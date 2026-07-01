@@ -167,7 +167,7 @@
       :initial-height="settingsPanelHeight"
       height-behaviour="scale"
       :allow-full-screen="true"
-      :on-minimize="closeSettings"
+      :on-close="closeSettings"
     >
       <NodeTitle
         :title="getNodeDescription(selectedNode.type).title"
@@ -212,7 +212,7 @@
       :initial-left="200"
       width-behaviour="scale"
       :allow-full-screen="true"
-      :on-minimize="closeTable"
+      :on-close="closeTable"
     >
       <div class="data-preview">
         <!-- Loading state -->

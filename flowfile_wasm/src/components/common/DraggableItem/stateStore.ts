@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { Z_INDEX } from './zIndex'
 
 // Bump when the localStorage shape or coordinate system changes — old keys are
@@ -7,6 +7,8 @@ import { Z_INDEX } from './zIndex'
 const STORAGE_VERSION = 1
 const itemStorageKey = (id: string) => `overlayPositionAndSize.v${STORAGE_VERSION}_${id}`
 const groupsStorageKey = `overlayGroups.v${STORAGE_VERSION}`
+// Key written by the removed pre-port panel system (DraggablePanel/panel-store).
+const LEGACY_PANEL_STORE_KEY = 'flowfile-panel-state-v2'
 
 const purgeLegacyKeys = () => {
   try {
@@ -20,21 +22,24 @@ const purgeLegacyKeys = () => {
         localStorage.removeItem(key)
       }
     }
+    // Drop the orphaned key from the removed DraggablePanel system.
+    localStorage.removeItem(LEGACY_PANEL_STORE_KEY)
   } catch {
     // localStorage can throw in private mode / quota exhaustion — ignore.
   }
 }
 
 // Looks up the canvas container so fullscreen panels fill the canvas region
-// (not the viewport, which would overlap the app header/toolbar).
+// (not the viewport, which would overlap the app header/toolbar). Uses
+// clientWidth/Height (untransformed layout box) to match getStickyContainer so
+// a host CSS transform:scale keeps fullscreen and docking consistent.
 const getCanvasBounds = (): { width: number; height: number } => {
   if (typeof document === 'undefined') {
     return { width: 0, height: 0 }
   }
   const container = document.querySelector('.canvas-container')
   if (container) {
-    const rect = container.getBoundingClientRect()
-    return { width: rect.width, height: rect.height }
+    return { width: container.clientWidth, height: container.clientHeight }
   }
   return { width: window.innerWidth, height: window.innerHeight }
 }
@@ -58,6 +63,8 @@ export interface ItemLayout {
   prevLeft?: number
   prevTop?: number
   clicked: boolean
+  // Collapsed-to-header state, persisted so it survives a reload.
+  minimized?: boolean
   group?: string
   syncDimensions?: boolean
 }
@@ -83,7 +90,6 @@ export const useItemStore = defineStore('itemStore', () => {
   const groups = ref<Record<string, string[]>>({})
   const inResizing = ref(false)
   const idItemClicked = ref<string | null>(null)
-  const idItemVisible = ref<string | null>(null)
 
   // Z-index constants (see zIndex.ts for the full hierarchy).
   const BASE_Z_INDEX = Z_INDEX.PANEL_BASE
@@ -109,18 +115,6 @@ export const useItemStore = defineStore('itemStore', () => {
       // Ignore quota / private-mode failures.
     }
   }
-
-  const layoutPresets = {
-    sidePanel: { width: 400, height: '100%' },
-    bottomPanel: { width: '100%', height: 300 },
-    dataView: { width: 600, height: 400 },
-    logView: { width: 600, height: 400 },
-  }
-
-  const getGroupItems = computed(() => (groupName: string) => {
-    if (!groups.value[groupName]) return []
-    return groups.value[groupName].map((id) => items.value[id]).filter(Boolean)
-  })
 
   const registerInitialState = (id: string, initialState: ItemInitialState) => {
     // Only register if not already registered (preserve the true initial state).
@@ -222,58 +216,6 @@ export const useItemStore = defineStore('itemStore', () => {
     })
   }
 
-  const arrangeItems = (arrangement: 'cascade' | 'tile' | 'stack') => {
-    const visibleItems = Object.entries(items.value)
-      .filter(([, item]) => !item.fullScreen)
-      .sort((a, b) => a[1].zIndex - b[1].zIndex)
-
-    switch (arrangement) {
-      case 'cascade': {
-        let offset = 0
-        visibleItems.forEach(([id, item]) => {
-          item.left = 100 + offset
-          item.top = 100 + offset
-          item.stickynessPosition = 'free'
-          offset += 30
-          saveItemState(id)
-        })
-        break
-      }
-
-      case 'tile': {
-        const screenWidth = window.innerWidth
-        const screenHeight = window.innerHeight
-        const itemCount = visibleItems.length
-        const cols = Math.ceil(Math.sqrt(itemCount))
-        const rows = Math.ceil(itemCount / cols)
-        const itemWidth = Math.floor(screenWidth / cols) - 20
-        const itemHeight = Math.floor(screenHeight / rows) - 20
-
-        visibleItems.forEach(([id, item], index) => {
-          const col = index % cols
-          const row = Math.floor(index / cols)
-          item.left = col * (itemWidth + 10) + 10
-          item.top = row * (itemHeight + 10) + 10
-          item.width = itemWidth
-          item.height = itemHeight
-          item.stickynessPosition = 'free'
-          saveItemState(id)
-        })
-        break
-      }
-
-      case 'stack': {
-        visibleItems.forEach(([id, item]) => {
-          item.left = 100
-          item.top = 100
-          item.stickynessPosition = 'free'
-          saveItemState(id)
-        })
-        break
-      }
-    }
-  }
-
   const saveItemState = (id: string) => {
     const existing = writeTimers.get(id)
     if (existing) clearTimeout(existing)
@@ -322,30 +264,6 @@ export const useItemStore = defineStore('itemStore', () => {
         localStorage.removeItem(groupsStorageKey)
       }
     }
-  }
-
-  const applyPreset = (id: string, presetName: keyof typeof layoutPresets) => {
-    const preset = layoutPresets[presetName]
-    const updates: Partial<ItemLayout> = {}
-
-    if (preset.width === '100%') {
-      updates.width = window.innerWidth
-      updates.fullWidth = true
-    } else {
-      updates.width = preset.width as number
-      updates.fullWidth = false
-    }
-
-    if (preset.height === '100%') {
-      updates.height = window.innerHeight
-      updates.fullHeight = true
-    } else {
-      updates.height = preset.height as number
-      updates.fullHeight = false
-    }
-
-    setItemState(id, updates)
-    saveItemState(id)
   }
 
   const toggleFullScreen = (id: string) => {
@@ -402,11 +320,15 @@ export const useItemStore = defineStore('itemStore', () => {
     writeTimers.forEach((timer) => clearTimeout(timer))
     writeTimers.clear()
 
-    Object.keys(items.value).forEach((id) => {
-      localStorage.removeItem(itemStorageKey(id))
-    })
-
-    localStorage.removeItem(groupsStorageKey)
+    try {
+      Object.keys(items.value).forEach((id) => {
+        localStorage.removeItem(itemStorageKey(id))
+      })
+      localStorage.removeItem(groupsStorageKey)
+    } catch {
+      // localStorage can throw in blocked-storage / private-mode contexts — the
+      // in-memory reset below still runs so the layout resets this session.
+    }
 
     groups.value = {}
 
@@ -425,6 +347,7 @@ export const useItemStore = defineStore('itemStore', () => {
         zIndex: BASE_Z_INDEX,
         fullScreen: false,
         clicked: false,
+        minimized: false,
         group: initialState.group,
         syncDimensions: initialState.syncDimensions,
       }
@@ -451,75 +374,11 @@ export const useItemStore = defineStore('itemStore', () => {
     }, 0)
   }
 
-  const resetSingleItem = (id: string) => {
-    const initialState = initialItemStates.value[id]
-    if (!initialState) {
-      return
-    }
-
-    const pending = writeTimers.get(id)
-    if (pending) {
-      clearTimeout(pending)
-      writeTimers.delete(id)
-    }
-
-    localStorage.removeItem(itemStorageKey(id))
-
-    const resetState: ItemLayout = {
-      width: initialState.width || 400,
-      height: initialState.height || 300,
-      left: initialState.left || 100,
-      top: initialState.top || 100,
-      stickynessPosition: initialState.stickynessPosition || 'free',
-      fullWidth: initialState.fullWidth || false,
-      fullHeight: initialState.fullHeight || false,
-      zIndex: items.value[id]?.zIndex || BASE_Z_INDEX,
-      fullScreen: false,
-      clicked: false,
-      group: initialState.group,
-      syncDimensions: initialState.syncDimensions,
-    }
-
-    items.value[id] = resetState
-  }
-
   const clickOnItem = (id: string) => {
     if (!items.value[id] || items.value[id].fullScreen) return
 
     bringToFront(id)
     idItemClicked.value = id
-  }
-
-  const setResizing = (resizing: boolean) => {
-    inResizing.value = resizing
-  }
-
-  const getResizing = () => {
-    return inResizing.value
-  }
-
-  const scrollOnItem = (id: string) => {
-    const itemElement = document.getElementById(id)
-    if (!itemElement) return
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            idItemVisible.value = id
-            bringToFront(id)
-          } else if (idItemVisible.value === id) {
-            items.value[id].zIndex = BASE_Z_INDEX
-            idItemVisible.value = null
-          }
-        })
-      },
-      {
-        threshold: 0.5,
-      },
-    )
-
-    observer.observe(itemElement)
   }
 
   const hasSavedState = (id: string): boolean => {
@@ -534,28 +393,18 @@ export const useItemStore = defineStore('itemStore', () => {
     inResizing,
     items,
     groups,
-    layoutPresets,
     initialItemStates,
-    idItemClicked,
     registerInitialState,
     setItemState,
     saveItemState,
     flushItemState,
     loadItemState,
     hasSavedState,
-    setResizing,
-    getResizing,
     clickOnItem,
-    scrollOnItem,
-    idItemVisible,
     toggleFullScreen,
     setFullScreen,
-    arrangeItems,
     syncGroupDimensions,
-    applyPreset,
-    getGroupItems,
     resetLayout,
-    resetSingleItem,
     bringToFront,
   }
 })

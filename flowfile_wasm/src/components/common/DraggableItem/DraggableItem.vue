@@ -95,6 +95,15 @@
       <div v-else-if="title" class="dragitem-tabs" @mousedown="startMove">
         <span class="dragitem-tab dragitem-tab--static active">{{ title }}</span>
       </div>
+      <button
+        v-if="onClose"
+        class="minimal-button close-button"
+        data-tooltip="true"
+        title="Close"
+        @click="handleClose"
+      >
+        <span class="icon">×</span>
+      </button>
     </div>
 
     <div class="content" @click="registerClick">
@@ -216,6 +225,12 @@ const props = defineProps({
     type: Function,
     default: null,
   },
+  // When provided, a "×" close button appears in the header (distinct from the
+  // "−" minimize/collapse button).
+  onClose: {
+    type: Function,
+    default: null,
+  },
   allowFreeMove: {
     type: Boolean,
     default: true,
@@ -330,6 +345,7 @@ const savePositionAndSize = () => {
     fullHeight: itemState.value.fullHeight,
     zIndex: itemState.value.zIndex,
     fullScreen: itemState.value.fullScreen,
+    minimized: isMinimized.value,
     group: itemState.value.group,
     syncDimensions: itemState.value.syncDimensions,
   })
@@ -382,6 +398,13 @@ const toggleMinimize = () => {
     props.onMinimize()
   }
   isMinimized.value = !isMinimized.value
+  // Persist the collapsed state so it survives a reload.
+  savePositionAndSize()
+  itemStore.flushItemState(props.id)
+}
+
+const handleClose = () => {
+  props.onClose?.()
 }
 
 const handleReziging = (e: MouseEvent) => {
@@ -992,8 +1015,12 @@ onMounted(() => {
     }
   }
 
+  // Restore the collapsed-to-header state from persisted layout.
+  isMinimized.value = !!itemState.value.minimized
+
   layoutResetHandler = () => {
     itemState.value = { ...itemStore.items[props.id] }
+    isMinimized.value = !!itemState.value.minimized
 
     // Ensure stickynessPosition is restored from initial state (props.initialPosition)
     // so sticky items snap back to their original position.
@@ -1023,6 +1050,8 @@ onBeforeUnmount(() => {
   }
   window.removeEventListener('resize', handleWindowResize)
   parentResizeObserver.disconnect()
+  clearTimeout(resizeTimeout)
+  if (resizeDelay.value) clearTimeout(resizeDelay.value)
   document.removeEventListener('mouseup', stopResize)
   document.removeEventListener('mousemove', onMove)
   document.removeEventListener('mouseup', stopMove)
@@ -1096,6 +1125,14 @@ onBeforeUnmount(() => {
 .minimal-button:hover {
   color: var(--color-text-primary);
   background-color: var(--color-background-hover);
+}
+/* Close button is pushed to the far right of the header, past the tab strip. */
+.close-button {
+  margin-left: auto;
+}
+.close-button:hover {
+  color: var(--color-text-inverse);
+  background-color: var(--color-danger);
 }
 .group-badge {
   background-color: var(--color-accent);
