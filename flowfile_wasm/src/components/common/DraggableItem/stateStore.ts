@@ -3,8 +3,9 @@ import { ref } from 'vue'
 import { Z_INDEX } from './zIndex'
 
 // Bump when the localStorage shape or coordinate system changes — old keys are
-// purged on next load.
-const STORAGE_VERSION = 1
+// purged on next load. v2: fixed the mount-time toolbar-offset so panels dock
+// at the correct top; discards geometry saved with the stale offset.
+const STORAGE_VERSION = 2
 const itemStorageKey = (id: string) => `overlayPositionAndSize.v${STORAGE_VERSION}_${id}`
 const groupsStorageKey = `overlayGroups.v${STORAGE_VERSION}`
 // Key written by the removed pre-port panel system (DraggablePanel/panel-store).

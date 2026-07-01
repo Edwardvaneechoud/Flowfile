@@ -481,7 +481,13 @@ const { hasSeenDemo } = useDemo()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
-const toolbarHeight = ref(52)
+// Panels dock below the in-canvas toolbar when it's shown; in app mode the
+// toolbar is hidden (the header drives actions) so they dock at the container
+// top. Resolved synchronously from the prop so the always-mounted palette
+// captures the right offset at mount — onMounted later refines it to the
+// toolbar's measured height. (A scale-axis panel preserves its top on reflow,
+// so a stale mount-time offset would otherwise never self-correct.)
+const toolbarHeight = ref(props.showToolbar ? 52 : 0)
 
 // Live height of the canvas container, tracked by a ResizeObserver (see onMounted).
 // Drives the default tiled heights so the right Settings drawer and the bottom
