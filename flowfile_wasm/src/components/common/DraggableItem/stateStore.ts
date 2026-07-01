@@ -63,6 +63,7 @@ export interface ItemLayout {
   prevHeight?: number
   prevLeft?: number
   prevTop?: number
+  prevZIndex?: number
   clicked: boolean
   // Collapsed-to-header state, persisted so it survives a reload.
   minimized?: boolean
@@ -241,29 +242,36 @@ export const useItemStore = defineStore('itemStore', () => {
   }
 
   const loadItemState = (id: string) => {
-    const savedState = localStorage.getItem(itemStorageKey(id))
-    if (savedState) {
-      try {
-        const state = JSON.parse(savedState)
-        // Clamp restored z-index to prevent inflated values from localStorage.
-        if (state.zIndex !== undefined && state.zIndex > MAX_Z_INDEX) {
-          state.zIndex = BASE_Z_INDEX
+    // Outer guard: localStorage.getItem can throw (SecurityError in a
+    // blocked-storage / cross-origin iframe), which would otherwise escape
+    // DraggableItem's onMounted. The inner catches handle corrupt JSON.
+    try {
+      const savedState = localStorage.getItem(itemStorageKey(id))
+      if (savedState) {
+        try {
+          const state = JSON.parse(savedState)
+          // Clamp restored z-index to prevent inflated values from localStorage.
+          if (state.zIndex !== undefined && state.zIndex > MAX_Z_INDEX) {
+            state.zIndex = BASE_Z_INDEX
+          }
+          setItemState(id, state)
+        } catch {
+          // Corrupted entry — drop it so next save overwrites cleanly.
+          localStorage.removeItem(itemStorageKey(id))
         }
-        setItemState(id, state)
-      } catch {
-        // Corrupted entry — drop it so next save overwrites cleanly.
-        localStorage.removeItem(itemStorageKey(id))
       }
-    }
 
-    const savedGroups = localStorage.getItem(groupsStorageKey)
-    if (savedGroups) {
-      try {
-        const groupData = JSON.parse(savedGroups)
-        groups.value = groupData.groups || {}
-      } catch {
-        localStorage.removeItem(groupsStorageKey)
+      const savedGroups = localStorage.getItem(groupsStorageKey)
+      if (savedGroups) {
+        try {
+          const groupData = JSON.parse(savedGroups)
+          groups.value = groupData.groups || {}
+        } catch {
+          localStorage.removeItem(groupsStorageKey)
+        }
       }
+    } catch {
+      // localStorage access blocked — proceed with in-memory defaults.
     }
   }
 
@@ -277,17 +285,12 @@ export const useItemStore = defineStore('itemStore', () => {
 
     if (items.value[id].fullScreen !== fullScreen) {
       if (fullScreen) {
-        Object.keys(items.value).forEach((otherId) => {
-          if (otherId !== id) {
-            items.value[otherId].zIndex = 1
-          }
-        })
-
         items.value[id].fullScreen = true
         items.value[id].prevWidth = items.value[id].width
         items.value[id].prevHeight = items.value[id].height
         items.value[id].prevLeft = items.value[id].left
         items.value[id].prevTop = items.value[id].top
+        items.value[id].prevZIndex = items.value[id].zIndex
 
         // Fill the canvas region (container), not the viewport — panels are
         // positioned inside the container so width/height are container-relative.
@@ -296,6 +299,8 @@ export const useItemStore = defineStore('itemStore', () => {
         items.value[id].height = bounds.height
         items.value[id].left = 0
         items.value[id].top = 0
+        // FULLSCREEN_Z_INDEX already sits above every normal panel (bounded by
+        // PANEL_MAX), so the other panels' relative stacking is left untouched.
         items.value[id].zIndex = FULLSCREEN_Z_INDEX
       } else {
         items.value[id].fullScreen = false
@@ -305,10 +310,9 @@ export const useItemStore = defineStore('itemStore', () => {
         items.value[id].height = items.value[id].prevHeight ?? 300
         items.value[id].left = items.value[id].prevLeft ?? 100
         items.value[id].top = items.value[id].prevTop ?? 100
-
-        Object.keys(items.value).forEach((otherId) => {
-          items.value[otherId].zIndex = BASE_Z_INDEX
-        })
+        // Drop back out of the fullscreen layer to the panel's own prior z; the
+        // clickOnItem below re-fronts it while every other panel keeps its order.
+        items.value[id].zIndex = items.value[id].prevZIndex ?? BASE_Z_INDEX
       }
 
       flushItemState(id)

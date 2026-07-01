@@ -1,28 +1,23 @@
 // Centralised z-index hierarchy for the canvas overlay system.
 //
 // Layered low to high. Use these constants instead of magic numbers so the
-// stacking order remains coherent when new overlays are added.
+// stacking order stays coherent when new overlays are added.
 export const Z_INDEX = {
   // Normal floating panels (DraggableItem). bringToFront walks BASE..MAX
   // before normalizing back to BASE.
   PANEL_BASE: 100,
   PANEL_MAX: 200,
 
-  // Floating widgets that should sit above panels but below fullscreen
-  // (e.g. the layout-controls trigger button).
-  FLOATING_WIDGET: 200,
-
-  // A panel in fullscreen mode covers everything else in the canvas region.
+  // A panel in fullscreen mode covers the other panels in the canvas region.
   FULLSCREEN: 250,
 
-  // Canvas-pinned controls that follow VueFlow stacking. Sit above panels
-  // but below fullscreen so a maximised panel still occludes them.
-  UNDO_REDO: 1000,
-  CONTEXT_MENU: 1000,
+  // Canvas-pinned menus (the VueFlow pane/context menu) float above the panels.
+  CONTEXT_MENU: 10000,
 
-  // Tooltips and toasts are app-level — they intentionally float above the
-  // canvas overlay system.
-  TOOLTIP: 100000,
+  // The floating layout-controls widget — sits above the whole canvas overlay
+  // system (panels, fullscreen, context menu) so Reset Layout / Fit stay
+  // reachable, but below app-level tooltips/toasts.
+  FLOATING_WIDGET: 20000,
 } as const
 
 export type ZIndexKey = keyof typeof Z_INDEX

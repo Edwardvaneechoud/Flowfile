@@ -351,7 +351,7 @@
       v-if="paneMenuVisible"
       ref="paneMenuEl"
       class="context-menu pane-menu"
-      :style="{ position: 'fixed', zIndex: 10000, top: `${paneMenu.y}px`, left: `${paneMenu.x}px` }"
+      :style="{ position: 'fixed', zIndex: Z_INDEX.CONTEXT_MENU, top: `${paneMenu.y}px`, left: `${paneMenu.x}px` }"
     >
       <div class="context-menu-item" @click="paneFitView">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
@@ -408,6 +408,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 
 import DraggableItem from './common/DraggableItem/DraggableItem.vue'
 import { useItemStore } from './common/DraggableItem/stateStore'
+import { Z_INDEX } from './common/DraggableItem/zIndex'
 import FlowNode from './nodes/FlowNode.vue'
 import DeletableEdge from './DeletableEdge.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
