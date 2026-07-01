@@ -832,11 +832,14 @@ const applyStickyPosition = () => {
   savePositionAndSize();
 };
 
+// Measure the canvas container (getStickyContainer → the overlay's offsetParent,
+// i.e. <main>), not instance.parent.vnode.el — once a panel is wrapped in
+// TabbedDrawer the latter is the panel itself, which collapses the fill to 300px.
 const calculateWidth = () => {
   if (props.initialWidth) {
     return props.initialWidth;
   } else if (props.initialPosition === "top" || props.initialPosition === "bottom") {
-    return instance?.parent?.vnode.el?.offsetWidth - props.initialLeft || 300;
+    return Math.max(150, getStickyContainer().width - (props.initialLeft || 0));
   } else return 300;
 };
 
@@ -844,7 +847,7 @@ const calculateHeight = () => {
   if (props.initialHeight) {
     return props.initialHeight;
   } else if (props.initialPosition === "left" || props.initialPosition === "right") {
-    return instance?.parent?.vnode.el?.offsetHeight - props.initialHeight || 300;
+    return Math.max(150, getStickyContainer().height - (props.initialTop || 0));
   } else return 300;
 };
 
