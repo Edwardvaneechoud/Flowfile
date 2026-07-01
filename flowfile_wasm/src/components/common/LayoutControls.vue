@@ -41,7 +41,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { clearAllPanelStates } from '../../stores/panel-store'
 
 const emit = defineEmits<{
   (e: 'reset-layout'): void
@@ -182,7 +181,8 @@ const runAction = <T extends any[]>(action: (...args: T) => void, ...args: T) =>
 }
 
 const resetLayout = () => {
-  clearAllPanelStates()
+  // Canvas handles the reset (clears saved geometry + restores initial layout
+  // via the DraggableItem store) in response to this event.
   emit('reset-layout')
 }
 

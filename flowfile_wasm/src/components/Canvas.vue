@@ -1,13 +1,14 @@
 <template>
-  <div class="canvas-container">
-    <!-- Node List Sidebar - Using DraggablePanel -->
-    <DraggablePanel
+  <div ref="canvasContainerRef" class="canvas-container">
+    <!-- Node List Sidebar -->
+    <DraggableItem
+      id="node-list-sidebar"
       title="Data Actions"
-      panel-id="node-list-sidebar"
+      :show-left="true"
       initial-position="left"
       :initial-width="200"
       :initial-top="toolbarHeight"
-      :default-z-index="100"
+      height-behaviour="scale"
       :allow-full-screen="false"
     >
       <div class="nodes-wrapper">
@@ -68,7 +69,7 @@
           </div>
         </div>
       </div>
-    </DraggablePanel>
+    </DraggableItem>
 
     <!-- Toolbar (hidden in app mode, where the header drives actions) -->
     <div v-if="showToolbar" ref="toolbarRef" class="toolbar">
@@ -155,15 +156,18 @@
     </div>
 
     <!-- Node Settings Panel -->
-    <DraggablePanel
+    <DraggableItem
       v-if="selectedNode && showSettings"
+      id="node-settings-panel"
       :title="getNodeDescription(selectedNode.type).title"
-      panel-id="node-settings-panel"
+      :show-right="true"
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
-      :default-z-index="120"
-      :on-close="closeSettings"
+      :initial-height="settingsPanelHeight"
+      height-behaviour="scale"
+      :allow-full-screen="true"
+      :on-minimize="closeSettings"
     >
       <NodeTitle
         :title="getNodeDescription(selectedNode.type).title"
@@ -195,20 +199,20 @@
           {{ isApplying ? 'Applying…' : justApplied ? 'Applied ✓' : 'Apply' }}
         </button>
       </template>
-    </DraggablePanel>
+    </DraggableItem>
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
-    <DraggablePanel
+    <DraggableItem
       v-if="selectedNodeId !== null && showTablePreview && selectedNode?.type !== 'explore_data'"
+      id="data-preview-panel"
       title="Table Preview"
-      panel-id="data-preview-panel"
+      :show-bottom="true"
       initial-position="bottom"
-      :initial-height="280"
+      :initial-height="tablePreviewHeight"
       :initial-left="200"
-      :default-z-index="110"
-      group="bottomPanels"
-      :sync-dimensions="true"
-      :on-close="closeTable"
+      width-behaviour="scale"
+      :allow-full-screen="true"
+      :on-minimize="closeTable"
     >
       <div class="data-preview">
         <!-- Loading state -->
@@ -311,7 +315,7 @@
           </button>
         </div>
       </div>
-    </DraggablePanel>
+    </DraggableItem>
 
     <!-- Hidden file input for Open (lives outside the toolbar so the header's
          Open action works even when the toolbar is hidden in app mode). -->
@@ -389,7 +393,6 @@ import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
 import { usePyodideStore } from '../stores/pyodide-store'
-import { usePanelZIndexStore } from '../stores/panel-zindex-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
@@ -403,7 +406,8 @@ import type { ColDef, GridReadyEvent, GridApi } from '@ag-grid-community/core'
 
 ModuleRegistry.registerModules([ClientSideRowModelModule])
 
-import DraggablePanel from './common/DraggablePanel.vue'
+import DraggableItem from './common/DraggableItem/DraggableItem.vue'
+import { useItemStore } from './common/DraggableItem/stateStore'
 import FlowNode from './nodes/FlowNode.vue'
 import DeletableEdge from './DeletableEdge.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
@@ -468,7 +472,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 }))
 
 const flowStore = useFlowStore()
-const zIndexStore = usePanelZIndexStore()
+const itemStore = useItemStore()
 const uiStore = useDesignerUiStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, showSettings, showTablePreview, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
@@ -478,6 +482,20 @@ const { hasSeenDemo } = useDemo()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
 const toolbarHeight = ref(52)
+
+// Live height of the canvas container, tracked by a ResizeObserver (see onMounted).
+// Drives the default tiled heights so the right Settings drawer and the bottom
+// Table dock dock without overlapping — DraggableItem reads these once on first
+// open (and on Reset Layout); the user resizes freely from there.
+const canvasContainerRef = ref<HTMLElement | null>(null)
+let containerResizeObserver: ResizeObserver | null = null
+const availableHeight = ref(window.innerHeight)
+const tablePreviewHeight = computed(() =>
+  Math.max(160, Math.floor((availableHeight.value - toolbarHeight.value) * 0.3)),
+)
+const settingsPanelHeight = computed(() =>
+  Math.max(220, availableHeight.value - toolbarHeight.value - tablePreviewHeight.value),
+)
 const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut } = useVueFlow()
 
 // Canvas (pane) right-click menu state.
@@ -825,8 +843,8 @@ function onNodeDoubleClick(event: { node: Node }) {
   flowStore.selectNode(nodeId)
   showSettings.value = true
   nextTick(() => {
-    zIndexStore.bringToFront('node-settings-panel')
-    zIndexStore.bringToFront('data-preview-panel')
+    itemStore.bringToFront('node-settings-panel')
+    itemStore.bringToFront('data-preview-panel')
   })
 }
 
@@ -980,7 +998,7 @@ async function handleRunNode(nodeId: number) {
 function handleEditNode(nodeId: number) {
   flowStore.selectNode(nodeId)
   showSettings.value = true
-  nextTick(() => zIndexStore.bringToFront('node-settings-panel'))
+  nextTick(() => itemStore.bringToFront('node-settings-panel'))
 }
 
 // View data (context menu): open the Table preview only (not Settings). Opening
@@ -989,7 +1007,7 @@ function handleEditNode(nodeId: number) {
 function handleViewData(nodeId: number) {
   showTablePreview.value = true
   flowStore.selectNode(nodeId)
-  nextTick(() => zIndexStore.bringToFront('data-preview-panel'))
+  nextTick(() => itemStore.bringToFront('data-preview-panel'))
 }
 
 // Each panel closes independently. Closing one keeps the other (and the node
@@ -1312,7 +1330,10 @@ function handleClearFlow() {
 }
 
 function handleResetLayout() {
-  window.dispatchEvent(new CustomEvent('layout-reset'))
+  // Clears saved geometry, restores each panel's registered initial state, and
+  // dispatches `layout-reset` so mounted DraggableItems re-apply their sticky
+  // positions.
+  itemStore.resetLayout()
 }
 
 function handleKeyDown(event: KeyboardEvent) {
@@ -1385,6 +1406,18 @@ onMounted(async () => {
     // No toolbar: panels dock from the top of the canvas area.
     toolbarHeight.value = 0
   }
+
+  // Track the canvas container height so the default tiled panel heights stay
+  // in sync with the real region (handles embedded/resized editors), not a
+  // stale window.innerHeight snapshot.
+  if (canvasContainerRef.value) {
+    availableHeight.value = canvasContainerRef.value.clientHeight
+    containerResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) availableHeight.value = entry.contentRect.height
+    })
+    containerResizeObserver.observe(canvasContainerRef.value)
+  }
 })
 
 onUnmounted(() => {
@@ -1392,6 +1425,8 @@ onUnmounted(() => {
   window.removeEventListener('click', handlePaneMenuClickOutside)
   cancelEdgeLeave()
   uiStore.clearActions()
+  containerResizeObserver?.disconnect()
+  containerResizeObserver = null
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)
   }
