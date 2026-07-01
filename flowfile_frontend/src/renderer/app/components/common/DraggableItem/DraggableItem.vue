@@ -912,6 +912,21 @@ watch(
   },
 );
 
+// App-controlled docked panels (right drawer, bottom dock) receive their height
+// via the initial-height override. Re-fit when it changes — on window resize, or
+// when the bottom dock opens/closes and the right drawer's available height moves
+// — so the right drawer's bottom keeps meeting the table's top exactly. Skipped
+// mid-gesture, while fullscreen, and for free-floating panels (user-positioned).
+watch(
+  () => props.initialHeight,
+  (h) => {
+    if (h == null || props.initialPosition === "free") return;
+    if (isDragging.value || isResizing.value || itemState.value.fullScreen) return;
+    itemState.value.height = h;
+    nextTick(() => applyStickyPosition());
+  },
+);
+
 nextTick().then(() => {
   observeParentResize();
 });
@@ -995,6 +1010,13 @@ onMounted(() => {
 
   layoutResetHandler = () => {
     itemState.value = { ...itemStore.items[props.id] };
+
+    // Reset an app-controlled height (right drawer / bottom dock) to the CURRENT
+    // override, not the first-mount snapshot, so the tiled layout is correct for
+    // the current table visibility and canvas size.
+    if (props.initialHeight != null) {
+      itemState.value.height = props.initialHeight;
+    }
 
     // Ensure stickynessPosition is restored from initial state (props.initialPosition)
     // This guarantees sticky items like logViewer snap back to their original position

@@ -257,9 +257,20 @@ const {
   insertNodeOnEdge,
 } = useDragAndDrop();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
-// Initial height for the bottom dock (25% of the canvas). DraggableItem reads it
-// once on mount; the user resizes from there.
+// Initial height for the bottom dock (25% of the canvas). DraggableItem reacts to
+// this via its initial-height override; the user can resize from there.
 const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
+// The bottom dock is only present for a data preview or the log viewer (mirrors
+// its drawerRegistry visibleWhen). When it's up, the right drawer stops just
+// above it (bottom meets the table's top); otherwise it fills the full height.
+const bottomDockVisible = computed(
+  () => drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer,
+);
+const rightDrawerHeight = computed(() =>
+  bottomDockVisible.value
+    ? Math.max(150, availableHeight.value - tablePreviewHeight.value)
+    : availableHeight.value,
+);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
@@ -1367,7 +1378,13 @@ defineExpose({
         v-for="d in drawers"
         :key="d.id"
         :def="d"
-        :height-override="d.id === 'bottomDock' ? tablePreviewHeight : undefined"
+        :height-override="
+          d.id === 'bottomDock'
+            ? tablePreviewHeight
+            : d.side === 'right'
+              ? rightDrawerHeight
+              : undefined
+        "
       />
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
