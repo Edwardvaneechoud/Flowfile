@@ -832,11 +832,15 @@ const applyStickyPosition = () => {
   savePositionAndSize();
 };
 
+// Fill-axis default sizes read from the canvas container (the overlay's
+// offsetParent), NOT instance.parent — the latter points at this overlay once
+// the panel is nested in a wrapper (TabbedDrawer), which self-references to a
+// tiny size and breaks the reset-layout defaults.
 const calculateWidth = () => {
   if (props.initialWidth) {
     return props.initialWidth;
   } else if (props.initialPosition === "top" || props.initialPosition === "bottom") {
-    return instance?.parent?.vnode.el?.offsetWidth - props.initialLeft || 300;
+    return Math.max(300, getStickyContainer().width - (props.initialLeft || 0));
   } else return 300;
 };
 
@@ -844,7 +848,7 @@ const calculateHeight = () => {
   if (props.initialHeight) {
     return props.initialHeight;
   } else if (props.initialPosition === "left" || props.initialPosition === "right") {
-    return instance?.parent?.vnode.el?.offsetHeight - props.initialHeight || 300;
+    return Math.max(300, getStickyContainer().height - (props.initialTop || 0));
   } else return 300;
 };
 

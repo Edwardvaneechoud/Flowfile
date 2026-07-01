@@ -38,6 +38,7 @@ export interface DrawerDef {
   initialWidth?: number;
   initialHeight?: number;
   initialLeft?: number;
+  initialTop?: number;
   widthBehaviour?: AxisBehaviour;
   heightBehaviour?: AxisBehaviour;
   allowFullScreen?: boolean;

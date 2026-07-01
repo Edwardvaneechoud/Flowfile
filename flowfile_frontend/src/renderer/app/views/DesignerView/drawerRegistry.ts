@@ -14,6 +14,9 @@ export const drawers: DrawerDef[] = [
     id: "rightDrawer",
     side: "right",
     initialWidth: 600,
+    // Small top gap so the drawer starts near the top (not the generic 100px
+    // free-panel default); Canvas derives its default height from this.
+    initialTop: 8,
     // Fixed width; height tracks the canvas (keeps its gap) instead of filling.
     heightBehaviour: "scale",
     allowFullScreen: true,
@@ -61,6 +64,7 @@ export const drawers: DrawerDef[] = [
     id: "aiDrawer",
     side: "right",
     initialWidth: 600,
+    initialTop: 8,
     heightBehaviour: "scale",
     allowFullScreen: true,
     onMinimize: ({ editor }) => editor.closeAiDrawer(),
