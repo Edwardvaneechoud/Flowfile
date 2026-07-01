@@ -82,6 +82,7 @@ const onMinimize = () => props.def.onMinimize?.(ctx);
     :initial-width="def.initialWidth"
     :initial-height="heightOverride ?? def.initialHeight"
     :initial-left="def.initialLeft"
+    :initial-top="def.initialTop"
     :width-behaviour="def.widthBehaviour"
     :height-behaviour="def.heightBehaviour"
     :allow-full-screen="def.allowFullScreen ?? true"

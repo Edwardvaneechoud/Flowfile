@@ -66,6 +66,7 @@ import layoutControls from "../../components/common/DraggableItem/layoutControls
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
 import TabbedDrawer from "./TabbedDrawer.vue";
 import { drawers } from "./drawerRegistry";
+import type { DrawerDef } from "../../types/drawer.types";
 import ContextMenu from "./ContextMenu.vue";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
@@ -257,9 +258,17 @@ const {
   insertNodeOnEdge,
 } = useDragAndDrop();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
-// Initial height for the bottom dock (25% of the canvas). DraggableItem reads it
-// once on mount; the user resizes from there.
+// Default drawer sizing. The bottom dock takes ~25% of the canvas height; the
+// right-side drawers fill from their top gap (def.initialTop) down to just above
+// the dock, so the two tile the right column without overlap. DraggableItem
+// reads these once on mount (and on Reset Layout); the user resizes from there.
 const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
+const drawerHeightOverride = (d: DrawerDef): number | undefined => {
+  if (d.id === "bottomDock") return tablePreviewHeight.value;
+  if (d.side === "right")
+    return Math.max(200, availableHeight.value - tablePreviewHeight.value - (d.initialTop ?? 0));
+  return undefined;
+};
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
@@ -1367,7 +1376,7 @@ defineExpose({
         v-for="d in drawers"
         :key="d.id"
         :def="d"
-        :height-override="d.id === 'bottomDock' ? tablePreviewHeight : undefined"
+        :height-override="drawerHeightOverride(d)"
       />
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
