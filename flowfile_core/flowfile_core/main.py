@@ -137,6 +137,7 @@ async def _flowfile_http_exception_handler(request: Request, exc: FlowfileHTTPEx
     built-in HTTPException handler produces (keeps flow_graph fastapi-import-free)."""
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
+
 # The Tauri 2 desktop shell loads the renderer from a custom protocol — the
 # exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
 # on Linux, `https://tauri.localhost` on Windows/Android). A regex covers all

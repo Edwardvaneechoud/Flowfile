@@ -10,9 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-import pyarrow as pa
-
 if TYPE_CHECKING:
+    # Annotation-only: keep pyarrow off the `import flowfile_frame` path.
+    import pyarrow as pa
+
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
     from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 

@@ -10,16 +10,24 @@ from copy import deepcopy
 from functools import partial
 from pathlib import Path
 from time import time
-from typing import Any, Literal, NamedTuple, Union
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Union
 from uuid import uuid1
 
-import fastexcel
 import polars as pl
-import yaml
-from pyarrow.parquet import ParquetFile
+
+if TYPE_CHECKING:
+    # fastexcel/pyarrow/yaml are expensive to import and only needed on the
+    # excel-read / parquet-input / flow-save paths — keep them off the
+    # `import flowfile_frame` hot path (see tests/test_lazy_imports.py).
+    # CatalogService/TableWriteMetadata drag in the catalog service + schema
+    # stack (~150ms of pydantic model building) and resolve lazily for the
+    # same reason.
+    from pyarrow.parquet import ParquetFile
+
+    from flowfile_core.catalog import CatalogService
+    from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 
 from flowfile_core.auth import sharing
-from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
@@ -49,10 +57,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
-    get_calamine_xlsx_data_types,
-    get_open_xlsx_datatypes,
-)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCloudWriter,
     ExternalDatabaseFetcher,
@@ -107,11 +111,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
-from flowfile_core.kafka.connection_manager import (
-    build_consumer_config,
-    get_kafka_connection,
-    get_kafka_connection_by_name,
-)
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import (
     build_execute_request,
@@ -121,7 +120,6 @@ from flowfile_core.kernel.execution import (
     write_inputs_to_parquet,
 )
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
     CloudStorageReadSettingsInternal,
@@ -150,7 +148,6 @@ from shared.google_analytics.models import (
 from shared.google_analytics.models import (
     GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
 )
-from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
@@ -164,7 +161,17 @@ def represent_list_json(dumper, data):
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
 
 
-yaml.add_representer(list, represent_list_json)
+def _get_yaml():
+    """Import yaml on first use (flow save/load), with our list representer installed.
+
+    Registration is a plain dict assignment, so re-running it on every call is
+    idempotent and cheap; the win is that `import flowfile_frame` no longer pays
+    for loading PyYAML.
+    """
+    import yaml
+
+    yaml.add_representer(list, represent_list_json)
+    return yaml
 
 
 def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
@@ -245,6 +252,13 @@ def get_xlsx_schema(
     Returns:
         A list of FlowfileColumn objects representing the schema.
     """
+    # read_excel_tables pulls openpyxl (and numpy) at module level — defer it to
+    # the xlsx schema path so `import flowfile_frame` doesn't pay for it.
+    from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
+        get_calamine_xlsx_data_types,
+        get_open_xlsx_datatypes,
+    )
+
     try:
         logger.info("Starting to calculate the schema")
         if engine == "openpyxl":
@@ -391,6 +405,8 @@ def _resolve_virtual_table(
     ):
         return pl.LazyFrame.deserialize(_io.BytesIO(serialized_lf))
     with get_db_context() as db:
+        from flowfile_core.catalog import CatalogService
+
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
         return svc.resolve_virtual_flow_table(
@@ -511,6 +527,8 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     resolved_table_name: str | None = None
     try:
         with get_db_context() as db:
+            from flowfile_core.catalog import CatalogService
+
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
 
@@ -585,7 +603,7 @@ def _write_catalog_delta_local(
     merge_keys: list[str] | None,
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
-) -> TableWriteMetadata | None:
+) -> "TableWriteMetadata | None":
     """Write a Delta table in-process. Returns metadata dict, or ``None`` when the write was skipped.
 
     *storage_options* (passed verbatim, ``None`` ⇒ local filesystem) routes the write to object
@@ -624,7 +642,7 @@ def _write_catalog_delta_remote(
     op_type: str,
     op_kwargs: dict,
     table_name: str,
-) -> TableWriteMetadata | None:
+) -> "TableWriteMetadata | None":
     """Write a Delta table via the worker service. Returns metadata dict, or ``None`` when skipped."""
     fetcher = ExternalDfFetcher(
         flow_id=flow_id,
@@ -647,7 +665,7 @@ def _write_catalog_delta_remote(
     return meta
 
 
-def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
+def _effective_namespace_id(svc: "CatalogService", settings) -> int | None:
     """Resolve a node's target namespace name-first (portable ``namespace_full_name``), falling back to
     the numeric ``namespace_id`` for flows saved before names were stored. The numeric id is install-local
     and goes stale when namespaces are recreated, so the name is preferred whenever present."""
@@ -661,7 +679,7 @@ def _register_catalog_table(
     settings: input_schema.CatalogWriteSettings,
     source_registration_id: int | None,
     user_id: int,
-    meta_kwargs: TableWriteMetadata,
+    meta_kwargs: "TableWriteMetadata",
     storage_options: dict[str, str] | None = None,
     is_cloud: bool = False,
 ) -> None:
@@ -676,6 +694,8 @@ def _register_catalog_table(
         partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
     try:
         with get_db_context() as db:
+            from flowfile_core.catalog import CatalogService
+
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
             if existing is not None:
@@ -872,6 +892,8 @@ def _handle_virtual_table_write(
     schema_json = json.dumps([{"name": c.column_name, "dtype": c.data_type} for c in df.schema])
 
     with get_db_context() as db:
+        from flowfile_core.catalog import CatalogService
+
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
         ns_id = _effective_namespace_id(svc, settings)
@@ -922,6 +944,8 @@ def _handle_physical_table_write(
     user_id = node_catalog_writer.user_id or 1
 
     with get_db_context() as db:
+        from flowfile_core.catalog import CatalogService
+
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
         namespace_id = _effective_namespace_id(svc, settings)
@@ -1043,14 +1067,14 @@ class FlowGraph:
     depends_on: dict[
         int,
         Union[
-            ParquetFile,
+            "ParquetFile",
             FlowDataEngine,
             "FlowGraph",
             pl.DataFrame,
         ],
     ]
     _flow_id: int
-    _input_data: Union[ParquetFile, FlowDataEngine, "FlowGraph"]
+    _input_data: Union["ParquetFile", FlowDataEngine, "FlowGraph"]
     _input_cols: list[str]
     _output_cols: list[str]
     _node_db: dict[str | int, FlowNode]
@@ -1073,7 +1097,7 @@ class FlowGraph:
         input_cols: list[str] = None,
         output_cols: list[str] = None,
         path_ref: str = None,
-        input_flow: Union[ParquetFile, FlowDataEngine, "FlowGraph"] = None,
+        input_flow: Union["ParquetFile", FlowDataEngine, "FlowGraph"] = None,
         cache_results: bool = False,
     ):
         """Initializes a new FlowGraph instance.
@@ -2645,6 +2669,8 @@ class FlowGraph:
                     )
 
                 tags = list({"ml", trainer.task_type, settings.model_type, *settings.catalog_tags})
+                from flowfile_core.catalog import CatalogService
+
                 with get_db_context() as _ns_db:
                     effective_namespace_id = _effective_namespace_id(
                         CatalogService(SQLAlchemyCatalogRepository(_ns_db)), settings
@@ -2827,6 +2853,8 @@ class FlowGraph:
             else:
                 if not settings.model_name:
                     raise ValueError("Apply Model: 'model_name' is required when source='catalog'.")
+                from flowfile_core.catalog import CatalogService
+
                 storage_backend = get_storage_backend()
                 with get_db_context() as db:
                     effective_namespace_id = _effective_namespace_id(
@@ -3979,6 +4007,14 @@ class FlowGraph:
         Args:
             node_kafka_source: The settings for the Kafka source node.
         """
+        # confluent_kafka + pyarrow.ipc load only when a kafka node is actually
+        # added — they must stay off the `import flowfile_frame` path.
+        from flowfile_core.kafka.connection_manager import (
+            build_consumer_config,
+            get_kafka_connection,
+            get_kafka_connection_by_name,
+        )
+        from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 
         logger.info("Adding kafka source")
         node_type = "kafka_source"
@@ -4545,6 +4581,8 @@ class FlowGraph:
             input_file.received_file.file_type in ("xlsx", "excel")
             and input_file.received_file.table_settings.sheet_name == ""
         ):
+            import fastexcel
+
             sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
             input_file.received_file.table_settings.sheet_name = sheet_name
 
@@ -5401,6 +5439,7 @@ class FlowGraph:
                     "Or stay on.1 if you still need .flowfile support.\n\n"
                 )
             elif suffix in (".yaml", ".yml"):
+                yaml = _get_yaml()
                 flowfile_data = self.get_flowfile_data()
                 data = flowfile_data.model_dump(mode="json")
                 with open(flow_path, "w", encoding="utf-8") as f:
@@ -5412,6 +5451,7 @@ class FlowGraph:
                     json.dump(data, f, indent=2, ensure_ascii=False)
 
             else:
+                yaml = _get_yaml()
                 flowfile_data = self.get_flowfile_data()
                 logger.warning(f"Unknown file extension {suffix}. Defaulting to YAML format.")
                 data = flowfile_data.model_dump(mode="json")

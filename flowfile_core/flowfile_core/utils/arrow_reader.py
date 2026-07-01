@@ -1,6 +1,12 @@
-from collections.abc import Callable, Iterator
+from __future__ import annotations
 
-import pyarrow as pa
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # pyarrow is expensive to import; every public helper here imports it on
+    # first call instead, keeping it off the `import flowfile_frame` path.
+    import pyarrow as pa
 
 from flowfile_core.configs import logger
 
@@ -30,6 +36,8 @@ def open_validated_file(file_path: str, n: int) -> pa.OSFile:
         >>> # Use the file object
         >>> file.close()
     """
+    import pyarrow as pa
+
     logger.debug(f"Attempting to open file: {file_path} with n={n}")
     if n < 0:
         logger.error(f"Invalid negative row count requested: {n}")
@@ -67,6 +75,8 @@ def create_reader(source: pa.OSFile) -> pa.ipc.RecordBatchFileReader:
         ...     reader = create_reader(source)
         ...     # Use the reader
     """
+    import pyarrow as pa
+
     try:
         reader = pa.ipc.open_file(source)
         logger.debug(f"Created reader with {reader.num_record_batches} batches")
@@ -176,6 +186,8 @@ def read(file_path: str) -> pa.Table:
         >>> print(f"Read {len(table)} rows")
         >>> print(f"Columns: {table.column_names}")
     """
+    import pyarrow as pa
+
     logger.info(f"Reading entire file: {file_path}")
     with open_validated_file(file_path, 0) as source:
         reader = create_reader(source)
@@ -212,6 +224,8 @@ def read_top_n(file_path: str, n: int = 1000, strict: bool = False) -> pa.Table:
         >>> # Read exactly 500 rows with strict checking
         >>> table = read_top_n("data.arrow", n=500, strict=True)
     """
+    import pyarrow as pa
+
     logger.info(f"Reading top {n} rows from {file_path} (strict={strict})")
     with open_validated_file(file_path, n) as source:
         reader = create_reader(source)

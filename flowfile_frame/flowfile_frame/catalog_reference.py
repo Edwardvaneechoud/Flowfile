@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from flowfile_core.catalog import (
-    CatalogService,
     NamespaceExistsError,
     SQLAlchemyCatalogRepository,
 )
@@ -34,6 +33,7 @@ from flowfile_core.database.connection import get_db_context
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from flowfile_core.catalog import CatalogService
     from flowfile_core.database.models import CatalogNamespace
     from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_core.schemas.catalog_schema import CatalogTableOut
@@ -48,6 +48,10 @@ def _get_current_user_id() -> int:
 
 
 def _get_service(db: Session) -> CatalogService:
+    # Deferred: CatalogService pulls the catalog schema/serializer stack, which
+    # is too heavy for the `import flowfile_frame` path.
+    from flowfile_core.catalog import CatalogService
+
     return CatalogService(SQLAlchemyCatalogRepository(db))
 
 

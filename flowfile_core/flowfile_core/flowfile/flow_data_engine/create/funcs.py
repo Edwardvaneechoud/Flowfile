@@ -3,7 +3,6 @@ import os
 import polars as pl
 from polars._typing import CsvEncoding
 
-from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
 from shared.path_utils import is_url
@@ -170,6 +169,10 @@ def create_from_path_avro(received_table: input_schema.ReceivedTable) -> pl.Data
 
 
 def create_from_path_excel(received_table: input_schema.ReceivedTable):
+    # read_excel_tables pulls openpyxl at module level — defer it to the excel
+    # read path so `import flowfile_frame` doesn't pay for it.
+    from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
+
     if not isinstance(received_table.table_settings, input_schema.InputExcelTable):
         raise ValueError("Received table settings are not of type InputExcelTable")
     table_settings: input_schema.InputExcelTable = received_table.table_settings

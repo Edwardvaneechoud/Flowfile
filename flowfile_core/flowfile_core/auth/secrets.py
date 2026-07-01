@@ -6,8 +6,19 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from cryptography.fernet import Fernet
+if TYPE_CHECKING:
+    from cryptography.fernet import Fernet
+
+
+def _fernet() -> "type[Fernet]":
+    # cryptography's Rust bindings are costly to import and this module sits on
+    # the `import flowfile_frame` path (via secret_manager) — load on first use.
+    from cryptography.fernet import Fernet
+
+    return Fernet
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +44,7 @@ class SecureStorage:
         self.key_path = self.storage_path / ".secret_key"
         if not self.key_path.exists():
             with open(self.key_path, "wb") as f:
-                f.write(Fernet.generate_key())
+                f.write(_fernet().generate_key())
             try:
                 os.chmod(self.key_path, 0o600)
             except Exception as e:
@@ -55,7 +66,7 @@ class SecureStorage:
             with open(path, "rb") as f:
                 data = f.read()
 
-            return json.loads(Fernet(key).decrypt(data).decode())
+            return json.loads(_fernet()(key).decrypt(data).decode())
         except Exception as e:
             logger.debug(f"Error reading from encrypted store: {e}")
             return {}
@@ -66,7 +77,7 @@ class SecureStorage:
             with open(self.key_path, "rb") as f:
                 key = f.read()
 
-            encrypted = Fernet(key).encrypt(json.dumps(data).encode())
+            encrypted = _fernet()(key).encrypt(json.dumps(data).encode())
             path = self._get_store_path(service_name)
 
             with open(path, "wb") as f:
@@ -151,7 +162,7 @@ def get_docker_secret_key() -> str | None:
     if env_key:
         env_key = env_key.strip().strip('"').strip("'")
         try:
-            Fernet(env_key.encode())
+            _fernet()(env_key.encode())
             return env_key
         except Exception:
             raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key") from None
@@ -161,7 +172,7 @@ def get_docker_secret_key() -> str | None:
         try:
             with open(secret_path) as f:
                 key = f.read().strip()
-                Fernet(key.encode())
+                _fernet()(key.encode())
                 return key
         except Exception:
             raise RuntimeError("Failed to read master key from Docker secret") from None
@@ -191,7 +202,7 @@ def generate_master_key() -> str:
     Returns:
         str: A new valid Fernet encryption key.
     """
-    return Fernet.generate_key().decode()
+    return _fernet().generate_key().decode()
 
 
 def get_master_key():
@@ -218,6 +229,6 @@ def get_master_key():
 
     key = get_password("flowfile", "master_key")
     if not key:
-        key = Fernet.generate_key().decode()
+        key = _fernet().generate_key().decode()
         set_password("flowfile", "master_key", key)
     return key

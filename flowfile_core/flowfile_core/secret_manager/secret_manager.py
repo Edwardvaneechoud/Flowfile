@@ -1,8 +1,6 @@
 import base64
+from typing import TYPE_CHECKING
 
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import SecretStr
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
@@ -13,6 +11,18 @@ from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.exceptions import FlowfileHTTPException
+
+if TYPE_CHECKING:
+    from cryptography.fernet import Fernet
+
+
+def _fernet() -> "type[Fernet]":
+    # cryptography's Rust bindings are costly to import; secrets are en/decrypted
+    # far from the `import flowfile_frame` hot path, so load on first use.
+    from cryptography.fernet import Fernet
+
+    return Fernet
+
 
 # Version identifier for key derivation scheme (allows future migrations)
 KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
@@ -35,6 +45,9 @@ def derive_user_key(user_id: int) -> bytes:
     Returns:
         bytes: A 32-byte URL-safe base64-encoded key suitable for Fernet
     """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
     master_key = get_master_key().encode()
 
     hkdf = HKDF(
@@ -51,14 +64,14 @@ def derive_user_key(user_id: int) -> bytes:
 def _encrypt_with_master_key(secret_value: str) -> str:
     """Legacy encryption using master key directly (for backward compatibility)."""
     key = get_master_key().encode()
-    f = Fernet(key)
+    f = _fernet()(key)
     return f.encrypt(secret_value.encode()).decode()
 
 
 def _decrypt_with_master_key(encrypted_value: str) -> SecretStr:
     """Legacy decryption using master key directly (for backward compatibility)."""
     key = get_master_key().encode()
-    f = Fernet(key)
+    f = _fernet()(key)
     return SecretStr(f.decrypt(encrypted_value.encode()).decode())
 
 
@@ -79,7 +92,7 @@ def encrypt_secret(secret_value: str, user_id: int) -> str:
         str: The encrypted value with embedded user_id
     """
     key = derive_user_key(user_id)
-    f = Fernet(key)
+    f = _fernet()(key)
     fernet_token = f.encrypt(secret_value.encode()).decode()
     return f"{SECRET_FORMAT_PREFIX}{user_id}${fernet_token}"
 
@@ -110,13 +123,13 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
         fernet_token = parts[1]
 
         key = derive_user_key(embedded_user_id)
-        f = Fernet(key)
+        f = _fernet()(key)
         return SecretStr(f.decrypt(fernet_token.encode()).decode())
 
     # Legacy format - use provided user_id or fall back to master key
     if user_id is not None:
         key = derive_user_key(user_id)
-        f = Fernet(key)
+        f = _fernet()(key)
         return SecretStr(f.decrypt(encrypted_value.encode()).decode())
 
     # Fall back to master key for legacy secrets without user context

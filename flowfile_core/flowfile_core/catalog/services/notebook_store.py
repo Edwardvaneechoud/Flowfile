@@ -15,9 +15,8 @@ import logging
 import os
 import tempfile
 import uuid
+from functools import cache
 from pathlib import Path
-
-import yaml
 
 from flowfile_core.fileExplorer.funcs import _is_contained
 from flowfile_core.schemas.catalog_schema import NotebookCellModel
@@ -45,21 +44,29 @@ NOTEBOOK_FORMAT = 1
 _SUFFIX = ".notebook.yaml"
 
 
-class _NotebookDumper(yaml.SafeDumper):
-    pass
-
-
-def _represent_str(dumper: yaml.SafeDumper, data: str):
+def _represent_str(dumper, data: str):
     style = "|" if "\n" in data else None
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
 
 
-_NotebookDumper.add_representer(str, _represent_str)
+@cache
+def _notebook_dumper():
+    """Build the SafeDumper subclass on first use — PyYAML stays off the
+    `import flowfile_frame` path (this module loads via catalog.service)."""
+    import yaml
+
+    class _NotebookDumper(yaml.SafeDumper):
+        pass
+
+    _NotebookDumper.add_representer(str, _represent_str)
+    return _NotebookDumper
 
 
 def _dump(data: dict) -> str:
+    import yaml
+
     return yaml.dump(
-        data, Dumper=_NotebookDumper, default_flow_style=False, sort_keys=False, allow_unicode=True, width=4096
+        data, Dumper=_notebook_dumper(), default_flow_style=False, sort_keys=False, allow_unicode=True, width=4096
     )
 
 
@@ -140,6 +147,8 @@ def read_notebook_cells(owner_id: int, notebook_uuid: str) -> list[NotebookCellM
     if not path.is_file():
         logger.warning("Notebook file missing for %s; returning empty cells", ctx)
         return []
+    import yaml
+
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:

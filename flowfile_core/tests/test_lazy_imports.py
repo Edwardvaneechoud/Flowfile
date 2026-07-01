@@ -2,9 +2,11 @@
 
 `import flowfile_frame` / `import flowfile` build ETL graphs in-process and must
 stay lightweight: they must NOT drag in the FastAPI server stack, Alembic, the
-cloud/data heavyweights (boto3, deltalake, gcsfs), or faker, and importing them
-must NOT create or migrate the catalog DB on disk (that is deferred to first
-actual DB access / server startup — see database/connection.ensure_db_initialized).
+cloud/data heavyweights (boto3, deltalake, gcsfs, pyarrow), worker/HTTP clients
+(requests, httpx, websockets), Docker/Kafka/Excel/YAML/crypto libraries, or
+faker, and importing them must NOT create or migrate the catalog DB on disk
+(that is deferred to first actual DB access / server startup — see
+database/connection.ensure_db_initialized).
 
 Each check runs in a fresh subprocess because sys.modules is process-global: by
 the time the pytest session reaches this file, other test modules have already
@@ -19,7 +21,33 @@ import tempfile
 from pathlib import Path
 
 # Server/heavy deps that must stay off the dataframe-API import path.
-BANNED = ["fastapi", "alembic", "faker", "boto3", "botocore", "deltalake", "gcsfs", "uvicorn"]
+BANNED = [
+    # server stack
+    "fastapi",
+    "uvicorn",
+    "alembic",
+    # cloud/data heavyweights
+    "boto3",
+    "botocore",
+    "deltalake",
+    "gcsfs",
+    "pyarrow",
+    # worker/HTTP clients (only needed when talking to worker/kernel/web)
+    "requests",
+    "httpx",
+    "websockets",
+    "docker",
+    # format/source specifics (load on first use of the matching node)
+    "openpyxl",
+    "fastexcel",
+    "confluent_kafka",
+    "yaml",
+    # secrets crypto (loads on first encrypt/decrypt)
+    "cryptography",
+    "passlib",
+    # sample-data generator
+    "faker",
+]
 
 
 def _run(script: str) -> str:

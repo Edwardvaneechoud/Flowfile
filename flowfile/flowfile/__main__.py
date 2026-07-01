@@ -156,9 +156,8 @@ def _complete_run_if_needed(
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
     """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
-    from fastapi import HTTPException
-
     from flowfile_core.auth.utils import get_local_user_id
+    from flowfile_core.exceptions import FlowfileHTTPException
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
     from flowfile_core.project import project_sync
 
@@ -168,7 +167,7 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
             sys.exit(1)
         try:
             return validate_path_under_cwd(arg)
-        except HTTPException as e:
+        except FlowfileHTTPException as e:
             print(f"Invalid project path: {e.detail}", file=sys.stderr)
             sys.exit(1)
 

@@ -2,8 +2,6 @@ from collections.abc import Generator
 from time import sleep
 from typing import Any
 
-import requests
-
 from flowfile_core.schemas.input_schema import SampleUsers
 
 
@@ -17,6 +15,9 @@ def getter(data: SampleUsers) -> Generator[dict[str, Any], None, None]:
     Returns:
 
     """
+    # requests loads only when this demo source actually fetches data.
+    import requests
+
     index_pos = 0
     for _i in range(data.size):
         sleep(0.01)

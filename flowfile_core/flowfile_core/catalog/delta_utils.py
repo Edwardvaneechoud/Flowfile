@@ -10,8 +10,10 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pyarrow as pa
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 from shared.delta_models import SourceTableVersion
 from shared.delta_utils import get_delta_size_bytes

@@ -5,10 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import HTTPException
 from pydantic import BaseModel
 
 from flowfile_core.configs import settings
+from flowfile_core.exceptions import FlowfileHTTPException
 from shared.storage_config import storage
 
 
@@ -432,10 +432,10 @@ def validate_path_under_cwd(user_path: str) -> str:
         The validated, normalized full path as a string
 
     Raises:
-        HTTPException: 403 if path escapes the allowed directories
+        FlowfileHTTPException: 403 if path escapes the allowed directories
     """
     if ".." in user_path:
-        raise HTTPException(403, "Access denied: path traversal not allowed")
+        raise FlowfileHTTPException(403, "Access denied: path traversal not allowed")
 
     expanded = os.path.expanduser(user_path)
 
@@ -446,7 +446,7 @@ def validate_path_under_cwd(user_path: str) -> str:
             base_real = os.path.realpath(root)
             if _is_contained(base_real, candidate_real):
                 return candidate_real
-        raise HTTPException(403, "Access denied")
+        raise FlowfileHTTPException(403, "Access denied")
 
     # In Docker/package mode, enforce strict sandboxing to trusted roots.
     for base in (os.getcwd(), str(storage.base_directory), str(storage.user_data_directory)):
@@ -456,7 +456,7 @@ def validate_path_under_cwd(user_path: str) -> str:
         if _is_contained(base_real, candidate_real):
             return candidate_real
 
-    raise HTTPException(403, "Access denied")
+    raise FlowfileHTTPException(403, "Access denied")
 
 
 _MANAGED_FLOW_FILENAME_RE = re.compile(r"^[A-Za-z0-9_\-]+\.(yaml|yml|json)$")
@@ -468,7 +468,7 @@ def resolve_managed_flow_path(filename: str) -> str:
     Accepts ONLY filenames matching ``[A-Za-z0-9_-]+\\.(yaml|yml|json)`` — no
     directory components, no dots other than the extension separator. Returns
     an absolute path strictly under storage.flows_directory. Raises
-    HTTPException(403) on violation.
+    FlowfileHTTPException(403) on violation.
 
     Sanitization is layered so CodeQL's ``py/path-injection`` query sees a
     recognized sanitizer on every taint path:
@@ -480,17 +480,17 @@ def resolve_managed_flow_path(filename: str) -> str:
          validate_path_under_cwd above).
     """
     if not filename or not _MANAGED_FLOW_FILENAME_RE.fullmatch(filename):
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+        raise FlowfileHTTPException(status_code=403, detail="invalid managed flow filename")
     if filename != os.path.basename(filename):
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+        raise FlowfileHTTPException(status_code=403, detail="invalid managed flow filename")
     if ".." in filename or "/" in filename or "\\" in filename:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+        raise FlowfileHTTPException(status_code=403, detail="invalid managed flow filename")
 
     base_path = os.path.normpath(str(storage.flows_directory))
     fullpath = os.path.normpath(os.path.join(base_path, filename))
     if fullpath.startswith(base_path):
         return fullpath
-    raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    raise FlowfileHTTPException(status_code=403, detail="invalid managed flow filename")
 
 
 # Alias for backward compatibility
