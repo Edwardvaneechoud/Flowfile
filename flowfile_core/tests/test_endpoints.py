@@ -428,6 +428,16 @@ def test_import_flow():
     assert flow_file_handler.get_flow(flow_id).flow_settings.path == flow_path, "Flow path not set"
 
 
+def test_import_flowfile_route_accepts_legacy_flowfile():
+    """The /import_flow route must accept the legacy `.flowfile` suffix (regression: the CodeQL
+    hardening commit dropped it from the allowlist, 403-ing opens that open_flow still supports)."""
+    from tests.flowfile.test_flowfile import find_parent_directory
+
+    flow_path = str(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/read_csv.flowfile")
+    response = client.get("/import_flow", params={"flow_path": flow_path})
+    assert response.status_code == 200, f"Legacy .flowfile should import, got {response.status_code}: {response.text}"
+
+
 def test_delete_connection():
     flow_id = create_flow_with_manual_input_and_select()
     if not flow_file_handler.get_node(flow_id, 1).leads_to_nodes:

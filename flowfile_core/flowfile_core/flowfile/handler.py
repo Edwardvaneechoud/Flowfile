@@ -69,30 +69,36 @@ class FlowfileHandler:
         self._flows[other.flow_id] = other
         return other.flow_id
 
-    def _find_open_flow_by_path(self, flow_path: Path) -> int | None:
-        """flow_id of an already-open flow whose resolved on-disk path matches, else None.
-        Reuses the resolved-path identity ``open_flow`` stores so reopening a live flow doesn't
-        clobber its unsaved in-memory edits."""
-        try:
-            target = str(flow_path.resolve())
-        except OSError:
-            target = str(flow_path)
-        return next(
-            (fid for fid, f in self._flows.items() if f.flow_settings and f.flow_settings.path == target),
-            None,
-        )
+    def _find_open_flow_for_user(self, user_id: int | None, source_registration_id: int) -> int | None:
+        """flow_id of a flow ALREADY OPEN IN THIS USER'S SESSION whose catalog registration
+        (source_registration_id) matches, else None. Scoped to the user's own sessions so a user
+        never inherits another user's live, dirty, differently-authorized graph. Identity is the
+        catalog registration id, not the on-disk path."""
+        for flow in self.get_user_flows(user_id):
+            settings = flow.flow_settings
+            if settings is not None and settings.source_registration_id == source_registration_id:
+                return flow.flow_id
+        return None
 
-    def import_flow(self, flow_path: Path | str, user_id: int | None = None, register_session: bool = True) -> int:
+    def import_flow(
+        self,
+        flow_path: Path | str,
+        user_id: int | None = None,
+        register_session: bool = True,
+        source_registration_id: int | None = None,
+    ) -> int:
         """Load a flow into the registry. ``register_session=False`` loads it into ``_flows`` (still
         passing ``user_id`` to ``open_flow`` for connection resolution) without opening an editor
         session, so project import doesn't auto-open every flow on the canvas.
 
-        When opening an editor session, an already-open flow (matched by resolved on-disk path) is
-        reused as-is rather than re-read from disk, so reopening it can't discard unsaved edits."""
+        When opening an editor session for a flow whose catalog registration
+        (``source_registration_id``) is already open in THIS user's session, the live in-memory flow
+        is reused instead of re-read from disk, so reopening it can't discard unsaved edits. The
+        route resolves the registration id from the path and passes it in."""
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
-        if register_session:
-            already_open_id = self._find_open_flow_by_path(flow_path)
+        if register_session and source_registration_id is not None:
+            already_open_id = self._find_open_flow_for_user(user_id, source_registration_id)
             if already_open_id is not None:
                 self._register_user_session(user_id, already_open_id)
                 return already_open_id
@@ -100,6 +106,12 @@ class FlowfileHandler:
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
         imported_flow.flow_settings.is_running = False
+        if source_registration_id is not None:
+            # Legacy .flowfile settings can reject a plain setattr; mirror resolve_source_registration_id.
+            try:
+                imported_flow.flow_settings.source_registration_id = source_registration_id
+            except (AttributeError, ValueError):
+                object.__setattr__(imported_flow.flow_settings, "source_registration_id", source_registration_id)
         if register_session:
             self._register_user_session(user_id, imported_flow.flow_id)
         return imported_flow.flow_id

@@ -468,6 +468,8 @@ def open_run_snapshot(
         suffix = ".yaml"
 
     parsed["flowfile_id"] = create_unique_id()
+    if isinstance(parsed.get("flowfile_settings"), dict):
+        parsed["flowfile_settings"]["source_registration_id"] = None
 
     if suffix == ".json":
         snapshot_data = json.dumps(parsed)
