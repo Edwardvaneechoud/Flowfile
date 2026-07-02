@@ -4,6 +4,7 @@
     :style="{
       left: position.x + 'px',
       top: position.y + 'px',
+      zIndex: Z_INDEX.FLOATING_WIDGET,
     }"
   >
     <Transition name="panel-fade">
@@ -41,7 +42,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { clearAllPanelStates } from '../../stores/panel-store'
+import { Z_INDEX } from './DraggableItem/zIndex'
 
 const emit = defineEmits<{
   (e: 'reset-layout'): void
@@ -182,7 +183,8 @@ const runAction = <T extends any[]>(action: (...args: T) => void, ...args: T) =>
 }
 
 const resetLayout = () => {
-  clearAllPanelStates()
+  // Canvas handles the reset (clears saved geometry + restores initial layout
+  // via the DraggableItem store) in response to this event.
   emit('reset-layout')
 }
 
@@ -200,7 +202,7 @@ onUnmounted(() => {
 <style scoped>
 .layout-widget-wrapper {
   position: fixed;
-  z-index: 20000;
+  /* z-index is bound inline from Z_INDEX.FLOATING_WIDGET. */
 }
 
 .trigger-btn {
