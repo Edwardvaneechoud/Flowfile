@@ -32,38 +32,6 @@
         <p>Loading flows...</p>
       </div>
     </div>
-    <!-- Fallback only (e.g. create failed / backend down): normal boot and
-         last-flow-close auto-open a blank canvas. Hidden while switching so the
-         close→create swap never flashes this card. -->
-    <div v-else-if="flowsActive.length === 0 && !isSwitching" class="empty-state">
-      <div class="empty-state-content">
-        <span class="empty-state-badge">
-          <span class="material-icons">account_tree</span>
-        </span>
-        <h2 class="empty-state-heading">No Active Flows</h2>
-        <p class="empty-state-text">
-          Create a new flow, open an existing one, or head back to Home.
-        </p>
-        <div class="empty-state-actions">
-          <button class="es-btn es-btn--primary" @click="openQuickCreateDialog">
-            <span class="material-icons">add</span>
-            Create new flow
-          </button>
-          <button class="es-btn" @click="openFlowDialog">
-            <span class="material-icons">folder_open</span>
-            Open existing flow
-          </button>
-          <button class="es-btn" @click="browseTemplates">
-            <span class="material-icons">layers</span>
-            Browse Templates
-          </button>
-          <button class="es-btn es-btn--ghost" @click="goHome">
-            <span class="material-icons">home</span>
-            Go to Home
-          </button>
-        </div>
-      </div>
-    </div>
     <div v-else class="canvas-wrap">
       <canvas-flow
         ref="canvasFlow"
@@ -84,7 +52,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from "vue";
-import { useRouter } from "vue-router";
+import { ElNotification } from "element-plus";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -96,8 +64,6 @@ import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
-
-const router = useRouter();
 
 const getAllFlows = FlowApi.getAllFlows;
 const closeFlow = FlowApi.closeFlow;
@@ -171,7 +137,7 @@ const reloadCanvas = async (flowPath: string, meta?: { name?: string; catalogRef
 // lands on a blank canvas when nothing is open (initial boot + after the last
 // flow is closed). register_in_catalog=false keeps these ephemeral scratch flows
 // out of the catalog; not recorded as a recent either. Returns false on failure
-// so callers can fall back to the empty state (e.g. backend down).
+// (there is no empty-state screen anymore, so notify and leave a blank canvas).
 const openBlankFlow = async (): Promise<boolean> => {
   try {
     const newFlowId = await FlowApi.createFlow(null, null, null, false);
@@ -180,6 +146,12 @@ const openBlankFlow = async (): Promise<boolean> => {
     return true;
   } catch (error) {
     console.error("Failed to auto-create blank flow:", error);
+    ElNotification({
+      title: "Couldn't open a new flow",
+      message: "Creating a blank flow failed. Is the backend running? Use New or Open to retry.",
+      type: "error",
+      position: "top-left",
+    });
     return false;
   }
 };
@@ -214,8 +186,8 @@ const handleCloseFlow = async (flowId: number) => {
         console.log("Switching to flow:", newFlowId);
         await handleFlowChange(newFlowId);
       } else {
-        // Last flow closed — land on a fresh blank canvas rather than an empty
-        // state. On failure, drop to flowId<=0 so the fallback card renders.
+        // Last flow closed — land on a fresh blank canvas. On failure, drop to
+        // flowId<=0 so the Canvas watcher clears to an empty canvas.
         const created = await openBlankFlow();
         if (!created) nodeStore.setFlowId(-1);
       }
@@ -270,22 +242,6 @@ const refreshFlow = async () => {
   }
 };
 
-const openFlowDialog = () => {
-  headerButtons.value?.openOpenDialog();
-};
-
-const openQuickCreateDialog = () => {
-  headerButtons.value?.handleQuickCreate();
-};
-
-const browseTemplates = () => {
-  router.push({ name: "templates" });
-};
-
-const goHome = () => {
-  router.push({ name: "home" });
-};
-
 const initialSetup = async () => {
   if (initialLoadComplete.value) {
     console.log("Initial setup already completed");
@@ -304,7 +260,7 @@ const initialSetup = async () => {
       persistedFlowId > 0 && flows.some((f) => f.flow_id === persistedFlowId);
 
     if (flows.length === 0) {
-      // Land on a fresh blank flow instead of the "No Active Flows" screen.
+      // Nothing open — land on a fresh blank canvas.
       const created = await openBlankFlow();
       if (!created && persistedFlowId > 0) nodeStore.setFlowId(-1);
     } else if (!persistedIsActive) {
@@ -512,107 +468,5 @@ onMounted(async () => {
 .loading-state-content p {
   color: var(--color-text-secondary);
   margin-top: var(--spacing-4);
-}
-
-/* Empty state styles */
-.empty-state {
-  height: calc(100vh - 50px);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: var(--color-background-secondary);
-}
-
-.empty-state-content {
-  text-align: center;
-  padding: var(--spacing-8);
-  max-width: 720px;
-}
-
-.empty-state-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--border-radius-xl);
-  background-color: var(--color-accent-subtle);
-  color: var(--color-accent);
-  margin-bottom: var(--spacing-4);
-}
-
-.empty-state-badge .material-icons {
-  font-size: 28px;
-}
-
-.empty-state-heading {
-  margin: 0 0 var(--spacing-2);
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.empty-state-text {
-  margin: 0 0 var(--spacing-6);
-  font-size: var(--font-size-base);
-  color: var(--color-text-tertiary);
-}
-
-.empty-state-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--spacing-2);
-}
-
-.es-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-1-5);
-  height: 38px;
-  padding: 0 var(--spacing-4);
-  background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-lg);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-  transition: all var(--transition-fast);
-}
-
-.es-btn:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  box-shadow: var(--shadow-xs);
-}
-
-.es-btn .material-icons {
-  font-size: 18px;
-}
-
-.es-btn--primary {
-  background-color: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-text-inverse);
-}
-
-.es-btn--primary:hover {
-  background-color: var(--color-accent-hover);
-  border-color: var(--color-accent-hover);
-  color: var(--color-text-inverse);
-}
-
-.es-btn--ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--color-text-tertiary);
-}
-
-.es-btn--ghost:hover {
-  border-color: transparent;
-  background-color: var(--color-background-tertiary);
-  color: var(--color-accent);
 }
 </style>
