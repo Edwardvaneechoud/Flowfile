@@ -21,11 +21,46 @@ import zipfile
 from pathlib import Path
 
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+from flowfile_core.flowfile.code_generator.param_codegen import (
+    SENTINEL_PREFIX,
+    apply_param_sentinels,
+    codegen_parameters,
+    parameter_default_repr,
+    resolve_param_sentinels,
+    restore_param_sentinels,
+    restore_sentinels_to_refs,
+)
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.param_types import FlowParameter, coerce_param_value
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import ProjectExportFile, ProjectExportManifest
 from flowfile_core.utils.utils import camel_case_to_snake_case
+
+# ParamType -> ff dtype expression for run-metadata casts (ff re-exports the
+# polars datatypes; values mirror subflow._PARAM_TYPE_TO_PL so generated output
+# dtypes match runtime output).
+_PARAM_TYPE_TO_FF_EXPR = {
+    "string": "ff.String",
+    "enum": "ff.String",
+    "integer": "ff.Int64",
+    "float": "ff.Float64",
+    "boolean": "ff.Boolean",
+}
+
+# ParamType -> Python annotation for generated function signatures.
+_PARAM_TYPE_TO_ANNOTATION = {
+    "string": "str",
+    "enum": "str",
+    "integer": "int",
+    "float": "float",
+    "boolean": "bool",
+}
+
+
+def _param_arg(parameter: FlowParameter) -> str:
+    annotation = _PARAM_TYPE_TO_ANNOTATION.get(parameter.type, "str")
+    return f"{parameter.name}: {annotation} = {parameter_default_repr(parameter)}"
 
 # flowfile_ctx APIs that talk to a running Flowfile server; the exported shim
 # raises NotImplementedError for these, so flag them in the manifest warnings.
@@ -112,6 +147,40 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         # to, so the same custom-node class reuses one module and two *different*
         # classes never collide onto the same custom_nodes/<stem>.py.
         self._custom_node_modules: dict[str, str] = {}
+        # Subflow support: resolved flow path -> module stem (module reuse), the
+        # per-module call metadata (input arg names, codegen params), and the
+        # generation-time cycle guard (paths currently being generated).
+        self._subflow_modules: dict[str, str] = {}
+        self._subflow_module_info: dict[str, dict] = {}
+        self._subflow_ancestry: set[str] = set()
+        # This flow's parameters that become function kwargs (set in convert()).
+        self._codegen_params: list[FlowParameter] = []
+
+    # --- flow parameters as function arguments -------------------------------------------
+
+    def convert(self) -> str:
+        """Convert with ``${name}`` parameter refs turned into function-argument references."""
+        self._codegen_params = codegen_parameters(self.flow_graph.flow_settings.parameters)
+        restorations = apply_param_sentinels(
+            [node.setting_input for node in self.flow_graph.nodes], self._codegen_params
+        )
+        try:
+            code = super().convert()
+        finally:
+            restore_param_sentinels(restorations)
+        code, leaked = resolve_param_sentinels(code, {p.name for p in self._codegen_params})
+        if leaked:
+            self.warnings.append(
+                f"Parameter reference(s) {sorted(leaked)} appear in places that cannot reference a "
+                "function argument (e.g. multi-line strings) and were left as literal ${...} text."
+            )
+        return code
+
+    def _function_def_line(self) -> str:
+        if not self._codegen_params:
+            return super()._function_def_line()
+        args = ", ".join(_param_arg(p) for p in self._codegen_params)
+        return f"def {self.function_name}(*, {args}):"
 
     # --- python_script (notebook) nodes -------------------------------------------------
 
@@ -209,6 +278,14 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             body = "\n\n".join(cell_blocks)
         else:
             body = script_input.code.rstrip()
+        if SENTINEL_PREFIX in body:
+            # Notebook source ships verbatim and is exec'd at runtime — keep the
+            # literal ${name} form instead of a function-argument reference.
+            body = restore_sentinels_to_refs(body)
+            self.warnings.append(
+                f"Notebook node {settings.node_id}: ${{...}} parameter references inside notebook code "
+                "are not resolved in the exported project."
+            )
 
         label = (settings.description or f"Notebook node {settings.node_id}").replace('"""', "'''")
         node_label = settings.description or f"node {settings.node_id}"
@@ -263,6 +340,245 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
                     "running Flowfile server; it will raise NotImplementedError in the exported project."
                 )
 
+    # --- run_flow (subflow) nodes ---------------------------------------------------------
+
+    def _handle_run_flow(
+        self, settings: input_schema.NodeRunFlow, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Emit the referenced flow as a subflows/ module exposing run(), plus the call site."""
+        from flowfile_core.flowfile.subflow import SubflowResolutionError, resolve_subflow_path
+
+        try:
+            resolved = resolve_subflow_path(settings.flow_reference, settings.user_id)
+        except SubflowResolutionError as exc:
+            self.unsupported_nodes.append((settings.node_id, "run_flow", str(exc)))
+            self._add_comment(f"# WARNING: run_flow node {settings.node_id}: {exc}")
+            return
+        path_key = str(resolved.path.resolve())
+        if path_key in self._subflow_ancestry:
+            reason = f"Circular flow reference: '{resolved.name}' is already being generated in this chain"
+            self.unsupported_nodes.append((settings.node_id, "run_flow", reason))
+            self._add_comment(f"# WARNING: run_flow node {settings.node_id}: {reason}")
+            return
+
+        module_stem = self._subflow_modules.get(path_key)
+        if module_stem is None:
+            module_stem = self._generate_subflow_module(settings.node_id, path_key, resolved)
+            if module_stem is None:
+                return
+        info = self._subflow_module_info[path_key]
+        self.imports.add(f"from subflows import {module_stem}")
+
+        node = self.flow_graph.get_node(settings.node_id)
+        keyed = (node.node_inputs.keyed_inputs or {}) if node is not None else {}
+        source_handles = (node.node_inputs.keyed_source_handles or {}) if node is not None else {}
+
+        def upstream_var(handle: str) -> str | None:
+            source = keyed.get(handle)
+            if source is None:
+                return None
+            src_handle = source_handles.get(handle, "output-0")
+            per_handle = self.node_handle_var_mapping.get((source.node_id, src_handle))
+            return per_handle or self.node_var_mapping.get(source.node_id, f"df_{source.node_id}")
+
+        prefix = f"_sf_{settings.node_id}"
+        call_kwargs: list[str] = []
+        for index, slot in enumerate(settings.input_slots):
+            source_var = upstream_var(f"input-{index + 1}")
+            if source_var is not None:
+                call_kwargs.append(f"{info['input_args'].get(slot, slot)}={source_var}")
+
+        specs_by_name = {p.name: p for p in settings.parameter_specs}
+        specs_by_name = {**{name: p for name, p in info["params"].items()}, **specs_by_name}
+        constant_bindings: list[input_schema.RunFlowParameterBinding] = []
+        column_bindings: list[input_schema.RunFlowParameterBinding] = []
+        for binding in settings.parameter_bindings:
+            if binding.parameter_name not in info["params"]:
+                continue
+            if binding.source == "constant":
+                constant_bindings.append(binding)
+                call_kwargs.append(
+                    f"{binding.parameter_name}={self._constant_literal(binding, specs_by_name)}"
+                )
+            elif binding.source == "column":
+                column_bindings.append(binding)
+
+        param_frame_var = upstream_var("input-0")
+        if column_bindings and param_frame_var is None:
+            self.warnings.append(
+                f"run_flow node {settings.node_id}: column-mapped parameter(s) have no data connected "
+                "to the parameter input; the generated code uses defaults/constants."
+            )
+            column_bindings = []
+
+        append_metadata = settings.iteration_mode == "iterate" and settings.append_run_metadata
+        metadata_bindings = constant_bindings + column_bindings if append_metadata else []
+        node_label = resolved.name.splitlines()[0]
+        self._add_code(f"# Subflow node {settings.node_id}: {node_label}")
+
+        if settings.iteration_mode == "iterate" and column_bindings:
+            self._emit_iterate_call(
+                settings, module_stem, prefix, var_name, call_kwargs, column_bindings,
+                metadata_bindings, specs_by_name, param_frame_var,
+            )
+            return
+
+        if column_bindings:  # first_value
+            self._add_code(f"{prefix}_params = {param_frame_var}.head(1).collect()")
+            for binding in column_bindings:
+                call_kwargs.append(
+                    f'{binding.parameter_name}={prefix}_params["{binding.column_name}"][0]'
+                )
+
+        outputs_var = f"{prefix}_outputs"
+        self._add_code(f"{outputs_var} = {module_stem}.run({', '.join(call_kwargs)})")
+        if not settings.output_slots:
+            self._add_code(f"{var_name} = None  # run_flow node has no outputs")
+            self._add_code("")
+            return
+        metadata_suffix = ""
+        if append_metadata:
+            exprs = self._metadata_exprs(
+                metadata_bindings, specs_by_name, lambda b: self._constant_literal(b, specs_by_name)
+            )
+            exprs.append('ff.lit(1).cast(ff.UInt32).alias("run_index")')
+            metadata_suffix = f".with_columns([{', '.join(exprs)}])"
+        for index, name in enumerate(settings.output_slots):
+            out_var = var_name if index == 0 else f"{var_name}_{name}"
+            self._add_code(f'{out_var} = {outputs_var}["{name}"]{metadata_suffix}')
+            self.node_handle_var_mapping[(settings.node_id, f"output-{index}")] = out_var
+        self._add_code("")
+
+    def _emit_iterate_call(
+        self,
+        settings: input_schema.NodeRunFlow,
+        module_stem: str,
+        prefix: str,
+        var_name: str,
+        call_kwargs: list[str],
+        column_bindings: list,
+        metadata_bindings: list,
+        specs_by_name: dict,
+        param_frame_var: str,
+    ) -> None:
+        """One subflow call per parameter row, outputs concatenated (mirrors runtime iterate)."""
+        row_var = f"{prefix}_row"
+        runs_var = f"{prefix}_runs"
+        rows_var = f"{prefix}_param_rows"
+        loop_kwargs = list(call_kwargs) + [
+            f'{binding.parameter_name}={row_var}["{binding.column_name}"]' for binding in column_bindings
+        ]
+        self._add_code(f"{rows_var} = {param_frame_var}.collect().to_dicts()")
+        self._add_code(f"{runs_var} = [")
+        self._add_code(f"    {module_stem}.run({', '.join(loop_kwargs)})")
+        self._add_code(f"    for {row_var} in {rows_var}")
+        self._add_code("]")
+        if not settings.output_slots:
+            self._add_code(f"{var_name} = None  # run_flow node has no outputs")
+            self._add_code("")
+            return
+
+        out_var_ref = f"{prefix}_out"
+        index_var = f"{prefix}_i"
+        if metadata_bindings:
+            def value_expr(binding) -> str:
+                if binding.source == "column":
+                    return f'{row_var}["{binding.column_name}"]'
+                return self._constant_literal(binding, specs_by_name)
+
+            exprs = self._metadata_exprs(metadata_bindings, specs_by_name, value_expr)
+            exprs.append(f'ff.lit({index_var}).cast(ff.UInt32).alias("run_index")')
+            item_template = f'{out_var_ref}["{{name}}"].with_columns([{", ".join(exprs)}])'
+            iterator = (
+                f"for {index_var}, ({row_var}, {out_var_ref}) in "
+                f"enumerate(zip({rows_var}, {runs_var}), start=1)"
+            )
+        else:
+            item_template = f'{out_var_ref}["{{name}}"]'
+            iterator = f"for {out_var_ref} in {runs_var}"
+
+        for index, name in enumerate(settings.output_slots):
+            out_var = var_name if index == 0 else f"{var_name}_{name}"
+            item = item_template.format(name=name)
+            self._add_code(f"{out_var} = ff.concat([")
+            self._add_code(f"    {item}")
+            self._add_code(f"    {iterator}")
+            self._add_code('], how="diagonal_relaxed")')
+            self.node_handle_var_mapping[(settings.node_id, f"output-{index}")] = out_var
+        self._add_code("")
+
+    @staticmethod
+    def _metadata_exprs(bindings: list, specs_by_name: dict, value_expr) -> list[str]:
+        """`param_<name>` metadata column expressions (typed casts mirror the runtime)."""
+        exprs = []
+        for binding in bindings:
+            spec = specs_by_name.get(binding.parameter_name)
+            dtype = _PARAM_TYPE_TO_FF_EXPR.get(spec.type if spec else "string", "ff.String")
+            exprs.append(
+                f'ff.lit({value_expr(binding)}).cast({dtype}).alias("param_{binding.parameter_name}")'
+            )
+        return exprs
+
+    def _constant_literal(self, binding, specs_by_name: dict) -> str:
+        """A constant binding as a Python literal (typed via the parameter's declared type)."""
+        raw = binding.constant_value if binding.constant_value is not None else ""
+        if SENTINEL_PREFIX in raw:
+            # References a parent-flow parameter: emit as a string literal and let
+            # the parent's sentinel post-pass turn it into the argument reference.
+            return repr(raw)
+        spec = specs_by_name.get(binding.parameter_name)
+        try:
+            return repr(coerce_param_value(spec.type if spec else "string", raw, spec.enum_values if spec else None))
+        except ValueError:
+            return repr(raw)
+
+    def _generate_subflow_module(self, node_id: int, path_key: str, resolved) -> str | None:
+        """Generate subflows/<stem>.py for *resolved* and register its call metadata."""
+        from flowfile_core.flowfile.code_generator.code_generator import UnsupportedNodeError
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+        try:
+            child_graph = open_flow(resolved.path)
+        except Exception as exc:  # noqa: BLE001 - unreadable/incompatible flow file
+            reason = f"Could not load referenced flow '{resolved.name}': {exc}"
+            self.unsupported_nodes.append((node_id, "run_flow", reason))
+            self._add_comment(f"# WARNING: run_flow node {node_id}: {reason}")
+            return None
+
+        child = SubflowModuleConverter(child_graph, parent=self)
+        self._subflow_ancestry.add(path_key)
+        try:
+            module_code = child.convert()
+        except UnsupportedNodeError as exc:
+            reason = f"Referenced flow '{resolved.name}' cannot be exported: {exc.reason}"
+            self.unsupported_nodes.append((node_id, "run_flow", reason))
+            self._add_comment(f"# WARNING: run_flow node {node_id}: {reason}")
+            return None
+        finally:
+            self._subflow_ancestry.discard(path_key)
+
+        self.has_notebooks = self.has_notebooks or child.has_notebooks
+        module_stem = self._unique_subflow_module_name(resolved.name)
+        self.module_files[f"subflows/{module_stem}.py"] = (
+            module_code if module_code.endswith("\n") else module_code + "\n"
+        )
+        self._subflow_modules[path_key] = module_stem
+        self._subflow_module_info[path_key] = {
+            "input_args": dict(child._input_args),
+            "params": {p.name: p for p in child._codegen_params},
+        }
+        return module_stem
+
+    def _unique_subflow_module_name(self, flow_name: str) -> str:
+        base = _sanitize_identifier(flow_name, "subflow")
+        used = set(self._subflow_modules.values())
+        candidate = base
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
+
     # --- user-defined (custom) nodes -----------------------------------------------------
 
     def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
@@ -306,6 +622,10 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
 
     def convert_to_project(self) -> ProjectExportManifest:
         """Convert the flow and assemble the full project file manifest."""
+        # Cycle guard root: a subflow chain that leads back to this file is circular.
+        parent_path = self.flow_graph.flow_settings.path
+        if parent_path:
+            self._subflow_ancestry.add(str(Path(parent_path).resolve()))
         pipeline_code = self.convert()
         project_name = _sanitize_identifier(self.flow_graph.__name__, "flowfile_project")
 
@@ -315,6 +635,8 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             files["notebooks/__init__.py"] = ""
         if any(path.startswith("custom_nodes/") for path in self.module_files):
             files["custom_nodes/__init__.py"] = ""
+        if any(path.startswith("subflows/") for path in self.module_files):
+            files["subflows/__init__.py"] = ""
         files.update(self.module_files)
         files["main.py"] = self._build_main_py()
         files["pyproject.toml"] = self._build_pyproject_toml(project_name)
@@ -397,6 +719,13 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             ]
         if any(path.startswith("custom_nodes/") for path in self.module_files):
             lines += ["- `custom_nodes/` — user-defined node classes, source preserved verbatim."]
+        if any(path.startswith("subflows/") for path in self.module_files):
+            lines += [
+                "- `subflows/` — referenced flows exported as callable modules: "
+                "`run(<inputs>, *, <parameters>)` returns a dict keyed by the flow's output names. "
+                "Iterated run-info columns use fixed `param_<name>`/`run_index` names (the in-app "
+                "runtime prefixes them with `_` on collision)."
+            ]
         lines += [
             "",
             "## How to run",
@@ -419,6 +748,92 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             lines += [f"- {warning}" for warning in self.warnings]
         lines.append("")
         return "\n".join(lines)
+
+
+class SubflowModuleConverter(FlowGraphToProjectConverter):
+    """Generates a subflow as an importable module exposing ``run(<inputs>, *, <params>)``.
+
+    flow_input nodes become function arguments (their sample data is the
+    fallback when an argument is omitted) and flow_output nodes become entries
+    of the returned dict, keyed by output name. Module/warning registries are
+    shared with the parent converter so nested notebooks, custom nodes, and
+    sub-subflows all land in the same project manifest.
+    """
+
+    function_name = "run"
+
+    def __init__(self, flow_graph: FlowGraph, parent: FlowGraphToProjectConverter):
+        super().__init__(flow_graph)
+        self.module_files = parent.module_files
+        self.warnings = parent.warnings
+        self._custom_node_modules = parent._custom_node_modules
+        self._subflow_modules = parent._subflow_modules
+        self._subflow_module_info = parent._subflow_module_info
+        self._subflow_ancestry = parent._subflow_ancestry
+        self._flow_output_names: dict[int, str] = {}
+        self._input_args: dict[str, str] = {}
+        used = {p.name for p in codegen_parameters(flow_graph.flow_settings.parameters)}
+        used |= {"ff", "pl", "RawData"}
+        for node in sorted(flow_graph.nodes, key=lambda n: n.node_id):
+            if node.node_type != "flow_input" or not isinstance(node.setting_input, input_schema.NodeFlowInput):
+                continue
+            name = node.setting_input.input_name
+            if keyword.iskeyword(name) or name in used:
+                self._input_args[name] = self._uniquify(f"{name}_in", used)
+            else:
+                used.add(name)
+                self._input_args[name] = name
+
+    def _function_def_line(self) -> str:
+        input_args = [f"{arg}: ff.FlowFrame | None = None" for arg in self._input_args.values()]
+        param_args = [_param_arg(p) for p in self._codegen_params]
+        if param_args:
+            signature = ", ".join([*input_args, "*", *param_args])
+        else:
+            signature = ", ".join(input_args)
+        return f"def {self.function_name}({signature}) -> dict[str, ff.FlowFrame]:"
+
+    def _append_module_epilogue(self, lines: list[str]) -> None:
+        lines.append("")
+
+    def _handle_flow_input(
+        self, settings: input_schema.NodeFlowInput, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        arg = self._input_args.get(settings.input_name)
+        if arg is None:
+            super()._handle_flow_input(settings, var_name, input_vars)
+            return
+        self._add_code(f"# flow_input '{settings.input_name}' — function argument (sample data when omitted)")
+        self._add_code(f"{var_name} = {arg} if {arg} is not None else {self._sample_expression(settings)}")
+        self._add_code("")
+
+    def _sample_expression(self, settings: input_schema.NodeFlowInput) -> str:
+        if settings.raw_data_format is not None and settings.raw_data_format.columns:
+            self.imports.add("from flowfile_core.schemas.input_schema import RawData")
+            return f"ff.from_raw_data(RawData(**{settings.raw_data_format.model_dump()}))"
+        return "ff.LazyFrame()"
+
+    def _handle_flow_output(
+        self, settings: input_schema.NodeFlowOutput, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        super()._handle_flow_output(settings, var_name, input_vars)
+        self._flow_output_names[settings.node_id] = settings.output_name
+        # output_nodes vars are kept in sync by the chain-fusion rename pass.
+        self.output_nodes.append((settings.node_id, var_name))
+
+    def add_return_code(self, lines: list[str]) -> None:
+        entries = [
+            (self._flow_output_names[node_id], var)
+            for node_id, var in self.output_nodes
+            if node_id in self._flow_output_names
+        ]
+        if not entries:
+            lines.append("    return {}")
+            return
+        lines.append("    return {")
+        for name, var in entries:
+            lines.append(f'        "{name}": {var},')
+        lines.append("    }")
 
 
 def export_flow_to_project(flow_graph: FlowGraph) -> ProjectExportManifest:

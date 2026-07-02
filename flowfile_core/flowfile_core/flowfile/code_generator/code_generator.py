@@ -143,6 +143,7 @@ class FlowGraphCodeConverter(
     """
 
     framework: str = "pl"
+    function_name: str = "run_etl_pipeline"
 
     def __init__(self, flow_graph: FlowGraph):
         self.flow_graph = flow_graph
@@ -858,7 +859,7 @@ class FlowGraphCodeConverter(
                 lines.append("")
             lines.append("")
 
-        lines.append("def run_etl_pipeline():")
+        lines.append(self._function_def_line())
         lines.append('    """')
         lines.append(f"    ETL Pipeline: {self.flow_graph.__name__}")
         lines.append("    Generated from Flowfile")
@@ -872,12 +873,18 @@ class FlowGraphCodeConverter(
                 lines.append("")
         lines.append("")
         self.add_return_code(lines)
+        self._append_module_epilogue(lines)
+
+        return "\n".join(lines)
+
+    def _function_def_line(self) -> str:
+        return f"def {self.function_name}():"
+
+    def _append_module_epilogue(self, lines: list[str]) -> None:
         lines.append("")
         lines.append("")
         lines.append('if __name__ == "__main__":')
-        lines.append("    pipeline_output = run_etl_pipeline()")
-
-        return "\n".join(lines)
+        lines.append(f"    pipeline_output = {self.function_name}()")
 
 
 class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
