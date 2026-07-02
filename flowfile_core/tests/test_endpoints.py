@@ -852,6 +852,39 @@ def test_create_flow_without_namespace_auto_registers_local_flows():
             db.commit()
 
 
+def test_create_flow_skip_catalog_registration():
+    """create_flow with register_in_catalog=False opens a session but writes no catalog registration."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    # Re-seed namespaces (autouse catalog fixtures may have wiped them) so that a
+    # regression where the flag is ignored would actually have somewhere to register.
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_ephemeral.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post(
+            "editor/create_flow",
+            params={"flow_path": flow_path, "register_in_catalog": False},
+        )
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        assert isinstance(resp.json(), int), "create_flow should still return a session flow_id"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is None, "register_in_catalog=False must not create a catalog registration"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
 def test_create_flow_name_collision_in_namespace_409():
     """A second create with the same name in the same namespace is rejected before any file is written."""
     from flowfile_core.database.models import FlowRegistration

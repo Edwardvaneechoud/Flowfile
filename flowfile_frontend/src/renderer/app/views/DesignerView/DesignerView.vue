@@ -32,8 +32,10 @@
         <p>Loading flows...</p>
       </div>
     </div>
-    <!-- Empty state when initial load completed but no flows are active. -->
-    <div v-else-if="flowsActive.length === 0" class="empty-state">
+    <!-- Fallback only (e.g. create failed / backend down): normal boot and
+         last-flow-close auto-open a blank canvas. Hidden while switching so the
+         close→create swap never flashes this card. -->
+    <div v-else-if="flowsActive.length === 0 && !isSwitching" class="empty-state">
       <div class="empty-state-content">
         <span class="empty-state-badge">
           <span class="material-icons">account_tree</span>
@@ -163,6 +165,23 @@ const reloadCanvas = async (flowPath: string, meta?: { name?: string; catalogRef
   }
 };
 
+// Create a fresh backend flow and make it the active one so the designer always
+// lands on a blank canvas when nothing is open (initial boot + after the last
+// flow is closed). register_in_catalog=false keeps these ephemeral scratch flows
+// out of the catalog; not recorded as a recent either. Returns false on failure
+// so callers can fall back to the empty state (e.g. backend down).
+const openBlankFlow = async (): Promise<boolean> => {
+  try {
+    const newFlowId = await FlowApi.createFlow(null, null, null, false);
+    await fetchActiveFlows();
+    nodeStore.setFlowId(newFlowId);
+    return true;
+  } catch (error) {
+    console.error("Failed to auto-create blank flow:", error);
+    return false;
+  }
+};
+
 const handleCloseFlow = async (flowId: number) => {
   try {
     console.log("Closing flow:", flowId);
@@ -183,8 +202,10 @@ const handleCloseFlow = async (flowId: number) => {
         console.log("Switching to flow:", newFlowId);
         await handleFlowChange(newFlowId);
       } else {
-        // No flows left — Canvas's watcher clears the canvas on flowId<=0.
-        nodeStore.setFlowId(-1);
+        // Last flow closed — land on a fresh blank canvas rather than an empty
+        // state. On failure, drop to flowId<=0 so the fallback card renders.
+        const created = await openBlankFlow();
+        if (!created) nodeStore.setFlowId(-1);
       }
     }
   } catch (error) {
@@ -271,10 +292,9 @@ const initialSetup = async () => {
       persistedFlowId > 0 && flows.some((f) => f.flow_id === persistedFlowId);
 
     if (flows.length === 0) {
-      // Drop any stale persisted ID so `hasOpenFlow` guards don't render
-      // canvas-only controls (right-cluster, undo/redo, Save) over the
-      // "No Active Flows" empty state.
-      if (persistedFlowId > 0) nodeStore.setFlowId(-1);
+      // Land on a fresh blank flow instead of the "No Active Flows" screen.
+      const created = await openBlankFlow();
+      if (!created && persistedFlowId > 0) nodeStore.setFlowId(-1);
     } else if (!persistedIsActive) {
       console.log("Setting initial flow ID to:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
