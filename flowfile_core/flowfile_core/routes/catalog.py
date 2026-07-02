@@ -74,6 +74,8 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardUpdate,
     DeltaTableHistory,
     FavoriteOut,
+    FlowInterfaceOut,
+    FlowInterfacePort,
     FlowRegistrationCreate,
     FlowRegistrationOut,
     FlowRegistrationUpdate,
@@ -350,6 +352,34 @@ def get_flow(
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.get_flow(registration_id=flow_id, user_id=current_user.id)
+
+
+@router.get("/flows/{flow_id}/interface", response_model=FlowInterfaceOut)
+@handle_catalog_exceptions()
+def get_flow_interface(
+    flow_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """The flow's callable surface (flow_input/flow_output ports + typed parameters).
+
+    Degrades to empty lists with ``file_exists=False`` when the flow file is
+    missing or unparseable, so the run_flow picker can still render.
+    """
+    from flowfile_core.flowfile import subflow
+
+    registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    try:
+        interface = subflow.get_subflow_interface(Path(registration.flow_path))
+    except Exception:  # noqa: BLE001 - degrade like the flow-API parameter lookup
+        return FlowInterfaceOut(registration_id=flow_id, file_exists=False)
+    return FlowInterfaceOut(
+        registration_id=flow_id,
+        inputs=[FlowInterfacePort(name=p.name, node_id=p.node_id) for p in interface.inputs],
+        outputs=[FlowInterfacePort(name=p.name, node_id=p.node_id) for p in interface.outputs],
+        parameters=interface.parameters,
+        file_exists=registration.file_exists,
+    )
 
 
 @router.put("/flows/{flow_id}", response_model=FlowRegistrationOut)

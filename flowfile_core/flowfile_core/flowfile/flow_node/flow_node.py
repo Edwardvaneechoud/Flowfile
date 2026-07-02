@@ -21,6 +21,11 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     results_exists,
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
+from flowfile_core.flowfile.flow_node.input_handles import (
+    PARAM_INPUT_HANDLE,
+    input_handle,
+    input_handle_index,
+)
 from flowfile_core.flowfile.flow_node.models import (
     NodeResults,
     NodeSchemaInformation,
@@ -37,6 +42,7 @@ from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_o
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState
+from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place, restore_parameters
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from flowfile_core.flowfile.utils import get_hash
@@ -93,7 +99,7 @@ class FlowNode:
     # Set by FlowGraph so that lazy schema prediction can substitute ${...} refs.
     # Using a callable avoids sync issues when flow_settings.parameters is mutated
     # directly without going through the FlowGraph.flow_settings setter.
-    _params_getter: Callable[[], dict[str, str]] | None = None
+    _params_getter: Callable[[], dict[str, ParamValue]] | None = None
     # Post-execution callback — invoked by run_graph() after all stages complete.
     # Receives success=True when this node and all downstream dependents succeeded.
     # Used e.g. by Kafka sources to commit offsets only on success.
@@ -167,6 +173,7 @@ class FlowNode:
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
         self._kernel_cancel_context = None
         self._kernel_cancel_event: threading.Event | None = None
+        self._subflow_cancel_context = None  # running child FlowGraph of a run_flow node
         self._cache_epoch = 0
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
@@ -477,6 +484,13 @@ class FlowNode:
         return self.node_inputs.main_inputs
 
     @property
+    def accepts_dynamic_inputs(self) -> bool:
+        """True when this node's connections are keyed by target handle (run_flow)."""
+        # node_template is assigned late in update_node; hash calculation runs before it.
+        template = getattr(self, "node_template", None)
+        return template is not None and bool(getattr(template, "dynamic_inputs", False))
+
+    @property
     def is_correct(self) -> bool:
         """Checks if the node's input connections satisfy its template requirements.
 
@@ -489,6 +503,7 @@ class FlowNode:
             self.node_template.input == len(self.node_inputs.get_all_inputs())
             or (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0)
             or (self.node_template.multi and self.node_template.can_be_start)
+            or self.accepts_dynamic_inputs
         )
 
     def set_node_information(self):
@@ -509,6 +524,18 @@ class FlowNode:
         node_information.output_handles = [
             n._input_output_handles.get(self.node_id, DEFAULT_OUTPUT_HANDLE) for n in self.leads_to_nodes
         ]
+        if self.accepts_dynamic_inputs and self.node_inputs.keyed_inputs:
+            source_handles = self.node_inputs.keyed_source_handles or {}
+            node_information.input_connections = [
+                schemas.FlowfileInputConnection(
+                    from_id=source.node_id,
+                    input_handle=handle,
+                    source_handle=source_handles.get(handle, DEFAULT_OUTPUT_HANDLE),
+                )
+                for handle, source in self.node_inputs.slot_items()
+            ]
+        else:
+            node_information.input_connections = None
         user_description = self.setting_input.description if hasattr(self.setting_input, "description") else ""
         if user_description:
             node_information.description = user_description
@@ -612,7 +639,16 @@ class FlowNode:
         Returns:
             A string hash value.
         """
-        depends_on_hashes = [_node.hash for _node in self.all_inputs]
+        if self.accepts_dynamic_inputs:
+            # Fold in the target handle and source handle so re-wiring the same
+            # upstream node to a different named input invalidates caches.
+            source_handles = self.node_inputs.keyed_source_handles or {}
+            depends_on_hashes = [
+                f"{handle}:{source_handles.get(handle, DEFAULT_OUTPUT_HANDLE)}:{_node.hash}"
+                for handle, _node in self.node_inputs.slot_items()
+            ]
+        else:
+            depends_on_hashes = [_node.hash for _node in self.all_inputs]
         node_data_hash = get_hash(setting_input)
         return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid, self._cache_epoch])
 
@@ -632,6 +668,7 @@ class FlowNode:
         from_node: "FlowNode",
         insert_type: Literal["main", "left", "right"] = "main",
         output_handle: str = DEFAULT_OUTPUT_HANDLE,
+        target_handle: str | None = None,
     ) -> None:
         """Adds a connection from a source node to this node.
 
@@ -639,10 +676,15 @@ class FlowNode:
             from_node: The node to connect from.
             insert_type: The type of input to connect to ('main', 'left', 'right').
             output_handle: The output handle on the source node (e.g. 'output-0', 'output-1').
+            target_handle: For dynamic-input nodes only: the target handle the edge
+                lands on ('input-0'..'input-N'). Ignored for static nodes.
 
         Raises:
             Exception: If the insert_type is invalid.
         """
+        if self.accepts_dynamic_inputs:
+            self._add_keyed_connection(from_node, target_handle or PARAM_INPUT_HANDLE, output_handle)
+            return
         from_node.leads_to_nodes.append(self)
         if insert_type == "main":
             if self.node_template.input <= 2 or self.node_inputs.main_inputs is None:
@@ -662,6 +704,90 @@ class FlowNode:
                 self.setting_input.depending_on_id = from_node.node_id
         self.reset()
         from_node.reset()
+
+    def _add_keyed_connection(self, from_node: "FlowNode", target_handle: str, output_handle: str) -> None:
+        """Attach *from_node* to a specific handle of a dynamic-input node.
+
+        Replace-if-occupied (permissive) so load/restore/remap paths never fail;
+        the connect API rejects occupied handles before calling this.
+        """
+        inputs = self.node_inputs
+        if inputs.keyed_inputs is None:
+            inputs.keyed_inputs = {}
+            inputs.keyed_source_handles = {}
+        existing = inputs.keyed_inputs.get(target_handle)
+        if existing is not None:
+            existing.delete_lead_to_node(self.node_id)
+            if not any(n is existing for h, n in inputs.keyed_inputs.items() if h != target_handle):
+                self._input_output_handles.pop(existing.node_id, None)
+        from_node.leads_to_nodes.append(self)
+        inputs.keyed_inputs[target_handle] = from_node
+        inputs.keyed_source_handles[target_handle] = output_handle
+        # Legacy readers key by source node id; ambiguous when one source feeds
+        # two handles — keyed_source_handles is authoritative for this node.
+        self._input_output_handles[from_node.node_id] = output_handle
+        inputs.rebuild_keyed_projection()
+        self.reset()
+        from_node.reset()
+
+    def _delete_keyed_connection(self, node_id: int, handle: str | None, complete: bool) -> bool:
+        """Remove keyed connection(s) fed by *node_id*; all of them when *complete*."""
+        inputs = self.node_inputs
+        if not inputs.keyed_inputs:
+            return False
+        if complete:
+            handles = [h for h, n in inputs.keyed_inputs.items() if n.node_id == node_id]
+        else:
+            handles = [handle] if inputs.keyed_connection_exists(handle, node_id) else []
+        if not handles:
+            return False
+        for h in handles:
+            inputs.keyed_inputs.pop(h, None)
+            if inputs.keyed_source_handles:
+                inputs.keyed_source_handles.pop(h, None)
+        if not any(n.node_id == node_id for n in inputs.keyed_inputs.values()):
+            self._input_output_handles.pop(node_id, None)
+        inputs.rebuild_keyed_projection()
+        self.reset()
+        return True
+
+    def remap_dynamic_inputs(self, mapping: dict[str, str | None]) -> dict[str, list[str]]:
+        """Re-key keyed connections after the node's input slots changed.
+
+        Args:
+            mapping: old handle -> new handle, or None to drop that connection.
+                Handles absent from the mapping keep their key.
+
+        Returns:
+            {"moved": [...], "dropped": [...]} describing what happened, so the
+            API layer can surface removed connections to the UI.
+        """
+        inputs = self.node_inputs
+        if not inputs.keyed_inputs:
+            return {"moved": [], "dropped": []}
+        moved: list[str] = []
+        dropped: list[str] = []
+        new_inputs: dict[str, FlowNode] = {}
+        new_source_handles: dict[str, str] = {}
+        for handle, node in inputs.keyed_inputs.items():
+            new_handle = mapping.get(handle, handle)
+            if new_handle is None:
+                dropped.append(handle)
+                node.delete_lead_to_node(self.node_id)
+                continue
+            if new_handle != handle:
+                moved.append(f"{handle}->{new_handle}")
+            new_inputs[new_handle] = node
+            new_source_handles[new_handle] = (inputs.keyed_source_handles or {}).get(handle, DEFAULT_OUTPUT_HANDLE)
+        inputs.keyed_inputs = new_inputs
+        inputs.keyed_source_handles = new_source_handles
+        remaining_ids = {n.node_id for n in new_inputs.values()}
+        for node_id in list(self._input_output_handles):
+            if node_id not in remaining_ids:
+                self._input_output_handles.pop(node_id, None)
+        inputs.rebuild_keyed_projection()
+        self.reset()
+        return {"moved": moved, "dropped": dropped}
 
     def evaluate_nodes(self, deep: bool = False) -> None:
         """Triggers a state reset for all directly connected downstream nodes.
@@ -810,11 +936,40 @@ class FlowNode:
             The FlowDataEngine from the appropriate output handle.
         """
         handle = self._input_output_handles.get(input_node.node_id, DEFAULT_OUTPUT_HANDLE)
+        return self._resolve_input_result_for_handle(input_node, handle)
+
+    @staticmethod
+    def _resolve_input_result_for_handle(input_node: "FlowNode", handle: str) -> FlowDataEngine | None:
         if handle != DEFAULT_OUTPUT_HANDLE:
             # get_output triggers execution first, then routes by handle. Required
             # for the first-call case where _named_outputs is still empty.
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
+
+    def _slot_input_pairs(self) -> list[tuple[Optional["FlowNode"], str]]:
+        """Positional inputs for the node function, as (source_node, source_handle).
+
+        Static nodes: one pair per connected input, in ``all_inputs`` order —
+        byte-equivalent to the historical behavior. Dynamic-input nodes: index i
+        corresponds to handle ``input-i`` (0 = the parameter handle); unconnected
+        slots yield ``(None, DEFAULT_OUTPUT_HANDLE)`` so the function signature
+        stays positional with gaps preserved.
+        """
+        if not self.accepts_dynamic_inputs:
+            return [
+                (node, self._input_output_handles.get(node.node_id, DEFAULT_OUTPUT_HANDLE))
+                for node in self.all_inputs
+            ]
+        keyed = self.node_inputs.keyed_inputs or {}
+        source_handles = self.node_inputs.keyed_source_handles or {}
+        max_index = len(getattr(self.setting_input, "input_slots", None) or [])
+        for handle in keyed:
+            max_index = max(max_index, input_handle_index(handle))
+        pairs: list[tuple[FlowNode | None, str]] = []
+        for i in range(max_index + 1):
+            handle = input_handle(i)
+            pairs.append((keyed.get(handle), source_handles.get(handle, DEFAULT_OUTPUT_HANDLE)))
+        return pairs
 
     def get_resulting_data(self) -> FlowDataEngine | None:
         """Executes the node's function to produce the actual output data.
@@ -848,13 +1003,16 @@ class FlowNode:
                                 input_data = []
                                 input_locks = []
                                 try:
-                                    for i, v in enumerate(self.all_inputs):
+                                    for i, (v, src_handle) in enumerate(self._slot_input_pairs()):
+                                        if v is None:
+                                            input_data.append(None)
+                                            continue
                                         self.print(f"Getting resulting data from input {i} (node {v.node_id})")
                                         # Lock the input node to prevent sibling nodes from
                                         # concurrently accessing the same upstream LazyFrame.
                                         v._execution_lock.acquire()
                                         input_locks.append(v._execution_lock)
-                                        input_result = self._resolve_input_result(v)
+                                        input_result = self._resolve_input_result_for_handle(v, src_handle)
                                         _df_type = type(input_result.data_frame) if input_result else "None"
                                         self.print(
                                             f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}"
@@ -920,8 +1078,8 @@ class FlowNode:
         try:
             fl = self._function(
                 *[
-                    v.get_predicted_resulting_data(self._input_output_handles.get(v.node_id, DEFAULT_OUTPUT_HANDLE))
-                    for v in self.all_inputs
+                    (v.get_predicted_resulting_data(src_handle) if v is not None else None)
+                    for v, src_handle in self._slot_input_pairs()
                 ]
             )
             fl = self._as_default_output(fl)
@@ -1024,7 +1182,7 @@ class FlowNode:
             if self.is_setup and self.results.errors is None:
                 if self.node_schema.result_schema is not None and len(self.node_schema.result_schema) > 0:
                     return self.node_schema.result_schema
-                elif self.node_type in ("output", "api_response"):
+                elif self.node_type in ("output", "api_response", "flow_output"):
                     if len(self.node_inputs.main_inputs) > 0:
                         self.node_schema.result_schema = self.node_inputs.main_inputs[0].schema
                 else:
@@ -1178,7 +1336,9 @@ class FlowNode:
                 return
             except Exception:
                 node_logger.warning("Failed to read the cache, rerunning the code")
-        if self.node_type in ("output", "api_response"):
+        if self.node_type in ("output", "api_response", "flow_output", "run_flow"):
+            # Stay in-core: sinks have nothing to offload, and run_flow's child
+            # graph already executed in-process while building its result.
             self.results.resulting_data = self.get_resulting_data()
             self.node_stats.has_run_with_current_setup = True
             return
@@ -1280,6 +1440,12 @@ class FlowNode:
                 manager.interrupt_execution_sync(kernel_id)
             except Exception:
                 logger.exception("Failed to interrupt kernel execution for kernel '%s'", kernel_id)
+        elif self._subflow_cancel_context is not None:
+            logger.info("Cancelling running subflow for node %s", self.node_id)
+            try:
+                self._subflow_cancel_context.cancel()
+            except Exception:
+                logger.exception("Failed to cancel subflow for node %s", self.node_id)
         else:
             logger.info("No external process to cancel; signalling in-process cancellation")
         self.node_stats.is_canceled = True
@@ -1429,6 +1595,8 @@ class FlowNode:
         Returns:
             True if a connection was found and removed, False otherwise.
         """
+        if self.accepts_dynamic_inputs:
+            return self._delete_keyed_connection(node_id, connection_type, complete)
         deleted: bool = False
         if connection_type == "input-0":
             for i, node in enumerate(self.node_inputs.main_inputs):
@@ -1650,7 +1818,14 @@ class FlowNode:
             setting_input=self.setting_input,
             flow_type=self.node_type,
         )
-        if self.main_input:
+        if self.accepts_dynamic_inputs:
+            # The settings panel's main_input is the parameter-data connection
+            # (handle input-0) specifically — not whichever slot happens to be
+            # connected first.
+            param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
+            if param_node is not None:
+                node.main_input = param_node.get_table_example()
+        elif self.main_input:
             node.main_input = self.main_input[0].get_table_example()
         if self.left_input:
             node.left_input = self.left_input.get_table_example()
@@ -1683,13 +1858,19 @@ class FlowNode:
         output_names = getattr(self.setting_input, "output_names", None)
         node_reference = getattr(self.setting_input, "node_reference", None)
         template_fields = {**self.node_template.__dict__}
-        template_fields["output_names"] = output_names if output_names and len(output_names) > 1 else None
+        if self.accepts_dynamic_inputs:
+            # Per-instance handles: pass names verbatim (may be [] -> zero outputs,
+            # or a single labeled output) so the frontend derives counts from them.
+            template_fields["output_names"] = output_names
+        else:
+            template_fields["output_names"] = output_names if output_names and len(output_names) > 1 else None
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,
             group_id=getattr(self.setting_input, "group_id", None),
             id=self.node_id,
             node_reference=node_reference,
+            input_names=getattr(self.setting_input, "input_names", None),
             **template_fields,
         )
 
@@ -1700,6 +1881,18 @@ class FlowNode:
             A list of `NodeEdge` objects.
         """
         edges = []
+        if self.accepts_dynamic_inputs:
+            source_handles = self.node_inputs.keyed_source_handles or {}
+            return [
+                schemas.NodeEdge(
+                    id=f"{source.node_id}-{self.node_id}-{handle}",
+                    source=source.node_id,
+                    target=self.node_id,
+                    sourceHandle=source_handles.get(handle, DEFAULT_OUTPUT_HANDLE),
+                    targetHandle=handle,
+                )
+                for handle, source in self.node_inputs.slot_items()
+            ]
         if self.node_inputs.main_inputs is not None:
             for i, main_input in enumerate(self.node_inputs.main_inputs):
                 source_handle = self._input_output_handles.get(main_input.node_id, DEFAULT_OUTPUT_HANDLE)

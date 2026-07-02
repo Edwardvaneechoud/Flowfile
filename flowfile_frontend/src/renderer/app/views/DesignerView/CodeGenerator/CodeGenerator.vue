@@ -22,40 +22,40 @@
           Project
         </button>
       </div>
-      <div v-if="codeMode !== 'project'" class="header-actions">
-        <button class="refresh-button" :disabled="loading" @click="refreshCode">
-          <svg
-            v-if="!loading"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M23 4v6h-6"></path>
-            <path d="M1 20v-6h6"></path>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-          </svg>
-          <span v-if="loading" class="spinner"></span>
-          {{ loading ? "Loading..." : "Refresh" }}
-        </button>
-        <button class="export-button" @click="exportCode">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
-          </svg>
-          Export Code
-        </button>
-      </div>
+    </div>
+    <div v-if="codeMode !== 'project'" class="code-toolbar">
+      <button class="action-btn" :disabled="loading" @click="refreshCode">
+        <svg
+          v-if="!loading"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M23 4v6h-6"></path>
+          <path d="M1 20v-6h6"></path>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+        <span v-if="loading" class="spinner"></span>
+        {{ loading ? "Loading..." : "Refresh" }}
+      </button>
+      <button class="action-btn primary" @click="exportCode">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        Export Code
+      </button>
     </div>
     <template v-if="active">
       <ProjectExport v-if="codeMode === 'project'" />
@@ -184,8 +184,8 @@ const exportCode = () => {
 
 .code-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 20px;
   flex-shrink: 0;
 }
@@ -202,21 +202,23 @@ const exportCode = () => {
 
 .mode-toggle {
   display: flex;
-  border: 1px solid var(--color-border);
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
-  overflow: hidden;
 }
 
 .toggle-button {
-  padding: 6px 14px;
+  padding: 4px 12px;
   border: none;
+  border-radius: var(--border-radius-sm);
   background: transparent;
-  color: var(--color-text-secondary, #999);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: var(--font-size-sm, 13px);
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-fast);
 }
 
 .toggle-button.active {
@@ -225,44 +227,72 @@ const exportCode = () => {
 }
 
 .toggle-button:not(.active):hover {
+  color: var(--color-text-primary);
   background: var(--color-background-tertiary);
 }
 
-.header-actions {
+.code-toolbar {
   display: flex;
-  gap: 12px;
-}
-
-.export-button,
-.refresh-button {
-  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  background: var(--color-accent);
-  color: var(--color-text-inverse);
-  border: none;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   cursor: pointer;
-  font-size: var(--font-size-base);
-  transition: background var(--transition-fast);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-fast);
 }
 
-.export-button:hover,
-.refresh-button:hover:not(:disabled) {
-  background: var(--color-accent-hover);
+.action-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
-.refresh-button:disabled {
-  background: var(--color-gray-500);
+.action-btn:hover:not(:disabled) {
+  background: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
+}
+
+.action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
+}
+
+.action-btn.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.action-btn.primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 
 .spinner {
   display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-text-inverse);
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
   border-radius: 50%;
   border-top-color: transparent;
   animation: spin 0.8s linear infinite;

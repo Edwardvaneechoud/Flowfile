@@ -231,42 +231,7 @@
             Define flow-level parameters and reference them in node settings using
             <code>${param_name}</code> syntax.
           </span>
-          <div v-if="flowSettings.parameters && flowSettings.parameters.length > 0">
-            <div v-for="(param, index) in flowSettings.parameters" :key="index" class="param-row">
-              <el-input
-                v-model="param.name"
-                placeholder="Name"
-                size="small"
-                class="param-name-input"
-                @change="pushFlowSettings"
-              />
-              <el-input
-                v-model="param.default_value"
-                placeholder="Default value"
-                size="small"
-                class="param-value-input"
-                @change="pushFlowSettings"
-              />
-              <el-input
-                v-model="param.description"
-                placeholder="Description (optional)"
-                size="small"
-                class="param-desc-input"
-                @change="pushFlowSettings"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                :icon="'Delete'"
-                circle
-                @click="removeParameter(index)"
-              />
-            </div>
-          </div>
-          <div v-else class="param-empty">No parameters defined.</div>
-          <el-button size="small" style="margin-top: var(--spacing-3)" @click="addParameter">
-            + Add Parameter
-          </el-button>
+          <parameter-settings v-model="flowSettings.parameters" @change="pushFlowSettings" />
         </div>
       </div>
     </div>
@@ -284,10 +249,12 @@ import { ElMessage } from "element-plus";
 
 import { saveFlowSilent } from "./utils";
 import RunButton from "./run.vue";
+import ParameterSettings from "./ParameterSettings.vue";
 import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { useProjectStore } from "../../../stores/project-store";
@@ -302,10 +269,10 @@ import {
   ExecutionLocation,
   updateRunStatus,
 } from "../../nodes/nodeLogic";
-import type { FlowParameter } from "../../../types/flow.types";
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
@@ -405,6 +372,7 @@ const loadFlowSettings = async (): Promise<void> => {
     flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
     flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
     flowSettings.value.parameters = flowSettings.value.parameters ?? [];
+    flowStore.setParameters(flowSettings.value.parameters);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 
@@ -431,6 +399,7 @@ const loadFlowSettings = async (): Promise<void> => {
 const pushFlowSettings = async () => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
+    flowStore.setParameters(flowSettings.value.parameters ?? []);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
     editorStore.bumpGraphVersion();
@@ -528,25 +497,6 @@ const runFlow = () => {
   if (runButton.value) {
     runButton.value?.runFlow();
   }
-};
-
-const addParameter = () => {
-  if (!flowSettings.value) return;
-  if (!flowSettings.value.parameters) {
-    flowSettings.value.parameters = [];
-  }
-  flowSettings.value.parameters.push({
-    name: "",
-    default_value: "",
-    description: "",
-  } as FlowParameter);
-  pushFlowSettings();
-};
-
-const removeParameter = (index: number) => {
-  if (!flowSettings.value?.parameters) return;
-  flowSettings.value.parameters.splice(index, 1);
-  pushFlowSettings();
 };
 
 const openSettingsModal = () => {
@@ -770,33 +720,5 @@ onMounted(async () => {
 .dialog-footer {
   display: flex;
   gap: var(--spacing-2);
-}
-
-.param-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-2);
-}
-
-.param-name-input {
-  flex: 1;
-  min-width: 80px;
-}
-
-.param-value-input {
-  flex: 2;
-  min-width: 100px;
-}
-
-.param-desc-input {
-  flex: 3;
-  min-width: 120px;
-}
-
-.param-empty {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted, #999);
-  font-style: italic;
 }
 </style>

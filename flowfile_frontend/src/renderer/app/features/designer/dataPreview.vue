@@ -345,8 +345,11 @@ const calculateGridHeight = () => {
 let schema_dict: any = {};
 
 async function downloadData(nodeId: number) {
+  // Spinner only when the node actually changes; a same-node refresh updates in
+  // place so it doesn't blank-and-reappear (flicker).
+  const isNodeSwitch = nodeId !== currentNodeId.value;
   try {
-    isLoading.value = true;
+    if (isNodeSwitch) isLoading.value = true;
     showFetchButton.value = false;
     currentNodeId.value = nodeId;
 
@@ -430,6 +433,7 @@ async function handleFetchData() {
 }
 
 function removeData() {
+  isLoading.value = false;
   rowData.value = [];
   showTable.value = false;
   dataAvailable.value = false;
@@ -450,8 +454,14 @@ watch(
       removeData();
       return;
     }
-    if (props.active) debouncedDownload(props.nodeId);
-    else debouncedDownload.cancel();
+    if (props.active) {
+      // Raise the spinner up-front on a node switch so the debounce window never
+      // flashes the previous node's data (or the placeholder) before loading.
+      if (props.nodeId !== currentNodeId.value) isLoading.value = true;
+      debouncedDownload(props.nodeId);
+    } else {
+      debouncedDownload.cancel();
+    }
   },
   { immediate: true },
 );

@@ -21,6 +21,8 @@ EXPECTED_SOURCE_TYPES = {
     "cloud_storage_reader",
     "database_reader",
     "external_source",
+    # Flow-in-flow entry point: no input port, so it registers as a source.
+    "flow_input",
     "google_analytics_reader",
     "kafka_source",
     "manual_input",
