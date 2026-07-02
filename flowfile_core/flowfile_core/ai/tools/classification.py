@@ -30,56 +30,28 @@ dynamic because the underlying class is runtime-registered.
 
 from __future__ import annotations
 
-from typing import Final, Literal
+from typing import Literal
 
 NodeClass = Literal["static", "dynamic", "source", "passthrough"]
 
-_NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
-    "manual_input": "source",
-    "filter": "static",
-    "formula": "static",
-    "select": "static",
-    "dynamic_rename": "dynamic",
-    "sort": "static",
-    "record_id": "static",
-    "sample": "static",
-    "random_split": "static",
-    "unique": "static",
-    "group_by": "static",
-    "window_functions": "static",
-    "pivot": "dynamic",
-    "unpivot": "dynamic",
-    "text_to_rows": "dynamic",
-    "graph_solver": "dynamic",
-    "python_script": "dynamic",
-    "polars_code": "dynamic",
-    "sql_query": "dynamic",
-    "join": "static",
-    "cross_join": "static",
-    "fuzzy_match": "static",
-    "record_count": "static",
-    "explore_data": "static",
-    "union": "static",
-    "output": "static",
-    "api_response": "static",
-    "read": "source",
-    "database_reader": "source",
-    "database_writer": "static",
-    "cloud_storage_reader": "source",
-    "cloud_storage_writer": "static",
-    "catalog_reader": "source",
-    "catalog_writer": "static",
-    "kafka_source": "source",
-    "google_analytics_reader": "source",
-    "rest_api_reader": "source",
-    "external_source": "source",
-    "promise": "passthrough",
-    "user_defined": "dynamic",
-    "train_model": "static",
-    "apply_model": "static",
-    "evaluate_model": "static",
-    "wait_for": "static",
-}
+# Derived from the node registry (each NodeSpec carries its ai_classification);
+# built lazily to keep this module import-light.
+_node_class_map: dict[str, NodeClass] | None = None
+
+
+def _get_node_class_map() -> dict[str, NodeClass]:
+    global _node_class_map
+    if _node_class_map is None:
+        from flowfile_core.flowfile.node_registry import BUILTIN_REGISTRY
+
+        _node_class_map = BUILTIN_REGISTRY.ai_classification_map()
+    return _node_class_map
+
+
+def __getattr__(name: str):
+    if name == "_NODE_CLASS_MAP":
+        return _get_node_class_map()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def classify_node_type(node_type: str) -> NodeClass:
@@ -89,7 +61,7 @@ def classify_node_type(node_type: str) -> NodeClass:
     through the kernel dry-run path which fails closed (refusal on missing
     upstream sample) rather than producing a wrong schema.
     """
-    return _NODE_CLASS_MAP.get(node_type, "dynamic")
+    return _get_node_class_map().get(node_type, "dynamic")
 
 
 def is_predictable_via_mirror(node_type: str) -> bool:

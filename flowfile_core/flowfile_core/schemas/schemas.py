@@ -16,52 +16,25 @@ TransformTypeLiteral = Literal["narrow", "wide", "other"]
 LazinessLiteral = Literal["lazy", "eager", "conditional"]
 _custom_node_store_cache = None
 
-NODE_TYPE_TO_SETTINGS_CLASS = {
-    "manual_input": input_schema.NodeManualInput,
-    "filter": input_schema.NodeFilter,
-    "formula": input_schema.NodeFormula,
-    "dynamic_rename": input_schema.NodeDynamicRename,
-    "select": input_schema.NodeSelect,
-    "sort": input_schema.NodeSort,
-    "record_id": input_schema.NodeRecordId,
-    "sample": input_schema.NodeSample,
-    "random_split": input_schema.NodeRandomSplit,
-    "unique": input_schema.NodeUnique,
-    "group_by": input_schema.NodeGroupBy,
-    "window_functions": input_schema.NodeWindowFunctions,
-    "pivot": input_schema.NodePivot,
-    "unpivot": input_schema.NodeUnpivot,
-    "text_to_rows": input_schema.NodeTextToRows,
-    "graph_solver": input_schema.NodeGraphSolver,
-    "python_script": input_schema.NodePythonScript,
-    "polars_code": input_schema.NodePolarsCode,
-    "sql_query": input_schema.NodeSqlQuery,
-    "join": input_schema.NodeJoin,
-    "cross_join": input_schema.NodeCrossJoin,
-    "fuzzy_match": input_schema.NodeFuzzyMatch,
-    "record_count": input_schema.NodeRecordCount,
-    "explore_data": input_schema.NodeExploreData,
-    "union": input_schema.NodeUnion,
-    "output": input_schema.NodeOutput,
-    "api_response": input_schema.NodeApiResponse,
-    "read": input_schema.NodeRead,
-    "database_reader": input_schema.NodeDatabaseReader,
-    "database_writer": input_schema.NodeDatabaseWriter,
-    "cloud_storage_reader": input_schema.NodeCloudStorageReader,
-    "cloud_storage_writer": input_schema.NodeCloudStorageWriter,
-    "catalog_reader": input_schema.NodeCatalogReader,
-    "catalog_writer": input_schema.NodeCatalogWriter,
-    "kafka_source": input_schema.NodeKafkaSource,
-    "google_analytics_reader": input_schema.NodeGoogleAnalyticsReader,
-    "rest_api_reader": input_schema.NodeRestApiReader,
-    "external_source": input_schema.NodeExternalSource,
-    "promise": input_schema.NodePromise,
-    "user_defined": input_schema.UserDefinedNode,
-    "train_model": input_schema.NodeTrainModel,
-    "apply_model": input_schema.NodeApplyModel,
-    "evaluate_model": input_schema.NodeEvaluateModel,
-    "wait_for": input_schema.NodeWaitFor,
-}
+# NODE_TYPE_TO_SETTINGS_CLASS is derived from the node registry (the single
+# source of truth for node types) and exposed lazily via module __getattr__
+# below to avoid a schemas <-> node_registry import cycle.
+_node_type_to_settings_class: dict[str, type] | None = None
+
+
+def _get_node_type_to_settings_class() -> dict[str, type]:
+    global _node_type_to_settings_class
+    if _node_type_to_settings_class is None:
+        from flowfile_core.flowfile.node_registry import BUILTIN_REGISTRY
+
+        _node_type_to_settings_class = BUILTIN_REGISTRY.settings_class_map()
+    return _node_type_to_settings_class
+
+
+def __getattr__(name: str):
+    if name == "NODE_TYPE_TO_SETTINGS_CLASS":
+        return _get_node_type_to_settings_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_global_execution_location() -> ExecutionLocationsLiteral:
@@ -88,7 +61,7 @@ def _get_custom_node_store():
 
 def get_settings_class_for_node_type(node_type: str):
     """Get the settings class for a node type, supporting both standard and user-defined nodes."""
-    model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
+    model_class = _get_node_type_to_settings_class().get(node_type)
     if model_class is None:
         if node_type in _get_custom_node_store():
             return input_schema.UserDefinedNode

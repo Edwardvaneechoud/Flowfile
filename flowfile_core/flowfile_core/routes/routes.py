@@ -108,8 +108,20 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 _MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
-def get_node_model(setting_name_ref: str):
-    """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
+def get_node_model(setting_name_ref: str, node_type: str | None = None):
+    """(Internal) Retrieves a node's Pydantic settings model.
+
+    Resolves through the node registry when ``node_type`` is given; falls back
+    to the legacy reflective scan of the input_schema module by lowercased
+    class name (still needed for types outside the registry's settings map,
+    e.g. the legacy ``datasource``).
+    """
+    if node_type is not None:
+        from flowfile_core.flowfile.node_registry import get_node_spec
+
+        spec = get_node_spec(node_type)
+        if spec is not None and spec.settings_class is not None:
+            return spec.settings_class
     logger.info("Getting node model for: " + setting_name_ref)
     for ref_name, ref in inspect.getmodule(input_schema).__dict__.items():
         if ref_name.lower() == setting_name_ref:
@@ -573,7 +585,7 @@ def add_node(
         if check_if_has_default_setting(node_type):
             logger.info(f"Found standard settings for {node_type}, trying to upload them")
             setting_name_ref = "node" + node_type.replace("_", "")
-            node_model = get_node_model(setting_name_ref)
+            node_model = get_node_model(setting_name_ref, node_type=node_type)
 
             # Temporarily disable history tracking for initial settings
             original_track_history = flow.flow_settings.track_history
@@ -1151,7 +1163,7 @@ def add_generic_settings(
     if add_func is None:
         raise HTTPException(404, "could not find the function")
     try:
-        ref = get_node_model(setting_name_ref)
+        ref = get_node_model(setting_name_ref, node_type=node_type)
         if ref:
             parsed_input = ref(**input_data)
     except ValidationError as e:

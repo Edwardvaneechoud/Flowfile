@@ -17,12 +17,15 @@ from typing import Any
 import polars as pl
 from websockets.sync.client import connect
 
-from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
 
 
-def _get_ws_url() -> str:
+def _get_ws_url(ws_base_url: str | None = None) -> str:
     """Convert HTTP worker URL to WebSocket URL."""
+    if ws_base_url is not None:
+        return ws_base_url
+    from flowfile_core.configs.settings import WORKER_URL
+
     return WORKER_URL.replace("http://", "ws://").replace("https://", "wss://")
 
 
@@ -139,6 +142,7 @@ def streaming_start(
     node_id: int | str,
     lf_bytes: bytes,
     kwargs: dict | None = None,
+    ws_base_url: str | None = None,
 ):
     """Open a WebSocket connection and send the task.
 
@@ -148,7 +152,7 @@ def streaming_start(
 
     Raises immediately on connection failure or send error.
     """
-    ws_url = _get_ws_url() + "/ws/submit"
+    ws_url = _get_ws_url(ws_base_url) + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
     ws = connect(ws_url)
@@ -196,11 +200,12 @@ def streaming_submit(
     node_id: int | str,
     lf_bytes: bytes,
     kwargs: dict | None = None,
+    ws_base_url: str | None = None,
 ) -> tuple[Any, Status]:
     """Submit a task via WebSocket and block until the result arrives.
 
     Convenience wrapper around :func:`streaming_start` +
     :func:`streaming_receive`.
     """
-    ws = streaming_start(task_id, operation_type, flow_id, node_id, lf_bytes, kwargs)
+    ws = streaming_start(task_id, operation_type, flow_id, node_id, lf_bytes, kwargs, ws_base_url)
     return streaming_receive(ws, task_id)

@@ -7,17 +7,12 @@ import polars as pl
 
 from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.execution.backends import ExecutionBackend, resolve_backend
+from flowfile_core.flowfile.execution.handles import TaskHandle
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    ExternalCloudWriter,
-    ExternalDatabaseFetcher,
-    ExternalDatabaseWriter,
-    ExternalDfFetcher,
-    ExternalOutputWriter,
-    ExternalSampler,
     clear_task_from_worker,
-    get_external_df_result,
     results_exists,
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
@@ -71,22 +66,8 @@ class FlowNode:
     _name: str = None  # name of the node, used for display
     _schema_callback: SingleExecutionFuture | None = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
-    _fetch_cached_df: (
-        ExternalDfFetcher
-        | ExternalDatabaseFetcher
-        | ExternalDatabaseWriter
-        | ExternalCloudWriter
-        | ExternalOutputWriter
-        | None
-    ) = None
-    _cache_progress: (
-        ExternalDfFetcher
-        | ExternalDatabaseFetcher
-        | ExternalDatabaseWriter
-        | ExternalCloudWriter
-        | ExternalOutputWriter
-        | None
-    ) = None
+    _fetch_cached_df: TaskHandle | None = None
+    _cache_progress: TaskHandle | None = None
     _execution_state: NodeExecutionState = None
     _executor: NodeExecutor | None = None  # Lazy-initialized
     # Callable that returns the parent flow's current parameters (name → value).
@@ -1117,29 +1098,36 @@ class FlowNode:
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True
 
-    def _do_execute_local_with_sampling(self, performance_mode: bool = False, flow_id: int = None):
-        """Executes the node's logic locally with external sampling.
+    def _do_execute_local_with_sampling(
+        self,
+        performance_mode: bool = False,
+        flow_id: int = None,
+        backend: ExecutionBackend | None = None,
+    ):
+        """Executes the node's logic locally, with the backend producing preview data.
 
         Internal method called by NodeExecutor.
 
         Args:
             performance_mode: If True, skips generating example data.
             flow_id: The ID of the parent flow.
+            backend: Compute backend for the sampling; the worker backend when None.
 
         Raises:
             Exception: Propagates exceptions from the execution.
         """
+        backend = backend or resolve_backend("remote")
         try:
             resulting_data = self.get_resulting_data()
             if not performance_mode:
-                external_sampler = ExternalSampler(
-                    lf=resulting_data.data_frame,
+                sampler_handle = backend.sample(
+                    resulting_data.data_frame,
                     file_ref=self.hash,
                     wait_on_completion=True,
                     node_id=self.node_id,
                     flow_id=flow_id,
                 )
-                self.store_example_data_generator(external_sampler)
+                self.store_example_data_generator(sampler_handle)
                 if self.results.errors is None and not self.node_stats.is_canceled:
                     self.node_stats.has_run_with_current_setup = True
             self.node_schema.result_schema = resulting_data.schema
@@ -1157,23 +1145,30 @@ class FlowNode:
                 if not self.node_settings.streamable:
                     step.node_settings.streamable = self.node_settings.streamable
 
-    def _do_execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
-        """Executes the node's logic remotely or handles cached results.
+    def _do_execute_remote(
+        self,
+        performance_mode: bool = False,
+        node_logger: NodeLogger = None,
+        backend: ExecutionBackend | None = None,
+    ):
+        """Executes the node's logic on the compute backend or handles cached results.
 
         Internal method called by NodeExecutor.
 
         Args:
             performance_mode: If True, skips generating example data.
             node_logger: The logger for this node execution.
+            backend: Compute backend; the worker backend when None.
 
         Raises:
             Exception: If the node_logger is not provided or if execution fails.
         """
         if node_logger is None:
             raise Exception("Node logger is not defined")
-        if self.node_settings.cache_results and results_exists(self.hash):
+        backend = backend or resolve_backend("remote")
+        if self.node_settings.cache_results and backend.results_exist(self.hash):
             try:
-                self.results.resulting_data = FlowDataEngine(get_external_df_result(self.hash))
+                self.results.resulting_data = FlowDataEngine(backend.get_cached_lazyframe(self.hash))
                 self._cache_progress = None
                 return
             except Exception:
@@ -1195,34 +1190,33 @@ class FlowNode:
             raise e
 
         if not performance_mode:
-            external_df_fetcher = ExternalDfFetcher(
-                lf=self.get_resulting_data().data_frame,
+            task_handle = backend.run_lazyframe(
+                self.get_resulting_data().data_frame,
                 file_ref=self.hash,
                 wait_on_completion=False,
                 flow_id=node_logger.flow_id,
                 node_id=self.node_id,
             )
-            self._fetch_cached_df = external_df_fetcher
+            self._fetch_cached_df = task_handle
 
             try:
-                lf = external_df_fetcher.get_result()
+                lf = task_handle.get_result()
                 self.results.resulting_data = FlowDataEngine(
                     lf,
-                    number_of_records=ExternalDfFetcher(
-                        lf=lf,
-                        operation_type="calculate_number_of_records",
+                    number_of_records=backend.count_records(
+                        lf,
                         flow_id=node_logger.flow_id,
                         node_id=self.node_id,
-                    ).result,
+                    ),
                 )
 
                 if not performance_mode:
-                    self.store_example_data_generator(external_df_fetcher)
+                    self.store_example_data_generator(task_handle)
                     self.node_stats.has_run_with_current_setup = True
 
             except Exception as e:
                 node_logger.error("Error with external process")
-                if external_df_fetcher.error_code == -1:
+                if task_handle.error_code == -1:
                     try:
                         self.results.resulting_data = self.get_resulting_data()
                         self.results.warnings = (
@@ -1234,12 +1228,12 @@ class FlowNode:
                     except Exception as e:
                         self.results.errors = str(e)
                         raise e
-                elif external_df_fetcher.error_description is None:
+                elif task_handle.error_description is None:
                     self.results.errors = str(e)
                     raise e
                 else:
-                    self.results.errors = external_df_fetcher.error_description
-                    raise Exception(external_df_fetcher.error_description) from e
+                    self.results.errors = task_handle.error_description
+                    raise Exception(task_handle.error_description) from e
             finally:
                 self._fetch_cached_df = None
 
@@ -1322,14 +1316,14 @@ class FlowNode:
             optimize_for_downstream=optimize_for_downstream,
         )
 
-    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
+    def store_example_data_generator(self, task_handle: TaskHandle):
         """Stores a generator function for fetching a sample of the result data.
 
         Args:
-            external_df_fetcher: The process that generated the sample data.
+            task_handle: The task that generated the sample data.
         """
-        if external_df_fetcher.status is not None:
-            file_ref = external_df_fetcher.status.file_ref
+        if task_handle.status is not None:
+            file_ref = task_handle.status.file_ref
             self.results.example_data_path = file_ref
             self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
         else:
