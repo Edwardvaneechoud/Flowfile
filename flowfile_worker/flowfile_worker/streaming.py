@@ -27,7 +27,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
-from flowfile_worker.spawner import process_manager
+from flowfile_worker.spawner import drain_result_queue, process_manager
 
 streaming_router = APIRouter()
 
@@ -167,6 +167,12 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
             await websocket.send_json({"type": "error", "error_message": msg})
             return True
 
+        # A child that put() a large result blocks in its feeder thread and never
+        # exits, so p.is_alive() would spin here forever. Break on the completion
+        # signal; the caller drains the queue (which unblocks the child) before joining.
+        if current == 100:
+            return False
+
     return False
 
 
@@ -185,9 +191,14 @@ def _update_completed_status(task_id: str, result_data: Any) -> None:
                 status_dict[task_id].results = result_data
 
 
-async def _send_completion(websocket: WebSocket, task_id: str, result_type: str, file_path: str, queue: Queue) -> None:
-    """Send completion message and result data over WebSocket."""
-    result_data = queue.get() if not queue.empty() else None
+async def _send_completion(
+    websocket: WebSocket, task_id: str, result_type: str, file_path: str, result_data: Any
+) -> None:
+    """Send completion message and result data over WebSocket.
+
+    *result_data* is drained from the result queue by the caller before joining the
+    child, so this coroutine never touches the queue (draining after join can deadlock).
+    """
     _update_completed_status(task_id, result_data)
 
     has_result = result_data is not None
@@ -296,14 +307,17 @@ async def ws_submit(websocket: WebSocket):
         if had_error:
             return
 
-        p.join()
-
         with progress.get_lock():
             final = progress.value
 
         if final == 100:
-            await _send_completion(websocket, task_id, ctx.result_type, ctx.file_path, queue)
+            # Drain the queue BEFORE joining: a large put() blocks the child's feeder
+            # thread until read, so joining first would deadlock.
+            result_data = await asyncio.to_thread(drain_result_queue, queue, p)
+            p.join()
+            await _send_completion(websocket, task_id, ctx.result_type, ctx.file_path, result_data)
         else:
+            p.join()
             await _send_final_error(websocket, task_id, progress, error_message)
 
     except WebSocketDisconnect:
