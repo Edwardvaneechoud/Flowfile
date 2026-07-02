@@ -1,10 +1,11 @@
 """Unit tests for the parameter resolver module."""
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from flowfile_core.flowfile.parameter_resolver import (
     apply_parameters_in_place,
+    resolve_expression_parameters,
     resolve_node_settings,
     resolve_parameters,
     restore_parameters,
@@ -249,3 +250,72 @@ def test_flow_parameter_typed_model():
         FlowParameter(name="n", default_value="abc", type="integer")
     p = FlowParameter(name="e", default_value="a", type="enum", enum_values=["a", "b"])
     assert p.typed_default() == "a"
+
+
+# expression-literal rendering (formula / advanced filter / dynamic-rename formula)
+
+
+def test_render_param_as_expr_literal_all_types():
+    from flowfile_core.flowfile.param_types import render_param_as_expr_literal as r
+
+    assert r("city") == '"city"'
+    assert r("") == '""'
+    assert r(5) == "5"
+    assert r(-5) == "-5"
+    assert r(3.14) == "3.14"
+    assert r(-3.14) == "-3.14"
+    # bool must be rendered before int (bool subclasses int)
+    assert r(True) == "true"
+    assert r(False) == "false"
+
+
+def test_render_param_as_expr_literal_escaping():
+    from flowfile_core.flowfile.param_types import render_param_as_expr_literal as r
+
+    assert r("a\\b") == '"a\\\\b"'
+    assert r("a\nb") == '"a\\nb"'
+    assert r("a\tb") == '"a\\tb"'
+    assert r("O'Brien") == '"O\'Brien"'
+
+
+class ExprMarkedSettings(BaseModel):
+    expr: str = Field(default="", json_schema_extra={"expression": True})
+    limit: str = ""
+
+
+def test_resolve_expression_parameters():
+    params = {"city": "NYC", "n": 5, "on": True}
+    assert resolve_expression_parameters("[a] == ${city}", params) == '[a] == "NYC"'
+    assert resolve_expression_parameters("${city}", params) == '"NYC"'
+    assert resolve_expression_parameters("[x] + ${n}", params) == "[x] + 5"
+    assert resolve_expression_parameters("${on}", params) == "true"
+    # unknown ref left untouched
+    assert resolve_expression_parameters("${missing}", params) == "${missing}"
+    # multiple refs
+    assert resolve_expression_parameters("${city} ${n}", params) == '"NYC" 5'
+
+
+def test_expression_field_routes_to_literal_renderer():
+    # expr field: string param becomes a quoted literal, scalar field keeps raw text
+    settings = ExprMarkedSettings(expr="[a] == ${city}", limit="${city}")
+    apply_parameters_in_place(settings, {"city": "NYC"})
+    assert settings.expr == '[a] == "NYC"'
+    assert settings.limit == "NYC"  # scalar path stringifies (no quotes)
+
+
+def test_expression_field_whole_field_not_typed_injected():
+    # Regression: a whole-field ${n} on an EXPRESSION field must stay a string ("5"),
+    # not be injected as a raw int (which would crash the expression parser).
+    settings = ExprMarkedSettings(expr="${n}")
+    restorations = apply_parameters_in_place(settings, {"n": 5})
+    assert settings.expr == "5"
+    assert isinstance(settings.expr, str)
+    restore_parameters(restorations)
+    assert settings.expr == "${n}"
+
+
+def test_expression_field_restores_after_run():
+    settings = ExprMarkedSettings(expr="[a] == ${city}")
+    restorations = apply_parameters_in_place(settings, {"city": "NYC"})
+    restore_parameters(restorations)
+    assert settings.expr == "[a] == ${city}"

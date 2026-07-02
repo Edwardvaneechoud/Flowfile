@@ -8,7 +8,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from flowfile_core.flowfile.param_types import ParamValue, stringify_param_value
+from flowfile_core.flowfile.param_types import (
+    ParamValue,
+    render_param_as_expr_literal,
+    stringify_param_value,
+)
 
 _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
@@ -29,6 +33,29 @@ def resolve_parameters(text: str, params: dict[str, ParamValue]) -> str:
         lambda m: stringify_param_value(params[m.group(1)]) if m.group(1) in params else m.group(0),
         text,
     )
+
+
+def resolve_expression_parameters(text: str, params: dict[str, ParamValue]) -> str:
+    """Replace ${name} patterns with type-correct polars_expr_transformer literals.
+
+    Used for expression fields (formula / advanced filter / dynamic-rename formula):
+    strings and enums are rendered as double-quoted literals, numbers bare, bools as
+    ``true``/``false`` (see ``render_param_as_expr_literal``). Unlike ``_substitute``
+    this never does whole-field typed injection — the result is always a valid
+    expression string, so a bare ``${name}`` works for any type and can be parsed.
+    """
+    if not params or "${" not in text:
+        return text
+    return _PARAM_PATTERN.sub(
+        lambda m: render_param_as_expr_literal(params[m.group(1)]) if m.group(1) in params else m.group(0),
+        text,
+    )
+
+
+def _is_expression_field(model: BaseModel, field_name: str) -> bool:
+    """Whether *field_name* on *model* is tagged as a raw-expression field."""
+    extra = type(model).model_fields[field_name].json_schema_extra
+    return isinstance(extra, dict) and extra.get("expression") is True
 
 
 def _substitute(value: str, params: dict[str, ParamValue]) -> Any:
@@ -92,7 +119,10 @@ def _apply_recursive(obj: Any, params: dict[str, ParamValue], restorations: _Res
             value = getattr(obj, field_name, None)
             if isinstance(value, str):
                 if "${" in value:
-                    resolved = _substitute(value, params)
+                    if _is_expression_field(obj, field_name):
+                        resolved = resolve_expression_parameters(value, params)
+                    else:
+                        resolved = _substitute(value, params)
                     if resolved != value:
                         restorations.append((obj, field_name, value))
                         object.__setattr__(obj, field_name, resolved)

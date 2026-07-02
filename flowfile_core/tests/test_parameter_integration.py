@@ -585,3 +585,159 @@ def test_parameter_change_invalidates_predicted_schema():
     finally:
         os.unlink(csv_a)
         os.unlink(csv_b)
+
+
+# formula / filter nodes: type-correct expression-literal parameter rendering
+
+
+def _manual_input(graph, node_id, rows):
+    graph.add_node_promise(
+        input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
+    )
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            raw_data_format=input_schema.RawData.from_pylist(rows),
+        )
+    )
+
+
+def _formula(graph, node_id, depending_on_id, out_name, function, data_type="Auto"):
+    graph.add_node_promise(
+        input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="formula")
+    )
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name=out_name, data_type=data_type),
+                function=function,
+            ),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+
+
+def _advanced_filter(graph, node_id, depending_on_id, expr):
+    graph.add_node_promise(
+        input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="filter")
+    )
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter=expr),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+
+
+def _column(graph, node_id, col):
+    return graph.get_node(node_id).get_resulting_data().to_dict()[col]
+
+
+def test_formula_string_param_embedded(execution_location):
+    """A string param embedded in a formula renders as a quoted literal (no manual quoting)."""
+    graph = make_graph(201, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="prefix", default_value="v2_", type="string")]
+    _manual_input(graph, 1, [{"name": "Alice"}, {"name": "Bob"}])
+    _formula(graph, 2, 1, "renamed", "${prefix} + [name]")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "renamed") == ["v2_Alice", "v2_Bob"]
+
+
+def test_formula_string_param_whole_field(execution_location):
+    """A whole-field ${p} string param yields a constant string column (must not crash)."""
+    graph = make_graph(202, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="greeting", default_value="hello", type="string")]
+    _manual_input(graph, 1, [{"name": "a"}, {"name": "b"}])
+    _formula(graph, 2, 1, "g", "${greeting}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "g") == ["hello", "hello"]
+
+
+def test_formula_int_param_embedded(execution_location):
+    graph = make_graph(203, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="bump", default_value="5", type="integer")]
+    _manual_input(graph, 1, [{"val": 10}, {"val": 20}])
+    _formula(graph, 2, 1, "bumped", "[val] + ${bump}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "bumped") == [15, 25]
+
+
+def test_formula_int_param_whole_field_no_crash(execution_location):
+    """Regression: a formula whose entire value is ${int_param} previously crashed
+    (raw int stuffed into the expression parser). It must resolve to a literal."""
+    graph = make_graph(204, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="bump", default_value="5", type="integer")]
+    _manual_input(graph, 1, [{"val": 10}, {"val": 20}])
+    _formula(graph, 2, 1, "five", "${bump}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "five") == [5, 5]
+
+
+def test_formula_bool_param_whole_field(execution_location):
+    graph = make_graph(205, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="flag", default_value="true", type="boolean")]
+    _manual_input(graph, 1, [{"name": "a"}, {"name": "b"}])
+    _formula(graph, 2, 1, "f", "${flag}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "f") == [True, True]
+
+
+def test_formula_string_escaping_roundtrip(execution_location):
+    """String param values with a backslash / newline round-trip through the literal renderer."""
+    graph = make_graph(206, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="p", default_value="a\\b\nc", type="string")]
+    _manual_input(graph, 1, [{"name": "x"}])
+    _formula(graph, 2, 1, "s", "${p}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "s") == ["a\\b\nc"]
+
+
+def test_filter_advanced_string_param(execution_location):
+    graph = make_graph(207, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="target", default_value="NYC", type="string")]
+    _manual_input(graph, 1, [{"city": "NYC"}, {"city": "LA"}, {"city": "NYC"}])
+    _advanced_filter(graph, 2, 1, "[city] == ${target}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "city") == ["NYC", "NYC"]
+
+
+def test_filter_advanced_numeric_param(execution_location):
+    graph = make_graph(208, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="threshold", default_value="25", type="integer")]
+    _manual_input(graph, 1, [{"age": 10}, {"age": 30}, {"age": 40}])
+    _advanced_filter(graph, 2, 1, "[age] > ${threshold}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "age") == [30, 40]
+
+
+def test_filter_advanced_preserves_original_after_run(execution_location):
+    graph = make_graph(209, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="threshold", default_value="25", type="integer")]
+    _manual_input(graph, 1, [{"age": 10}, {"age": 30}])
+    _advanced_filter(graph, 2, 1, "[age] > ${threshold}")
+    run_and_assert_ok(graph)
+    stored = graph.get_node(2).setting_input.filter_input.advanced_filter
+    assert stored == "[age] > ${threshold}", f"reference must be preserved after run, got {stored!r}"
+
+
+def test_formula_param_type_change_rerun(execution_location):
+    """The literal is inferred from the runtime value, so changing a param's TYPE
+    between runs yields a correctly-typed result for the same ${ref}."""
+    graph = make_graph(210, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="x", default_value="5", type="string")]
+    _manual_input(graph, 1, [{"name": "a"}])
+    _formula(graph, 2, 1, "c", "${x}")
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "c") == ["5"]  # string param -> quoted literal -> string column
+
+    graph.flow_settings.parameters = [FlowParameter(name="x", default_value="5", type="integer")]
+    graph.reset()
+    run_and_assert_ok(graph)
+    assert _column(graph, 2, "c") == [5]  # integer param -> bare literal -> int column

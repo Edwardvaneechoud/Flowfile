@@ -4,6 +4,7 @@ Lowest layer of the parameter stack — imports nothing from flowfile_core so
 both ``schemas.schemas`` and ``schemas.input_schema`` can depend on it.
 """
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel, model_validator
@@ -49,6 +50,22 @@ def stringify_param_value(value: ParamValue) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def render_param_as_expr_literal(value: ParamValue) -> str:
+    """Render a typed value as a polars_expr_transformer literal for expression fields.
+
+    Booleans -> bare ``true``/``false``; ints/floats -> bare number; strings and
+    enum values -> a double-quoted, escaped literal (the parser ``eval``s string
+    tokens, so ``json.dumps`` output is both valid and round-trip safe). Type is
+    inferred from the runtime value, so a bare ``${param}`` resolves correctly for
+    every parameter type without manual quoting.
+    """
+    if isinstance(value, bool):  # bool subclasses int; must be checked first
+        return "true" if value else "false"
+    if isinstance(value, (int | float)):
+        return repr(value)
+    return json.dumps(str(value))
 
 
 class FlowParameter(BaseModel):

@@ -254,6 +254,7 @@ import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { useProjectStore } from "../../../stores/project-store";
@@ -271,6 +272,7 @@ import {
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
@@ -370,6 +372,7 @@ const loadFlowSettings = async (): Promise<void> => {
     flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
     flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
     flowSettings.value.parameters = flowSettings.value.parameters ?? [];
+    flowStore.setParameters(flowSettings.value.parameters);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 
@@ -396,6 +399,7 @@ const loadFlowSettings = async (): Promise<void> => {
 const pushFlowSettings = async () => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
+    flowStore.setParameters(flowSettings.value.parameters ?? []);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
     editorStore.bumpGraphVersion();
