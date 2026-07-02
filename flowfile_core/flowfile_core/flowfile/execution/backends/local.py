@@ -7,8 +7,9 @@ are allowed here; the core-never-collects contract applies to the remote path.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import polars as pl
 
@@ -16,6 +17,12 @@ from flowfile_core.flowfile.execution.backends.base import ExecutionBackend
 from flowfile_core.flowfile.execution.exceptions import WorkerTaskError
 from flowfile_core.flowfile.execution.handles import LocalResultHandle, TaskHandle
 from shared.storage_config import storage
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+    from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalReadSettings
+    from flowfile_core.schemas.input_schema import OutputSettings
 
 
 class LocalBackend(ExecutionBackend):
@@ -63,6 +70,55 @@ class LocalBackend(ExecutionBackend):
 
     def count_records(self, lf: pl.LazyFrame, *, flow_id: int, node_id: int | str) -> int | None:
         return int(lf.select(pl.len()).collect().item())
+
+    def random_split(
+        self,
+        df: FlowDataEngine,
+        splits: list[tuple[str, float]],
+        seed: int | None,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> NamedOutputs:
+        return df.random_split(splits, seed)
+
+    def read_database(
+        self,
+        settings: DatabaseExternalReadSettings,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> TaskHandle:
+        from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
+        from flowfile_core.secret_manager.secret_manager import decrypt_secret
+
+        connection = settings.connection
+        source = SqlSource(
+            connection_string=sql_utils.construct_sql_uri(
+                database_type=connection.database_type,
+                host=connection.host,
+                port=connection.port,
+                database=connection.database,
+                username=connection.username,
+                password=decrypt_secret(connection.password) if connection.password else None,
+                ssl_enabled=bool(getattr(connection, "ssl_enabled", False)),
+                connect_timeout=10,
+            ),
+            query=settings.query,
+            cancel_check=cancel_check,
+        )
+        return LocalResultHandle(result=source.get_pl_df().lazy(), file_ref=str(settings.flowfile_node_id))
+
+    def write_output(
+        self,
+        df: FlowDataEngine,
+        settings: OutputSettings,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> TaskHandle:
+        df.output(output_fs=settings, flow_id=flow_id, node_id=node_id, execute_remote=False)
+        return LocalResultHandle(result=None, file_ref=str(node_id))
 
     def results_exist(self, file_ref: str) -> bool:
         return False

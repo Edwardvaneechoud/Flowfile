@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, ClassVar
 
 import polars as pl
 
 from flowfile_core.flowfile.execution.handles import TaskHandle
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+    from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalReadSettings
+    from flowfile_core.schemas.input_schema import OutputSettings
 
 
 class ExecutionBackend(ABC):
@@ -52,6 +59,40 @@ class ExecutionBackend(ABC):
     @abstractmethod
     def count_records(self, lf: pl.LazyFrame, *, flow_id: int, node_id: int | str) -> int | None:
         """Count the rows a LazyFrame plan produces."""
+
+    @abstractmethod
+    def random_split(
+        self,
+        df: FlowDataEngine,
+        splits: list[tuple[str, float]],
+        seed: int | None,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> NamedOutputs:
+        """Partition rows into labeled outputs by the given percentages."""
+
+    # -- sources and sinks -------------------------------------------------------
+
+    @abstractmethod
+    def read_database(
+        self,
+        settings: DatabaseExternalReadSettings,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> TaskHandle:
+        """Run the rendered SQL read; the result is a LazyFrame."""
+
+    @abstractmethod
+    def write_output(
+        self,
+        df: FlowDataEngine,
+        settings: OutputSettings,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> TaskHandle:
+        """Write the frame to its file destination."""
 
     # -- result cache ------------------------------------------------------------
 

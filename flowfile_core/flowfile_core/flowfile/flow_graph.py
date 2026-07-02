@@ -56,12 +56,10 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCloudWriter,
-    ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
     ExternalGoogleAnalyticsFetcher,
     ExternalKafkaFetcher,
-    ExternalOutputWriter,
     ExternalRestApiFetcher,
     MLApplyFetcher,
     MLTrainFetcher,
@@ -3188,9 +3186,8 @@ class FlowGraph:
 
         def _func(table: FlowDataEngine) -> NamedOutputs:
             split_pairs = [(s.name, s.percentage) for s in settings.splits]
-            if self.execution_location == "local":
-                return table.random_split(split_pairs, settings.seed)
-            return table.random_split_external(
+            return self.execution_backend.random_split(
+                table,
                 split_pairs,
                 settings.seed,
                 flow_id=self.flow_id,
@@ -3502,30 +3499,15 @@ class FlowGraph:
         """
 
         def _func(df: FlowDataEngine):
-            if self.execution_location == "local":
-                df.output(
-                    output_fs=output_file.output_settings,
-                    flow_id=self.flow_id,
-                    node_id=output_file.node_id,
-                    execute_remote=False,
-                )
-                return df
-            output_fs = output_file.output_settings
             node = self.get_node(output_file.node_id)
-            writer = ExternalOutputWriter(
-                lf=df.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                compression=output_fs.compression,
+            writer_handle = self.execution_backend.write_output(
+                df,
+                output_file.output_settings,
                 flow_id=self.flow_id,
                 node_id=output_file.node_id,
-                wait_on_completion=False,
             )
-            node._fetch_cached_df = writer
-            writer.get_result()
+            node._fetch_cached_df = writer_handle
+            writer_handle.get_result()
             return df
 
         def schema_callback():
@@ -3876,30 +3858,7 @@ class FlowGraph:
             )
 
             # Local and worker reads share shared.db_reader.read_sql_with_fallback
-            # (via SqlSource here, via read_sql_source in the worker).
-            if self.execution_location == "local":
-                local_source = SqlSource(
-                    connection_string=sql_utils.construct_sql_uri(
-                        database_type=database_connection.database_type,
-                        host=database_connection.host,
-                        port=database_connection.port,
-                        database=database_connection.database,
-                        username=database_connection.username,
-                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
-                        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
-                        connect_timeout=10,
-                    ),
-                    query=None if database_settings.query_mode == "table" else database_settings.query,
-                    table_name=database_settings.table_name,
-                    schema_name=database_settings.schema_name,
-                    fields=node_database_reader.fields,
-                    cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
-                )
-                fl = FlowDataEngine(local_source.get_pl_df())
-                fl.lazy = True
-                node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
-                return fl
-
+            # (via SqlSource in the LocalBackend, via read_sql_source in the worker).
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,
@@ -3911,11 +3870,13 @@ class FlowGraph:
                 )
             )
 
-            external_database_fetcher = ExternalDatabaseFetcher(
-                database_external_read_settings, wait_on_completion=False
+            reader_handle = self.execution_backend.read_database(
+                database_external_read_settings,
+                cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
             )
-            node._fetch_cached_df = external_database_fetcher
-            fl = FlowDataEngine(external_database_fetcher.get_result())
+            node._fetch_cached_df = reader_handle
+            fl = FlowDataEngine(reader_handle.get_result())
+            fl.lazy = True
             node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 

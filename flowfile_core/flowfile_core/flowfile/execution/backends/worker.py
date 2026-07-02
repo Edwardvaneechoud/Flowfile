@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, ClassVar
 
 import polars as pl
 
@@ -11,6 +12,12 @@ from flowfile_core.flowfile.execution.backends.base import ExecutionBackend
 from flowfile_core.flowfile.execution.exceptions import WorkerTaskError
 from flowfile_core.flowfile.execution.handles import TaskHandle
 from flowfile_core.flowfile.execution.transport import WorkerTransport, get_default_transport
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+    from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalReadSettings
+    from flowfile_core.schemas.input_schema import OutputSettings
 
 
 class RemoteWorkerBackend(ExecutionBackend):
@@ -75,6 +82,51 @@ class RemoteWorkerBackend(ExecutionBackend):
             node_id=node_id,
             transport=self.transport,
         ).result
+
+    def random_split(
+        self,
+        df: FlowDataEngine,
+        splits: list[tuple[str, float]],
+        seed: int | None,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> NamedOutputs:
+        return df.random_split_external(splits, seed, flow_id=flow_id, node_id=node_id)
+
+    def read_database(
+        self,
+        settings: DatabaseExternalReadSettings,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> TaskHandle:
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDatabaseFetcher
+
+        return ExternalDatabaseFetcher(settings, wait_on_completion=False, transport=self.transport)
+
+    def write_output(
+        self,
+        df: FlowDataEngine,
+        settings: OutputSettings,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> TaskHandle:
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalOutputWriter
+
+        return ExternalOutputWriter(
+            lf=df.data_frame,
+            data_type=settings.file_type,
+            path=settings.abs_file_path,
+            write_mode=settings.write_mode,
+            sheet_name=settings.sheet_name,
+            delimiter=settings.delimiter,
+            compression=settings.compression,
+            flow_id=flow_id,
+            node_id=node_id,
+            wait_on_completion=False,
+            transport=self.transport,
+        )
 
     def results_exist(self, file_ref: str) -> bool:
         if not OFFLOAD_TO_WORKER:
