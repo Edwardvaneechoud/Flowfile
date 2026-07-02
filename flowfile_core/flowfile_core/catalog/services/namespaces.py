@@ -114,6 +114,20 @@ class NamespaceService:
         namespace = self.repo.get_namespace(namespace_id)
         return namespace.name if namespace is not None else None
 
+    def resolve_namespace_path(self, namespace_id: int | None) -> str | None:
+        """Full dotted path from the root catalog down (e.g. 'Demo.market'); just the
+        catalog name for a level-0 namespace; None for None. Uses the direct parent, so
+        it stays correct if the 2-level nesting cap is ever raised."""
+        if namespace_id is None:
+            return None
+        ns = self.repo.get_namespace(namespace_id)
+        if ns is None:
+            return None
+        if ns.parent_id is None:
+            return ns.name
+        parent = self.repo.get_namespace(ns.parent_id)
+        return f"{parent.name}.{ns.name}" if parent is not None else ns.name
+
     def resolve_namespace_id_by_path(self, catalog_name: str | None, schema_name: str | None) -> int | None:
         """Resolve a portable (catalog, schema) name pair to an existing namespace id (resolve-only,
         never creates). Returns the schema id (level 1), the catalog id when no schema, or None."""

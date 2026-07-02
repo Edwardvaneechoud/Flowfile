@@ -192,6 +192,8 @@ export interface CatalogTable {
   namespace_id: number | null;
   namespace_name: string | null;
   full_table_name: string | null;
+  // Fully-qualified catalog.schema.table (full_table_name is only 2-part schema.table).
+  qualified_name: string | null;
   description: string | null;
   owner_id: number;
   file_exists: boolean;

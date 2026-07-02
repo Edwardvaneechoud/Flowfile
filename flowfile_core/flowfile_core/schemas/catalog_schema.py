@@ -302,6 +302,8 @@ class CatalogTableOut(BaseModel):
     namespace_id: int | None = None
     namespace_name: str | None = None
     full_table_name: str | None = None
+    # Fully-qualified ``catalog.schema.table`` (full_table_name is only 2-part ``schema.table``).
+    qualified_name: str | None = None
     description: str | None = None
     owner_id: int
     file_exists: bool = True

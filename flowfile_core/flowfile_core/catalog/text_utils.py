@@ -18,21 +18,58 @@ _TABLE_INTRODUCERS = r"\b(?:FROM|JOIN|INTO|UPDATE)\b|,"
 
 
 def rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> str:
-    """Rewrite ``ns.table`` / ``"ns"."table"`` / mixed variants to ``"ns.table"``.
+    """Rewrite an N-part ``a.b.c`` reference (bare / double- / single-quoted / mixed
+    segments) to the single quoted identifier ``"a.b.c"`` the flat SQL engine registers.
 
     Only rewrites occurrences matching a known registered qualified name, so column
-    qualifiers like ``t.col`` on unrelated aliases are untouched.
+    qualifiers like ``t.col`` on unrelated aliases are untouched. Longest-first so a
+    3-part name is collapsed before its 2-part suffix. Single quotes are always string
+    literals in this dialect, so a full dotted chain of quoted/bare segments matching a
+    *registered* table name is unambiguously a (mis-quoted) table reference.
     """
     for qualified_name in sorted(qualified_names, key=len, reverse=True):
         if "." not in qualified_name:
             continue
-        namespace, _, table = qualified_name.partition(".")
-        ns_esc, table_esc = re.escape(namespace), re.escape(table)
-        ns_part = rf'(?:(?<![\w"]){ns_esc}|"{ns_esc}")'
-        table_part = rf'(?:{table_esc}(?![\w"])|"{table_esc}")'
-        pattern = re.compile(rf"{ns_part}\s*\.\s*{table_part}")
+        parts = qualified_name.split(".")  # names can't contain '.' (reject_dot_in_name), so lossless
+        segments = []
+        for i, part in enumerate(parts):
+            esc = re.escape(part)
+            bare = esc
+            if i == 0:
+                bare = rf'(?<![\w"\']){bare}'
+            if i == len(parts) - 1:
+                bare = rf'{bare}(?![\w"\'])'
+            segments.append(rf"""(?:"{esc}"|'{esc}'|{bare})""")
+        pattern = re.compile(r"\s*\.\s*".join(segments))
         query = pattern.sub(f'"{qualified_name}"', query)
     return query
+
+
+_RELATION_NOT_FOUND = re.compile(r"relation '([^']+)' was not found", re.IGNORECASE)
+
+
+def friendly_relation_error(error: str, query: str) -> str:
+    """Clarify polars' ``relation 'X' was not found`` for multi-part references.
+
+    Polars reports only the FIRST segment of an ``a.b.c`` reference, so a missing
+    table reads as a missing catalog (``relation 'global-catalog' was not found``).
+    When the query contains a multi-part reference starting with that segment, name
+    the full reference the user actually wrote instead.
+    """
+    match = _RELATION_NOT_FOUND.search(error)
+    if match is None:
+        return error
+    seg = re.escape(match.group(1))
+    part = r"""(?:"[^"]*"|'[^']*'|[\w-]+)"""
+    ref = re.compile(rf"""(?:"{seg}"|'{seg}'|{seg})(?:\s*\.\s*{part})+""")
+    found = ref.search(query)
+    if found is None:
+        return error  # single-part / not a dotted reference: polars' message is already clear
+    display = re.sub(r"\s*\.\s*", ".", found.group(0)).replace('"', "").replace("'", "")
+    return (
+        f"Table '{display}' was not found in the catalog. "
+        f"Check the name is spelled correctly and the table is registered."
+    )
 
 
 def is_table_reference(name: str, query: str) -> bool:

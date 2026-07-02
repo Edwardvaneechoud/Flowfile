@@ -1309,6 +1309,12 @@ class CatalogService:
         """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
         return self._virtual_tables.resolve_all_queryable_tables()
 
+    def resolve_cloud_only_table_aliases(self, exclude: set[str] | frozenset = frozenset()) -> dict[str, str]:
+        """Map SQL names of object-storage-backed physical tables (not queryable in the SQL editor)
+        to their fully-qualified display name. Virtual tables are excluded — they materialize
+        through their flow (with the flow's credentials) and do resolve."""
+        return self._virtual_tables.resolve_cloud_only_table_aliases(exclude=exclude)
+
     def execute_sql_query(
         self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
     ) -> SqlQueryResult:

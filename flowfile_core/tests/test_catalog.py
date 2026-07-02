@@ -1632,6 +1632,237 @@ class TestCrossNamespaceResolution:
             # Bare alias for unique name points to the same id as its qualified alias.
             assert virtual_map["only_here"] == virtual_map["ns_a.only_here"]
 
+    def test_resolve_namespace_path(self):
+        cat_id, schema_a_id, _, _ = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            from flowfile_core.catalog.services.namespaces import NamespaceService
+
+            ns = NamespaceService(SQLAlchemyCatalogRepository(db))
+            assert ns.resolve_namespace_path(schema_a_id) == "cat.ns_a"  # catalog.schema
+            assert ns.resolve_namespace_path(cat_id) == "cat"  # level-0 catalog
+            assert ns.resolve_namespace_path(None) is None
+
+    def _seed_demo_market_delta(self, db) -> str:
+        """Demo(catalog) -> market(schema) -> fx_rates delta-shaped table. Returns its dir."""
+        import os
+        import tempfile
+
+        tmpdir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(tmpdir, "_delta_log"))  # make it look like a Delta table
+        demo = CatalogNamespace(name="Demo", level=0, owner_id=1)
+        db.add(demo)
+        db.commit()
+        db.refresh(demo)
+        market = CatalogNamespace(name="market", level=1, parent_id=demo.id, owner_id=1)
+        db.add(market)
+        db.commit()
+        db.refresh(market)
+        db.add(
+            CatalogTable(
+                name="fx_rates",
+                namespace_id=market.id,
+                owner_id=1,
+                file_path=tmpdir,
+                storage_format="delta",
+            )
+        )
+        db.commit()
+        return tmpdir
+
+    def test_queryable_tables_include_three_part_key(self):
+        _cleanup_catalog()
+        with get_db_context() as db:
+            tmpdir = self._seed_demo_market_delta(db)
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            delta_map, _ = svc.resolve_all_queryable_tables()
+            dir_name = Path(tmpdir).name
+            # Fully-qualified 3-part, 2-part, and bare all point at the same table.
+            assert delta_map.get("Demo.market.fx_rates") == dir_name
+            assert delta_map.get("market.fx_rates") == dir_name
+            assert delta_map.get("fx_rates") == dir_name
+
+    def test_execute_sql_resolves_three_part_and_quoted_forms(self, monkeypatch):
+        """The 3-part catalog.schema.table forms a user naturally writes — bare, per-segment
+        quoted, single quoted identifier, and the mixed single/double quoting from the catalog
+        tree — all collapse to the registered flat key and reach the worker."""
+        import flowfile_core.catalog.service as svc_module
+
+        _cleanup_catalog()
+        with get_db_context() as db:
+            self._seed_demo_market_delta(db)
+
+            captured: dict = {}
+
+            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+                captured["query"] = query
+                captured["tables"] = tables
+                return {
+                    "columns": [],
+                    "dtypes": [],
+                    "rows": [],
+                    "total_rows": 0,
+                    "truncated": False,
+                    "execution_time_ms": 0.0,
+                    "used_tables": [],
+                }
+
+            monkeypatch.setattr(svc_module, "trigger_sql_query", fake_trigger)
+
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            for form in (
+                "SELECT * FROM Demo.market.fx_rates",
+                'SELECT * FROM "Demo"."market"."fx_rates"',
+                'SELECT * FROM "Demo.market.fx_rates"',
+                "SELECT * FROM 'Demo'.'market'.\"fx_rates\"",
+            ):
+                svc.execute_sql_query(form)
+                assert captured["query"] == 'SELECT * FROM "Demo.market.fx_rates"', form
+                assert "Demo.market.fx_rates" in captured["tables"], form
+
+    def test_table_out_qualified_name_is_three_part(self):
+        _, _, _, foo_a_id = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.get_table(foo_a_id, user_id=1)
+            assert out.qualified_name == "cat.ns_a.foo"  # catalog.schema.table
+            assert out.full_table_name == "ns_a.foo"  # unchanged 2-part
+
+    def test_execute_sql_cloud_table_returns_clear_error(self):
+        """Object-storage-backed tables aren't queryable in the SQL editor; the error should
+        name the table and explain the limitation instead of a raw 'relation not found'."""
+        _cleanup_catalog()
+        with get_db_context() as db:
+            gcat = CatalogNamespace(name="global-catalog", level=0, owner_id=1)
+            db.add(gcat)
+            db.commit()
+            db.refresh(gcat)
+            main = CatalogNamespace(name="main", level=1, parent_id=gcat.id, owner_id=1)
+            db.add(main)
+            db.commit()
+            db.refresh(main)
+            db.add(
+                CatalogTable(
+                    name="local",
+                    namespace_id=main.id,
+                    owner_id=1,
+                    file_path="s3://bucket/global-catalog/main/local",
+                    storage_format="delta",
+                )
+            )
+            db.commit()
+
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            for form in (
+                'SELECT * FROM "global-catalog.main.local"',
+                'SELECT * FROM "global-catalog"."main"."local"',
+            ):
+                res = svc.execute_sql_query(form)
+                assert res.error is not None, form
+                assert "cloud/object storage" in res.error, form
+                assert "global-catalog.main.local" in res.error, form
+
+    def test_virtual_tables_not_flagged_as_cloud_limited(self):
+        """Virtual tables materialize through their flow (with the flow's credentials), so they
+        must resolve normally and never be reported as cloud-limited — even with a cloud path."""
+        _cleanup_catalog()
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="c", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            # Virtual table with a cloud-ish path: resolves via its flow, must NOT be flagged.
+            db.add(
+                CatalogTable(
+                    name="v",
+                    namespace_id=cat.id,
+                    owner_id=1,
+                    file_path="s3://bucket/v",
+                    storage_format="delta",
+                    table_type="virtual",
+                )
+            )
+            # Physical cloud table: the one that IS cloud-limited.
+            db.add(
+                CatalogTable(
+                    name="p",
+                    namespace_id=cat.id,
+                    owner_id=1,
+                    file_path="s3://bucket/p",
+                    storage_format="delta",
+                )
+            )
+            db.commit()
+
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            aliases = svc.resolve_cloud_only_table_aliases()
+            leaf_names = {a.split(".")[-1] for a in aliases}
+            assert "v" not in leaf_names, aliases  # virtual never flagged
+            assert "p" in leaf_names, aliases  # physical cloud table flagged
+            # And the virtual table is registered as queryable so it can resolve via the flow.
+            _, virtual_map = svc.resolve_all_queryable_tables()
+            assert "c.v" in virtual_map
+
+    def test_execute_sql_missing_virtual_producer_flow_returns_clear_error(self):
+        """A virtual table whose producer flow file is gone should give a clear reason,
+        not a swallowed warning + a downstream 'relation not found'."""
+        _cleanup_catalog()
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="c", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            reg = FlowRegistration(
+                name="producer", flow_path="/nonexistent/does_not_exist.yaml", owner_id=1, namespace_id=cat.id
+            )
+            db.add(reg)
+            db.commit()
+            db.refresh(reg)
+            db.add(
+                CatalogTable(
+                    name="broken_virtual",
+                    namespace_id=cat.id,
+                    owner_id=1,
+                    table_type="virtual",
+                    producer_registration_id=reg.id,
+                )
+            )
+            db.commit()
+
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            res = svc.execute_sql_query("SELECT * FROM broken_virtual")
+            assert res.error is not None
+            assert "broken_virtual" in res.error
+            assert "could not be resolved" in res.error
+            assert "source flow is missing" in res.error
+
+    def test_execute_sql_unknown_table_names_full_reference(self, monkeypatch):
+        """polars reports only the first segment of an a.b.c reference; the SQL editor should
+        name the full table the user wrote instead of blaming the (existing) catalog."""
+        import flowfile_core.catalog.service as svc_module
+
+        _cleanup_catalog()
+        with get_db_context() as db:
+            self._seed_demo_market_delta(db)  # a queryable table so we reach the worker call
+
+            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+                return {
+                    "columns": [],
+                    "dtypes": [],
+                    "rows": [],
+                    "total_rows": 0,
+                    "truncated": False,
+                    "execution_time_ms": 0.0,
+                    "used_tables": [],
+                    "error": "relation 'global-catalog' was not found",
+                }
+
+            monkeypatch.setattr(svc_module, "trigger_sql_query", fake_trigger)
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            res = svc.execute_sql_query('SELECT * FROM "global-catalog".main.locals')
+            assert res.error is not None
+            assert "global-catalog.main.locals" in res.error
+            assert "was not found in the catalog" in res.error
+
     def test_schedule_out_includes_namespace_fields(self):
         _, schema_a_id, _, foo_a_id = self._seed_two_foo_tables()
         with get_db_context() as db:
@@ -1659,6 +1890,71 @@ class TestCrossNamespaceResolution:
             assert out.trigger_namespace_id == schema_a_id
             assert out.trigger_namespace_name == "ns_a"
             assert out.trigger_full_table_name == "ns_a.foo"
+
+
+class TestRewriteQualifiedReferences:
+    """Pure-function tests for the N-part SQL identifier rewriter."""
+
+    NAMES = {"Demo.market.fx_rates", "market.fx_rates", "fx_rates"}
+
+    def _rw(self, query: str) -> str:
+        from flowfile_core.catalog.text_utils import rewrite_qualified_references
+
+        return rewrite_qualified_references(query, self.NAMES)
+
+    @pytest.mark.parametrize(
+        "form",
+        [
+            "SELECT * FROM Demo.market.fx_rates",
+            'SELECT * FROM "Demo"."market"."fx_rates"',
+            'SELECT * FROM "Demo.market.fx_rates"',
+            "SELECT * FROM 'Demo'.'market'.\"fx_rates\"",
+            'SELECT * FROM "Demo" . "market" . "fx_rates"',
+        ],
+    )
+    def test_three_part_forms_collapse_to_flat_identifier(self, form):
+        assert self._rw(form) == 'SELECT * FROM "Demo.market.fx_rates"'
+
+    def test_two_part_and_bare_unchanged_behaviour(self):
+        assert self._rw("SELECT * FROM market.fx_rates") == 'SELECT * FROM "market.fx_rates"'
+        assert self._rw('SELECT * FROM "market"."fx_rates"') == 'SELECT * FROM "market.fx_rates"'
+        assert self._rw("SELECT * FROM fx_rates") == "SELECT * FROM fx_rates"  # bare: no dot, untouched
+
+    def test_column_qualifier_on_three_part_table(self):
+        assert (
+            self._rw("SELECT Demo.market.fx_rates.col FROM Demo.market.fx_rates")
+            == 'SELECT "Demo.market.fx_rates".col FROM "Demo.market.fx_rates"'
+        )
+
+    def test_string_literals_are_not_clobbered(self):
+        # A whole-string literal containing a dot (or a registered name) must never be rewritten:
+        # the joining '.' is matched outside quotes.
+        assert (
+            self._rw("SELECT * FROM market.fx_rates WHERE label = 'market.fx_rates'")
+            == "SELECT * FROM \"market.fx_rates\" WHERE label = 'market.fx_rates'"
+        )
+        assert self._rw("SELECT * FROM fx_rates WHERE c = 'US'") == "SELECT * FROM fx_rates WHERE c = 'US'"
+
+
+class TestFriendlyRelationError:
+    """Pure-function tests for clarifying polars 'relation not found' errors."""
+
+    def _f(self, err: str, q: str) -> str:
+        from flowfile_core.catalog.text_utils import friendly_relation_error
+
+        return friendly_relation_error(err, q)
+
+    def test_multipart_reference_names_full_table(self):
+        out = self._f("relation 'global-catalog' was not found", 'SELECT * FROM "global-catalog".main.locals')
+        assert "global-catalog.main.locals" in out
+        assert "was not found in the catalog" in out
+
+    def test_single_part_unknown_left_as_is(self):
+        err = "relation 'nonexistent' was not found"
+        assert self._f(err, "SELECT * FROM nonexistent") == err  # already clear
+
+    def test_unrelated_error_passthrough(self):
+        assert self._f("some parse error", "SELECT 1") == "some parse error"
 
 
 class TestCronSchedules:
