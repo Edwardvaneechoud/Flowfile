@@ -1,4 +1,5 @@
-from flowfile_core.kernel.manager import KernelManager
+from typing import TYPE_CHECKING
+
 from flowfile_core.kernel.models import (
     ArtifactIdentifier,
     ArtifactPersistenceInfo,
@@ -16,7 +17,6 @@ from flowfile_core.kernel.models import (
     RecoveryMode,
     RecoveryStatus,
 )
-from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
@@ -39,12 +39,16 @@ __all__ = [
     "get_kernel_manager",
 ]
 
-_manager: KernelManager | None = None
+if TYPE_CHECKING:
+    from flowfile_core.kernel.manager import KernelManager
+
+_manager: "KernelManager | None" = None
 
 
-def get_kernel_manager() -> KernelManager:
+def get_kernel_manager() -> "KernelManager":
     global _manager
     if _manager is None:
+        from flowfile_core.kernel.manager import KernelManager
         from shared.storage_config import storage
 
         # Use a sub-directory of the standard temp/internal_storage tree.
@@ -54,3 +58,20 @@ def get_kernel_manager() -> KernelManager:
         shared_path = str(storage.temp_directory / "kernel_shared")
         _manager = KernelManager(shared_volume_path=shared_path)
     return _manager
+
+
+def __getattr__(name: str):
+    # `router` is imported only by the FastAPI server (main.py). Loading it
+    # eagerly would pull fastapi into every importer of this package (incl.
+    # flowfile_frame via flow_graph's KernelManager/execution imports), so
+    # resolve it lazily to keep the dataframe-API import light. KernelManager
+    # is deferred for the same reason: manager.py imports docker + httpx.
+    if name == "router":
+        from flowfile_core.kernel.routes import router
+
+        return router
+    if name == "KernelManager":
+        from flowfile_core.kernel.manager import KernelManager
+
+        return KernelManager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

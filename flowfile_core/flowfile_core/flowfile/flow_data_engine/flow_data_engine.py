@@ -10,6 +10,11 @@ from math import ceil
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
+    # pyarrow is expensive to import and only needed when arrow/parquet paths
+    # actually run — keep it off the `import flowfile_frame` hot path.
+    from pyarrow import Table as PaTable
+    from pyarrow.parquet import ParquetFile
+
     from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
 import polars as pl
@@ -18,8 +23,6 @@ from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 from polars_grouper import graph_solver
-from pyarrow import Table as PaTable
-from pyarrow.parquet import ParquetFile
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
@@ -813,6 +816,8 @@ class FlowDataEngine:
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
         """Handles file path reference input."""
+        from pyarrow.parquet import ParquetFile
+
         try:
             pf = ParquetFile(path_ref)
         except Exception as e:

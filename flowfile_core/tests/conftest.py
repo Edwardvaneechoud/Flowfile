@@ -61,11 +61,10 @@ SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # secon
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""
-    from flowfile_core.database.connection import engine, get_database_url
-    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.connection import engine, ensure_db_initialized, get_database_url
     from flowfile_core.database.models import Base
 
-    init_db()
+    ensure_db_initialized()
 
     yield
 

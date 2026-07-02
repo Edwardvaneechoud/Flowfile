@@ -10,11 +10,6 @@ from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 from shared.storage_config import storage
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
-
 
 def _validate_flow_path(flow_path: Path) -> Path:
     """Validate flow path is within allowed directories or is an explicit absolute path."""
@@ -115,8 +110,11 @@ def _load_flowfile_yaml(flow_path: Path) -> schemas.FlowInformation:
     Returns:
         FlowInformation object
     """
-    if yaml is None:
-        raise ImportError("PyYAML is required for YAML files. Install with: pip install pyyaml")
+    try:
+        # Deferred so PyYAML loads only when a YAML flow is actually opened.
+        import yaml
+    except ImportError:
+        raise ImportError("PyYAML is required for YAML files. Install with: pip install pyyaml") from None
     flow_path = _validate_flow_path(flow_path)
     with open(flow_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)

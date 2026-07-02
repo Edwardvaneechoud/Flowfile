@@ -1084,7 +1084,7 @@ class TestI1_DotDotGuardInDockerMode:
         # Finding I1: docker/package branch must reject .. sequences.
         monkeypatch.setenv("FLOWFILE_MODE", "docker")
         from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
-        from fastapi import HTTPException
+        from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
             validate_path_under_cwd("some/../../etc/passwd")
@@ -1094,7 +1094,7 @@ class TestI1_DotDotGuardInDockerMode:
         # Finding I1: same check applies in package mode.
         monkeypatch.setenv("FLOWFILE_MODE", "package")
         from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
-        from fastapi import HTTPException
+        from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
             validate_path_under_cwd("../secret")

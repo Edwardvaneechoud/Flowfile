@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
 
 # LEGACY PICKLE LOADING
 
@@ -25,6 +24,10 @@ class LegacyUnpickler(pickle.Unpickler):
 
     def find_class(self, module: str, name: str):
         """Override to redirect transform_schema dataclasses to legacy definitions."""
+        # Deferred: the legacy-schema module is sizable and only needed when a
+        # pre-YAML `.flowfile` pickle is actually opened.
+        from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
+
         if name in LEGACY_CLASS_MAP:
             return LEGACY_CLASS_MAP[name]
         return super().find_class(module, name)

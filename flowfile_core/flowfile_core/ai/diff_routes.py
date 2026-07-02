@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from flowfile_core import flow_file_handler
 from flowfile_core.ai import audit, diff
 from flowfile_core.auth.jwt import get_current_active_user
-from flowfile_core.database.connection import SessionLocal, get_db
+from flowfile_core.database.connection import SessionLocal, ensure_db_initialized, get_db
 
 router = APIRouter()
 
@@ -165,6 +165,7 @@ def _flip_audit_actions(audit_ids: list[int], action: audit.DiffAction) -> list[
     if not audit_ids:
         return []
     updated: list[int] = []
+    ensure_db_initialized()
     with SessionLocal() as session:
         for aid in audit_ids:
             row = audit.update_diff_action(aid, action, db=session)

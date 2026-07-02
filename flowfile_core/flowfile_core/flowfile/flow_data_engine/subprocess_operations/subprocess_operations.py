@@ -1,14 +1,37 @@
 # Standard library imports
+from __future__ import annotations
+
 import io
 import json
 import threading
 from base64 import b64decode
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 import polars as pl
-import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
+
+if TYPE_CHECKING:
+    import requests
+
+    from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
+else:
+
+    class _LazyRequests:
+        """Stand-in that defers `import requests` (~80ms) until the first worker call.
+
+        Every use in this module is a network round-trip to the worker, so the
+        import cost never belongs on the `import flowfile_frame` path. On first
+        attribute access the real module replaces this proxy in globals().
+        """
+
+        def __getattr__(self, name):
+            import requests
+
+            globals()["requests"] = requests
+            return getattr(requests, name)
+
+    requests = _LazyRequests()
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
@@ -29,7 +52,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
 )
-from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
@@ -481,6 +503,8 @@ def trigger_delta_history(
     response = requests.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta history read failed: {response.text}")
+    from flowfile_core.schemas.catalog_schema import DeltaTableHistory
+
     return DeltaTableHistory.model_validate(response.json())
 
 
@@ -501,6 +525,8 @@ def trigger_delta_version_preview(
     response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta version preview failed: {response.text}")
+    from flowfile_core.schemas.catalog_schema import CatalogTablePreview
+
     return CatalogTablePreview.model_validate(response.json())
 
 
@@ -520,6 +546,8 @@ def trigger_delta_preview(
     response = requests.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta preview failed: {response.text}")
+    from flowfile_core.schemas.catalog_schema import CatalogTablePreview
+
     return CatalogTablePreview.model_validate(response.json())
 
 

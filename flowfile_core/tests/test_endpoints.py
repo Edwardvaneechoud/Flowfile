@@ -2337,7 +2337,7 @@ def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
 def test_validate_path_under_cwd_electron_blocks_dot_dot(monkeypatch):
     """In electron mode, .. traversal must still be rejected with a 403 (the
     blocklist is kept on top of the normpath+startswith barrier)."""
-    from fastapi import HTTPException
+    from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
     from flowfile_core.configs import settings
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd

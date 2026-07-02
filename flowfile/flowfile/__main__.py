@@ -20,6 +20,12 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
 
     OFFLOAD_TO_WORKER.set(False)
 
+    # DB init is no longer an import side effect; get_run_user_id below reads the
+    # catalog DB via shared models (bypassing core's get_db guard), so init here.
+    from flowfile_core.database.connection import ensure_db_initialized
+
+    ensure_db_initialized()
+
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     path = Path(flow_path)
@@ -150,9 +156,8 @@ def _complete_run_if_needed(
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
     """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
-    from fastapi import HTTPException
-
     from flowfile_core.auth.utils import get_local_user_id
+    from flowfile_core.exceptions import FlowfileHTTPException
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
     from flowfile_core.project import project_sync
 
@@ -162,7 +167,7 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
             sys.exit(1)
         try:
             return validate_path_under_cwd(arg)
-        except HTTPException as e:
+        except FlowfileHTTPException as e:
             print(f"Invalid project path: {e.detail}", file=sys.stderr)
             sys.exit(1)
 

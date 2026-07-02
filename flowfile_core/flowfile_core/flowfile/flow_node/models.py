@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-import pyarrow as pa
+if TYPE_CHECKING:
+    # Annotation-only: pyarrow is expensive and must stay off the
+    # `import flowfile_frame` path.
+    import pyarrow as pa
 
 
 class ExecutionStrategy(Enum):
@@ -179,9 +184,9 @@ class NodeStepInputs:
         main_inputs: A list of `FlowNode` objects connected to the main input port(s).
     """
 
-    left_input: "FlowNode" = None
-    right_input: "FlowNode" = None
-    main_inputs: list["FlowNode"] = None
+    left_input: FlowNode = None
+    right_input: FlowNode = None
+    main_inputs: list[FlowNode] = None
 
     @property
     def input_ids(self) -> list[int]:
@@ -193,7 +198,7 @@ class NodeStepInputs:
             return [node_input.node_information.id for node_input in self.get_all_inputs()]
         return []
 
-    def get_all_inputs(self) -> list["FlowNode"]:
+    def get_all_inputs(self) -> list[FlowNode]:
         """
         Retrieves a single list containing all input nodes (main, left, and right).
         :return: A list of all connected `FlowNode` objects.

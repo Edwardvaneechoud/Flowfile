@@ -4,17 +4,24 @@ Extracted from FlowGraph.add_python_script to keep the closure small and
 each piece independently testable.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, SERVER_PORT
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ExternalDfFetcher
-from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
+
+if TYPE_CHECKING:
+    # KernelManager is annotation-only here; manager.py imports docker + httpx,
+    # which must stay off the `import flowfile_frame` path.
+    from flowfile_core.kernel.manager import KernelManager
 
 logger = logging.getLogger(__name__)
 

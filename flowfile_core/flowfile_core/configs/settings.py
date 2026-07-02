@@ -4,7 +4,6 @@ import os
 import platform
 import tempfile
 
-from passlib.context import CryptContext
 from starlette.config import Config
 
 from flowfile_core.configs.utils import MutableBool
@@ -158,7 +157,6 @@ IS_RUNNING_IN_DOCKER = is_docker_mode()
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
-PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
@@ -166,3 +164,15 @@ GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
     "GOOGLE_OAUTH_REDIRECT_URI",
     f"http://localhost:{SERVER_PORT}/ga_connections/oauth/callback",
 )
+
+
+def __getattr__(name: str):
+    # Nothing in-repo uses PWD_CONTEXT (auth/password.py owns password hashing),
+    # but it stays resolvable for external callers. Built lazily so importing
+    # settings — which sits on the `import flowfile_frame` path — doesn't pay
+    # for loading passlib.
+    if name == "PWD_CONTEXT":
+        from passlib.context import CryptContext
+
+        return CryptContext(schemes=["bcrypt"], deprecated="auto")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

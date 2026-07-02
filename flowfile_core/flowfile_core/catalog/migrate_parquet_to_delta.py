@@ -23,7 +23,7 @@ from pathlib import Path
 import polars as pl
 
 from flowfile_core.catalog.delta_utils import is_delta_table
-from flowfile_core.database.connection import SessionLocal
+from flowfile_core.database.connection import SessionLocal, ensure_db_initialized
 from flowfile_core.database.models import CatalogTable
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,7 @@ def migrate_table(table: CatalogTable, *, dry_run: bool = False) -> bool:
 
 
 def main(dry_run: bool = False) -> int:
+    ensure_db_initialized()
     db = SessionLocal()
     try:
         tables = db.query(CatalogTable).filter(CatalogTable.storage_format == "parquet").all()

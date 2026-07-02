@@ -38,7 +38,7 @@ from threading import Lock
 from sqlalchemy.orm import Session
 
 from flowfile_core.ai.audit import query_events
-from flowfile_core.database.connection import SessionLocal
+from flowfile_core.database.connection import SessionLocal, ensure_db_initialized
 from flowfile_core.database.models import AiAuditEvent
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ def aggregate_pass_rate(
 
     if db is not None:
         return _aggregate(db)
+    ensure_db_initialized()
     with SessionLocal() as session:
         return _aggregate(session)
 

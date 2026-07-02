@@ -15,7 +15,6 @@ from base64 import b64encode
 from typing import Any
 
 import polars as pl
-from websockets.sync.client import connect
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
@@ -148,6 +147,10 @@ def streaming_start(
 
     Raises immediately on connection failure or send error.
     """
+    # websockets loads only when a task is actually streamed to the worker —
+    # keeps it off the `import flowfile_frame` path.
+    from websockets.sync.client import connect
+
     ws_url = _get_ws_url() + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 

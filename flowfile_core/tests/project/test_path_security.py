@@ -111,7 +111,7 @@ class TestValidatePathDockerMode:
     def test_dotdot_in_docker_mode_raises_403(self, monkeypatch):
         # Finding I1: docker branch had no explicit '..' guard pre-fix; post-fix rejects it.
         from flowfile_core.configs import settings
-        from fastapi import HTTPException
+        from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "docker")
         with pytest.raises(HTTPException) as exc_info:
@@ -121,7 +121,7 @@ class TestValidatePathDockerMode:
     def test_dotdot_in_package_mode_raises_403(self, monkeypatch):
         # Finding I1: same guard applies in package mode.
         from flowfile_core.configs import settings
-        from fastapi import HTTPException
+        from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "package")
         with pytest.raises(HTTPException) as exc_info:
@@ -134,7 +134,7 @@ class TestValidatePathDockerMode:
         # but settings.FLOWFILE_MODE is bound at import time).
         from flowfile_core.configs import settings
         from shared.storage_config import storage
-        from fastapi import HTTPException
+        from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "docker")
         # Construct a sibling of the user_data_directory.
@@ -165,7 +165,7 @@ class TestValidatePathElectronMode:
     def test_dotdot_in_electron_mode_raises_403(self, monkeypatch):
         # Non-regression: electron mode blocks '..' traversal too (added in the same fix).
         from flowfile_core.configs import settings
-        from fastapi import HTTPException
+        from flowfile_core.exceptions import FlowfileHTTPException as HTTPException
 
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "electron")
         with pytest.raises(HTTPException) as exc_info:
