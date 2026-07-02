@@ -1,8 +1,9 @@
 import gc
+import queue as _queue
 from base64 import b64encode
 from multiprocessing import Process
 from multiprocessing.queues import Queue
-from time import sleep
+from time import monotonic, sleep
 
 from flowfile_worker import funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.process_manager import ProcessManager
@@ -10,6 +11,33 @@ from flowfile_worker.process_manager import ProcessManager
 process_manager = ProcessManager()
 
 flowfile_node_id_type = int | str
+
+# Bound the result drain so a wedged child can't hang the monitor forever, while
+# still allowing a large payload's feeder thread time to flush to the pipe.
+RESULT_QUEUE_TIMEOUT = 30.0
+
+
+def drain_result_queue(q: Queue, p: Process, timeout: float = RESULT_QUEUE_TIMEOUT):
+    """Read the single result a child puts on *q*, draining BEFORE the caller joins *p*.
+
+    A child that put() a payload larger than the OS pipe buffer (~64 KB) blocks in its
+    feeder thread until the parent reads it, so joining first would deadlock. Poll instead
+    of a single long get() so we bail the instant the child exits without a result (e.g. it
+    crashed after signalling completion but before put()), independent of put/signal order.
+    """
+    deadline = monotonic() + timeout
+    while True:
+        try:
+            return q.get(timeout=0.1)
+        except _queue.Empty:
+            if not p.is_alive():
+                # Child exited: any put() has been flushed. One last non-blocking read.
+                try:
+                    return q.get_nowait()
+                except _queue.Empty:
+                    return None
+            if monotonic() >= deadline:
+                return None
 
 
 def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_message: mp_context.Array, q: Queue):
@@ -50,17 +78,31 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
                         status_dict[task_id].error_message = error_message.value.decode().rstrip("\x00")
                 break
 
+            # A child that put() a large result blocks in its feeder thread and never
+            # exits, so p.is_alive() would spin here forever. Break on the completion
+            # signal and let the drain below read the queue (which unblocks the child).
+            if current_progress == 100:
+                break
+
+        with status_dict_lock:
+            cancelled = status_dict[task_id].status == "Cancelled"
+        with progress.get_lock():
+            final_progress = progress.value
+
+        # Drain the queue BEFORE joining (see drain_result_queue). Only the success path
+        # (progress == 100) puts a result; errors travel via the shared Array.
+        result = None
+        if not cancelled and final_progress == 100:
+            result = drain_result_queue(q, p)
+
         p.join()
 
         with status_dict_lock:
             status = status_dict[task_id]
             if status.status != "Cancelled":
-                with progress.get_lock():
-                    final_progress = progress.value
                 if final_progress == 100:
                     status.status = "Completed"
-                    if not q.empty():
-                        result = q.get()
+                    if result is not None:
                         # b64-encode bytes for JSON-safe storage in status_dict (REST responses)
                         if isinstance(result, bytes):
                             status.results = b64encode(result).decode("ascii")
