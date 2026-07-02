@@ -12,8 +12,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useItemStore } from '../../src/components/common/DraggableItem/stateStore'
 import { Z_INDEX } from '../../src/components/common/DraggableItem/zIndex'
 
-// STORAGE_VERSION is 2 → this is the persisted key format (kept in sync manually).
-const key = (id: string) => `overlayPositionAndSize.v2_${id}`
+// STORAGE_VERSION is 3 → this is the persisted key format (kept in sync manually).
+const key = (id: string) => `overlayPositionAndSize.v3_${id}`
 
 describe('DraggableItem item store', () => {
   beforeEach(() => {

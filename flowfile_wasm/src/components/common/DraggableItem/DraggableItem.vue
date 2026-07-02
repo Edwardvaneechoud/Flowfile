@@ -144,17 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  onMounted,
-  onBeforeUnmount,
-  defineExpose,
-  defineProps,
-  getCurrentInstance,
-  nextTick,
-  watch,
-} from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, getCurrentInstance, nextTick, watch } from 'vue'
 import { useItemStore } from './stateStore'
 import type { ItemLayout, AxisBehaviour } from './stateStore'
 
@@ -266,8 +256,10 @@ const itemState = ref(
   itemStore.items[props.id] || {
     width: props.initialWidth || 400,
     height: props.initialHeight || 300,
-    left: props.initialLeft || 100,
-    top: props.initialTop || 100,
+    // ?? not || — a legitimate 0 offset (e.g. docking at the container top when
+    // the toolbar is hidden) must not fall through to the 100 default.
+    left: props.initialLeft ?? 100,
+    top: props.initialTop ?? 100,
     group: props.group,
     syncDimensions: props.syncDimensions,
     zIndex: 100,
@@ -964,8 +956,10 @@ onMounted(() => {
 
   const initialWidth = calculateWidth()
   const initialHeight = calculateHeight()
-  const initialLeft = props.initialLeft || 100
-  const initialTop = props.initialTop || 100
+  // ?? not || — preserve a legitimate 0 offset (docking flush to an edge)
+  // instead of treating it as "unset" and defaulting to 100.
+  const initialLeft = props.initialLeft ?? 100
+  const initialTop = props.initialTop ?? 100
 
   // IMPORTANT: Register the true initial state FIRST
   itemStore.registerInitialState(props.id, {
