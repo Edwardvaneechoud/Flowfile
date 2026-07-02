@@ -2,6 +2,7 @@
 import { defineStore } from "pinia";
 import type { VueFlowStore } from "@vue-flow/core";
 import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../types";
+import type { FlowParameter } from "../types/flow.types";
 import { FlowApi } from "../api";
 import { useEditorStore } from "./editor-store";
 
@@ -34,6 +35,10 @@ export const useFlowStore = defineStore("flow", {
       historyState: { ...defaultHistoryState } as HistoryState,
       // Artifact visualization data
       artifactData: { ...defaultArtifactData } as FlowArtifactData,
+      // Flow-level parameters (${name} refs). Populated by the header when it
+      // loads/saves flow settings; read by the formula/filter editor for
+      // highlighting, autocomplete and hover.
+      parameters: [] as FlowParameter[],
       // Monotonic counter bumped by `requestReload()`. Components rendering
       // the canvas (e.g. `Canvas.vue`'s `loadFlow`) watch this and re-fetch
       // the graph on bump. Used when the backend mutates the flow without
@@ -73,6 +78,22 @@ export const useFlowStore = defineStore("flow", {
       }
       this.historyState = { ...defaultHistoryState };
       this.artifactData = { ...defaultArtifactData };
+      this.parameters = [];
+    },
+
+    setParameters(parameters: FlowParameter[]) {
+      this.parameters = parameters ?? [];
+    },
+
+    // Fallback loader for when the editor opens before the header has fetched
+    // flow settings. Pinned to a flowId so a late response for a stale flow is
+    // dropped.
+    async loadParameters(flowId?: number) {
+      const targetId = flowId ?? this.flowId;
+      if (targetId < 0) return;
+      const settings = await FlowApi.getFlowSettings(targetId);
+      if (this.flowId !== targetId) return;
+      this.parameters = settings?.parameters ?? [];
     },
 
     setVueFlowInstance(vueFlowInstance: VueFlowStore) {

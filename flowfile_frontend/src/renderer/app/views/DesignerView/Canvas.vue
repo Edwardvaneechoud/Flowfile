@@ -200,8 +200,9 @@ function onNodeDrag({ event, node }: { event: MouseEvent | TouchEvent; node: Nod
   const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
   // `multi` nodes render one input handle that accepts many sources, so they
   // qualify as 1-input for splice purposes even though template.input is high.
+  // Dynamic-input nodes never splice: their input-0 is the parameter handle.
   const effectiveInputCount = template?.multi ? 1 : (template?.input ?? 0);
-  if (!template || effectiveInputCount !== 1 || template.output < 1) {
+  if (!template || template.dynamic_inputs || effectiveInputCount !== 1 || template.output < 1) {
     markHoveredEdge(null);
     nodeDragInsertCandidate = null;
     return;
@@ -493,7 +494,13 @@ function isValidConnection(connection: Connection): boolean {
   const targetNode = instance.findNode(target);
   const targetTemplate = (targetNode?.data as { nodeTemplate?: NodeTemplate } | undefined)
     ?.nodeTemplate;
-  if (targetTemplate && !targetTemplate.multi && connection.targetHandle) {
+  // Every handle of a dynamic_inputs node (run_flow) is single-edge, including
+  // the parameter handle input-0.
+  if (
+    targetTemplate &&
+    (targetTemplate.dynamic_inputs || !targetTemplate.multi) &&
+    connection.targetHandle
+  ) {
     const handleOccupied = currentEdges.some(
       (e) => e.target === target && e.targetHandle === connection.targetHandle,
     );
@@ -612,16 +619,18 @@ const openNodeSettings = async (nodeId: number) => {
 const openNodeData = (nodeId: number) => {
   if (isGroupNodeId(String(nodeId))) return;
   drawerStore.setPreviewNode(nodeId);
+  drawerStore.setActiveTab("bottomDock", "data");
   nextTick().then(() => itemStore.bringToFront("bottomDock"));
 };
 
 const nodeClick = (mouseEvent: any) => {
-  // Single click opens Settings only. The bottom dock is opened by double-click
-  // (handleMainDblClick), not here; if it's already open we follow the selection.
+  // Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
   const rawId = String(mouseEvent.node.id);
   openNodeSettings(parseInt(rawId));
-  if (!isGroupNodeId(rawId) && drawerStore.previewNodeId !== null) {
+  const dockOpen = drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer;
+  if (!isGroupNodeId(rawId) && dockOpen) {
     drawerStore.setPreviewNode(parseInt(rawId));
+    drawerStore.setActiveTab("bottomDock", "data");
   }
 };
 
@@ -735,6 +744,8 @@ const copySelectedNodes = () => {
       flowIdToCopyFrom: flowStore.flowId,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
+      inputHandles: node.data.inputs,
+      outputHandles: node.data.outputs,
     };
     localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
     localStorage.removeItem("copiedMultiNodes");
@@ -763,6 +774,8 @@ const copySelectedNodes = () => {
       flowIdToCopyFrom: flowStore.flowId,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
+      inputHandles: node.data.inputs,
+      outputHandles: node.data.outputs,
       relativeX: node.position.x - minX,
       relativeY: node.position.y - minY,
     }));

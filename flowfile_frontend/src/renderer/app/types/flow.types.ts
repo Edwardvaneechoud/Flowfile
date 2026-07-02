@@ -10,10 +10,15 @@ export type ExecutionLocation = "local" | "remote";
 
 // Flow Parameters
 
+export type FlowParamType = "string" | "integer" | "float" | "boolean" | "enum";
+
 export interface FlowParameter {
   name: string;
   default_value: string;
   description: string;
+  // Missing type means "string" (pre-typed-parameters flows).
+  type?: FlowParamType;
+  enum_values?: string[] | null;
 }
 
 // Flow Settings
@@ -106,6 +111,9 @@ export interface NodeTemplate {
   custom_node: boolean;
   tags?: string[];
   output_names?: string[];
+  // True for nodes whose handles come from per-instance input_names/output_names
+  // (run_flow); every handle of such a node accepts exactly one edge.
+  dynamic_inputs?: boolean;
 }
 
 export interface NodeInput extends NodeTemplate {
@@ -114,6 +122,8 @@ export interface NodeInput extends NodeTemplate {
   pos_y: number;
   group_id?: number | null;
   node_reference?: string;
+  // run_flow instances: ["Parameters", ...input_slots]; index i ↔ handle input-${i}.
+  input_names?: string[] | null;
 }
 
 // Handle Types
@@ -123,6 +133,7 @@ export interface NodeHandle {
   position: Position;
   label?: string;
   title?: string;
+  kind?: "data" | "parameter";
 }
 
 // Input Name Info (for kernel node autocomplete)

@@ -175,6 +175,12 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
 
+        if self.node.node_type == "run_flow":
+            # The referenced flow file can change without any parent-settings
+            # change, so a subflow node is never considered up to date.
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
+
         if force_refresh:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)

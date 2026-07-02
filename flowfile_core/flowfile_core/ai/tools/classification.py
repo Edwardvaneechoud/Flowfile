@@ -25,7 +25,9 @@ set names the nodes whose schema callback either reads the upstream lazy frame
 values to column names) or executes user code (``polars_code`` /
 ``python_script`` / ``sql_query``) or expands rows in non-deterministic ways
 (``unpivot`` / ``text_to_rows`` / ``graph_solver``). ``user_defined`` is
-dynamic because the underlying class is runtime-registered.
+dynamic because the underlying class is runtime-registered, and ``run_flow``
+is dynamic because its output schema only exists after the referenced subflow
+is executed.
 """
 
 from __future__ import annotations
@@ -79,6 +81,12 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "apply_model": "static",
     "evaluate_model": "static",
     "wait_for": "static",
+    # Flow-in-flow authoring primitives. flow_input has no input port (source);
+    # flow_output is a passthrough sink; run_flow's output schema only exists
+    # after the referenced subflow is run, so it's dynamic.
+    "flow_input": "source",
+    "flow_output": "static",
+    "run_flow": "dynamic",
 }
 
 

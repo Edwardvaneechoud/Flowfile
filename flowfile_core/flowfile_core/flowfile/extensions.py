@@ -4,6 +4,7 @@ import polars as pl
 
 from flowfile_core.flowfile._extensions.real_time_interface import get_realtime_func_results
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas.output_model import InstantFuncResult
 from flowfile_core.utils.arrow_reader import read_top_n
 
@@ -16,6 +17,12 @@ def get_first_row(arrow_path: str) -> pl.DataFrame:
 def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFuncResult:
     if len(node_step.main_input) == 0:
         return InstantFuncResult(result="No input data connected, so cannot evaluate the result", success=None)
+    # Resolve ${param} references so the preview matches what execution produces
+    # (typed literals: strings quoted, numbers/bools bare). Unknown refs are left
+    # as-is. Mirrors the expression-field substitution done at run time.
+    params_getter = getattr(node_step, "_params_getter", None)
+    if params_getter and "${" in func_string:
+        func_string = resolve_expression_parameters(func_string, params_getter())
     node_input = node_step.main_input[0]
     try:
         if (

@@ -1,0 +1,987 @@
+<template>
+  <div ref="rootEl" class="settings-section">
+    <!-- Table Controls -->
+    <div class="controls-section controls-top">
+      <div class="button-group">
+        <el-button type="primary" size="small" @click="addColumn">
+          <template #icon><i class="fas fa-plus" /></template>
+          Add Column
+        </el-button>
+        <el-button type="primary" size="small" @click="addRow">
+          <template #icon><i class="fas fa-plus" /></template>
+          Add Row
+        </el-button>
+        <el-button size="small" @click="toggleRawData">
+          <template #icon>
+            <i :class="showRawData ? 'fas fa-eye-slash' : 'fas fa-code'" />
+          </template>
+          {{ showRawData ? "Hide JSON" : "Edit JSON" }}
+        </el-button>
+        <el-button size="small" @click="toggleCsvPaste">
+          <template #icon>
+            <i :class="showCsvPaste ? 'fas fa-eye-slash' : 'fas fa-paste'" />
+          </template>
+          {{ showCsvPaste ? "Hide Paste Area" : "Paste CSV/TSV" }}
+        </el-button>
+        <el-button size="small" @click="copyAllData">
+          <template #icon><i class="fas fa-copy" /></template>
+          Copy All
+        </el-button>
+      </div>
+      <div class="table-info">
+        <span class="info-badge">{{ columns.length }} columns</span>
+        <span class="info-badge">{{ rows.length }} rows</span>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <table class="modern-table">
+        <thead>
+          <tr class="header-row">
+            <th class="row-number-header">#</th>
+            <th v-for="col in columns" :key="col.id" class="column-header-cell">
+              <div class="column-header">
+                <div class="header-top">
+                  <input
+                    v-model="col.name"
+                    class="input-header"
+                    type="text"
+                    :placeholder="`Column ${col.id}`"
+                    @focus="selectAll($event)"
+                  />
+                  <button
+                    class="delete-column-btn"
+                    title="Delete column"
+                    @click="deleteColumn(col.id)"
+                  >
+                    <i class="fas fa-times" />
+                  </button>
+                </div>
+                <div class="header-type">
+                  <el-select
+                    v-model="col.dataType"
+                    size="small"
+                    class="type-select"
+                    :teleported="true"
+                  >
+                    <el-option
+                      v-for="dtype in dataTypes"
+                      :key="dtype"
+                      :label="dtype"
+                      :value="dtype"
+                    />
+                  </el-select>
+                </div>
+              </div>
+            </th>
+            <th class="actions-header"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, rowIndex) in rows" :key="row.id" class="data-row">
+            <td class="row-number">{{ rowIndex + 1 }}</td>
+            <td v-for="col in columns" :key="col.id" class="data-cell">
+              <input
+                v-model="row.values[col.id]"
+                class="input-cell"
+                type="text"
+                @focus="selectAll($event)"
+                @keydown="handleCellKeydown($event, row, col)"
+                @paste="handleCellPaste($event, row, col)"
+              />
+            </td>
+            <td class="row-actions">
+              <button class="delete-row-btn" title="Delete row" @click="deleteRow(row.id)">
+                <i class="fas fa-times" />
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Raw Data Editor -->
+    <el-collapse-transition>
+      <div v-if="showRawData" class="raw-data-section">
+        <div class="raw-data-header">
+          <span class="raw-data-title">JSON Editor</span>
+          <span class="raw-data-hint">Edit the data as JSON array</span>
+        </div>
+        <el-input
+          v-model="rawDataString"
+          type="textarea"
+          :rows="10"
+          :placeholder="JSON.stringify([{ column1: 'value1' }], null, 2)"
+          class="json-editor"
+        />
+        <div class="raw-data-controls">
+          <el-button type="primary" size="small" @click="updateTableFromRawData">
+            <template #icon><i class="fas fa-sync" /></template>
+            Apply JSON to Table
+          </el-button>
+        </div>
+      </div>
+    </el-collapse-transition>
+
+    <!-- CSV/TSV Paste Area -->
+    <el-collapse-transition>
+      <div v-if="showCsvPaste" class="raw-data-section">
+        <div class="raw-data-header">
+          <span class="raw-data-title">Paste CSV/TSV Data</span>
+          <span class="raw-data-hint">
+            Paste tab-separated (from Excel/Sheets) or comma-separated data
+          </span>
+        </div>
+        <div class="csv-options">
+          <el-radio-group v-model="csvDelimiter" size="small">
+            <el-radio-button value="tab">Tab (TSV)</el-radio-button>
+            <el-radio-button value="comma">Comma (CSV)</el-radio-button>
+            <el-radio-button value="auto">Auto-detect</el-radio-button>
+          </el-radio-group>
+          <el-checkbox v-model="csvFirstRowHeaders" size="small">
+            First row is headers
+          </el-checkbox>
+        </div>
+        <el-input
+          v-model="csvPasteString"
+          type="textarea"
+          :rows="10"
+          placeholder="Paste your data here..."
+          class="json-editor"
+        />
+        <div class="raw-data-controls">
+          <el-button type="primary" size="small" @click="applyCsvData">
+            <template #icon><i class="fas fa-sync" /></template>
+            Apply to Table
+          </el-button>
+        </div>
+      </div>
+    </el-collapse-transition>
+  </div>
+</template>
+
+<script lang="ts" setup>
+// Shared tabular sample-data editor extracted from ManualInput.vue, reused by
+// FlowInput.vue. v-model carries the RawDataFormat-shaped value; an echo guard
+// keeps parent write-backs of our own emits from resetting the table.
+import { ref, computed, watch, nextTick } from "vue";
+import { ElNotification } from "element-plus";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { parseTabularText, parseCsvText } from "../../../../../utils/clipboardUtils";
+import type { MinimalFieldInput, RawDataFormat } from "../../../../../types/node.types";
+import { inferDataType } from "./manualInputLogic";
+
+interface Column {
+  id: number;
+  name: string;
+  dataType?: string;
+}
+
+interface Row {
+  id: number;
+  values: Record<number, string>;
+}
+
+const props = defineProps<{
+  modelValue?: RawDataFormat | null;
+  // Legacy manual_input settings carried row-major records under `raw_data`.
+  legacyRecords?: Record<string, unknown>[] | null;
+}>();
+
+const emit = defineEmits<{
+  (e: "update:modelValue", value: RawDataFormat): void;
+}>();
+
+const nodeStore = useNodeStore();
+
+const rootEl = ref<HTMLElement | null>(null);
+const columns = ref<Column[]>([]);
+const rows = ref<Row[]>([]);
+const showRawData = ref(false);
+const rawDataString = ref("");
+const showCsvPaste = ref(false);
+const csvPasteString = ref("");
+const csvDelimiter = ref<"tab" | "comma" | "auto">("auto");
+const csvFirstRowHeaders = ref(true);
+
+let nextColumnId = 1;
+let nextRowId = 1;
+
+const dataTypes = nodeStore.getDataTypes();
+
+const rawData = computed(() => {
+  return rows.value.map((row) => {
+    const obj: Record<string, string> = {};
+    for (const col of columns.value) {
+      obj[col.name] = row.values[col.id];
+    }
+    return obj;
+  });
+});
+
+const rawDataFormat = computed((): RawDataFormat => {
+  const formattedColumns: MinimalFieldInput[] = columns.value.map((col) => ({
+    name: col.name,
+    data_type: col.dataType || "String",
+  }));
+
+  const data: unknown[][] = columns.value.map((col) =>
+    rows.value.map((row) => row.values[col.id] || ""),
+  );
+
+  return {
+    columns: formattedColumns,
+    data: data,
+  };
+});
+
+let lastEmitted = "";
+
+watch(
+  [columns, rows],
+  () => {
+    const value = rawDataFormat.value;
+    lastEmitted = JSON.stringify(value);
+    emit("update:modelValue", value);
+  },
+  { deep: true },
+);
+
+const initializeEmptyTable = () => {
+  rows.value = [{ id: 1, values: { 1: "" } }];
+  columns.value = [{ id: 1, name: "Column 1", dataType: "String" }];
+  nextColumnId = 2;
+  nextRowId = 2;
+};
+
+const populateTableFromData = (data: Record<string, unknown>[]) => {
+  rows.value = [];
+  columns.value = [];
+
+  if (data.length === 0) {
+    return;
+  }
+
+  const columnNames = Object.keys(data[0]);
+
+  const columnValues: Record<string, unknown[]> = {};
+  columnNames.forEach((name) => {
+    columnValues[name] = data.map((item) => item[name]);
+  });
+
+  columnNames.forEach((name, colIndex) => {
+    const inferredType = inferDataType(columnValues[name]);
+    columns.value.push({
+      id: colIndex + 1,
+      name: name,
+      dataType: inferredType,
+    });
+  });
+
+  data.forEach((item, rowIndex) => {
+    const row: Row = { id: rowIndex + 1, values: {} };
+    columnNames.forEach((key, colIndex) => {
+      row.values[colIndex + 1] = String(item[key] ?? "");
+    });
+    rows.value.push(row);
+  });
+
+  nextColumnId = columns.value.length + 1;
+  nextRowId = rows.value.length + 1;
+};
+
+const populateTableFromRawDataFormat = (rawDataFormat: RawDataFormat) => {
+  rows.value = [];
+  columns.value = [];
+
+  if (rawDataFormat.columns) {
+    rawDataFormat.columns.forEach((col, index) => {
+      columns.value.push({
+        id: index + 1,
+        name: col.name,
+        dataType: col.data_type || "String",
+      });
+    });
+  }
+
+  const numRows = rawDataFormat.data[0]?.length || 0;
+  for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
+    const row: Row = { id: rowIndex + 1, values: {} };
+    rawDataFormat.data.forEach((colData, colIndex) => {
+      row.values[colIndex + 1] = String(colData[rowIndex] || "");
+    });
+    rows.value.push(row);
+  }
+
+  if (numRows === 0 && columns.value.length > 0) {
+    const emptyRow: Row = { id: 1, values: {} };
+    columns.value.forEach((col) => {
+      emptyRow.values[col.id] = "";
+    });
+    rows.value.push(emptyRow);
+    nextRowId = 2;
+  } else {
+    nextRowId = numRows + 1;
+  }
+
+  nextColumnId = columns.value.length + 1;
+};
+
+const applyModelValue = (value: RawDataFormat | null | undefined) => {
+  if (value && value.columns && value.data) {
+    populateTableFromRawDataFormat(value);
+  } else if (props.legacyRecords) {
+    populateTableFromData(props.legacyRecords);
+  } else {
+    initializeEmptyTable();
+  }
+  rawDataString.value = JSON.stringify(rawData.value, null, 2);
+};
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (JSON.stringify(value ?? null) === lastEmitted) return;
+    applyModelValue(value);
+  },
+  { immediate: true, deep: true },
+);
+
+const addColumn = () => {
+  columns.value.push({
+    id: nextColumnId,
+    name: `Column ${nextColumnId}`,
+    dataType: "String",
+  });
+  nextColumnId++;
+};
+
+const addRow = () => {
+  const newRow: Row = { id: nextRowId, values: {} };
+  columns.value.forEach((col) => {
+    newRow.values[col.id] = "";
+  });
+  rows.value.push(newRow);
+  nextRowId++;
+};
+
+const deleteColumn = (id: number) => {
+  const index = columns.value.findIndex((col) => col.id === id);
+  if (index !== -1) {
+    columns.value.splice(index, 1);
+    rows.value.forEach((row) => {
+      delete row.values[id];
+    });
+  }
+};
+
+const deleteRow = (id: number) => {
+  const index = rows.value.findIndex((row) => row.id === id);
+  if (index !== -1) {
+    rows.value.splice(index, 1);
+  }
+};
+
+const toggleRawData = () => {
+  showRawData.value = !showRawData.value;
+};
+
+const selectAll = (event: FocusEvent) => {
+  const target = event.target as HTMLInputElement;
+  target.select();
+};
+
+const focusCell = async (rowIndex: number, colIndex: number) => {
+  await nextTick();
+  const tableEl = rootEl.value?.querySelector(".modern-table");
+  if (!tableEl) return;
+  const dataRows = tableEl.querySelectorAll(".data-row");
+  if (rowIndex < 0 || rowIndex >= dataRows.length) return;
+  const cells = dataRows[rowIndex].querySelectorAll(".input-cell");
+  if (colIndex < 0 || colIndex >= cells.length) return;
+  (cells[colIndex] as HTMLInputElement).focus();
+};
+
+const handleCellKeydown = (event: KeyboardEvent, row: Row, col: Column) => {
+  const colIndex = columns.value.findIndex((c) => c.id === col.id);
+  const rowIndex = rows.value.findIndex((r) => r.id === row.id);
+  const lastCol = columns.value.length - 1;
+  const lastRow = rows.value.length - 1;
+
+  switch (event.key) {
+    case "Tab":
+      if (event.shiftKey) {
+        if (colIndex > 0) {
+          event.preventDefault();
+          focusCell(rowIndex, colIndex - 1);
+        } else if (rowIndex > 0) {
+          event.preventDefault();
+          focusCell(rowIndex - 1, lastCol);
+        }
+      } else {
+        if (colIndex === lastCol && rowIndex === lastRow) {
+          event.preventDefault();
+          addRow();
+          focusCell(rowIndex + 1, 0);
+        }
+      }
+      break;
+
+    case "Enter":
+      event.preventDefault();
+      if (rowIndex < lastRow) {
+        focusCell(rowIndex + 1, colIndex);
+      } else {
+        addRow();
+        focusCell(rowIndex + 1, colIndex);
+      }
+      break;
+
+    case "ArrowUp":
+      if (rowIndex > 0) {
+        event.preventDefault();
+        focusCell(rowIndex - 1, colIndex);
+      }
+      break;
+
+    case "ArrowDown":
+      if (rowIndex < lastRow) {
+        event.preventDefault();
+        focusCell(rowIndex + 1, colIndex);
+      }
+      break;
+
+    case "ArrowLeft": {
+      const input = event.target as HTMLInputElement;
+      if (input.selectionStart === 0 && input.selectionEnd === 0 && colIndex > 0) {
+        event.preventDefault();
+        focusCell(rowIndex, colIndex - 1);
+      }
+      break;
+    }
+
+    case "ArrowRight": {
+      const input = event.target as HTMLInputElement;
+      if (input.selectionStart === input.value.length && colIndex < lastCol) {
+        event.preventDefault();
+        focusCell(rowIndex, colIndex + 1);
+      }
+      break;
+    }
+  }
+};
+
+const applyPastedData = (data: string[][], startRowIndex: number, startColIndex: number) => {
+  const maxCols = Math.max(...data.map((r) => r.length));
+
+  while (columns.value.length < startColIndex + maxCols) {
+    columns.value.push({
+      id: nextColumnId,
+      name: `Column ${nextColumnId}`,
+      dataType: "String",
+    });
+    nextColumnId++;
+  }
+
+  while (rows.value.length < startRowIndex + data.length) {
+    const newRow: Row = { id: nextRowId, values: {} };
+    columns.value.forEach((col) => {
+      newRow.values[col.id] = "";
+    });
+    rows.value.push(newRow);
+    nextRowId++;
+  }
+
+  for (let r = 0; r < data.length; r++) {
+    const row = rows.value[startRowIndex + r];
+    for (let c = 0; c < data[r].length; c++) {
+      const col = columns.value[startColIndex + c];
+      row.values[col.id] = data[r][c];
+    }
+  }
+
+  for (let c = 0; c < maxCols; c++) {
+    const col = columns.value[startColIndex + c];
+    const colValues = rows.value.map((r) => r.values[col.id]);
+    col.dataType = inferDataType(colValues);
+  }
+};
+
+const handleCellPaste = (event: ClipboardEvent, row: Row, col: Column) => {
+  const text = event.clipboardData?.getData("text/plain");
+  if (!text) return;
+
+  const parsed = parseTabularText(text);
+  if (!parsed) return; // Single value — let browser handle normally
+
+  event.preventDefault();
+  const rowIndex = rows.value.findIndex((r) => r.id === row.id);
+  const colIndex = columns.value.findIndex((c) => c.id === col.id);
+  applyPastedData(parsed, rowIndex, colIndex);
+};
+
+const copyAllData = async () => {
+  const headerLine = columns.value.map((c) => c.name).join("\t");
+  const dataLines = rows.value.map((row) =>
+    columns.value.map((col) => row.values[col.id] || "").join("\t"),
+  );
+  const tsv = [headerLine, ...dataLines].join("\n");
+
+  try {
+    await navigator.clipboard.writeText(tsv);
+    ElNotification({
+      title: "Copied",
+      message: `${rows.value.length} rows copied to clipboard`,
+      type: "success",
+      duration: 2000,
+    });
+  } catch {
+    ElNotification({
+      title: "Error",
+      message: "Failed to copy to clipboard",
+      type: "error",
+    });
+  }
+};
+
+const toggleCsvPaste = () => {
+  showCsvPaste.value = !showCsvPaste.value;
+};
+
+const applyCsvData = () => {
+  if (!csvPasteString.value.trim()) {
+    ElNotification({
+      title: "Error",
+      message: "Please paste some data first",
+      type: "error",
+    });
+    return;
+  }
+
+  try {
+    const parsed = parseCsvText(csvPasteString.value, csvDelimiter.value);
+    if (parsed.length === 0) {
+      ElNotification({
+        title: "Error",
+        message: "No data found in the pasted text",
+        type: "error",
+      });
+      return;
+    }
+
+    let data: Record<string, unknown>[];
+
+    if (csvFirstRowHeaders.value && parsed.length > 1) {
+      const headers = parsed[0];
+      data = parsed.slice(1).map((row) => {
+        const obj: Record<string, unknown> = {};
+        headers.forEach((header, i) => {
+          obj[header || `Column ${i + 1}`] = row[i] ?? "";
+        });
+        return obj;
+      });
+    } else {
+      const colCount = Math.max(...parsed.map((r) => r.length));
+      data = parsed.map((row) => {
+        const obj: Record<string, unknown> = {};
+        for (let i = 0; i < colCount; i++) {
+          obj[`Column ${i + 1}`] = row[i] ?? "";
+        }
+        return obj;
+      });
+    }
+
+    populateTableFromData(data);
+    ElNotification({
+      title: "Success",
+      message: `Table updated with ${data.length} rows`,
+      type: "success",
+    });
+  } catch {
+    ElNotification({
+      title: "Error",
+      message: "Failed to parse the pasted data. Please check the format.",
+      type: "error",
+    });
+  }
+};
+
+const updateTableFromRawData = () => {
+  try {
+    const newData = JSON.parse(rawDataString.value);
+    if (!Array.isArray(newData)) {
+      ElNotification({
+        title: "Error",
+        message: "Data must be an array of objects",
+        type: "error",
+      });
+      return;
+    }
+    populateTableFromData(newData);
+    ElNotification({
+      title: "Success",
+      message: "Table updated successfully",
+      type: "success",
+    });
+  } catch (error) {
+    ElNotification({
+      title: "Error",
+      message: "Invalid JSON format. Please check your input.",
+      type: "error",
+    });
+  }
+};
+
+// Watchers
+watch(rawData, (newVal) => {
+  rawDataString.value = JSON.stringify(newVal, null, 2);
+});
+</script>
+
+<style scoped>
+.settings-section {
+  padding: var(--spacing-4);
+  background: var(--color-background-primary);
+  border-radius: var(--border-radius-lg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Controls Section */
+.controls-section {
+  margin-bottom: var(--spacing-3);
+}
+
+.controls-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.button-group {
+  display: flex;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
+}
+
+.table-info {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.info-badge {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-background-muted);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--border-radius-sm);
+}
+
+/* Table Container */
+.table-container {
+  flex: 1;
+  min-height: 150px;
+  overflow: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+}
+
+/* Modern Table */
+.modern-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* Header Row */
+.header-row {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-background-muted);
+}
+
+.row-number-header {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-light);
+  background: var(--color-background-muted);
+  position: sticky;
+  left: 0;
+  z-index: 11;
+}
+
+.column-header-cell {
+  min-width: 140px;
+  width: 140px;
+  padding: 0;
+  border-bottom: 2px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-light);
+  vertical-align: top;
+}
+
+.column-header {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-2);
+  padding-bottom: var(--spacing-1);
+}
+
+.input-header {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  padding: var(--spacing-1);
+  border-radius: var(--border-radius-sm);
+  outline: none;
+}
+
+.input-header:focus {
+  background: var(--color-background-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.input-header::placeholder {
+  color: var(--color-text-muted);
+}
+
+.delete-column-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  border-radius: var(--border-radius-sm);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.delete-column-btn:hover {
+  color: var(--color-danger);
+  background: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+}
+
+.delete-column-btn i {
+  font-size: 10px;
+}
+
+.header-type {
+  padding: 0 var(--spacing-2) var(--spacing-2);
+}
+
+.type-select {
+  width: 100%;
+}
+
+.type-select :deep(.el-input__wrapper) {
+  background: var(--color-background-primary);
+  box-shadow: none;
+  border: 1px solid var(--color-border-light);
+}
+
+.type-select :deep(.el-input__inner) {
+  font-size: var(--font-size-xs);
+  height: 24px;
+}
+
+.type-select :deep(.el-select__caret) {
+  font-size: 10px;
+}
+
+.actions-header {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  border-bottom: 2px solid var(--color-border-light);
+  background: var(--color-background-muted);
+}
+
+/* Data Rows */
+.data-row {
+  transition: background var(--transition-fast);
+}
+
+.data-row:hover {
+  background: var(--color-background-hover);
+}
+
+.data-row:hover .row-number {
+  background: var(--color-background-hover);
+}
+
+.row-number {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-light);
+  background: var(--color-background-muted);
+  position: sticky;
+  left: 0;
+  z-index: 5;
+}
+
+.data-cell {
+  min-width: 140px;
+  width: 140px;
+  padding: 0;
+  border-bottom: 1px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-light);
+}
+
+.input-cell {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  padding: var(--spacing-2);
+  outline: none;
+}
+
+.input-cell:focus {
+  background: var(--color-background-primary);
+  box-shadow: inset 0 0 0 2px var(--color-primary);
+}
+
+.row-actions {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  text-align: center;
+  border-bottom: 1px solid var(--color-border-light);
+  padding: var(--spacing-1);
+}
+
+.delete-row-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  border-radius: var(--border-radius-sm);
+  transition: all var(--transition-fast);
+  opacity: 0;
+}
+
+.data-row:hover .delete-row-btn {
+  opacity: 1;
+}
+
+.delete-row-btn:hover {
+  color: var(--color-danger);
+  background: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+}
+
+.delete-row-btn i {
+  font-size: 10px;
+}
+
+/* Raw Data Section */
+.raw-data-section {
+  margin-top: var(--spacing-4);
+  padding: var(--spacing-4);
+  background: var(--color-background-muted);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--color-border-light);
+}
+
+.raw-data-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+}
+
+.raw-data-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.raw-data-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.json-editor :deep(.el-textarea__inner) {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  background: var(--color-background-primary);
+}
+
+.raw-data-controls {
+  margin-top: var(--spacing-3);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.csv-options {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-3);
+  flex-wrap: wrap;
+}
+
+/* Custom Scrollbar */
+.table-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: var(--color-background-muted);
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background-color: var(--color-gray-400);
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gray-500);
+}
+
+.table-container::-webkit-scrollbar-corner {
+  background: var(--color-background-muted);
+}
+</style>
