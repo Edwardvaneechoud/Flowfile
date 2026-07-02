@@ -61,15 +61,28 @@
 
       <!-- Handles are always rendered -->
       <div
-        v-for="(input, index) in data.inputs"
+        v-for="(input, index) in sideInputs"
         :key="input.id"
         class="handle-input"
-        :style="getHandleStyle(index, data.inputs.length)"
+        :style="getHandleStyle(index, sideInputs.length)"
       >
-        <span v-if="input.label && data.inputs.length > 1" class="handle-label handle-label--input">
+        <span
+          v-if="input.label && sideInputs.length > 1"
+          class="handle-label handle-label--input"
+          :title="input.title || input.label"
+        >
           {{ input.label }}
         </span>
         <Handle :id="input.id" type="target" :position="input.position" />
+      </div>
+      <!-- Fixed parameter-data handle (run_flow): bottom-center, subdued until hovered -->
+      <div
+        v-if="parameterInput"
+        :key="parameterInput.id"
+        class="handle-input--parameter"
+        :title="parameterInput.title"
+      >
+        <Handle :id="parameterInput.id" type="target" :position="parameterInput.position" />
       </div>
       <div
         v-for="(output, index) in data.outputs"
@@ -266,6 +279,13 @@ const props = defineProps({
   },
 });
 
+// The parameter-data handle (run_flow) renders bottom-center; only real data
+// inputs share the left edge spacing.
+const sideInputs = computed(() => props.data.inputs.filter((input) => input.kind !== "parameter"));
+const parameterInput = computed(() =>
+  props.data.inputs.find((input) => input.kind === "parameter"),
+);
+
 const onTitleClick = (event: MouseEvent) => {
   toggleEditMode(true);
   mouseX.value = event.clientX;
@@ -358,6 +378,8 @@ const copyNode = () => {
     flowIdToCopyFrom: nodeStore.flow_id,
     multi: props.data.nodeTemplate?.multi,
     nodeTemplate: props.data.nodeTemplate,
+    inputHandles: props.data.inputs,
+    outputHandles: props.data.outputs,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
   localStorage.removeItem("copiedMultiNodes");
@@ -699,6 +721,32 @@ onMounted(async () => {
 
 .handle-label--input {
   left: 14px;
+}
+
+/* Parameter handles (input-0 on dynamic-input nodes): square amber marker. */
+.handle-input--parameter {
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.handle-input--parameter :deep(.vue-flow__handle) {
+  background-color: var(--color-info, #909399);
+  border-color: var(--color-info, #909399);
+  border-radius: 2px;
+  opacity: 0.55;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.handle-input--parameter:hover :deep(.vue-flow__handle) {
+  opacity: 1;
+  transform: scale(1.3);
+  background-color: var(--color-primary, #409eff);
+  border-color: var(--color-primary, #409eff);
 }
 
 .handle-label--output {

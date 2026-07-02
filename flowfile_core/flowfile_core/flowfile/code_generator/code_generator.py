@@ -367,6 +367,25 @@ class FlowGraphCodeConverter(
         self._add_code(f"{var_name} = {self.framework}.LazyFrame({data}, schema={schema}, strict=False)")
         self._add_code("")
 
+    def _handle_flow_input(
+        self, settings: input_schema.NodeFlowInput, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Subflow input placeholder: exported code uses its sample data (or an empty frame)."""
+        self._add_code(f"# flow_input '{settings.input_name}' — sample data used for standalone export")
+        if settings.raw_data_format is not None and settings.raw_data_format.columns:
+            self._handle_manual_input(settings, var_name, input_vars)
+        else:
+            self._add_code(f"{var_name} = {self.framework}.LazyFrame()")
+            self._add_code("")
+
+    def _handle_flow_output(
+        self, settings: input_schema.NodeFlowOutput, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Subflow output marker: passthrough."""
+        input_df = input_vars.get("main", "df")
+        self._add_code(f"{var_name} = {input_df}  # flow_output '{settings.output_name}'")
+        self._add_code("")
+
     def _column_dtype(self, node_id: int, field: str) -> str | None:
         """Predicted Polars dtype string (e.g. ``"Boolean"``) of ``field`` on ``node_id``'s
         output schema, or None when unavailable. Filter is schema-preserving, so the filter

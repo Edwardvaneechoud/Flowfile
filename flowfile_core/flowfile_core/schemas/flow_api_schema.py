@@ -6,11 +6,12 @@ specification exposed by an endpoint, and per-endpoint API keys.
 
 import re
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-ApiParamType = Literal["string", "integer", "float", "boolean", "enum"]
+from flowfile_core.flowfile.param_types import ParamType
+
+ApiParamType = ParamType
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -110,6 +111,8 @@ class FlowParamInfo(BaseModel):
 
     name: str
     default: str = ""
+    type: ApiParamType = "string"
+    enum_values: list[str] | None = None
 
 
 class PublishableFlow(BaseModel):

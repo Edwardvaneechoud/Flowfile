@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from flowfile_core.flowfile.param_types import ParamValue, stringify_param_value
+
 _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 # Type alias: list of (object, field_name_or_key_or_index, original_value) triples
@@ -15,21 +17,38 @@ _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 _Restorations = list[tuple[Any, str | int, Any]]
 
 
-def resolve_parameters(text: str, params: dict[str, str]) -> str:
+def resolve_parameters(text: str, params: dict[str, ParamValue]) -> str:
     """Replace ${name} patterns in *text* with values from *params*.
 
-    Unknown references are left unchanged.
+    Unknown references are left unchanged. Typed values are rendered with
+    ``stringify_param_value`` (bool -> ``true``/``false``).
     """
     if not params or "${" not in text:
         return text
-    return _PARAM_PATTERN.sub(lambda m: params.get(m.group(1), m.group(0)), text)
+    return _PARAM_PATTERN.sub(
+        lambda m: stringify_param_value(params[m.group(1)]) if m.group(1) in params else m.group(0),
+        text,
+    )
+
+
+def _substitute(value: str, params: dict[str, ParamValue]) -> Any:
+    """Resolve *value*: a whole-field ``${name}`` ref yields the typed value; embedded refs stringify."""
+    m = _PARAM_PATTERN.fullmatch(value)
+    if m and m.group(1) in params:
+        return params[m.group(1)]
+    return resolve_parameters(value, params)
 
 
 # In-place mutation (used by _execute_single_node)
 
 
-def apply_parameters_in_place(obj: Any, params: dict[str, str]) -> _Restorations:
+def apply_parameters_in_place(obj: Any, params: dict[str, ParamValue]) -> _Restorations:
     """Mutate *obj*'s string fields in place, substituting ${name} patterns.
+
+    A field whose entire value is a single ``${name}`` reference receives the
+    parameter's *typed* value (int/float/bool for typed parameters — assigned via
+    ``object.__setattr__``, bypassing field validation, and restored afterwards);
+    embedded references are stringified.
 
     Returns a list of (target, field, original_value) triples so the caller
     can restore the originals after execution.  This preserves the identity of
@@ -67,13 +86,13 @@ def restore_parameters(restorations: _Restorations) -> None:
             obj[field] = original
 
 
-def _apply_recursive(obj: Any, params: dict[str, str], restorations: _Restorations) -> None:
+def _apply_recursive(obj: Any, params: dict[str, ParamValue], restorations: _Restorations) -> None:
     if isinstance(obj, BaseModel):
         for field_name in obj.model_fields:
             value = getattr(obj, field_name, None)
             if isinstance(value, str):
                 if "${" in value:
-                    resolved = resolve_parameters(value, params)
+                    resolved = _substitute(value, params)
                     if resolved != value:
                         restorations.append((obj, field_name, value))
                         object.__setattr__(obj, field_name, resolved)
@@ -86,14 +105,14 @@ def _apply_recursive(obj: Any, params: dict[str, str], restorations: _Restoratio
                     if isinstance(item, BaseModel):
                         _apply_recursive(item, params, restorations)
                     elif isinstance(item, str) and "${" in item:
-                        resolved = resolve_parameters(item, params)
+                        resolved = _substitute(item, params)
                         if resolved != item:
                             restorations.append((value, i, item))
                             value[i] = resolved
     elif isinstance(obj, dict):
         for key, value in obj.items():
             if isinstance(value, str) and "${" in value:
-                resolved = resolve_parameters(value, params)
+                resolved = _substitute(value, params)
                 if resolved != value:
                     restorations.append((obj, key, value))
                     obj[key] = resolved

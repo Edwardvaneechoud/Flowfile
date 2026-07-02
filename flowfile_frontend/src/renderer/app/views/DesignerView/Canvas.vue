@@ -200,8 +200,9 @@ function onNodeDrag({ event, node }: { event: MouseEvent | TouchEvent; node: Nod
   const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
   // `multi` nodes render one input handle that accepts many sources, so they
   // qualify as 1-input for splice purposes even though template.input is high.
+  // Dynamic-input nodes never splice: their input-0 is the parameter handle.
   const effectiveInputCount = template?.multi ? 1 : (template?.input ?? 0);
-  if (!template || effectiveInputCount !== 1 || template.output < 1) {
+  if (!template || template.dynamic_inputs || effectiveInputCount !== 1 || template.output < 1) {
     markHoveredEdge(null);
     nodeDragInsertCandidate = null;
     return;
@@ -493,7 +494,13 @@ function isValidConnection(connection: Connection): boolean {
   const targetNode = instance.findNode(target);
   const targetTemplate = (targetNode?.data as { nodeTemplate?: NodeTemplate } | undefined)
     ?.nodeTemplate;
-  if (targetTemplate && !targetTemplate.multi && connection.targetHandle) {
+  // Every handle of a dynamic_inputs node (run_flow) is single-edge, including
+  // the parameter handle input-0.
+  if (
+    targetTemplate &&
+    (targetTemplate.dynamic_inputs || !targetTemplate.multi) &&
+    connection.targetHandle
+  ) {
     const handleOccupied = currentEdges.some(
       (e) => e.target === target && e.targetHandle === connection.targetHandle,
     );
@@ -735,6 +742,8 @@ const copySelectedNodes = () => {
       flowIdToCopyFrom: flowStore.flowId,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
+      inputHandles: node.data.inputs,
+      outputHandles: node.data.outputs,
     };
     localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
     localStorage.removeItem("copiedMultiNodes");
@@ -763,6 +772,8 @@ const copySelectedNodes = () => {
       flowIdToCopyFrom: flowStore.flowId,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
+      inputHandles: node.data.inputs,
+      outputHandles: node.data.outputs,
       relativeX: node.position.x - minX,
       relativeY: node.position.y - minY,
     }));

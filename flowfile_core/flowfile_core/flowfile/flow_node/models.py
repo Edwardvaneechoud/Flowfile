@@ -177,11 +177,38 @@ class NodeStepInputs:
         left_input: The `FlowNode` connected to the left input port.
         right_input: The `FlowNode` connected to the right input port.
         main_inputs: A list of `FlowNode` objects connected to the main input port(s).
+        keyed_inputs: For dynamic-input nodes only — target handle -> source node.
+        keyed_source_handles: target handle -> source output handle.
+
+    For dynamic-input nodes ``main_inputs`` is always the slot-ordered projection
+    of ``keyed_inputs`` (rebuilt after every keyed mutation), so every consumer
+    of ``get_all_inputs``/``input_ids`` keeps working unchanged.
     """
 
     left_input: "FlowNode" = None
     right_input: "FlowNode" = None
     main_inputs: list["FlowNode"] = None
+    keyed_inputs: dict[str, "FlowNode"] | None = None
+    keyed_source_handles: dict[str, str] | None = None
+
+    def keyed_connection_exists(self, handle: str, from_node_id: int) -> bool:
+        """True when *handle* is connected and fed by node *from_node_id*."""
+        if not self.keyed_inputs:
+            return False
+        node = self.keyed_inputs.get(handle)
+        return node is not None and node.node_id == from_node_id
+
+    def slot_items(self) -> list[tuple[str, "FlowNode"]]:
+        """Keyed connections as (handle, source node), ordered by handle index."""
+        from flowfile_core.flowfile.flow_node.input_handles import input_handle_index
+
+        if not self.keyed_inputs:
+            return []
+        return sorted(self.keyed_inputs.items(), key=lambda kv: input_handle_index(kv[0]))
+
+    def rebuild_keyed_projection(self) -> None:
+        """Recompute ``main_inputs`` as the slot-ordered projection of the keyed map."""
+        self.main_inputs = [node for _, node in self.slot_items()]
 
     @property
     def input_ids(self) -> list[int]:
