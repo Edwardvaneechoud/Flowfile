@@ -93,6 +93,7 @@ class FlowParameter(BaseModel):
         return self
 
     def typed_default(self) -> ParamValue:
+        # TODO: empty default returns "" for any type; an int/float param then exports a wrong-typed default.
         if self.default_value == "":
             return ""
         try:

@@ -35,6 +35,7 @@ def param_sentinel(name: str) -> str:
 
 def codegen_parameters(parameters: list[FlowParameter]) -> list[FlowParameter]:
     """Parameters usable as function arguments (name must be a valid identifier)."""
+    # TODO: reject Python keywords too (keyword.iskeyword); a param named class/return emits an invalid signature.
     return [p for p in parameters if _IDENTIFIER_RE.match(p.name)]
 
 
