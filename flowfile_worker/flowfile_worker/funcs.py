@@ -162,8 +162,6 @@ def apply_model_task(
         scored_df = collect_lazy_frame(scored_lf)
         scored_df.write_ipc(file_path)
         flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows")
-        with progress.get_lock():
-            progress.value = 100
     except Exception as e:
         flowfile_logger.error(f"Error during apply_model_task: {str(e)}")
         error_msg = str(e).encode()[:1024]
@@ -176,8 +174,12 @@ def apply_model_task(
         # plan over a non-existent file. The framework already inspects
         # progress.value before reading the queue; this keeps that contract.
         return
+    # put THEN signal done: consumers key completion off progress == 100, so the
+    # result must already be on the queue when that flips (matches store/fuzzy/train).
     lf = pl.scan_ipc(file_path)
     queue.put(lf.serialize())
+    with progress.get_lock():
+        progress.value = 100
 
 
 def fuzzy_join_task(
