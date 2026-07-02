@@ -29,6 +29,7 @@ from typing import Any
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
 from flowfile_core.schemas.flow_api_schema import ApiParamSpec
 from flowfile_core.schemas.output_model import RunInformation
 from flowfile_core.schemas.schemas import get_global_execution_location
@@ -96,31 +97,12 @@ def _reject_unsafe_string(spec: ApiParamSpec, value: str) -> str:
 
 def _coerce(spec: ApiParamSpec, raw: str) -> str:
     """Validate ``raw`` against ``spec`` and return the string value to substitute."""
-    t = spec.type
-    if t == "string":
+    if spec.type == "string":
         return _reject_unsafe_string(spec, raw)
-    if t == "integer":
-        try:
-            return str(int(raw))
-        except ValueError as exc:
-            raise ApiParamError(f"parameter '{spec.name}' must be an integer") from exc
-    if t == "float":
-        try:
-            return str(float(raw))
-        except ValueError as exc:
-            raise ApiParamError(f"parameter '{spec.name}' must be a number") from exc
-    if t == "boolean":
-        low = raw.strip().lower()
-        if low in ("true", "1", "yes"):
-            return "true"
-        if low in ("false", "0", "no"):
-            return "false"
-        raise ApiParamError(f"parameter '{spec.name}' must be a boolean (true/false)")
-    if t == "enum":
-        if raw not in (spec.enum_values or []):
-            raise ApiParamError(f"parameter '{spec.name}' must be one of {spec.enum_values}")
-        return raw
-    return _reject_unsafe_string(spec, raw)
+    try:
+        return stringify_param_value(coerce_param_value(spec.type, raw, spec.enum_values))
+    except ValueError as exc:
+        raise ApiParamError(f"parameter '{spec.name}': {exc}") from exc
 
 
 def resolve_params(specs: list[ApiParamSpec], query: dict[str, str]) -> dict[str, str]:
@@ -214,7 +196,10 @@ def _effective_specs(flow, overrides: list[ApiParamSpec]) -> list[ApiParamSpec]:
         if override is not None:
             specs.append(override)
         else:
-            specs.append(ApiParamSpec(name=param.name, type="string", required=False))
+            # No stored override: inherit the flow parameter's own declared type.
+            specs.append(
+                ApiParamSpec(name=param.name, type=param.type, enum_values=param.enum_values, required=False)
+            )
     return specs
 
 

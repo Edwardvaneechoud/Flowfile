@@ -316,7 +316,10 @@ def get_flow_parameters(
         flow = open_flow(Path(registration.flow_path), user_id=current_user.id)
     except Exception:  # noqa: BLE001 - convenience lookup, degrade gracefully
         return []
-    return [FlowParamInfo(name=p.name, default=p.default_value or "") for p in flow.flow_settings.parameters]
+    return [
+        FlowParamInfo(name=p.name, default=p.default_value or "", type=p.type, enum_values=p.enum_values)
+        for p in flow.flow_settings.parameters
+    ]
 
 
 @management_router.get("/endpoints/{endpoint_id}", response_model=ApiEndpointOut)

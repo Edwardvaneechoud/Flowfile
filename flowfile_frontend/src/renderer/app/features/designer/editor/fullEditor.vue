@@ -9,7 +9,7 @@
           v-model="filterText"
           class="search-input"
           type="text"
-          :placeholder="optionSelection === 'fields' ? 'Filter fields' : 'Filter functions'"
+          :placeholder="searchPlaceholder"
         />
         <i v-if="filterText" class="fas fa-times clear-icon" @click="filterText = ''" />
       </div>
@@ -17,6 +17,12 @@
         <column-selector
           v-if="optionSelection === 'fields'"
           :filter-text="filterText"
+          @value-selected="handleNodeSelected"
+        />
+        <param-selector
+          v-else-if="optionSelection === 'parameters'"
+          :filter-text="filterText"
+          :parameters="parameters"
           @value-selected="handleNodeSelected"
         />
         <func-selector
@@ -35,6 +41,7 @@
         :editor-string="code"
         :columns="nodeStore.nodeData?.main_input?.columns"
         :column-types="columnTypes"
+        :parameters="parameters"
         @update-editor-string="handleCodeChange"
       />
     </div>
@@ -45,9 +52,12 @@
 <script lang="ts" setup>
 import { ref, Ref, watch, onMounted, nextTick, computed } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
+import ParamSelector from "./ParamSelector/ParamSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
 import FunctionEditor from "./FunctionEditor.vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useFlowStore } from "../../../stores/flow-store";
+import type { FlowParameter } from "../../../types/flow.types";
 import InstantFuncResults from "./instantFuncResults.vue";
 import debounce from "lodash/debounce";
 import FuncSelector from "./FuncSelector/FuncSelector.vue";
@@ -55,10 +65,13 @@ import FuncSelector from "./FuncSelector/FuncSelector.vue";
 const optionSelection = ref("fields");
 const filterText = ref("");
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
+const parameters = computed<FlowParameter[]>(() => flowStore.parameters);
 
 const radioOptions = [
   { value: "fields", text: "Fields", icon: "fa fa-columns" },
   { value: "functions", text: "Functions", icon: "fas fa-atom" },
+  { value: "parameters", text: "Parameters", icon: "fas fa-sliders-h" },
 ];
 
 const props = defineProps({
@@ -80,6 +93,12 @@ const showHideOptions = () => {
 };
 
 const showSideBar = computed(() => parseInt(treeNodeWidth.value.replace("px", "")) > 50);
+
+const searchPlaceholder = computed(() => {
+  if (optionSelection.value === "fields") return "Filter fields";
+  if (optionSelection.value === "parameters") return "Filter parameters";
+  return "Filter functions";
+});
 
 const columnTypes = computed<Record<string, string>>(() => {
   const schema = nodeStore.nodeData?.main_input?.table_schema ?? [];
@@ -115,8 +134,17 @@ const handleNodeSelected = (nodeLabel: string) => {
   functionEditor.value?.insertTextAtCursor(nodeLabel);
 };
 
+// Make sure the editor has the flow's parameters for highlight/autocomplete/hover.
+// Fetch on open (and if the flow id changes) so we never depend on the header
+// having populated the store first.
+const ensureParameters = () => {
+  if (flowStore.flowId > 0) flowStore.loadParameters(flowStore.flowId);
+};
+watch(() => flowStore.flowId, ensureParameters);
+
 onMounted(async () => {
   await nextTick();
+  ensureParameters();
   if (instantFuncResultsRef.value) {
     instantFuncResultsRef.value.getInstantFuncResults(props.editorString, nodeStore.flow_id);
   }

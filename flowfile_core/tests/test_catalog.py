@@ -1962,3 +1962,71 @@ class TestSaveFlowToCatalog:
         assert rb.status_code == 409
 
         self._cleanup((fid_a2, fid_b), (dup_path,))
+
+
+# ==================== Flow interface endpoint (run_flow support) ====================
+
+
+class TestFlowInterfaceEndpoint:
+    def _register(self, path: Path, name: str) -> int:
+        import uuid as _uuid
+
+        with get_db_context() as db:
+            reg = FlowRegistration(flow_uuid=str(_uuid.uuid4()), name=name, flow_path=str(path), owner_id=1)
+            db.add(reg)
+            db.commit()
+            db.refresh(reg)
+            return reg.id
+
+    def _build_subflow_file(self, path: Path) -> None:
+        from flowfile_core.flowfile.handler import FlowfileHandler
+        from flowfile_core.schemas import input_schema, schemas
+        from flowfile_core.schemas.schemas import FlowParameter
+
+        handler = FlowfileHandler()
+        handler.register_flow(
+            schemas.FlowSettings(
+                flow_id=901, name="iface_flow", path=".", execution_mode="Development", execution_location="local"
+            )
+        )
+        graph = handler.get_flow(901)
+        graph.flow_settings.parameters = [FlowParameter(name="limit", default_value="5", type="integer")]
+        graph.add_node_promise(input_schema.NodePromise(flow_id=901, node_id=1, node_type="flow_input"))
+        graph.add_flow_input(input_schema.NodeFlowInput(flow_id=901, node_id=1, input_name="customers"))
+        graph.add_node_promise(input_schema.NodePromise(flow_id=901, node_id=2, node_type="flow_output"))
+        graph.add_flow_output(
+            input_schema.NodeFlowOutput(flow_id=901, node_id=2, output_name="result", depending_on_id=1)
+        )
+        from flowfile_core.flowfile.flow_graph import add_connection
+
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.save_flow(str(path))
+
+    def test_get_flow_interface(self, tmp_path):
+        _cleanup_catalog()
+        flow_path = tmp_path / "iface_flow.yaml"
+        self._build_subflow_file(flow_path)
+        reg_id = self._register(flow_path, "iface_flow")
+
+        response = client.get(f"/catalog/flows/{reg_id}/interface")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["registration_id"] == reg_id
+        assert body["file_exists"] is True
+        assert [p["name"] for p in body["inputs"]] == ["customers"]
+        assert [p["name"] for p in body["outputs"]] == ["result"]
+        assert body["parameters"][0]["name"] == "limit"
+        assert body["parameters"][0]["type"] == "integer"
+
+    def test_get_flow_interface_unknown_registration(self):
+        response = client.get("/catalog/flows/99999999/interface")
+        assert response.status_code == 404
+
+    def test_get_flow_interface_missing_file_degrades(self, tmp_path):
+        _cleanup_catalog()
+        reg_id = self._register(tmp_path / "gone.yaml", "gone_flow")
+        response = client.get(f"/catalog/flows/{reg_id}/interface")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["file_exists"] is False
+        assert body["inputs"] == [] and body["outputs"] == []

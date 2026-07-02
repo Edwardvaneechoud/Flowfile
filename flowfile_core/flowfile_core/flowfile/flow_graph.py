@@ -67,6 +67,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     fetch_kafka_offsets,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
     add_un_drawn_nodes,
@@ -79,6 +81,7 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
     group_nodes_by_depth,
 )
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import (
     apply_parameters_in_place,
     find_unresolved_in_model,
@@ -1114,6 +1117,11 @@ class FlowGraph:
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
         self.artifact_context = ArtifactContext()
+        # Subflow recursion guards: resolved paths of every ancestor flow file and
+        # this graph's nesting depth. Attributes (not contextvars) because stages
+        # execute on ThreadPoolExecutor threads.
+        self._subflow_ancestry: frozenset[str] = frozenset()
+        self._subflow_depth: int = 0
         # Last user_id seen on any node settings (stamped by the editor routes /
         # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
         # live graph is empty at undo time (snapshots intentionally omit user_id).
@@ -1145,8 +1153,11 @@ class FlowGraph:
         ):
             self.reset()
         else:
-            old_params = {p.name: p.default_value for p in self._flow_settings.parameters}
-            new_params = {p.name: p.default_value for p in flow_settings.parameters}
+            def _param_state(params: list[schemas.FlowParameter]) -> dict:
+                return {p.name: (p.default_value, p.type, tuple(p.enum_values or [])) for p in params}
+
+            old_params = _param_state(self._flow_settings.parameters)
+            new_params = _param_state(flow_settings.parameters)
             if old_params != new_params:
                 for node in self.nodes:
                     if node.setting_input is not None and find_unresolved_in_model(node.setting_input):
@@ -1358,6 +1369,8 @@ class FlowGraph:
                 to_node = self.get_node(output_node_id)
                 if to_node is None:
                     continue
+                if to_node.accepts_dynamic_inputs:
+                    continue  # keyed edges are restored from input_connections below
 
                 output_node_info = flow_info.data.get(output_node_id)
                 if output_node_info is None:
@@ -1381,6 +1394,8 @@ class FlowGraph:
                     continue
 
                 to_node.add_node_connection(from_node, insert_type)
+
+        restore_dynamic_input_connections(self, flow_info)
 
         # Member group_ids were re-applied above via add_<type>(setting_input);
         # repopulate the box registry (name/color/bounds) from the snapshot.
@@ -3473,8 +3488,8 @@ class FlowGraph:
         # the flow_settings.setter or mutated directly on flow_settings.parameters.
         _graph = self
 
-        def _get_params() -> dict[str, str]:
-            return {p.name: p.default_value for p in (_graph.flow_settings.parameters or [])}
+        def _get_params() -> dict[str, ParamValue]:
+            return {p.name: p.typed_default() for p in (_graph.flow_settings.parameters or [])}
 
         node._params_getter = _get_params
         return node
@@ -3573,6 +3588,99 @@ class FlowGraph:
             schema_callback=schema_callback,
             input_node_ids=[input_node_id],
         )
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_flow_output(self, settings: input_schema.NodeFlowOutput) -> "FlowGraph":
+        """Adds a named subflow-output sink (passthrough, always materialized).
+
+        When this flow runs inside another flow via a run_flow node, the parent
+        reads this node's result as one of the subflow's outputs.
+        """
+        for other in self.nodes:
+            if (
+                other.node_type == "flow_output"
+                and other.node_id != settings.node_id
+                and isinstance(other.setting_input, input_schema.NodeFlowOutput)
+                and other.setting_input.output_name == settings.output_name
+            ):
+                raise ValueError(f"flow_output name '{settings.output_name}' is already used by node {other.node_id}")
+
+        def _func(df: FlowDataEngine):
+            return df
+
+        def schema_callback():
+            node: FlowNode = self.get_node(settings.node_id)
+            if node.node_inputs.main_inputs:
+                return node.node_inputs.main_inputs[0].schema
+            return []
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="flow_output",
+            setting_input=settings,
+            schema_callback=schema_callback,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_run_flow(self, settings: input_schema.NodeRunFlow) -> "FlowGraph":
+        """Adds a node that executes a catalog-registered flow as a subflow.
+
+        Inputs are keyed: handle input-0 carries optional parameter data; handles
+        input-1..input-N feed the subflow's flow_input nodes (input_slots order).
+        Outputs mirror the subflow's flow_output nodes (output_slots order).
+        """
+        from flowfile_core.flowfile import subflow
+
+        subflow.stamp_flow_reference(settings)
+        _graph = self
+
+        def _func(*inputs: FlowDataEngine):
+            param_input = inputs[0] if inputs else None
+            return subflow.execute_run_flow_node(_graph, settings, param_input, tuple(inputs[1:]))
+
+        def schema_callback():
+            node = _graph.get_node(settings.node_id)
+            named = subflow.predict_run_flow_named_schemas(settings)
+            if node is not None and named:
+                node._named_schemas = named
+            return named.get(DEFAULT_OUTPUT_HANDLE, [])
+
+        existing = self.get_node(settings.node_id)
+        old_slots: list[str] | None = None
+        if existing is not None and isinstance(existing.setting_input, input_schema.NodeRunFlow):
+            old_slots = list(existing.setting_input.input_slots)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="run_flow",
+            setting_input=settings,
+            schema_callback=schema_callback,
+            input_node_ids=[],
+        )
+
+        if old_slots is not None and old_slots != settings.input_slots:
+            node = self.get_node(settings.node_id)
+            # Keyed edges follow their slot by NAME; vanished names drop their edge.
+            mapping: dict[str, str | None] = {}
+            for old_index, slot_name in enumerate(old_slots):
+                old_handle = input_handle(old_index + 1)
+                if slot_name in settings.input_slots:
+                    mapping[old_handle] = input_handle(settings.input_slots.index(slot_name) + 1)
+                else:
+                    mapping[old_handle] = None
+            result = node.remap_dynamic_inputs(mapping)
+            if result["dropped"]:
+                self.flow_logger.warning(
+                    f"run_flow node {settings.node_id}: dropped connection(s) on {', '.join(result['dropped'])} "
+                    "after the subflow interface changed"
+                )
+        return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
@@ -4675,6 +4783,46 @@ class FlowGraph:
         """
         self.add_datasource(input_file)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_flow_input(self, settings: input_schema.NodeFlowInput) -> "FlowGraph":
+        """Adds a named subflow-input placeholder source.
+
+        Standalone runs serve the optional sample data (empty frame otherwise);
+        a parent run_flow node overwrites ``node.function`` with real data.
+        """
+        for other in self.nodes:
+            if (
+                other.node_type == "flow_input"
+                and other.node_id != settings.node_id
+                and isinstance(other.setting_input, input_schema.NodeFlowInput)
+                and other.setting_input.input_name == settings.input_name
+            ):
+                raise ValueError(f"flow_input name '{settings.input_name}' is already used by node {other.node_id}")
+        if settings.raw_data_format is not None and settings.raw_data_format.columns:
+            input_data = FlowDataEngine(settings.raw_data_format)
+        else:
+            input_data = FlowDataEngine()
+        node = self.get_node(settings.node_id)
+        if node:
+            node.node_type = "flow_input"
+            node.name = "flow_input"
+            node.function = input_data
+            node.setting_input = settings
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                settings.node_id,
+                function=input_data,
+                setting_input=settings,
+                name="flow_input",
+                node_type="flow_input",
+                parent_uuid=self.uuid,
+            )
+            self._node_db[settings.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(settings.node_id)
+        return self
+
     @property
     def nodes(self) -> list[FlowNode]:
         """Gets a list of all FlowNode objects in the graph."""
@@ -4947,7 +5095,7 @@ class FlowGraph:
         node: FlowNode,
         performance_mode: bool,
         run_info_lock: threading.Lock,
-        params: dict[str, str] | None = None,
+        params: dict[str, ParamValue] | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -5088,7 +5236,7 @@ class FlowGraph:
         self,
         execution_plan: ExecutionPlan,
         performance_mode: bool,
-        params: dict[str, str],
+        params: dict[str, ParamValue],
         skip_node_ids: set[str | int],
     ) -> set[str | int]:
         """Execute all stages in the plan, running independent nodes in parallel.
@@ -5210,7 +5358,7 @@ class FlowGraph:
             execution_order_message(self.flow_logger, execution_plan.stages)
 
             performance_mode = self.flow_settings.execution_mode == "Performance"
-            params: dict[str, str] = {p.name: p.default_value for p in self.flow_settings.parameters}
+            params: dict[str, ParamValue] = {p.name: p.typed_default() for p in self.flow_settings.parameters}
 
             failed_node_ids = self._execute_stages(execution_plan, performance_mode, params, plan_skip_ids)
             if not self.flow_settings.is_canceled:
@@ -5297,6 +5445,7 @@ class FlowGraph:
                 input_ids=node_info.input_ids,
                 outputs=node_info.outputs,
                 output_handles=node_info.output_handles,
+                input_connections=node_info.input_connections,
                 setting_input=node_info.setting_input,
             )
             nodes.append(flowfile_node)
@@ -5714,10 +5863,79 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     error = validate_connection(from_node, to_node)
     if error is not None:
         raise HTTPException(422, error.detail)
+    if to_node.accepts_dynamic_inputs:
+        _add_keyed_connection_validated(to_node, from_node, node_connection)
+        return
+    try:
+        insert_type = node_connection.input_connection.get_node_input_connection_type()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     to_node.add_node_connection(
         from_node,
-        node_connection.input_connection.get_node_input_connection_type(),
+        insert_type,
         output_handle=node_connection.output_connection.connection_class,
+    )
+
+
+def restore_dynamic_input_connections(graph: "FlowGraph", flow_info: schemas.FlowInformation) -> None:
+    """Rebuild keyed edges of dynamic-input nodes from serialized ``input_connections``.
+
+    Shared by ``open_flow`` and ``restore_from_snapshot``; the generic wiring pass
+    skips dynamic-input targets. Malformed entries are skipped with a warning so a
+    hand-edited or stale file degrades to missing edges instead of failing to open.
+    """
+    for node_id, node_info in flow_info.data.items():
+        connections = getattr(node_info, "input_connections", None)
+        if not connections:
+            continue
+        to_node = graph.get_node(node_id)
+        if to_node is None or not to_node.accepts_dynamic_inputs:
+            continue
+        slot_count = len(getattr(to_node.setting_input, "input_slots", None) or [])
+        for connection in connections:
+            from_node = graph.get_node(connection.from_id)
+            if from_node is None:
+                logger.warning(f"Node {node_id}: dropping keyed edge from missing node {connection.from_id}")
+                continue
+            try:
+                handle_index = input_handle_index(connection.input_handle)
+            except ValueError:
+                logger.warning(f"Node {node_id}: dropping keyed edge with invalid handle {connection.input_handle!r}")
+                continue
+            if handle_index > slot_count:
+                # No lead exists for this never-restored edge; calling
+                # delete_lead_to_node here would strip a valid keyed edge
+                # restored earlier from the same source node.
+                logger.warning(
+                    f"Node {node_id}: dropping keyed edge on {connection.input_handle} "
+                    f"(only {slot_count} input slots)"
+                )
+                continue
+            to_node.add_node_connection(
+                from_node,
+                "main",
+                output_handle=connection.source_handle,
+                target_handle=connection.input_handle,
+            )
+
+
+def _add_keyed_connection_validated(
+    to_node: FlowNode, from_node: FlowNode, node_connection: input_schema.NodeConnection
+) -> None:
+    """Connect-API validation for dynamic-input targets: one edge per existing handle."""
+    handle = node_connection.input_connection.connection_class
+    if isinstance(to_node.setting_input, input_schema.NodePromise):
+        raise HTTPException(422, "Configure the node before connecting inputs")
+    slot_count = len(getattr(to_node.setting_input, "input_slots", None) or [])
+    if input_handle_index(handle) > slot_count:
+        raise HTTPException(422, f"Handle {handle} is not available on node {to_node.node_id}")
+    if to_node.node_inputs.keyed_inputs and handle in to_node.node_inputs.keyed_inputs:
+        raise HTTPException(422, f"Handle {handle} already has a connection")
+    to_node.add_node_connection(
+        from_node,
+        "main",
+        output_handle=node_connection.output_connection.connection_class,
+        target_handle=handle,
     )
 
 
@@ -5735,9 +5953,20 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     # CORS headers and shows up as a CORS error in the browser.
     if from_node is None or to_node is None:
         raise HTTPException(422, "Connection does not exist on the input node")
+    if to_node.accepts_dynamic_inputs:
+        handle = node_connection.input_connection.connection_class
+        if not to_node.node_inputs.keyed_connection_exists(handle, from_node.node_id):
+            raise HTTPException(422, "Connection does not exist on the input node")
+        from_node.delete_lead_to_node(to_node.node_id)
+        to_node.delete_input_node(from_node.node_id, connection_type=handle)
+        return
+    try:
+        connection_name = node_connection.input_connection.get_node_input_connection_type()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
         node_input_id=from_node.node_id,
-        connection_name=node_connection.input_connection.get_node_input_connection_type(),
+        connection_name=connection_name,
     )
     if not connection_valid:
         raise HTTPException(422, "Connection does not exist on the input node")

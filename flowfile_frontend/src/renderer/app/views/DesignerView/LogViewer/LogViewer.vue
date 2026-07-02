@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, onUnmounted, nextTick, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
 import { flowfileCorebaseURL } from "../../../../config/constants";
 import authService from "../../../services/auth.service";
 
 // Store & Refs
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const logs = ref<string>("");
 const eventSourceRef = ref<EventSource | null>(null);
 const autoScroll = ref(true);
@@ -28,6 +30,15 @@ watch(
   () => nodeStore.isRunning,
   (isRunning) => {
     isRunning ? startStreamingLogs() : stopStreamingLogs();
+  },
+);
+
+// The Logs tab is always mounted now; connect when logs are explicitly revealed
+// (results toggle) without a run so switching to the tab shows content.
+watch(
+  () => editorStore.isShowingLogViewer,
+  (show) => {
+    if (show && !nodeStore.isRunning && !eventSourceRef.value) startStreamingLogs();
   },
 );
 
@@ -145,7 +156,9 @@ const setupTokenRefresh = () => {
 
 // Lifecycle Hooks
 onMounted(() => {
-  startStreamingLogs();
+  // Don't open an SSE just because the dock opened for a data preview; only
+  // stream when a run is active or logs are explicitly shown.
+  if (nodeStore.isRunning || editorStore.isShowingLogViewer) startStreamingLogs();
   setupTokenRefresh();
 });
 

@@ -8,6 +8,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from flowfile_core.flowfile.param_types import (
+    ParamValue,
+    render_param_as_expr_literal,
+    stringify_param_value,
+)
+
 _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 # Type alias: list of (object, field_name_or_key_or_index, original_value) triples
@@ -15,21 +21,61 @@ _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 _Restorations = list[tuple[Any, str | int, Any]]
 
 
-def resolve_parameters(text: str, params: dict[str, str]) -> str:
+def resolve_parameters(text: str, params: dict[str, ParamValue]) -> str:
     """Replace ${name} patterns in *text* with values from *params*.
 
-    Unknown references are left unchanged.
+    Unknown references are left unchanged. Typed values are rendered with
+    ``stringify_param_value`` (bool -> ``true``/``false``).
     """
     if not params or "${" not in text:
         return text
-    return _PARAM_PATTERN.sub(lambda m: params.get(m.group(1), m.group(0)), text)
+    return _PARAM_PATTERN.sub(
+        lambda m: stringify_param_value(params[m.group(1)]) if m.group(1) in params else m.group(0),
+        text,
+    )
+
+
+def resolve_expression_parameters(text: str, params: dict[str, ParamValue]) -> str:
+    """Replace ${name} patterns with type-correct polars_expr_transformer literals.
+
+    Used for expression fields (formula / advanced filter / dynamic-rename formula):
+    strings and enums are rendered as double-quoted literals, numbers bare, bools as
+    ``true``/``false`` (see ``render_param_as_expr_literal``). Unlike ``_substitute``
+    this never does whole-field typed injection — the result is always a valid
+    expression string, so a bare ``${name}`` works for any type and can be parsed.
+    """
+    if not params or "${" not in text:
+        return text
+    return _PARAM_PATTERN.sub(
+        lambda m: render_param_as_expr_literal(params[m.group(1)]) if m.group(1) in params else m.group(0),
+        text,
+    )
+
+
+def _is_expression_field(model: BaseModel, field_name: str) -> bool:
+    """Whether *field_name* on *model* is tagged as a raw-expression field."""
+    extra = type(model).model_fields[field_name].json_schema_extra
+    return isinstance(extra, dict) and extra.get("expression") is True
+
+
+def _substitute(value: str, params: dict[str, ParamValue]) -> Any:
+    """Resolve *value*: a whole-field ``${name}`` ref yields the typed value; embedded refs stringify."""
+    m = _PARAM_PATTERN.fullmatch(value)
+    if m and m.group(1) in params:
+        return params[m.group(1)]
+    return resolve_parameters(value, params)
 
 
 # In-place mutation (used by _execute_single_node)
 
 
-def apply_parameters_in_place(obj: Any, params: dict[str, str]) -> _Restorations:
+def apply_parameters_in_place(obj: Any, params: dict[str, ParamValue]) -> _Restorations:
     """Mutate *obj*'s string fields in place, substituting ${name} patterns.
+
+    A field whose entire value is a single ``${name}`` reference receives the
+    parameter's *typed* value (int/float/bool for typed parameters — assigned via
+    ``object.__setattr__``, bypassing field validation, and restored afterwards);
+    embedded references are stringified.
 
     Returns a list of (target, field, original_value) triples so the caller
     can restore the originals after execution.  This preserves the identity of
@@ -67,38 +113,50 @@ def restore_parameters(restorations: _Restorations) -> None:
             obj[field] = original
 
 
-def _apply_recursive(obj: Any, params: dict[str, str], restorations: _Restorations) -> None:
+def _apply_recursive(
+    obj: Any, params: dict[str, ParamValue], restorations: _Restorations, render_expressions: bool = True
+) -> None:
+    """Substitute ``${name}`` refs in *obj* in place.
+
+    When *render_expressions* is True (runtime resolution) expression fields render
+    typed literals via ``resolve_expression_parameters``. When False (e.g. code-gen
+    sentinel substitution) every field uses the raw ``_substitute`` path so the
+    replacement text is inserted verbatim.
+    """
     if isinstance(obj, BaseModel):
         for field_name in obj.model_fields:
             value = getattr(obj, field_name, None)
             if isinstance(value, str):
                 if "${" in value:
-                    resolved = resolve_parameters(value, params)
+                    if render_expressions and _is_expression_field(obj, field_name):
+                        resolved = resolve_expression_parameters(value, params)
+                    else:
+                        resolved = _substitute(value, params)
                     if resolved != value:
                         restorations.append((obj, field_name, value))
                         object.__setattr__(obj, field_name, resolved)
             elif isinstance(value, BaseModel):
-                _apply_recursive(value, params, restorations)
+                _apply_recursive(value, params, restorations, render_expressions)
             elif isinstance(value, dict):
-                _apply_recursive(value, params, restorations)
+                _apply_recursive(value, params, restorations, render_expressions)
             elif isinstance(value, list):
                 for i, item in enumerate(value):
                     if isinstance(item, BaseModel):
-                        _apply_recursive(item, params, restorations)
+                        _apply_recursive(item, params, restorations, render_expressions)
                     elif isinstance(item, str) and "${" in item:
-                        resolved = resolve_parameters(item, params)
+                        resolved = _substitute(item, params)
                         if resolved != item:
                             restorations.append((value, i, item))
                             value[i] = resolved
     elif isinstance(obj, dict):
         for key, value in obj.items():
             if isinstance(value, str) and "${" in value:
-                resolved = resolve_parameters(value, params)
+                resolved = _substitute(value, params)
                 if resolved != value:
                     restorations.append((obj, key, value))
                     obj[key] = resolved
             elif isinstance(value, (BaseModel | dict)):
-                _apply_recursive(value, params, restorations)
+                _apply_recursive(value, params, restorations, render_expressions)
 
 
 def find_unresolved_in_model(obj: Any) -> set[str]:

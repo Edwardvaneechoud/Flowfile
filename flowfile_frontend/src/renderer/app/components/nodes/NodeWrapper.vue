@@ -61,15 +61,28 @@
 
       <!-- Handles are always rendered -->
       <div
-        v-for="(input, index) in data.inputs"
+        v-for="(input, index) in sideInputs"
         :key="input.id"
         class="handle-input"
-        :style="getHandleStyle(index, data.inputs.length)"
+        :style="getHandleStyle(index, sideInputs.length)"
       >
-        <span v-if="input.label && data.inputs.length > 1" class="handle-label handle-label--input">
+        <span
+          v-if="input.label && sideInputs.length > 1"
+          class="handle-label handle-label--input"
+          :title="input.title || input.label"
+        >
           {{ input.label }}
         </span>
         <Handle :id="input.id" type="target" :position="input.position" />
+      </div>
+      <!-- Fixed parameter-data handle (run_flow): bottom-center, subdued until hovered -->
+      <div
+        v-if="parameterInput"
+        :key="parameterInput.id"
+        class="handle-input--parameter"
+        :title="parameterInput.title"
+      >
+        <Handle :id="parameterInput.id" type="target" :position="parameterInput.position" />
       </div>
       <div
         v-for="(output, index) in data.outputs"
@@ -125,6 +138,23 @@
               <line x1="9" y1="3" x2="9" y2="21"></line>
             </svg>
             <span>View Data</span>
+          </div>
+          <div v-if="isRunFlowNode" class="context-menu-item" @click="openTargetFlow">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+            <span>Go to Flow</span>
           </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
@@ -207,6 +237,7 @@
 //   - NodeHandles.vue: handle rendering loops (~lines 64-89)
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
+import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useEditorStore } from "../../stores/editor-store";
@@ -215,9 +246,10 @@ import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
 import { snapshotClipboard } from "../../utils/clipboardUtils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
+import { CatalogApi } from "../../api/catalog.api";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
-import type { NodeTemplate, NodeHandle } from "../../types";
+import type { NodeTemplate, NodeHandle, RunFlowReference } from "../../types";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -265,6 +297,15 @@ const props = defineProps({
     required: true,
   },
 });
+
+// The parameter-data handle (run_flow) renders bottom-center; only real data
+// inputs share the left edge spacing.
+const sideInputs = computed(() => props.data.inputs.filter((input) => input.kind !== "parameter"));
+const parameterInput = computed(() =>
+  props.data.inputs.find((input) => input.kind === "parameter"),
+);
+
+const isRunFlowNode = computed(() => props.data.nodeTemplate?.item === "run_flow");
 
 const onTitleClick = (event: MouseEvent) => {
   toggleEditMode(true);
@@ -345,6 +386,33 @@ const viewData = () => {
   closeContextMenu();
 };
 
+const openTargetFlow = async () => {
+  closeContextMenu();
+  try {
+    const nodeData = await nodeStore.getNodeData(props.data.id, false);
+    const flowRef = nodeData?.setting_input?.flow_reference as RunFlowReference | undefined;
+    const registrationId = flowRef?.registration_id ?? 0;
+    let flowPath = flowRef?.flow_path ?? null;
+    let name: string | undefined;
+    if (registrationId > 0) {
+      try {
+        const reg = await CatalogApi.getFlow(registrationId);
+        flowPath = reg?.flow_path ?? flowPath;
+        name = reg?.name;
+      } catch {
+        // Registration lookup failed (e.g. deleted) — fall back to stored path.
+      }
+    }
+    if (!flowPath) {
+      ElMessage.warning("No target flow is selected for this node.");
+      return;
+    }
+    editorStore.requestOpenFlow(flowPath, name);
+  } catch (error) {
+    console.error("Error opening target flow:", error);
+  }
+};
+
 const copyNode = () => {
   const nodeCopyValue: NodeCopyValue = {
     nodeIdToCopyFrom: props.data.id,
@@ -358,6 +426,8 @@ const copyNode = () => {
     flowIdToCopyFrom: nodeStore.flow_id,
     multi: props.data.nodeTemplate?.multi,
     nodeTemplate: props.data.nodeTemplate,
+    inputHandles: props.data.inputs,
+    outputHandles: props.data.outputs,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
   localStorage.removeItem("copiedMultiNodes");
@@ -699,6 +769,32 @@ onMounted(async () => {
 
 .handle-label--input {
   left: 14px;
+}
+
+/* Parameter handles (input-0 on dynamic-input nodes): square amber marker. */
+.handle-input--parameter {
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.handle-input--parameter :deep(.vue-flow__handle) {
+  background-color: var(--color-info, #909399);
+  border-color: var(--color-info, #909399);
+  border-radius: 2px;
+  opacity: 0.55;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.handle-input--parameter:hover :deep(.vue-flow__handle) {
+  opacity: 1;
+  transform: scale(1.3);
+  background-color: var(--color-primary, #409eff);
+  border-color: var(--color-primary, #409eff);
 }
 
 .handle-label--output {

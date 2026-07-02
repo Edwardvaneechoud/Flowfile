@@ -27,6 +27,8 @@ def test_dynamic_set_matches_design() -> None:
         "polars_code",
         "sql_query",
         "user_defined",
+        # run_flow's output schema only exists after the referenced subflow runs.
+        "run_flow",
     }
     actual_dynamic = {nt for nt in NODE_TYPE_TO_SETTINGS_CLASS if classify_node_type(nt) == "dynamic"}
     assert actual_dynamic == expected_dynamic
@@ -43,6 +45,8 @@ def test_source_set_includes_all_readers() -> None:
         "google_analytics_reader",
         "rest_api_reader",
         "external_source",
+        # Flow-in-flow entry point: no input port, source-shaped.
+        "flow_input",
     }
     actual_source = {nt for nt in NODE_TYPE_TO_SETTINGS_CLASS if classify_node_type(nt) == "source"}
     assert actual_source == expected_source

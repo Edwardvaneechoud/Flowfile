@@ -3,7 +3,7 @@ from pathlib import Path
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.configs.settings import is_docker_mode
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
@@ -214,6 +214,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             input_ids=node.input_ids,
             outputs=node.outputs,
             output_handles=node.output_handles,
+            input_connections=node.input_connections,
             setting_input=setting_input,
         )
         nodes_dict[node.id] = node_info
@@ -341,6 +342,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
         output_handles = getattr(node_info, "output_handles", None) or []
         for idx, output_node_id in enumerate(node_info.outputs or []):
             to_node = new_flow.get_node(output_node_id)
+            if to_node is not None and to_node.accepts_dynamic_inputs:
+                continue  # keyed edges are restored from input_connections below
             if to_node is not None:
                 output_node_obj = flow_storage_obj.data[output_node_id]
                 is_left_input = (output_node_obj.left_input_id == node_id) and (
@@ -369,8 +372,12 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
                     flow_storage_obj.node_connections.index((from_node.node_id, output_node_id))
                 )
 
+    restore_dynamic_input_connections(new_flow, flow_storage_obj)
+
     for missing_connection in set(flow_storage_obj.node_connections) - set(new_flow.node_connections):
         to_node = new_flow.get_node(missing_connection[1])
+        if to_node.accepts_dynamic_inputs:
+            continue  # keyed edges only come from input_connections
         if not to_node.has_input:
             test_if_circular_connection(missing_connection, new_flow)
             from_node = new_flow.get_node(missing_connection[0])

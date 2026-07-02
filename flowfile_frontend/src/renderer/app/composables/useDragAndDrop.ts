@@ -26,7 +26,8 @@ import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
 import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
-import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
+import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
+import { buildOutputHandles, deriveHandles } from "../utils/nodeHandles";
 import { desktop } from "../../lib/desktop";
 
 const EDGE_DROP_CLASS = "edge-drop-target";
@@ -104,23 +105,6 @@ let id = 0;
 
 function getId(): number {
   return ++id;
-}
-
-// Build the outputs array for a custom-node. When a node declares more than one
-// output, each handle gets a compact letter id (A, B, …) for the canvas and the
-// user-defined name (when available) as a hover tooltip via the `title` attr.
-// For nodes whose output count is user-configurable (e.g. random_split), the
-// effective count is whichever is larger: the template's static count or the
-// number of saved output names.
-export function buildOutputHandles(outputCount: number, names?: string[]): NodeHandle[] {
-  const count = Math.max(outputCount, names?.length ?? 0);
-  const multi = count > 1;
-  return Array.from({ length: count }, (_, i) => ({
-    id: outputHandle(i),
-    position: Position.Right,
-    label: multi ? outputLabel(i) : undefined,
-    title: multi ? names?.[i] : undefined,
-  }));
 }
 
 const state = {
@@ -369,6 +353,14 @@ export default function useDragAndDrop() {
     try {
       const component = await getComponentRaw(node.type);
       const nodeId: number = getId();
+      // Prefer the handle snapshots taken at copy time (exact for dynamic-handle
+      // nodes); fall back to deriving from the template counts.
+      const derived = deriveHandles({
+        input: node.numberOfInputs,
+        output: node.numberOfOutputs,
+        dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
+        output_names: node.nodeTemplate?.output_names,
+      });
       const newNode: Node = {
         id: String(nodeId),
         type: "custom-node",
@@ -380,14 +372,8 @@ export default function useDragAndDrop() {
           id: nodeId,
           label: node.label,
           component: markRaw(component),
-          inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
-            id: `input-${i}`,
-            position: Position.Left,
-          })),
-          outputs: buildOutputHandles(
-            node.numberOfOutputs,
-            node.nodeTemplate?.output_names ?? undefined,
-          ),
+          inputs: node.inputHandles ?? derived.inputs,
+          outputs: node.outputHandles ?? derived.outputs,
           nodeTemplate: node.nodeTemplate,
         },
       };
@@ -420,10 +406,15 @@ export default function useDragAndDrop() {
   };
 
   async function getNodeToAdd(node: NodeInput): Promise<Node> {
-    const numberOfInputs: number = node.multi ? 1 : node.input;
-
     const nodeTemplate = await getNodeTemplateByItem(node.item);
     const component = await getComponent(nodeTemplate || node.item);
+
+    // The per-instance NodeInput carries input_names/output_names; the template
+    // flag covers dynamic nodes saved before a subflow was picked.
+    const { inputs, outputs } = deriveHandles({
+      ...node,
+      dynamic_inputs: node.dynamic_inputs || nodeTemplate?.dynamic_inputs,
+    });
 
     const newNode: Node = {
       id: String(node.id),
@@ -437,11 +428,8 @@ export default function useDragAndDrop() {
         label: node.name,
         component: markRaw(component),
         nodeReference: node.node_reference,
-        inputs: Array.from({ length: numberOfInputs }, (_, i) => ({
-          id: `input-${i}`,
-          position: Position.Left,
-        })),
-        outputs: buildOutputHandles(node.output, node.output_names ?? undefined),
+        inputs,
+        outputs,
         nodeTemplate: nodeTemplate,
       },
     };
@@ -598,7 +586,7 @@ export default function useDragAndDrop() {
 
     try {
       const component = await getComponent(nodeData);
-      const numberOfInputs: number = nodeData.multi ? 1 : nodeData.input;
+      const { inputs, outputs } = deriveHandles(nodeData);
 
       const newNode: Node = {
         id: String(nodeId),
@@ -608,11 +596,8 @@ export default function useDragAndDrop() {
           id: nodeId,
           label: nodeData.name,
           component: markRaw(component),
-          inputs: Array.from({ length: numberOfInputs }, (_, i) => ({
-            id: `input-${i}`,
-            position: Position.Left,
-          })),
-          outputs: buildOutputHandles(nodeData.output, nodeData.output_names ?? undefined),
+          inputs,
+          outputs,
           nodeTemplate: nodeData,
         },
       };
@@ -640,8 +625,14 @@ export default function useDragAndDrop() {
       // `multi` nodes render a single input handle that accepts many sources,
       // so for splice purposes they behave like a 1-input node regardless of
       // the backend's `input` count (e.g. polars_code/python_script have input=10).
+      // Dynamic-input nodes never splice: their input-0 is the parameter handle.
       const effectiveInputCount = nodeData.multi ? 1 : nodeData.input;
-      if (droppedOnEdgeId && effectiveInputCount === 1 && nodeData.output >= 1) {
+      if (
+        droppedOnEdgeId &&
+        !nodeData.dynamic_inputs &&
+        effectiveInputCount === 1 &&
+        nodeData.output >= 1
+      ) {
         const insertResponse = await insertNodeOnEdge(flowId, nodeId, nodeData, droppedOnEdgeId);
         if (insertResponse) return insertResponse;
       }
@@ -769,6 +760,12 @@ export default function useDragAndDrop() {
 
     const uiNodePromises = nodeInfos.map(async ({ node, newNodeId, offsetX, offsetY }) => {
       const component = await getComponentRaw(node.type);
+      const derived = deriveHandles({
+        input: node.numberOfInputs,
+        output: node.numberOfOutputs,
+        dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
+        output_names: node.nodeTemplate?.output_names,
+      });
       const newNode: Node = {
         id: String(newNodeId),
         type: "custom-node",
@@ -780,14 +777,8 @@ export default function useDragAndDrop() {
           id: newNodeId,
           label: node.label,
           component: markRaw(component),
-          inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
-            id: `input-${i}`,
-            position: Position.Left,
-          })),
-          outputs: buildOutputHandles(
-            node.numberOfOutputs,
-            node.nodeTemplate?.output_names ?? undefined,
-          ),
+          inputs: node.inputHandles ?? derived.inputs,
+          outputs: node.outputHandles ?? derived.outputs,
           nodeTemplate: node.nodeTemplate,
         },
       };
@@ -826,11 +817,17 @@ export default function useDragAndDrop() {
           (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
         );
         const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""), 10);
+        const snapshotHandles = sourceNodeInfo?.outputHandles;
+        const snapshotLabel =
+          snapshotHandles && snapshotHandles.length > 1
+            ? snapshotHandles[outputIndex]?.label
+            : undefined;
         const outputLabel =
-          sourceNodeInfo?.nodeTemplate?.output_names &&
+          snapshotLabel ??
+          (sourceNodeInfo?.nodeTemplate?.output_names &&
           sourceNodeInfo.nodeTemplate.output_names.length > 1
             ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
-            : undefined;
+            : undefined);
 
         const newEdge = {
           id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,

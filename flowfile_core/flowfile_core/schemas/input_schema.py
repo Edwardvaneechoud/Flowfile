@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
@@ -1449,6 +1450,127 @@ class NodeApiResponse(NodeSingleInput):
         """Describes the API response shape."""
         limit = f", max {self.max_rows} rows" if self.max_rows else ""
         return f"API response ({self.orientation}{limit})"
+
+
+def _validate_port_name(name: str, kind: str) -> str:
+    """Shared validator for flow_input/flow_output port names."""
+    if not name or not name[0].isalpha() or not all(c.isalnum() or c == "_" for c in name):
+        raise ValueError(f"Invalid {kind} name: {name!r} (must start with a letter; alphanumeric/underscore only)")
+    return name
+
+
+class NodeFlowInput(NodeManualInput):
+    """Named source placeholder inside a subflow.
+
+    Extends NodeManualInput so the sample data reuses the manual-input settings
+    shape and editor. Standalone runs serve ``raw_data_format`` (empty frame when
+    blank); a parent run_flow node injects real data at execution time.
+    """
+
+    input_name: str = "input"
+
+    @field_validator("input_name")
+    @classmethod
+    def _validate_input_name(cls, v: str) -> str:
+        return _validate_port_name(v, "flow input")
+
+    def get_default_description(self) -> str:
+        return f"Subflow input '{self.input_name}'"
+
+
+class NodeFlowOutput(NodeSingleInput):
+    """Named passthrough sink marking a subflow output; multiple allowed per flow."""
+
+    output_name: str = "output"
+
+    @field_validator("output_name")
+    @classmethod
+    def _validate_output_name(cls, v: str) -> str:
+        return _validate_port_name(v, "flow output")
+
+    def get_default_description(self) -> str:
+        return f"Subflow output '{self.output_name}'"
+
+
+class SubflowReference(BaseModel):
+    """Reference to a catalog-registered flow.
+
+    ``registration_id`` is the primary reference; ``flow_uuid`` is stamped
+    server-side and used to repair a dangling id; ``flow_path`` is display-only.
+    """
+
+    registration_id: int
+    flow_uuid: str | None = None
+    flow_path: str | None = None
+
+
+class RunFlowParameterBinding(BaseModel):
+    """How one subflow parameter gets its value for a run_flow execution."""
+
+    parameter_name: str
+    source: Literal["default", "constant", "column"] = "default"
+    constant_value: str | None = None
+    column_name: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_source_value(self) -> "RunFlowParameterBinding":
+        if self.source == "constant" and self.constant_value is None:
+            raise ValueError(f"parameter '{self.parameter_name}': constant binding requires constant_value")
+        if self.source == "column" and not self.column_name:
+            raise ValueError(f"parameter '{self.parameter_name}': column binding requires column_name")
+        return self
+
+
+class NodeRunFlow(NodeBase):
+    """Settings for a node that executes a catalog-registered flow as a subflow.
+
+    ``input_slots``/``output_slots`` persist the last-synced subflow interface
+    (flow_input/flow_output names in interface order); connections are keyed to
+    handles positionally against them (handle ``input-{i+1}`` <-> input_slots[i];
+    ``input-0`` is the reserved parameter-data handle).
+    """
+
+    flow_reference: SubflowReference
+    input_slots: list[str] = Field(default_factory=list)
+    output_slots: list[str] = Field(default_factory=list)
+    parameter_specs: list[FlowParameter] = Field(default_factory=list)
+    parameter_bindings: list[RunFlowParameterBinding] = Field(default_factory=list)
+    iteration_mode: Literal["first_value", "iterate"] = "first_value"
+    append_run_metadata: bool = True
+
+    @property
+    def input_names(self) -> list[str]:
+        """Handle labels, index i <-> handle input-i (index 0 = parameter handle).
+
+        An empty label at index 0 tells the frontend to hide the parameter
+        handle (the subflow has no parameters); data handles keep input-1..N.
+        """
+        param_label = "Parameters" if (self.parameter_specs or self.parameter_bindings) else ""
+        return [param_label, *self.input_slots]
+
+    @property
+    def output_names(self) -> list[str]:
+        return list(self.output_slots)
+
+    @model_validator(mode="after")
+    def _validate_slots_and_bindings(self) -> "NodeRunFlow":
+        if len(self.input_slots) > 9:
+            raise ValueError("Subflows with more than 9 data inputs are not supported")
+        if len(self.output_slots) > 10:
+            raise ValueError("Subflows with more than 10 outputs are not supported")
+        if len(set(self.input_slots)) != len(self.input_slots):
+            raise ValueError("input_slots must be unique")
+        if len(set(self.output_slots)) != len(self.output_slots):
+            raise ValueError("output_slots must be unique")
+        binding_names = [b.parameter_name for b in self.parameter_bindings]
+        if len(set(binding_names)) != len(binding_names):
+            raise ValueError("Duplicate parameter bindings")
+        return self
+
+    def get_default_description(self) -> str:
+        name = self.flow_reference.flow_path or f"registration {self.flow_reference.registration_id}"
+        mode = "per row" if self.iteration_mode == "iterate" else "once"
+        return f"Run flow {Path(name).stem if self.flow_reference.flow_path else name} ({mode})"
 
 
 class CatalogWriteSettings(BaseModel):

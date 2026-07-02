@@ -545,6 +545,34 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "node — its output is the unmodified primary input. Often used to enforce "
         "side-effect ordering (write A before reading B)."
     ),
+    "flow_input": (
+        "A subflow's named input port — where a parent flow feeds data in. Only "
+        "used when this flow is run inside another flow (via 'run_flow'). Has no "
+        "input port of its own, so it counts as a source. Extends 'manual_input': "
+        "the sample rows you type are placeholders shown during a standalone run; "
+        "the parent 'run_flow' node replaces them with real data. ``input_name`` "
+        "labels the port. For a normal top-level flow, load data with 'read' or "
+        "'manual_input' instead — not this. Pairs with 'flow_output' and 'run_flow'."
+    ),
+    "flow_output": (
+        "A subflow's named output port — the result a parent flow can read back. "
+        "Only used when this flow is run inside another flow (via 'run_flow'). A "
+        "passthrough: its output equals its input, so it does not change the data. "
+        "``output_name`` labels the result; a flow can have several 'flow_output' "
+        "nodes for several results. It does NOT write a file or a database — for "
+        "that use 'output' (file) or 'database_writer'. Pairs with 'flow_input' "
+        "and 'run_flow'."
+    ),
+    "run_flow": (
+        "Runs another flow (from the catalog) as a subflow, then returns its "
+        "outputs. Data inputs map to the subflow's 'flow_input' ports; the "
+        "subflow's 'flow_output' ports become this node's outputs (handle "
+        "``input-0`` is reserved for parameter data). ``parameter_bindings`` set "
+        "each subflow parameter from a default, a constant, or a column. "
+        "``iteration_mode`` runs the subflow once (``first_value``) or once per "
+        "input row (``iterate``). Its output columns are known only after the "
+        "subflow runs. Pairs with 'flow_input' / 'flow_output' inside that flow."
+    ),
 }
 
 
@@ -1033,6 +1061,38 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "input-0 and the write node's success signal to input-1. "
         "Pitfall: this is for ordering side effects, not data — "
         "input-1's data is discarded; only its completion is observed."
+    ),
+    "flow_input": (
+        "Marks where a parent flow sends data in when this flow is used as a "
+        "subflow. Settings: an 'Input name' (the label the parent maps data to) "
+        "and the same sample-data grid as 'Manual input' — type a few rows so you "
+        "can build and preview the subflow on its own. Worked example: 'a "
+        "reusable cleaning flow another flow feeds orders into' → drag 'Flow "
+        "Input' from Input Sources, set Input name=orders, add a few sample rows. "
+        "Pitfall: the sample rows are placeholders — a 'Run Flow' node in the "
+        "parent replaces them with real data at run time. For a normal flow, use "
+        "'Read data' or 'Manual input' instead."
+    ),
+    "flow_output": (
+        "Marks a result this flow exposes when it's used as a subflow. Settings: "
+        "just an 'Output name' (the label the parent reads it back by); the node "
+        "passes its input through unchanged. Worked example: 'expose the cleaned "
+        "orders to the parent flow' → drag 'Flow Output' from Output Operations, "
+        "connect it to the last step, set Output name=clean_orders. Add one 'Flow "
+        "Output' per result you want to expose. Pitfall: this does NOT save a "
+        "file or write to a database — use 'Write data' for a file or 'Write to "
+        "Database' for a table."
+    ),
+    "run_flow": (
+        "Runs another saved flow inside this one. Settings: pick a 'Flow' from "
+        "the catalog; the node then shows one input per 'Flow Input' in that flow "
+        "and one output per 'Flow Output'. A 'Parameters' section binds each "
+        "subflow parameter to a default, a constant, or a column, and a toggle "
+        "runs the subflow once or once per input row. Worked example: 'reuse my "
+        "orders-cleaning flow here' → drag 'Run Flow' from Combine Operations, "
+        "pick that flow, wire your data into its inputs, map any parameters. "
+        "Pitfall: the output columns appear only after the referenced flow has "
+        "run once — re-sync if you change that flow."
     ),
 }
 

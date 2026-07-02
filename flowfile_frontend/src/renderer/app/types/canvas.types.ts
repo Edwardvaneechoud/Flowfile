@@ -1,7 +1,7 @@
 // Canvas-related TypeScript interfaces and types
 
 import type { NodeBase } from "./node.types";
-import type { NodeTemplate } from "./flow.types";
+import type { NodeHandle, NodeTemplate } from "./flow.types";
 
 // Node Copy Types
 
@@ -18,6 +18,10 @@ export interface NodeCopyValue {
   nodeTemplate?: NodeTemplate;
   relativeX?: number;
   relativeY?: number;
+  // Live handle snapshots so dynamic-handle nodes (run_flow) paste with the
+  // same inputs/outputs the source node had.
+  inputHandles?: NodeHandle[];
+  outputHandles?: NodeHandle[];
 }
 
 export interface NodeCopyInput extends NodeCopyValue {
