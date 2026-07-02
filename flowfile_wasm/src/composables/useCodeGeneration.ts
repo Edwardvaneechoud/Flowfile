@@ -70,6 +70,165 @@ function toPythonValue(value: any): string {
   return String(value)
 }
 
+// --- Chain fusion (ported from flowfile_core code_generator/chain_fusion.py) ---
+// Collapse linear runs of single-use nodes into a single piped expression, keeping
+// named variables only where the graph branches (fan-out) or merges (join/union).
+
+interface NodeEmission {
+  nodeId: number
+  varName: string
+  lines: string[] // non-empty code lines for this node (no trailing blanks)
+  mainProducerId: number | null // sole input node id, or null for sources / multi-input
+  numInputs: number // number of distinct (resolved) input nodes
+  pinned: boolean // user named the node (node_reference) -> keep it a variable
+}
+
+const ASSIGNMENT_RE = /^[A-Za-z_]\w* = /
+
+function assignmentCount(lines: string[]): number {
+  return lines.filter(line => ASSIGNMENT_RE.test(line)).length
+}
+
+// True when the node is exactly one top-level assignment to its own var.
+function isSimpleEmission(em: NodeEmission): boolean {
+  return em.lines.length > 0 && em.lines[0].startsWith(`${em.varName} = `) && assignmentCount(em.lines) === 1
+}
+
+// Remove the common leading indentation shared by every non-blank line.
+function dedentLines(lines: string[]): string[] {
+  let common = Infinity
+  for (const line of lines) {
+    if (!line.trim()) continue
+    const indent = line.length - line.replace(/^\s+/, '').length
+    common = Math.min(common, indent)
+  }
+  if (!isFinite(common) || common === 0) return lines
+  return lines.map(line => (line.trim() ? line.slice(common) : line))
+}
+
+// Method-chain lines of `consumer` applied to `producerVar`, or null when not fusable.
+function linkSuffix(consumer: NodeEmission, producerVar: string): string[] | null {
+  if (consumer.lines.length === 0) return null
+  const head = consumer.lines[0]
+  const direct = `${consumer.varName} = ${producerVar}`
+  const paren = `${consumer.varName} = (${producerVar}`
+  let suffix: string[]
+  if (head.startsWith(direct + '.')) {
+    suffix = [head.slice(direct.length), ...consumer.lines.slice(1)]
+  } else if (head === paren) {
+    const body = consumer.lines.slice(1)
+    if (body.length === 0 || body[body.length - 1].trimEnd() !== ')') return null
+    suffix = dedentLines(body.slice(0, -1))
+  } else {
+    return null
+  }
+  // Not fusable when producerVar is referenced anywhere but the chain base
+  // (e.g. `... for c in producer.columns`), since fusing drops that variable.
+  const token = new RegExp(`\\b${producerVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
+  if (suffix.some(line => token.test(line))) return null
+  return suffix
+}
+
+// The right-hand side of a chain-root statement (`var = ` stripped).
+function rootRhs(em: NodeEmission): string[] {
+  const head = em.lines[0]
+  return [head.slice(`${em.varName} = `.length), ...em.lines.slice(1)]
+}
+
+function indentLine(line: string): string {
+  return line.trim() ? `    ${line}` : ''
+}
+
+// Render a producer->consumer chain as one piped expression (or null to bail).
+function renderChain(chain: NodeEmission[]): string[] | null {
+  if (chain.length === 1) return [...chain[0].lines]
+  const out = [`${chain[chain.length - 1].varName} = (`]
+  for (const line of rootRhs(chain[0])) out.push(indentLine(line))
+  for (let i = 0; i < chain.length - 1; i++) {
+    const suffix = linkSuffix(chain[i + 1], chain[i].varName)
+    if (suffix === null) return null
+    for (const line of suffix) out.push(indentLine(line))
+  }
+  out.push(')')
+  return out
+}
+
+// Render all node statements, fusing linear single-use chains into pipes.
+// Returns [bodyLines, survivingBoundaryNodeIds].
+function renderPipeline(
+  emissions: NodeEmission[],
+  consumers: Map<number, number[]>
+): [string[], Set<number>] {
+  const byId = new Map(emissions.map(em => [em.nodeId, em]))
+  const simple = new Map(emissions.map(em => [em.nodeId, isSimpleEmission(em)]))
+
+  const absorbedInto = new Map<number, number>()
+  for (const producer of emissions) {
+    if (!simple.get(producer.nodeId) || producer.numInputs > 1) continue
+    if (producer.pinned) continue // user named it; keep it as its own variable
+    const consuming = consumers.get(producer.nodeId) || []
+    if (consuming.length !== 1) continue
+    const consumer = byId.get(consuming[0])
+    if (!consumer || !simple.get(consumer.nodeId)) continue
+    if (consumer.numInputs !== 1 || consumer.mainProducerId !== producer.nodeId) continue
+    if (linkSuffix(consumer, producer.varName) === null) continue
+    absorbedInto.set(producer.nodeId, consumer.nodeId)
+  }
+
+  const rendered: string[] = []
+  const survivors = new Set<number>()
+  for (const em of emissions) {
+    if (absorbedInto.has(em.nodeId)) continue // emitted as part of its consumer's chain
+    const chain = [em]
+    let cur = em
+    while (cur.mainProducerId !== null && absorbedInto.get(cur.mainProducerId) === cur.nodeId) {
+      cur = byId.get(cur.mainProducerId)!
+      chain.unshift(cur)
+    }
+    let block = renderChain(chain)
+    if (block === null) block = chain.flatMap(node => node.lines) // defensive fallback
+    survivors.add(em.nodeId)
+    if (rendered.length > 0) rendered.push('')
+    rendered.push(...block)
+  }
+  return [rendered, survivors]
+}
+
+// Operation-based labels for the boundary variables that survive chain fusion.
+const NODE_TYPE_VAR_LABEL: Record<string, string> = {
+  read: 'source',
+  manual_input: 'source',
+  external_data: 'source',
+  filter: 'filtered',
+  formula: 'computed',
+  select: 'selected',
+  dynamic_rename: 'renamed',
+  sort: 'ordered',
+  group_by: 'grouped',
+  pivot: 'pivoted',
+  unpivot: 'unpivoted',
+  join: 'joined',
+  cross_join: 'joined',
+  union: 'combined',
+  unique: 'deduped',
+  record_id: 'with_record_id',
+  sample: 'sampled',
+  head: 'sampled',
+  polars_code: 'transformed'
+}
+
+// Python keywords + common builtins that generated names must never shadow.
+const RESERVED_NAMES = new Set<string>([
+  'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class',
+  'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global',
+  'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return',
+  'try', 'while', 'with', 'yield',
+  'abs', 'all', 'any', 'bool', 'bytes', 'dict', 'filter', 'float', 'format', 'frozenset',
+  'getattr', 'hash', 'id', 'input', 'int', 'iter', 'len', 'list', 'map', 'max', 'min',
+  'next', 'object', 'open', 'ord', 'print', 'range', 'repr', 'reversed', 'round', 'set',
+  'slice', 'sorted', 'str', 'sum', 'tuple', 'type', 'vars', 'zip'
+])
+
 class FlowToPolarsConverter {
   private nodes: Map<number, FlowNode>
   private edges: FlowEdge[]
@@ -80,6 +239,11 @@ class FlowToPolarsConverter {
   private lastNodeVar: string | null
   private unsupportedNodes: Array<{ id: number; type: string; reason: string }>
   private formulaCode: Record<number, string>
+  // (node, effectiveVar, start, end) per emitting node; (start, end) slices codeLines.
+  private nodeSpans: Array<{ node: FlowNode; effectiveVar: string; start: number; end: number }>
+  // node_id -> upstream node_id for nodes that emit nothing (passthroughs).
+  private passthrough: Map<number, number>
+  private currentNodeId: number
 
   constructor(options: CodeGenerationOptions) {
     this.nodes = options.nodes
@@ -91,6 +255,9 @@ class FlowToPolarsConverter {
     this.codeLines = []
     this.lastNodeVar = null
     this.unsupportedNodes = []
+    this.nodeSpans = []
+    this.passthrough = new Map()
+    this.currentNodeId = -1
   }
 
   convert(): string {
@@ -168,10 +335,31 @@ class FlowToPolarsConverter {
     const nodeReference = node.node_reference || (node.settings as any)?.node_reference
     const varName = nodeReference || `df_${node.id}`
     this.nodeVarMapping.set(node.id, varName)
-    this.lastNodeVar = varName
+    this.currentNodeId = node.id
 
     const inputVars = this.getInputVars(node)
 
+    const start = this.codeLines.length
+    this.dispatchNodeCode(node, varName, inputVars)
+    const end = this.codeLines.length
+
+    // A handler may have remapped the node to a passthrough (e.g. empty select,
+    // explore_data); read the effective var back so downstream/return honour it.
+    const effectiveVar = this.nodeVarMapping.get(node.id) || varName
+    this.lastNodeVar = effectiveVar
+
+    if (end === start) {
+      // Handler emitted nothing -> passthrough to its sole main input.
+      const mainInputs = node.inputIds || []
+      if (mainInputs.length === 1) {
+        this.passthrough.set(node.id, mainInputs[0])
+      }
+    } else {
+      this.nodeSpans.push({ node, effectiveVar, start, end })
+    }
+  }
+
+  private dispatchNodeCode(node: FlowNode, varName: string, inputVars: Record<string, string>): void {
     switch (node.type) {
       case 'read':
         this.handleReadCsv(node.settings as NodeReadSettings, varName)
@@ -497,10 +685,11 @@ class FlowToPolarsConverter {
         this.addCode(`    ${expr},`)
       }
       this.addCode(`])`)
+      this.addCode('')
     } else {
-      this.addCode(`${varName} = ${inputDf}`)
+      // Nothing selected -> transparent passthrough; remap and emit nothing.
+      this.nodeVarMapping.set(this.currentNodeId, inputDf)
     }
-    this.addCode('')
   }
 
   private handleGroupBy(settings: NodeGroupBySettings, varName: string, inputVars: { main?: string }): void {
@@ -822,8 +1011,9 @@ class FlowToPolarsConverter {
       args = argList.join(', ')
     }
   
+    const fnName = `_polars_code_${this.currentNodeId}`
     this.addCode('# Custom Polars code')
-    this.addCode(`def _polars_code_${varName.replace('df_', '')}(${params}):`)
+    this.addCode(`def ${fnName}(${params}):`)
   
     const hasOutputDf = /\boutput_df\s*=/.test(code)
 
@@ -866,14 +1056,14 @@ class FlowToPolarsConverter {
 
     this.addCode('')
 
-    this.addCode(`${varName} = _polars_code_${varName.replace('df_', '')}(${args})`)
+    this.addCode(`${varName} = ${fnName}(${args})`)
     this.addCode('')
   }
 
-  private handlePreview(varName: string, inputVars: { main?: string }): void {
-    const inputDf = inputVars.main || 'df'
-    this.addCode(`${varName} = ${inputDf}  # Preview (pass-through)`)
-    this.addCode('')
+  private handlePreview(_varName: string, inputVars: { main?: string }): void {
+    // explore_data is interactive-only: remap to its input and emit nothing, so
+    // no dead `var = input` passthrough appears in the exported script.
+    this.nodeVarMapping.set(this.currentNodeId, inputVars.main || 'df')
   }
 
   private handleOutput(settings: NodeOutputSettings, varName: string, inputVars: { main?: string }): void {
@@ -950,6 +1140,149 @@ class FlowToPolarsConverter {
     this.codeLines.push(comment)
   }
 
+  // Upstream node ids feeding `node` (main + left + right).
+  private rawProducerIds(node: FlowNode): number[] {
+    const ids = [...(node.inputIds || [])]
+    if (node.leftInputId !== undefined) ids.push(node.leftInputId)
+    if (node.rightInputId !== undefined) ids.push(node.rightInputId)
+    return ids
+  }
+
+  // Hop through elided passthrough nodes to the real producing node.
+  private resolveProducer(nodeId: number): number {
+    const seen = new Set<number>()
+    while (this.passthrough.has(nodeId) && !seen.has(nodeId)) {
+      seen.add(nodeId)
+      nodeId = this.passthrough.get(nodeId)!
+    }
+    return nodeId
+  }
+
+  private varLabel(node: FlowNode): string {
+    return NODE_TYPE_VAR_LABEL[node.type] || 'df'
+  }
+
+  // Fuse linear single-use chains, then give the surviving boundaries clean names.
+  private renderBody(): string[] {
+    const emissions: NodeEmission[] = []
+    const nodeById = new Map<number, FlowNode>()
+    for (const { node, effectiveVar, start, end } of this.nodeSpans) {
+      let lines = this.codeLines.slice(start, end)
+      while (lines.length > 0 && lines[lines.length - 1] === '') lines = lines.slice(0, -1)
+      if (lines.length === 0) continue
+      const resolved = new Set(this.rawProducerIds(node).map(pid => this.resolveProducer(pid)))
+      const numInputs = resolved.size
+      const mainProducerId = numInputs === 1 ? resolved.values().next().value! : null
+      const pinned = Boolean(node.node_reference || (node.settings as any)?.node_reference)
+      emissions.push({
+        nodeId: node.id, varName: effectiveVar, lines, mainProducerId, numInputs, pinned
+      })
+      nodeById.set(node.id, node)
+    }
+
+    const consumers = new Map<number, number[]>()
+    for (const em of emissions) consumers.set(em.nodeId, [])
+    for (const em of emissions) {
+      const node = nodeById.get(em.nodeId)!
+      const resolved = new Set(this.rawProducerIds(node).map(pid => this.resolveProducer(pid)))
+      for (const pid of resolved) {
+        if (consumers.has(pid)) consumers.get(pid)!.push(em.nodeId)
+      }
+    }
+
+    const [body, survivors] = renderPipeline(emissions, consumers)
+    const rename = this.planBoundaryNames(emissions, survivors, nodeById)
+    return this.applyRenames(body, rename)
+  }
+
+  // Renameable boundaries: single-output provisional `df_N` assignments (not pinned,
+  // and only node types with a known operation label).
+  private isRenameable(em: NodeEmission, node: FlowNode): boolean {
+    if (em.pinned) return false
+    if (!(node.type in NODE_TYPE_VAR_LABEL)) return false
+    return em.varName === `df_${em.nodeId}`
+  }
+
+  // Map provisional `df_N` tokens to clean labels; suffix only on collision.
+  private planBoundaryNames(
+    emissions: NodeEmission[], survivors: Set<number>, nodeById: Map<number, FlowNode>
+  ): Map<string, string> {
+    const ordered = emissions.filter(em => survivors.has(em.nodeId))
+    const renameable = ordered.filter(em => this.isRenameable(em, nodeById.get(em.nodeId)!))
+    const labels = new Map(renameable.map(em => [em.nodeId, this.varLabel(nodeById.get(em.nodeId)!)]))
+    const counts = new Map<string, number>()
+    for (const label of labels.values()) counts.set(label, (counts.get(label) || 0) + 1)
+
+    const used = new Set<string>([
+      ...ordered.filter(em => em.pinned).map(em => em.varName),
+      ...RESERVED_NAMES,
+      ...this.importedNames()
+    ])
+    const seen = new Map<string, number>()
+    const rename = new Map<string, string>()
+    for (const em of renameable) {
+      const label = labels.get(em.nodeId)!
+      let name: string
+      if ((counts.get(label) || 0) > 1) {
+        seen.set(label, (seen.get(label) || 0) + 1)
+        name = `${label}_${seen.get(label)}`
+      } else {
+        name = label
+      }
+      name = this.uniquify(name, used)
+      rename.set(em.varName, name)
+    }
+    return rename
+  }
+
+  // Names bound by imports so generated vars never shadow an import alias.
+  private importedNames(): Set<string> {
+    const names = new Set<string>()
+    for (const statement of this.imports) {
+      let m = statement.match(/^import\s+(.+?)(?:\s+as\s+(\w+))?$/)
+      if (m) {
+        names.add(m[2] || m[1].split('.')[0])
+        continue
+      }
+      m = statement.match(/^from\s+\S+\s+import\s+(.+)$/)
+      if (m) {
+        for (const part of m[1].split(',')) {
+          const alias = part.trim().match(/(\w+)(?:\s+as\s+(\w+))?/)
+          if (alias) names.add(alias[2] || alias[1])
+        }
+      }
+    }
+    return names
+  }
+
+  private uniquify(name: string, used: Set<string>): string {
+    let candidate = name
+    let bump = 2
+    while (used.has(candidate)) {
+      candidate = `${name}_${bump}`
+      bump++
+    }
+    used.add(candidate)
+    return candidate
+  }
+
+  // Substitute provisional tokens with final names across body + return target.
+  // Word-boundary regex, leaving `param=` kwargs untouched (mirrors core's fallback).
+  private applyRenames(body: string[], rename: Map<string, string>): string[] {
+    if (rename.size === 0) return body
+    const patterns = Array.from(rename.entries()).map(
+      ([oldName, newName]) => [new RegExp(`\\b${oldName}\\b(?!=)`, 'g'), newName] as const
+    )
+    const out = body.map(line => {
+      for (const [pat, newName] of patterns) line = line.replace(pat, newName)
+      return line
+    })
+    if (this.lastNodeVar !== null) {
+      this.lastNodeVar = rename.get(this.lastNodeVar) ?? this.lastNodeVar
+    }
+    return out
+  }
+
   private buildFinalCode(): string {
     const lines: string[] = []
 
@@ -964,7 +1297,10 @@ class FlowToPolarsConverter {
     lines.push('    """')
     lines.push('    ')
 
-    for (const line of this.codeLines) {
+    // renderBody() fuses chains and (as a side effect) remaps this.lastNodeVar
+    // to its final name, so it must run before the return line is emitted.
+    const body = this.renderBody()
+    for (const line of body) {
       if (line) {
         lines.push(`    ${line}`)
       } else {
