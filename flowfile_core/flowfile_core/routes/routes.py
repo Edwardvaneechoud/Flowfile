@@ -315,6 +315,15 @@ def _run_and_track(flow, user_id: int | None):
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
+    if user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None:
+        reg_path = flow.flow_settings.path or flow.flow_settings.save_location
+        if reg_path:
+            try:
+                flow.save_flow(flow_path=reg_path)
+                auto_register_flow(reg_path, flow.flow_settings.name, user_id)
+                resolve_source_registration_id(flow)
+            except Exception:
+                logger.info("First-run catalog registration failed (non-critical)", exc_info=True)
     reg_id, flow_name, flow_path = _resolve_run_identity(flow)
     logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
