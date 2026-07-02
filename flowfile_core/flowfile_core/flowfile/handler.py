@@ -69,12 +69,33 @@ class FlowfileHandler:
         self._flows[other.flow_id] = other
         return other.flow_id
 
+    def _find_open_flow_by_path(self, flow_path: Path) -> int | None:
+        """flow_id of an already-open flow whose resolved on-disk path matches, else None.
+        Reuses the resolved-path identity ``open_flow`` stores so reopening a live flow doesn't
+        clobber its unsaved in-memory edits."""
+        try:
+            target = str(flow_path.resolve())
+        except OSError:
+            target = str(flow_path)
+        return next(
+            (fid for fid, f in self._flows.items() if f.flow_settings and f.flow_settings.path == target),
+            None,
+        )
+
     def import_flow(self, flow_path: Path | str, user_id: int | None = None, register_session: bool = True) -> int:
         """Load a flow into the registry. ``register_session=False`` loads it into ``_flows`` (still
         passing ``user_id`` to ``open_flow`` for connection resolution) without opening an editor
-        session, so project import doesn't auto-open every flow on the canvas."""
+        session, so project import doesn't auto-open every flow on the canvas.
+
+        When opening an editor session, an already-open flow (matched by resolved on-disk path) is
+        reused as-is rather than re-read from disk, so reopening it can't discard unsaved edits."""
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
+        if register_session:
+            already_open_id = self._find_open_flow_by_path(flow_path)
+            if already_open_id is not None:
+                self._register_user_session(user_id, already_open_id)
+                return already_open_id
         imported_flow = open_flow(flow_path, user_id=user_id)
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)

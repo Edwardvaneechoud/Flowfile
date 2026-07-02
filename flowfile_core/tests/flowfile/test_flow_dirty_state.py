@@ -110,3 +110,25 @@ def test_handler_import_flow_reports_clean(handler, tmp_path):
     imported = fresh_handler.get_flow(imported_id)
     assert imported.has_unsaved_changes() is False
     assert fresh_handler.get_flow_info_with_runtime(imported_id).has_unsaved_changes is False
+
+
+def test_reopen_open_flow_preserves_unsaved_changes(handler, tmp_path):
+    """Reopening an already-open flow (same path) must reuse it, not reload from disk
+    and clobber unsaved in-memory edits."""
+    path = tmp_path / "f.yaml"
+    seed = _register(handler, path)
+    add_test_manual_input(seed, SAMPLE, node_id=1)
+    seed.save_flow(str(path))
+
+    editor = FlowfileHandler()  # simulates the editor session
+    flow_id = editor.import_flow(path)
+    live = editor.get_flow(flow_id)
+    add_test_manual_input(live, SAMPLE_OTHER, node_id=2)  # unsaved edit
+    assert live.has_unsaved_changes() is True
+
+    reopened_id = editor.import_flow(path)  # "open flow" again from catalog
+
+    assert reopened_id == flow_id
+    assert editor.get_flow(reopened_id) is live  # same object — not replaced from disk
+    assert live.has_unsaved_changes() is True
+    assert live.get_node(2) is not None  # unsaved node survived
