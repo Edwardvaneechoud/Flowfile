@@ -51,7 +51,10 @@ def apply_param_sentinels(nodes_settings: list[Any], parameters: list[FlowParame
         return restorations
     for settings in nodes_settings:
         if settings is not None:
-            _apply_recursive(settings, sentinels, restorations)
+            # render_expressions=False: insert the sentinel verbatim (the token-level
+            # post-pass rewrites it). Expression-literal rendering would quote the
+            # sentinel and break the rewrite.
+            _apply_recursive(settings, sentinels, restorations, render_expressions=False)
     return restorations
 
 
@@ -67,6 +70,22 @@ def restore_sentinels_to_refs(text: str) -> str:
 def parameter_default_repr(parameter: FlowParameter) -> str:
     """The Python literal used as the function-argument default."""
     return repr(parameter.typed_default())
+
+
+# ParamType -> Python annotation for generated function signatures.
+PARAM_TYPE_TO_ANNOTATION = {
+    "string": "str",
+    "enum": "str",
+    "integer": "int",
+    "float": "float",
+    "boolean": "bool",
+}
+
+
+def param_arg(parameter: FlowParameter) -> str:
+    """``name: type = default`` for a generated function signature."""
+    annotation = PARAM_TYPE_TO_ANNOTATION.get(parameter.type, "str")
+    return f"{parameter.name}: {annotation} = {parameter_default_repr(parameter)}"
 
 
 def _rewrite_string_token(token_text: str, param_names: set[str]) -> str | None:

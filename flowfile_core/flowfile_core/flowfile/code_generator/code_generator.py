@@ -14,6 +14,13 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
+from flowfile_core.flowfile.code_generator.param_codegen import (
+    apply_param_sentinels,
+    codegen_parameters,
+    param_arg,
+    resolve_param_sentinels,
+    restore_param_sentinels,
+)
 from flowfile_core.flowfile.code_generator.transform_handlers import TransformHandlersMixin
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
@@ -161,8 +168,36 @@ class FlowGraphCodeConverter(
         self._node_spans: list[tuple[FlowNode, str, int, int]] = []
         # node_id -> upstream node_id for nodes that emit nothing (passthroughs).
         self._passthrough: dict[int, int] = {}
+        # Flow parameters that become function kwargs (set in convert()).
+        self._codegen_params: list = []
+        self.warnings: list[str] = []
 
     def convert(self) -> str:
+        """Convert the FlowGraph to code, turning ``${name}`` parameter references
+        into references to same-named function arguments on the generated function.
+
+        Refs are replaced with sentinels in the node settings before emission and
+        rewritten to argument references by a token-level post-pass; anything that
+        can't be rewritten safely degrades back to literal ``${name}`` text and is
+        reported in ``self.warnings``.
+        """
+        self._codegen_params = codegen_parameters(self.flow_graph.flow_settings.parameters)
+        restorations = apply_param_sentinels(
+            [node.setting_input for node in self.flow_graph.nodes], self._codegen_params
+        )
+        try:
+            code = self._convert_core()
+        finally:
+            restore_param_sentinels(restorations)
+        code, leaked = resolve_param_sentinels(code, {p.name for p in self._codegen_params})
+        if leaked:
+            self.warnings.append(
+                f"Parameter reference(s) {sorted(leaked)} appear in places that cannot reference a "
+                "function argument (e.g. multi-line strings) and were left as literal ${...} text."
+            )
+        return code
+
+    def _convert_core(self) -> str:
         """
         Main method to convert the FlowGraph to Polars code.
 
@@ -878,7 +913,10 @@ class FlowGraphCodeConverter(
         return "\n".join(lines)
 
     def _function_def_line(self) -> str:
-        return f"def {self.function_name}():"
+        if not self._codegen_params:
+            return f"def {self.function_name}():"
+        args = ", ".join(param_arg(p) for p in self._codegen_params)
+        return f"def {self.function_name}(*, {args}):"
 
     def _append_module_epilogue(self, lines: list[str]) -> None:
         lines.append("")

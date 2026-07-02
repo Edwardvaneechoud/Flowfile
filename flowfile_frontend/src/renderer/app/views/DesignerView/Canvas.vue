@@ -619,16 +619,18 @@ const openNodeSettings = async (nodeId: number) => {
 const openNodeData = (nodeId: number) => {
   if (isGroupNodeId(String(nodeId))) return;
   drawerStore.setPreviewNode(nodeId);
+  drawerStore.setActiveTab("bottomDock", "data");
   nextTick().then(() => itemStore.bringToFront("bottomDock"));
 };
 
 const nodeClick = (mouseEvent: any) => {
-  // Single click opens Settings only. The bottom dock is opened by double-click
-  // (handleMainDblClick), not here; if it's already open we follow the selection.
+  // Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
   const rawId = String(mouseEvent.node.id);
   openNodeSettings(parseInt(rawId));
-  if (!isGroupNodeId(rawId) && drawerStore.previewNodeId !== null) {
+  const dockOpen = drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer;
+  if (!isGroupNodeId(rawId) && dockOpen) {
     drawerStore.setPreviewNode(parseInt(rawId));
+    drawerStore.setActiveTab("bottomDock", "data");
   }
 };
 

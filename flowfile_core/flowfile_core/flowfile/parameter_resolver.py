@@ -113,13 +113,22 @@ def restore_parameters(restorations: _Restorations) -> None:
             obj[field] = original
 
 
-def _apply_recursive(obj: Any, params: dict[str, ParamValue], restorations: _Restorations) -> None:
+def _apply_recursive(
+    obj: Any, params: dict[str, ParamValue], restorations: _Restorations, render_expressions: bool = True
+) -> None:
+    """Substitute ``${name}`` refs in *obj* in place.
+
+    When *render_expressions* is True (runtime resolution) expression fields render
+    typed literals via ``resolve_expression_parameters``. When False (e.g. code-gen
+    sentinel substitution) every field uses the raw ``_substitute`` path so the
+    replacement text is inserted verbatim.
+    """
     if isinstance(obj, BaseModel):
         for field_name in obj.model_fields:
             value = getattr(obj, field_name, None)
             if isinstance(value, str):
                 if "${" in value:
-                    if _is_expression_field(obj, field_name):
+                    if render_expressions and _is_expression_field(obj, field_name):
                         resolved = resolve_expression_parameters(value, params)
                     else:
                         resolved = _substitute(value, params)
@@ -127,13 +136,13 @@ def _apply_recursive(obj: Any, params: dict[str, ParamValue], restorations: _Res
                         restorations.append((obj, field_name, value))
                         object.__setattr__(obj, field_name, resolved)
             elif isinstance(value, BaseModel):
-                _apply_recursive(value, params, restorations)
+                _apply_recursive(value, params, restorations, render_expressions)
             elif isinstance(value, dict):
-                _apply_recursive(value, params, restorations)
+                _apply_recursive(value, params, restorations, render_expressions)
             elif isinstance(value, list):
                 for i, item in enumerate(value):
                     if isinstance(item, BaseModel):
-                        _apply_recursive(item, params, restorations)
+                        _apply_recursive(item, params, restorations, render_expressions)
                     elif isinstance(item, str) and "${" in item:
                         resolved = _substitute(item, params)
                         if resolved != item:
@@ -147,7 +156,7 @@ def _apply_recursive(obj: Any, params: dict[str, ParamValue], restorations: _Res
                     restorations.append((obj, key, value))
                     obj[key] = resolved
             elif isinstance(value, (BaseModel | dict)):
-                _apply_recursive(value, params, restorations)
+                _apply_recursive(value, params, restorations, render_expressions)
 
 
 def find_unresolved_in_model(obj: Any) -> set[str]:
