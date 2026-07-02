@@ -803,10 +803,10 @@ class TestRunFlowProjectExport:
         pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
         assert "_sf_9_param_rows = " in pipeline and ".collect().to_dicts()" in pipeline
         assert "head_subflow.run(customers=" in pipeline
-        assert 'limit=_sf_9_row["limit"])' in pipeline
+        assert "limit=_sf_9_row['limit'])" in pipeline
         assert "ff.concat([" in pipeline
         assert 'how="diagonal_relaxed"' in pipeline
-        assert 'ff.lit(_sf_9_row["limit"]).cast(ff.Int64).alias("param_limit")' in pipeline
+        assert 'ff.lit(_sf_9_row[\'limit\']).cast(ff.Int64).alias("param_limit")' in pipeline
         assert 'ff.lit(_sf_9_i).cast(ff.UInt32).alias("run_index")' in pipeline
         assert ".data" not in pipeline  # subflow boundary stays at the FlowFrame level
         ast.parse(pipeline)
@@ -836,8 +836,71 @@ class TestRunFlowProjectExport:
 
         pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
         assert "_sf_9_params = " in pipeline and ".head(1).collect()" in pipeline
-        assert 'limit=_sf_9_params["limit"][0]' in pipeline
+        assert "limit=_sf_9_params['limit'][0]" in pipeline
         assert "run_index" not in pipeline
+        ast.parse(pipeline)
+
+    def test_column_name_with_quote_first_value_is_valid_python(self, tmp_path):
+        """A column name containing a double quote must go through repr() so the
+        generated first-value call site stays valid Python. Raw interpolation
+        produced _sf_9_params["a"b"][0], a SyntaxError (and a code-injection seam)."""
+        col = 'a"b'
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=51, name="parent_quote_first")
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name=col
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert f"limit=_sf_9_params[{col!r}][0]" in pipeline
+        ast.parse(pipeline)  # unescaped column name would raise SyntaxError here
+
+    def test_column_name_with_quote_iterate_is_valid_python(self, tmp_path):
+        """Iterate-mode loop kwargs and metadata exprs also repr() the column name."""
+        col = 'a"b'
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=52, name="parent_quote_iter")
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 1}, {"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                iteration_mode="iterate",
+                append_run_metadata=True,
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name=col
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert f"limit=_sf_9_row[{col!r}]" in pipeline          # loop kwarg
+        assert f"ff.lit(_sf_9_row[{col!r}]).cast(" in pipeline  # metadata value_expr
         ast.parse(pipeline)
 
     def test_module_reuse_across_two_nodes(self, tmp_path):

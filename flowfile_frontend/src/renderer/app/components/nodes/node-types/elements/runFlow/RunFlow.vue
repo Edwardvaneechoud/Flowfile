@@ -418,6 +418,8 @@ const applyInterfaceToCanvas = async () => {
   );
   if (dangling.length === 0) return;
 
+  const removedIds: string[] = [];
+  let failedCount = 0;
   for (const edge of dangling) {
     const connection: NodeConnection = {
       input_connection: {
@@ -434,19 +436,36 @@ const applyInterfaceToCanvas = async () => {
     try {
       await FlowApi.deleteConnection(Number(nodeRunFlow.value.flow_id), connection);
     } catch (error) {
+      // Backend delete failed: keep the edge on the canvas so it stays in sync
+      // with the still-present server-side connection. Suppressing + removing it
+      // here would hide the edge while the connection lingers, and Canvas.vue's
+      // delete-on-remove retry is suppressed, so the desync would never heal.
       console.error("Failed to delete stale connection:", error);
+      failedCount += 1;
+      continue;
     }
+    // Backend delete succeeded: tell Canvas.handleEdgeChange to skip the
+    // redundant delete, then drop the edge from the canvas below.
     suppressedEdgeRemovals.add(edge.id);
+    removedIds.push(edge.id);
   }
   // One removal per call: Canvas.handleEdgeChange ignores batched change events,
   // which would leave the suppression entries unconsumed.
-  for (const edge of dangling) {
-    vfInstance.removeEdges([edge.id]);
+  for (const id of removedIds) {
+    vfInstance.removeEdges([id]);
   }
-  ElMessage.warning(
-    `Removed ${dangling.length} connection${dangling.length === 1 ? "" : "s"} that no longer ` +
-      "match the flow's inputs/outputs.",
-  );
+  if (removedIds.length > 0) {
+    ElMessage.warning(
+      `Removed ${removedIds.length} connection${removedIds.length === 1 ? "" : "s"} that no longer ` +
+        "match the flow's inputs/outputs.",
+    );
+  }
+  if (failedCount > 0) {
+    ElMessage.error(
+      `Could not remove ${failedCount} stale connection${failedCount === 1 ? "" : "s"}; ` +
+        "they remain on the canvas — reload the flow to retry.",
+    );
+  }
 };
 
 let catalogLoadPromise: Promise<void> | null = null;

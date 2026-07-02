@@ -427,7 +427,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             self._add_code(f"{prefix}_params = {param_frame_var}.head(1).collect()")
             for binding in column_bindings:
                 call_kwargs.append(
-                    f'{binding.parameter_name}={prefix}_params["{binding.column_name}"][0]'
+                    f"{binding.parameter_name}={prefix}_params[{binding.column_name!r}][0]"
                 )
 
         outputs_var = f"{prefix}_outputs"
@@ -466,7 +466,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         runs_var = f"{prefix}_runs"
         rows_var = f"{prefix}_param_rows"
         loop_kwargs = list(call_kwargs) + [
-            f'{binding.parameter_name}={row_var}["{binding.column_name}"]' for binding in column_bindings
+            f"{binding.parameter_name}={row_var}[{binding.column_name!r}]" for binding in column_bindings
         ]
         self._add_code(f"{rows_var} = {param_frame_var}.collect().to_dicts()")
         self._add_code(f"{runs_var} = [")
@@ -483,7 +483,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         if metadata_bindings:
             def value_expr(binding) -> str:
                 if binding.source == "column":
-                    return f'{row_var}["{binding.column_name}"]'
+                    return f"{row_var}[{binding.column_name!r}]"
                 return self._constant_literal(binding, specs_by_name)
 
             exprs = self._metadata_exprs(metadata_bindings, specs_by_name, value_expr)
