@@ -11,7 +11,9 @@ import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.flowfile.execution.exceptions import WorkerTaskError
+from flowfile_core.flowfile.execution.transport import WorkerTransport, get_default_transport
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     ApplyModelInput,
     FuzzyJoinInput,
@@ -22,8 +24,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     streaming_receive,
-    streaming_start,
-    streaming_submit,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
@@ -43,6 +43,7 @@ def trigger_df_operation(
     file_ref: str,
     operation_type: OperationType = "store",
     kwargs: dict | None = None,
+    transport: WorkerTransport | None = None,
 ) -> Status:
     # Send raw bytes directly - no base64 encoding overhead
     headers = {
@@ -54,14 +55,19 @@ def trigger_df_operation(
     }
     if kwargs:
         headers["X-Kwargs"] = json.dumps(kwargs)
-    v = requests.post(url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers)
+    v = (transport or get_default_transport()).post("/submit_query/", data=lf.serialize(), headers=headers)
     if not v.ok:
-        raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
+        raise WorkerTaskError(f"trigger_df_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
 def trigger_sample_operation(
-    lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100
+    lf: pl.LazyFrame,
+    file_ref: str,
+    flow_id: int,
+    node_id: str | int,
+    sample_size: int = 100,
+    transport: WorkerTransport | None = None,
 ) -> Status:
     # Send raw bytes directly - no base64 encoding overhead
     headers = {
@@ -72,9 +78,9 @@ def trigger_sample_operation(
         "X-Flow-Id": str(flow_id),
         "X-Node-Id": str(node_id),
     }
-    v = requests.post(url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers)
+    v = (transport or get_default_transport()).post("/store_sample/", data=lf.serialize(), headers=headers)
     if not v.ok:
-        raise Exception(f"trigger_sample_operation: Could not cache the data, {v.text}")
+        raise WorkerTaskError(f"trigger_sample_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
@@ -85,6 +91,7 @@ def trigger_fuzzy_match_operation(
     file_ref: str,
     flow_id: int,
     node_id: int | str,
+    transport: WorkerTransport | None = None,
 ) -> Status:
     # Use raw bytes - Pydantic will handle single base64 encoding for JSON transport
     left_serializable_object = PolarsOperation(operation=left_df.serialize())
@@ -97,9 +104,9 @@ def trigger_fuzzy_match_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = requests.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
+    v = (transport or get_default_transport()).post("/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
     if not v.ok:
-        raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
+        raise WorkerTaskError(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
@@ -113,6 +120,7 @@ def trigger_train_model_operation(
     file_ref: str,
     flow_id: int,
     node_id: int | str,
+    transport: WorkerTransport | None = None,
 ) -> Status:
     """Submit a training job to the worker.
 
@@ -130,9 +138,9 @@ def trigger_train_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = requests.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json())
+    v = (transport or get_default_transport()).post("/train_ml_model", data=payload.model_dump_json())
     if not v.ok:
-        raise Exception(f"trigger_train_model_operation: Could not start training, {v.text}")
+        raise WorkerTaskError(f"trigger_train_model_operation: Could not start training, {v.text}")
     return Status(**v.json())
 
 
@@ -143,6 +151,7 @@ def trigger_apply_model_operation(
     file_ref: str,
     flow_id: int,
     node_id: int | str,
+    transport: WorkerTransport | None = None,
 ) -> Status:
     """Submit an apply-model job to the worker."""
     payload = ApplyModelInput(
@@ -153,9 +162,9 @@ def trigger_apply_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = requests.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json())
+    v = (transport or get_default_transport()).post("/apply_ml_model", data=payload.model_dump_json())
     if not v.ok:
-        raise Exception(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
+        raise WorkerTaskError(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
     return Status(**v.json())
 
 
@@ -164,42 +173,48 @@ def trigger_create_operation(
     node_id: int | str,
     received_table: ReceivedTable,
     file_type: str = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro"],
+    transport: WorkerTransport | None = None,
 ):
-    f = requests.post(
-        url=f"{WORKER_URL}/create_table/{file_type}",
+    f = (transport or get_default_transport()).post(
+        f"/create_table/{file_type}",
         data=received_table.model_dump_json(),
         params={"flowfile_flow_id": flow_id, "flowfile_node_id": node_id},
     )
     if not f.ok:
-        raise Exception(f"trigger_create_operation: Could not cache the data, {f.text}")
+        raise WorkerTaskError(f"trigger_create_operation: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
-def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
-    f = requests.post(
-        url=f"{WORKER_URL}/store_database_read_result", data=database_external_read_settings.model_dump_json()
+def trigger_database_read_collector(
+    database_external_read_settings: DatabaseExternalReadSettings,
+    transport: WorkerTransport | None = None,
+):
+    f = (transport or get_default_transport()).post(
+        "/store_database_read_result", data=database_external_read_settings.model_dump_json()
     )
     if not f.ok:
-        raise Exception(f"trigger_database_read_collector: Could not cache the data, {f.text}")
+        raise WorkerTaskError(f"trigger_database_read_collector: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
-def trigger_kafka_read(kafka_read_settings) -> Status:
+def trigger_kafka_read(kafka_read_settings, transport: WorkerTransport | None = None) -> Status:
     """Send a Kafka read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
+    f = (transport or get_default_transport()).post(
+        "/store_kafka_read_result", data=kafka_read_settings.model_dump_json()
+    )
     if not f.ok:
-        raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
+        raise WorkerTaskError(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
     return Status(**f.json())
 
 
-def fetch_kafka_offsets(task_id: str) -> dict | None:
+def fetch_kafka_offsets(task_id: str, transport: WorkerTransport | None = None) -> dict | None:
     """Fetch deferred Kafka offset data from the worker for a completed task.
 
     Returns a dict with ``new_offsets``, ``messages_consumed``, etc. from the
     KafkaReadResult that was saved as a sidecar file, or ``None`` if no
     offsets were recorded (e.g. empty topic).
     """
-    f = requests.get(f"{WORKER_URL}/kafka_offsets/{task_id}")
+    f = (transport or get_default_transport()).get(f"/kafka_offsets/{task_id}")
     if not f.ok:
         logger.warning("Failed to fetch Kafka offsets for task %s: %s", task_id, f.text)
         return None
@@ -207,35 +222,45 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
     return data
 
 
-def trigger_google_analytics_read(ga_read_settings) -> Status:
+def trigger_google_analytics_read(ga_read_settings, transport: WorkerTransport | None = None) -> Status:
     """Send a Google Analytics 4 read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json())
-    if not f.ok:
-        raise Exception(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
-    return Status(**f.json())
-
-
-def trigger_rest_api_read(settings) -> Status:
-    """Send a REST API read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json())
-    if not f.ok:
-        raise Exception(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
-    return Status(**f.json())
-
-
-def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
-    f = requests.post(
-        url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
+    f = (transport or get_default_transport()).post(
+        "/store_google_analytics_read_result", data=ga_read_settings.model_dump_json()
     )
     if not f.ok:
-        raise Exception(f"trigger_database_write: Could not cache the data, {f.text}")
+        raise WorkerTaskError(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
     return Status(**f.json())
 
 
-def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
-    f = requests.post(url=f"{WORKER_URL}/write_data_to_cloud", data=database_external_write_settings.model_dump_json())
+def trigger_rest_api_read(settings, transport: WorkerTransport | None = None) -> Status:
+    """Send a REST API read request to the worker service."""
+    f = (transport or get_default_transport()).post("/store_rest_api_read_result", data=settings.model_dump_json())
     if not f.ok:
-        raise Exception(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
+        raise WorkerTaskError(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
+    return Status(**f.json())
+
+
+def trigger_database_write(
+    database_external_write_settings: DatabaseExternalWriteSettings,
+    transport: WorkerTransport | None = None,
+):
+    f = (transport or get_default_transport()).post(
+        "/store_database_write_result", data=database_external_write_settings.model_dump_json()
+    )
+    if not f.ok:
+        raise WorkerTaskError(f"trigger_database_write: Could not cache the data, {f.text}")
+    return Status(**f.json())
+
+
+def trigger_cloud_storage_write(
+    database_external_write_settings: CloudStorageWriteSettingsWorkerInterface,
+    transport: WorkerTransport | None = None,
+):
+    f = (transport or get_default_transport()).post(
+        "/write_data_to_cloud", data=database_external_write_settings.model_dump_json()
+    )
+    if not f.ok:
+        raise WorkerTaskError(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
@@ -249,12 +274,13 @@ def trigger_write_output(
     sheet_name: str | None = None,
     delimiter: str | None = None,
     compression: str | None = None,
+    transport: WorkerTransport | None = None,
 ) -> Status:
     from base64 import encodebytes
 
     serializable_df = lf.serialize()
-    r = requests.post(
-        f"{WORKER_URL}/write_results/",
+    r = (transport or get_default_transport()).post(
+        "/write_results/",
         json={
             "operation": encodebytes(serializable_df).decode(),
             "data_type": data_type,
@@ -268,7 +294,7 @@ def trigger_write_output(
         },
     )
     if not r.ok:
-        raise Exception(f"trigger_write_output: Could not write the data, {r.text}")
+        raise WorkerTaskError(f"trigger_write_output: Could not write the data, {r.text}")
     return Status(**r.json())
 
 
@@ -283,7 +309,7 @@ def trigger_catalog_materialize(
     }
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
+    response = get_default_transport().post("/catalog/materialize", json=payload)
     return response
 
 
@@ -305,7 +331,7 @@ def trigger_resolve_virtual_table(
         "plan_bytes": b64encode(plan_bytes).decode("ascii"),
         "source_versions_hash": source_versions_hash,
     }
-    response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
+    response = get_default_transport().post("/flow/resolve_virtual_table", json=payload, timeout=300)
     if not response.ok:
         raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")
     return response.json()
@@ -331,7 +357,7 @@ def trigger_sql_query(
         payload["virtual_refs"] = virtual_refs
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
+    response = get_default_transport().post("/catalog/sql_query", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
     return response.json()
@@ -354,7 +380,7 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
         max_rows,
     )
     body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS)
+    response = get_default_transport().post("/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",
@@ -384,7 +410,7 @@ def trigger_visualize_fields(worker_source: dict) -> dict:
         worker_source.get("kind"),
     )
     body = {"source": worker_source}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_fields", json=body, timeout=30)
+    response = get_default_transport().post("/catalog/visualize_fields", json=body, timeout=30)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d body=%s",
@@ -415,7 +441,7 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
         limit,
     )
     body = {"source": worker_source, "column": column, "limit": limit}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS)
+    response = get_default_transport().post("/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d body=%s",
@@ -426,7 +452,8 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
         raise RuntimeError(f"Worker visualize_column_stats failed: {response.text}")
     data = response.json()
     logger.info(
-        "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d cache_hit=%s value_count=%d truncated=%s",
+        "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d cache_hit=%s "
+        "value_count=%d truncated=%s",
         session_key,
         response.status_code,
         data.get("cache_hit"),
@@ -439,8 +466,8 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
 def trigger_visualize_evict(session_key: str) -> None:
     """Ask the worker to drop a cached viz session (e.g. after a table update)."""
     logger.info("[viz] -> worker /catalog/visualize_evict session_key=%s", session_key)
-    response = requests.post(
-        f"{WORKER_URL}/catalog/visualize_evict",
+    response = get_default_transport().post(
+        "/catalog/visualize_evict",
         params={"session_key": session_key},
         timeout=10,
     )
@@ -459,7 +486,7 @@ def trigger_read_table_metadata(table_name: str, storage: dict | None = None) ->
     payload = {"table_path": table_name}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
+    response = get_default_transport().post("/catalog/table_metadata", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker table metadata read failed: {response.text}")
     return response.json()
@@ -478,7 +505,7 @@ def trigger_delta_history(
     payload = {"table_path": table_name, "limit": limit}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
+    response = get_default_transport().post("/catalog/delta_history", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta history read failed: {response.text}")
     return DeltaTableHistory.model_validate(response.json())
@@ -498,7 +525,7 @@ def trigger_delta_version_preview(
     payload = {"table_path": table_name, "version": version, "n_rows": n_rows}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
+    response = get_default_transport().post("/catalog/delta_version_preview", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta version preview failed: {response.text}")
     return CatalogTablePreview.model_validate(response.json())
@@ -517,7 +544,7 @@ def trigger_delta_preview(
     payload = {"table_path": table_name, "n_rows": n_rows}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
+    response = get_default_transport().post("/catalog/delta_preview", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta preview failed: {response.text}")
     return CatalogTablePreview.model_validate(response.json())
@@ -536,7 +563,7 @@ def trigger_optimize_catalog_table(
     payload = {"table_path": table_name, "z_order_columns": z_order_columns}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/optimize", json=payload, timeout=600)
+    response = get_default_transport().post("/catalog/optimize", json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker optimize failed: {response.text}")
     return response.json()
@@ -556,14 +583,14 @@ def trigger_vacuum_catalog_table(
     payload = {"table_path": table_name, "retention_hours": retention_hours, "dry_run": dry_run}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/vacuum", json=payload, timeout=600)
+    response = get_default_transport().post("/catalog/vacuum", json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker vacuum failed: {response.text}")
     return response.json()
 
 
 def get_results(file_ref: str) -> Status | None:
-    f = requests.get(f"{WORKER_URL}/status/{file_ref}")
+    f = get_default_transport().get(f"/status/{file_ref}")
     if f.status_code == 200:
         return Status(**f.json())
     else:
@@ -575,7 +602,7 @@ def results_exists(file_ref: str):
         return False
 
     try:
-        f = requests.get(f"{WORKER_URL}/status/{file_ref}")
+        f = get_default_transport().get(f"/status/{file_ref}")
         if f.status_code == 200:
             if f.json()["status"] == "Completed":
                 return True
@@ -602,7 +629,7 @@ def clear_task_from_worker(file_ref: str) -> bool:
         return False
 
     try:
-        f = requests.delete(f"{WORKER_URL}/clear_task/{file_ref}")
+        f = get_default_transport().delete(f"/clear_task/{file_ref}")
         if f.status_code == 200:
             return True
         return False
@@ -627,7 +654,7 @@ def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
 
 
 def get_status(file_ref: str) -> Status:
-    status_response = requests.get(f"{WORKER_URL}/status/{file_ref}")
+    status_response = get_default_transport().get(f"/status/{file_ref}")
     if status_response.status_code == 200:
         return Status(**status_response.json())
     else:
@@ -648,7 +675,7 @@ def cancel_task(file_ref: str) -> bool:
         Exception: If there's an error communicating with the worker service
     """
     try:
-        response = requests.post(f"{WORKER_URL}/cancel_task/{file_ref}")
+        response = get_default_transport().post(f"/cancel_task/{file_ref}")
         if response.ok:
             return True
         return False
@@ -661,8 +688,9 @@ class BaseFetcher:
     Thread-safe fetcher for polling worker status and retrieving results.
     """
 
-    def __init__(self, file_ref: str = None):
+    def __init__(self, file_ref: str = None, transport: WorkerTransport | None = None):
         self.file_ref = file_ref if file_ref else str(uuid4())
+        self._transport = transport or get_default_transport()
 
         # Thread synchronization
         self._lock = threading.Lock()
@@ -730,7 +758,7 @@ class BaseFetcher:
         try:
             while not self._stop_event.is_set():
                 try:
-                    r = requests.get(f"{WORKER_URL}/status/{self.file_ref}", timeout=10)
+                    r = self._transport.get(f"/status/{self.file_ref}", timeout=10)
 
                     if r.status_code == 200:
                         status = Status(**r.json())
@@ -833,7 +861,7 @@ class BaseFetcher:
                 pass
 
         try:
-            cancel_task(self.file_ref)
+            self._transport.cancel_task(self.file_ref)
         except Exception as e:
             logger.error(f"Failed to cancel task on worker: {str(e)}")
 
@@ -908,7 +936,7 @@ class BaseFetcher:
         Raises on connection or send error so the caller can fall back to REST.
         """
         if blocking:
-            result, status = streaming_submit(
+            result, status = self._transport.streaming_submit(
                 task_id=self.file_ref,
                 operation_type=operation_type,
                 flow_id=flow_id,
@@ -922,7 +950,7 @@ class BaseFetcher:
                 self._started = True
             self.status = status
         else:
-            ws = streaming_start(
+            ws = self._transport.streaming_start(
                 task_id=self.file_ref,
                 operation_type=operation_type,
                 flow_id=flow_id,
@@ -974,8 +1002,9 @@ class ExternalDfFetcher(BaseFetcher):
         operation_type: OperationType = "store",
         offload_to_worker: bool = True,
         kwargs: dict | None = None,
+        transport: WorkerTransport | None = None,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, transport=transport)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
 
         try:
@@ -999,11 +1028,12 @@ class ExternalDfFetcher(BaseFetcher):
             node_id=node_id,
             flow_id=flow_id,
             kwargs=kwargs,
+            transport=self._transport,
         )
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-        self.status = get_status(self.file_ref)
+        self.status = self._transport.get_status(self.file_ref)
 
 
 class ExternalSampler(BaseFetcher):
@@ -1017,8 +1047,9 @@ class ExternalSampler(BaseFetcher):
         file_ref: str = None,
         wait_on_completion: bool = True,
         sample_size: int = 100,
+        transport: WorkerTransport | None = None,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, transport=transport)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
 
         try:
@@ -1036,12 +1067,17 @@ class ExternalSampler(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_sample_operation(
-            lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
+            lf=lf,
+            file_ref=file_ref,
+            sample_size=sample_size,
+            node_id=node_id,
+            flow_id=flow_id,
+            transport=self._transport,
         )
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-        self.status = get_status(self.file_ref)
+        self.status = self._transport.get_status(self.file_ref)
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
@@ -1054,8 +1090,9 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
         node_id: int | str,
         file_ref: str = None,
         wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, transport=transport)
 
         r = trigger_fuzzy_match_operation(
             left_df=left_df,
@@ -1064,6 +1101,7 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,
+            transport=self._transport,
         )
         self.file_ref = r.background_task_id
         self.running = r.status == "Processing"
@@ -1091,8 +1129,9 @@ class MLTrainFetcher(BaseFetcher):
         node_id: int | str,
         file_ref: str,
         wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, transport=transport)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_train_model_operation(
             lf=lf,
@@ -1104,6 +1143,7 @@ class MLTrainFetcher(BaseFetcher):
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,
+            transport=self._transport,
         )
         self.file_ref = r.background_task_id
         self.running = r.status == "Processing"
@@ -1123,8 +1163,9 @@ class MLApplyFetcher(BaseFetcher):
         node_id: int | str,
         file_ref: str,
         wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, transport=transport)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_apply_model_operation(
             lf=lf,
@@ -1133,6 +1174,7 @@ class MLApplyFetcher(BaseFetcher):
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,
+            transport=self._transport,
         )
         self.file_ref = r.background_task_id
         self.running = r.status == "Processing"
@@ -1148,20 +1190,30 @@ class ExternalCreateFetcher(BaseFetcher):
         flow_id: int,
         file_type: str = "csv",
         wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
+        transport = transport or get_default_transport()
         r = trigger_create_operation(
-            received_table=received_table, file_type=file_type, node_id=node_id, flow_id=flow_id
+            received_table=received_table, file_type=file_type, node_id=node_id, flow_id=flow_id, transport=transport
         )
-        super().__init__(file_ref=r.background_task_id)
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalDatabaseFetcher(BaseFetcher):
-    def __init__(self, database_external_read_settings: DatabaseExternalReadSettings, wait_on_completion: bool = True):
-        r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(
+        self,
+        database_external_read_settings: DatabaseExternalReadSettings,
+        wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
+    ):
+        transport = transport or get_default_transport()
+        r = trigger_database_read_collector(
+            database_external_read_settings=database_external_read_settings, transport=transport
+        )
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1170,9 +1222,10 @@ class ExternalDatabaseFetcher(BaseFetcher):
 class ExternalKafkaFetcher(BaseFetcher):
     """Fetches data from Kafka via the worker service. Same pattern as ExternalDatabaseFetcher."""
 
-    def __init__(self, kafka_read_settings, wait_on_completion: bool = True):
-        r = trigger_kafka_read(kafka_read_settings=kafka_read_settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(self, kafka_read_settings, wait_on_completion: bool = True, transport: WorkerTransport | None = None):
+        transport = transport or get_default_transport()
+        r = trigger_kafka_read(kafka_read_settings=kafka_read_settings, transport=transport)
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1181,9 +1234,10 @@ class ExternalKafkaFetcher(BaseFetcher):
 class ExternalGoogleAnalyticsFetcher(BaseFetcher):
     """Fetches GA4 data via the worker service. Same pattern as ExternalDatabaseFetcher."""
 
-    def __init__(self, ga_read_settings, wait_on_completion: bool = True):
-        r = trigger_google_analytics_read(ga_read_settings=ga_read_settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(self, ga_read_settings, wait_on_completion: bool = True, transport: WorkerTransport | None = None):
+        transport = transport or get_default_transport()
+        r = trigger_google_analytics_read(ga_read_settings=ga_read_settings, transport=transport)
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1192,9 +1246,10 @@ class ExternalGoogleAnalyticsFetcher(BaseFetcher):
 class ExternalRestApiFetcher(BaseFetcher):
     """Fetches REST API data via the worker service. Same pattern as ExternalDatabaseFetcher."""
 
-    def __init__(self, settings, wait_on_completion: bool = True):
-        r = trigger_rest_api_read(settings=settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(self, settings, wait_on_completion: bool = True, transport: WorkerTransport | None = None):
+        transport = transport or get_default_transport()
+        r = trigger_rest_api_read(settings=settings, transport=transport)
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1202,10 +1257,16 @@ class ExternalRestApiFetcher(BaseFetcher):
 
 class ExternalDatabaseWriter(BaseFetcher):
     def __init__(
-        self, database_external_write_settings: DatabaseExternalWriteSettings, wait_on_completion: bool = True
+        self,
+        database_external_write_settings: DatabaseExternalWriteSettings,
+        wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
-        r = trigger_database_write(database_external_write_settings=database_external_write_settings)
-        super().__init__(file_ref=r.background_task_id)
+        transport = transport or get_default_transport()
+        r = trigger_database_write(
+            database_external_write_settings=database_external_write_settings, transport=transport
+        )
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1213,10 +1274,16 @@ class ExternalDatabaseWriter(BaseFetcher):
 
 class ExternalCloudWriter(BaseFetcher):
     def __init__(
-        self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface, wait_on_completion: bool = True
+        self,
+        cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface,
+        wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
-        r = trigger_cloud_storage_write(database_external_write_settings=cloud_storage_write_settings)
-        super().__init__(file_ref=r.background_task_id)
+        transport = transport or get_default_transport()
+        r = trigger_cloud_storage_write(
+            database_external_write_settings=cloud_storage_write_settings, transport=transport
+        )
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1241,7 +1308,9 @@ class ExternalOutputWriter(BaseFetcher):
         delimiter: str | None = None,
         compression: str | None = None,
         wait_on_completion: bool = True,
+        transport: WorkerTransport | None = None,
     ):
+        transport = transport or get_default_transport()
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_write_output(
             lf=lf,
@@ -1253,8 +1322,9 @@ class ExternalOutputWriter(BaseFetcher):
             compression=compression,
             flow_id=flow_id,
             node_id=node_id,
+            transport=transport,
         )
-        super().__init__(file_ref=r.background_task_id)
+        super().__init__(file_ref=r.background_task_id, transport=transport)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from flowfile_core.flowfile.execution.exceptions import WorkerConnectionError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     results_exists,
 )
@@ -384,7 +385,7 @@ class NodeExecutor:
             )
             return
 
-        if "Connection refused" in error_str and "/submit_query/" in error_str:
+        if isinstance(error, WorkerConnectionError):
             node_logger.warning(
                 "Could not connect to remote worker. "
                 "Ensure the worker process is running, or change settings to local execution."
