@@ -41,6 +41,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
+from flowfile_core.flowfile.execution.backends import ExecutionBackend, resolve_backend
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -4752,6 +4753,15 @@ class FlowGraph:
         if self.flow_settings.execution_location != execution_location:
             self.reset()
         self.flow_settings.execution_location = execution_location
+
+    @property
+    def execution_backend(self) -> ExecutionBackend:
+        """The compute backend for the flow's current execution location.
+
+        Resolved per call so node closures built at add-time honor the
+        location at run time.
+        """
+        return resolve_backend(self.execution_location)
 
     def validate_if_node_can_be_fetched(self, node_id: int) -> None:
         flow_node = self._node_db.get(node_id)

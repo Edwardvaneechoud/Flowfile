@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from flowfile_core.flowfile.execution.backends import ExecutionBackend, resolve_backend
 from flowfile_core.flowfile.execution.exceptions import WorkerConnectionError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     results_exists,
@@ -94,6 +95,7 @@ class NodeExecutor:
         retry: bool = True,
         node_logger: NodeLogger = None,
         optimize_for_downstream: bool = True,
+        backend: ExecutionBackend | None = None,
     ) -> None:
         """
         Main execution entry point.
@@ -108,10 +110,12 @@ class NodeExecutor:
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
             optimize_for_downstream: Cache wide transforms for downstream nodes
+            backend: Compute backend override; resolved from run_location when None
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
 
+        backend = backend or resolve_backend(run_location)
         state = self.state_provider.get_state(self.node.node_id, self.node.parent_uuid)
 
         if reset_cache:
@@ -146,7 +150,7 @@ class NodeExecutor:
         self.node.reset()
 
         try:
-            self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger)
+            self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger, backend)
             self._update_source_file_info(state)
             self._sync_state_to_legacy(state)
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
@@ -241,6 +245,7 @@ class NodeExecutor:
         strategy: ExecutionStrategy,
         performance_mode: bool,
         node_logger: NodeLogger,
+        backend: ExecutionBackend,
     ) -> None:
         """Execute using the determined strategy."""
         match strategy:
@@ -249,9 +254,9 @@ class NodeExecutor:
             case ExecutionStrategy.FULL_LOCAL:
                 self._do_full_local(state, performance_mode)
             case ExecutionStrategy.LOCAL_WITH_SAMPLING:
-                self._do_local_with_sampling(state, performance_mode, node_logger.flow_id)
+                self._do_local_with_sampling(state, performance_mode, node_logger.flow_id, backend)
             case ExecutionStrategy.REMOTE:
-                self._do_remote(state, performance_mode, node_logger)
+                self._do_remote(state, performance_mode, node_logger, backend)
 
     def _do_full_local(self, state: NodeExecutionState, performance_mode: bool) -> None:
         """
@@ -265,26 +270,38 @@ class NodeExecutor:
             if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
 
-    def _do_local_with_sampling(self, state: NodeExecutionState, performance_mode: bool, flow_id: int) -> None:
+    def _do_local_with_sampling(
+        self,
+        state: NodeExecutionState,
+        performance_mode: bool,
+        flow_id: int,
+        backend: ExecutionBackend,
+    ) -> None:
         """
         In-process execution with external sampler for preview data.
 
         The main computation runs locally, but sample data is generated
         via an external process for the UI preview.
         """
-        self.node._do_execute_local_with_sampling(performance_mode, flow_id)
+        self.node._do_execute_local_with_sampling(performance_mode, flow_id, backend)
         if self.node.results.resulting_data is not None:
             state.result_schema = self.node.results.resulting_data.schema
         if self.node.results.errors is None and not self.node.node_stats.is_canceled:
             state.mark_successful()
 
-    def _do_remote(self, state: NodeExecutionState, performance_mode: bool, node_logger: NodeLogger) -> None:
+    def _do_remote(
+        self,
+        state: NodeExecutionState,
+        performance_mode: bool,
+        node_logger: NodeLogger,
+        backend: ExecutionBackend,
+    ) -> None:
         """
         Full remote worker execution.
 
         Computation is offloaded to an external worker process.
         """
-        self.node._do_execute_remote(performance_mode, node_logger)
+        self.node._do_execute_remote(performance_mode, node_logger, backend)
         if self.node.results.resulting_data is not None:
             state.result_schema = self.node.results.resulting_data.schema
             state.mark_successful()

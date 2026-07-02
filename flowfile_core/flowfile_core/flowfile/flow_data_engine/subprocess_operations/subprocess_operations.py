@@ -688,6 +688,8 @@ class BaseFetcher:
     Thread-safe fetcher for polling worker status and retrieving results.
     """
 
+    status: Status | None = None
+
     def __init__(self, file_ref: str = None, transport: WorkerTransport | None = None):
         self.file_ref = file_ref if file_ref else str(uuid4())
         self._transport = transport or get_default_transport()
