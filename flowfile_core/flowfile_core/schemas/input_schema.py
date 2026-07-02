@@ -1261,6 +1261,38 @@ class NodeRestApiReader(NodeBase):
         return " | ".join(pieces)
 
 
+class ParameterMapping(BaseModel):
+    """Maps an input column to a sub-flow parameter for the Run-flow node."""
+
+    param_name: str
+    input_column: str = ""
+
+
+class NodeRunFlow(NodeSingleInput):
+    """Settings for a node that runs a saved sub-flow once per input row.
+
+    Each input row supplies string values for the sub-flow's ``${param}`` references
+    (``parameter_mappings``); the sub-flow runs once per row (sequentially, with an
+    optional ``delay_seconds`` between runs) and the per-row outputs are unioned. The
+    sub-flow's single ``api_response`` node defines what data is returned.
+
+    ``flow_reference`` (the saved flow's filesystem path) is canonical; a
+    ``flow_registration_id`` is resolved to a path at run time when set.
+    """
+
+    flow_reference: str | None = None
+    flow_registration_id: int | None = None
+    parameter_mappings: list[ParameterMapping] = Field(default_factory=list)
+    delay_seconds: float = 0.0
+    max_rows: int = 1000
+
+    def get_default_description(self) -> str:
+        """Describes which sub-flow runs per input row."""
+        if self.flow_reference:
+            return f"Run {Path(self.flow_reference).stem} per input row"
+        return "Run a sub-flow per input row"
+
+
 class NodeFormula(NodeSingleInput):
     """Settings for a node that applies a formula to create/modify a column."""
 

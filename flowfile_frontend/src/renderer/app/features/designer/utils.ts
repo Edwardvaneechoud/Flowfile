@@ -49,6 +49,7 @@ const BUILTIN_ICONS = new Set([
   "union.svg",
   "unique.svg",
   "unpivot.svg",
+  "run_flow.svg",
 ]);
 
 const DEFAULT_ICON = "user-defined-icon.png";

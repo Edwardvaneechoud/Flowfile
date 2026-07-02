@@ -25,6 +25,13 @@
               class="form-control"
               placeholder="https://api.example.com/v1/items"
             />
+            <div class="helper-text">
+              <i class="fa-solid fa-info-circle"></i>
+              <span
+                >Supports <code>${param}</code> references to flow parameters (resolved at run time;
+                Fetch sample uses each parameter's default value).</span
+              >
+            </div>
           </div>
         </div>
 

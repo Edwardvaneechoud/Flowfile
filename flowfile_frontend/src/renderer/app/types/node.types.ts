@@ -1079,6 +1079,20 @@ export interface NodeRestApiReader extends NodeBase {
   fields?: MinimalFieldInput[] | null;
 }
 
+// Run-flow node: run a saved sub-flow once per input row, mapping columns to its ${params}.
+export interface ParameterMapping {
+  param_name: string;
+  input_column: string;
+}
+
+export interface NodeRunFlow extends NodeSingleInput {
+  flow_reference: string | null;
+  flow_registration_id: number | null;
+  parameter_mappings: ParameterMapping[];
+  delay_seconds: number;
+  max_rows: number;
+}
+
 // ML Nodes
 
 export type MLParamType = "boolean" | "number" | "integer" | "select";

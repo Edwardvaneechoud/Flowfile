@@ -72,6 +72,7 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "kafka_source": "source",
     "google_analytics_reader": "source",
     "rest_api_reader": "source",
+    "run_flow": "static",
     "external_source": "source",
     "promise": "passthrough",
     "user_defined": "dynamic",

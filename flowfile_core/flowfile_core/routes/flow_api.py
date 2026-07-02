@@ -46,6 +46,7 @@ from flowfile_core.schemas.flow_api_schema import (
     ApiTestRequest,
     FlowParamInfo,
     PublishableFlow,
+    RunnableFlow,
 )
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
@@ -291,6 +292,37 @@ def list_publishable_flows(
         PublishableFlow(
             registration_id=r.id,
             name=r.name,
+            file_exists=bool(r.flow_path) and Path(r.flow_path).exists(),
+        )
+        for r in regs
+    ]
+
+
+@management_router.get("/runnable-flows", response_model=list[RunnableFlow])
+def list_runnable_flows(
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """The current user's API-compatible flows, for the Run-flow node's picker.
+
+    A flow qualifies when it has exactly one ``api_response`` node
+    (``is_api_compatible``). Unlike ``publishable-flows`` this does not exclude flows
+    already published as endpoints — a flow can be both an API and a sub-flow.
+    """
+    regs = (
+        db.query(db_models.FlowRegistration)
+        .filter(
+            db_models.FlowRegistration.owner_id == current_user.id,
+            db_models.FlowRegistration.is_api_compatible.is_(True),
+        )
+        .order_by(db_models.FlowRegistration.name)
+        .all()
+    )
+    return [
+        RunnableFlow(
+            registration_id=r.id,
+            name=r.name,
+            flow_path=r.flow_path or "",
             file_exists=bool(r.flow_path) and Path(r.flow_path).exists(),
         )
         for r in regs
