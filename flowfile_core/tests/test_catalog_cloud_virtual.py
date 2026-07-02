@@ -161,7 +161,7 @@ class TestCloudCacheReadGuard:
             mock_db = MagicMock()
             mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
+            with patch("flowfile_core.catalog.CatalogService") as MockSvc:
                 inst = MagicMock()
                 inst.resolve_virtual_flow_table.return_value = expected
                 MockSvc.return_value = inst
