@@ -139,6 +139,23 @@
             </svg>
             <span>View Data</span>
           </div>
+          <div v-if="isRunFlowNode" class="context-menu-item" @click="openTargetFlow">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+            <span>Go to Flow</span>
+          </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg
@@ -220,6 +237,7 @@
 //   - NodeHandles.vue: handle rendering loops (~lines 64-89)
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
+import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useEditorStore } from "../../stores/editor-store";
@@ -228,9 +246,10 @@ import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
 import { snapshotClipboard } from "../../utils/clipboardUtils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
+import { CatalogApi } from "../../api/catalog.api";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
-import type { NodeTemplate, NodeHandle } from "../../types";
+import type { NodeTemplate, NodeHandle, RunFlowReference } from "../../types";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -285,6 +304,8 @@ const sideInputs = computed(() => props.data.inputs.filter((input) => input.kind
 const parameterInput = computed(() =>
   props.data.inputs.find((input) => input.kind === "parameter"),
 );
+
+const isRunFlowNode = computed(() => props.data.nodeTemplate?.item === "run_flow");
 
 const onTitleClick = (event: MouseEvent) => {
   toggleEditMode(true);
@@ -363,6 +384,33 @@ const openSettings = () => {
 const viewData = () => {
   editorStore.requestNodeData(props.data.id);
   closeContextMenu();
+};
+
+const openTargetFlow = async () => {
+  closeContextMenu();
+  try {
+    const nodeData = await nodeStore.getNodeData(props.data.id, false);
+    const flowRef = nodeData?.setting_input?.flow_reference as RunFlowReference | undefined;
+    const registrationId = flowRef?.registration_id ?? 0;
+    let flowPath = flowRef?.flow_path ?? null;
+    let name: string | undefined;
+    if (registrationId > 0) {
+      try {
+        const reg = await CatalogApi.getFlow(registrationId);
+        flowPath = reg?.flow_path ?? flowPath;
+        name = reg?.name;
+      } catch {
+        // Registration lookup failed (e.g. deleted) — fall back to stored path.
+      }
+    }
+    if (!flowPath) {
+      ElMessage.warning("No target flow is selected for this node.");
+      return;
+    }
+    editorStore.requestOpenFlow(flowPath, name);
+  } catch (error) {
+    console.error("Error opening target flow:", error);
+  }
 };
 
 const copyNode = () => {

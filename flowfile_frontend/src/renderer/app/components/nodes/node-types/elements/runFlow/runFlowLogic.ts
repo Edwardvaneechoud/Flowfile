@@ -1,7 +1,7 @@
 // Pure helpers for the RunFlow settings panel (unit-tested in node env —
 // keep free of Vue / VueFlow imports).
-import type { FlowParameter } from "../../../../../types/flow.types";
-import type { RunFlowParameterBinding } from "../../../../../types/node.types";
+import type { FlowParameter, FlowParamType } from "../../../../../types/flow.types";
+import type { FileColumn, RunFlowParameterBinding } from "../../../../../types/node.types";
 
 export const MAX_RUN_FLOW_INPUTS = 9;
 export const MAX_RUN_FLOW_OUTPUTS = 10;
@@ -32,9 +32,31 @@ export function mergeBindingRows(
   }));
 }
 
-// Rebuild bindings against a freshly fetched interface: surviving parameters
-// keep their binding, removed ones are dropped, and new ones bind to a column
-// on a case-insensitive name match (else the subflow default).
+export function hasColumnBinding(rows: BindingRow[]): boolean {
+  return rows.some((row) => row.binding.source === "column");
+}
+
+const COMPATIBLE_GROUP: Record<FlowParamType, FileColumn["data_type_group"]> = {
+  string: "String",
+  enum: "String",
+  boolean: "Boolean",
+  integer: "Numeric",
+  float: "Numeric",
+};
+
+const INTEGER_DTYPE_RE = /^u?int/i;
+
+export function columnMatchesParamType(column: FileColumn, paramType: FlowParamType): boolean {
+  const wantedGroup = COMPATIBLE_GROUP[paramType];
+  if (!wantedGroup) return true;
+  if (column.data_type_group !== wantedGroup) return false;
+  return paramType !== "integer" || INTEGER_DTYPE_RE.test((column.data_type ?? "").trim());
+}
+
+export function matchingColumnNames(columns: FileColumn[], paramType: FlowParamType): string[] {
+  return columns.filter((column) => columnMatchesParamType(column, paramType)).map((c) => c.name);
+}
+
 export function reconcileBindings(
   oldBindings: RunFlowParameterBinding[],
   parameters: FlowParameter[],

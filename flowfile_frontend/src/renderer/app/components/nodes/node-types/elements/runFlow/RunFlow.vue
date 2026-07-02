@@ -158,14 +158,15 @@
                   :model-value="row.binding.column_name ?? undefined"
                   size="small"
                   :disabled="availableColumns.length === 0"
-                  :placeholder="
-                    availableColumns.length === 0
-                      ? 'Connect data to the params input'
-                      : 'Select column'
-                  "
+                  :placeholder="columnPlaceholder(row)"
                   @update:model-value="(v: string) => (row.binding.column_name = v)"
                 >
-                  <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+                  <el-option
+                    v-for="col in columnsForRow(row)"
+                    :key="col"
+                    :label="col"
+                    :value="col"
+                  />
                 </el-select>
               </span>
             </div>
@@ -173,8 +174,8 @@
           <div v-else class="param-empty">This flow has no parameters.</div>
         </div>
 
-        <!-- Row handling mode (only relevant when the subflow has parameters) -->
-        <div v-if="bindingRows.length > 0" class="run-flow-field">
+        <!-- Row handling mode (only relevant when a parameter is fed from a column) -->
+        <div v-if="showParameterRows" class="run-flow-field">
           <label class="run-flow-label">Parameter rows</label>
           <el-radio-group v-model="nodeRunFlow.iteration_mode" size="small">
             <el-radio label="first_value">Use first row only</el-radio>
@@ -194,7 +195,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useFlowStore } from "../../../../../stores/flow-store";
@@ -207,7 +208,7 @@ import {
   buildDynamicInputHandles,
   buildDynamicOutputHandles,
 } from "../../../../../utils/nodeHandles";
-import type { NodeData, NodeRunFlow } from "../../../../../types/node.types";
+import type { NodeData, NodeRunFlow, FileColumn } from "../../../../../types/node.types";
 import type { FlowParameter, FlowParamType } from "../../../../../types/flow.types";
 import type { NodeConnection } from "../../../../../types/canvas.types";
 import {
@@ -216,6 +217,8 @@ import {
   mergeBindingRows,
   reconcileBindings,
   findDanglingEdges,
+  hasColumnBinding,
+  matchingColumnNames,
   type BindingRow,
 } from "./runFlowLogic";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -259,12 +262,44 @@ const availableColumns = computed((): string[] => {
   return (nodeData.value?.main_input?.table_schema ?? []).map((col) => col.name);
 });
 
+const availableColumnSchema = computed(
+  (): FileColumn[] => nodeData.value?.main_input?.table_schema ?? [],
+);
+
 const bindingRows = computed((): BindingRow[] => {
   if (!nodeRunFlow.value) return [];
   return mergeBindingRows(nodeRunFlow.value.parameter_specs, nodeRunFlow.value.parameter_bindings);
 });
 
+// Iterating over input rows only makes sense when a parameter is fed from a
+// column; hide the section (and neutralize the mode) otherwise.
+const showParameterRows = computed((): boolean => hasColumnBinding(bindingRows.value));
+
+watch(showParameterRows, (visible) => {
+  if (!visible && nodeRunFlow.value) {
+    nodeRunFlow.value.iteration_mode = "first_value";
+  }
+});
+
 const paramType = (spec: FlowParameter): FlowParamType => spec.type ?? "string";
+
+// Columns offered for a "column" binding, filtered to types that match the
+// parameter. Keep the current selection visible even if its type no longer
+// matches, so an existing binding is never silently hidden.
+const columnsForRow = (row: BindingRow): string[] => {
+  const matching = matchingColumnNames(availableColumnSchema.value, paramType(row.spec));
+  const current = row.binding.column_name;
+  if (current && !matching.includes(current)) {
+    return [current, ...matching];
+  }
+  return matching;
+};
+
+const columnPlaceholder = (row: BindingRow): string => {
+  if (availableColumns.value.length === 0) return "Connect data to the params input";
+  if (columnsForRow(row).length === 0) return `No matching ${paramType(row.spec)} column`;
+  return "Select column";
+};
 
 const setConstant = (row: BindingRow, value: string | null) => {
   row.binding.constant_value = value;
