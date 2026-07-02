@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
@@ -99,6 +100,23 @@ class FlowRegistrationOut(BaseModel):
     access: AccessInfo | None = None
 
     model_config = {"from_attributes": True}
+
+
+class FlowInterfacePort(BaseModel):
+    """One flow_input or flow_output port of a registered flow."""
+
+    name: str
+    node_id: int
+
+
+class FlowInterfaceOut(BaseModel):
+    """The callable surface of a registered flow, consumed by the run_flow node UI."""
+
+    registration_id: int
+    inputs: list[FlowInterfacePort] = Field(default_factory=list)
+    outputs: list[FlowInterfacePort] = Field(default_factory=list)
+    parameters: list[FlowParameter] = Field(default_factory=list)
+    file_exists: bool = True
 
 
 class CatalogTableSummary(BaseModel):

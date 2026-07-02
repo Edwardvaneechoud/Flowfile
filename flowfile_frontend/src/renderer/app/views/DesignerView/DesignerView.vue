@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from "vue";
+import { ref, computed, onMounted, nextTick, watch } from "vue";
 import { useRouter } from "vue-router";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
@@ -92,6 +92,7 @@ import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
+import { useEditorStore } from "../../stores/editor-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 
 const router = useRouter();
@@ -113,6 +114,7 @@ const nodeOptions = ref<NodeTemplate[]>([]);
 const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
@@ -162,6 +164,16 @@ const reloadCanvas = async (flowPath: string, meta?: { name?: string; catalogRef
     isSwitching.value = false;
   }
 };
+
+// A run_flow node's "Go to Flow" menu dispatches this; route it through the
+// same reloadCanvas the catalog/header use so the tab strip + header refresh.
+watch(
+  () => editorStore.openFlowRequest.token,
+  () => {
+    const { flowPath, name } = editorStore.openFlowRequest;
+    if (flowPath) reloadCanvas(flowPath, { name });
+  },
+);
 
 const handleCloseFlow = async (flowId: number) => {
   try {

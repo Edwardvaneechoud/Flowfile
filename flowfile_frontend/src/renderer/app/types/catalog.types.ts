@@ -2,6 +2,7 @@
 // Maps to backend schemas in catalog_schema.py
 import type { AccessInfo } from "./sharing.types";
 import type { NotebookSummary } from "../api/notebook.api";
+import type { FlowParameter } from "./flow.types";
 
 // Namespace (Unity Catalog-style hierarchy)
 
@@ -107,6 +108,23 @@ export interface FlowRegistrationUpdate {
   name?: string;
   description?: string;
   namespace_id?: number | null;
+}
+
+// Subflow Interface (flows-in-flows)
+
+export interface SubflowIOPort {
+  name: string;
+  node_id: number;
+}
+
+export type SubflowParameterSpec = FlowParameter;
+
+export interface SubflowInterface {
+  registration_id: number;
+  inputs: SubflowIOPort[];
+  outputs: SubflowIOPort[];
+  parameters: SubflowParameterSpec[];
+  file_exists: boolean;
 }
 
 // Flow Run

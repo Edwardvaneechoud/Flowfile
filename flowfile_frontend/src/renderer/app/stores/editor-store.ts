@@ -50,6 +50,11 @@ export const useEditorStore = defineStore("editor", {
     // right-click menu in NodeWrapper). Canvas watches the `token`.
     nodeSettingsOpenRequest: { nodeId: -1 as number, token: 0 },
     nodeDataOpenRequest: { nodeId: -1 as number, token: 0 },
+
+    // Request signal to open a flow by path from outside the header (the
+    // run_flow node's "Go to Flow" menu). DesignerView watches the `token` and
+    // routes it through reloadCanvas so the flow tab strip + header refresh.
+    openFlowRequest: { flowPath: "", name: undefined as string | undefined, token: 0 },
   }),
 
   getters: {
@@ -196,6 +201,12 @@ export const useEditorStore = defineStore("editor", {
 
     requestNodeData(nodeId: number) {
       this.nodeDataOpenRequest = { nodeId, token: this.nodeDataOpenRequest.token + 1 };
+    },
+
+    // Ask DesignerView to open a flow by path (mirrors the catalog "open" path,
+    // refreshing the flow tab strip and header, not just the canvas).
+    requestOpenFlow(flowPath: string, name?: string) {
+      this.openFlowRequest = { flowPath, name, token: this.openFlowRequest.token + 1 };
     },
 
     // ========== AI Assistant Drawer ==========

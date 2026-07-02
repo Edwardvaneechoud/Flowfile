@@ -1,9 +1,17 @@
 from enum import Enum
 from typing import Any, ClassVar, Literal, NamedTuple
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+)
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.flowfile.param_types import FlowParameter  # noqa: F401 - re-exported; historical home
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import input_schema
 
@@ -61,6 +69,9 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "apply_model": input_schema.NodeApplyModel,
     "evaluate_model": input_schema.NodeEvaluateModel,
     "wait_for": input_schema.NodeWaitFor,
+    "flow_input": input_schema.NodeFlowInput,
+    "flow_output": input_schema.NodeFlowOutput,
+    "run_flow": input_schema.NodeRunFlow,
 }
 
 
@@ -109,14 +120,6 @@ def get_prio_execution_location(
         return "local"
     else:
         return local_execution_location
-
-
-class FlowParameter(BaseModel):
-    """A single flow-level parameter that can be referenced via ${name} syntax."""
-
-    name: str
-    default_value: str = ""
-    description: str = ""
 
 
 class FlowGraphConfig(BaseModel):
@@ -256,6 +259,18 @@ class FlowfileSettings(BaseModel):
         return v
 
 
+class FlowfileInputConnection(BaseModel):
+    """One keyed input edge of a dynamic-input node (per-edge target handle).
+
+    Only nodes whose template sets ``dynamic_inputs`` serialize these; the same
+    upstream node may legitimately appear twice with different handles.
+    """
+
+    from_id: int
+    input_handle: str
+    source_handle: str = "output-0"
+
+
 class FlowfileNode(BaseModel):
     """Node representation for flowfile serialization (YAML/JSON)."""
 
@@ -275,6 +290,8 @@ class FlowfileNode(BaseModel):
     # (e.g. ["output-0", "output-1"]). Older flowfiles omit this — loaders treat
     # missing entries as "output-0".
     output_handles: list[str] | None = None
+    # Keyed edges for dynamic-input nodes; None for every other node type.
+    input_connections: list[FlowfileInputConnection] | None = None
     setting_input: Any | None = None
 
     _setting_input_exclude: ClassVar[set] = {
@@ -591,6 +608,9 @@ class NodeTemplate(BaseModel):
     custom_node: bool | None = False
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
+    # Per-instance input handles (run_flow): connections are keyed by target
+    # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
+    dynamic_inputs: bool = False
     tags: list[NodeTag] = Field(default_factory=list)
 
 
@@ -613,6 +633,7 @@ class NodeInformation(BaseModel):
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
     output_handles: list[str] | None = None
+    input_connections: list[FlowfileInputConnection] | None = None
     setting_input: Any | None = None
 
     @property
@@ -705,6 +726,9 @@ class NodeInput(NodeTemplate):
     pos_y: float
     group_id: int | None = None
     output_names: list[str] | None = None
+    # Dynamic-input nodes: label per input handle, index i <-> "input-{i}"
+    # (index 0 is the reserved parameter handle). None for static nodes.
+    input_names: list[str] | None = None
     node_reference: str | None = None
 
 

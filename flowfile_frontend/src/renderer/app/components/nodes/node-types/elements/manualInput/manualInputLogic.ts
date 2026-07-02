@@ -18,3 +18,41 @@ export const createManualInput = (
   });
   return nodeManualInput;
 };
+
+/**
+ * Infer the best data type for a column based on its values
+ */
+export const inferDataType = (values: unknown[]): string => {
+  const validValues = values.filter((v) => v !== null && v !== undefined && v !== "");
+
+  if (validValues.length === 0) {
+    return "String";
+  }
+
+  const allBooleans = validValues.every(
+    (v) => typeof v === "boolean" || v === "true" || v === "false",
+  );
+  if (allBooleans) {
+    return "Boolean";
+  }
+
+  const allNumeric = validValues.every((v) => {
+    if (typeof v === "number") return true;
+    if (typeof v === "string") {
+      const parsed = Number(v);
+      return !isNaN(parsed) && v.trim() !== "";
+    }
+    return false;
+  });
+
+  if (allNumeric) {
+    const allIntegers = validValues.every((v) => {
+      const num = typeof v === "number" ? v : Number(v);
+      return Number.isInteger(num);
+    });
+
+    return allIntegers ? "Int64" : "Float64";
+  }
+
+  return "String";
+};

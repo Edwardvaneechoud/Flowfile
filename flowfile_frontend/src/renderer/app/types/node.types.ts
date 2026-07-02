@@ -2,6 +2,7 @@
 
 import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes";
 import type { DisplayOutput } from "./kernel.types";
+import type { FlowParameter } from "./flow.types";
 
 // Data Type Definitions
 
@@ -853,6 +854,45 @@ export interface NodeInputData extends NodeBase {
 
 export interface NodeManualInput extends NodeBase {
   raw_data_format: RawDataFormat;
+}
+
+// Flows-in-flows Nodes
+
+// Mirrors the backend: NodeFlowInput extends NodeManualInput, so the optional
+// sample data rides on the inherited raw_data_format field.
+export interface NodeFlowInput extends NodeManualInput {
+  input_name: string;
+}
+
+export interface NodeFlowOutput extends NodeSingleInput {
+  output_name: string;
+}
+
+export interface RunFlowReference {
+  registration_id: number;
+  flow_uuid: string | null;
+  flow_path: string | null;
+}
+
+export type RunFlowBindingSource = "default" | "constant" | "column";
+
+export interface RunFlowParameterBinding {
+  parameter_name: string;
+  source: RunFlowBindingSource;
+  constant_value: string | null;
+  column_name: string | null;
+}
+
+export type RunFlowIterationMode = "first_value" | "iterate";
+
+export interface NodeRunFlow extends NodeBase {
+  flow_reference: RunFlowReference;
+  input_slots: string[];
+  output_slots: string[];
+  parameter_specs: FlowParameter[];
+  parameter_bindings: RunFlowParameterBinding[];
+  iteration_mode: RunFlowIterationMode;
+  append_run_metadata: boolean;
 }
 
 export interface NodeSelect extends NodeSingleInput {
