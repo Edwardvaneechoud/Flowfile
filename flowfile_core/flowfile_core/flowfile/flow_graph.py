@@ -42,7 +42,6 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_ga_connection,
 )
 from flowfile_core.flowfile.execution.backends import ExecutionBackend, resolve_backend
-from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
     execute_polars_code,
@@ -78,6 +77,8 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
     group_nodes_by_depth,
 )
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+from flowfile_core.flowfile.node_registry import get_node_spec
+from flowfile_core.flowfile.node_registry.spec import NodeBuildContext, NodeSpec
 from flowfile_core.flowfile.parameter_resolver import (
     apply_parameters_in_place,
     find_unresolved_in_model,
@@ -2079,18 +2080,7 @@ class FlowGraph:
         Args:
             union_settings: The settings for the union operation.
         """
-
-        def _func(*flowfile_tables: FlowDataEngine):
-            dfs: list[pl.LazyFrame] | list[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
-            return FlowDataEngine(pl.concat(dfs, how="diagonal_relaxed"))
-
-        self.add_node_step(
-            node_id=union_settings.node_id,
-            function=_func,
-            node_type="union",
-            setting_input=union_settings,
-            input_node_ids=union_settings.depending_on_ids,
-        )
+        self._add_from_spec(get_node_spec("union"), union_settings)
 
     def add_initial_node_analysis(self, node_promise: input_schema.NodePromise, track_history: bool = True):
         """Adds a data exploration/analysis node based on a node promise.
@@ -2211,38 +2201,7 @@ class FlowGraph:
         Args:
             filter_settings: The settings for the filter operation.
         """
-
-        def _func(fl: FlowDataEngine):
-            is_advanced = filter_settings.filter_input.is_advanced()
-
-            if is_advanced:
-                expression = filter_settings.filter_input.advanced_filter
-            else:
-                basic_filter = filter_settings.filter_input.basic_filter
-                if basic_filter is None:
-                    logger.warning("Basic filter is None, returning unfiltered data")
-                    return fl
-
-                try:
-                    field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
-                except Exception:
-                    field_data_type = None
-
-                expression = build_filter_expression(basic_filter, field_data_type)
-                filter_settings.filter_input.advanced_filter = expression
-
-            if filter_settings.split_mode:
-                return fl.filter_split(expression)
-            return fl.do_filter(expression)
-
-        self.add_node_step(
-            filter_settings.node_id,
-            _func,
-            node_type="filter",
-            renew_schema=False,
-            setting_input=filter_settings,
-            input_node_ids=[filter_settings.depending_on_id],
-        )
+        self._add_from_spec(get_node_spec("filter"), filter_settings)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
@@ -2251,17 +2210,7 @@ class FlowGraph:
         Args:
             node_number_of_records: The settings for the record count operation.
         """
-
-        def _func(fl: FlowDataEngine) -> FlowDataEngine:
-            return fl.get_record_count()
-
-        self.add_node_step(
-            node_id=node_number_of_records.node_id,
-            function=_func,
-            node_type="record_count",
-            setting_input=node_number_of_records,
-            input_node_ids=[node_number_of_records.depending_on_id],
-        )
+        self._add_from_spec(get_node_spec("record_count"), node_number_of_records)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
@@ -3133,18 +3082,7 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-
-        def _func(table: FlowDataEngine) -> FlowDataEngine:
-            return table.do_sort(sort_settings.sort_input)
-
-        self.add_node_step(
-            node_id=sort_settings.node_id,
-            function=_func,
-            node_type="sort",
-            setting_input=sort_settings,
-            input_node_ids=[sort_settings.depending_on_id],
-        )
-        return self
+        return self._add_from_spec(get_node_spec("sort"), sort_settings)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "FlowGraph":
@@ -3156,18 +3094,7 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-
-        def _func(table: FlowDataEngine) -> FlowDataEngine:
-            return table.get_sample(sample_settings.sample_size)
-
-        self.add_node_step(
-            node_id=sample_settings.node_id,
-            function=_func,
-            node_type="sample",
-            setting_input=sample_settings,
-            input_node_ids=[sample_settings.depending_on_id],
-        )
-        return self
+        return self._add_from_spec(get_node_spec("sample"), sample_settings)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_random_split(self, settings: input_schema.NodeRandomSplit) -> "FlowGraph":
@@ -3357,6 +3284,27 @@ class FlowGraph:
     def graph_has_input_data(self) -> bool:
         """Checks if the graph has an initial input data source."""
         return self._input_data is not None
+
+    def _add_from_spec(self, spec: NodeSpec, settings: Any) -> "FlowGraph":
+        """Adds or updates a node declaratively from its NodeSpec.
+
+        The spec's compute_factory builds the closure and the input node ids
+        are derived from the spec's arity; everything else goes through
+        add_node_step unchanged.
+        """
+        if spec.compute_factory is None:
+            raise ValueError(f"Node type {spec.node_type!r} has no compute_factory; use its explicit add_* method")
+        ctx = NodeBuildContext(graph=self, node_id=settings.node_id)
+        function = spec.compute_factory(settings, ctx)
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=function,
+            node_type=spec.node_type,
+            renew_schema=spec.renew_schema,
+            setting_input=settings,
+            input_node_ids=spec.derive_input_node_ids(settings),
+        )
+        return self
 
     def add_node_step(
         self,

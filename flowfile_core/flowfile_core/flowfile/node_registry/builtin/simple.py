@@ -2,11 +2,90 @@
 
 Generated from the pre-registry catalogs (NodeTemplate list, settings map,
 AI classification map); maintained by hand from here on.
+
+Compute factories build the closures FlowGraph._add_from_spec wires into
+add_node_step. FlowDataEngine and friends are imported inside the factories:
+this module is loaded while configs.node_store is still initializing, so a
+module-level import would create a cycle. Every closure is named ``_func`` —
+add_node_step uses function.__name__ for the node name.
 """
 
-from flowfile_core.flowfile.node_registry.spec import NodeSpec
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import polars as pl
+
+from flowfile_core.flowfile.node_registry.spec import NodeBuildContext, NodeSpec
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import NodeTag, NodeTemplate
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+
+def _sort_compute(settings: input_schema.NodeSort, ctx: NodeBuildContext) -> Callable:
+    def _func(table: FlowDataEngine) -> FlowDataEngine:
+        return table.do_sort(settings.sort_input)
+
+    return _func
+
+
+def _sample_compute(settings: input_schema.NodeSample, ctx: NodeBuildContext) -> Callable:
+    def _func(table: FlowDataEngine) -> FlowDataEngine:
+        return table.get_sample(settings.sample_size)
+
+    return _func
+
+
+def _record_count_compute(settings: input_schema.NodeRecordCount, ctx: NodeBuildContext) -> Callable:
+    def _func(fl: FlowDataEngine) -> FlowDataEngine:
+        return fl.get_record_count()
+
+    return _func
+
+
+def _filter_compute(settings: input_schema.NodeFilter, ctx: NodeBuildContext) -> Callable:
+    def _func(fl: FlowDataEngine) -> FlowDataEngine:
+        from flowfile_core.configs import logger
+        from flowfile_core.flowfile.filter_expressions import build_filter_expression
+
+        is_advanced = settings.filter_input.is_advanced()
+
+        if is_advanced:
+            expression = settings.filter_input.advanced_filter
+        else:
+            basic_filter = settings.filter_input.basic_filter
+            if basic_filter is None:
+                logger.warning("Basic filter is None, returning unfiltered data")
+                return fl
+
+            try:
+                field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
+            except Exception:
+                field_data_type = None
+
+            expression = build_filter_expression(basic_filter, field_data_type)
+            settings.filter_input.advanced_filter = expression
+
+        if settings.split_mode:
+            return fl.filter_split(expression)
+        return fl.do_filter(expression)
+
+    return _func
+
+
+def _union_compute(settings: input_schema.NodeUnion, ctx: NodeBuildContext) -> Callable:
+    def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+        dfs: list[pl.LazyFrame] | list[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
+        return FlowDataEngine(pl.concat(dfs, how="diagonal_relaxed"))
+
+    return _func
+
 
 SPECS: list[NodeSpec] = [
     NodeSpec(
@@ -47,6 +126,7 @@ SPECS: list[NodeSpec] = [
         ),
         has_default_settings=True,
         ai_classification="static",
+        compute_factory=_record_count_compute,
     ),
     NodeSpec(
         node_type="cross_join",
@@ -104,6 +184,8 @@ SPECS: list[NodeSpec] = [
             tags=[NodeTag.FILTER, NodeTag.WHERE, NodeTag.SUBSET],
         ),
         ai_classification="static",
+        compute_factory=_filter_compute,
+        renew_schema=False,
     ),
     NodeSpec(
         node_type="formula",
@@ -314,6 +396,7 @@ SPECS: list[NodeSpec] = [
         ),
         has_default_settings=True,
         ai_classification="static",
+        compute_factory=_sort_compute,
     ),
     NodeSpec(
         node_type="sample",
@@ -334,6 +417,7 @@ SPECS: list[NodeSpec] = [
         ),
         has_default_settings=True,
         ai_classification="static",
+        compute_factory=_sample_compute,
     ),
     NodeSpec(
         node_type="text_to_rows",
@@ -374,6 +458,7 @@ SPECS: list[NodeSpec] = [
         ),
         has_default_settings=True,
         ai_classification="static",
+        compute_factory=_union_compute,
     ),
     NodeSpec(
         node_type="unpivot",
