@@ -137,7 +137,14 @@ const handleOpenFromDialog = async (payload: {
 };
 
 const handleOpenRecent = async (flowPath: string) => {
-  const flowId = await openFlow(flowPath);
+  // Pass the recent's catalog id so openFlow can reuse an already-open session
+  // (matched by catalog identity) instead of re-importing over unsaved edits.
+  const entry = recentFlows.value.find((f) => f.path === flowPath);
+  const flowId = await openFlow(flowPath, {
+    name: entry?.name,
+    catalogRef: entry?.catalogRef,
+    catalogId: entry?.catalogId,
+  });
   if (flowId !== null) goToDesigner();
 };
 
