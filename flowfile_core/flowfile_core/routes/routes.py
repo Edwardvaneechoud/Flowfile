@@ -1474,25 +1474,18 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
 
 @router.get("/import_flow/", tags=["editor"], response_model=int)
 def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_user)) -> int:
-    """Imports a saved flow and registers it as a session for the current user.
-
-    If the same catalog registration is already open in this user's session, the live in-memory
-    flow is reused (navigate-to) rather than reloaded over unsaved edits."""
+    """Imports a flow from a saved `.yaml` and registers it as a new session for the current user."""
     validated_path = validate_path_under_cwd(flow_path)
     validated_path_obj = Path(validated_path)
 
     if not validated_path_obj.exists() or not validated_path_obj.is_file():
         raise HTTPException(404, "File not found")
 
-    if validated_path_obj.suffix.lower() not in {".yaml", ".yml", ".json", ".flowfile"}:
+    if validated_path_obj.suffix.lower() not in {".yaml", ".yml", ".json"}:
         raise HTTPException(403, "Invalid flow file type")
 
     user_id = current_user.id if current_user else None
-    existing_reg = find_registration_by_path(validated_path)
-    source_registration_id = existing_reg.id if existing_reg else None
-    flow_id = flow_file_handler.import_flow(
-        validated_path_obj, user_id=user_id, source_registration_id=source_registration_id
-    )
+    flow_id = flow_file_handler.import_flow(validated_path_obj, user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
         auto_register_flow(validated_path, flow.flow_settings.name, user_id)

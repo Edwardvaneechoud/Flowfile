@@ -22,6 +22,7 @@ export interface FlowSettings {
   flow_id: number;
   name: string;
   description?: string;
+  source_registration_id?: number | null;
   save_location?: string;
   auto_save: boolean;
   modified_on?: number;

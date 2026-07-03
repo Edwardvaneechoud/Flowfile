@@ -1144,7 +1144,14 @@ async function openFlowInDesigner(
   flow: Pick<FlowRegistration, "flow_path" | "name" | "namespace_id" | "id">,
 ) {
   try {
-    const flowId = await FlowApi.importFlow(flow.flow_path);
+    // If this catalog flow is already open in a live session, navigate to it instead of
+    // re-importing from disk (which would reload the saved version over unsaved edits). Both
+    // sides carry the catalog identity — the registration id here (flow.id) and
+    // source_registration_id on each open session — so we match on that, no file path needed.
+    const openSession = (await FlowApi.getAllFlows()).find(
+      (s) => s.source_registration_id != null && s.source_registration_id === flow.id,
+    );
+    const flowId = openSession ? openSession.flow_id : await FlowApi.importFlow(flow.flow_path);
     flowStore.setFlowId(flowId);
     // Catalog opens were never landing in recents (the home screen looked empty
     // in docker, where flows are opened from the catalog rather than a file
