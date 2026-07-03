@@ -1,7 +1,10 @@
 # Discovery dossier: frontend-tauri-wasm
 
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 Scope: `flowfile_frontend/` (Vue 3 renderer + Tauri 2 shell) and `flowfile_wasm/` (Pyodide browser build).
-All paths absolute under `/Users/edwardvaneechoud/flowfile_backup/Flowfile/`. Every claim below was verified
+All paths absolute under `Flowfile/`. Every claim below was verified
 by reading the cited file unless marked **inferred**.
 
 ---

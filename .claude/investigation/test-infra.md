@@ -1,6 +1,9 @@
 # Flowfile Test Infrastructure — Discovery Dossier (KEY=test-infra)
 
-All paths relative to repo root `/Users/edwardvaneechoud/flowfile_backup/Flowfile` unless absolute.
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
+All paths relative to repo root `Flowfile` unless absolute.
 Everything below was verified by reading files or running read-only commands on 2026-07-03 (branch `improvement/improve-naming-unnamed-flows`). Items I could not fully verify are marked **inferred**.
 
 ---

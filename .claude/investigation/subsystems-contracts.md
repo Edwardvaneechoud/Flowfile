@@ -1,7 +1,10 @@
 # Discovery Dossier — KEY=subsystems-contracts
 
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 Cross-cutting subsystem contracts of the Flowfile monorepo, verified against source at
-`/Users/edwardvaneechoud/flowfile_backup/Flowfile` (branch `improvement/improve-naming-unnamed-flows`,
+`Flowfile` (branch `improvement/improve-naming-unnamed-flows`,
 HEAD `fa23a297`). All paths below are repo-relative unless absolute. Every claim was verified by
 reading the file or running a read-only grep/ls; items I could not fully verify are marked
 **(inferred)**.

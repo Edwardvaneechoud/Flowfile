@@ -1,6 +1,9 @@
 # Discovery dossier — KEY=frame-api: the `flowfile_frame` programmatic API
 
-All paths relative to repo root `/Users/edwardvaneechoud/flowfile_backup/Flowfile` unless absolute.
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
+All paths relative to repo root `Flowfile` unless absolute.
 Everything below was verified by reading source or running probes on 2026-07-03 (branch `improvement/improve-naming-unnamed-flows`, clean tree) unless marked **inferred**.
 
 ---

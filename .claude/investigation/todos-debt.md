@@ -1,8 +1,12 @@
 # Discovery Dossier — KEY=todos-debt
+
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 ## Debt & Live Pain Inventory — Flowfile monorepo
 
 Investigated at commit `f6963c77` (branch `feature/claude-skills`), 2026-07-03.
-Working dir: `/Users/edwardvaneechoud/flowfile_backup/Flowfile`.
+Working dir: `Flowfile`.
 Everything below was verified by reading files or running read-only commands unless marked **inferred**.
 
 ---

@@ -1,7 +1,10 @@
 # Discovery Dossier — run-operate-data
 
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 Dimension: running, operating, and on-disk data conventions for the Flowfile monorepo.
-Repo: `/Users/edwardvaneechoud/flowfile_backup/Flowfile` (branch at time of investigation: `feature/claude-skills`, HEAD `f6963c77`).
+Repo: `Flowfile` (branch at time of investigation: `feature/claude-skills`, HEAD `f6963c77`).
 All claims verified by reading source or running read-only/isolated commands unless marked **inferred**.
 
 **Version note:** actual runtime version is **0.12.7** (printed by `python -m flowfile`; from `shared/_version.get_version()`). Root CLAUDE.md says 0.11.0 — stale. Alembic head is **028** (`028_catalog_namespace_storage.py`), not 021 as root CLAUDE.md says.

@@ -1,8 +1,12 @@
 # Discovery dossier — KEY=config-flags
+
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 ## Exhaustive configuration catalog for the Flowfile monorepo
 
 Everything below was verified 2026-07-03 against the working tree at
-`/Users/edwardvaneechoud/flowfile_backup/Flowfile` (branch `improvement/improve-naming-unnamed-flows`,
+`Flowfile` (branch `improvement/improve-naming-unnamed-flows`,
 clean) by reading files and running read-only greps. Items I could not fully verify are marked **inferred**.
 
 Verification commands actually run (all read-only):
