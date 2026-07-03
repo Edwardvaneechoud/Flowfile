@@ -567,6 +567,25 @@ describe('Code Generation', () => {
       expect(code).toContain('renamed = source.rename')
     })
 
+    it('does not rewrite a provisional token that appears inside a string literal', () => {
+      // node 1 fans out (so it survives as `source`, i.e. df_1 -> source is in the
+      // rename map). A downstream filter compares against the literal value "df_1".
+      // The variable reference must be renamed, but the string literal must not.
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'filter', {
+        filter_input: { mode: 'basic', basic_filter: { field: 'label', operator: 'equals', value: 'df_1' } }
+      }, [1]))
+      nodes.set(3, createNode(3, 'sort', { sort_input: [{ column: 'label', how: 'asc' }] }, [1]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 2], [1, 3]]) })
+
+      expect(code).toContain('source = pl.scan_csv') // df_1 -> source (real rename)
+      expect(code).toContain('source.filter') // variable reference renamed
+      expect(code).toContain('== "df_1"') // string literal left verbatim
+      expect(code).not.toContain('== "source"') // the naive-regex bug would produce this
+    })
+
     it('names custom polars_code functions by node id', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))

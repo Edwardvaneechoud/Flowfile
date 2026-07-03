@@ -1268,17 +1268,66 @@ class FlowToPolarsConverter {
 
   // Substitute provisional tokens with final names across body + return target.
   // Word-boundary regex, leaving `param=` kwargs untouched (mirrors core's fallback).
+  // Only real code is rewritten — string literals and comments are left verbatim
+  // (mirrors flowfile_core's _rename_tokens, which renames NAME tokens only), so a
+  // column/filter value like "df_2" is never mangled into a renamed variable.
   private applyRenames(body: string[], rename: Map<string, string>): string[] {
     if (rename.size === 0) return body
     const patterns = Array.from(rename.entries()).map(
       ([oldName, newName]) => [new RegExp(`\\b${oldName}\\b(?!=)`, 'g'), newName] as const
     )
-    const out = body.map(line => {
-      for (const [pat, newName] of patterns) line = line.replace(pat, newName)
-      return line
-    })
+    const out = body.map(element =>
+      element
+        .split('\n')
+        .map(line => this.renameCodeSegments(line, patterns))
+        .join('\n')
+    )
     if (this.lastNodeVar !== null) {
       this.lastNodeVar = rename.get(this.lastNodeVar) ?? this.lastNodeVar
+    }
+    return out
+  }
+
+  // Apply the rename patterns to a single physical line, skipping Python string
+  // literals and comments. The line is walked once, splitting it into code runs
+  // vs. protected spans (quoted strings, `# ...` comments); only code runs are
+  // rewritten. Generated code never emits f-strings, so string bodies are opaque.
+  private renameCodeSegments(line: string, patterns: ReadonlyArray<readonly [RegExp, string]>): string {
+    let out = ''
+    let i = 0
+    const n = line.length
+    while (i < n) {
+      const ch = line[i]
+      if (ch === '"' || ch === "'") {
+        // Consume a string literal verbatim (handles backslash escapes).
+        const quote = ch
+        let j = i + 1
+        while (j < n) {
+          if (line[j] === '\\') {
+            j += 2
+            continue
+          }
+          if (line[j] === quote) {
+            j++
+            break
+          }
+          j++
+        }
+        out += line.slice(i, j)
+        i = j
+      } else if (ch === '#') {
+        // Comment: the rest of the line is protected.
+        out += line.slice(i)
+        i = n
+      } else {
+        // Code run up to the next quote or comment start.
+        let j = i
+        while (j < n && line[j] !== '"' && line[j] !== "'" && line[j] !== '#') j++
+        let segment = line.slice(i, j)
+        for (const [pat, newName] of patterns) segment = segment.replace(pat, newName)
+        out += segment
+        i = j
+      }
     }
     return out
   }
