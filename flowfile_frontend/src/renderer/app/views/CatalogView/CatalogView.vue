@@ -509,6 +509,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
 import { NodeApi } from "../../api/node.api";
+import { copyToClipboard } from "../../utils/clipboardUtils";
 import type { NotebookSummary } from "../../api/notebook.api";
 import { EmptyState } from "../../components/common";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
@@ -622,6 +623,7 @@ const tableMenuOptions: ContextMenuOption[] = [
   { label: "View table", action: "view" },
   { label: "Use in flow", action: "read" },
   { label: "Create visual", action: "visuals" },
+  { label: "Copy reference", action: "copy" },
 ];
 
 // Right-click context menu for catalog models (artifacts)
@@ -810,6 +812,14 @@ function onTableMenuSelect(action: string) {
   if (action === "view") selectTable(table.id);
   else if (action === "read") createReadInFlow(table);
   else if (action === "visuals") openCreateViz(table);
+  else if (action === "copy") copyTableReference(table);
+}
+
+async function copyTableReference(table: CatalogTable) {
+  const ref = buildTableRef(table.qualified_name ?? table.full_table_name ?? table.name);
+  const ok = await copyToClipboard(ref);
+  if (ok) ElMessage.success(`Copied ${ref}`);
+  else ElMessage.error("Failed to copy reference");
 }
 
 function onArtifactContextMenu(payload: { artifact: GlobalArtifact; x: number; y: number }) {
@@ -1000,8 +1010,14 @@ function quoteSqlName(name: string): string {
   return /^[a-zA-Z_]\w*$/.test(name) ? name : `"${name}"`;
 }
 
-function handleQueryTable(tableName: string) {
-  sqlInitialQuery.value = `SELECT * FROM ${quoteSqlName(tableName)}`;
+// Quote each dotted segment of a (fully-qualified) reference so catalog.schema.table
+// resolves collision-free. Splitting on '.' is safe — names can't contain a dot.
+function buildTableRef(reference: string): string {
+  return reference.split(".").map(quoteSqlName).join(".");
+}
+
+function handleQueryTable(reference: string) {
+  sqlInitialQuery.value = `SELECT * FROM ${buildTableRef(reference)}`;
   // Clear selected table so the SQL editor panel shows
   catalogStore.clearTableSelection();
   router.push({ name: "catalog", query: { tab: "sql" } });

@@ -265,6 +265,20 @@ class VirtualTableService:
 
     # ---- Resolution ------------------------------------------------------ #
 
+    def _table_query_aliases(self, table: CatalogTable, bare_unique: bool, path_cache: dict) -> set[str]:
+        """SQL-registerable names for a table: fully-qualified ``catalog.schema.table``,
+        the 2-part ``schema.table``, and the bare name when globally unique. ``path_cache``
+        memoizes namespace-path lookups across the table set."""
+        nid = table.namespace_id
+        if nid not in path_cache:
+            path_cache[nid] = self._namespaces.resolve_namespace_path(nid)
+        ns_path = path_cache[nid]
+        schema_name = ns_path.rsplit(".", 1)[-1] if ns_path else None
+        names = {format_full_name(schema_name, table.name), format_full_name(ns_path, table.name)}
+        if bare_unique:
+            names.add(table.name)
+        return names
+
     def resolve_query_virtual_table(
         self,
         table_id: int,
@@ -292,15 +306,12 @@ class VirtualTableService:
         for t in all_tables:
             bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
 
+        path_cache: dict[int | None, str | None] = {}
         aliases_by_table: dict[int, list[str]] = {}
         alias_to_table: dict[str, CatalogTable] = {}
         for t in all_tables:
-            ns_name = self._namespaces.resolve_namespace_name(t.namespace_id)
-            qualified = format_full_name(ns_name, t.name)
-            aliases = [qualified]
-            if bare_counts.get(t.name, 0) == 1 and qualified != t.name:
-                aliases.append(t.name)
-            aliases_by_table[t.id] = aliases
+            aliases = self._table_query_aliases(t, bare_counts.get(t.name, 0) == 1, path_cache)
+            aliases_by_table[t.id] = list(aliases)
             for alias in aliases:
                 alias_to_table[alias] = t
 
@@ -471,19 +482,42 @@ class VirtualTableService:
             if t.table_type == "virtual" or (t.file_path and is_delta_table(Path(t.file_path))):
                 bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
 
+        path_cache: dict[int | None, str | None] = {}
         delta_map: dict[str, str] = {}
         virtual_map: dict[str, int] = {}
         for table in tables:
-            ns_name = self._namespaces.resolve_namespace_name(table.namespace_id)
-            qualified = format_full_name(ns_name, table.name)
-            include_bare = bare_counts.get(table.name, 0) == 1
+            aliases = self._table_query_aliases(table, bare_counts.get(table.name, 0) == 1, path_cache)
             if table.table_type == "virtual":
-                virtual_map[qualified] = table.id
-                if include_bare and qualified != table.name:
-                    virtual_map[table.name] = table.id
+                for alias in aliases:
+                    virtual_map[alias] = table.id
             elif table.file_path and is_delta_table(Path(table.file_path)):
                 dir_name = Path(table.file_path).name
-                delta_map[qualified] = dir_name
-                if include_bare and qualified != table.name:
-                    delta_map[table.name] = dir_name
+                for alias in aliases:
+                    delta_map[alias] = dir_name
         return delta_map, virtual_map
+
+    def resolve_cloud_only_table_aliases(
+        self, accessible_table_ids: set[int] | None = None, exclude: set[str] | frozenset = frozenset()
+    ) -> dict[str, str]:
+        """Map each SQL name of an object-storage-backed physical table to its fully-qualified
+        display name. These tables are excluded from the worker-offloaded SQL path (known
+        limitation), so the SQL editor uses this to return a clear error instead of a raw
+        'relation not found'. ``exclude`` drops names also served by a queryable table."""
+        tables = self.repo.list_tables()
+        if accessible_table_ids is not None:
+            tables = [t for t in tables if t.id in accessible_table_ids]
+        bare_counts: dict[str, int] = {}
+        for t in tables:
+            if t.table_type != "virtual" and t.file_path and _is_cloud_uri(t.file_path):
+                bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
+        path_cache: dict[int | None, str | None] = {}
+        aliases: dict[str, str] = {}
+        for table in tables:
+            if table.table_type == "virtual" or not table.file_path or not _is_cloud_uri(table.file_path):
+                continue
+            names = self._table_query_aliases(table, bare_counts.get(table.name, 0) == 1, path_cache)
+            display = format_full_name(path_cache.get(table.namespace_id), table.name)
+            for name in names:
+                if name not in exclude:
+                    aliases[name] = display
+        return aliases
