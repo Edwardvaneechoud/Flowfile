@@ -852,6 +852,72 @@ def test_create_flow_without_namespace_auto_registers_local_flows():
             db.commit()
 
 
+def test_create_flow_skip_catalog_registration():
+    """create_flow with register_in_catalog=False opens a session but writes no catalog registration
+    and no YAML on disk — the ephemeral scratch flow lives in-memory until an explicit save/run."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    # Re-seed namespaces (autouse catalog fixtures may have wiped them) so that a
+    # regression where the flag is ignored would actually have somewhere to register.
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_ephemeral.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post(
+            "editor/create_flow",
+            params={"flow_path": flow_path, "register_in_catalog": False},
+        )
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        flow_id = resp.json()
+        assert isinstance(flow_id, int), "create_flow should still return a session flow_id"
+
+        assert not os.path.exists(flow_path), "register_in_catalog=False must not write the scratch YAML to disk"
+
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow is not None, "the ephemeral scratch flow should still be a live in-memory session"
+        assert flow.has_unsaved_changes() is False, "a fresh scratch flow should have a clean dirty baseline"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is None, "register_in_catalog=False must not create a catalog registration"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_create_flow_default_persists_to_disk():
+    """A default create (register_in_catalog omitted) still writes the flow YAML to disk — the
+    deferral is scoped to ephemeral scratch flows and must not regress normal creates."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "default_create_persist.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post("editor/create_flow", params={"flow_path": flow_path})
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        assert os.path.exists(flow_path), "a default create must persist the flow YAML to disk"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
 def test_create_flow_name_collision_in_namespace_409():
     """A second create with the same name in the same namespace is rejected before any file is written."""
     from flowfile_core.database.models import FlowRegistration
@@ -1215,6 +1281,63 @@ def test_flow_run():
     response = client.post("/flow/run/", params={"flow_id": flow_id})
     assert response.status_code in (200, 202), "Flow not Started"
     assert flow_file_handler.get_flow(flow_id).get_run_info().start_time is not None, "Flow did not run"
+
+
+def test_first_run_registers_ephemeral_scratch_flow():
+    """A scratch flow created with register_in_catalog=False stays out of the catalog
+    until its first run, which promotes it into the catalog."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()  # ensure default namespaces exist for auto-registration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "scratch_first_run.yaml")
+
+    def _drop_registration():
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+    remove_flow(flow_path)
+    _drop_registration()
+
+    try:
+        resp = client.post(
+            "editor/create_flow",
+            params={"flow_path": flow_path, "register_in_catalog": False},
+        )
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        flow_id = resp.json()
+
+        assert not os.path.exists(flow_path), "scratch flow YAML must not be written before its first run"
+
+        with get_db_context() as db:
+            assert (
+                db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none() is None
+            ), "Scratch flow must not be catalogued before its first run"
+
+        add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+        manual_input = input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"name": "John"}, {"name": "Jane"}]),
+        )
+        client.post("/update_settings/", json=manual_input.model_dump(), params={"node_type": "manual_input"})
+
+        run_resp = client.post("/flow/run/", params={"flow_id": flow_id})
+        assert run_resp.status_code in (200, 202), f"Run failed: {run_resp.text}"
+
+        assert os.path.exists(flow_path), "first run must persist the scratch flow YAML to disk"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is not None, "First run must register the scratch flow in the catalog"
+    finally:
+        remove_flow(flow_path)
+        _drop_registration()
 
 
 def test_instant_function_result_after_run():

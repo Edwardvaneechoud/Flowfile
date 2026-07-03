@@ -82,6 +82,7 @@ export class FlowApi {
     flowPath: string | null = null,
     name: string | null = null,
     namespaceId: number | null = null,
+    registerInCatalog = true,
   ): Promise<number> {
     const response = await axios.post(
       "/editor/create_flow/",
@@ -92,6 +93,7 @@ export class FlowApi {
           flow_path: flowPath,
           name: name,
           namespace_id: namespaceId,
+          register_in_catalog: registerInCatalog,
         },
       },
     );
