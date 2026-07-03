@@ -535,7 +535,7 @@ import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
-import { useRecentFlows } from "../../composables/useRecentFlows";
+import { useFlowOpener } from "../../composables/useFlowOpener";
 import { findNamespacePath } from "../../types";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
@@ -558,7 +558,7 @@ const catalogStore = useCatalogStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
-const { recordFlow } = useRecentFlows();
+const { openFlow } = useFlowOpener();
 
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
@@ -1143,30 +1143,19 @@ async function openRunSnapshot(runId: number) {
 async function openFlowInDesigner(
   flow: Pick<FlowRegistration, "flow_path" | "name" | "namespace_id" | "id">,
 ) {
-  try {
-    // If this catalog flow is already open in a live session, navigate to it instead of
-    // re-importing from disk (which would reload the saved version over unsaved edits). Both
-    // sides carry the catalog identity — the registration id here (flow.id) and
-    // source_registration_id on each open session — so we match on that, no file path needed.
-    const openSession = (await FlowApi.getAllFlows()).find(
-      (s) => s.source_registration_id != null && s.source_registration_id === flow.id,
-    );
-    const flowId = openSession ? openSession.flow_id : await FlowApi.importFlow(flow.flow_path);
-    flowStore.setFlowId(flowId);
-    // Catalog opens were never landing in recents (the home screen looked empty
-    // in docker, where flows are opened from the catalog rather than a file
-    // dialog). Record here, building catalogRef exactly like refreshCatalogRefs.
-    const nsPath =
-      flow.namespace_id != null ? findNamespacePath(catalogStore.tree, flow.namespace_id) : [];
-    recordFlow({
-      path: flow.flow_path,
-      name: flow.name,
-      catalogRef: nsPath.length ? `${nsPath.join(".")}.${flow.name}` : undefined,
-      catalogId: flow.id,
-    });
+  // openFlow owns the shared contract: reuse an already-open session by catalog
+  // id (falling back to importFlow), set the flow id, record recents, and notify
+  // on failure. We only build catalogRef (exactly like refreshCatalogRefs) and
+  // navigate to the designer once the open succeeds.
+  const nsPath =
+    flow.namespace_id != null ? findNamespacePath(catalogStore.tree, flow.namespace_id) : [];
+  const flowId = await openFlow(flow.flow_path, {
+    name: flow.name,
+    catalogRef: nsPath.length ? `${nsPath.join(".")}.${flow.name}` : undefined,
+    catalogId: flow.id,
+  });
+  if (flowId !== null) {
     router.push({ name: "designer" });
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to open flow");
   }
 }
 
