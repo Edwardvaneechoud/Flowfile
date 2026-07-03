@@ -625,6 +625,42 @@ class TestRuns:
         assert len(data["items"]) == 0
 
 
+def test_open_run_snapshot_does_not_reuse_registration(tmp_path):
+    """A run snapshot serializes source_registration_id; opening it must NOT let that id be
+    matched by the registration-scoped reuse — the snapshot opens as a fresh, unlinked tab."""
+    from datetime import datetime, timezone
+
+    # Build a real flow, stamp a registration id, and serialize it as the run snapshot.
+    flow_path = tmp_path / "snap_src.yaml"
+    flow_id = flow_file_handler.add_flow(name="snap_src", flow_path=str(flow_path), user_id=1)
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.source_registration_id = 4242
+    flow.save_flow(str(flow_path))
+    snapshot_text = flow_path.read_text()
+    flow_file_handler.delete_flow(flow_id)
+    assert "4242" in snapshot_text  # sanity: the id is baked into the snapshot
+
+    with get_db_context() as db:
+        run = FlowRun(
+            registration_id=None,
+            flow_name="snap_src",
+            flow_path=str(flow_path),
+            user_id=1,
+            started_at=datetime.now(timezone.utc),
+            number_of_nodes=0,
+            run_type="in_designer_run",
+            flow_snapshot=snapshot_text,
+        )
+        db.add(run)
+        db.commit()
+        run_id = run.id
+
+    resp = client.post(f"/catalog/runs/{run_id}/open")
+    assert resp.status_code == 200, resp.text
+    opened = flow_file_handler.get_flow(resp.json()["flow_id"])
+    assert opened.flow_settings.source_registration_id is None  # nulled, cannot hijack reuse
+
+
 # Stats tests
 
 
