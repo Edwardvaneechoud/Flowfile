@@ -1,6 +1,9 @@
 # Discovery dossier — KEY=core-architecture (flowfile_core engine deep-read)
 
-All paths relative to repo root `/Users/edwardvaneechoud/flowfile_backup/Flowfile` unless absolute.
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
+All paths relative to repo root `Flowfile` unless absolute.
 Verified on branch `improvement/improve-naming-unnamed-flows` (clean tree), 2026-07-03. Everything below was read from source; items I could not fully confirm are marked **inferred**.
 
 Verified line counts (`wc -l`):

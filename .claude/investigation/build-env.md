@@ -1,7 +1,11 @@
 # Discovery dossier — KEY=build-env
+
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 ## Build system & environment recreation for the Flowfile monorepo
 
-Repo: `/Users/edwardvaneechoud/flowfile_backup/Flowfile` (branch `improvement/improve-naming-unnamed-flows`, clean at time of survey).
+Repo: `Flowfile` (branch `improvement/improve-naming-unnamed-flows`, clean at time of survey).
 All claims below verified by reading the referenced file or running the referenced command on 2026-07-03 unless explicitly marked **inferred**.
 
 ---

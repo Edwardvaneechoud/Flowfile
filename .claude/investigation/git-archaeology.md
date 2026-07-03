@@ -1,8 +1,11 @@
 # Git Archaeology — Failure History of the Flowfile Monorepo
 
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 Discovery dimension: `git-archaeology`. All claims below verified via read-only git commands
 (`git log`, `git show`, `git branch -a`, `git tag`, `git ls-remote --tags origin`) and file reads
-against the working tree at `/Users/edwardvaneechoud/flowfile_backup/Flowfile`, 2026-07-03.
+against the working tree at `Flowfile`, 2026-07-03.
 Anything not directly verified is marked **inferred**.
 
 ## Repo shape facts

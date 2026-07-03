@@ -1,7 +1,11 @@
 # Discovery Dossier — KEY=ci-release
+
+> **FROZEN EVIDENCE** — snapshot at commit `f6963c77` (2026-07-03, v0.12.7); deliberately unmaintained and expected to drift.
+> Authority order: **live repo → `.claude/skills/` → this file (leads only — re-verify before citing).** See [`README.md`](./README.md).
+
 ## CI/CD & Release Discipline for the Flowfile monorepo
 
-Investigated: 2026-07-03, repo `/Users/edwardvaneechoud/flowfile_backup/Flowfile`, HEAD branch `feature/claude-skills` (git-status snapshot said `improvement/improve-naming-unnamed-flows` at session start; local `main` == `origin/main` == `f6963c77`). All claims verified by reading files, git history, or live read-only `gh api` / `gh run` calls unless marked **inferred**.
+Investigated: 2026-07-03, repo `Flowfile`, HEAD branch `feature/claude-skills` (git-status snapshot said `improvement/improve-naming-unnamed-flows` at session start; local `main` == `origin/main` == `f6963c77`). All claims verified by reading files, git history, or live read-only `gh api` / `gh run` calls unless marked **inferred**.
 
 ---
 
