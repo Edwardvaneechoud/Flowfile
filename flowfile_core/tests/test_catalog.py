@@ -1642,6 +1642,32 @@ class TestCrossNamespaceResolution:
             assert ns.resolve_namespace_path(cat_id) == "cat"  # level-0 catalog
             assert ns.resolve_namespace_path(None) is None
 
+    def test_resolve_namespace_path_walks_full_chain(self):
+        """resolve_namespace_path walks the whole parent chain, so a 3-level namespace
+        resolves to catalog.schema.sub — not just its two lowest segments. The tree is
+        built directly since create_namespace caps nesting at 2 levels."""
+        _cleanup_catalog()
+        with get_db_context() as db:
+            from flowfile_core.catalog.services.namespaces import NamespaceService
+
+            cat = CatalogNamespace(name="cat", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            schema = CatalogNamespace(name="schema", level=1, parent_id=cat.id, owner_id=1)
+            db.add(schema)
+            db.commit()
+            db.refresh(schema)
+            sub = CatalogNamespace(name="sub", level=2, parent_id=schema.id, owner_id=1)
+            db.add(sub)
+            db.commit()
+            db.refresh(sub)
+
+            ns = NamespaceService(SQLAlchemyCatalogRepository(db))
+            assert ns.resolve_namespace_path(sub.id) == "cat.schema.sub"
+            assert ns.resolve_namespace_path(schema.id) == "cat.schema"
+            assert ns.resolve_namespace_path(cat.id) == "cat"
+
     def _seed_demo_market_delta(self, db) -> str:
         """Demo(catalog) -> market(schema) -> fx_rates delta-shaped table. Returns its dir."""
         import os
@@ -1801,6 +1827,53 @@ class TestCrossNamespaceResolution:
             # And the virtual table is registered as queryable so it can resolve via the flow.
             _, virtual_map = svc.resolve_all_queryable_tables()
             assert "c.v" in virtual_map
+
+    def test_cloud_only_aliases_drop_ambiguous_bare_name(self):
+        """Two object-storage tables sharing a bare name across namespaces each keep their
+        qualified aliases with the correct display; the colliding bare name is dropped rather
+        than last-write-wins to one table's display. A uniquely-named cloud table keeps its bare."""
+        _cleanup_catalog()
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="cat", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            ns_a = CatalogNamespace(name="ns_a", level=1, parent_id=cat.id, owner_id=1)
+            ns_b = CatalogNamespace(name="ns_b", level=1, parent_id=cat.id, owner_id=1)
+            db.add_all([ns_a, ns_b])
+            db.commit()
+            db.refresh(ns_a)
+            db.refresh(ns_b)
+            db.add_all(
+                [
+                    CatalogTable(
+                        name="shared", namespace_id=ns_a.id, owner_id=1,
+                        file_path="s3://bucket/a/shared", storage_format="delta",
+                    ),
+                    CatalogTable(
+                        name="shared", namespace_id=ns_b.id, owner_id=1,
+                        file_path="s3://bucket/b/shared", storage_format="delta",
+                    ),
+                    CatalogTable(
+                        name="solo", namespace_id=ns_a.id, owner_id=1,
+                        file_path="s3://bucket/a/solo", storage_format="delta",
+                    ),
+                ]
+            )
+            db.commit()
+
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            aliases = svc.resolve_cloud_only_table_aliases()
+
+            # Qualified forms carry each table's own display, never the other's.
+            assert aliases["ns_a.shared"] == "cat.ns_a.shared"
+            assert aliases["ns_b.shared"] == "cat.ns_b.shared"
+            assert aliases["cat.ns_a.shared"] == "cat.ns_a.shared"
+            assert aliases["cat.ns_b.shared"] == "cat.ns_b.shared"
+            # Colliding bare name dropped (would misattribute under a hardcoded bare_unique).
+            assert "shared" not in aliases
+            # Unique bare name still kept.
+            assert aliases["solo"] == "cat.ns_a.solo"
 
     def test_execute_sql_missing_virtual_producer_flow_returns_clear_error(self):
         """A virtual table whose producer flow file is gone should give a clear reason,

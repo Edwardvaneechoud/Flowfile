@@ -506,12 +506,16 @@ class VirtualTableService:
         tables = self.repo.list_tables()
         if accessible_table_ids is not None:
             tables = [t for t in tables if t.id in accessible_table_ids]
+        bare_counts: dict[str, int] = {}
+        for t in tables:
+            if t.table_type != "virtual" and t.file_path and _is_cloud_uri(t.file_path):
+                bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
         path_cache: dict[int | None, str | None] = {}
         aliases: dict[str, str] = {}
         for table in tables:
             if table.table_type == "virtual" or not table.file_path or not _is_cloud_uri(table.file_path):
                 continue
-            names = self._table_query_aliases(table, bare_unique=True, path_cache=path_cache)
+            names = self._table_query_aliases(table, bare_counts.get(table.name, 0) == 1, path_cache)
             display = format_full_name(path_cache.get(table.namespace_id), table.name)
             for name in names:
                 if name not in exclude:
