@@ -285,6 +285,19 @@ class TableService:
         self._cloud_conn_cache[namespace_id] = available
         return available
 
+    def _is_remote_storage(self, table: CatalogTable) -> bool:
+        """True when the table's data lives on object storage.
+
+        Either its ``file_path`` is a cloud URI, or its catalog is backed by object
+        storage (where physical tables are stored under a bare dir name that resolves
+        to S3). This gates the UI so remote previews load on demand, not eagerly.
+        """
+        if getattr(table, "table_type", "physical") == "virtual":
+            return False
+        if _is_cloud_uri(table.file_path or ""):
+            return True
+        return self._cloud_storage_connection_available(table.namespace_id)
+
     def _check_file_exists(self, table: CatalogTable) -> bool:
         """Determine whether the backing data for a table is available."""
         is_virtual = getattr(table, "table_type", "physical") == "virtual"
@@ -292,8 +305,7 @@ class TableService:
             return True
         if not table.file_path:
             file_exists = False
-        elif _is_cloud_uri(table.file_path):
-            # Object-storage tables: skip the per-table data probe; just check the storage connection.
+        elif self._is_remote_storage(table):
             file_exists = self._cloud_storage_connection_available(table.namespace_id)
         else:
             file_exists = table_exists(table.file_path)
@@ -378,7 +390,7 @@ class TableService:
             description=table.description,
             owner_id=table.owner_id,
             file_exists=file_exists_flag,
-            is_remote_storage=_is_cloud_uri(table.file_path or ""),
+            is_remote_storage=self._is_remote_storage(table),
             is_favorite=is_favorite,
             schema_columns=columns,
             row_count=table.row_count,
@@ -444,7 +456,7 @@ class TableService:
                     description=table.description,
                     owner_id=table.owner_id,
                     file_exists=file_exists_flag,
-                    is_remote_storage=_is_cloud_uri(table.file_path or ""),
+                    is_remote_storage=self._is_remote_storage(table),
                     is_favorite=table.id in favorite_ids,
                     schema_columns=columns,
                     row_count=table.row_count,
