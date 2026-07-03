@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>Flowfile - Visual ETL Tool</title>
 
-    <!-- Material Design Web Components -->
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
-    <!-- Base styles that work with MkDocs Material theme -->
     <style>
         :root {
             --md-primary-fg-color: #00CED1;
@@ -71,8 +69,6 @@
             font-size: 0.875rem;
         }
 
-        /* Mobile-first approach */
-
         /* Hero Section */
         .hero-section {
             min-height: 100vh;
@@ -118,12 +114,6 @@
             height: auto;
             margin-bottom: 1.5rem;
             filter: drop-shadow(0 10px 30px rgba(0,0,0,0.2));
-            animation: pulse 3s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
         }
 
         .hero-title {
@@ -287,35 +277,50 @@
             font-size: 0.95rem;
         }
 
-        /* Code Preview */
-        .code-preview {
+        /* Persona router */
+        .persona-section {
+            padding: 3rem 1rem;
             background: var(--md-code-bg-color);
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin: 2rem 1rem;
-            max-width: 800px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }
 
-        .code-header {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
+        .persona-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
         }
 
-        .code-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: #ff5f57;
+        .persona-card {
+            background: var(--md-default-bg-color);
+            border: 1px solid rgba(128,128,128,0.2);
+            border-radius: 12px;
+            padding: 1.25rem;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.2s ease;
+            display: block;
         }
 
-        .code-dot:nth-child(2) { background: #ffbd2e; }
-        .code-dot:nth-child(3) { background: #28ca42; }
+        .persona-card:hover {
+            border-color: var(--md-primary-fg-color);
+            transform: translateY(-2px);
+        }
 
-        /* Developer Section Styles */
-        .developer-section {
+        .persona-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+            color: var(--md-primary-fg-color--dark);
+        }
+
+        .persona-card p {
+            font-size: 0.9rem;
+            color: var(--md-default-fg-color--light);
+            margin: 0;
+        }
+
+        /* Example / two-ways section */
+        .example-section {
             padding: 3rem 1rem;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             color: white;
@@ -343,31 +348,21 @@
             color: var(--md-primary-fg-color);
             margin-bottom: 1.5rem;
             font-size: 1.2rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
         }
 
-        .approach-card ul {
-            list-style: none;
-            padding: 0;
+        .approach-card ol {
+            padding-left: 1.25rem;
             margin: 0;
         }
 
         .approach-card li {
-            padding: 0.5rem 0;
+            padding: 0.4rem 0;
             color: rgba(255,255,255,0.9);
-            display: flex;
-            align-items: flex-start;
-            gap: 0.5rem;
             font-size: 0.95rem;
         }
 
-        .approach-card li::before {
-            content: '✓';
-            color: var(--md-primary-fg-color);
-            font-weight: bold;
-            flex-shrink: 0;
+        .approach-card li strong {
+            color: white;
         }
 
         .approach-card pre {
@@ -384,35 +379,6 @@
             font-size: 0.8rem;
         }
 
-        .developer-features {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 1rem;
-            margin: 2rem 0;
-            max-width: 1200px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .developer-feature {
-            background: rgba(255,255,255,0.05);
-            padding: 1.25rem;
-            border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-
-        .developer-feature h4 {
-            color: var(--md-primary-fg-color);
-            margin-bottom: 0.5rem;
-            font-size: 1rem;
-        }
-
-        .developer-feature p {
-            color: rgba(255,255,255,0.7);
-            font-size: 0.9rem;
-            margin: 0;
-        }
-
         /* Interface Screenshot */
         .interface-preview {
             max-width: 1000px;
@@ -425,11 +391,6 @@
             height: auto;
             border-radius: 16px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-            transition: transform 0.3s ease;
-        }
-
-        .interface-preview img:hover {
-            transform: scale(1.02);
         }
 
         /* Section Titles */
@@ -461,41 +422,11 @@
             color: rgba(255,255,255,0.8) !important;
         }
 
-        /* Stats Section */
-        .stats-container {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin: 2rem 0;
-            flex-wrap: wrap;
-            padding: 0 1rem;
-        }
-
-        .stat-item {
-            text-align: center;
-            text-decoration: none;
-            color: inherit;
-            transition: transform 0.2s;
-            display: block;
-            min-width: 100px;
-        }
-
-        .stat-value {
-            font-size: 2rem;
-            color: var(--md-primary-fg-color);
-            font-weight: bold;
-        }
-
-        .stat-label {
-            color: var(--md-default-fg-color--light);
-            font-size: 0.9rem;
-        }
-
         /* Bottom CTA Section */
         .bottom-cta {
             text-align: center;
             padding: 3rem 1rem;
-            background: var(--md-code-bg-color);
+            background: var(--md-default-bg-color);
         }
 
         .bottom-cta-subtitle {
@@ -508,164 +439,41 @@
 
         /* Tablet styles */
         @media (min-width: 640px) {
-            .hero-title {
-                font-size: 2.5rem;
-            }
-
-            .hero-subtitle {
-                font-size: 1.1rem;
-            }
-
-            .hero-button {
-                padding: 0.8rem 2rem;
-                font-size: 1rem;
-            }
-
-            .features-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .developer-features {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .section-title {
-                font-size: 2rem;
-            }
-
-            .section-subtitle {
-                font-size: 1.1rem;
-            }
-
-            .feature-title {
-                font-size: 1.2rem;
-            }
-
-            .stats-container {
-                gap: 3rem;
-            }
-
-            .stat-value {
-                font-size: 2.5rem;
-            }
+            .hero-title { font-size: 2.5rem; }
+            .hero-subtitle { font-size: 1.1rem; }
+            .hero-button { padding: 0.8rem 2rem; font-size: 1rem; }
+            .features-grid { grid-template-columns: repeat(2, 1fr); }
+            .persona-grid { grid-template-columns: repeat(2, 1fr); }
+            .section-title { font-size: 2rem; }
+            .section-subtitle { font-size: 1.1rem; }
+            .feature-title { font-size: 1.2rem; }
         }
 
         /* Desktop styles */
         @media (min-width: 1024px) {
-            .hero-section {
-                min-height: 70vh;
-                padding: 2rem;
-            }
-
-            .hero-logo {
-                margin-bottom: 2rem;
-            }
-
-            .hero-title {
-                font-size: 3.5rem;
-            }
-
-            .hero-subtitle {
-                font-size: 1.3rem;
-            }
-
-            .hero-buttons {
-                flex-direction: row;
-                gap: 1rem;
-            }
-
-            .features-section {
-                padding: 4rem 2rem;
-            }
-
-            .features-grid {
-                grid-template-columns: repeat(3, 1fr);
-                gap: 2rem;
-            }
-
-            /* When there are 7 cards, the 7th lands alone on row 3 — push it to the middle column. */
-            .features-grid > :nth-child(7):last-child {
-                grid-column: 2;
-            }
-
-            .feature-card {
-                padding: 2rem;
-            }
-
-            .approach-grid {
-                grid-template-columns: 1fr 1fr;
-                gap: 2rem;
-                margin: 3rem 0;
-            }
-
-            .approach-card {
-                padding: 2rem;
-            }
-
-            .approach-card h3 {
-                font-size: 1.4rem;
-            }
-
-            .developer-section {
-                padding: 4rem 2rem;
-            }
-
-            .developer-features {
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 1.5rem;
-                margin: 3rem 0;
-            }
-
-            .developer-feature {
-                padding: 1.5rem;
-            }
-
-            .developer-feature h4 {
-                font-size: 1.1rem;
-            }
-
-            .developer-feature p {
-                font-size: 0.95rem;
-            }
-
-            .section-title {
-                font-size: 2.5rem;
-                margin-bottom: 1rem;
-            }
-
-            .section-subtitle {
-                font-size: 1.2rem;
-                margin-bottom: 3rem;
-            }
-
-            .feature-title {
-                font-size: 1.3rem;
-            }
-
-            .feature-description {
-                font-size: 1rem;
-            }
-
-            .interface-preview {
-                margin: 3rem auto;
-                padding: 0 2rem;
-            }
-
-            .bottom-cta {
-                padding: 4rem 2rem;
-            }
-
-            .approach-card code {
-                font-size: 0.875rem;
-            }
-
-            .approach-card li {
-                font-size: 1rem;
-            }
-
-            pre {
-                font-size: 0.9rem;
-            }
+            .hero-section { min-height: 70vh; padding: 2rem; }
+            .hero-logo { margin-bottom: 2rem; }
+            .hero-title { font-size: 3.5rem; }
+            .hero-subtitle { font-size: 1.3rem; }
+            .hero-buttons { flex-direction: row; gap: 1rem; }
+            .features-section { padding: 4rem 2rem; }
+            .features-grid { grid-template-columns: repeat(3, 1fr); gap: 2rem; }
+            .feature-card { padding: 2rem; }
+            .persona-section { padding: 4rem 2rem; }
+            .persona-grid { grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+            .approach-grid { grid-template-columns: 1fr 1fr; gap: 2rem; margin: 3rem 0; }
+            .approach-card { padding: 2rem; }
+            .approach-card h3 { font-size: 1.4rem; }
+            .example-section { padding: 4rem 2rem; }
+            .section-title { font-size: 2.5rem; margin-bottom: 1rem; }
+            .section-subtitle { font-size: 1.2rem; margin-bottom: 3rem; }
+            .feature-title { font-size: 1.3rem; }
+            .feature-description { font-size: 1rem; }
+            .interface-preview { margin: 3rem auto; padding: 0 2rem; }
+            .bottom-cta { padding: 4rem 2rem; }
+            .approach-card code { font-size: 0.875rem; }
+            .approach-card li { font-size: 1rem; }
+            pre { font-size: 0.9rem; }
         }
 
         /* Animations */
@@ -689,18 +497,9 @@
 
         /* Touch device optimizations */
         @media (hover: none) and (pointer: coarse) {
-            .feature-card:active {
-                transform: scale(0.98);
-            }
-
-            .hero-button:active {
-                transform: scale(0.95);
-            }
-
-            .feature-arrow {
-                opacity: 1;
-                transform: translateX(0);
-            }
+            .feature-card:active { transform: scale(0.98); }
+            .hero-button:active { transform: scale(0.95); }
+            .feature-arrow { opacity: 1; transform: translateX(0); }
         }
 
         /* Reduce motion for accessibility */
@@ -714,25 +513,20 @@
 
         /* High contrast mode support */
         @media (prefers-contrast: high) {
-            .feature-card {
-                border: 2px solid var(--md-default-fg-color);
-            }
-
-            .hero-button {
-                border: 2px solid currentColor;
-            }
+            .feature-card, .persona-card { border: 2px solid var(--md-default-fg-color); }
+            .hero-button { border: 2px solid currentColor; }
         }
     </style>
 </head>
 <body>
-    <!-- Hero Section -->
+    <!-- Hero -->
     <section class="hero-section">
         <div class="hero-content">
             <img src="assets/images/logo.png" alt="Flowfile Logo" class="hero-logo fade-in">
             <h1 class="hero-title fade-in">Flowfile</h1>
             <p class="hero-subtitle fade-in">
-                An open-source data platform with a visual pipeline builder, AI assistant, data catalog, Delta Lake storage,
-                scheduling, Kafka ingestion, sandboxed Python execution, and a Polars-compatible API — all in a single pip install.
+                An open-source data platform with a visual pipeline builder, AI assistant, data catalog with Delta Lake storage,
+                scheduling, Kafka ingestion, sandboxed Python execution, and a Polars-compatible API — installed with a single pip install.
             </p>
             <div class="hero-buttons fade-in">
                 <a href="quickstart.html" class="hero-button hero-button-primary">
@@ -741,17 +535,14 @@
                         <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
                     </svg>
                 </a>
+                <a href="https://demo.flowfile.org" class="hero-button hero-button-secondary">
+                    <span>Try the Live Demo</span>
+                </a>
                 <a href="https://github.com/edwardvaneechoud/Flowfile" class="hero-button hero-button-secondary">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
                     </svg>
                     <span>View on GitHub</span>
-                </a>
-                <a href="users/" class="hero-button hero-button-primary">
-                    <span>User Guides</span>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-                    </svg>
                 </a>
             </div>
         </div>
@@ -762,12 +553,22 @@
         <img src="assets/images/ai/ai-overview.gif" alt="Flowfile AI Assistant in action" loading="lazy">
     </div>
 
-    <!-- Features Section -->
+    <!-- Features -->
     <section class="features-section">
-        <h2 class="section-title">Why Flowfile?</h2>
-        <p class="section-subtitle">A complete data platform — visual pipeline builder, catalog, scheduling, and more — powered by Polars</p>
+        <h2 class="section-title">What's inside</h2>
+        <p class="section-subtitle">A complete data platform built on Polars — every part works with every other part</p>
 
         <div class="features-grid">
+            <a href="users/visual-editor/building-flows.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">🎨</div>
+                <h3 class="feature-title">Visual Pipeline Builder</h3>
+                <p class="feature-description">
+                    40+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more —
+                    with a data preview at every step.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
             <a href="ai/index.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">✨</div>
                 <h3 class="feature-title">AI Assistant</h3>
@@ -779,28 +580,29 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="users/visual-editor/building-flows.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">🎨</div>
-                <h3 class="feature-title">Visual Pipeline Builder</h3>
-                <p class="feature-description">
-                    30+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more.
-                    See your data flow in real-time with instant previews at each step.
-                </p>
-                <span class="feature-arrow">→</span>
-            </a>
-
-            <a href="users/visual-editor/catalog.html" class="feature-card fade-in feature-link">
+            <a href="users/visual-editor/catalog/index.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">📚</div>
-                <h3 class="feature-title">Data Catalog & Delta Lake</h3>
+                <h3 class="feature-title">Data Catalog &amp; Delta Lake</h3>
                 <p class="feature-description">
-                    Every table stored as Delta Lake with version history, time travel, and merge/upsert support. Track lineage, runs, and artifacts in one place.
+                    Tables stored as Delta Lake with version history and time travel. Namespaces, lineage,
+                    run history, and virtual tables in one place.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="users/visual-editor/schedules.html" class="feature-card fade-in feature-link">
+            <a href="users/visual-editor/catalog/sql-editor.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">📊</div>
+                <h3 class="feature-title">Analyze &amp; Explore</h3>
+                <p class="feature-description">
+                    Query any catalog table in the SQL editor, explore results in Graphic Walker
+                    visualizations, and save the charts next to the data.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="users/visual-editor/catalog/schedules.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">⏰</div>
-                <h3 class="feature-title">Scheduling & Triggers</h3>
+                <h3 class="feature-title">Scheduling &amp; Triggers</h3>
                 <p class="feature-description">
                     Run flows on intervals or trigger them when catalog tables update.
                     Built into the catalog — not a separate orchestration tool.
@@ -810,9 +612,10 @@
 
             <a href="users/visual-editor/connections.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">📡</div>
-                <h3 class="feature-title">Kafka & Cloud Storage</h3>
+                <h3 class="feature-title">Kafka, Databases &amp; Cloud Storage</h3>
                 <p class="feature-description">
-                    Ingest from Kafka/Redpanda as a canvas node. Read and write to S3, Azure Data Lake, and GCS. Connect to PostgreSQL, MySQL, and more.
+                    Ingest from Kafka/Redpanda as a canvas node. Read and write S3, Azure Data Lake, and GCS.
+                    Connect PostgreSQL, MySQL, and SQLite.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
@@ -821,116 +624,139 @@
                 <div class="feature-icon">🐍</div>
                 <h3 class="feature-title">Sandboxed Python</h3>
                 <p class="feature-description">
-                    Run arbitrary Python code in isolated Docker containers. Use any library — matplotlib, scikit-learn, or your own — output flows back into the pipeline.
+                    Run arbitrary Python in isolated Docker containers. Use any library —
+                    the output flows back into the pipeline.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
 
             <a href="users/visual-editor/tutorials/code-generator.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🔄</div>
-                <h3 class="feature-title">Code Generation & Python API</h3>
+                <h3 class="feature-title">Code Generation &amp; Python API</h3>
                 <p class="feature-description">
-                    Export visual flows as Python/Polars scripts. Or build pipelines programmatically with a Polars-compatible API and visualize them on the canvas.
+                    Export visual flows as standalone Python/Polars scripts, or build pipelines in code
+                    with a Polars-compatible API and open them on the canvas.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
         </div>
     </section>
 
-    <!-- Developer Section -->
-    <section class="developer-section">
+    <!-- Worked example: one pipeline, two ways -->
+    <section class="example-section">
         <div style="max-width: 1200px; margin: 0 auto;">
-            <h2 class="section-title section-title-white">Build Pipelines Your Way</h2>
+            <h2 class="section-title section-title-white">One pipeline, two ways</h2>
             <p class="section-subtitle section-subtitle-white">
-                Use the visual designer for exploration or write code for automation - seamlessly switch between both
+                The same sales pipeline — cleaned, filtered, and aggregated — on the canvas and in Python.
+                Both produce the same flow; switch whenever you like.
             </p>
 
+            <!-- IMAGE-PLACEHOLDER-TO-CHANGE: the sales_pipeline flow on the canvas — Read Data → Drop Duplicates → Filter → Group By, with the result preview open on the Group By node -->
+
             <div class="approach-grid">
-                <!-- Visual Approach -->
                 <div class="approach-card">
-                    <h3><span>📊</span> Visual Approach</h3>
-                    <ul>
-                        <li>Drag and drop nodes to build workflows</li>
-                        <li>Configure transformations with intuitive forms</li>
-                        <li>Preview data at each step instantly</li>
-                        <li>Export your pipeline as Python code</li>
-                        <li>Perfect for exploration and prototyping</li>
-                    </ul>
+                    <h3>On the canvas</h3>
+                    <ol>
+                        <li><strong>Read</strong> — load <code>supermarket_sales.csv</code></li>
+                        <li><strong>Drop Duplicates</strong> — remove repeated invoice rows</li>
+                        <li><strong>Filter</strong> — keep bulk orders: <code>[quantity] &gt; 7</code></li>
+                        <li><strong>Group By</strong> — per city, the sum and median of gross income</li>
+                    </ol>
                 </div>
 
-                <!-- Code Approach -->
                 <div class="approach-card">
-                    <h3><span>🐍</span> Code Approach</h3>
+                    <h3>In Python</h3>
+                    <!-- Keep in sync with docs/examples/sales_pipeline.py (the tested source of truth) -->
                     <pre><code>import flowfile as ff
 
-df = ff.read_csv("data.csv")
-result = df.filter(
-    ff.col("amount") > 1000
-).group_by("region").agg(
-    ff.col("amount").sum()
+df = ff.read_csv("data/templates/supermarket_sales.csv")
+
+result = (
+    df.unique()
+    .filter(ff.col("quantity") &gt; 7)
+    .group_by("city")
+    .agg(
+        ff.col("gross_income").sum().alias("total_income"),
+        ff.col("gross_income").median().alias("median_income"),
+    )
 )
 
-# Visualize your pipeline
-ff.open_graph_in_editor(result.flow_graph)</code></pre>
+print(result.collect())</code></pre>
                 </div>
             </div>
 
             <div class="hero-buttons">
-                <a href="users/python-api/" class="hero-button hero-button-primary">
-                    <span>Python API Documentation</span>
+                <a href="quickstart.html" class="hero-button hero-button-primary">
+                    <span>Build it step by step</span>
                 </a>
-                <a href="users/visual-editor/" class="hero-button hero-button-secondary">
-                    <span>Visual Editor Guide</span>
+                <a href="assets/flows/sales_pipeline.yaml" download class="hero-button hero-button-secondary">
+                    <span>Download the flow (.yaml)</span>
                 </a>
-            </div>
-            <div class="hero-buttons" style="margin-top: 2rem;">
-                <a href="for-developers/" class="hero-button hero-button-primary">
-                    <span>Read Developer Docs</span>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                <a href="assets/try-sales-pipeline.html" class="hero-button hero-button-secondary">
+                    <span>Open this flow in your browser</span>
                 </a>
             </div>
+            <p style="text-align: center; margin-top: 1rem; color: rgba(255,255,255,0.6); font-size: 0.85rem;">
+                Also available in the app: Create → From template → "Sales pipeline". The flow and the code above are
+                validated by the test suite on every commit.
+            </p>
         </div>
     </section>
 
-    <!-- Bottom CTA Section -->
+    <!-- Persona router -->
+    <section class="persona-section">
+        <h2 class="section-title">Where to start</h2>
+        <p class="section-subtitle">Pick the guide written for the way you work</p>
+
+        <div class="persona-grid">
+            <a href="users/visual-editor/index.html" class="persona-card">
+                <h3>Build flows visually</h3>
+                <p>The canvas, nodes, and formulas — no code required.</p>
+            </a>
+            <a href="users/coming-from-excel.html" class="persona-card">
+                <h3>Coming from Excel</h3>
+                <p>VLOOKUP, pivot tables, and IF-formulas, translated to flows.</p>
+            </a>
+            <a href="users/visual-editor/connections.html" class="persona-card">
+                <h3>Connect your data</h3>
+                <p>Databases, S3/ADLS/GCS, Kafka, REST APIs, Google Analytics.</p>
+            </a>
+            <a href="users/visual-editor/catalog/index.html" class="persona-card">
+                <h3>Analyze your data</h3>
+                <p>Catalog tables, SQL editor, visualizations, schedules.</p>
+            </a>
+            <a href="users/python-api/index.html" class="persona-card">
+                <h3>Write Python</h3>
+                <p>A Polars-compatible API that builds visual flows as a side effect.</p>
+            </a>
+            <a href="users/deployment/index.html" class="persona-card">
+                <h3>Deploy &amp; operate</h3>
+                <p>Desktop, pip, or Docker — plus users, groups, and sharing.</p>
+            </a>
+        </div>
+    </section>
+
+    <!-- Bottom CTA -->
     <section class="bottom-cta">
-        <h2 class="section-title">See It For Yourself</h2>
+        <h2 class="section-title">Free and open source</h2>
         <p class="bottom-cta-subtitle">
-            Start rediscovering how we bridge the gap between business users and technical users.
+            One install gives you the visual editor, the Python API, the catalog, and all services.
         </p>
-
-        <div class="stats-container">
-            <a href="quickstart.html" class="stat-item">
-                <div class="stat-value">5 min</div>
-                <div class="stat-label">to first pipeline</div>
-            </a>
-            <a href="users/python-api/" class="stat-item">
-                <div class="stat-value">100%</div>
-                <div class="stat-label">Familiar API</div>
-            </a>
-            <a href="users/visual-editor/tutorials/code-generator.html" class="stat-item">
-                <div class="stat-value">0</div>
-                <div class="stat-label">vendor lock-in</div>
-            </a>
-        </div>
-
-        <div class="hero-buttons" style="margin-top: 2rem;">
+        <pre style="display: inline-block; text-align: left; margin-bottom: 2rem;"><code>pip install flowfile</code></pre>
+        <div class="hero-buttons">
             <a href="quickstart.html" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
-                <span>Try Interactive Tutorial</span>
+                <span>Quickstart</span>
             </a>
-            <a href="users/visual-editor/tutorials/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
-                <span>Browse Examples</span>
+            <a href="users/index.html" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
+                <span>Guides by audience</span>
             </a>
         </div>
-
         <p style="margin-top: 2rem; color: var(--md-default-fg-color--light); font-size: 0.9rem;">
-            Free, <a href="https://github.com/edwardvaneechoud/Flowfile" style="color: var(--md-primary-fg-color); text-decoration: none;">open-source</a> and customizable
+            MIT licensed, developed <a href="https://github.com/edwardvaneechoud/Flowfile" style="color: var(--md-primary-fg-color); text-decoration: none;">on GitHub</a>
         </p>
     </section>
 
-    <!-- Scripts -->
     <script>
-        // Add intersection observer for fade-in animations
         const observer = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
@@ -940,13 +766,11 @@ ff.open_graph_in_editor(result.flow_graph)</code></pre>
             });
         }, { threshold: 0.1 });
 
-        // Observe all fade-in elements
         document.querySelectorAll('.fade-in').forEach(el => {
             observer.observe(el);
         });
 
-        // Add touch feedback for mobile devices
-        const touchElements = document.querySelectorAll('.hero-button, .feature-card, .stat-item');
+        const touchElements = document.querySelectorAll('.hero-button, .feature-card, .persona-card');
         touchElements.forEach(el => {
             el.addEventListener('touchstart', function() {
                 this.style.opacity = '0.8';
@@ -956,7 +780,6 @@ ff.open_graph_in_editor(result.flow_graph)</code></pre>
             });
         });
 
-        // Improve hover states for mobile
         let touchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
         if (touchDevice) {
             document.body.classList.add('touch-device');

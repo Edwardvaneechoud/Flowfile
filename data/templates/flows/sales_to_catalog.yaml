@@ -1,0 +1,85 @@
+flowfile_version: 0.8.2
+flowfile_id: 13
+flowfile_name: Sales To Catalog
+flowfile_settings:
+  description: null
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/supermarket_sales.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: group_by
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: city
+        agg: groupby
+        new_name: city
+      - old_name: product_line
+        agg: groupby
+        new_name: product_line
+      - old_name: gross_income
+        agg: sum
+        new_name: total_income
+      - old_name: quantity
+        agg: sum
+        new_name: units_sold
+- id: 3
+  type: catalog_writer
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 500
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: []
+  setting_input:
+    cache_results: false
+    catalog_write_settings:
+      table_name: sales_by_city
+      namespace_full_name: General.default
+      write_mode: overwrite
+_template_meta:
+  template_id: sales_to_catalog
+  name: Sales to Catalog
+  description: Aggregate sales by city and product line, then publish the result as
+    a catalog table.
+  category: Intermediate
+  tags: [group_by, catalog_writer]
+  node_count: 3
+  icon: inventory
+_required_csv_files: [supermarket_sales.csv]

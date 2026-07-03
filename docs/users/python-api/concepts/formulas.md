@@ -6,7 +6,7 @@ A few FlowFrame methods accept **Flowfile formula** strings — the same Excel-l
 "[price] * [quantity]"   # Equivalent to ff.col("price") * ff.col("quantity")
 ```
 
-This page documents the methods that accept formulas. The language itself — syntax, operators, and all 95 built-in functions — is documented in the [Formula Language guide](../../formulas/index.md). For everything else, use regular [Polars expressions](expressions.md).
+This page documents the methods that accept formulas. The language itself — syntax, operators, and the full [built-in function reference](../../formulas/functions.md) — is documented in the [Formula Language guide](../../formulas/index.md). For everything else, use regular [Polars expressions](expressions.md).
 
 !!! tip "Try it in your browser"
     The [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) shows the generated FlowFrame code for every formula you type.
@@ -66,7 +66,7 @@ output = df.with_columns([
 )
 ```
 
-**When to use which?** [Polars expressions](expressions.md) cover the entire Polars API and are the better fit for complex transformations. Formulas shine for simple, readable column logic and render as editable Formula/Filter node settings when you [open the pipeline in the visual editor](../reference/visual-ui.md).
+**When to use which?** [Polars expressions](expressions.md) cover most of the Polars API and are the better fit for complex transformations. Formulas are best for simple, readable column logic and render as editable Formula/Filter node settings when you [open the pipeline in the visual editor](../reference/visual-ui.md).
 
 ---
 

@@ -49,13 +49,16 @@ extra_javascript:
 
 plugins:
   - search
+  - redirects:
+      redirect_maps:
+        for-developers/docker-deployment.md: users/deployment/docker.md
   - mkdocstrings:
       handlers:
         python:
           options:
             # Global options for all Python objects
             show_root_heading: true
-            show_inherited_members: true
+            inherited_members: true
             show_bases: true
             # Options specific to the griffe-pydantic extension
             extensions:
@@ -68,6 +71,15 @@ markdown_extensions:
   - md_in_html
   - admonition
   - pymdownx.details
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+      dedent_subsections: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -80,77 +92,87 @@ markdown_extensions:
 
 nav:
   - Home: index.html
-  - Quickstart: quickstart.md
 
-  - User Guides:
-    - Overview: users/index.md
+  - Get Started:
+    - Quickstart: quickstart.md
+    - Guides by Audience: users/index.md
+    - Coming from Excel: users/coming-from-excel.md
+    - Flowfile Lite (Browser): users/deployment/lite.md
 
+  - Visual Editor:
+    - Overview: users/visual-editor/index.md
+    - Building Flows: users/visual-editor/building-flows.md
     - Formulas:
       - Formula Language: users/formulas/index.md
       - Function Reference: users/formulas/functions.md
+    - Node Reference:
+      - Overview: users/visual-editor/nodes/index.md
+      - Input Nodes: users/visual-editor/nodes/input.md
+      - Transform Nodes: users/visual-editor/nodes/transform.md
+      - Combine Nodes: users/visual-editor/nodes/combine.md
+      - Aggregate Nodes: users/visual-editor/nodes/aggregate.md
+      - Output Nodes: users/visual-editor/nodes/output.md
+      - Machine Learning Nodes: users/visual-editor/nodes/ml.md
+    - Sandboxed Python (Kernels): users/visual-editor/kernels.md
+    - Node Designer: users/visual-editor/node-designer.md
+    - Worked Examples:
+      - Overview: users/visual-editor/tutorials/index.md
+      - Sales Pipeline: users/visual-editor/tutorials/sales-pipeline.md
+      - Export to Python: users/visual-editor/tutorials/code-generator.md
+    - Settings: users/visual-editor/settings.md
 
-    - Visual Editor:
-      - Getting Started: users/visual-editor/index.md
-      - Building Flows: users/visual-editor/building-flows.md
-      - Node Reference:
-        - Overview: users/visual-editor/nodes/index.md
-        - Input Nodes: users/visual-editor/nodes/input.md
-        - Transform Nodes: users/visual-editor/nodes/transform.md
-        - Combine Nodes: users/visual-editor/nodes/combine.md
-        - Aggregate Nodes: users/visual-editor/nodes/aggregate.md
-        - Output Nodes: users/visual-editor/nodes/output.md
-        - Machine Learning Nodes: users/visual-editor/nodes/ml.md
-      - Catalog:
-        - Overview: users/visual-editor/catalog/index.md
-        - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
-        - Visualizations: users/visual-editor/catalog/visualizations.md
-        - Schedules: users/visual-editor/catalog/schedules.md
-        - SQL Editor: users/visual-editor/catalog/sql-editor.md
-        - Secrets & Encryption: users/visual-editor/catalog/secrets.md
-      - Features:
-        - Kernel Execution: users/visual-editor/kernels.md
-        - Node Designer: users/visual-editor/node-designer.md
-        - Connections: users/visual-editor/connections.md
-      - Tutorials:
-        - Overview: users/visual-editor/tutorials/index.md
-        - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
-        - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
-        - Export to Python: users/visual-editor/tutorials/code-generator.md
-      - Settings: users/visual-editor/settings.md
+  - Connect Your Data:
+    - Overview: users/connect/index.md
+    - Connections: users/visual-editor/connections.md
+    - Secrets & Encryption: users/visual-editor/catalog/secrets.md
+    - Databases: users/visual-editor/tutorials/database-connectivity.md
+    - Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
+    - Kafka: users/connect/kafka.md
+    - REST APIs & Google Analytics: users/connect/apis.md
 
-    - Python API:
-      - Overview: users/python-api/index.md
-      - Quick Start: users/python-api/quickstart.md
-      - Core Concepts:
-        - Overview: users/python-api/concepts/index.md
-        - FlowFrame & FlowGraph: users/python-api/concepts/design-concepts.md
-        - Expressions: users/python-api/concepts/expressions.md
-        - Formulas in Python: users/python-api/concepts/formulas.md
-      - API Reference:
-        - Overview: users/python-api/reference/index.md
-        - Reading Data: users/python-api/reference/reading-data.md
-        - Writing Data: users/python-api/reference/writing-data.md
-        - Catalog References: users/python-api/reference/catalog-references.md
-        - Data Types: users/python-api/reference/data-types.md
-        - DataFrame Operations: users/python-api/reference/flowframe-operations.md
-        - Aggregations: users/python-api/reference/aggregations.md
-        - Joins: users/python-api/reference/joins.md
-        - Cloud Storage: users/python-api/reference/cloud-connections.md
-        - Visual UI Integration: users/python-api/reference/visual-ui.md
-      - Tutorials:
-        - Overview: users/python-api/tutorials/index.md
-        - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
+  - Catalog & Automation:
+    - Overview: users/visual-editor/catalog/index.md
+    - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
+    - SQL Editor: users/visual-editor/catalog/sql-editor.md
+    - Visualizations: users/visual-editor/catalog/visualizations.md
+    - Schedules: users/visual-editor/catalog/schedules.md
+    - Subflows: users/visual-editor/subflows.md
+    - Projects & Git: users/projects.md
 
-  - Deployment:
-    - Overview: users/deployment/index.md
-    - Flowfile Lite (Browser): users/deployment/lite.md
-    - Desktop App: users/deployment/desktop.md
-    - Python Package: users/deployment/python.md
-    - Docker: users/deployment/docker.md
+  - Python API:
+    - Overview: users/python-api/index.md
+    - Quick Start: users/python-api/quickstart.md
+    - Core Concepts:
+      - Overview: users/python-api/concepts/index.md
+      - FlowFrame & FlowGraph: users/python-api/concepts/design-concepts.md
+      - Expressions: users/python-api/concepts/expressions.md
+      - Formulas in Python: users/python-api/concepts/formulas.md
+    - API Reference:
+      - Overview: users/python-api/reference/index.md
+      - Reading Data: users/python-api/reference/reading-data.md
+      - Writing Data: users/python-api/reference/writing-data.md
+      - Catalog References: users/python-api/reference/catalog-references.md
+      - Data Types: users/python-api/reference/data-types.md
+      - DataFrame Operations: users/python-api/reference/flowframe-operations.md
+      - Aggregations: users/python-api/reference/aggregations.md
+      - Joins: users/python-api/reference/joins.md
+      - Cloud Storage: users/python-api/reference/cloud-connections.md
+      - Visual UI Integration: users/python-api/reference/visual-ui.md
+    - Tutorials:
+      - Overview: users/python-api/tutorials/index.md
+      - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
 
   - AI Assistant:
     - Overview: ai/index.md
     - Provider Setup: ai/providers.md
+
+  - Deploy & Operate:
+    - Overview: users/deployment/index.md
+    - Desktop App: users/deployment/desktop.md
+    - Python Package: users/deployment/python.md
+    - Docker: users/deployment/docker.md
+    - Users, Groups & Sharing: users/deployment/sharing.md
+    - Headless Runs & CLI: users/deployment/cli.md
 
   - For Developers:
     - Introduction: for-developers/index.md

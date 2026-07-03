@@ -16,7 +16,7 @@ The kernel system consists of two main components:
 
 ```mermaid
 graph LR
-    Frontend["Frontend<br/>(Vue/Electron)"]
+    Frontend["Frontend<br/>(Vue/Tauri)"]
     Core["Core API<br/>(port 63578)"]
     Manager["Kernel Manager<br/>(Docker API)"]
     K1["Kernel Container<br/>(port 9999)"]
@@ -49,7 +49,7 @@ The `KernelManager` is a singleton that runs inside the Core service. It manages
 | Operation | What Happens |
 |-----------|-------------|
 | **Create** | Allocates a `KernelInfo` record, persists config to the database |
-| **Start** | Verifies the `flowfile-kernel` Docker image exists, runs `docker.containers.run()`, polls `/health` until ready (120s timeout) |
+| **Start** | Verifies the pinned kernel image (`flowfile-kernel-{base,ml,lite}:<tag>`) exists, runs `docker.containers.run()`, polls `/health` until ready (120s timeout) |
 | **Execute** | Serializes inputs to parquet, sends `ExecuteRequest` via HTTP, tracks kernel state |
 | **Stop** | Stops and removes the Docker container |
 | **Delete** | Stops if running, removes from in-memory registry and database |
@@ -92,13 +92,13 @@ Flowfile does **not** define compatibility *ranges* between app and kernel versi
 
 ### Three independent version numbers
 
-| Version | Where | Example | Role |
-|---------|-------|---------|------|
-| App / root | root `pyproject.toml` | `0.11.0` | The Flowfile release |
-| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT`) | `0.4.0` | The image the app pulls / runs |
-| Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | `0.3.0` | The kernel's HTTP API version, reported by `/health` |
+| Version | Where | Role |
+|---------|-------|------|
+| App / root | root `pyproject.toml` `version` | The Flowfile release |
+| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT`, `0.4.0` as of 2026-07) | The image the app pulls / runs |
+| Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | The kernel's HTTP API version, reported by `/health` |
 
-These evolve **independently** — bumping the app does not require bumping the kernel image, and vice versa.
+Read each value from its source rather than assuming a number — the three are decoupled. They evolve **independently**: bumping the app does not require bumping the kernel image, and vice versa.
 
 ### How the pin works
 
@@ -106,7 +106,7 @@ These evolve **independently** — bumping the app does not require bumping the 
 - Core reads the running kernel's runtime version from `/health` into `KernelInfo.kernel_version` **for display only** (the "Kernel runtime" line in the Kernel Manager). There is no min/max gate and nothing that rejects or warns about an "out-of-range" kernel.
 - The only **hard** coupling is **polars**: `kernel_runtime` pins a polars (and the `polars-ds` plugin) compatible with the app's `polars >=1.8.2,<1.40`. These must be bumped together, but that compatibility is guaranteed at *image-build time* via the pinned tag — not by a runtime check.
 
-So the practical contract is "use the pinned tag." An older kernel image is **not blocked** — it simply may lack fixes or features the app expects (for example, JSON-format global-artifact deserialization was only fixed in image `0.3.1`). That gap is surfaced as a non-blocking **"Update available"** hint in the Kernel Manager (per flavour) and the kernel details modal (per kernel), rather than a hard version gate.
+So the practical contract is "use the pinned tag." An older kernel image is **not blocked** — it simply may lack fixes or features the app expects. That gap is surfaced as a non-blocking **"Update available"** hint in the Kernel Manager (per flavour) and the kernel details modal (per kernel), rather than a hard version gate.
 
 ### Shipping a kernel change
 
@@ -265,12 +265,13 @@ All endpoints require JWT authentication and enforce user ownership:
 | `DELETE /kernels/{id}` | Delete kernel |
 | `POST /kernels/{id}/execute` | Execute code |
 | `POST /kernels/{id}/execute_cell` | Execute in interactive mode |
-| `POST /kernels/{id}/interrupt` | Cancel execution |
 | `GET /kernels/{id}/artifacts` | List artifacts |
 | `POST /kernels/{id}/clear` | Clear all artifacts |
 | `GET /kernels/{id}/display_outputs` | Get display outputs |
 | `GET /kernels/{id}/memory` | Get memory usage |
 | `GET /kernels/docker-status` | Check Docker availability |
+
+There is no core-side interrupt route. Cancellation is a kernel-runtime concern: the runtime container exposes `POST /interrupt` on its own port (see [Thread-based Execution](#thread-based-execution)), which Core reaches directly, not through a `/kernels/{id}/interrupt` proxy.
 
 ### Database Persistence
 
@@ -325,13 +326,17 @@ Artifact serialization uses pickle/cloudpickle. This is acceptable because:
 
 ### Building the Kernel Image
 
-```bash
-# Via docker compose
-docker compose build flowfile-kernel
+The resolver looks for `flowfile-kernel-{base,ml,lite}:local` when the pinned registry tag isn't present locally, so tag your local build to match the flavour you want to run:
 
-# Or directly
-docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
+```bash
+# Via docker compose (builds the base flavour as flowfile-kernel-base:local)
+docker compose --profile kernel build flowfile-kernel
+
+# Or directly — tag the flavour explicitly
+docker build -t flowfile-kernel-base:local -f kernel_runtime/Dockerfile kernel_runtime/
 ```
+
+A bare `docker build -t flowfile-kernel …` produces a tag the app will not pick up.
 
 The image is based on `python:3.12-slim` and includes:
 
@@ -342,21 +347,21 @@ The image is based on `python:3.12-slim` and includes:
 
 ### Docker Compose Integration
 
-The `docker-compose.yml` includes a build-only service for the kernel image:
+The `docker-compose.yml` includes a build-only service per kernel flavour (`flowfile-kernel`, `flowfile-kernel-ml`, `flowfile-kernel-lite`). The base flavour:
 
 ```yaml
 flowfile-kernel:
   build:
     context: kernel_runtime
     dockerfile: Dockerfile
-  image: flowfile-kernel
+  image: flowfile-kernel-base:local
   entrypoint: ["true"]
   restart: "no"
   profiles:
     - kernel
 ```
 
-This service is not started by `docker compose up` — it only builds the image. The Core service creates kernel containers dynamically via the Docker API.
+These services are not started by `docker compose up` — the `kernel` profile only builds the images (the `entrypoint: ["true"]` exits immediately). The Core service creates kernel containers dynamically via the Docker API, using the `flowfile-kernel-{base,ml,lite}:local` tags.
 
 !!! warning "Docker Socket"
     The Core service requires access to the Docker socket (`/var/run/docker.sock`) to manage kernel containers. In production, consider using a Docker socket proxy (e.g., `tecnativa/docker-socket-proxy`) to restrict API access.
@@ -387,8 +392,8 @@ python -m pytest kernel_runtime/tests -v
 ### Integration Tests (Docker Required)
 
 ```bash
-# Build the kernel image first
-docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
+# Build the base kernel image first (tag must match the resolver's flavour tag)
+docker build -t flowfile-kernel-base:local -f kernel_runtime/Dockerfile kernel_runtime/
 
 # Run kernel integration tests
 poetry run pytest flowfile_core/tests -m kernel -v

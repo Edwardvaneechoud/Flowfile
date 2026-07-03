@@ -1,22 +1,13 @@
 # Python API
 
-Build data pipelines programmatically with Flowfile's Polars-compatible API.
+Build data pipelines programmatically with Flowfile's Polars-compatible API. For Python developers who want version-controllable, reproducible pipelines that can still be opened in the visual editor.
 
 !!! info "Backend required — not in Flowfile Lite"
     The Python API runs the full Flowfile engine in-process. It is **not** part of the browser-only [Flowfile Lite](../deployment/lite.md) edition, which is visual-only. Install the [Python package](../deployment/python.md) to use this API.
 
-!!! info "If You Know Polars, You Know Flowfile" 
-    Our API is designed to be a seamless extension of Polars. The majority of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
+If you know Polars, most of this API will look familiar: the `FlowFrame` mirrors a Polars `LazyFrame`, and expressions (`ff.col`, `ff.when`, the `.str`/`.dt` namespaces) work the same way. The additions are the parts that connect your code to the rest of Flowfile — cloud and database connectors, the catalog, and opening a pipeline in the visual editor.
 
-
-## Who This Is For
-
-- **Python developers** who prefer code over drag-and-drop
-- **Data scientists** familiar with Polars or Pandas
-- **Engineers** building automated data pipelines
-- **Anyone** who needs version control and programmatic pipeline generation
-
-## Quick Example
+## Quick example
 
 ```python
 import flowfile as ff
@@ -26,20 +17,20 @@ result = df.filter(ff.col("amount") > 100).group_by("region").agg(
     ff.col("amount").sum()
 )
 
-# Visualize your pipeline
+# Open the pipeline in the visual editor
 ff.open_graph_in_editor(result.flow_graph)
 ```
 
 ## Documentation
 
 ### [Quick Start](quickstart.md)
-Get up and running in 5 minutes with your first pipeline.
+Install the package and build your first pipeline.
 
 ### [Core Concepts](concepts/index.md)
 
-- [FlowFrame and FlowGraph](concepts/design-concepts.md) - Fundamental building blocks
-- [Expressions](concepts/expressions.md) - Polars-style column operations
-- [Formulas in Python](concepts/formulas.md) - Methods that accept the Excel-like [formula language](../formulas/index.md)
+- [FlowFrame and FlowGraph](concepts/design-concepts.md) — the lazy, graph-connected data model
+- [Expressions](concepts/expressions.md) — Polars-style column operations
+- [Formulas in Python](concepts/formulas.md) — methods that accept the Excel-like [formula language](../formulas/index.md)
 
 ### [API Reference](reference/index.md)
 
@@ -51,15 +42,12 @@ Get up and running in 5 minutes with your first pipeline.
 - [Joins](reference/joins.md)
 - [Cloud Storage](reference/cloud-connections.md)
 - [Visual UI Integration](reference/visual-ui.md)
+- [Catalog References](reference/catalog-references.md)
 
 ### [Tutorials](tutorials/index.md)
 
 - [Building Flows with Code](tutorials/flowfile_frame_api.md)
 
-## For Contributors
+## For contributors
 
-Want to understand how Flowfile works internally or contribute to the project? See the [Developer Documentation](../../for-developers/index.md) for architecture details and internal API reference.
-
----
-
-*Prefer visual workflows? Check out the [Visual Editor Guide](../visual-editor/index.md).*
+To understand how Flowfile works internally or contribute to the project, see the [Developer Documentation](../../for-developers/index.md).

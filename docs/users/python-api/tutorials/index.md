@@ -1,45 +1,19 @@
 # Python API Tutorials
 
-Learn to build powerful data pipelines with code through practical, hands-on examples.
+Worked, hands-on pipelines built with the Python API. Start with the code-to-flow walkthrough, then use the short patterns below as building blocks.
 
-## Available Tutorials
+## Tutorial
 
 ### [Building Flows with Code](flowfile_frame_api.md)
-The complete guide to creating data pipelines programmatically while maintaining visual compatibility.
 
-**You'll learn:**
-- Creating pipelines with the FlowFrame API
-- Using Polars-compatible operations
-- Automatically generating visual graphs
-- Switching between code and visual editing
+Build a pipeline programmatically and open it as a visual graph in the Designer. Covers `from_dict`, expressions, conditional logic, grouping, and `open_graph_in_editor`.
 
-**Perfect for:**
-- Python developers new to Flowfile
-- Data scientists wanting reproducible pipelines
-- Anyone preferring code over drag-and-drop
+## Patterns
 
-## Coming Soon
+These fragments are illustrative — adapt the paths and columns to your data. For fully tested, runnable pipelines see the reference pages' worked examples ([operations](../reference/flowframe-operations.md), [joins](../reference/joins.md), [aggregations](../reference/aggregations.md)).
 
-### Data Pipeline Patterns
-Common patterns for ETL, data cleaning, and analysis.
+### ETL pipeline
 
-### Performance Optimization
-Advanced techniques for handling large datasets efficiently.
-
-### Integration Examples
-Connecting Flowfile with pandas, scikit-learn, and other tools.
-
-## Tutorial Style
-
-Our Python tutorials focus on:
-- **Real-world examples** - Practical use cases you'll actually encounter
-- **Code-first approach** - Everything done programmatically
-- **Visual integration** - How to leverage the UI when helpful
-- **Best practices** - Production-ready patterns
-
-## Quick Examples
-
-### ETL Pipeline
 ```python
 import flowfile as ff
 
@@ -61,29 +35,25 @@ transformed = (
 transformed.write_parquet("output.parquet")
 ```
 
-### Data Validation
+### Data validation
+
 ```python
-# Check for data quality issues
 df = ff.read_csv("input.csv")
 
-# Find duplicates
+# Find duplicate keys
 duplicates = df.group_by("id").agg(
     ff.count().alias("count")
 ).filter(ff.col("count") > 1)
 
-# Find nulls
+# Count nulls per column
 null_counts = df.select([
     ff.col(c).is_null().sum().alias(f"{c}_nulls")
     for c in df.columns
 ])
 ```
 
-## Resources
+## Related
 
-- [API Reference](../reference/index.md) - Complete method documentation
-- [Core Concepts](../concepts/index.md) - Understand the architecture
-- [Quick Start](../quickstart.md) - Get running in 5 minutes
-
----
-
-*Want more tutorials? Let us know what you'd like to see in our [GitHub Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions)!*
+- [API Reference](../reference/index.md) — method-by-method documentation
+- [Core Concepts](../concepts/index.md) — the FlowFrame and FlowGraph model
+- [Quick Start](../quickstart.md) — install and build a first pipeline

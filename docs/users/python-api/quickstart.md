@@ -1,6 +1,6 @@
 # Python API Quick Start
 
-Get up and running with Flowfile's Python API in 5 minutes.
+Install the package, build a first pipeline, and tour the operations you'll reach for most. For Python developers writing Flowfile pipelines in code.
 
 ## Installation
 
@@ -8,107 +8,97 @@ Get up and running with Flowfile's Python API in 5 minutes.
 pip install flowfile
 ```
 
-## Your First Pipeline
+## Your first pipeline
+
+This pipeline reads a CSV, derives a column, filters, and aggregates. It runs against committed sample data and is executed by the docs test suite:
+
+```python
+--8<-- "docs/examples/first_pipeline.py:example"
+```
+
+`collect()` runs the plan and returns a Polars `DataFrame`.
+
+## Key ideas
+
+### FlowFrame
+
+Your data container — like a Polars `LazyFrame`, but every operation is also recorded as a graph node:
 
 ```python
 import flowfile as ff
 
-# Load data
-df = ff.read_csv("sales.csv", description="Load sales data")
-
-# Transform
-result = (
-    df
-    .filter(ff.col("amount") > 100, description="Filter large sales")
-    .with_columns([
-        (ff.col("amount") * 1.1).alias("amount_with_tax")
-    ], description="Add tax calculation")
-    .group_by("region")
-    .agg([
-        ff.col("amount").sum().alias("total_sales"),
-        ff.col("amount").mean().alias("avg_sale")
-    ])
-)
-
-# Get results as Polars DataFrame
-data = result.collect()
-print(data)
-
-# Visualize in the UI
-ff.open_graph_in_editor(result.flow_graph)
+df = ff.FlowFrame({"col1": [1, 2, 3]})  # from a dict
+df = ff.read_csv("file.csv")            # from CSV
+df = ff.read_parquet("file.parquet")    # from Parquet
 ```
 
-## Key Concepts
+### Always lazy
 
-### FlowFrame
-Your data container - like a Polars LazyFrame but tracks all operations:
-
-```python
-# Create from various sources
-df = ff.FlowFrame({"col1": [1, 2, 3]})  # From dict
-df = ff.read_csv("file.csv")            # From CSV
-df = ff.read_parquet("file.parquet")    # From Parquet
-```
-
-### Always Lazy
 Operations don't execute until you call `.collect()`:
 
 ```python
-# These operations just build the plan
+# These calls just build the plan
 df = ff.read_csv("huge_file.csv")
 df = df.filter(ff.col("status") == "active")
 df = df.select(["id", "name", "amount"])
 
-# Now it executes everything efficiently
+# Now it executes, reading only what's needed
 result = df.collect()
 ```
 
+Check `df.schema` to see column types without running anything.
+
 ### Descriptions
-Document your pipeline as you build:
+
+Any operation accepts a `description` that shows up on the node in the visual editor:
 
 ```python
 df = (
     ff.read_csv("input.csv", description="Raw customer data")
     .filter(ff.col("active") == True, description="Keep active only")
-    .drop_duplicates(description="Remove duplicates")
+    .unique(description="Remove duplicates")
 )
 ```
 
-## Common Operations
+## Common operations
 
 ### Filtering
+
 ```python
-# Polars style
+# Polars expression predicate
 df.filter(ff.col("age") > 21)
 
-# Flowfile formula style
-df.filter(flowfile_formula="[age] > 21 AND [status] = 'active'")
+# Flowfile formula (renders as an editable Filter node)
+df.filter(flowfile_formula="[age] > 21 and [status] = 'active'")
 ```
 
-### Adding Columns
+### Adding columns
+
 ```python
-# Standard way
+# Expression form
 df.with_columns([
     (ff.col("price") * ff.col("quantity")).alias("total")
 ])
 
-# Formula syntax
+# Formula form
 df.with_columns(
     flowfile_formulas=["[price] * [quantity]"],
-    output_column_names=["total"]
+    output_column_names=["total"],
 )
 ```
 
-### Grouping & Aggregation
+### Grouping and aggregation
+
 ```python
 df.group_by("category").agg([
     ff.col("sales").sum().alias("total_sales"),
     ff.col("sales").mean().alias("avg_sales"),
-    ff.col("id").count().alias("count")
+    ff.col("id").count().alias("count"),
 ])
 ```
 
 ### Joining
+
 ```python
 customers = ff.read_csv("customers.csv")
 orders = ff.read_csv("orders.csv")
@@ -116,106 +106,42 @@ orders = ff.read_csv("orders.csv")
 result = customers.join(
     orders,
     left_on="customer_id",
-    right_on="cust_id",
-    how="left"
+    right_on="customer_id",
+    how="left",
 )
 ```
 
-## Cloud Storage
+See the [Joins reference](reference/joins.md) for the full set of strategies.
+
+## Cloud storage
+
+Store an S3 connection once, then read and write with it by name. This tested example round-trips a Parquet aggregate through S3:
 
 ```python
-from pydantic import SecretStr
-
-# Set up S3 connection
-ff.create_cloud_storage_connection_if_not_exists(
-    ff.FullCloudStorageConnection(
-        connection_name="my-s3",
-        storage_type="s3",
-        auth_method="access_key",
-        aws_region="us-east-1",
-        aws_access_key_id="your-key",
-        aws_secret_access_key=SecretStr("your-secret")
-    )
-)
-
-# Read from S3
-df = ff.scan_parquet_from_cloud_storage(
-    "s3://bucket/data.parquet",
-    connection_name="my-s3"
-)
-
-# Write to S3
-df.write_parquet_to_cloud_storage(
-    "s3://bucket/output.parquet",
-    connection_name="my-s3"
-)
+--8<-- "docs/examples/integrations/cloud_storage_s3.py:example"
 ```
 
-## Visual Integration
+!!! info "Local S3-compatible stacks vs plain S3"
+    That example sets `endpoint_url`, `aws_allow_unsafe_html=True`, and inline keys to reach a local MinIO stack. Against real AWS S3, the connection needs only its `connection_name`, `storage_type`, `auth_method`, `aws_region`, and credentials — no endpoint URL and no unsafe-HTML flag. Once the connection exists, reads and writes just reference it by name. See [Cloud Connection Management](reference/cloud-connections.md).
 
-### Open in Editor
+## Visual integration
+
+### Open in the editor
+
 ```python
-# Build pipeline in code
 pipeline = ff.read_csv("data.csv").filter(ff.col("value") > 100)
-
-# Open in visual editor
 ff.open_graph_in_editor(pipeline.flow_graph)
 ```
 
-### Start Web UI
-```python
-# Launch the web interface
-ff.start_web_ui()  # Opens browser automatically
-```
-
-## Complete Example
+### Start the web UI
 
 ```python
-import flowfile as ff
-
-# Build a complete ETL pipeline
-pipeline = (
-    ff.read_csv("raw_sales.csv", description="Load raw sales")
-    .filter(ff.col("amount") > 0, description="Remove invalid")
-    .with_columns([
-        ff.col("date").str.strptime(ff.Date, "%Y-%m-%d"),
-        (ff.col("amount") * ff.col("quantity")).alias("total")
-    ], description="Parse dates and calculate totals")
-    .group_by([ff.col("date").dt.year().alias("year"), "product"])
-    .agg([
-        ff.col("total").sum().alias("revenue"),
-        ff.col("quantity").sum().alias("units_sold")
-    ])
-    .sort("revenue", descending=True)
-)
-
-# Execute and get results
-results = pipeline.collect()
-print(results)
-
-# Visualize the pipeline
-ff.open_graph_in_editor(pipeline.flow_graph)
-
-# Save results
-pipeline.write_parquet("yearly_sales.parquet")
+ff.start_web_ui()  # opens a browser tab
 ```
 
-## Next Steps
+## Next steps
 
-- 📖 [Core Concepts](concepts/design-concepts.md) - Understand FlowFrame and FlowGraph
-- 📚 [API Reference](reference/index.md) - Detailed documentation
-- 🎯 [Tutorials](tutorials/index.md) - Real-world examples
-- 🔄 [Visual Integration](reference/visual-ui.md) - Working with the UI
-
-## Tips
-
-1. **Use descriptions** - They appear in the visual editor
-2. **Think lazy** - Build your entire pipeline before collecting
-3. **Leverage formulas** - Use `[column]` syntax for simpler expressions
-4. **Visualize often** - `open_graph_in_editor()` helps debug
-5. **Check schemas** - Use `df.schema` to see structure without running
-
----
-
-*Ready for more? Check out the [full API reference](reference/index.md) or learn about [core concepts](concepts/design-concepts.md).*
-Or want to see another example? Checkout the [quickstart guide](../../quickstart.md#technical-quickstart)!
+- [Core Concepts](concepts/design-concepts.md) — the FlowFrame and FlowGraph model
+- [API Reference](reference/index.md) — method-by-method documentation
+- [Tutorials](tutorials/index.md) — worked pipelines
+- [Visual UI Integration](reference/visual-ui.md) — moving between code and the editor

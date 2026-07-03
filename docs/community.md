@@ -1,6 +1,6 @@
 # Community
 
-Flowfile is an MIT-licensed open source project, and it's built by the people who use it. Whether you want to ask a question, share a flow, report a bug, or propose a feature, there's a place for you here.
+Flowfile is an MIT-licensed open source project. Use the channels below to ask a question, share a flow, report a bug, or propose a feature.
 
 ## Where to go
 

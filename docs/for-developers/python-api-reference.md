@@ -53,10 +53,8 @@ The `FlowDataEngine` is the primary engine of the library, providing a rich API 
       unwrap_annotated: true
       show_symbol_type_toc: true
 
-#### FlowfileColumn
-
-### `FlowfileColumn`
-The `FlowfileColumn` is a data class that holds the schema and rich metadata for a single column managed by the `FlowDataEngine`.
+### FlowfileColumn
+The `FlowfileColumn` holds the schema and metadata for a single column managed by the `FlowDataEngine`.
 
 ::: flowfile_core.flowfile.flow_data_engine.flow_file_column.main.FlowfileColumn
     options:

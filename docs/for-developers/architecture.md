@@ -1,6 +1,6 @@
 # Technical Architecture
 
-Flowfile's architecture integrates visual design with high-performance data processing through three interconnected services and utilizes Polars' lazy evaluation. This design provides real-time feedback, processes large datasets efficiently, and maintains UI responsiveness during intensive computations. On this page, the three-service architecture, key technical features such as real-time schema prediction and efficient data exchange, and the role of Polars' lazy evaluation are explained.
+Flowfile's architecture pairs visual design with data processing across three services, built on Polars' lazy evaluation. This page explains the three-service architecture, key technical features such as real-time schema prediction and efficient data exchange, and the role of Polars' lazy evaluation.
 
 ![Flowfile Architecture](../assets/images/architecture/flowfile_architecture.png)
 
@@ -8,7 +8,7 @@ Flowfile's architecture integrates visual design with high-performance data proc
 
 ### Three-Service Architecture
 
-**Designer (Electron + Vue)** The visual interface where data pipelines are build through drag-and-drop operations. It communicates with the Core service to provide real-time feedback and displays data previews.
+**Designer (Tauri + Vue)** The visual interface where data pipelines are built through drag-and-drop operations. It is a Tauri 2 desktop shell (Rust) wrapping a Vue 3 renderer, and the same renderer serves the web build. It communicates with the Core service for real-time feedback and data previews.
 
 **Core Service (FastAPI)** The orchestration engine that manages workflows, predicts schemas, and coordinates execution. It maintains the Directed Acyclic Graph (DAG) structure and handles all UI interactions and overall flow logic.
 
@@ -18,7 +18,7 @@ Flowfile's architecture integrates visual design with high-performance data proc
 
 ### Real-time Schema Prediction
 
-When you add or configure a node, Flowfile immediately shows how your data structure will change — **without executing any transformations**. This continuous feedback significantly reduces user errors and increases predictability. This happens through:
+When you add or configure a node, Flowfile immediately shows how your data structure will change — **without executing any transformations**. This happens through:
 
 -   **Schema Callbacks**: Custom functions, defined per node type, that calculate output schemas based on node settings and input schemas.
 -   **Lazy Evaluation**: Leveraging Polars' ability to determine the schema of a planned transformation (`LazyFrame`) without processing the full dataset.
@@ -48,50 +48,40 @@ As you add and connect nodes, Flowfile builds a Directed Acyclic Graph (DAG) whe
 * **Nodes** represent data operations (read file, filter, join, write to database, etc.).
 * **Edges** represent the flow of data between operations.
 
-The DAG is managed by the `EtlGraph` class in the Core service, which orchestrates the entire workflow:
+The DAG is managed by the `FlowGraph` class (`flowfile_core/flowfile_core/flowfile/flow_graph.py`) in the Core service, which orchestrates the entire workflow. The class shape below is illustrative — see the [Python API Reference](python-api-reference.md#flowgraph) for the real signatures.
 
 <details markdown="1">
-<summary>View EtlGraph Python Implementation</summary>
+<summary>View FlowGraph shape (illustrative)</summary>
 
 ```python
-class EtlGraph:
+class FlowGraph:
     """
     Manages the ETL workflow as a DAG. Stores nodes, dependencies,
     and settings, and handles the execution order.
     """
     uuid: str
-    _node_db: Dict[Union[str, int], NodeStep]  # Internal storage for all node steps
-    _flow_starts: List[NodeStep]               # Nodes that initiate data flow (e.g., readers)
+    _node_db: Dict[Union[str, int], FlowNode]  # Internal storage for all nodes
+    _flow_starts: List[FlowNode]               # Nodes that initiate data flow (e.g., readers)
     _node_ids: List[Union[str, int]]           # Tracking node identifiers
     flow_settings: schemas.FlowSettings        # Global configuration for the flow
 
     def add_node_step(self, node_id: Union[int, str], function: Callable,
                       node_type: str, **kwargs) -> None:
-        """Adds a new processing node (NodeStep) to the graph."""
-        node_step = NodeStep(node_id=node_id, function=function, node_type=node_type, **kwargs)
-        self._node_db[node_id] = node_step
-        # Additional logic to manage dependencies and flow starts...
+        """Adds a new FlowNode to the graph."""
+        ...
 
     def run_graph(self) -> RunInformation:
-        """Executes the entire flow in the correct topological order."""
-        execution_order = self.topological_sort() # Determine correct sequence
-        run_info = RunInformation()
-        for node in execution_order:
-            # Execute node based on mode (Development/Performance)
-            node_results = node.execute_node() # Simplified representation
-            run_info.add_result(node.node_id, node_results)
-        return run_info
-
-    def topological_sort(self) -> List[NodeStep]:
-        """Determines the correct order to execute nodes based on dependencies."""
-        # Standard DAG topological sort algorithm...
-        pass
+        """Executes the flow in the correct topological order."""
+        ...
 ```
 </details>
 
-Each `NodeStep` in the graph encapsulates information about its dependencies, transformation logic, and output schema. This structure allows Flowfile to determine execution order, track data lineage, optimize performance, and provide schema predictions throughout the pipeline.
+Each `FlowNode` in the graph encapsulates its dependencies, transformation logic, and output schema. This lets Flowfile determine execution order, track data lineage, optimize performance, and predict schemas throughout the pipeline.
 
 ### Execution Modes
+
+!!! info "Canonical explanation"
+    This is the reference description of Development vs Performance mode. The [Core Developer Guide](flowfile-core.md#execution-strategy-how-nodes-decide-where-to-run) and [Design Philosophy](design-philosophy.md) pages link here rather than repeat it.
 
 By clicking on settings &rarr; execution modes you can set how the flow will be executed the next time you run the flow.
 
@@ -115,25 +105,28 @@ In Development mode, each node's transformation is triggered sequentially within
 In Performance mode, Flowfile fully embraces Polars' lazy evaluation. The Core service constructs the *entire* Polars execution plan based on the DAG. This plan (`LazyFrame`) is passed to the Worker service. The Worker only *materializes* (executes `.collect()` or `.sink_*()`) the plan when an output node (like writing to a file) requires the final result, or if a node is explicitly configured to cache its results (`node.cache_results`). This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
 
 <details markdown="1">
-<summary>View Performance Mode Python Example</summary>
+<summary>View Performance Mode Python Example (simplified)</summary>
 
 ```python
 # Execution logic in Performance Mode (simplified)
-def execute_performance_mode(self, node: NodeStep, is_output_node: bool):
+def execute_performance_mode(self, node: FlowNode, is_output_node: bool):
     """Handles execution in performance mode, leveraging lazy evaluation."""
     if is_output_node or node.cache_results:
-        # If result is needed (output or caching), trigger execution in Worker
-        external_df_fetcher = ExternalDfFetcher(
-            lf=node.get_resulting_data().data_frame, # Pass the LazyFrame plan
-            file_ref=node.hash, # Unique reference for caching
-            wait_on_completion=False # Usually async
+        # If the result is needed (output or caching), offload to the Worker.
+        # Offload happens inside ExternalDfFetcher.__init__ — constructing it
+        # serializes the LazyFrame and POSTs it to the worker. flow_id and
+        # node_id are required.
+        fetcher = ExternalDfFetcher(
+            flow_id=node.flow_id,
+            node_id=node.node_id,
+            lf=node.get_resulting_data().data_frame,  # the LazyFrame plan
+            file_ref=node.hash,                        # unique reference for caching
+            wait_on_completion=False,                  # usually async
         )
-        # Worker executes .collect() or .sink_*() and caches if needed
-        result = external_df_fetcher.get_result() # May return LazyFrame or trigger compute
-        return result # Or potentially just confirmation if sinking
+        result = fetcher.get_result()  # Worker runs .collect()/.sink_*() and caches
+        return result
     else:
-        # If not output/cached, just pass the LazyFrame plan along
-        # No computation happens here for intermediate nodes
+        # Intermediate nodes just pass the LazyFrame plan along — no compute here.
         return node.get_resulting_data().data_frame
 ```
 
@@ -152,36 +145,36 @@ Flowfile uses Apache Arrow IPC format for efficient inter-process communication 
 
 This ensures responsiveness, memory isolation, and efficiency.
 
-Here’s how the Core might offload computation to the Worker, and how the Worker manages the separate process execution:
+Here is how the Core offloads computation to the Worker, and how the Worker manages the separate process execution:
 
 <details markdown="1">
-<summary>View Core-Side Python Example</summary>
+<summary>View Core-Side Python Example (simplified)</summary>
 
 ```python
 # Core side - Initiating remote execution in the Worker (simplified)
 def execute_remote(self, performance_mode: bool = False) -> None:
     """Offloads the execution of a node's LazyFrame to the Worker service."""
-    # Create a fetcher instance to manage communication with the Worker
-    external_df_fetcher = ExternalDfFetcher(
-        lf=self.get_resulting_data().data_frame, # The Polars LazyFrame plan
-        file_ref=self.hash,                      # Unique identifier for the result/cache
-        wait_on_completion=False,                # Operate asynchronously
+    # Constructing ExternalDfFetcher IS the offload: __init__ serializes the
+    # LazyFrame and sends it to the worker (no separate "start" call). The
+    # constructor requires flow_id and node_id.
+    fetcher = ExternalDfFetcher(
+        flow_id=self.flow_id,
+        node_id=self.node_id,
+        lf=self.get_resulting_data().data_frame,  # the Polars LazyFrame plan
+        file_ref=self.hash,                        # unique identifier for result/cache
+        wait_on_completion=False,                  # operate asynchronously
     )
 
-    # Store the fetcher to potentially retrieve results later
-    self._fetch_cached_df = external_df_fetcher
-
-    # Request the Worker to start processing (this returns quickly)
-    # The actual computation happens asynchronously in the Worker
-    external_df_fetcher.start_processing_in_worker() # Hypothetical method name
+    # Store the fetcher to retrieve results later
+    self._fetch_cached_df = fetcher
 
     # For UI updates, request a sample separately
-    self.store_example_data_generator(external_df_fetcher) # Fetches sample async
+    self.store_example_data_generator(fetcher)  # fetches sample async
 ```
 </details>
 
 <details markdown="1">
-<summary>View Worker-Side Python Example</summary>
+<summary>View Worker-Side Python Example (simplified)</summary>
 
 ```python
 # Worker side - Managing computation in a separate process (simplified)
@@ -192,8 +185,10 @@ def start_process(
     # ... other args like operation type
 ) -> None:
     """Launches a separate OS process to handle the heavy computation."""
-    # Use multiprocessing context for safety
-    mp_context = multiprocessing.get_context('spawn') # or 'fork' depending on OS/needs
+    # The worker forces spawn at module load (set_start_method('spawn',
+    # force=True) in flowfile_worker/__init__.py) so every child is a fresh,
+    # killable process regardless of platform — never fork.
+    mp_context = get_context('spawn')
 
     # Shared memory/queue for progress tracking and results/errors
     progress = mp_context.Value('i', 0) # Shared integer for progress %
@@ -219,7 +214,7 @@ def start_process(
 ```
 </details>
 
-## The Power of Lazy Evaluation
+## Lazy Evaluation
 
 By building on Polars' lazy evaluation, Flowfile achieves:
 
@@ -228,15 +223,6 @@ By building on Polars' lazy evaluation, Flowfile achieves:
 -   **Parallel Execution**: Polars automatically parallelizes operations across all available CPU cores during execution.
 -   **Predicate Pushdown**: Filters and selections are applied as early as possible in the plan, often directly at the data source level (like during file reading), minimizing the amount of data that needs to be processed downstream.
 
-## Summary
-
-This design enables Flowfile to:
-
--   Provide instant feedback without processing data.
--   Handle datasets of any size efficiently.
--   Keep the UI responsive during heavy computations.
--   Scale from simple transformations to complex ETL pipelines.
-
 ---
 
-*For a deep dive into the implementation details, see the [full technical article](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c).*
+*Background reading: the original [design article](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c) covers the motivation and early design. It predates some renames (the graph class is now `FlowGraph`, nodes are `FlowNode`), so treat class names there as historical.*

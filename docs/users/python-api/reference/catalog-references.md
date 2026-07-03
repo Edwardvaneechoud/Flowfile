@@ -62,9 +62,9 @@ for schema in catalog.list_schemas():
     print(schema.name, schema.list_tables())
 ```
 
-#### `list_tables() -> list[CatalogTableOut]`
+#### `list_tables() -> list[CatalogTableOut]` — CatalogReference
 
-Return tables across **every** schema in this catalog, as a flat list. Each row's `namespace_id` field tells you which schema it belongs to. For a per-schema view, use [`SchemaReference.list_tables()`](#list_tables-list-catalogtableout).
+Return tables across **every** schema in this catalog, as a flat list. Each row's `namespace_id` field tells you which schema it belongs to. For a per-schema view, use [`SchemaReference.list_tables()`](#list_tables-listcatalogtableout-schemareference).
 
 ```python
 for table in catalog.list_tables():
@@ -104,7 +104,7 @@ Like `CatalogReference`, schema references are immutable, hashable, and picklabl
 
 ### Methods
 
-#### `list_tables() -> list[CatalogTableOut]`
+#### `list_tables() -> list[CatalogTableOut]` — SchemaReference
 
 Return tables registered in this schema.
 
@@ -186,10 +186,13 @@ orders = raw.read_table("orders")
 clean = (
     orders
     .filter(ff.col("status") != "cancelled")
-    .with_columns(ff.col("total").cast(float))
+    .with_columns(ff.col("total").cast(ff.Float64))
 )
 staging.write_table(clean, "orders_clean", write_mode="overwrite")
 
 # Discover what's there
 print([t.name for t in catalog.list_tables()])
 ```
+
+---
+[← Previous: Visual UI Integration](visual-ui.md)

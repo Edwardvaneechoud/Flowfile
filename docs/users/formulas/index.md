@@ -2,7 +2,7 @@
 
 Flowfile formulas are a simple, Excel-like expression language for transforming data. Write `[column]` to reference a column, call functions like `round()` or `concat()`, and use `if ... then ... else ... endif` for conditional logic — the same way you would in a spreadsheet formula or a SQL `CASE` statement.
 
-Every formula compiles to a native [Polars](https://pola.rs) expression before it runs, so there is no row-by-row Python overhead: formulas are as fast as hand-written Polars code. The same language is used everywhere in Flowfile — the visual editor and the Python API share it.
+Every formula compiles to a native [Polars](https://pola.rs) expression before it runs, so there is no row-by-row Python overhead. The same language is used everywhere in Flowfile — the visual editor and the Python API share it.
 
 !!! tip "Try it in your browser"
     The [interactive formula playground](https://edwardvaneechoud.github.io/polars_expr_transformer/). Pick a sample dataset, type a formula, and watch the result, the generated Polars code, and the FlowFrame code update as you type.
@@ -148,7 +148,3 @@ pl.when(pl.col("score") >= pl.lit(90)).then(pl.lit("A"))
 ```
 
 This is also why flows that use formulas [export to clean Python code](../visual-editor/tutorials/code-generator.md): each formula has a direct Polars equivalent.
-
----
-
-*Next: browse the [function reference](functions.md), use formulas in the [Formula node](../visual-editor/nodes/transform.md#formula), or call them from the [Python API](../python-api/concepts/formulas.md).*

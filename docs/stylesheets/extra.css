@@ -1,4 +1,125 @@
-/* docs/stylesheets/extra.css */
+/* docs/stylesheets/extra.css — Flowfile brand layer.
+   Pages must not use inline styles; visual variety comes from these shared
+   classes plus Material's grid cards / content tabs. */
+
 .md-grid {
     max-width: 1920px;
+}
+
+/* Brand palette (matches the landing page hero) */
+:root,
+[data-md-color-scheme="default"] {
+    --ff-teal: #00CED1;
+    --ff-teal-dark: #008B8B;
+    --ff-purple: #6B46C1;
+    --ff-purple-light: #8B5CF6;
+    --md-primary-fg-color: #008B8B;
+    --md-primary-fg-color--light: #00CED1;
+    --md-primary-fg-color--dark: #006b6b;
+    --md-accent-fg-color: #6B46C1;
+}
+
+[data-md-color-scheme="slate"] {
+    --ff-teal: #20E3E6;
+    --ff-teal-dark: #00CED1;
+    --ff-purple: #A78BFA;
+    --ff-purple-light: #8B5CF6;
+    --md-primary-fg-color: #008B8B;
+    --md-primary-fg-color--light: #20E3E6;
+    --md-primary-fg-color--dark: #006b6b;
+    --md-accent-fg-color: #8B5CF6;
+}
+
+/* Header + nav tabs: translucent brand-teal bar, blurred so scrolled content
+   stays readable underneath */
+.md-header,
+.md-tabs {
+    background: color-mix(in srgb, var(--md-primary-fg-color) 55%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    color: #fff;
+}
+
+.md-header {
+    box-shadow: none;
+}
+
+.md-tabs__link--active,
+.md-tabs__link:hover {
+    color: #fff;
+    opacity: 1;
+}
+
+.md-search__input {
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #fff;
+}
+
+.md-search__input::placeholder,
+.md-search__input + .md-search__icon {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* Material grid cards: brand accent bar + hover lift */
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
+    border-radius: 0.4rem;
+    border-top: 3px solid transparent;
+    background:
+        linear-gradient(var(--md-default-bg-color), var(--md-default-bg-color)) padding-box,
+        linear-gradient(90deg, var(--ff-teal), var(--ff-purple)) border-box;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    border-color: transparent;
+}
+
+/* Two-path chooser (quickstart, guides-by-audience) */
+.md-typeset .ff-paths {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.8rem;
+    margin: 1em 0;
+}
+
+.md-typeset a.ff-path {
+    display: block;
+    padding: 0.9rem 1rem;
+    border-radius: 0.4rem;
+    border: 1px solid;
+    color: var(--md-default-fg-color);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-typeset a.ff-path:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.md-typeset a.ff-path > strong {
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 0.2rem;
+}
+
+.md-typeset a.ff-path-teal {
+    border-color: var(--ff-teal-dark);
+    background: color-mix(in srgb, var(--ff-teal) 8%, transparent);
+}
+
+.md-typeset a.ff-path-teal > strong {
+    color: var(--ff-teal-dark);
+}
+
+.md-typeset a.ff-path-purple {
+    border-color: var(--ff-purple);
+    background: color-mix(in srgb, var(--ff-purple) 8%, transparent);
+}
+
+.md-typeset a.ff-path-purple > strong {
+    color: var(--ff-purple);
 }

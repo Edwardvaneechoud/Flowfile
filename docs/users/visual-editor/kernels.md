@@ -58,7 +58,7 @@ When Docker is not running or the kernel image has not been built, a status bann
 | **Kernel ID** | Unique identifier (alphanumeric) | — |
 | **Name** | A human-readable display label | — |
 | **Packages** | Comma-separated pip packages to install at startup | *(none)* |
-| **Memory (GB)** | Maximum memory the container can use (0.5–64 GB) | `2` |
+| **Memory (GB)** | Maximum memory the container can use (0.5–64 GB) | `4` |
 | **CPU Cores** | Number of CPU cores allocated (0.5–32) | `2` |
 | **GPU** | Enable GPU passthrough (requires NVIDIA Docker) | `false` |
 
@@ -164,7 +164,7 @@ Click the **?** button in the code editor header to open the built-in API refere
 
 ## Writing Code
 
-Inside a Python Script node connected to a kernel, you write standard Python code. The `flowfile` module is available automatically — no imports needed.
+Inside a Python Script node connected to a kernel, you write standard Python code. The `flowfile_ctx` object is available automatically — no imports needed.
 
 ### Reading Input Data
 
@@ -197,7 +197,7 @@ all_inputs = flowfile_ctx.read_inputs()
     Input names come from the **node reference** of each source node. You can set or change a node's reference in its settings panel. If no reference is set, the default name is `df_{node_id}`. Names must be lowercase and can only contain letters, digits, and underscores.
 
 !!! tip "Showing connection names on the canvas"
-    To display connection names on the canvas, enable **Show edge labels** in the [Flow Settings](building-flows.md#1-flow-settings).
+    To display connection names on the canvas, enable **Show edge labels** in the [Flow Settings](building-flows.md#flow-settings).
 
 ### Writing Output Data
 
@@ -343,8 +343,8 @@ for a in artifacts:
 flowfile_ctx.delete_global_artifact("sales_model_v2")
 ```
 
-!!! note "Registered Flows Required"
-    `publish_global` requires the flow to be registered in the catalog. It is not available in interactive (cell) mode.
+!!! note "Registered flow required to persist"
+    `publish_global` needs a flow registration to persist the artifact. Core normally auto-provisions a scratch registration for you, so this works in most cases. When no registration is available it returns `-1` and skips persisting rather than raising.
 
 !!! tip "Artifact Persistence"
     Local artifacts are automatically saved to disk and recovered if the kernel restarts — no configuration needed.
@@ -452,7 +452,7 @@ Your `process` method code stays the same — the `self.settings_schema` access 
 3. Runs your process method body
 4. Publishes outputs via `flowfile_ctx.publish_output()` for each named output
 
-The full `flowfile` API (artifacts, display, logging) is available inside kernel-enabled custom nodes.
+The full `flowfile_ctx` API (artifacts, display, logging) is available inside kernel-enabled custom nodes.
 
 For details on building custom nodes, see [Node Designer](node-designer.md#kernel-execution).
 
@@ -468,15 +468,15 @@ Kernel execution is in beta. The following limitations are known and being worke
 
 ---
 
-## `flowfile` API Reference
+## `flowfile_ctx` API Reference
 
-The following functions are available inside kernel code via the `flowfile` module:
+The following functions are available inside kernel code via the `flowfile_ctx` object:
 
 ### Data I/O
 
 | Function | Description                                                                                                   |
 |----------|---------------------------------------------------------------------------------------------------------------|
-| `read_input(name="main")` | Read input data as a `pl.LazyFrame` if more then one sources are provided. It attempts to concat all sources. |
+| `read_input(name="main")` | Read input data as a `pl.LazyFrame`. If more than one source is provided, it attempts to concat all sources. |
 | `read_inputs()` | Read all named inputs as `dict[str, list[LazyFrame]]`                                                         |
 | `publish_output(df, name="main")` | Write a DataFrame/LazyFrame as output                                                                         |
 

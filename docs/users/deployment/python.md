@@ -1,6 +1,6 @@
 # Python Package
 
-Install Flowfile as a Python package for programmatic use.
+Install Flowfile as a Python package to build flows programmatically, run them in CI/CD, or open a flow you built in code in the visual editor. This page covers install and the two ways to launch the editor; the full API lives in the [Python API Guide](../python-api/index.md).
 
 ## Installation
 
@@ -8,42 +8,42 @@ Install Flowfile as a Python package for programmatic use.
 pip install flowfile
 ```
 
-## Usage
+## A first pipeline
+
+Every `flowfile` method builds a lazy flow graph; nothing runs until you call `.collect()` (or execute the flow). Writes are lazy too — `write_csv` appends an Output node to the graph and returns a `FlowFrame`; the file is written when the graph runs, not on the `write_csv` call itself.
 
 ```python
-import flowfile as ff
-
-# Read data
-df = ff.read_csv("data.csv")
-
-# Transform
-df = df.with_columns(
-    flowfile_formulas=["[price] * [quantity]"],
-    output_column_names=["total"],
-)
-
-# Write
-df.write_csv("output.csv")
+--8<-- "docs/examples/first_pipeline.py:example"
 ```
+
+This reads a CSV, derives a column, filters, and aggregates — the same operations the visual editor exposes as nodes.
 
 ## Running the Visual Editor
 
-Launch the visual editor from Python:
+There is no `ff.open_editor()`. Launch the editor one of two ways:
+
+Start the web UI (serves the editor at `http://localhost:63578`):
 
 ```python
 import flowfile as ff
 
-# Open the visual editor
-ff.open_editor()
+ff.start_web_ui()
 ```
 
-## Features
+Or open a graph you built in code directly in the editor:
 
-- Full Python API for building flows programmatically
-- Export visual flows to Python code
-- Master key auto-generated and stored securely
-- Integrates with existing Python projects
+```python
+import flowfile as ff
 
-## Documentation
+graph = ff.create_flow_graph()
+# ... add nodes to graph ...
+ff.open_graph_in_editor(graph)
+```
 
-See the [Python API Guide](../python-api/index.md) for detailed documentation.
+The editor is normally started from the command line instead:
+
+```bash
+flowfile run ui
+```
+
+On first use, the setup screen generates and stores the encryption [master key](docker.md#first-run-master-key).

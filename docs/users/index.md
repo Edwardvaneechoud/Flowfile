@@ -1,80 +1,75 @@
-# Flowfile User Guides
+# Guides by audience
 
-Welcome to Flowfile! Whether you prefer visual drag-and-drop or writing code, we've got you covered.
+Flowfile is one tool with several front doors. Pick the one that matches how you work — every path builds the same flows, and you can switch between them at any point.
 
-## Choose Your Path
+## Find your starting point
 
-<div markdown="1", style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 2rem 0;">
+<div class="grid cards" markdown>
 
-<div markdown="1", style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
+-   :material-drag-variant: **Build flows visually**
 
-### 🎨 [Visual Editor](visual-editor/index.md)
+    ---
 
-Perfect for analysts and business users who want to build data pipelines visually.
+    Drag nodes onto a canvas and preview the data at every step — no code required.
 
-**You'll learn:**
+    [:octicons-arrow-right-24: Visual Editor](visual-editor/index.md)
 
-- Drag and drop nodes to build flows
-- Configure transformations with forms
-- Connect to databases and cloud storage
-- Export your flows as Python code
+-   :material-microsoft-excel: **Coming from Excel**
 
-[**Get Started with Visual Editor →**](visual-editor/index.md)
+    ---
+
+    VLOOKUPs, pivot tables, and IF-formulas, translated into flows.
+
+    [:octicons-arrow-right-24: Coming from Excel](coming-from-excel.md)
+
+-   :material-database: **Connect your data**
+
+    ---
+
+    Databases, S3/ADLS/GCS, Kafka, REST APIs — set up a connection once, use it everywhere.
+
+    [:octicons-arrow-right-24: Connect Your Data](connect/index.md)
+
+-   :material-chart-bar: **Analyze your data**
+
+    ---
+
+    Query catalog tables in the SQL editor, build visualizations, schedule refreshes.
+
+    [:octicons-arrow-right-24: Catalog](visual-editor/catalog/index.md)
+
+-   :material-language-python: **Write Python**
+
+    ---
+
+    Polars-style code that builds a visual flow as a side effect.
+
+    [:octicons-arrow-right-24: Python API](python-api/index.md)
+
+-   :material-server: **Deploy for a team**
+
+    ---
+
+    Docker, users and groups, sharing, headless runs.
+
+    [:octicons-arrow-right-24: Deploy & Operate](deployment/index.md)
 
 </div>
 
-<div markdown="1" style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
+## Visual and code are the same pipeline
 
-### 🐍 [Python API](python-api/index.md)
+A flow built on the canvas and a pipeline written in Python construct the same graph underneath:
 
-Perfect for developers and data scientists who prefer code.
+- Write code, then inspect it on the canvas with `ff.open_graph_in_editor(df.flow_graph)`.
+- Build visually, then [export the flow as standalone Python](visual-editor/tutorials/code-generator.md) — plain Polars, no Flowfile dependency required to run it.
+- Hand a visual flow to a colleague who prefers code, or the other way around — both are views of the same graph.
 
-**You'll learn:**
-
-- Build pipelines with Polars-compatible API
-- Seamlessly integrate with existing code
-- Visualize your code as flow graphs
-- Use advanced features and optimizations
-
-[**Get Started with Python →**](python-api/index.md)
-
-</div>
-
-</div>
-
-## The Best of Both Worlds
-
-The beauty of Flowfile is that **you don't have to choose**. You can:
-
-- Write code and visualize it instantly with `open_graph_in_editor()`
-- Build visually and export as Python code
-- Switch between visual and code at any time
-- Collaborate across technical and non-technical teams
-
-## Quick Examples
-
-### Visual Approach
-1. Drag a "Read Data" node onto canvas
-2. Add a "Filter" node and connect them
-3. Configure filter conditions in the form
-4. Run and see results instantly
-
-### Code Approach
 ```python
-import flowfile as ff
-
-df = ff.read_csv("data.csv")
-result = df.filter(ff.col("amount") > 100)
-ff.open_graph_in_editor(result.flow_graph)  # See it visually!
+--8<-- "docs/examples/sales_pipeline.py:example"
 ```
 
-## Where to Start?
+This is the same pipeline the [Quickstart](../quickstart.md) builds visually — read, deduplicate, filter, aggregate.
 
-- **New to Flowfile?** Start with our [Quick Start Guide](../quickstart.md)
-- **Coming from Excel/Tableau?** Try the [Visual Editor](visual-editor/index.md)
-- **Know Python/Pandas/Polars?** Jump into the [Python API](python-api/index.md)
-- **Want to see real examples?** Check out our tutorials in either section
+## New here?
 
----
-
-*Remember: Every visual flow can become code, and every code pipeline can be visualized. Choose what feels natural and switch whenever you want!*
+The [Quickstart](../quickstart.md) installs Flowfile and walks both paths in a few minutes: a visual flow that ends in the catalog, and the Python version of the same pipeline.

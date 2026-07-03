@@ -2,7 +2,7 @@
 
 Organize, track, and govern your data flows and tables in a central catalog.
 
-The Catalog is your single pane of glass for managing flows, tracking execution history, registering data tables (physical and [virtual](virtual-tables.md)), querying data with [SQL](sql-editor.md), sharing artifacts across flows, and automating pipelines with [schedules](schedules.md).
+The Catalog is a central place to manage flows and track execution history. It registers data tables (physical and [virtual](virtual-tables.md)), queries data with [SQL](sql-editor.md), shares artifacts across flows, and automates pipelines with [schedules](schedules.md).
 
 !!! info "Limited in Flowfile Lite"
     The browser-only [Flowfile Lite](../../deployment/lite.md) edition includes only a **lightweight in-browser catalog** (save and reuse CSV tables). The governed catalog described here — Delta-backed storage, version history, virtual tables, lineage, SQL, schedules, and secrets — requires the full desktop/server build.
@@ -16,6 +16,32 @@ The Catalog is your single pane of glass for managing flows, tracking execution 
 ## Opening the Catalog
 
 Click the **Catalog** icon in the left sidebar menu to open the Catalog page.
+
+---
+
+## Start with a populated catalog
+
+A fresh install starts with an empty catalog (only the `General > default` namespace). To explore the catalog with real content, seed the optional **Demo** catalog from the command line:
+
+```bash
+flowfile seed-demo
+```
+
+This one command:
+
+- Creates a `Demo` catalog with two schemas — `sales_analytics` and `market`
+- Writes four Delta tables under `Demo > sales_analytics` — `regions`, `products`, `customers`, and `sales`
+- Registers a **Sales by Region** flow (under `sales_analytics`) and runs it once so its output table is populated
+- Registers a **Daily FX Sync** flow (under `market`), schedules it with a `0 6 * * *` cron, and triggers an immediate first run
+
+`seed-demo` is idempotent — running it again skips tables and flows that already exist. To remove everything under the `Demo` catalog (tables, flows, schedules, and namespaces) in one call:
+
+```bash
+flowfile remove-demo
+```
+
+!!! note "Demo flows are the source of truth"
+    The seeded flows are imported from bundled YAML. Edit those flows in the designer and re-run them — they persist like any other registered flow until you run `flowfile remove-demo`.
 
 ---
 
@@ -144,10 +170,10 @@ Click a run to see its full detail:
 
 Register data tables in the catalog for reuse across flows. Catalog tables come in two types:
 
-| Type | Icon | Description |
-|------|------|-------------|
-| **Physical** | <i class="fa-solid fa-table"></i> | Data materialized as a Delta table on disk — fast reads, version history, full schema preservation |
-| **Virtual** | <i class="fa-solid fa-bolt"></i> | No data on disk — executes a producer flow on demand to produce results. See [Virtual Flow Tables](virtual-tables.md) |
+| Type | Description |
+|------|-------------|
+| **Physical** | Data materialized as a Delta table on disk — fast reads, version history, full schema preservation |
+| **Virtual** | No data on disk — executes a producer flow on demand to produce results. See [Virtual Flow Tables](virtual-tables.md) |
 
 !!! tip "Recommended: Register tables via a flow"
     Use a [Catalog Writer](../nodes/output.md#catalog-writer) node in your flow for the best experience. It supports more source types, ensures correct data interpretation, and enables lineage tracking.
@@ -208,7 +234,7 @@ The catalog tracks full data lineage — which flows produce and consume each ta
 | **Producer flow** | For [virtual tables](virtual-tables.md): the flow that produces data on demand |
 | **Consumer flows** | Flows that read from this table via Catalog Reader nodes |
 
-This lineage graph enables powerful automation: when a table is updated, any [table trigger schedule](schedules.md#table-trigger) watching it fires automatically, creating reactive data pipelines.
+This lineage graph drives automation: when a table is updated, any [table trigger schedule](schedules.md#table-trigger) watching it fires automatically, creating reactive data pipelines.
 
 ---
 
@@ -230,12 +256,13 @@ When you register a table or write via a [Catalog Writer](../nodes/output.md#cat
 3. Metadata is extracted: row count, column count, file size, and column schema (names + Polars data types)
 4. A database record links the table name, namespace, and file path
 
-**Storage location:**
+**Storage location:** the directory is resolved by `FLOWFILE_USER_DATA_DIR` (or `~/.flowfile` locally).
 
 | Environment | Path |
 |-------------|------|
 | Desktop / local | `~/.flowfile/catalog_tables/` |
-| Docker | `/data/user/catalog_tables/` (mapped via `FLOWFILE_USER_DATA_DIR`) |
+| Docker (code default) | `/data/user/catalog_tables/` |
+| Docker (shipped `docker-compose.yml`) | `/app/user_data/catalog_tables/` — the compose file sets `FLOWFILE_USER_DATA_DIR=/app/user_data` |
 
 **File naming:** Each Delta table directory is named `{table_name}_{uuid}` (e.g., `sales_data_a3f1b2c4/`). The UUID suffix ensures uniqueness even when multiple tables share similar names.
 
@@ -259,8 +286,6 @@ In the table detail panel, the **History** section shows:
 - **Current version** number
 - **Version list** with timestamps, operation types, and metadata
 - **Preview at version** — select any historical version to see the data as it was at that point
-
-This is especially useful for auditing changes, debugging data quality issues, and understanding how a table evolved over time.
 
 !!! info "Delta versioning is only available for physical tables"
     Virtual tables have no physical storage and therefore no version history. If you need historical snapshots, use a physical table.

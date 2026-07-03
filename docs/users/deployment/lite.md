@@ -2,11 +2,7 @@
 
 Flowfile Lite is the **zero-install, browser-only** edition of the visual editor. Polars runs entirely in WebAssembly via [Pyodide](https://pyodide.org/), so your flows execute client-side with **no backend, no account, and no data leaving your browser**.
 
-<div align="center" style="padding: 1rem;">
-  <a href="https://demo.flowfile.org"><b>▶&nbsp;&nbsp;Try Flowfile Lite in your browser&nbsp;&nbsp;→</b></a>
-  <br>
-  <sub>No install. No signup. Polars in the browser via Pyodide.</sub>
-</div>
+[Try Flowfile Lite in your browser →](https://demo.flowfile.org) — no install, no signup; Polars in the browser via Pyodide.
 
 It is also published as the embeddable npm package [`flowfile-editor`](https://www.npmjs.com/package/flowfile-editor), so you can drop the editor into your own web app.
 
@@ -28,43 +24,30 @@ It is also published as the embeddable npm package [`flowfile-editor`](https://w
 
 ## What's included
 
-Flowfile Lite ships **18 nodes** across 5 categories — the same canvas, settings panels, and Polars semantics as the full editor:
+Flowfile Lite ships **23 nodes** (as of 2026-07) across five active categories — the same canvas, settings panels, and Polars semantics as the full editor. A sixth category, Machine Learning, is present in the palette but its nodes are locked (full-build only).
 
 | Category | Nodes |
 |----------|-------|
-| **Input** | Read File (CSV · Excel · Parquet, local upload or remote URL), Manual Input, Read from Catalog, External Data¹ |
-| **Transform** | Filter, Select, Sort, Unique, Take Sample, Polars Code |
-| **Combine** | Join |
-| **Aggregate** | Group By, Pivot, Unpivot |
-| **Output** | Explore Data (Graphic Walker), Write Data (download CSV · Excel · Parquet), Write to Catalog, External Output¹ |
+| **Input Sources** | Read File (CSV · Excel · Parquet, local upload or remote URL), Manual Input, External Data¹, Read from Catalog |
+| **Transformations** | Filter, Select, Formula, Sort, Polars Code, Unique, Rename, Record ID, Take Sample |
+| **Combine Operations** | Join, Cross Join, Union |
+| **Aggregations** | Group By, Pivot, Unpivot |
+| **Output Operations** | Explore Data (Graphic Walker), Write Data (download CSV · Excel · Parquet), Write to Catalog, External Output¹ |
 
 ¹ *External Data / External Output are host-integration nodes used when Flowfile Lite is embedded as a library — they let the host app feed in and read out datasets.*
 
 It also supports **exporting a flow to a standalone Python/Polars script** and a lightweight **in-browser catalog** (CSV-only) for saving and reusing tables between flows.
 
-!!! tip "No Formula node? Use Polars Code"
-    Flowfile Lite swaps the visual [**Formula** node](../visual-editor/nodes/transform.md#formula) for the **Polars Code** node, where you can write any Polars expression directly (with autocompletion). Everything `with_columns` does in the full build is available here as code.
+!!! tip "Formula and Polars Code both ship"
+    Lite includes the visual [**Formula** node](../visual-editor/nodes/transform.md#formula) for point-and-click column expressions *and* the **Polars Code** node for writing any Polars expression directly (with autocompletion).
 
 ---
 
 ## What's *not* included
 
-Everything that depends on the Python backend, worker, or kernel containers is **unavailable** in Flowfile Lite:
+Everything that depends on the Python backend, worker, or kernel containers is **unavailable** in Flowfile Lite; those nodes appear greyed-out in the palette so the full breadth stays discoverable. The [feature comparison](#feature-comparison) below lists what's excluded; the **Window Functions** node is also unavailable.
 
-- **Databases** — no PostgreSQL / MySQL / SQL Server / Oracle readers or writers
-- **Cloud storage** — no S3 / Azure ADLS / Google Cloud Storage
-- **Kafka** ingestion and **REST API / Google Analytics** sources
-- **Kernels / Python Script** — no sandboxed user-code execution
-- **SQL editor** and SQL query node
-- **Machine Learning nodes** (Train / Apply / Evaluate Model)
-- **Scheduler** and flow automation
-- **AI assistant** (Chat, Agent, Cmd+K, inline actions)
-- **Secrets & connections manager** — no credentials are stored
-- **Governed catalog** — no Delta Lake versioning, virtual tables, lineage, or saved visualizations
-- **The Python API** (`flowfile_frame`) — Lite is visual-only
-- Extra transforms: **Add Record ID, Text to Rows, Fuzzy Match, Union, Cross Join, Graph Solver**
-
-Memory is bounded by the browser heap, and data previews are capped (100k rows).
+Memory is bounded by the browser heap, and the Explore Data view materializes at most 100k rows for charting.
 
 ---
 
@@ -74,15 +57,17 @@ Memory is bounded by the browser heap, and data previews are capped (100k rows).
 |---------|:-------------:|:-------------:|
 | Install / runtime | pip · Desktop · Docker | None — runs in the browser |
 | Compute engine | Polars on Python backend + worker | Polars compiled to WebAssembly (Pyodide) |
-| Nodes | 40+ | 18 |
+| Nodes | 40+ | 23 (as of 2026-07) |
 | Local files (CSV / Excel / Parquet) | ✓ | ✓ |
 | Remote URL fetch | ✓ | ✓ |
 | Databases (Postgres / MySQL / …) | ✓ | ✗ |
 | Cloud storage (S3 / ADLS / GCS) | ✓ | ✗ |
 | Kafka / REST API / Google Analytics | ✓ | ✗ |
+| Formula node | ✓ | ✓ |
 | Polars Code node | ✓ | ✓ |
 | Python Script / Kernels | ✓ | ✗ |
-| SQL editor & SQL query | ✓ | ✗ |
+| SQL Query node | ✓ | ✗ |
+| Fuzzy Match / Graph Solver | ✓ | ✗ |
 | Machine Learning nodes | ✓ | ✗ |
 | Scheduler & automation | ✓ | ✗ |
 | AI assistant (BYOK) | ✓ | ✗ |

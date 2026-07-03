@@ -1,6 +1,6 @@
 # SQL Editor
 
-Query your catalog tables directly using SQL — no need to build a flow for quick ad-hoc analysis.
+Query your catalog tables directly using SQL.
 
 !!! info "Not in Flowfile Lite"
     The SQL editor requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../../deployment/lite.md) edition.
@@ -10,7 +10,9 @@ Query your catalog tables directly using SQL — no need to build a flow for qui
 ## Opening the SQL Editor
 
 Click the **SQL** button in the catalog toolbar to open the SQL editor panel.
+
 ![SQL editor](../../../assets/images/guides/catalog/sql-editor.png)
+
 ---
 
 ## Writing Queries
@@ -67,17 +69,10 @@ Each time the virtual table is read (via Catalog Reader, another SQL query, or t
 
 ## Python API
 
-You can also run SQL queries against catalog tables programmatically:
+SQL queries against catalog tables also run from Python. This tested example writes an aggregate to the catalog and queries it back (note `read_catalog_sql` is imported from `flowfile_frame` — it is not on the `ff` namespace):
 
 ```python
-import flowfile as ff
-
-df = ff.read_catalog_sql("""
-    SELECT o.order_id, c.name, o.total
-    FROM orders o
-    JOIN customers c ON o.customer_id = c.id
-    WHERE o.total > 1000
-""")
+--8<-- "docs/examples/catalog_analysis.py:example"
 ```
 
 See [Reading Data — Catalog SQL](../../python-api/reference/reading-data.md#query-with-sql) for full documentation.

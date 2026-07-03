@@ -3,7 +3,7 @@
 Input nodes are the starting point for any data flow. Flowfile supports reading from **local files**, **databases**, **cloud storage**, **catalog tables**, and **manual input**.
 
 !!! info "Not all input nodes are in Flowfile Lite"
-    The browser-only [Flowfile Lite](../../deployment/lite.md) build reads **local files (CSV/Excel/Parquet)**, **remote URLs**, **Manual Input**, and **Read from Catalog** — but it has no backend, so **Cloud Storage Reader** and **Database Reader** are not available.
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build reads **local files (CSV/Excel/Parquet)**, host-provided datasets (**External Data**), **Manual Input**, and **Read from Catalog** — but it has no backend, so **Cloud Storage Reader**, **Database Reader**, and the API/Kafka sources are not available.
 
 ## Node Details
 
@@ -19,14 +19,6 @@ The **Read Data** node allows you to load local data into your flow. It supports
 - **Arrow IPC / Feather files** (`.arrow`, `.ipc`, `.feather`)
 - **NDJSON files** (`.ndjson`, `.jsonl`)
 - **Avro files** (`.avro`)
-
-#### **Usage:**
-
-1. Select your input file.  
-2. Configure any format-specific options.  
-3. Preview and confirm your data.  
-
----
 
 #### CSV  
 When a **CSV** file is selected, the following setup options are available:  
@@ -60,7 +52,7 @@ When an **Excel** file is selected, you can specify the sheet, select specific r
 ---
 
 #### Parquet  
-When a **Parquet** file is selected, no additional setup options are required. Parquet is a columnar storage format optimized for efficiency and performance. It retains schema information and data types, enabling faster reads and writes without manual configuration.
+When a **Parquet** file is selected, no additional setup options are required.
 
 ---
 
@@ -99,7 +91,7 @@ The **Cloud Storage Reader** node reads data directly from cloud object storage.
 | Parameter          | Description                                                                                              |
 |--------------------|----------------------------------------------------------------------------------------------------------|
 | **File Path**      | Path to the file or directory (e.g., `bucket-name/folder/file.csv`)                                    |
-| **File Format**    | Supported formats: CSV, Parquet, JSON, Delta Lake                                                       |
+| **File Format**    | Supported formats: CSV, Parquet, JSON, Delta Lake, Iceberg                                              |
 | **Scan Mode**      | Single file or directory scan (reads all matching files in a directory)                                 |
 
 #### **Format-Specific Options:**
@@ -321,6 +313,19 @@ From your flow's perspective, a virtual table behaves identically to a physical 
 #### **SQL Mode**
 
 The Catalog Reader also supports a **SQL mode** where you can write SQL queries against all catalog tables (both physical and virtual). Tables are registered by name in a Polars SQL context, so you can join and query across the entire catalog. See [SQL Editor](../catalog/sql-editor.md) for more details.
+
+---
+
+### Flow Input
+
+The **Flow Input** node is a named entry point for a [subflow](../subflows.md) — a flow called from another flow. It has no upstream connection; when the flow runs on its own it serves the sample data configured in its settings, and when a parent flow calls it through a Run Flow node, the parent's dataset replaces that sample.
+
+| Parameter | Description |
+|-----------|-------------|
+| **Input name** | The port name the parent binds data to (default `input`) |
+| **Sample data** | The dataset served when the flow runs standalone |
+
+See [Subflows](../subflows.md) for the full pattern.
 
 ---
 [← Node overview](index.md) | [Next: Transform data →](transform.md)

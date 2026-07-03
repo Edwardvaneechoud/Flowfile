@@ -20,8 +20,7 @@ Your preference persists across sessions.
 
 Manage team access through the Admin panel. Click your username → **Admin**.
 
-<!-- IMAGE: user_management.png - Admin panel showing user list -->
-![User Management](../../assets/images/guides/settings/user_management.png)
+![Admin panel showing the user list](../../assets/images/guides/settings/user_management.png)
 
 ### Creating Users
 
@@ -36,9 +35,8 @@ New users must change their password on first login.
 ### Password Requirements
 
 - Minimum 8 characters
-- At least one uppercase letter
-- At least one lowercase letter
 - At least one number
+- At least one special character (`!@#$%^&*()_+-=[]{}|;:,.<>?`)
 
 ### Admin Privileges
 

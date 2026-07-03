@@ -1,107 +1,64 @@
-# Building Flows with code
+# Building Flows with Code
 
-The `flowfile_frame` module provides a powerful, Polars-like API that allows you to define and execute data transformation pipelines in Python while automatically generating a visual ETL graph.  
-<sub><sup>[Source: readme.md]</sup></sub>
-
----
+The `flowfile_frame` API lets you define and run data transformation pipelines in Python — with a Polars-like surface — while building a visual ETL graph as a side effect. This tutorial walks through a simple pipeline and a more involved one, and opens each in the Designer.
 
 ## Overview
 
-`flowfile_frame` is designed to bridge the gap between writing code and visual workflow design. It offers:
-
-- A familiar API for those accustomed to Pandas or Polars.  
-- Automatic generation of an ETL graph from your Python code.  
-- The ability to visualize, save, and share your data pipelines in the Flowfile Designer UI.  
-- The performance benefits of the Polars engine.  
-
----
+`flowfile_frame` gives you a Polars-like API that generates an ETL graph from your Python code, which you can visualize, save, and share in the Flowfile Designer. Execution runs on the Polars engine.
 
 ## Installation
 
-The `flowfile_frame` module is included with the standard `flowfile` package.
+The `flowfile_frame` module ships with the standard `flowfile` package.
 
 ```bash
 pip install flowfile
 ```
 
-### Quick Start
-You can create a data pipeline programmatically and see the results:
+## A first pipeline
 
+Build a pipeline programmatically and collect the result (this code runs in the test suite on every commit):
 
 ```python
-import flowfile as ff
-from flowfile import col, open_graph_in_editor
-
-df = ff.from_dict({
-    "id": [1, 2, 2],
-    "value": [10, 20, 15]
-})
-
-result = df.filter(col("value") > 12, description="filter value > 12").with_columns(
-    (col("value") * 10).alias("scaled_value"), description="get a scaled value"
-).group_by(col("id")).agg(col("value").sum().alias("sum_value"),
-                        col("value").max().alias("max_value"),
-                        col("value").min().alias("min_value"))
-df = result.collect()  # provides a polars dataframe
-open_graph_in_editor(result.flow_graph)
+--8<-- "docs/examples/code_to_flow.py:first"
 ```
+
+Then open the graph in the Designer:
+
+```python
+ff.open_graph_in_editor(result.flow_graph)
+```
+
 <details markdown="1">
-<summary>Generated Flow in Flowfile UI</summary>
+<summary>Generated flow in the Flowfile UI</summary>
 
 ![Created flow](../../../assets/images/guides/code_to_flow/code_to_flow.png)
 </details>
 
-## Visualizing Your Pipeline
+## A more involved pipeline
 
-One of the most powerful features of `flowfile_frame` is its ability to convert your code into a visual graph that can be opened in the Flowfile UI.
-
-You can build more advanced pipelines with conditional logic, grouping, and aggregation — and then instantly visualize them.
+You can add conditional logic, grouping, and aggregation, then visualize the result the same way:
 
 ```python
-import flowfile as ff
-from flowfile import open_graph_in_editor
-
-# Create a more complex data pipeline
-df = ff.from_dict({
-    "id": [1, 2, 3, 4, 5],
-    "category": ["A", "B", "A", "C", "B"],
-    "value": [100, 200, 150, 300, 250]
-})
-
-aggregated_df = (
-    df
-    .filter(ff.col("value") > 120, description='Filter on value greater then 120')
-    .with_columns([
-        (ff.col("value") * 1.1).alias("adjusted_value"),
-        ff.when(ff.col("category") == "A").then(ff.lit("Premium"))
-          .when(ff.col("category") == "B").then(ff.lit("Standard"))
-          .otherwise(ff.lit("Basic")).alias("tier")
-    ], description='Calculate the thier')
-    .group_by("tier")
-    .agg([
-        ff.col("adjusted_value").sum().alias("total_value"),
-        ff.col("id").count().alias("count")
-    ])
-)
-
-# This will launch the Flowfile Designer UI and render your pipeline
-open_graph_in_editor(aggregated_df.flow_graph)
+--8<-- "docs/examples/code_to_flow.py:involved"
 ```
+
+```python
+ff.open_graph_in_editor(aggregated.flow_graph)
+```
+
 <details markdown="1">
-<summary>Generated Flow in Flowfile UI</summary>
+<summary>Generated flow in the Flowfile UI</summary>
 
 ![Created flow](../../../assets/images/guides/code_to_flow/code_to_flow_2.png)
 </details>
 
-When you run `open_graph_in_editor(...)`, the Flowfile Designer UI will open and display a visual graph of your pipeline. You can:
+When you call `open_graph_in_editor(...)`, the Designer opens and displays your pipeline, where you can inspect each node, continue editing visually, or save and export it.
 
-* Inspect each transformation node
-* Continue modifying your logic visually
-* Share or export your pipeline
+!!! note "Grouping by an expression"
+    `group_by(col("id"))` groups by an expression, which renders as a `polars_code` node rather than an editable group_by node. Grouping by a column name (`group_by("id")`) produces the editable node.
 
-### Benefits Summary
-By combining the declarative power of a Polars-like API with Flowfile’s interactive designer, `flowfile_frame` gives you:
+## Related
 
-* Code-first development with automatic visualization
-* Zero-config ETL graph generation
-* Easy debugging and collaboration
+- [FlowFrame and FlowGraph](../concepts/design-concepts.md) — the model behind these graphs
+- [Visual UI Integration](../reference/visual-ui.md) — launching and controlling the Designer from Python
+- [API Reference](../reference/index.md) — the full method set

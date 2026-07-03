@@ -40,7 +40,7 @@ spawned child         imports Polars, holds the LazyFrame, runs polars-gw
 
 Two boundaries do real work here:
 
-- **Core never touches a `LazyFrame`.** It resolves *where* a visualization reads from — a Delta table, a SQL string, a Python flow — and ships a small descriptor to the worker. That keeps core small and responsive.
+- **Core never touches a `LazyFrame`.** `VisualizationService` resolves *where* a visualization reads from — a Delta table, a SQL string, a Python flow — and ships a small descriptor to the worker. That keeps core small and responsive.
 - **The worker's FastAPI process doesn't import Polars either.** It dispatches. The actual heavy lifting — Polars, polars-gw, dataset memory — lives in spawned child processes that the parent only knows about through queues.
 
 The second boundary is the unusual one. Polars is memory-heavy and aggressively multithreaded; mixing it into the request-serving process means one slow query starves every other chart. Pushing it out to a child fixes that.
@@ -58,7 +58,7 @@ Two properties fall out of how the pool is keyed:
 - **Same source, same child.** Successive queries from one visualization reuse the warm `LazyFrame`. A per-handle lock guarantees that two browser tabs editing the same visualization don't trip over each other's responses.
 - **Different sources, different children, in parallel.** Two users on two tables — or one user with two visualization tabs open — run in separate processes that don't block each other. There is no global lock between sessions.
 
-`flowfile_worker/viz_sessions.py` is the registry. `flowfile_worker/viz_session_worker.py` is the entry point that runs inside each spawned process — and the **only** place anywhere in the worker that imports Polars and polars-gw.
+`flowfile_worker/flowfile_worker/viz_sessions.py` is the registry. `flowfile_worker/flowfile_worker/viz_session_worker.py` is the entry point that runs inside each spawned process — and the **only** place in the worker that imports **polars-gw** and holds the visualization dataset in memory. (Plain `polars` is imported by other worker modules such as `funcs.py` and `catalog_reader.py`; it's the polars-gw session data that is confined to the spawned child.)
 
 ---
 
@@ -74,13 +74,13 @@ Each child holds a real, live dataset, so left alone they accumulate and the wor
 
 Every one of these paths runs the child through the same shutdown sequence: send a graceful stop, wait briefly, terminate, kill if it's still alive, drop references. Nothing is kept around on the assumption it might be needed later.
 
-The actual numeric thresholds live as constants at the top of `viz_sessions.py` and are tunable knobs, not load-bearing magic.
+The actual numeric thresholds live as constants near the top of `flowfile_worker/flowfile_worker/viz_sessions.py` (`IDLE_TTL_SECONDS`, `MAX_SESSIONS`, `REAP_INTERVAL_SECONDS`, `MAX_REQUESTS_PER_CHILD`, `MAX_CHILD_LIFETIME_SECONDS`) and are tunable knobs, not load-bearing magic.
 
 ---
 
 ## What a "visualization" looks like at rest
 
-A visualization is a row in `catalog_visualizations`: a name, a Graphic Walker chart spec (JSON, possibly multi-tab), a pointer to either a catalog table or an inline SQL query, and a thumbnail PNG captured client-side at save time. Schemas live in `flowfile_core/schemas/catalog_schema.py`.
+A visualization is a row in `catalog_visualizations`: a name, a Graphic Walker chart spec (JSON, possibly multi-tab), a pointer to either a catalog table or an inline SQL query, and a thumbnail PNG captured client-side at save time. Schemas live in `flowfile_core/flowfile_core/schemas/catalog_schema.py`.
 
 A visualization never embeds the data — it embeds *how to find the data*. That's why deleting the underlying table doesn't cascade-delete the visualization (it becomes orphaned and the library labels it as such), why moving a visualization between namespaces is free, and why a SQL visualization can reference whatever tables exist in the catalog at query time.
 
@@ -91,7 +91,7 @@ A visualization never embeds the data — it embeds *how to find the data*. That
 To support a new source — a remote Postgres, a parquet on S3, anything — the touchpoints are:
 
 1. Extend the source descriptor in core, and the matching worker model, so the new kind is expressible.
-2. Teach `CatalogService` to translate it into a worker descriptor and emit a deterministic `session_key`. The session key is what lets the pool reuse children.
+2. Teach `VisualizationService` (`flowfile_core/flowfile_core/catalog/services/visualizations.py`) to translate it into a worker descriptor and emit a deterministic `session_key` (`_session_key_for_table` and the `session_key` fields). The session key is what lets the pool reuse children.
 3. Teach `viz_session_worker._build_viz_loader_in_child` to open the new kind as a Polars `LazyFrame`.
 
 Path validation and source resolution live in core on purpose. The worker child should treat its inputs as already-validated names plus an opaque chart payload — defence-in-depth is core's job.

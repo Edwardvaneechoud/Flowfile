@@ -1,47 +1,28 @@
-# The Architecture Story: How Flowfile Bridges Code and Visual Worlds
+# Design Philosophy: Code and Visual Are One Model
 
-<strong>📋 TL;DR - Key Takeaways</strong>
+This page explains the core design decision behind Flowfile: the Python API and the visual editor construct the same underlying objects. It is for contributors mapping the codebase, and for anyone curious how a drag-and-drop tool and a code API can stay in lockstep.
 
-!!! abstract "Key Points"
-    - **Two ways to build pipelines**: Write Python code or use drag-and-drop UI - both create the same thing
-    - **Settings-based design**: Every transformation is just a configuration object (Pydantic model)
-    - **Clear separation**: Graph structure, settings, and execution are handled separately
-    - **Happy accident**: Started as a UI project, ended up with an architecture that works great for both UI and code
+!!! info "Related pages"
+    - [Technical Architecture](architecture.md) — the three services and execution modes
+    - [Core Developer Guide](flowfile-core.md) — internal implementation, hands-on
+    - [Python API](../users/python-api/index.md) — using Flowfile in your own projects
 
+## The problem
 
-!!! info "Navigation"
-    - **This page**: Architecture overview and design decisions
-    - **[Core Developer Guide](flowfile-core.md)**: Technical implementation details
-    - **[Python API](../users/python-api/index.md)**: How to use Flowfile in your projects
+Most data tools make you choose: a visual interface (approachable but limited) or code (expressive but harder). Flowfile aims for both in one tool, which raises one hard question — how do you make a drag-and-drop interface produce the exact same pipelines as writing code?
 
-<strong>👥 Who Should Read This?</strong>
-!!! question "Target Audience"
-    - Contributors who want to understand the codebase
-    - Users curious about how things work internally
-    - Developers building similar dual-interface tools
-    - Anyone interested in bridging UI and code approaches
-
-## The Problem We Solved
-
-Most data tools force you to choose: either use a visual interface (easy but limited) or write code (powerful but complex). We wanted both in the same tool.
-
-The challenge: How do you make a visual drag-and-drop interface that creates the exact same pipelines as writing code?
-
-The platform started with a clean, settings-based backend where every transformation is a declarative configuration object. This design is perfect for a UI. But developers don't think in configuration objects—they think in code:
+The backend was built around a settings-based model: every transformation is a declarative configuration object (a Pydantic model). That model suits a UI well, but developers think in code, not configuration objects:
 
 ```python
 # How developers want to write data code
 df.filter(col("price") > 100).group_by("region").sum()
 ```
 
-The breakthrough came from realizing that the Polars API would be able to convert to our settings object and therefore creating the same settings object that the UI creates. Both interfaces become different ways to build the same underlying configuration, giving developers the expressiveness they want while maintaining the structured settings the UI needs.
+The resolution is to have the Python API build those same settings objects. Both interfaces become different front-ends to one underlying configuration: developers get an expressive, chainable API, and the UI gets the structured settings it needs.
 
 ## The result
 
-!!! abstract "How It Actually Happened"
-    This wasn't some grand plan. I started building a drag-and-drop UI and needed a clean way to configure nodes. Settings objects made sense for the UI. But the development of Flowfile has never been a planned approach, it was just about building what sounded _fun_.
-    Later, when looking at other projects, I realized I could just have the API methods create the same settings objects, well that is **_fun_**. Suddenly there were two equivalent interfaces almost by accident,.
-    Since Polars does the actual data processing, our settings just configure what Polars should do. This turned out to be an easy abstraction layer that showed it's potential from the start.
+Flowfile grew out of a visual editor. Nodes were configured with settings objects because that is a clean fit for a UI. Later, the Python API was wired to construct those same settings objects, so a method call and a dropped node produce identical configuration. Because Polars does the actual data processing, the settings only describe *what* Polars should do — a thin, stable abstraction layer.
 
 The result is a Python API that constructs the exact same configuration objects as the visual editor:
 
@@ -52,7 +33,7 @@ Both interfaces are different ways to build the same Directed Acyclic Graph (DAG
 
 ## One Pipeline, Two Ways
 
-Let's build the same pipeline using both approaches to see how they produce identical results.
+The same pipeline built both ways produces identical results.
 
 ### Sample Data
 
@@ -101,29 +82,35 @@ df_4 = df_3.group_by(['region']).agg([
 
 **Graph Introspection:**
 ```python
-# Access all nodes that were created in the graph
+# Access all nodes that were created in the graph.
+# Node ids come from a global incrementing counter (generate_node_id), so
+# the exact numbers depend on how many ids were minted before this run.
 print(graph._node_db)
-# {1: Node id: 1 (manual_input), 
-#  3: Node id: 3 (formula), 
-#  4: Node id: 4 (filter), 
-#  5: Node id: 5 (group_by)}
+# {<id>: Node id: <id> (manual_input),
+#  <id>: Node id: <id> (formula),
+#  <id>: Node id: <id> (filter),
+#  <id>: Node id: <id> (group_by)}
 
 # Find the starting node(s) of the graph
 print(graph._flow_starts)
-# [Node id: 1 (manual_input)]
+# [Node id: <id> (manual_input)]
+
+# Each FlowFrame exposes the node id it produced
+manual_id = df_1.node_id
+formula_id = df_2.node_id
 
 # From every node, access the next node that depends on it
-print(graph.get_node(1).leads_to_nodes)
-# [Node id: 3 (formula)]
+print(graph.get_node(manual_id).leads_to_nodes)
+# [Node id: <formula_id> (formula)]
 
 # The other way around works too
-print(graph.get_node(3).node_inputs)
-# NodeStepInputs(Left Input: None, Right Input: None, 
-#                Main Inputs: [Node id: 1 (manual_input)])
+print(graph.get_node(formula_id).node_inputs)
+# NodeStepInputs(Left Input: None, Right Input: None,
+#                Main Inputs: [Node id: <manual_id> (manual_input)])
 
 # Access the settings and type of any node
-print(graph.get_node(4).setting_input)
-print(graph.get_node(4).node_type)
+print(graph.get_node(formula_id).setting_input)
+print(graph.get_node(formula_id).node_type)
 ```
 </details>
 
@@ -224,7 +211,7 @@ This is the polars query plan generated by both methods:
 
 #### 1. The DAG is Everything
 
-Every Flowfile pipeline is a Directed Acyclic Graph where. This is captured in the  [FlowGraph](python-api-reference.md#flowgraph)
+Every Flowfile pipeline is a Directed Acyclic Graph where nodes are operations and edges are data dependencies, captured in the [FlowGraph](python-api-reference.md#flowgraph):
 
 - **Nodes** are transformations (filter, join, group_by, etc.)
 - **Edges** represent data flow between nodes
@@ -232,7 +219,7 @@ Every Flowfile pipeline is a Directed Acyclic Graph where. This is captured in t
 
 #### 2. Settings Drive Everything
 
-Every node is composed of two parts: the **Node class** (a Pydantic BaseModel) that holds metadata and the **Settings** (often dataclasses) that configure the transformation:
+Every node is composed of two parts: the **Node class** (a Pydantic BaseModel) that holds metadata, and the **Settings** (also Pydantic BaseModels) that configure the transformation:
 
 Read more about [Nodes](python-api-reference.md#input_schema) and the [transformations](python-api-reference.md#transform_schema)
 
@@ -253,67 +240,41 @@ class NodeBase(BaseModel):
     description: Optional[str] = None
     # ... graph metadata ...
 
-# The Settings: transformation configuration (dataclass)
-@dataclass
-class GroupByInput:
+# The Settings: transformation configuration (Pydantic BaseModel
+# with a custom __init__ that also accepts positional args)
+class GroupByInput(BaseModel):
     """Defines how to perform the group by operation"""
     agg_cols: List[AggColl]
 
-@dataclass
-class AggColl:
+class AggColl(BaseModel):
     """Single aggregation operation"""
-    old_name: str      # Column to aggregate
-    agg: str          # Aggregation function ('sum', 'mean', etc.)
+    old_name: str            # Column to aggregate
+    agg: str                 # Aggregation function ('sum', 'mean', etc.)
     new_name: Optional[str]  # Output column name
     output_type: Optional[str] = None
 ```
 
-!!! tip "Settings Power The Backend"
-    This dual structure—Nodes for graph metadata, Settings for transformation logic—drives the backend:
-    
-    - 🔧 **Code generation** (method signatures match settings)
-    - 💾 **Serialization** (graphs can be saved/loaded)
-    - 🔮 **Schema prediction** (output types are inferred from AggColl)
-    - 🎨 **UI structure** (defines what the frontend needs to collect, though forms are manually built)
+!!! tip "Settings power the backend"
+    This dual structure — Nodes for graph metadata, Settings for transformation logic — drives the backend:
+
+    - **Code generation** — method signatures match settings.
+    - **Serialization** — graphs can be saved and loaded.
+    - **Schema prediction** — output types are inferred from settings like `AggColl`.
+    - **UI structure** — defines what the frontend collects (native-node forms are hand-built; custom nodes are auto-generated).
 
 #### 3. Execution is Everything
 
-The [`FlowDataEngine`](python-api-reference.md#flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine) orchestrates everything about execution. While the DAG defines structure and settings define configuration, FlowDataEngine is the runtime brain that makes it all happen.
+The [`FlowDataEngine`](python-api-reference.md#flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine) owns execution. While the DAG defines structure and settings define configuration, FlowDataEngine wraps a Polars LazyFrame/DataFrame and decides where, when, and how transformations run:
 
-FlowDataEngine handles:
 - **Compute location** (worker service vs local execution)
 - **Caching strategy** (when to materialize, where to store)
 - **Schema caching** (avoiding redundant schema calculations)
 - **Lazy vs eager evaluation** (performance vs debugging modes)
 - **Data movement** (passing LazyFrames between transformations)
 
-This separation is powerful: the DAG remains a pure specification, settings stay declarative, and FlowDataEngine owns all execution concerns. It wraps a Polars LazyFrame/DataFrame but is really the execution orchestrator—deciding where, when, and how transformations run.
-
 ### Understanding FlowNode
 
-The `FlowNode` class is the heart of each transformation in the graph. Each node encapsulates everything needed for a single transformation step:
-
-!!! info "Core FlowNode Components"
-    **Essential State:**
-    
-    - **`_function`**: The closure containing the transformation logic
-    - **`leads_to_nodes`**: List of downstream nodes that depend on this one
-    - **`node_information`**: Metadata (id, type, position, connections)
-    - **`_hash`**: Unique identifier based on settings and parent hashes
-    
-    **Runtime State:**
-    
-    - **`results`**: Holds the resulting data, errors, and example data paths
-    - **`node_stats`**: Tracks execution status (has_run, is_canceled, etc.)
-    - **`node_settings`**: Runtime settings (cache_results, streamable, etc.)
-    - **`state_needs_reset`**: Flag indicating if the node needs recalculation
-    
-    **Schema Information:**
-    
-    - **`node_schema`**: Input/output columns and predicted schemas
-    - **`schema_callback`**: Function to calculate schema without execution
-
-The beauty is that FlowNode doesn't know about specific transformations—it just orchestrates the execution of its `_function` closure with the right inputs and manages the resulting state.
+Each `FlowNode` wraps a single transformation: it holds the `_function` closure that carries the node's logic, its downstream links, hash, runtime state, and schema. FlowNode doesn't know about specific transformations — it orchestrates its `_function` closure with the right inputs and manages the resulting state. For the full component-by-component walkthrough, see the [Core Developer Guide](flowfile-core.md).
 
 ## Flowfile: The Use of Closures
 
@@ -358,7 +319,7 @@ graph LR
     func4 ==> |Final FlowDataEngine<br/>with full LazyFrame plan| Result
 ```
 
-Each `_func` is a closure that wraps around the previous one, building up a chain. The beauty is that Polars can track the schema through this entire chain without executing any data transformations—it just builds the query plan!
+Each `_func` is a closure that wraps around the previous one, building up a chain. Polars tracks the schema through this entire chain without executing any data transformations — it just builds the query plan.
 
 #### The Closure Pattern in Practice
 
@@ -411,14 +372,6 @@ print(result.data_frame.collect_schema())
 # Schema([('region', String), ('total_revenue', Float64), ('avg_transaction', Float64)])
 ```
 
-!!! example "Why This Works"
-    1. **Each `_func` is a closure** containing the node's settings
-    2. **Functions only need FlowDataEngine as input** (or multiple for joins/unions)
-    3. **LazyFrame tracks schema changes** through the entire chain
-    4. **No data is processed**—Polars just builds the query plan
-    
-    The result: instant schema feedback without running expensive computations!
-
 ### Fallback: Schema Callbacks
 
 For nodes that can't infer schemas automatically (external data sources), each FlowNode can have a `schema_callback`:
@@ -430,187 +383,97 @@ def schema_callback(settings, input_schema):
     return new_schema
 ```
 
-## Execution Methods
+## Running a flow
 
-Flowfile offers flexible execution strategies depending on your needs:
+The two execution modes — **Development** and **Performance** — are described in full on the [Technical Architecture page](architecture.md#execution-modes). The code below shows how each is invoked and how to read the query plan.
 
-### 🚀 Available Execution Methods
-
-#### Performance Mode
-
-**When to use:** Production pipelines, large datasets
+**Performance mode.** Pull the final result; Polars optimizes and runs the whole pipeline once, with no intermediate materialization.
 
 ```python
-# Get the final result efficiently
 result = flow.get_node(final_node_id).get_resulting_data()
 ```
 
-**Characteristics:**
-
-- ⚡ Pull-based execution from the final node
-- 🎯 Polars optimizes the entire pipeline
-- 💨 Data flows once through optimized plan
-- 🚫 No intermediate materialization
-
-#### Development Mode
-
-**When to use:** Debugging, inspection, incremental development
+**Development mode.** Push-based execution in topological order; each node's output is written to disk so any intermediate result can be inspected. On re-run, only changed nodes (and their descendants) run again.
 
 ```python
-# Execute with caching enabled
 import flowfile as ff
 
 flow = ff.create_flow_graph()
 flow.flow_settings.execution_mode = "Development"
 
-# Add transformations here
+# ... add transformations ...
 flow.run_graph()
 
-# Inspect intermediate results
-node_3_result = flow.get_node(3).results.get_example_data()
-
-flow.get_node(3).needs_run(performance_mode=False) # False
-
+# Inspect an intermediate result by node id
+node = flow.get_node(some_node_id)
+example = node.results.get_example_data()
+node.needs_run(performance_mode=False)  # False once it has run
 ```
 
-**Characteristics:**
-- 📝 Push-based execution in topological order
-- 💾 Each node's output written to disk
-- 🔍 Inspect any intermediate result
-- 🔄 When re-running the flow, only the steps that have changed(directly and indirectly) will run
-
-#### Explain Plan
-
-**When to use:** Optimization, understanding deeply the execution plan.
-
-!!! warning This feature uses directly the Polars implementation, when the full flow cannot be fully converted to Polars, it will show partial executions.
+**Explain plan.** See the optimized Polars plan without executing.
 
 ```python
-# See what Polars will actually do
 plan = flow.get_node(node_id).get_resulting_data().data_frame.explain()
 print(plan)
 ```
 
-**Characteristics:**
-- 📊 Shows optimized query plan
-- 🔍 Understand Polars optimizations
-- 📈 Identify performance bottlenecks
-- 🎯 No actual execution
+!!! warning "Partial plans"
+    Explain uses the Polars plan directly. When part of the flow cannot be expressed as Polars, the plan shows only the convertible portion.
 
 ## System Architecture
 
-### Service Architecture
-
-```mermaid
-graph LR
-    subgraph "Frontend"
-        A[Designer<br/>Vue/Electron]
-    end
-    
-    subgraph "Backend"
-        B[Core Service<br/>FastAPI]
-        C[Worker Service<br/>FastAPI]
-    end
-    
-    subgraph "Storage"
-        D[Arrow IPC<br/>Cache]
-    end
-    
-    A <-->|Settings/Schema| B
-    B <-->|Execution| C
-    C <-->|Data| D
-```
-
-!!! info "Service Responsibilities"
-    **Designer:**
-    - Visual graph building interface
-    - Node configuration forms (manually implemented)
-    - Real-time schema feedback
-    
-    **Core:**
-    - DAG management
-    - Execution orchestration
-    - Schema prediction
-    
-    **Worker:**
-    - Polars transformations
-    - Data caching (Arrow IPC)
-    - Isolated from Core for scalability
+The three-service split (Designer, Core, Worker) and Arrow IPC data exchange are covered on the [Technical Architecture page](architecture.md#three-service-architecture).
 
 ### Project Structure
 
+Each Python package nests its importable code one level down (e.g. `flowfile_core/flowfile_core/`). The key directories:
+
 ```
-flowfile/
-├── flowfile_core/
-│   ├── nodes/              # Node implementations
-│   ├── schemas/            # Pydantic models
-│   └── flowfile/          # Graph management
-├── flowfile_worker/
-│   ├── execution/         # Polars execution
-│   └── cache/            # Arrow IPC caching
+Flowfile/
+├── flowfile_core/flowfile_core/
+│   ├── flowfile/          # FlowGraph, FlowNode, FlowDataEngine, node_designer
+│   ├── schemas/           # Pydantic settings + request/response models
+│   ├── configs/           # node_store/nodes.py registry, settings.py
+│   ├── routes/            # FastAPI routers
+│   ├── ai/ · kernel/ · catalog/ · auth/ · scheduler/ · alembic/
+├── flowfile_worker/flowfile_worker/   # flat modules: funcs.py, routes.py,
+│                                       # process_manager.py, viz_session_worker.py, …
+├── flowfile_frame/        # Polars-like Python API (FlowFrame, Expr)
 └── flowfile_frontend/
-    ├── components/       # Vue components
-    └── electron/        # Desktop app
+    ├── src/renderer/      # Vue 3 renderer (shared by desktop + web)
+    └── src-tauri/         # Tauri 2 Rust shell + sidecar boot
 ```
 
 ## Contributing
 
-!!! warning "Current State of Node Development"
-    While the backend architecture elegantly uses settings-driven nodes, adding new nodes requires work across multiple layers. The frontend currently requires manual implementation for each node type—the visual editor doesn't automatically generate forms from Pydantic schemas yet.
-    
-    However, there are also opportunities for more focused contributions! Integration with databases and cloud services is needed—these are smaller, more targeted tasks since the core structure is already in place. There's a lot of active development happening, so it's an exciting time to contribute!
+Adding a **built-in native node** touches multiple layers: the frontend needs a hand-written settings form (native nodes are not auto-generated from Pydantic schemas). Smaller, self-contained tasks — new database and cloud connectors — are a good entry point, because the surrounding structure already exists.
 
-### Adding a New Node: The Full Picture
+!!! tip "Prefer a custom node?"
+    If you want a new transformation without touching the frontend, build a [custom node](creating-custom-nodes.md) with the Node Designer API. Custom nodes get an auto-generated settings panel and land in the **User Defined Operations** palette section.
 
-Adding a node isn't as simple as defining settings and a function. Here's what's actually required:
+### Adding a native node: the full picture
 
-#### Backend Requirements
+A native node is more than a settings model and a function.
 
-1. **Define the Pydantic settings model** in `schemas/`
-2. **Implement the transformation method** on `FlowDataEngine`
-3. **Add the node method** to `FlowGraph` (e.g., `add_custom_transform()`)
-4. **Create the closure function** that captures settings
-5. **Define schema callbacks** for predicting output schemas
-6. **Register the node** in the node registry
+#### Backend
 
-Example of what's really needed in FlowGraph:
+1. Define the Pydantic settings model in `schemas/`.
+2. Implement the transformation method on `FlowDataEngine`.
+3. Add the node method to `FlowGraph` (e.g. `add_<node_type>()`).
+4. Create the closure function that captures settings.
+5. Define a schema callback for predicting output schemas.
+6. Register the node in `configs/node_store/nodes.py`.
 
-```python
-def add_custom_transform(self, transform_settings: input_schema.NodeCustomTransform):
-    # Create the closure that captures settings
-    def _func(fl: FlowDataEngine) -> FlowDataEngine:
-        return fl.do_custom_transform(transform_settings.transform_input)
-    
-    # Register with the graph
-    self.add_node_step(
-        node_id=transform_settings.node_id,
-        function=_func,
-        node_type='custom_transform',
-        setting_input=transform_settings,
-        input_node_ids=[transform_settings.depending_on_id]
-    )
-    
-    # Don't forget schema prediction!
-    node = self.get_node(transform_settings.node_id)
-    # ... schema callback setup ...
-```
+The `FlowGraph.add_<node_type>` method follows the same closure pattern shown earlier — construct a `_func` that captures the settings and hand it to `add_node_step`. See `add_group_by` / `add_union` above for real examples.
 
-#### Frontend Requirements
+#### Frontend
 
-Currently, you'll need to:
+1. Create a Vue settings component for the node's form.
+2. Handle its visual representation in the graph editor.
+3. Map the UI inputs to the backend settings structure.
+4. Add the node type to the palette.
 
-1. Create a new Vue component for the node's configuration form
-2. Handle the visual representation in the graph editor
-3. Map the UI inputs to the backend settings structure
-4. Add the node type to the visual editor's palette
+!!! note "Future direction"
+    A long-term goal is to auto-generate the native-node settings UI from Pydantic schemas, the way custom nodes already work — which would reduce a native node to its backend settings and transformation logic. This is aspirational, not shipped.
 
-This manual process ensures full control over the UI/UX but requires significant development effort.
-
-### Future Vision
-
-The goal is to eventually auto-generate UI from Pydantic schemas, which would complete the settings-driven architecture. This would make adding new nodes closer to just defining the backend settings and transformation logic, with the UI automatically following.
-
-The beauty of Flowfile's architecture—discovered through the organic evolution from a UI-first approach—is that even though adding nodes requires work across multiple layers today, the settings-based design provides a clear contract between visual and code interfaces. 
-
-I hope you enjoyed learning about Flowfile's architecture and found the dual-interface approach as exciting as I do! If you have questions, ideas, or want to contribute, ]
-feel free to reach out via [GitHub](https://github.com/edwardvaneechoud/Flowfile) or check our [Core Developer Guide](flowfile-core.md). Happy building!
+Questions and ideas are welcome via [GitHub](https://github.com/edwardvaneechoud/Flowfile), and the [Core Developer Guide](flowfile-core.md) goes deeper on the internals.

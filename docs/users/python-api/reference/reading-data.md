@@ -52,22 +52,24 @@ df = ff.read_parquet("sales_data.parquet", description="Q4 sales results")
 ### Arrow IPC / Feather, NDJSON, and Avro Files
 
 Flowfile also reads Arrow IPC/Feather, newline-delimited JSON (NDJSON), and Avro
-files as first-class connectors:
+files. These readers live in `flowfile_frame` and are **not** re-exported on the
+`ff` namespace — import them directly:
 
 ```python
+from flowfile_frame import read_ipc, read_ndjson, read_avro, scan_ipc, scan_ndjson
+
 # Arrow IPC / Feather (lazy scan — like parquet)
-df = ff.read_ipc("data.arrow", description="Arrow IPC source")
+df = read_ipc("data.arrow", description="Arrow IPC source")
 
 # Newline-delimited JSON (lazy scan)
-df = ff.read_ndjson("events.ndjson")
+df = read_ndjson("events.ndjson")
 
 # Avro (eager read — offloaded to the worker so core never holds the dataset)
-df = ff.read_avro("data.avro")
+df = read_avro("data.avro")
 ```
 
-IPC and NDJSON are scanned lazily, so they expose `scan_ipc` / `scan_ndjson`
-aliases too. Avro has no lazy scan in Polars, so its read is offloaded to the
-worker.
+IPC and NDJSON are scanned lazily, so they also provide `scan_ipc` / `scan_ndjson`.
+Avro has no lazy scan in Polars, so its read is offloaded to the worker.
 
 ### Scanning vs Reading
 
@@ -78,9 +80,11 @@ Flowfile provides both `read_*` and `scan_*` functions for Polars compatibility:
 df1 = ff.read_csv("data.csv")
 df2 = ff.scan_csv("data.csv")  # Alias for read_csv
 
-# Also available for the new lazy formats
-df3 = ff.scan_ipc("data.arrow")
-df4 = ff.scan_ndjson("events.ndjson")
+# The lazy IPC/NDJSON scans are imported from flowfile_frame (not ff.*)
+from flowfile_frame import scan_ipc, scan_ndjson
+
+df3 = scan_ipc("data.arrow")
+df4 = scan_ndjson("events.ndjson")
 ```
 
 ## Cloud Storage Reading
@@ -134,7 +138,7 @@ df = ff.read_from_cloud_storage(
 
 ### Format-Specific Cloud Readers
 
-### Cloud CSV Reading
+#### Cloud CSV Reading
 
 ```python
 # Read from S3 with connection
@@ -153,7 +157,10 @@ df = ff.scan_csv_from_cloud_storage(
 )
 ```
 
-### Cloud Parquet Reading
+!!! note "CSV delimiter default"
+    The cloud CSV readers default `delimiter=";"`. Pass `delimiter=","` explicitly for comma-separated files (as above).
+
+#### Cloud Parquet Reading
 
 ```python
 # Single file
@@ -170,7 +177,7 @@ df = ff.scan_parquet_from_cloud_storage(
 )
 ```
 
-### Cloud JSON Reading
+#### Cloud JSON Reading
 
 ```python
 df = ff.scan_json_from_cloud_storage(
@@ -179,7 +186,7 @@ df = ff.scan_json_from_cloud_storage(
 )
 ```
 
-### Delta Lake Reading
+#### Delta Lake Reading
 
 ```python
 # Latest version
@@ -188,11 +195,11 @@ df = ff.scan_delta(
     connection_name="data-lake-connection"
 )
 
-# Specific version (if supported)
+# Time-travel to a specific version
 df = ff.scan_delta(
     "s3://data-lake/delta-table",
-    connection_name="data-lake-connection"
-    # Note: version parameter support depends on implementation
+    connection_name="data-lake-connection",
+    version=5,
 )
 ```
 
@@ -235,16 +242,16 @@ Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the un
 
 ### Query with SQL
 
-Use `read_catalog_sql()` to execute SQL queries against all catalog tables — both physical and virtual. Tables are registered by name in a Polars SQL context.
+Use `read_catalog_sql()` to execute SQL queries against all catalog tables — both physical and virtual. Tables are registered by name in a Polars SQL context. `read_catalog_sql` is imported from `flowfile_frame` (it is not on the `ff` namespace):
 
 ```python
-import flowfile as ff
+from flowfile_frame import read_catalog_sql
 
 # Query a single table
-df = ff.read_catalog_sql("SELECT * FROM customers WHERE region = 'Europe'")
+df = read_catalog_sql("SELECT * FROM customers WHERE region = 'Europe'")
 
 # Join across catalog tables
-df = ff.read_catalog_sql("""
+df = read_catalog_sql("""
     SELECT o.order_id, c.name, o.total
     FROM orders o
     JOIN customers c ON o.customer_id = c.id
@@ -252,7 +259,7 @@ df = ff.read_catalog_sql("""
 """)
 
 # Aggregate virtual and physical tables together
-df = ff.read_catalog_sql("""
+df = read_catalog_sql("""
     SELECT category, SUM(amount) as total
     FROM sales_summary
     GROUP BY category
@@ -340,66 +347,17 @@ df = ff.read_database(
 !!! note "Return Type"
     `read_database()` returns a `FlowFrame` (not a raw Polars `LazyFrame`). The result supports `.collect()` to materialize data, `.data` to access the underlying `LazyFrame`, and `open_graph_in_editor()` to visualize the pipeline in the UI.
 
+The tested integration example reads a table and a query from PostgreSQL through a stored connection:
+
+```python
+--8<-- "docs/examples/integrations/database_read.py:example"
+```
+
 ## Connection Management
 
-Before reading from cloud storage, set up connections:
-
-```python
-import flowfile as ff
-from pydantic import SecretStr
-
-# Create S3 connection
-ff.create_cloud_storage_connection_if_not_exists(
-    ff.FullCloudStorageConnection(
-        connection_name="my-aws-connection",
-        storage_type="s3",
-        auth_method="access_key",
-        aws_region="us-east-1",
-        aws_access_key_id="your-access-key",
-        aws_secret_access_key=SecretStr("your-secret-key")
-    )
-)
-```
-
-## Flowfile-Specific Features
-
-### Description Parameter
-
-Every reader accepts an optional `description` for visual documentation:
-
-```python
-df = ff.read_csv(
-    "quarterly_sales.csv",
-    description="Load Q4 2024 sales data for analysis"
-)
-```
-
-### Automatic Scan Mode Detection
-
-Cloud storage readers automatically detect scan mode:
-
-```python
-# Automatically detects single file
-df = ff.scan_parquet_from_cloud_storage("s3://bucket/file.parquet")
-
-# Automatically detects directory scan
-df = ff.scan_parquet_from_cloud_storage("s3://bucket/folder/")
-```
-
-### Integration with Visual UI
-
-All reading operations create nodes in the visual workflow:
-
-```python
-df = ff.read_csv("data.csv", description="Source data")
-
-# Open in visual editor
-ff.open_graph_in_editor(df.flow_graph)
-```
+Set up cloud and database connections once, then reference them by name. See [Cloud Connection Management](cloud-connections.md).
 
 ## Examples
-
-### Standard Data Pipeline
 
 ```python
 import flowfile as ff
@@ -416,26 +374,6 @@ orders = ff.scan_parquet_from_cloud_storage(
 
 # Continue processing...
 result = customers.join(orders, on="customer_id")
-```
-
-### Multi-Format Cloud Pipeline
-
-```python
-# Different formats from same connection
-config_data = ff.scan_json_from_cloud_storage(
-    "s3://configs/settings.json",
-    connection_name="app-data"
-)
-
-sales_data = ff.scan_parquet_from_cloud_storage(
-    "s3://analytics/sales/",
-    connection_name="app-data"
-)
-
-delta_data = ff.scan_delta(
-    "s3://warehouse/customer_dim",
-    connection_name="app-data"
-)
 ```
 
 
