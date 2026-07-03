@@ -4,7 +4,7 @@
 
 Flowfile is a visual ETL (Extract, Transform, Load) platform built with a Python backend and Vue 3/Tauri frontend. It pairs a visual flow designer with a programmatic, Polars-compatible Python API (`flowfile_frame`) for building data pipelines, and bundles a data catalog (Delta Lake storage), an embedded scheduler, Kafka ingestion, and sandboxed Python execution. The full stack ships as a single `pip install flowfile`.
 
-**Version:** 0.11.0 | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+ (CI runs 20 and 22; no `engines`/`.nvmrc` pin)
+**Version:** see root `pyproject.toml` (kept in lockstep across manifests via `make bump-version` / `make check-version`) | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+ (CI runs 20 and 22; no `engines`/`.nvmrc` pin)
 
 ## Repository Structure
 
@@ -16,15 +16,14 @@ flowfile_worker/     # FastAPI compute worker - heavy data processing offload (p
 flowfile_frame/      # Python API library - Polars-like interface for programmatic flow building
 flowfile_frontend/   # Tauri 2 (Rust shell) + Vue 3 desktop/web UI with VueFlow graph editor
 flowfile_scheduler/  # Embedded scheduler for recurring flow runs
-flowfile_wasm/       # Browser-only WASM version using Pyodide (lightweight, 16 nodes)
+flowfile_wasm/       # Browser-only WASM version using Pyodide (lightweight node subset)
 flowfile/            # CLI entry point and web UI launcher
 kernel_runtime/      # Docker-based isolated Python code execution environment (port 9999)
-shared/              # Cross-service package (storage_config, crypto, cloud_storage, kafka, ml, rest_api, google_analytics)
+shared/              # Cross-service package (storage_config, cloud_storage, kafka, ml, rest_api, google_analytics)
 build_backends/      # PyInstaller build scripts
 test_utils/          # Docker-backed test fixtures (postgres, mysql, s3/MinIO, gcs, azurite, kafka)
 tools/               # Schema migration (migrate/) + Tauri sidecar staging/signing (rename_sidecar.py)
 docs/                # MkDocs documentation site (Material theme)
-docker-remote/       # Compose stack using published Docker Hub images (remote/server deploy)
 ```
 
 Each Python package uses a nested layout: the importable code lives one level
@@ -35,6 +34,27 @@ architecture, conventions, and gotchas (`flowfile_core/`, `flowfile_worker/`,
 `flowfile_frame/`, `flowfile_frontend/`, `flowfile_scheduler/`, `flowfile_wasm/`,
 `kernel_runtime/`, `shared/`) — read the relevant one when working inside a
 package. Paths in those docs are relative to the package's own directory.
+
+### Skill library
+
+Deep runbooks live in `.claude/skills/` (raw discovery evidence in
+`.claude/investigation/`). Load the matching skill before working in its area:
+
+- `flowfile-change-control` — version bumps, Alembic migrations, dependency pins, release tags, CI gates.
+- `flowfile-architecture-contract` — system map + cross-service contracts; deciding where new code belongs.
+- `flowfile-debugging-playbook` — symptom→cause triage for live breakage (DB cascades, 307s, stale nodes, kernels, AI loops).
+- `flowfile-failure-archaeology` — past incidents and settled debates; check before re-fighting an old battle or trusting a stale branch.
+- `flowfile-build-and-env` — recreating any dev/build environment; make targets, sidecar staging, toolchain versions.
+- `flowfile-run-and-operate` — CLI verbs, headless flow runs, service startup modes, on-disk storage map.
+- `flowfile-testing-and-validation` — per-package test commands, pytest markers, Docker fixtures, test-DB isolation.
+- `flowfile-config-and-flags` — every env var and runtime flag, who reads it, defaults, and doc drift.
+- `flowfile-node-development` — adding or modifying a node type across core/frontend/frame/wasm.
+- `flowfile-frontend-conventions` — Vue renderer, Tauri shell, and WASM UI conventions and traps.
+- `flowfile-frame-and-codegen` — FlowFrame/Expr internals, lazy semantics, generated-code contract, stub pipeline.
+- `flowfile-ai-subsystem` — /ai/* architecture, providers, prompt-edit and executor-normalization doctrines.
+- `flowfile-codegen-parity-campaign` — closing visual-flow ↔ exported-Python parity gaps (xfails, code_generator/).
+- `flowfile-research-frontier` — the maintainer's long-horizon bets; scoping ambitious or exploratory work.
+- `flowfile-docs-and-writing` — docs-site structure, comment doctrine, CLAUDE.md maintenance protocol.
 
 ## Architecture
 
@@ -50,14 +70,14 @@ WASM frontend (Pyodide) runs fully in-browser — no core/worker/kernel.
 - **flowfile_worker** (`:63579`): Separate FastAPI service for CPU-intensive data ops. Each job runs in a **spawned subprocess** (`mp_context = get_context("spawn")` in `flowfile_worker/__init__.py`), so dataset memory lives in killable children, never the FastAPI process.
 - **kernel_runtime**: Docker containers for sandboxed user Python code. Each serves `uvicorn ... --port 9999` inside the container (`EXPOSE 9999`); core maps that to a host port in `19000-19999` and the kernel calls back to core on `:63578`.
 - **flowfile_frame**: Polars-like Python API (lazy evaluation, column expressions in `expr.py`, DB/cloud connectors). **Not standalone** — it imports `flowfile_core` directly to build in-process `FlowGraph` objects and ships in the same monorepo distribution.
-- **Flow graph engine**: `flowfile_core/flowfile_core/flowfile/flow_graph.py` (main DAG execution logic, ~224KB).
+- **Flow graph engine**: `flowfile_core/flowfile_core/flowfile/flow_graph.py` (main DAG execution logic; the largest module in the repo — read selectively).
 
 **Core/worker contract:** core must **not** materialise LazyFrames (no `.collect()` on the hot path). With `FLOWFILE_OFFLOAD_TO_WORKER` (default on) core serializes the LazyFrame and POSTs it to the worker at `WORKER_HOST:FLOWFILE_WORKER_PORT`; the worker holds the resulting dataset in its spawned children. Core ships paths/JSON, not in-memory frames. The **scheduler** is embedded in core (no separate service/port) and only auto-starts when `FLOWFILE_SCHEDULER_ENABLED` is set.
 
 ## Subsystems & Cross-Package Contracts
 
 - **AI** (`flowfile_core/flowfile_core/ai/`): LLM agent stack behind the `/ai/*` router. Surfaces in `ai/agents/` (`assist` single-shot, `copilot` next-step, `planner` multi-turn diff-staged graph edits). Providers in `ai/providers/registry.py` are **litellm-backed** (anthropic, openai, google, groq, openrouter, ollama, local); BYOK per-user encrypted keys in `ai/byok.py` + `ai/credentials.py`; on-demand local llama.cpp model in `ai/local_model/`. The whole router is gated by `FEATURE_FLAG_AI` (a runtime-flippable `MutableBool`, default on) → 503 when off. **Keep the package litellm-import-free except `ai/byok.py`** — importing `ai.credentials` / `ai.feature_flag` must do no provider I/O; lazy-contract tests enforce this. AI tests live in `flowfile_core/tests/ai/`.
-- **Database & migrations**: one SQLite catalog DB (`flowfile_catalog.db`) shared by core, scheduler, and worker. URL resolved in `shared/storage_config.get_database_url()`. Schema changes use **Alembic** (`flowfile_core/flowfile_core/alembic/versions/NNN_*.py`, currently 001–021), run automatically at core startup via `flowfile_core/database/migration.py`. Add a migration when changing `flowfile_core/database/models.py`; keep the numeric `NNN_` prefix sequence.
+- **Database & migrations**: one SQLite catalog DB (`flowfile_catalog.db`) shared by core, scheduler, and worker. URL resolved in `shared/storage_config.get_database_url()`. Schema changes use **Alembic** (`flowfile_core/flowfile_core/alembic/versions/NNN_*.py`; `ls` the dir for the current head), run automatically at core startup via `flowfile_core/database/migration.py`. Add a migration when changing `flowfile_core/database/models.py`; keep the numeric `NNN_` prefix sequence.
 - **`shared/` layer**: import-only-downward utilities for core/worker/scheduler/kernel. `shared/storage_config.py` is the single source of truth for on-disk paths via the `storage` singleton — two roots: **internal** (`base_directory`, `~/.flowfile` locally / `/app/internal_storage` in Docker) vs **user data** (flows, uploads, outputs). Kernel-exchange/artifact dirs must stay under the kernel shared volume so Docker kernels can read/write them — don't relocate them to `base_directory`.
 - **Secrets & API keys**: user secrets use a Fernet master key → **HKDF per-user key**. Stored format `$ffsec$1$<user_id>$<token>` embeds the user_id so the **worker re-derives the key independently of core** (`flowfile_core/secret_manager/secret_manager.py`, `flowfile_worker/secrets.py`) — don't change the format without migrating both sides. API keys are hashed with **SHA-256** (`flowfile_core/auth/api_key.py`): intentional for 256-bit tokens; the CodeQL weak-hash alert is a known false positive, not a bug to "fix" with a KDF.
 - **Group-based sharing** (`flowfile_core/flowfile_core/auth/sharing.py`): multi-user authorization layer letting resources be shared with **user groups** at `use`/`manage` levels. Three tables (`user_groups`, `user_group_memberships`, one polymorphic `resource_grants`) added in migration 020; routers `/user-groups` + `/shares` (both **404 in electron** mode). Sharing is **authorization-only** — the `$ffsec$1$<owner_id>$` ciphertext stays owner-keyed, so a shared secret/connection decrypts unchanged in core *and* the worker (zero worker/scheduler changes). `sharing_enabled()` reads `FLOWFILE_MODE` from `os.environ` per call (settings caches it at import). Resource lookups (`get_encrypted_secret`, `get_database_connection`, GA/Kafka helpers) are **own-first, else group-granted** (own shadows shared; lowest id wins on name collisions). Connection mutations by manage-grantees that change a target field (host/endpoint/protocol) require re-entering credentials (anti-repoint-harvest); rotated secrets re-encrypt under the **owner's** id. The **catalog is private-by-default in docker mode** via `catalog/access.py::AccessResolver` injected into `CatalogService` (`access=None` ⇒ unrestricted: electron, internal callers, tests); admins and the kernel `_internal_service` principal bypass. Every resource-delete path must call `sharing.delete_grants_for_resource` (SQLite reuses rowids). Tests in `flowfile_core/tests/sharing/` run an in-process docker-mode fixture.
@@ -125,6 +145,10 @@ docker compose up -d
 | `make test_built_services` | Smoke-test the PyInstaller binaries against `/docs` |
 | `make stubs` | Regenerate flowfile_frame `.pyi` stubs (run after changing FlowFrame/Expr/public API) |
 | `make check_stubs` | CI drift gate: regenerate stubs and fail if they differ from committed files |
+| `make formula_docs` | Regenerate `docs/users/formulas/functions.md` from polars-expr-transformer docstrings |
+| `make check_formula_docs` | CI drift gate: regenerate formula docs and fail if the committed page changed |
+| `make bump-version VERSION=X.Y.Z` | Bump the app version everywhere (pyproject / package.json / tauri.conf.json / Cargo.toml) |
+| `make check-version` | CI drift gate: fail if the version is out of sync across manifests |
 | `make generate_key` / `make force_key` | Generate Fernet master key (no-op if present) / regenerate unconditionally |
 | `make update_lock` / `make force_lock` | Refresh Poetry lock (`poetry lock` / `poetry lock --no-update`) |
 | `make stop_servers` | Kill stray `flowfile_core` / Vite dev-server processes |
@@ -167,6 +191,7 @@ poetry run pytest -m kernel
 | `kernel` | Integration tests requiring Docker kernel containers |
 | `docker_integration` | Full Docker-based E2E tests (Docker required, slow) |
 | `kafka` | Integration tests requiring a Kafka/Redpanda broker (Docker) |
+| `lsp` | Notebook LSP (Jedi) code-intelligence tests |
 
 **Coverage source:** `flowfile_core/flowfile_core` + `flowfile_worker/flowfile_worker` only (frame/scheduler excluded).
 
@@ -297,7 +322,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 
 ## CI/CD Workflows
 
-`.github/workflows/` holds 12 workflows (note the mix of `.yml` and `.yaml`). All path-filtered workflows also support `workflow_dispatch` (manual run). CodeQL security scanning is **not** a workflow file — it runs via GitHub Advanced Security **default setup** (configured in repo Settings → Code security), covering python/js-ts/actions/rust on a weekly schedule. (A legacy `codeql.yaml` advanced workflow was removed: it failed weekly on a missing config file and could not coexist with default setup.)
+`.github/workflows/` holds the CI pipelines (mix of `.yml` and `.yaml`; `ls .github/workflows` for the current set). All path-filtered workflows also support `workflow_dispatch` (manual run). CodeQL security scanning runs via GitHub Advanced Security **default setup** (configured in repo Settings → Code security), covering python/js-ts/actions/rust on a weekly schedule. A legacy `codeql.yaml` advanced workflow **still exists** (weekly cron, python/js-ts) but references a missing `.github/codeql/codeql-config.yml`, so default setup is the effective scanner.
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
@@ -313,6 +338,9 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `pypi-release.yml` | Git tags `v*` | Build frontend into static, Poetry build, publish to PyPI |
 | `release.yaml` | Git tags `v*` | Build & sign Tauri desktop installers (macOS arm64/intel, Windows, Linux), publish GitHub release |
 | `npm-publish-wasm.yml` | Git tags `wasm-v*` | Publish `flowfile-editor` WASM package to npm |
+| `claude.yml` | `@claude` mention in issues / PR comments / reviews | Claude Code agent responds on GitHub |
+| `claude-pr-review.yml` | PR opened/synchronize/ready/reopened (skips drafts) | Automated Claude PR review |
+| `codeql.yaml` | Weekly cron + manual | Legacy advanced CodeQL scan (broken config reference — see note above) |
 
 > Release tags: pushing a `v*` tag fires **both** `pypi-release.yml` (PyPI) and `release.yaml` (desktop installers); a `wasm-v*` tag fires the npm WASM publish.
 
@@ -364,11 +392,11 @@ environment in local/desktop runs.
 
 ## Important Files
 
-- `flowfile_core/flowfile_core/flowfile/flow_graph.py` - Core DAG execution engine (~224KB, 5349 lines)
-- `flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py` - Polars data engine backing node execution (~120KB)
-- `flowfile_core/flowfile_core/schemas/input_schema.py` - Pydantic node-config schemas (the node settings contract, ~64KB)
-- `flowfile_frame/flowfile_frame/flow_frame.py` - FlowFrame API (~140KB, 3414 lines)
-- `flowfile_frame/flowfile_frame/expr.py` - Column expression system (~68KB, 1722 lines)
+- `flowfile_core/flowfile_core/flowfile/flow_graph.py` - Core DAG execution engine (largest module in the repo; read selectively)
+- `flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py` - Polars data engine backing node execution (large)
+- `flowfile_core/flowfile_core/schemas/input_schema.py` - Pydantic node-config schemas (the node settings contract)
+- `flowfile_frame/flowfile_frame/flow_frame.py` - FlowFrame API (large; read selectively)
+- `flowfile_frame/flowfile_frame/expr.py` - Column expression system
 - `flowfile_core/flowfile_core/main.py` - Core FastAPI app with all routers
 - `flowfile_worker/flowfile_worker/main.py` - Worker FastAPI app
 - `flowfile/flowfile/__main__.py` - CLI entry point (run flows, launch web UI, `flowfile project {init|open|save}` git project-tracking verb)
