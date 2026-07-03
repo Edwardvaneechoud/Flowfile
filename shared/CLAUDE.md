@@ -44,7 +44,7 @@ Tests live in `shared/tests/` and run from the repo root:
 poetry run pytest shared/tests
 ```
 - `tests/test_artifact_storage.py`, `tests/test_ml_metrics.py` — plain unit tests.
-- `tests/kafka/` — needs a Redpanda container; `tests/kafka/conftest.py` auto-starts it via `test_utils.kafka.fixtures` and `pytest.skip`s when Docker is unavailable. No custom pytest marker is applied to shared tests (the `worker`/`core`/`kernel` markers in root `pyproject.toml` are not used here).
+- `tests/kafka/` — needs a Redpanda container; `tests/kafka/conftest.py` auto-starts it via `test_utils.kafka.fixtures` and `pytest.skip`s when Docker is unavailable. No custom pytest marker is applied to shared tests (none of the root `pyproject.toml` markers are used here).
 
 ## Gotchas
 - `crypto/` exists on disk but contains only stale `__pycache__/*.pyc` — there is NO tracked crypto source module. Don't import `shared.crypto`; envelope/master-key crypto lives elsewhere.

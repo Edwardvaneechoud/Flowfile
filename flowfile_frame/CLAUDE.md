@@ -37,7 +37,7 @@ Library only — no server/CLI of its own. Usage: `import flowfile_frame as ff`,
 ```bash
 poetry run pytest flowfile_frame/tests
 ```
-Tests live in `tests/` (`test_flow_frame.py`, `test_expressions.py`, `test_ff_repr.py`, `test_joins.py`, etc.). `tests/conftest.py` sets `TESTING=True` and provisions a MinIO cloud connection (`minio-flowframe-test`, expects MinIO on `localhost:9000`). Docker-dependent tests use `@pytest.mark.skipif(not is_docker_available(), ...)` (helper in `tests/utils.py`). There is no `frame`-specific pytest marker in root `pyproject.toml` (only `worker`, `core`, `kernel`).
+Tests live in `tests/` (`test_flow_frame.py`, `test_expressions.py`, `test_ff_repr.py`, `test_joins.py`, etc.). `tests/conftest.py` sets `TESTING=True` and provisions a MinIO cloud connection (`minio-flowframe-test`, expects MinIO on `localhost:9000`). Docker-dependent tests use `@pytest.mark.skipif(not is_docker_available(), ...)` (helper in `tests/utils.py`). There is no `frame`-specific pytest marker in root `pyproject.toml` (see `[tool.pytest.ini_options]` for the registered set).
 
 ## Gotchas
 - **Stub gate.** Public surface of `FlowFrame`/`Expr`/submodules ships committed `.pyi` stubs (+ `py.typed`). After any public API change run `make stubs` (root) and commit; `make check_stubs` is the CI gate that fails on drift. All three generators run from `make stubs`: `expr_stub_generator.py` → `expr.pyi`, `flow_frame_stub_generator.py` → `flow_frame.pyi`, and `submodule_stub_generator.py` → every other `.pyi` **including `__init__.pyi`** (it walks all `.py`, excluding only `expr.py`/`flow_frame.py`). `make stubs` then runs `ruff --select F401 --fix` to prune unused imports.
@@ -46,8 +46,8 @@ Tests live in `tests/` (`test_flow_frame.py`, `test_expressions.py`, `test_ff_re
 - DB/cloud/catalog helpers persist via `flowfile_core` (`get_db_context`, core's connection manager) — they touch core's storage, not a local file.
 
 ## Key files
-- `flowfile_frame/flow_frame.py` — `FlowFrame`, the central graph-building class (~140KB / ~3.4k lines).
-- `flowfile_frame/expr.py` — column expression system + `_repr_str` (~68KB / ~1.7k lines).
+- `flowfile_frame/flow_frame.py` — `FlowFrame`, the central graph-building class (large; read selectively).
+- `flowfile_frame/expr.py` — column expression system + `_repr_str` (large).
 - `flowfile_frame/__init__.py` — public API surface, Polars re-exports, `LazyFrame`/`DataFrame` aliases.
 - `flowfile_frame/lazy_methods.py` — `add_lazyframe_methods`, `PASSTHROUGH_METHODS`.
 - `flowfile_frame/flow_frame_methods.py` — module-level constructors/readers.

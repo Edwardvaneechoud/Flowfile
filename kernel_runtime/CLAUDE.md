@@ -5,7 +5,7 @@ FastAPI service that executes arbitrary user Python in an isolated Docker contai
 ## Role
 A sandboxed code-execution kernel. `flowfile_core`'s `KernelManager` (`flowfile_core/flowfile_core/kernel/manager.py`) launches one container per kernel from a published image, serving uvicorn on container port **9999** (`EXPOSE 9999`). In local Docker mode core maps 9999 to a host port in the **19000-19999** range (`_BASE_PORT=19000`, `_PORT_RANGE=1000`); in Docker-in-Docker mode it reaches the kernel by service name on 9999 (no host map). Core POSTs `/execute` with code + input parquet paths; the kernel runs the code, writes output parquet to the shared volume, and calls **back to core** (`FLOWFILE_CORE_URL`, default `http://host.docker.internal:63578`) for global-artifact and catalog HTTP APIs. Core never materialises datasets — the kernel does the Polars/Delta work and ships paths/JSON.
 
-Image flavours (selected by core, not by this package): **base** / **ml** / **lite**, defaulting to `edwardvaneechoud/flowfile-kernel-{base,ml,lite}:0.3.0`, overridable via `FLOWFILE_KERNEL_IMAGE` (legacy base alias) or `FLOWFILE_KERNEL_IMAGE_{BASE,ML,LITE}`. The Dockerfile builds base vs ml via `--build-arg EXTRAS=ml`; lite via `--build-arg SLIM_CONSTRAINTS=true`.
+Image flavours (selected by core, not by this package): **base** / **ml** / **lite**, defaulting to the exact `edwardvaneechoud/flowfile-kernel-{base,ml,lite}` tags pinned in `flowfile_core/flowfile_core/kernel/manager.py`, overridable via `FLOWFILE_KERNEL_IMAGE` (legacy base alias) or `FLOWFILE_KERNEL_IMAGE_{BASE,ML,LITE}`. The Dockerfile builds base vs ml via `--build-arg EXTRAS=ml`; lite via `--build-arg SLIM_CONSTRAINTS=true`.
 
 ## Layout
 - `kernel_runtime/main.py` — FastAPI app, `/execute` + clear/artifact/persistence/recovery/memory/display/health endpoints, per-flow namespace store, SIGUSR1 interrupt handling.
@@ -24,7 +24,7 @@ Image flavours (selected by core, not by this package): **base** / **ml** / **li
 - **Path translation:** core passes host paths; `_translate_host_path_to_container` rewrites them to container mounts (`FLOWFILE_HOST_CATALOG_TABLES_DIR`→`/catalog_tables` checked first, then `FLOWFILE_HOST_SHARED_DIR`→`/shared`). In DinD those env vars are unset and paths pass through unchanged.
 - **Core callbacks auth:** `X-Internal-Token` (prefer per-request `internal_token`, fall back to `FLOWFILE_INTERNAL_TOKEN`) + `X-Kernel-Id`.
 - **No flowfile_core/worker import:** the kernel re-implements Delta writes itself (`_perform_delta_write` mirrors `shared/delta_utils.py`) so it stays standalone.
-- **Version contract:** image / `pyproject.toml` version (`0.3.1`) evolves independently of the app version (root `0.11.0`) and of the runtime API `__version__` (`kernel_runtime/__init__.py`, currently `0.2.2`, surfaced by `/health`). The app pins **one exact kernel tag per flavour** in `flowfile_core/flowfile_core/kernel/manager.py` — there is **no** compatibility range and **no** runtime version check (`kernel_version` is display-only). polars (`>=1.8.2,<1.40`) and pyarrow (`^18`) are aligned with core; core's `flavours.py` reads `kernel_runtime/poetry.lock` as the source of truth for baked versions. Full write-up: `docs/for-developers/kernel-architecture.md` → "Versioning & compatibility".
+- **Version contract:** three independent version streams — the image version (this package's `pyproject.toml`), the app version (root `pyproject.toml`), and the runtime API `__version__` (`kernel_runtime/__init__.py`, surfaced by `/health`); don't assume any of them match. The app pins **one exact kernel tag per flavour** in `flowfile_core/flowfile_core/kernel/manager.py` — there is **no** compatibility range and **no** runtime version check (`kernel_version` is display-only). polars/pyarrow pins are aligned with core (compare both `pyproject.toml`s when bumping); core's `flavours.py` reads `kernel_runtime/poetry.lock` as the source of truth for baked versions. Full write-up: `docs/for-developers/kernel-architecture.md` → "Versioning & compatibility".
 
 ## Running / entry points
 - Local (no Docker): `poetry run uvicorn kernel_runtime.main:app --host 0.0.0.0 --port 9999`
@@ -51,5 +51,5 @@ Image flavours (selected by core, not by this package): **base** / **ml** / **li
 - `kernel_runtime/serialization.py` — global-artifact format detection / (de)serialise.
 - `Dockerfile` — multi-stage build, `EXTRAS`/`SLIM_CONSTRAINTS` args, exports `/opt/constraints.txt`.
 - `entrypoint.sh` — `KERNEL_PACKAGES` install then launch uvicorn on 9999.
-- `pyproject.toml` — pinned deps aligned with core, `ml` extras group, image version `0.3.0`.
+- `pyproject.toml` — pinned deps aligned with core, `ml` extras group, the image version.
 - `tests/conftest.py` — `TestClient` fixtures + global-state reset.
