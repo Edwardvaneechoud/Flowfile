@@ -80,6 +80,34 @@ export function reconcileBindings(
   });
 }
 
+// True when a freshly-read subflow interface no longer matches the slots/params
+// the node last saved (ports added/removed/renamed/reordered, or a parameter
+// spec changed) — i.e. the node is stale and should re-sync. Description-only
+// parameter edits are ignored so a mere doc tweak doesn't churn connections.
+export function subflowInterfaceChanged(
+  iface: { inputs: { name: string }[]; outputs: { name: string }[]; parameters: FlowParameter[] },
+  inputSlots: string[],
+  outputSlots: string[],
+  parameterSpecs: FlowParameter[],
+): boolean {
+  const sameNames = (ports: { name: string }[], slots: string[]): boolean =>
+    ports.length === slots.length && ports.every((port, i) => port.name === slots[i]);
+  if (!sameNames(iface.inputs, inputSlots)) return true;
+  if (!sameNames(iface.outputs, outputSlots)) return true;
+  // Normalize so a saved spec round-tripped through the backend ([] / null /
+  // undefined enum_values, absent type) doesn't read as "changed" every open.
+  const project = (params: FlowParameter[]): string =>
+    JSON.stringify(
+      params.map((p) => [
+        p.name,
+        p.type ?? "string",
+        p.default_value ?? "",
+        p.enum_values && p.enum_values.length ? p.enum_values : null,
+      ]),
+    );
+  return project(iface.parameters) !== project(parameterSpecs);
+}
+
 export interface EdgeLike {
   id: string;
   source: string;

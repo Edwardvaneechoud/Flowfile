@@ -582,7 +582,8 @@ def add_node(
         logger.info("Adding node")
         flow.add_node_promise(node_promise, track_history=False)
 
-        if check_if_has_default_setting(node_type):
+        is_subflow_port = node_type in ("flow_input", "flow_output")
+        if check_if_has_default_setting(node_type) or is_subflow_port:
             logger.info(f"Found standard settings for {node_type}, trying to upload them")
             setting_name_ref = "node" + node_type.replace("_", "")
             node_model = get_node_model(setting_name_ref)
@@ -595,6 +596,14 @@ def add_node(
                 initial_settings = node_model(
                     flow_id=flow_id, node_id=node_id, cache_results=False, pos_x=pos_x, pos_y=pos_y, node_type=node_type
                 )
+                if is_subflow_port:
+                    # A second subflow port must not collide on the default name ('output'/'input').
+                    name_attr = "output_name" if node_type == "flow_output" else "input_name"
+                    setattr(
+                        initial_settings,
+                        name_attr,
+                        flow._unique_subflow_port_name(getattr(initial_settings, name_attr), node_type, node_id),
+                    )
                 add_func(initial_settings)
             finally:
                 flow.flow_settings.track_history = original_track_history

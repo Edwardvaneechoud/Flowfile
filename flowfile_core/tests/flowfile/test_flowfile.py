@@ -2792,3 +2792,37 @@ def test_filter_split_mode_default_is_false():
         ),
     )
     assert settings.split_mode is False
+
+
+class TestGetCloudConnectionSettings:
+    """Resolution contract for get_cloud_connection_settings (no Docker required)."""
+
+    def test_auto_without_connection_falls_back_to_env_vars(self):
+        from flowfile_core.flowfile.flow_graph import get_cloud_connection_settings
+
+        conn = get_cloud_connection_settings(connection_name=None, user_id=1, auth_mode="auto")
+        assert conn.auth_method == "env_vars"
+
+    def test_env_vars_without_connection_falls_back_to_env_vars(self):
+        from flowfile_core.flowfile.flow_graph import get_cloud_connection_settings
+
+        conn = get_cloud_connection_settings(connection_name="", user_id=1, auth_mode="env_vars")
+        assert conn.auth_method == "env_vars"
+
+    def test_aws_cli_without_connection_falls_back_to_aws_cli(self):
+        from flowfile_core.flowfile.flow_graph import get_cloud_connection_settings
+
+        conn = get_cloud_connection_settings(connection_name=None, user_id=1, auth_mode="aws-cli")
+        assert conn.auth_method == "aws-cli"
+
+    def test_missing_named_connection_raises_instead_of_masking(self):
+        """A referenced-but-missing connection must error, not silently degrade to env auth."""
+        from fastapi import HTTPException
+
+        from flowfile_core.flowfile.flow_graph import get_cloud_connection_settings
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_cloud_connection_settings(
+                connection_name="does-not-exist-xyz", user_id=1, auth_mode="auto"
+            )
+        assert exc_info.value.status_code == 400

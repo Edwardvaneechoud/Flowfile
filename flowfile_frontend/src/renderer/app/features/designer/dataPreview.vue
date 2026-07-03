@@ -48,8 +48,14 @@
             :title="output.title"
             @click="selectOutput(output.id)"
           >
-            <span class="output-selector__letter">{{ output.label || output.id }}</span>
-            <span v-if="output.title" class="output-selector__name">{{ output.title }}</span>
+            <span
+              v-if="output.title && output.label && output.title !== output.label"
+              class="output-selector__letter"
+              >{{ output.label }}</span
+            >
+            <span class="output-selector__name">{{
+              output.title || output.label || output.id
+            }}</span>
           </button>
         </div>
 

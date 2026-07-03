@@ -16,8 +16,9 @@ import yaml
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.flowfile.manage.io_flowfile import _flowfile_data_to_flow_information, open_flow
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
 from flowfile_core.schemas.output_model import RunInformation
 
 
@@ -1001,6 +1002,78 @@ class TestMultiOutputRoundtrip:
             assert loaded.get_node(downstream_id)._input_output_handles[2] == expected_handle, (
                 f"Node {downstream_id} should be wired to {expected_handle} after reload"
             )
+
+
+class TestCloudStorageAutoAuthImport:
+    """Regression: cloud storage nodes saved with the default auth_mode='auto' must re-import.
+
+    auth_mode was typed as the connection-level AuthMethod literal (which has no 'auto').
+    Pydantic skips default validation on construction, so a node built with the 'auto' default
+    saved fine, but re-opening the persisted flow validated the explicit 'auto' and raised a
+    ValidationError deep in _flowfile_data_to_flow_information (the import crash path).
+    """
+
+    @staticmethod
+    def _flowfile_data_with_node(node_type: str, setting_input: dict) -> schemas.FlowfileData:
+        return schemas.FlowfileData(
+            flowfile_version="1.0",
+            flowfile_id=1,
+            flowfile_name="cloud_auto_auth",
+            flowfile_settings=schemas.FlowfileSettings(),
+            nodes=[
+                schemas.FlowfileNode(id=1, type=node_type, is_start_node=True, setting_input=setting_input),
+            ],
+        )
+
+    def test_read_settings_auto_auth_survives_model_roundtrip(self):
+        settings = CloudStorageReadSettings(
+            resource_path="s3://demo-bucket/data-lake/sales/*", scan_mode="directory", file_format="parquet"
+        )
+        assert settings.auth_mode == "auto", "default node-level auth_mode should be 'auto'"
+        restored = CloudStorageReadSettings.model_validate(settings.model_dump())
+        assert restored.auth_mode == "auto"
+
+    def test_write_settings_auto_auth_survives_model_roundtrip(self):
+        settings = CloudStorageWriteSettings(resource_path="s3://demo-bucket/out/summary.parquet")
+        assert settings.auth_mode == "auto"
+        restored = CloudStorageWriteSettings.model_validate(settings.model_dump())
+        assert restored.auth_mode == "auto"
+
+    def test_cloud_storage_reader_auto_auth_reimports(self):
+        read_settings = CloudStorageReadSettings(
+            resource_path="s3://demo-bucket/data-lake/sales/year=2024/month=*",
+            scan_mode="directory",
+            file_format="parquet",
+            connection_name=None,
+        )
+        node = input_schema.NodeCloudStorageReader(
+            flow_id=1, node_id=1, user_id=1, cloud_storage_settings=read_settings
+        )
+        flowfile_data = self._flowfile_data_with_node("cloud_storage_reader", node.model_dump())
+
+        # Exact function from the reported import crash traceback.
+        flow_info = _flowfile_data_to_flow_information(flowfile_data)
+
+        loaded = flow_info.data[1].setting_input
+        assert isinstance(loaded, input_schema.NodeCloudStorageReader)
+        assert loaded.cloud_storage_settings.auth_mode == "auto"
+
+    def test_cloud_storage_writer_auto_auth_reimports(self):
+        write_settings = CloudStorageWriteSettings(
+            resource_path="s3://demo-bucket/data-lake/aggregated/summary.parquet",
+            write_mode="overwrite",
+            file_format="parquet",
+        )
+        node = input_schema.NodeCloudStorageWriter(
+            flow_id=1, node_id=1, user_id=1, cloud_storage_settings=write_settings
+        )
+        flowfile_data = self._flowfile_data_with_node("cloud_storage_writer", node.model_dump())
+
+        flow_info = _flowfile_data_to_flow_information(flowfile_data)
+
+        loaded = flow_info.data[1].setting_input
+        assert isinstance(loaded, input_schema.NodeCloudStorageWriter)
+        assert loaded.cloud_storage_settings.auth_mode == "auto"
 
 
 if __name__ == '__main__':
