@@ -2274,6 +2274,30 @@ class TestSaveFlowToCatalog:
             except Exception:
                 pass
 
+    def test_unnamed_flow_has_friendly_untitled_name(self):
+        """A quick-created flow (no name) reads clearly as unnamed and keeps the display
+        name out of the on-disk filename (filesystem-safe, unique per flow id)."""
+        from flowfile_core.flowfile.handler import create_flow_name, create_unnamed_flow_filename
+
+        assert create_flow_name().startswith("Untitled flow ")
+        assert ".yaml" not in create_flow_name()
+        fname = create_unnamed_flow_filename(1234)
+        assert fname.endswith(".yaml") and "1234" in fname
+        assert " " not in fname and ":" not in fname
+
+        fid = flow_file_handler.add_flow(user_id=self._user_id())
+        path = Path(flow_file_handler.get_flow(fid).flow_settings.path)
+        try:
+            name = flow_file_handler.get_flow(fid).flow_settings.name
+            assert name.startswith("Untitled flow "), name
+            assert str(path).startswith(str(storage.unnamed_flows_directory)), path
+            # File name is filesystem-safe and decoupled from the display name.
+            assert path.name != name
+            assert " " not in path.name and ":" not in path.name
+            assert path.name.endswith(".yaml")
+        finally:
+            self._cleanup((fid,), (path,))
+
     def test_save_as_new_name_keeps_original(self):
         ns_id = self._make_namespace()
         fid = self._new_inmemory_flow("sa_alpha")
