@@ -1282,9 +1282,20 @@ class FlowGraph:
             determine_insertion_order,
         )
 
-        # Preserve the current flow_id and source_registration_id
+        # Preserve the live on-disk IDENTITY across the restore. Undo/redo replays
+        # graph state + editable settings ONLY; the flow's identity (where it lives on
+        # disk and what it is called) must survive because the snapshot does NOT carry
+        # it: FlowfileSettings omits name/path/save_location, and the snapshot's
+        # flowfile_name is the file STEM ("{flow_id}_test_flow"), not the catalog
+        # display name. Dropping path here previously reset it to "" after undo, which
+        # broke the display-name-by-path lookup (UI reverted to the raw stem) and
+        # path-based save relinking (422 "no save path" / a new orphaned registration).
         original_flow_id = self._flow_id
         original_source_registration_id = self._flow_settings.source_registration_id
+        original_name = self._flow_settings.name
+        original_path = self._flow_settings.path
+        original_save_location = self._flow_settings.save_location
+        original_graph_name = self.__name__
 
         flow_info = _flowfile_data_to_flow_information(snapshot)
 
@@ -1311,13 +1322,17 @@ class FlowGraph:
         self._groups.clear()
         self._results = None
 
-        # Restore flow settings (preserve original flow_id and source_registration_id)
+        # Restore editable settings from the snapshot, then re-stamp the LIVE identity
+        # so it is never sourced from the (stem-derived, path-less) snapshot.
         self._flow_settings = flow_info.flow_settings
         self._flow_settings.flow_id = original_flow_id
         self._flow_id = original_flow_id
+        self._flow_settings.name = original_name
+        self._flow_settings.path = original_path
+        self._flow_settings.save_location = original_save_location
         if self._flow_settings.source_registration_id is None:
             self._flow_settings.source_registration_id = original_source_registration_id
-        self.__name__ = flow_info.flow_name or self.__name__
+        self.__name__ = original_graph_name
 
         ingestion_order = determine_insertion_order(flow_info)
 

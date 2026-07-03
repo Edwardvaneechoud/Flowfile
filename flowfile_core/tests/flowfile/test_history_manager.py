@@ -1058,3 +1058,98 @@ class TestSelectNodeRedo:
         restored_data_type = select_node.setting_input.select_input[0].data_type
         assert restored_data_type == 'Float64', \
             f"After redo, data_type should be Float64, but got {restored_data_type}"
+
+
+# ==================== Restore preserves on-disk identity ====================
+
+
+@pytest.fixture
+def catalog_like_flow(flow_handler):
+    """A flow mimicking one opened from the catalog: the ``name`` is the file stem
+    ``{flow_id}_test_flow`` and it has a real ``path`` + ``source_registration_id``
+    (the state ``open_flow`` produces). History enabled for manual capture."""
+    flow_handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=99,
+            name='99_test_flow',
+            path='/data/flows/99_test_flow.yaml',
+            save_location=None,
+            source_registration_id=42,
+            execution_mode='Development',
+            track_history=False,
+        )
+    )
+    flow = flow_handler.get_flow(99)
+    flow._history_manager._config = HistoryConfig(enabled=True)
+    return flow
+
+
+class TestRestoreFromSnapshotPreservesIdentity:
+    """Undo/redo must revert graph + editable settings but never the flow's on-disk
+    identity (name/path/save_location/source_registration_id). Regression test for the
+    bug where undo wiped ``path`` -> the UI reverted to the raw ``{flow_id}_`` stem and
+    saving orphaned the catalog registration."""
+
+    def test_undo_preserves_identity_and_reverts_graph(self, catalog_like_flow, sample_data):
+        flow = catalog_like_flow
+        add_manual_input_node(flow, sample_data, node_id=1)
+        initial_count = len(flow.nodes)
+
+        flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "before adding node")
+
+        add_filter_node(flow, node_id=2, input_node_id=1)
+        assert len(flow.nodes) == initial_count + 1
+
+        result = flow.undo()
+        assert result.success is True
+
+        # Identity preserved (path is the load-bearing field the bug wiped to "").
+        assert flow.flow_settings.path == '/data/flows/99_test_flow.yaml'
+        assert flow.flow_settings.name == '99_test_flow'
+        assert flow.flow_settings.save_location is None
+        assert flow.flow_settings.source_registration_id == 42
+        assert flow.flow_id == 99
+        assert flow.__name__ == '99_test_flow'
+        # Graph state reverted.
+        assert len(flow.nodes) == initial_count
+
+    def test_redo_re_preserves_identity(self, catalog_like_flow, sample_data):
+        flow = catalog_like_flow
+        add_manual_input_node(flow, sample_data, node_id=1)
+        initial_count = len(flow.nodes)
+
+        flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "before adding node")
+        add_filter_node(flow, node_id=2, input_node_id=1)
+
+        assert flow.undo().success is True
+        redo_result = flow.redo()
+        assert redo_result.success is True
+
+        # Graph re-applied and identity still intact after redo.
+        assert len(flow.nodes) == initial_count + 1
+        assert flow.flow_settings.path == '/data/flows/99_test_flow.yaml'
+        assert flow.flow_settings.name == '99_test_flow'
+        assert flow.flow_settings.source_registration_id == 42
+
+    def test_unsaved_flow_identity_is_noop_safe(self, flow_handler, sample_data):
+        """A never-saved flow (empty path) must undo without regressions."""
+        flow_handler.register_flow(
+            schemas.FlowSettings(
+                flow_id=101,
+                name='',
+                path='',
+                execution_mode='Development',
+                track_history=False,
+            )
+        )
+        flow = flow_handler.get_flow(101)
+        flow._history_manager._config = HistoryConfig(enabled=True)
+
+        add_manual_input_node(flow, sample_data, node_id=1)
+        flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "before adding node")
+        add_filter_node(flow, node_id=2, input_node_id=1)
+
+        result = flow.undo()
+        assert result.success is True
+        assert flow.flow_settings.path == ''
+        assert flow.flow_settings.save_location is None
