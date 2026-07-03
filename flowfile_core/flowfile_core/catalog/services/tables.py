@@ -366,6 +366,7 @@ class TableService:
 
         namespace_name = self._namespaces.resolve_namespace_name(table.namespace_id)
         full_table_name = format_full_name(namespace_name, table.name)
+        qualified_name = format_full_name(self._namespaces.resolve_namespace_path(table.namespace_id), table.name)
 
         return CatalogTableOut(
             id=table.id,
@@ -373,6 +374,7 @@ class TableService:
             namespace_id=table.namespace_id,
             namespace_name=namespace_name,
             full_table_name=full_table_name,
+            qualified_name=qualified_name,
             description=table.description,
             owner_id=table.owner_id,
             file_exists=file_exists_flag,
@@ -409,9 +411,11 @@ class TableService:
         favorite_ids = self.repo.bulk_get_favorite_table_ids(user_id, table_ids)
 
         ns_name_cache: dict[int, str | None] = {}
+        ns_path_cache: dict[int, str | None] = {}
         for t in tables:
             if t.namespace_id is not None and t.namespace_id not in ns_name_cache:
                 ns_name_cache[t.namespace_id] = self._namespaces.resolve_namespace_name(t.namespace_id)
+                ns_path_cache[t.namespace_id] = self._namespaces.resolve_namespace_path(t.namespace_id)
 
         result: list[CatalogTableOut] = []
         for table in tables:
@@ -425,7 +429,9 @@ class TableService:
             file_exists_flag = self._check_file_exists(table)
 
             namespace_name = ns_name_cache.get(table.namespace_id) if table.namespace_id is not None else None
+            namespace_path = ns_path_cache.get(table.namespace_id) if table.namespace_id is not None else None
             full_table_name = format_full_name(namespace_name, table.name)
+            qualified_name = format_full_name(namespace_path, table.name)
 
             result.append(
                 CatalogTableOut(
@@ -434,6 +440,7 @@ class TableService:
                     namespace_id=table.namespace_id,
                     namespace_name=namespace_name,
                     full_table_name=full_table_name,
+                    qualified_name=qualified_name,
                     description=table.description,
                     owner_id=table.owner_id,
                     file_exists=file_exists_flag,
