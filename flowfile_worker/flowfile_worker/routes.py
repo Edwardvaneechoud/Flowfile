@@ -6,6 +6,7 @@ import uuid
 from queue import Empty
 
 import polars as pl
+from deltalake.exceptions import DeltaError
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 
 from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_context, status_dict, status_dict_lock
@@ -753,6 +754,10 @@ def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> mod
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except (FileNotFoundError, DeltaError) as e:
+        # Version outside retained history or its data files were vacuumed away.
+        logger.info(f"Delta version {payload.version} unavailable: {str(e)}")
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error reading delta version preview: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e

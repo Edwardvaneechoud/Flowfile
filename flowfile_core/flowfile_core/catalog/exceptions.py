@@ -180,6 +180,22 @@ class TableNotFoundError(CatalogError):
         super().__init__(detail)
 
 
+class TableVersionUnavailableError(CatalogError):
+    """Raised when a requested Delta table version can no longer be read.
+
+    The version is either outside the table's retained history or its data
+    files were removed by a vacuum operation, so it can no longer be previewed.
+    """
+
+    def __init__(self, version: int, table_id: int | None = None):
+        self.version = version
+        self.table_id = table_id
+        super().__init__(
+            f"Version {version} is no longer available. It may have been removed by a "
+            "vacuum operation or falls outside the table's retained history."
+        )
+
+
 class TableExistsError(CatalogError):
     """Raised when attempting to create a duplicate catalog table."""
 

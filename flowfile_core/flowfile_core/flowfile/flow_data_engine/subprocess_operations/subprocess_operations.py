@@ -499,6 +499,10 @@ def trigger_delta_version_preview(
     if storage is not None:
         payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
+    if response.status_code == 404:
+        from flowfile_core.catalog.exceptions import TableVersionUnavailableError
+
+        raise TableVersionUnavailableError(version=version)
     if not response.ok:
         raise RuntimeError(f"Worker delta version preview failed: {response.text}")
     return CatalogTablePreview.model_validate(response.json())
