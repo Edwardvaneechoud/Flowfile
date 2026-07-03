@@ -49,6 +49,7 @@ interface CatalogState {
   selectedTable: CatalogTable | null;
   tablePreview: CatalogTablePreview | null;
   loadingTablePreview: boolean;
+  previewError: string | null;
   tableHistory: DeltaTableHistory | null;
   loadingTableHistory: boolean;
   tableHistoryStale: boolean;
@@ -139,6 +140,7 @@ export const useCatalogStore = defineStore("catalog", {
     selectedTable: null,
     tablePreview: null,
     loadingTablePreview: false,
+    previewError: null,
     tableHistory: null,
     loadingTableHistory: false,
     tableHistoryStale: false,
@@ -412,6 +414,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedArtifact = null;
       this.clearNamespaceSelection();
       this.tablePreview = null;
+      this.previewError = null;
       // Show recently-loaded version history automatically from the sessionStorage cache (flagged
       // stale after 5 min). Only the data preview stays gated for object-storage tables.
       const cachedHistory = tableId !== null ? readCachedHistory(tableId) : null;
@@ -440,6 +443,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedTableId = null;
       this.selectedTable = null;
       this.tablePreview = null;
+      this.previewError = null;
       this.tableHistory = null;
       this.tableHistoryStale = false;
       this.selectedVersion = null;
@@ -447,10 +451,12 @@ export const useCatalogStore = defineStore("catalog", {
 
     async loadTablePreview(tableId: number, limit = 100) {
       this.loadingTablePreview = true;
+      this.previewError = null;
       try {
         this.tablePreview = await CatalogApi.getTablePreview(tableId, limit, this.selectedVersion);
-      } catch {
+      } catch (e: any) {
         this.tablePreview = null;
+        this.previewError = e?.response?.data?.detail ?? "Failed to load preview.";
       } finally {
         this.loadingTablePreview = false;
       }
@@ -508,8 +514,18 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     selectVersion(version: number | null) {
-      this.selectedVersion = version;
-      if (this.selectedTableId !== null) {
+      // Viewing the current version is the same as viewing "latest". The plain latest
+      // read stays valid after old versions are vacuumed, whereas a version-pinned read
+      // can reference files that vacuum removed — so route current → latest (null).
+      const current = this.tableHistory?.current_version ?? null;
+      this.selectedVersion = version !== null && version === current ? null : version;
+      if (this.selectedTableId === null) return;
+      // Mirror selectTable: object-storage previews load on demand (the "Load preview"
+      // button), never eagerly on a version click. Local tables still auto-load.
+      if (this.selectedTable?.is_remote_storage) {
+        this.tablePreview = null;
+        this.previewError = null;
+      } else {
         this.loadTablePreview(this.selectedTableId);
       }
     },

@@ -494,6 +494,14 @@ class TestWorkerRoutes:
         data = resp.json()
         assert len(data["rows"]) == 1
 
+    def test_delta_version_preview_missing_version_404(self, worker_client, versioned_delta):
+        """A version outside the table's history returns 404, not a 500."""
+        resp = worker_client.post(
+            "/catalog/delta_version_preview",
+            json={"table_path": "versioned", "version": 99, "n_rows": 100},
+        )
+        assert resp.status_code == 404
+
     def test_delta_preview(self, worker_client, versioned_delta):
         resp = worker_client.post(
             "/catalog/delta_preview",

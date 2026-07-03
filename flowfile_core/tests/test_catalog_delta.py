@@ -15,14 +15,16 @@ Covers:
 """
 
 import json
+import os
 from datetime import datetime, timezone
 
 import polars as pl
 import pytest
+from deltalake import DeltaTable
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.catalog import CatalogService, TableExistsError
+from flowfile_core.catalog import CatalogService, TableExistsError, TableVersionUnavailableError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import _parse_delta_history
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget
@@ -849,6 +851,98 @@ class TestGetTablePreviewDelta:
         assert len(preview_v0.rows) == 1
         assert len(preview_v1.rows) == 2
 
+    def test_preview_at_out_of_range_version_raises(self, tmp_path):
+        """A version beyond the table's history should raise TableVersionUnavailableError."""
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "oor_version"
+        pl.DataFrame({"v": [1]}).write_delta(str(delta_dir))
+
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="oor_table",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+                row_count=1,
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+
+            import flowfile_core.configs.settings
+            from flowfile_core.configs.utils import MutableBool
+
+            orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
+            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
+            try:
+                with pytest.raises(TableVersionUnavailableError):
+                    svc.get_table_preview(table.id, version=99)
+            finally:
+                flowfile_core.configs.settings.OFFLOAD_TO_WORKER = orig
+
+    def test_preview_at_vacuumed_version_raises(self, tmp_path):
+        """A version whose data files were vacuumed away should raise TableVersionUnavailableError."""
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "vacuumed_version"
+        pl.DataFrame({"v": [1]}).write_delta(str(delta_dir), mode="error")
+        pl.DataFrame({"v": [1, 2]}).write_delta(str(delta_dir), mode="overwrite")
+
+        # Simulate a vacuum: physically delete version 0's data files (log entry stays).
+        for uri in DeltaTable(str(delta_dir), version=0).file_uris():
+            path = uri.replace("file://", "")
+            if os.path.exists(path):
+                os.remove(path)
+
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="vacuumed_table",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+                row_count=2,
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+
+            import flowfile_core.configs.settings
+            from flowfile_core.configs.utils import MutableBool
+
+            orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
+            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
+            try:
+                # Latest version still reads fine; the vacuumed version does not.
+                assert len(svc.get_table_preview(table.id, version=1).rows) == 2
+                with pytest.raises(TableVersionUnavailableError):
+                    svc.get_table_preview(table.id, version=0)
+            finally:
+                flowfile_core.configs.settings.OFFLOAD_TO_WORKER = orig
+
+
+class TestTriggerDeltaVersionPreviewMapping:
+    """The worker offload path maps a 404 to TableVersionUnavailableError."""
+
+    def test_worker_404_maps_to_domain_exception(self, monkeypatch):
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
+
+        class _FakeResponse:
+            status_code = 404
+            ok = False
+            text = '{"detail": "Version 99 is no longer available."}'
+
+        monkeypatch.setattr(subops.requests, "post", lambda *a, **kw: _FakeResponse())
+
+        with pytest.raises(TableVersionUnavailableError):
+            subops.trigger_delta_version_preview("some_table", version=99, n_rows=100)
+
 
 # table_exists in _table_to_out (delta-aware)
 
@@ -1005,6 +1099,39 @@ class TestPreviewVersionEndpoint:
         data = resp.json()
         assert data["columns"] == ["val"]
         assert len(data["rows"]) == 3
+
+    def test_preview_missing_version_returns_410(self, client, tmp_path):
+        """Previewing a version that no longer exists returns 410 with a clear message."""
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "api_missing_version"
+        pl.DataFrame({"val": [1, 2, 3]}).write_delta(str(delta_dir))
+
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="api_missing_ver_table",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+                row_count=3,
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+            table_id = table.id
+
+        import flowfile_core.configs.settings
+        from flowfile_core.configs.utils import MutableBool
+
+        orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
+        flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
+        try:
+            resp = client.get(f"/catalog/tables/{table_id}/preview", params={"version": 99})
+        finally:
+            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = orig
+
+        assert resp.status_code == 410
+        assert "no longer available" in resp.json()["detail"].lower()
 
 
 # DB migration: storage_format column

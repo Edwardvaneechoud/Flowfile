@@ -7,13 +7,14 @@ from pathlib import Path
 
 import polars as pl
 from deltalake import DeltaTable
+from deltalake.exceptions import DeltaError
 
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
     read_delta_preview,
     table_exists,
 )
-from flowfile_core.catalog.exceptions import TableNotFoundError
+from flowfile_core.catalog.exceptions import TableNotFoundError, TableVersionUnavailableError
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.services._resolve import resolve_or_log
@@ -185,12 +186,17 @@ class TablePreviewService:
                 return trigger_delta_version_preview(
                     _catalog_table_dir_name(table_path), version, limit, storage=storage_payload
                 )
+            except TableVersionUnavailableError:
+                raise
             except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
-        delta_table = DeltaTable(table_path, version=version, storage_options=storage_options)
-        dataset = delta_table.to_pyarrow_dataset()
-        pa_table = dataset.head(limit)
+        try:
+            delta_table = DeltaTable(table_path, version=version, storage_options=storage_options)
+            pa_table = delta_table.to_pyarrow_dataset().head(limit)
+        except (FileNotFoundError, DeltaError) as exc:
+            logger.info("Delta version %s unavailable for %s: %s", version, table_path, exc)
+            raise TableVersionUnavailableError(version=version) from exc
         return format_pyarrow_preview(pa_table)
 
     def _get_delta_preview(
