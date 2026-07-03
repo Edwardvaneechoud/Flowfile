@@ -353,11 +353,13 @@ def get_cloud_connection_settings(
         HTTPException: If the connection settings cannot be found.
     """
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
-    if cloud_connection_settings is None and auth_mode in ("env_vars", "auto"):
-        # auto/env_vars resolve credentials from the environment, so no saved connection is needed
-        cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
-    elif cloud_connection_settings is None and auth_mode == "aws-cli":
-        cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
+    # Only fabricate a connection from the environment when no saved connection was referenced.
+    # A referenced-but-missing connection_name must still error, not silently fall back.
+    if cloud_connection_settings is None and not connection_name:
+        if auth_mode in ("env_vars", "auto"):
+            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
+        elif auth_mode == "aws-cli":
+            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
     if cloud_connection_settings is None:
         raise HTTPException(status_code=400, detail="Cloud connection settings not found")
     return cloud_connection_settings
