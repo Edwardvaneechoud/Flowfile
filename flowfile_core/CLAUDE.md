@@ -14,7 +14,7 @@ Central FastAPI backend and DAG execution engine for Flowfile: manages flows as 
 - `flowfile_core/flowfile/flow_data_engine/flow_data_engine.py` — per-node Polars compute wrapper (lazy frames, previews; `join/`, `fuzzy_matching/`, `subprocess_operations/` subdirs).
 - `flowfile_core/flowfile/sources/external_sources/` — SQL / REST API / Google Analytics / custom source connectors (`factory.py`).
 - `flowfile_core/configs/node_store/nodes.py` — node template/default registry (`get_all_standard_nodes`).
-- `flowfile_core/schemas/input_schema.py` — Pydantic node-config models (~90 classes); other request/response schemas alongside.
+- `flowfile_core/schemas/input_schema.py` — Pydantic node-config models (one per node type, large file); other request/response schemas alongside.
 - `flowfile_core/ai/` — AI subsystem (see patterns); routers under `ai/*_routes.py`, plus `agents/`, `providers/`, `tools/` (incl. `tools/executor/`), `local_model/`, `context/`.
 - `flowfile_core/auth/` — JWT (`jwt.py`), API keys (`api_key.py`), passwords (`password.py`).
 - `flowfile_core/secret_manager/secret_manager.py` — Fernet+HKDF per-user secret encryption.
@@ -32,7 +32,7 @@ Central FastAPI backend and DAG execution engine for Flowfile: manages flows as 
 - **Kernels:** `kernel/manager.py` allocates host ports from **19000–19999** (`_BASE_PORT=19000`, `_PORT_RANGE=1000`) per container; image flavours (`ImageFlavour.BASE/ML/LITE/CUSTOM`) resolve locked versions from `kernel_runtime/poetry.lock`, parsed in `kernel/flavours.py`. All containers stop in the app lifespan shutdown.
 - **Migrations auto-run on import:** importing `flowfile_core.database.init_db` runs `database/migration.py:run_startup_migration` at module level (skipped when `FLOWFILE_SKIP_STARTUP_MIGRATION` set), handling fresh-install, legacy `flowfile.db` copy, and pending-migration cases. `init_db()` itself then seeds default users/catalog. Add schema changes as a new `alembic/versions/NNN_*.py`; never hand-edit existing migrations.
 - **Settings are `MutableBool`** so they toggle live: `SINGLE_FILE_MODE`, `OFFLOAD_TO_WORKER`, `FEATURE_FLAG_AI`, `FLOWFILE_AI_LOG_PROMPTS[_SCRUB]`.
-- **Project git-tracking** (`project/`, router `routes/project.py`, migrations 023–026, `FLOWFILE_ENABLE_PROJECTS`): mirrors an install's flows/connections/schedules/catalog into a deterministic, secret-free git folder. The **DB stays the runtime source of truth**: projection (`projection.py`, DB→files) runs automatically as fire-and-forget hooks at the tail of catalog/secret/connection/flow save paths, and import (`importer.py`, files→DB) runs only at explicit boundaries (open/restore/reload). **The projection hooks must never raise** — failures are swallowed (logged) so a sync error never breaks the originating save. In docker mode the router 404s unless `FLOWFILE_ENABLE_PROJECTS` is set, and projects are confined to `<user_data>/projects/<owner_id>`.
+- **Project git-tracking** (`project/`, router `routes/project.py`, the `*project*` migrations in `alembic/versions/`, `FLOWFILE_ENABLE_PROJECTS`): mirrors an install's flows/connections/schedules/catalog into a deterministic, secret-free git folder. The **DB stays the runtime source of truth**: projection (`projection.py`, DB→files) runs automatically as fire-and-forget hooks at the tail of catalog/secret/connection/flow save paths, and import (`importer.py`, files→DB) runs only at explicit boundaries (open/restore/reload). **The projection hooks must never raise** — failures are swallowed (logged) so a sync error never breaks the originating save. In docker mode the router 404s unless `FLOWFILE_ENABLE_PROJECTS` is set, and projects are confined to `<user_data>/projects/<owner_id>`.
 
 ## Running / entry points
 ```bash
@@ -47,7 +47,7 @@ Scheduler only starts when `FLOWFILE_SCHEDULER_ENABLED` ∈ {true,1,yes}. `FLOWF
 poetry run pytest flowfile_core/tests          # this package's suite (run from repo root)
 poetry run pytest -m kernel                     # Docker-backed kernel tests only
 ```
-Tests live in `flowfile_core/tests/` (package root, `test_*.py`); fixtures in `tests/conftest.py`, `tests/kernel_fixtures.py`, helpers in `tests/flowfile_core_test_utils.py` / `tests/utils.py`. Markers: `core`, `kernel`, `kafka`, `docker_integration` (defined in root `pyproject.toml`). `asyncio_mode = strict`.
+Tests live in `flowfile_core/tests/` (package root, `test_*.py`); fixtures in `tests/conftest.py`, `tests/kernel_fixtures.py`, helpers in `tests/flowfile_core_test_utils.py` / `tests/utils.py`. Markers are defined in root `pyproject.toml` `[tool.pytest.ini_options]` (this package uses `core`, `kernel`, `kafka`, `docker_integration`, `lsp`). `asyncio_mode = strict`.
 
 ## Gotchas
 - `flowfile_core/__init__.py` runs `validate_setup()` then `init_db()` **on import** — importing the package has side effects (DB file creation, Alembic schema migration, default-user seeding).

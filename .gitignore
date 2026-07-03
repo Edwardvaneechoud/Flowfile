@@ -97,9 +97,10 @@ test-embed
 error-linux
 .claude/scheduled_tasks.lock
 
-# Repo-root local Claude state only — leave subtree configs
-# (e.g. plugin/agent dirs nested under packages) tracked.
-/.claude/
+# Repo-root Claude state: track the shared skills/investigation/launch config,
+# keep only machine-local settings out of version control
+# (scheduled_tasks.lock is ignored above under runtime artefacts).
+.claude/settings.local.json
 
 # Signing checklist holds real cert/notarization secrets — never commit
 flowfile_frontend/src-tauri/SIGNING_CHECKLIST.md
