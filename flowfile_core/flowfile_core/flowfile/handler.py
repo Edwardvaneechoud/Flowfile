@@ -192,13 +192,18 @@ class FlowfileHandler:
 
         return new_flow_id
 
-    def add_flow(self, name: str = None, flow_path: str = None, user_id: int | None = None) -> int:
+    def add_flow(
+        self, name: str = None, flow_path: str = None, user_id: int | None = None, persist: bool = True
+    ) -> int:
         """
         Creates a new flow with a reference to the flow path
         Args:
             name (str): The name of the flow
             flow_path (str): The path to the flow file
             user_id (int): The ID of the user creating the flow
+            persist (bool): When False, keep the flow in-memory only and do not write its
+                YAML to disk. Used for ephemeral scratch flows so an abandoned blank canvas
+                leaves no orphan file; the path is still set, so a later save/run writes it.
 
         Returns:
             int: The flow id
@@ -211,7 +216,10 @@ class FlowfileHandler:
             flow_path = get_flow_save_location(name)
         flow_info = FlowSettings(name=name, flow_id=next_id, save_location=str(flow_path), path=str(flow_path))
         flow = self.register_flow(flow_info, user_id=user_id)
-        flow.save_flow(flow.flow_settings.path)
+        if persist:
+            flow.save_flow(flow.flow_settings.path)
+        else:
+            flow.mark_as_saved()  # clean baseline, no YAML on disk until first save/run
         return next_id
 
     def get_flow_info(self, flow_id: int) -> FlowSettings:

@@ -315,6 +315,9 @@ def _run_and_track(flow, user_id: int | None):
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
+    # First run promotes an unregistered (ephemeral scratch) flow into the catalog so it
+    # gains a source_registration_id. This intentionally re-registers any unregistered flow;
+    # making a deliberate catalog deletion durable would need a tombstone (separate follow-up).
     if user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None:
         reg_path = flow.flow_settings.path or flow.flow_settings.save_location
         if reg_path:
@@ -990,9 +993,10 @@ def create_flow(
     namespace instead of the default (``General > Local Flows``).
 
     Set ``register_in_catalog=False`` to create an ephemeral scratch flow that is
-    not written into the catalog (no ``FlowRegistration`` / ``source_registration_id``).
-    Used by the designer's auto-open-blank-canvas landing so throwaway flows don't
-    accumulate in the catalog; an explicit "Save As" registers it later.
+    neither written into the catalog (no ``FlowRegistration`` / ``source_registration_id``)
+    nor persisted to disk (``persist=False``): it lives in-memory until an explicit save or
+    first run. Used by the designer's auto-open-blank-canvas landing so throwaway flows
+    don't accumulate in the catalog or as orphan YAML in ``unnamed_flows``.
     """
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
@@ -1033,7 +1037,9 @@ def create_flow(
                 status_code=409,
                 detail=f"Flow path {flow_path} is already registered in another namespace",
             )
-    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
+    flow_id = flow_file_handler.add_flow(
+        name=name, flow_path=flow_path, user_id=user_id, persist=register_in_catalog
+    )
     flow = flow_file_handler.get_flow(flow_id)
     if register_in_catalog and flow and flow.flow_settings:
         try:
