@@ -23,8 +23,17 @@ def get_flow_save_location(flow_name: str) -> Path:
 
 
 def create_flow_name() -> str:
-    """Creates a unique flow name"""
-    return datetime.now().strftime("%Y%m%d_%H_%M_%S") + "_flow.yaml"
+    """Human-facing default name for a quick-created / unnamed flow. Reads clearly as
+    unnamed — matching 'Untitled notebook'/'Untitled dashboard' — with a timestamp so
+    multiple unnamed flows stay distinguishable in the 'Unnamed Flows' catalog namespace."""
+    return "Unnamed flow " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def create_unnamed_flow_filename(flow_id: int) -> str:
+    """Filesystem-safe YAML filename for an unnamed flow's on-disk file, keeping the
+    display name's spaces/colons out of the path. The flow id makes it unique even when
+    two flows are created in the same second (registration dedupes on path, not name)."""
+    return f"Unnamed_flow_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{flow_id}.yaml"
 
 
 @dataclass
@@ -212,7 +221,9 @@ class FlowfileHandler:
         next_id = create_unique_id()
         if not name:
             name = create_flow_name()
-        if not flow_path:
+            # Keep the friendly display name off the filesystem path — derive a safe file name.
+            flow_path = flow_path or get_flow_save_location(create_unnamed_flow_filename(next_id))
+        elif not flow_path:
             flow_path = get_flow_save_location(name)
         flow_info = FlowSettings(name=name, flow_id=next_id, save_location=str(flow_path), path=str(flow_path))
         flow = self.register_flow(flow_info, user_id=user_id)
