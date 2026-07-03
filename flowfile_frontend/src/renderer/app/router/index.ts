@@ -3,7 +3,6 @@ import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
 import setupService from "../services/setup.service";
 import { useAuthStore } from "../stores/auth-store";
-import { FlowApi } from "../api";
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -28,21 +27,10 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true },
     children: [
       {
-        // App entry: resume into the designer when flows are already open
-        // (matches the pre-Home startup behavior); land on Home only when
-        // nothing is open. The component is an unreachable fallback — the
-        // guard always redirects.
+        // App entry always lands in the designer; DesignerView auto-opens a
+        // blank flow when no session is active (Home stays on the sidebar).
         path: "",
-        name: "main",
-        component: () => import("../views/HomeView/HomeView.vue"),
-        beforeEnter: async (_to, _from, next) => {
-          try {
-            const flows = await FlowApi.getAllFlows();
-            next({ name: flows.length > 0 ? "designer" : "home" });
-          } catch {
-            next({ name: "home" });
-          }
-        },
+        redirect: { name: "designer" },
       },
       {
         path: "home",

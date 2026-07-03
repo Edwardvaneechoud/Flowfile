@@ -160,6 +160,7 @@
           :table="catalogStore.selectedTable"
           :preview="catalogStore.tablePreview"
           :loading-preview="catalogStore.loadingTablePreview"
+          :preview-error="catalogStore.previewError"
           :table-history="catalogStore.tableHistory"
           :loading-table-history="catalogStore.loadingTableHistory"
           :table-history-stale="catalogStore.tableHistoryStale"

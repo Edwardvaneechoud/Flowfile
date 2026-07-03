@@ -315,6 +315,18 @@ def _run_and_track(flow, user_id: int | None):
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
+    # First run promotes an unregistered (ephemeral scratch) flow into the catalog so it
+    # gains a source_registration_id. This intentionally re-registers any unregistered flow;
+    # making a deliberate catalog deletion durable would need a tombstone (separate follow-up).
+    if user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None:
+        reg_path = flow.flow_settings.path or flow.flow_settings.save_location
+        if reg_path:
+            try:
+                flow.save_flow(flow_path=reg_path)
+                auto_register_flow(reg_path, flow.flow_settings.name, user_id)
+                resolve_source_registration_id(flow)
+            except Exception:
+                logger.info("First-run catalog registration failed (non-critical)", exc_info=True)
     reg_id, flow_name, flow_path = _resolve_run_identity(flow)
     logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
@@ -972,12 +984,19 @@ def create_flow(
     flow_path: str = None,
     name: str = None,
     namespace_id: int = None,
+    register_in_catalog: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Creates a new, empty flow file at the specified path and registers a session for it.
 
     When ``namespace_id`` is provided, the flow is registered in that catalog
     namespace instead of the default (``General > Local Flows``).
+
+    Set ``register_in_catalog=False`` to create an ephemeral scratch flow that is
+    neither written into the catalog (no ``FlowRegistration`` / ``source_registration_id``)
+    nor persisted to disk (``persist=False``): it lives in-memory until an explicit save or
+    first run. Used by the designer's auto-open-blank-canvas landing so throwaway flows
+    don't accumulate in the catalog or as orphan YAML in ``unnamed_flows``.
     """
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
@@ -1018,9 +1037,11 @@ def create_flow(
                 status_code=409,
                 detail=f"Flow path {flow_path} is already registered in another namespace",
             )
-    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
+    flow_id = flow_file_handler.add_flow(
+        name=name, flow_path=flow_path, user_id=user_id, persist=register_in_catalog
+    )
     flow = flow_file_handler.get_flow(flow_id)
-    if flow and flow.flow_settings:
+    if register_in_catalog and flow and flow.flow_settings:
         try:
             register_flow_in_namespace(flow.flow_settings.path, name or flow.flow_settings.name, user_id, namespace_id)
         except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:

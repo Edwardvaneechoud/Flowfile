@@ -333,6 +333,20 @@
         </span>
       </div>
       <div v-if="loadingPreview" class="loading-state">Loading preview...</div>
+      <div v-else-if="previewError" class="preview-error">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <div class="preview-error-body">
+          <p class="preview-error-title">Preview unavailable</p>
+          <p class="preview-error-message">{{ previewError }}</p>
+          <button
+            v-if="isViewingHistorical"
+            class="version-banner-link"
+            @click="emit('selectVersion', null)"
+          >
+            Back to latest
+          </button>
+        </div>
+      </div>
       <div v-else-if="preview && preview.rows.length > 0" class="preview-table-wrapper">
         <table class="styled-table preview-table">
           <thead>
@@ -389,6 +403,7 @@ const props = defineProps<{
   table: CatalogTable;
   preview: CatalogTablePreview | null;
   loadingPreview: boolean;
+  previewError: string | null;
   tableHistory: DeltaTableHistory | null;
   loadingTableHistory: boolean;
   tableHistoryStale: boolean;
@@ -971,6 +986,43 @@ function formatCell(value: any): string {
   opacity: 0.4;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* ========== Preview Error ========== */
+.preview-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-primary);
+}
+
+.preview-error > i {
+  color: var(--color-warning);
+  font-size: var(--font-size-lg);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.preview-error-title {
+  margin: 0 0 var(--spacing-1);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.preview-error-message {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.preview-error .version-banner-link {
+  margin-left: 0;
+  margin-top: var(--spacing-2);
 }
 
 /* ========== States ========== */
