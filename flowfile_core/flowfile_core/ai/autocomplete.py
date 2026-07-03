@@ -103,8 +103,21 @@ class _JoinKeyLLMOutput(BaseModel):
 
 
 def _column_names_for_node(node: FlowNode) -> list[str] | None:
-    """Return the predicted upstream column names; ``None`` only when the schema is missing (``[]`` stays ``[]``)."""
-    schema: list[FlowfileColumn] | None = node.node_schema.predicted_schema
+    """Return the predicted upstream column names, computing them on demand.
+
+    ``None`` only when the schema can't be produced; an empty schema stays
+    ``[]``. Uses ``get_predicted_schema`` rather than a raw
+    ``node_schema.predicted_schema`` read — that cache is nulled on every
+    settings edit, so a bare read is almost always ``None`` when a join panel
+    is open and the surface would wrongly degrade. Prediction is a lazy
+    ``collect_schema`` (no full-data collect); the async caller offloads it to
+    a thread. Never raises — a cold/broken upstream degrades to ``None``.
+    """
+    try:
+        schema: list[FlowfileColumn] | None = node.get_predicted_schema()
+    except Exception as exc:  # noqa: BLE001 — cold/broken upstream degrades, never raises
+        logger.debug("suggest_join_keys: get_predicted_schema failed: %s", exc)
+        return None
     if schema is None:
         return None
     return [col.column_name for col in schema]
@@ -278,8 +291,8 @@ async def suggest_join_keys(
             reason="Left or right node not found in flow.",
         )
 
-    left_columns = _column_names_for_node(left_node)
-    right_columns = _column_names_for_node(right_node)
+    left_columns = await asyncio.to_thread(_column_names_for_node, left_node)
+    right_columns = await asyncio.to_thread(_column_names_for_node, right_node)
 
     if left_columns is None or right_columns is None:
         latency_ms = int((time.monotonic() - started) * 1000)
