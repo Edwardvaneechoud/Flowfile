@@ -34,6 +34,7 @@ import type {
   QueryVirtualTableCreate,
   SchedulerStatus,
   SqlQueryResult,
+  SubflowInterface,
   VacuumTableRequest,
   VacuumTableResponse,
   VirtualFlowTableCreate,
@@ -104,6 +105,14 @@ export class CatalogApi {
 
   static async runFlow(flowId: number): Promise<FlowRun> {
     const response = await axios.post<FlowRun>(`/catalog/flows/${flowId}/run`);
+    return response.data;
+  }
+
+  /** Subflow interface (flow_input/flow_output ports + typed parameters) for run_flow. */
+  static async getFlowInterface(registrationId: number): Promise<SubflowInterface> {
+    const response = await axios.get<SubflowInterface>(
+      `/catalog/flows/${registrationId}/interface`,
+    );
     return response.data;
   }
 

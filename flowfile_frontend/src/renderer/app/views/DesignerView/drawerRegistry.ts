@@ -109,7 +109,10 @@ export const drawers: DrawerDef[] = [
         id: "logs",
         label: "Logs",
         component: markRaw(LogViewer),
-        visibleWhen: ({ editor }) => editor.isShowingLogViewer,
+        // Always available as a tab (decoupled from the results toggle); like the
+        // Code tab, the run/results signal only pulls focus to it.
+        visibleWhen: ({ editor }) => editor.displayLogViewer,
+        focusWhen: ({ editor }) => editor.isShowingLogViewer,
       },
     ],
   },

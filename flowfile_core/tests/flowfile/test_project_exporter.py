@@ -642,3 +642,380 @@ def test_project_executes_end_to_end(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ==================== run_flow (subflow) project export ====================
+
+
+def _register_flow_file(path: Path, name: str) -> int:
+    import uuid as _uuid
+
+    from flowfile_core.database import models as db_models
+    from flowfile_core.database.connection import get_db_context
+
+    with get_db_context() as db:
+        reg = db_models.FlowRegistration(flow_uuid=str(_uuid.uuid4()), name=name, flow_path=str(path), owner_id=1)
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
+        return reg.id
+
+
+def _build_head_subflow(tmp_path: Path) -> dict:
+    """flow_input 'customers' (4 sample rows) -> head(${limit}) -> flow_outputs result/row_count."""
+    flow = create_basic_flow(flow_id=31, name="head_subflow")
+    flow.flow_settings.parameters = [
+        schemas.FlowParameter(name="limit", default_value="10", type="integer")
+    ]
+    flow.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            input_name="customers",
+            raw_data_format=input_schema.RawData.from_pylist(
+                [{"name": f"c{i}", "rank": i} for i in range(1, 5)]
+            ),
+        )
+    )
+    flow.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=flow.flow_id,
+            node_id=2,
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df.head(${limit})"
+            ),
+            depending_on_ids=[1],
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=flow.flow_id, node_id=3, output_name="result", depending_on_id=2)
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_record_count(input_schema.NodeRecordCount(flow_id=flow.flow_id, node_id=4, depending_on_id=2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 4))
+    flow.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=flow.flow_id, node_id=5, output_name="row_count", depending_on_id=4)
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(4, 5))
+
+    path = tmp_path / "head_subflow.yaml"
+    flow.save_flow(str(path))
+    return {"path": path, "registration_id": _register_flow_file(path, "head_subflow")}
+
+
+def _keyed_connect(flow: FlowGraph, from_id: int, to_id: int, target_handle: str) -> None:
+    add_connection(
+        flow,
+        input_schema.NodeConnection(
+            input_connection=input_schema.NodeInputConnection(node_id=to_id, connection_class=target_handle),
+            output_connection=input_schema.NodeOutputConnection(node_id=from_id, connection_class="output-0"),
+        ),
+    )
+
+
+def _run_flow_settings(flow: FlowGraph, registration_id: int, **overrides) -> input_schema.NodeRunFlow:
+    defaults = dict(
+        flow_id=flow.flow_id,
+        node_id=9,
+        user_id=1,
+        flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+        input_slots=["customers"],
+        output_slots=["result", "row_count"],
+        parameter_specs=[schemas.FlowParameter(name="limit", default_value="10", type="integer")],
+    )
+    defaults.update(overrides)
+    return input_schema.NodeRunFlow(**defaults)
+
+
+def _manifest_file(manifest: ProjectExportManifest, path: str) -> str:
+    return next(f.content for f in manifest.files if f.path == path)
+
+
+class TestRunFlowProjectExport:
+    def test_subflow_module_and_call_site(self, tmp_path):
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=41, name="parent_flow")
+        add_sample_input(flow, node_id=1)
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="constant", constant_value="3"
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 1, 9, "input-1")
+
+        manifest = export_flow_to_project(flow)
+        paths = {f.path for f in manifest.files}
+        assert "subflows/head_subflow.py" in paths
+        assert "subflows/__init__.py" in paths
+
+        module = _manifest_file(manifest, "subflows/head_subflow.py")
+        assert "def run(customers: ff.FlowFrame | None = None, *, limit: int = 10) -> dict[str, ff.FlowFrame]:" in module
+        assert ".head(limit)" in module  # sentinel resolved to the kwarg
+        assert '"result":' in module and '"row_count":' in module
+        assert "customers if customers is not None else" in module  # FlowFrame arg used directly
+        ast.parse(module)
+
+        pipeline = _manifest_file(manifest, "pipeline.py")
+        assert "from subflows import head_subflow" in pipeline
+        # boundary naming may rename vars (df_1 -> source, df_9 -> df); assert shape, not names
+        assert "_sf_9_outputs = head_subflow.run(customers=" in pipeline
+        assert ", limit=3)" in pipeline
+        # subflow modules speak FlowFrame end-to-end: no .data / FlowFrame() hops
+        assert '= _sf_9_outputs["result"]' in pipeline
+        assert '= _sf_9_outputs["row_count"]' in pipeline
+        assert 'ff.FlowFrame(_sf_9_outputs' not in pipeline
+        ast.parse(pipeline)
+
+    def test_iterate_mode_emits_loop_with_metadata(self, tmp_path):
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=42, name="parent_iterate")
+        add_sample_input(flow, node_id=1)
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 1}, {"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                iteration_mode="iterate",
+                append_run_metadata=True,
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name="limit"
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 1, 9, "input-1")
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert "_sf_9_param_rows = " in pipeline and ".collect().to_dicts()" in pipeline
+        assert "head_subflow.run(customers=" in pipeline
+        assert "limit=_sf_9_row['limit'])" in pipeline
+        assert "ff.concat([" in pipeline
+        assert 'how="diagonal_relaxed"' in pipeline
+        assert 'ff.lit(_sf_9_row[\'limit\']).cast(ff.Int64).alias("param_limit")' in pipeline
+        assert 'ff.lit(_sf_9_i).cast(ff.UInt32).alias("run_index")' in pipeline
+        assert ".data" not in pipeline  # subflow boundary stays at the FlowFrame level
+        ast.parse(pipeline)
+
+    def test_first_value_column_binding(self, tmp_path):
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=43, name="parent_first")
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name="limit"
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert "_sf_9_params = " in pipeline and ".head(1).collect()" in pipeline
+        assert "limit=_sf_9_params['limit'][0]" in pipeline
+        assert "run_index" not in pipeline
+        ast.parse(pipeline)
+
+    def test_column_name_with_quote_first_value_is_valid_python(self, tmp_path):
+        """A column name containing a double quote must go through repr() so the
+        generated first-value call site stays valid Python. Raw interpolation
+        produced _sf_9_params["a"b"][0], a SyntaxError (and a code-injection seam)."""
+        col = 'a"b'
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=51, name="parent_quote_first")
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name=col
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert f"limit=_sf_9_params[{col!r}][0]" in pipeline
+        ast.parse(pipeline)  # unescaped column name would raise SyntaxError here
+
+    def test_column_name_with_quote_iterate_is_valid_python(self, tmp_path):
+        """Iterate-mode loop kwargs and metadata exprs also repr() the column name."""
+        col = 'a"b'
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=52, name="parent_quote_iter")
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 1}, {"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                iteration_mode="iterate",
+                append_run_metadata=True,
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name=col
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert f"limit=_sf_9_row[{col!r}]" in pipeline          # loop kwarg
+        assert f"ff.lit(_sf_9_row[{col!r}]).cast(" in pipeline  # metadata value_expr
+        ast.parse(pipeline)
+
+    def test_module_reuse_across_two_nodes(self, tmp_path):
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=44, name="parent_two_nodes")
+        flow.add_run_flow(_run_flow_settings(flow, sub["registration_id"], node_id=9))
+        flow.add_run_flow(_run_flow_settings(flow, sub["registration_id"], node_id=10))
+
+        manifest = export_flow_to_project(flow)
+        module_paths = [f.path for f in manifest.files if f.path.startswith("subflows/") and f.path != "subflows/__init__.py"]
+        assert module_paths == ["subflows/head_subflow.py"]
+        pipeline = _manifest_file(manifest, "pipeline.py")
+        assert "_sf_9_outputs = head_subflow.run(" in pipeline
+        assert "_sf_10_outputs = head_subflow.run(" in pipeline
+
+    def test_circular_reference_reports_unsupported(self, tmp_path):
+        from flowfile_core.flowfile.code_generator.code_generator import UnsupportedNodeError
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+        path = tmp_path / "self_ref_export.yaml"
+        path.write_text("placeholder")
+        registration_id = _register_flow_file(path, "self_ref_export")
+        flow = create_basic_flow(flow_id=45, name="self_ref_export")
+        flow.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=flow.flow_id,
+                node_id=9,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+                input_slots=[],
+                output_slots=[],
+            )
+        )
+        flow.save_flow(str(path))
+
+        reloaded = open_flow(path)
+        with pytest.raises(UnsupportedNodeError, match="[Cc]ircular"):
+            export_flow_to_project(reloaded)
+
+    def test_pipeline_parameters_become_kwargs(self, tmp_path):
+        flow = create_basic_flow(flow_id=46, name="param_pipeline")
+        flow.flow_settings.parameters = [
+            schemas.FlowParameter(name="n", default_value="2", type="integer"),
+            schemas.FlowParameter(name="label", default_value="x y", type="string"),
+        ]
+        add_sample_input(flow, node_id=1)
+        flow.add_polars_code(
+            input_schema.NodePolarsCode(
+                flow_id=flow.flow_id,
+                node_id=2,
+                polars_code_input=transform_schema.PolarsCodeInput(
+                    polars_code='output_df = input_df.head(${n}).with_columns(pl.lit("v ${label}").alias("tag"))'
+                ),
+                depending_on_ids=[1],
+            )
+        )
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
+        assert "def run_etl_pipeline(*, n: int = 2, label: str = 'x y'):" in pipeline
+        assert ".head(n)" in pipeline
+        assert 'f"v {label}"' in pipeline
+        assert "${" not in pipeline
+        ast.parse(pipeline)
+
+    def test_plain_exports_still_unsupported(self, tmp_path):
+        from flowfile_core.flowfile.code_generator.code_generator import (
+            FlowGraphToFlowFrameConverter,
+            FlowGraphToPolarsConverter,
+        )
+
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=47, name="plain_export")
+        flow.add_run_flow(_run_flow_settings(flow, sub["registration_id"]))
+        for converter_cls in (FlowGraphToFlowFrameConverter, FlowGraphToPolarsConverter):
+            converter = converter_cls(flow)
+            try:
+                converter.convert()
+            except Exception:
+                pass
+            assert any(node_type == "run_flow" for _, node_type, _ in converter.unsupported_nodes)
+
+    def test_project_with_subflow_executes_end_to_end(self, tmp_path):
+        sub = _build_head_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=48, name="e2e_subflow_parent")
+        add_sample_input(flow, node_id=1)  # 3 rows: id/age
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow.flow_id,
+                node_id=2,
+                raw_data_format=input_schema.RawData.from_pylist([{"limit": 1}, {"limit": 2}]),
+            )
+        )
+        flow.add_run_flow(
+            _run_flow_settings(
+                flow,
+                sub["registration_id"],
+                iteration_mode="iterate",
+                append_run_metadata=True,
+                parameter_bindings=[
+                    input_schema.RunFlowParameterBinding(
+                        parameter_name="limit", source="column", column_name="limit"
+                    )
+                ],
+            )
+        )
+        _keyed_connect(flow, 1, 9, "input-1")
+        _keyed_connect(flow, 2, 9, "input-0")
+
+        manifest = export_flow_to_project(flow)
+        project_dir = write_project(manifest, tmp_path)
+        result = subprocess.run(
+            [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+        )
+        assert result.returncode == 0, result.stderr
+        # head(1) + head(2) of the 3-row parent frame -> 3 rows with metadata columns
+        assert "param_limit" in result.stdout
+        assert "run_index" in result.stdout

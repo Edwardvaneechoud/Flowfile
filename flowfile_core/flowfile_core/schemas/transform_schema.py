@@ -284,7 +284,7 @@ class FunctionInput(BaseModel):
     """Defines a formula to be applied, including the output field information."""
 
     field: FieldInput
-    function: str
+    function: str = Field(json_schema_extra={"expression": True})
 
     def __init__(self, field: FieldInput = None, function: str = None, **data):
         if field is not None:
@@ -392,7 +392,7 @@ class FilterInput(BaseModel):
 
     mode: FilterModeLiteral = "basic"
     basic_filter: BasicFilter | None = None
-    advanced_filter: str = ""
+    advanced_filter: str = Field(default="", json_schema_extra={"expression": True})
 
     # Keep old field name for backward compatibility
     filter_type: str | None = None
@@ -1169,7 +1169,7 @@ class DynamicRenameInput(BaseModel):
     rename_mode: RenameMode = "prefix"
     prefix: str = ""
     suffix: str = ""
-    formula: str = ""
+    formula: str = Field(default="", json_schema_extra={"expression": True})
 
     selection_mode: ColumnSelectionMode = "all"
     selected_columns: list[str] = Field(default_factory=list)

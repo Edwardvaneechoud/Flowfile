@@ -1,26 +1,35 @@
 <template>
   <div class="project-export">
     <div class="project-toolbar">
-      <button class="toolbar-button" :disabled="loading" @click="fetchManifest">
+      <button class="action-btn" :disabled="loading" @click="fetchManifest">
         <span v-if="loading" class="spinner"></span>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 4v6h-6"></path>
+          <path d="M1 20v-6h6"></path>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
         {{ loading ? "Loading..." : "Refresh" }}
       </button>
-      <div class="toolbar-actions">
-        <button
-          class="toolbar-button primary"
-          :disabled="loading || !files.length"
-          @click="downloadZip"
-        >
-          Download .zip
-        </button>
-        <button
-          class="toolbar-button primary"
-          :disabled="loading || !files.length"
-          @click="showSaveDialog = true"
-        >
-          Save to folder…
-        </button>
-      </div>
+      <button class="action-btn primary" :disabled="loading || !files.length" @click="downloadZip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        Download .zip
+      </button>
+      <button
+        class="action-btn"
+        :disabled="loading || !files.length"
+        @click="showSaveDialog = true"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path
+            d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+          ></path>
+        </svg>
+        Save to folder…
+      </button>
     </div>
 
     <div v-if="errorMessage" class="project-error">{{ errorMessage }}</div>
@@ -211,40 +220,57 @@ onMounted(fetchManifest);
 
 .project-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.toolbar-actions {
-  display: flex;
-  gap: 12px;
-}
-
-.toolbar-button {
-  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  background: var(--color-gray-500);
-  color: var(--color-text-inverse);
-  border: none;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   cursor: pointer;
-  font-size: var(--font-size-base);
-  transition: background var(--transition-fast);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-fast);
 }
 
-.toolbar-button.primary {
-  background: var(--color-accent);
+.action-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
-.toolbar-button.primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
+.action-btn:hover:not(:disabled) {
+  background: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
 }
 
-.toolbar-button:disabled {
-  background: var(--color-gray-500);
+.action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
+}
+
+.action-btn.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.action-btn.primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 
 .project-error {
@@ -338,9 +364,9 @@ onMounted(fetchManifest);
 
 .spinner {
   display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-text-inverse);
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
   border-radius: 50%;
   border-top-color: transparent;
   animation: spin 0.8s linear infinite;
