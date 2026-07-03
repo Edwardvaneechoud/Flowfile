@@ -560,6 +560,76 @@ def test_save_flow_to_catalog_prefixes_filename():
             db.commit()
 
 
+def test_undo_preserves_catalog_display_name_and_path():
+    """Regression: undo must keep a catalog flow's clean display_name + path.
+
+    Previously undo dropped ``flow_settings.path``, so the session's display-name
+    lookup failed (the UI reverted to the raw ``{flow_id}_`` file stem) and a silent
+    save could no longer relink to the original catalog registration.
+    """
+    from flowfile_core.database.models import FlowRegistration
+    from flowfile_core.flowfile.history_manager import HistoryConfig
+    from flowfile_core.schemas.history_schema import HistoryActionType
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "undo_display_src.yaml")
+    remove_flow(src_path)
+    ns = client.post("/catalog/namespaces", json={"name": "NsUndoDisplay"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    src_flow_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    expected_file = storage.flows_directory / f"{src_flow_id}_undo_disp.yaml"
+    if expected_file.exists():
+        expected_file.unlink()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": src_flow_id, "flow_name": "undo_disp", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        flow_id = resp.json()
+        assert isinstance(flow_id, int)
+
+        def _session():
+            sessions = client.get("/active_flowfile_sessions/").json()
+            return next((s for s in sessions if s["flow_id"] == flow_id), None)
+
+        # Baseline: the clean display_name is resolved from the registration by path.
+        before = _session()
+        assert before is not None, "Saved flow has no active session"
+        assert before["display_name"] == "undo_disp"
+        assert before["path"], "Saved flow should have a path"
+
+        # Make an undoable change on the live flow, then undo via the route.
+        flow = flow_file_handler.get_flow(flow_id)
+        flow.flow_settings.track_history = False
+        flow._history_manager._config = HistoryConfig(enabled=True)
+        flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "before add")
+        flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+
+        undo = client.post("/editor/undo/", params={"flow_id": flow_id})
+        assert undo.status_code == 200 and undo.json()["success"], undo.text
+
+        # Regression assertions: identity survived the undo.
+        after = _session()
+        assert after is not None
+        assert after["display_name"] == "undo_disp", "Undo must not drop the catalog display name"
+        assert after["path"], "Undo must not wipe the flow path"
+
+        # A silent same-path save still works (it needs the preserved path).
+        save = client.post("/save_flow", params={"flow_id": flow_id})
+        assert save.status_code == 200, save.text
+    finally:
+        remove_flow(src_path)
+        if expected_file.exists():
+            expected_file.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path == str(expected_file)
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
 def test_save_flow_to_catalog_refuses_overwrite_of_foreign_file():
     """A pre-existing file with no catalog registration must not be overwritten."""
     from flowfile_core.database.models import FlowRegistration

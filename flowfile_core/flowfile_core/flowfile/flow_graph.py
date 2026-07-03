@@ -126,7 +126,7 @@ from flowfile_core.kernel.execution import (
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
-    AuthMethod,
+    CloudStorageAuthMode,
     CloudStorageReadSettingsInternal,
     CloudStorageWriteSettingsInternal,
     FullCloudStorageConnection,
@@ -337,7 +337,7 @@ def get_xlsx_schema_callback(
 
 
 def get_cloud_connection_settings(
-    connection_name: str, user_id: int, auth_mode: AuthMethod
+    connection_name: str, user_id: int, auth_mode: CloudStorageAuthMode
 ) -> FullCloudStorageConnection:
     """Retrieves cloud storage connection settings, falling back to environment variables if needed.
 
@@ -353,8 +353,8 @@ def get_cloud_connection_settings(
         HTTPException: If the connection settings cannot be found.
     """
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
-    if cloud_connection_settings is None and auth_mode in ("env_vars", transform_schema.AUTO_DATA_TYPE):
-        # If the auth mode is aws-cli, we do not need connection settings
+    if cloud_connection_settings is None and auth_mode in ("env_vars", "auto"):
+        # auto/env_vars resolve credentials from the environment, so no saved connection is needed
         cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
     elif cloud_connection_settings is None and auth_mode == "aws-cli":
         cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")

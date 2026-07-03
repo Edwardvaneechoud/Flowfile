@@ -21,6 +21,21 @@ AuthMethod = Literal[
     "service_account",
 ]
 
+# Node-level auth mode: every connection AuthMethod plus "auto" (auto-detect from
+# environment/aws-cli when no saved connection is referenced). Distinct from AuthMethod,
+# which types a stored connection and must always be a concrete method.
+CloudStorageAuthMode = Literal[
+    "access_key",
+    "iam_role",
+    "service_principal",
+    "managed_identity",
+    "sas_token",
+    "aws-cli",
+    "env_vars",
+    "service_account",
+    "auto",
+]
+
 
 def encrypt_for_worker(secret_value: SecretStr | None, user_id: int) -> str | None:
     """
@@ -158,7 +173,7 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
 class CloudStorageSettings(BaseModel):
     """Settings for cloud storage nodes in the visual designer"""
 
-    auth_mode: AuthMethod = "auto"
+    auth_mode: CloudStorageAuthMode = "auto"
     connection_name: str | None = None  # Required only for 'reference' mode
     resource_path: str  # s3://bucket/path/to/file.csv
 
