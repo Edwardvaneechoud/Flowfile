@@ -789,7 +789,10 @@ export default function useDragAndDrop() {
     const createdNodes = await Promise.all(uiNodePromises);
 
     let lastResponse: OperationResponse | undefined;
-    const backendCopyPromises = createdNodes.map(async ({ node, newNodeId, offsetX, offsetY }) => {
+    // Copy one node at a time: the backend reserves a unique subflow-port name per
+    // flow_output/flow_input, and firing the copies concurrently would race that
+    // check-then-add (two ports resolving to the same name, one failing to render).
+    for (const { node, newNodeId, offsetX, offsetY } of createdNodes) {
       const nodePromise: NodePromise = {
         node_id: newNodeId,
         flow_id: flowId,
@@ -798,12 +801,11 @@ export default function useDragAndDrop() {
         pos_y: offsetY,
         cache_results: true,
       };
-      return FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise);
-    });
-
-    const copyResponses = await Promise.all(backendCopyPromises);
-    if (copyResponses.length > 0) {
-      lastResponse = copyResponses[copyResponses.length - 1];
+      lastResponse = await FlowApi.copyNode(
+        node.nodeIdToCopyFrom,
+        multiCopyValue.flowIdToCopyFrom,
+        nodePromise,
+      );
     }
 
     await nextTick();

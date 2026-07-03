@@ -126,7 +126,7 @@ from flowfile_core.kernel.execution import (
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
-    AuthMethod,
+    CloudStorageAuthMode,
     CloudStorageReadSettingsInternal,
     CloudStorageWriteSettingsInternal,
     FullCloudStorageConnection,
@@ -337,7 +337,7 @@ def get_xlsx_schema_callback(
 
 
 def get_cloud_connection_settings(
-    connection_name: str, user_id: int, auth_mode: AuthMethod
+    connection_name: str, user_id: int, auth_mode: CloudStorageAuthMode
 ) -> FullCloudStorageConnection:
     """Retrieves cloud storage connection settings, falling back to environment variables if needed.
 
@@ -353,11 +353,13 @@ def get_cloud_connection_settings(
         HTTPException: If the connection settings cannot be found.
     """
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
-    if cloud_connection_settings is None and auth_mode in ("env_vars", transform_schema.AUTO_DATA_TYPE):
-        # If the auth mode is aws-cli, we do not need connection settings
-        cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
-    elif cloud_connection_settings is None and auth_mode == "aws-cli":
-        cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
+    # Only fabricate a connection from the environment when no saved connection was referenced.
+    # A referenced-but-missing connection_name must still error, not silently fall back.
+    if cloud_connection_settings is None and not connection_name:
+        if auth_mode in ("env_vars", "auto"):
+            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
+        elif auth_mode == "aws-cli":
+            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
     if cloud_connection_settings is None:
         raise HTTPException(status_code=400, detail="Cloud connection settings not found")
     return cloud_connection_settings
@@ -1282,9 +1284,20 @@ class FlowGraph:
             determine_insertion_order,
         )
 
-        # Preserve the current flow_id and source_registration_id
+        # Preserve the live on-disk IDENTITY across the restore. Undo/redo replays
+        # graph state + editable settings ONLY; the flow's identity (where it lives on
+        # disk and what it is called) must survive because the snapshot does NOT carry
+        # it: FlowfileSettings omits name/path/save_location, and the snapshot's
+        # flowfile_name is the file STEM ("{flow_id}_test_flow"), not the catalog
+        # display name. Dropping path here previously reset it to "" after undo, which
+        # broke the display-name-by-path lookup (UI reverted to the raw stem) and
+        # path-based save relinking (422 "no save path" / a new orphaned registration).
         original_flow_id = self._flow_id
         original_source_registration_id = self._flow_settings.source_registration_id
+        original_name = self._flow_settings.name
+        original_path = self._flow_settings.path
+        original_save_location = self._flow_settings.save_location
+        original_graph_name = self.__name__
 
         flow_info = _flowfile_data_to_flow_information(snapshot)
 
@@ -1311,13 +1324,17 @@ class FlowGraph:
         self._groups.clear()
         self._results = None
 
-        # Restore flow settings (preserve original flow_id and source_registration_id)
+        # Restore editable settings from the snapshot, then re-stamp the LIVE identity
+        # so it is never sourced from the (stem-derived, path-less) snapshot.
         self._flow_settings = flow_info.flow_settings
         self._flow_settings.flow_id = original_flow_id
         self._flow_id = original_flow_id
+        self._flow_settings.name = original_name
+        self._flow_settings.path = original_path
+        self._flow_settings.save_location = original_save_location
         if self._flow_settings.source_registration_id is None:
             self._flow_settings.source_registration_id = original_source_registration_id
-        self.__name__ = flow_info.flow_name or self.__name__
+        self.__name__ = original_graph_name
 
         ingestion_order = determine_insertion_order(flow_info)
 
@@ -5726,7 +5743,44 @@ class FlowGraph:
             return
 
         combined_settings = combine_existing_settings_and_new_settings(existing_setting_input, new_node_settings)
-        getattr(self, f"add_{node_type}")(combined_settings)
+        # Subflow port names must stay unique; auto-rename the copy so it doesn't collide with the source.
+        if node_type == "flow_output" and isinstance(combined_settings, input_schema.NodeFlowOutput):
+            combined_settings.output_name = self._unique_subflow_port_name(
+                combined_settings.output_name, node_type, combined_settings.node_id
+            )
+        elif node_type == "flow_input" and isinstance(combined_settings, input_schema.NodeFlowInput):
+            combined_settings.input_name = self._unique_subflow_port_name(
+                combined_settings.input_name, node_type, combined_settings.node_id
+            )
+        try:
+            getattr(self, f"add_{node_type}")(combined_settings)
+        except Exception:
+            # A failed copy must not leave the pre-added promise dangling in the graph.
+            if self.get_node(new_node_settings.node_id) is not None:
+                self.delete_node(new_node_settings.node_id)
+            raise
+
+    def _unique_subflow_port_name(self, desired_name: str, node_type: str, exclude_node_id: int) -> str:
+        """Return a subflow port name not already used by another flow_input/flow_output node.
+
+        Used when copying: duplicating a 'result' output yields 'result_1', 'result_2', …
+        (a trailing '_<n>' is stripped first so copies of copies keep incrementing the base).
+        """
+        attr = "output_name" if node_type == "flow_output" else "input_name"
+        taken = {
+            getattr(node.setting_input, attr, None)
+            for node in self.nodes
+            if node.node_type == node_type and node.node_id != exclude_node_id
+        }
+        taken.discard(None)
+        if desired_name not in taken:
+            return desired_name
+        base, _, suffix = desired_name.rpartition("_")
+        base = base if base and suffix.isdigit() else desired_name
+        counter = 1
+        while f"{base}_{counter}" in taken:
+            counter += 1
+        return f"{base}_{counter}"
 
     def generate_code(self):
         """Generates code for the flow graph.

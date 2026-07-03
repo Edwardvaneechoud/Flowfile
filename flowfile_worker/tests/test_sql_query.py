@@ -107,3 +107,26 @@ def test_execution_time_reported(delta_tables):
     result = execute_sql_query("SELECT * FROM customers", delta_tables)
 
     assert result["execution_time_ms"] > 0
+
+
+@pytest.fixture
+def three_part_table():
+    """A Delta table registered under a fully-qualified flat key, as core now ships it."""
+    catalog_dir = storage.catalog_tables_directory
+    df = pl.DataFrame({"pair": ["EURUSD", "GBPUSD"], "rate": [1.08, 1.27]})
+    df.write_delta(str(catalog_dir / "fx_rates"))
+    return {"Demo.market.fx_rates": "fx_rates"}
+
+
+def test_three_part_quoted_identifier_resolves(three_part_table):
+    """A flat 3-part key registered by core resolves when the query references it as a
+    single double-quoted identifier (the form rewrite_qualified_references emits).
+
+    (``used_tables`` is not asserted here: it matches the registered name against the
+    plan text, which only ever contains the storage path — a pre-existing heuristic
+    orthogonal to name resolution.)"""
+    result = execute_sql_query('SELECT * FROM "Demo.market.fx_rates"', three_part_table)
+
+    assert result["columns"] == ["pair", "rate"]
+    assert result["total_rows"] == 2
+    assert result["rows"] == [["EURUSD", 1.08], ["GBPUSD", 1.27]]

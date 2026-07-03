@@ -211,6 +211,7 @@ import {
 import type { NodeData, NodeRunFlow, FileColumn } from "../../../../../types/node.types";
 import type { FlowParameter, FlowParamType } from "../../../../../types/flow.types";
 import type { NodeConnection } from "../../../../../types/canvas.types";
+import type { SubflowInterface } from "../../../../../types/catalog.types";
 import {
   MAX_RUN_FLOW_INPUTS,
   MAX_RUN_FLOW_OUTPUTS,
@@ -219,6 +220,7 @@ import {
   findDanglingEdges,
   hasColumnBinding,
   matchingColumnNames,
+  subflowInterfaceChanged,
   type BindingRow,
 } from "./runFlowLogic";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -350,6 +352,25 @@ const handleFlowChange = async (registrationId: number | null) => {
   await refreshInterface();
 };
 
+// Persist a freshly-read interface onto the node: reconcile bindings, store the
+// new slots/specs, save, and rebuild the canvas handles (dropping edges whose
+// handle vanished). Returns true only when the save succeeded.
+const applyInterface = async (iface: SubflowInterface): Promise<boolean> => {
+  if (!nodeRunFlow.value) return false;
+  nodeRunFlow.value.parameter_bindings = reconcileBindings(
+    nodeRunFlow.value.parameter_bindings,
+    iface.parameters,
+    availableColumns.value,
+  );
+  nodeRunFlow.value.input_slots = iface.inputs.map((port) => port.name);
+  nodeRunFlow.value.output_slots = iface.outputs.map((port) => port.name);
+  nodeRunFlow.value.parameter_specs = iface.parameters;
+  const saved = await saveSettings();
+  if (!saved) return false;
+  await applyInterfaceToCanvas();
+  return true;
+};
+
 const refreshInterface = async () => {
   const registrationId = nodeRunFlow.value?.flow_reference?.registration_id;
   if (!nodeRunFlow.value || !registrationId || registrationId <= 0) return;
@@ -372,25 +393,51 @@ const refreshInterface = async () => {
       );
       return;
     }
-    nodeRunFlow.value.parameter_bindings = reconcileBindings(
-      nodeRunFlow.value.parameter_bindings,
-      iface.parameters,
-      availableColumns.value,
-    );
-    nodeRunFlow.value.input_slots = iface.inputs.map((port) => port.name);
-    nodeRunFlow.value.output_slots = iface.outputs.map((port) => port.name);
-    nodeRunFlow.value.parameter_specs = iface.parameters;
-    const saved = await saveSettings();
-    if (!saved) {
+    if (!(await applyInterface(iface))) {
       ElMessage.error("Could not save the updated interface; connections were left untouched.");
-      return;
     }
-    await applyInterfaceToCanvas();
   } catch (error) {
     console.error("Failed to load flow interface:", error);
     ElMessage.error("Failed to load the flow's interface");
   } finally {
     interfaceLoading.value = false;
+  }
+};
+
+// On open, re-sync the node with the referenced subflow so it reflects the
+// current inputs/outputs/parameters without a manual Refresh. Only touches the
+// node when the interface actually drifted, and never wipes it on a missing
+// file or a too-large interface.
+const syncInterfaceOnOpen = async (nodeId: number) => {
+  const registrationId = nodeRunFlow.value?.flow_reference?.registration_id;
+  if (!nodeRunFlow.value || !registrationId || registrationId <= 0) return;
+  try {
+    const iface = await CatalogApi.getFlowInterface(registrationId);
+    // The fetch is a network round-trip; if the drawer moved to another node or
+    // closed meanwhile, don't mutate/save the node the user navigated away from.
+    if (!nodeRunFlow.value || nodeStore.node_id !== nodeId) return;
+    if (
+      !iface.file_exists ||
+      iface.inputs.length > MAX_RUN_FLOW_INPUTS ||
+      iface.outputs.length > MAX_RUN_FLOW_OUTPUTS
+    ) {
+      return;
+    }
+    if (
+      !subflowInterfaceChanged(
+        iface,
+        nodeRunFlow.value.input_slots,
+        nodeRunFlow.value.output_slots,
+        nodeRunFlow.value.parameter_specs,
+      )
+    ) {
+      return;
+    }
+    if (await applyInterface(iface)) {
+      ElMessage.info("Updated the Run Flow node to match the subflow's current interface.");
+    }
+  } catch (error) {
+    console.error("Could not auto-sync the run_flow interface on open:", error);
   }
 };
 
@@ -436,9 +483,19 @@ const applyInterfaceToCanvas = async () => {
     try {
       await FlowApi.deleteConnection(Number(nodeRunFlow.value.flow_id), connection);
     } catch (error) {
-      // Backend delete failed: keep the edge on the canvas so it stays in sync
-      // with the still-present server-side connection. Suppressing + removing it
-      // here would hide the edge while the connection lingers, and Canvas.vue's
+      // A 422 means the connection no longer exists server-side — saving the new
+      // interface already dropped it (add_run_flow remaps keyed inputs, dropping
+      // vanished slots). The edge is genuinely stale, so drop it from the canvas
+      // rather than reporting a spurious failure.
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 422) {
+        suppressedEdgeRemovals.add(edge.id);
+        removedIds.push(edge.id);
+        continue;
+      }
+      // A real failure (connection still present): keep the edge so it stays in
+      // sync with the server-side connection. Suppressing + removing it here would
+      // hide the edge while the connection lingers, and Canvas.vue's
       // delete-on-remove retry is suppressed, so the desync would never heal.
       console.error("Failed to delete stale connection:", error);
       failedCount += 1;
@@ -542,6 +599,10 @@ const loadNodeData = async (nodeId: number) => {
   ) {
     selectedNamespaceId.value = registration.namespace_id;
   }
+
+  // Reflect any change to the referenced subflow's interface since this node was
+  // last saved (the reason a stale run_flow node keeps old handles on the canvas).
+  await syncInterfaceOnOpen(nodeId);
 };
 
 defineExpose({

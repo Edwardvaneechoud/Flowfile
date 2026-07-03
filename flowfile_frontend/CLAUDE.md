@@ -14,7 +14,7 @@ Pure client. Talks to `flowfile_core` over HTTP; never to `flowfile_worker` dire
 - `src/renderer/app/views/<Name>View/` — one dir per routed page (DesignerView, CatalogView, ConnectionsView, AdminView, LoginView, SetupView, KernelManagerView, AiProvidersView, …). `app/pages/NodeDesigner.vue` is a standalone routed page outside `views/`.
 - `src/renderer/app/features/designer/` — flow editor internals (`drawflowExtensions.ts`, `editor/` with FunctionEditor / ColumnSelector / pythonEditor).
 - `src/renderer/app/features/ai/` — AI assistant, command palette, ghost-node suggestions, diff panel.
-- `src/renderer/app/components/nodes/` — VueFlow node wrappers; `node-types/elements/` has 43 per-node-type subdirs (76 `.vue` settings components). `GenericNode.vue` and `composables/useDragAndDrop.ts` resolve them via `import.meta.glob` + a string-interpolated path. `getComponents.ts` is unrelated — it lazy-loads only `elements/manualInput/*.vue` editor cells.
+- `src/renderer/app/components/nodes/` — VueFlow node wrappers; `node-types/elements/` has one subdir per node type (dozens of `.vue` settings components). `GenericNode.vue` and `composables/useDragAndDrop.ts` resolve them via `import.meta.glob` + a string-interpolated path. `getComponents.ts` is unrelated — it lazy-loads only `elements/manualInput/*.vue` editor cells.
 - `src/renderer/app/stores/` — Pinia stores (`flow-store`, `node-store`, `results-store`, `auth-store`, `theme-store`, the `ai-*` stores, …); `index.ts` is the plugin.
 - `src/renderer/app/api/` & `app/services/` — Axios API wrappers; `services/` adds auth/setup/user services, `axios.config.ts` (interceptors, `withCredentials`), and SSE clients (`aiStreamClient.ts`, `aiDiffClient.ts`).
 - `src/renderer/app/composables/`, `app/router/index.ts`, `app/i18n/` (only locale `locales/gb.json`), `app/layouts/`.
@@ -25,7 +25,7 @@ Pure client. Talks to `flowfile_core` over HTTP; never to `flowfile_worker` dire
 ## Key patterns & conventions
 - Path aliases declared in **three** places, keep in sync: `vite.config.mjs` and `tsconfig.json` define `@` (`@/*` glob form in tsconfig) plus `@/api`, `@/types`, `@/stores`, `@/composables`; `vitest.config.ts` defines only bare `@`.
 - Router uses **hash history** (`createWebHashHistory`). Routes are lazy `import()`ed; most live under the `/main` `AppLayout` parent with `meta.requiresAuth` (default true).
-- All desktop-native calls MUST go through `lib/desktop.ts`, which no-ops / falls back in web mode (`isDesktop` guard). Don't import `@tauri-apps/*` directly in view code. New Tauri commands must be registered in `src-tauri/src/lib.rs` `generate_handler!` (current set: `get_services_status`, `get_service_ports`, `get_app_version`, `quit_app`, `app_refresh`, `open_oauth`) and wrapped in `desktop.ts`. `desktop.ts` also calls plugin commands directly (`plugin:opener|open_url`, clipboard-manager) — no Rust command needed for those.
+- All desktop-native calls MUST go through `lib/desktop.ts`, which no-ops / falls back in web mode (`isDesktop` guard). Don't import `@tauri-apps/*` directly in view code. New Tauri commands must be registered in `src-tauri/src/lib.rs` `generate_handler!` (the authoritative command list) and wrapped in `desktop.ts`. `desktop.ts` also calls plugin commands directly (`plugin:opener|open_url`, clipboard-manager) — no Rust command needed for those.
 - No JSX/TSX: React (`react`/`react-dom` v19, pinned via `overrides`) is only a dynamic `import("react")` inside the `@kanaries/graphic-walker` Vue wrappers. `vite.config.mjs` deliberately omits `@vitejs/plugin-react`; `tsconfig.json` excludes `*.tsx`/`*.jsx`.
 - AG Grid is the **modular** `@ag-grid-community/*` v31 (`ModuleRegistry.registerModules`; not the monolithic `ag-grid-community`).
 - OAuth: the GA connection opens the **system browser** (`desktop.openExternal`) because Google blocks embedded webviews; the generic `open_oauth` command opens a modal Tauri webview window (`oauth.rs`) for providers that allow it.
@@ -38,7 +38,7 @@ From this dir (`npm install` first):
 - `npm run build` — same checks + `tauri build`. `tauri.conf.json`: `devUrl http://localhost:8080`, `frontendDist ../build/renderer`, `beforeDevCommand npm run dev:web`, `beforeBuildCommand npm run build:renderer-only`.
 
 ## Testing
-- **Unit (Vitest):** `npm run test:unit` (`vitest.config.ts`, `node` env, `globals:false`). Picks up only `src/**/*.test.ts` — currently the `ai-*` stores, `features/ai/markdown.test.ts`, and `views/CatalogView/cron-builder.test.ts`. Co-locate new unit tests next to the module.
+- **Unit (Vitest):** `npm run test:unit` (`vitest.config.ts`, `node` env, `globals:false`). Picks up only `src/**/*.test.ts` (stores, composables, per-node logic, view helpers). Co-locate new unit tests next to the module.
 - **E2E (Playwright):** `tests/*.spec.ts` (`web-flow.spec.ts`, `canvas-overlays.spec.ts`). `npm run test:web` runs the web-flow spec; `npm run test:all` runs the dir. Needs core (`:63578`) + the web server running first. `playwright.config.ts`: single worker, 120s timeout. `make test_e2e` from repo root orchestrates it.
 
 ## Gotchas

@@ -560,6 +560,76 @@ def test_save_flow_to_catalog_prefixes_filename():
             db.commit()
 
 
+def test_undo_preserves_catalog_display_name_and_path():
+    """Regression: undo must keep a catalog flow's clean display_name + path.
+
+    Previously undo dropped ``flow_settings.path``, so the session's display-name
+    lookup failed (the UI reverted to the raw ``{flow_id}_`` file stem) and a silent
+    save could no longer relink to the original catalog registration.
+    """
+    from flowfile_core.database.models import FlowRegistration
+    from flowfile_core.flowfile.history_manager import HistoryConfig
+    from flowfile_core.schemas.history_schema import HistoryActionType
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "undo_display_src.yaml")
+    remove_flow(src_path)
+    ns = client.post("/catalog/namespaces", json={"name": "NsUndoDisplay"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    src_flow_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    expected_file = storage.flows_directory / f"{src_flow_id}_undo_disp.yaml"
+    if expected_file.exists():
+        expected_file.unlink()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": src_flow_id, "flow_name": "undo_disp", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        flow_id = resp.json()
+        assert isinstance(flow_id, int)
+
+        def _session():
+            sessions = client.get("/active_flowfile_sessions/").json()
+            return next((s for s in sessions if s["flow_id"] == flow_id), None)
+
+        # Baseline: the clean display_name is resolved from the registration by path.
+        before = _session()
+        assert before is not None, "Saved flow has no active session"
+        assert before["display_name"] == "undo_disp"
+        assert before["path"], "Saved flow should have a path"
+
+        # Make an undoable change on the live flow, then undo via the route.
+        flow = flow_file_handler.get_flow(flow_id)
+        flow.flow_settings.track_history = False
+        flow._history_manager._config = HistoryConfig(enabled=True)
+        flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "before add")
+        flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+
+        undo = client.post("/editor/undo/", params={"flow_id": flow_id})
+        assert undo.status_code == 200 and undo.json()["success"], undo.text
+
+        # Regression assertions: identity survived the undo.
+        after = _session()
+        assert after is not None
+        assert after["display_name"] == "undo_disp", "Undo must not drop the catalog display name"
+        assert after["path"], "Undo must not wipe the flow path"
+
+        # A silent same-path save still works (it needs the preserved path).
+        save = client.post("/save_flow", params={"flow_id": flow_id})
+        assert save.status_code == 200, save.text
+    finally:
+        remove_flow(src_path)
+        if expected_file.exists():
+            expected_file.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path == str(expected_file)
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
 def test_save_flow_to_catalog_refuses_overwrite_of_foreign_file():
     """A pre-existing file with no catalog registration must not be overwritten."""
     from flowfile_core.database.models import FlowRegistration
@@ -843,6 +913,72 @@ def test_create_flow_without_namespace_auto_registers_local_flows():
             reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one()
             ns = db.get(CatalogNamespace, reg.namespace_id)
             assert ns.name == "Local Flows"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_create_flow_skip_catalog_registration():
+    """create_flow with register_in_catalog=False opens a session but writes no catalog registration
+    and no YAML on disk — the ephemeral scratch flow lives in-memory until an explicit save/run."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    # Re-seed namespaces (autouse catalog fixtures may have wiped them) so that a
+    # regression where the flag is ignored would actually have somewhere to register.
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_ephemeral.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post(
+            "editor/create_flow",
+            params={"flow_path": flow_path, "register_in_catalog": False},
+        )
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        flow_id = resp.json()
+        assert isinstance(flow_id, int), "create_flow should still return a session flow_id"
+
+        assert not os.path.exists(flow_path), "register_in_catalog=False must not write the scratch YAML to disk"
+
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow is not None, "the ephemeral scratch flow should still be a live in-memory session"
+        assert flow.has_unsaved_changes() is False, "a fresh scratch flow should have a clean dirty baseline"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is None, "register_in_catalog=False must not create a catalog registration"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_create_flow_default_persists_to_disk():
+    """A default create (register_in_catalog omitted) still writes the flow YAML to disk — the
+    deferral is scoped to ephemeral scratch flows and must not regress normal creates."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "default_create_persist.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post("editor/create_flow", params={"flow_path": flow_path})
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        assert os.path.exists(flow_path), "a default create must persist the flow YAML to disk"
     finally:
         remove_flow(flow_path)
         with get_db_context() as db:
@@ -1215,6 +1351,63 @@ def test_flow_run():
     response = client.post("/flow/run/", params={"flow_id": flow_id})
     assert response.status_code in (200, 202), "Flow not Started"
     assert flow_file_handler.get_flow(flow_id).get_run_info().start_time is not None, "Flow did not run"
+
+
+def test_first_run_registers_ephemeral_scratch_flow():
+    """A scratch flow created with register_in_catalog=False stays out of the catalog
+    until its first run, which promotes it into the catalog."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()  # ensure default namespaces exist for auto-registration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "scratch_first_run.yaml")
+
+    def _drop_registration():
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+    remove_flow(flow_path)
+    _drop_registration()
+
+    try:
+        resp = client.post(
+            "editor/create_flow",
+            params={"flow_path": flow_path, "register_in_catalog": False},
+        )
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        flow_id = resp.json()
+
+        assert not os.path.exists(flow_path), "scratch flow YAML must not be written before its first run"
+
+        with get_db_context() as db:
+            assert (
+                db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none() is None
+            ), "Scratch flow must not be catalogued before its first run"
+
+        add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+        manual_input = input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"name": "John"}, {"name": "Jane"}]),
+        )
+        client.post("/update_settings/", json=manual_input.model_dump(), params={"node_type": "manual_input"})
+
+        run_resp = client.post("/flow/run/", params={"flow_id": flow_id})
+        assert run_resp.status_code in (200, 202), f"Run failed: {run_resp.text}"
+
+        assert os.path.exists(flow_path), "first run must persist the scratch flow YAML to disk"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is not None, "First run must register the scratch flow in the catalog"
+    finally:
+        remove_flow(flow_path)
+        _drop_registration()
 
 
 def test_instant_function_result_after_run():
@@ -1825,6 +2018,91 @@ def test_copy_placeholder_node():
         "/editor/copy_node", params={"node_id_to_copy_from": 1, "flow_id_to_copy_from": flow_id}, json=new_node
     )
     assert r.status_code == 200, "Node not copied"
+
+
+def test_copy_flow_output_generates_unique_name():
+    """Copying a flow_output must not fail on the duplicate output_name; it auto-renames."""
+    flow_id = create_flow_with_manual_input()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=2, node_type="flow_output"))
+    flow.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=flow_id, node_id=2, output_name="output", depending_on_id=1)
+    )
+
+    new_node = {"flow_id": flow_id, "node_id": 3, "node_type": "flow_output", "pos_x": 10, "pos_y": 10}
+    r = client.post(
+        "/editor/copy_node", params={"node_id_to_copy_from": 2, "flow_id_to_copy_from": flow_id}, json=new_node
+    )
+    assert r.status_code == 200, r.text
+    assert flow.get_node(2).setting_input.output_name == "output", "Source output must be untouched"
+    copied = flow.get_node(3)
+    assert copied is not None, "Copied flow_output not added"
+    assert copied.node_type == "flow_output"
+    assert copied.setting_input.output_name == "output_1", "Copy must get a unique output_name"
+
+    # Copying again keeps incrementing the base rather than colliding.
+    new_node_2 = {"flow_id": flow_id, "node_id": 4, "node_type": "flow_output", "pos_x": 20, "pos_y": 20}
+    r2 = client.post(
+        "/editor/copy_node", params={"node_id_to_copy_from": 2, "flow_id_to_copy_from": flow_id}, json=new_node_2
+    )
+    assert r2.status_code == 200, r2.text
+    assert flow.get_node(4).setting_input.output_name == "output_2"
+
+
+def test_add_flow_output_assigns_unique_default_name():
+    """Dragging a second flow_output must not collide on the default 'output' name."""
+    flow_id = create_flow_with_manual_input()
+    flow = flow_file_handler.get_flow(flow_id)
+    for nid in (2, 3, 4):
+        r = client.post(
+            "/editor/add_node",
+            params={"flow_id": flow_id, "node_id": nid, "node_type": "flow_output", "pos_x": 0, "pos_y": 0},
+        )
+        assert r.status_code == 200, r.text
+    assert flow.get_node(2).setting_input.output_name == "output"
+    assert flow.get_node(3).setting_input.output_name == "output_1"
+    assert flow.get_node(4).setting_input.output_name == "output_2"
+
+    # Saving a node with its auto-assigned unique name (the drawer-close path) must succeed...
+    keep = input_schema.NodeFlowOutput(flow_id=flow_id, node_id=3, output_name="output_1", depending_on_id=-1)
+    r_keep = client.post("/update_settings/", json=keep.model_dump(), params={"node_type": "flow_output"})
+    assert r_keep.status_code == 200, r_keep.text
+    # ...but explicitly renaming it to collide with another port is still rejected.
+    clash = input_schema.NodeFlowOutput(flow_id=flow_id, node_id=3, output_name="output", depending_on_id=-1)
+    r_clash = client.post("/update_settings/", json=clash.model_dump(), params={"node_type": "flow_output"})
+    assert r_clash.status_code == 419, r_clash.text
+
+
+def test_add_flow_input_assigns_unique_default_name():
+    """Dragging a second flow_input must not collide on the default 'input' name."""
+    flow_id = ensure_clean_flow()
+    flow = flow_file_handler.get_flow(flow_id)
+    for nid in (1, 2):
+        r = client.post(
+            "/editor/add_node",
+            params={"flow_id": flow_id, "node_id": nid, "node_type": "flow_input", "pos_x": 0, "pos_y": 0},
+        )
+        assert r.status_code == 200, r.text
+    assert flow.get_node(1).setting_input.input_name == "input"
+    assert flow.get_node(2).setting_input.input_name == "input_1"
+
+
+def test_copy_flow_input_generates_unique_name():
+    """Copying a flow_input must not fail on the duplicate input_name; it auto-renames."""
+    flow_id = ensure_clean_flow()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="flow_input"))
+    flow.add_flow_input(input_schema.NodeFlowInput(flow_id=flow_id, node_id=1, input_name="input"))
+
+    new_node = {"flow_id": flow_id, "node_id": 2, "node_type": "flow_input", "pos_x": 10, "pos_y": 10}
+    r = client.post(
+        "/editor/copy_node", params={"node_id_to_copy_from": 1, "flow_id_to_copy_from": flow_id}, json=new_node
+    )
+    assert r.status_code == 200, r.text
+    assert flow.get_node(1).setting_input.input_name == "input", "Source input must be untouched"
+    copied = flow.get_node(2)
+    assert copied is not None, "Copied flow_input not added"
+    assert copied.setting_input.input_name == "input_1", "Copy must get a unique input_name"
 
 
 def test_create_db_connection():
