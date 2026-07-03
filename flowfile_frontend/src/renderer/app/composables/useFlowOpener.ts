@@ -15,8 +15,27 @@ export function useFlowOpener() {
 
   async function openFlow(
     flowPath: string,
-    meta?: { name?: string; catalogRef?: string },
+    meta?: { name?: string; catalogRef?: string; catalogId?: number },
   ): Promise<number | null> {
+    if (meta?.catalogId != null) {
+      try {
+        const openSession = (await FlowApi.getAllFlows()).find(
+          (s) => s.source_registration_id != null && s.source_registration_id === meta.catalogId,
+        );
+        if (openSession) {
+          nodeStore.setFlowId(openSession.flow_id);
+          recordFlow({
+            path: flowPath,
+            name: meta.name,
+            catalogRef: meta.catalogRef,
+            catalogId: meta.catalogId,
+          });
+          return openSession.flow_id;
+        }
+      } catch {
+        /* fall through to import */
+      }
+    }
     try {
       const flowId = await FlowApi.importFlow(flowPath);
       // importFlow is typed Promise<number> but the backend can return an
@@ -31,7 +50,12 @@ export function useFlowOpener() {
       }
       // setFlowId triggers the Canvas watcher which loads the flow.
       nodeStore.setFlowId(flowId);
-      recordFlow({ path: flowPath, name: meta?.name, catalogRef: meta?.catalogRef });
+      recordFlow({
+        path: flowPath,
+        name: meta?.name,
+        catalogRef: meta?.catalogRef,
+        catalogId: meta?.catalogId,
+      });
       return flowId;
     } catch (error: any) {
       removeFlow(flowPath);
