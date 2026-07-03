@@ -14,10 +14,11 @@ from flowfile_core.catalog.constants import (
     SAVED_FLOW_SQL_NODE_X,
     SAVED_FLOW_SQL_NODE_Y,
 )
+from flowfile_core.catalog.exceptions import FlowNotFoundError, TableNotFoundError
 from flowfile_core.catalog.repository import CatalogRepository
-from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.text_utils import (
+    friendly_relation_error,
     hash_source_versions,
     is_table_reference,
     rewrite_qualified_references,
@@ -91,10 +92,28 @@ class SqlService:
 
         virtual_tables = self._require_virtual_tables()
         delta_map, virtual_map = virtual_tables.resolve_all_queryable_tables(accessible_table_ids)
+        queryable = {*delta_map, *virtual_map}
+
+        cloud_aliases = virtual_tables.resolve_cloud_only_table_aliases(accessible_table_ids, exclude=queryable)
+        if cloud_aliases:
+            # Collapse dotted references (any quoting) so detection matches regardless of form.
+            detect_query = rewrite_qualified_references(query, queryable | set(cloud_aliases))
+            referenced = sorted(
+                {display for alias, display in cloud_aliases.items() if is_table_reference(alias, detect_query)}
+            )
+            if referenced:
+                names = ", ".join(f"'{d}'" for d in referenced)
+                return SqlQueryResult(
+                    error=(
+                        f"Table {names} is stored in cloud/object storage, which the SQL editor "
+                        f"does not support yet. Read it from a flow (Cloud storage or Catalog reader node) instead."
+                    )
+                )
+
         if not delta_map and not virtual_map:
             return SqlQueryResult(error="No catalog tables available")
 
-        query = rewrite_qualified_references(query, {*delta_map, *virtual_map})
+        query = rewrite_qualified_references(query, queryable)
         referenced_virtuals = {vname for vname in virtual_map if is_table_reference(vname, query)}
 
         virtual_refs: dict[str, str] = {}
@@ -102,13 +121,21 @@ class SqlService:
         for vname in referenced_virtuals:
             vid = virtual_map[vname]
             if vid not in ipc_path_by_id:
-                ipc_path = resolve_or_log(
-                    lambda vid=vid: self._materialise_virtual_for_sql(vid, user_id),
-                    kind="virtual table for SQL",
-                    identifier=vname,
-                )
-                if ipc_path is None:
-                    continue
+                # The virtual is referenced in the query, so it can't be skipped — a failure
+                # here means the query can't run. Surface a clear reason instead of letting the
+                # worker fail later with a cryptic "relation not found".
+                try:
+                    ipc_path = self._materialise_virtual_for_sql(vid, user_id)
+                except Exception as e:
+                    missing_source = isinstance(e, FileNotFoundError | FlowNotFoundError | TableNotFoundError)
+                    logger.warning(
+                        "Could not resolve virtual table %r for SQL: %s", vname, e, exc_info=not missing_source
+                    )
+                    reason = "its source flow is missing" if missing_source else "its source flow failed to run"
+                    return SqlQueryResult(
+                        error=f"Virtual table '{vname}' could not be resolved — {reason}. "
+                        f"See the server logs for details."
+                    )
                 ipc_path_by_id[vid] = ipc_path
             virtual_refs[vname] = ipc_path_by_id[vid]
 
@@ -118,9 +145,11 @@ class SqlService:
 
         try:
             result = _service_module.trigger_sql_query(query, delta_map, max_rows, virtual_refs=virtual_refs or None)
-            return SqlQueryResult(**result)
         except RuntimeError as e:
-            return SqlQueryResult(error=str(e))
+            return SqlQueryResult(error=friendly_relation_error(str(e), query))
+        if result.get("error"):
+            result["error"] = friendly_relation_error(result["error"], query)
+        return SqlQueryResult(**result)
 
     def _materialise_virtual_for_sql(self, virtual_id: int, user_id: int | None) -> str:
         """Resolve a virtual table to an IPC path for the SQL worker call."""

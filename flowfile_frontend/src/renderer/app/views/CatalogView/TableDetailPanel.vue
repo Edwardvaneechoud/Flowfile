@@ -29,7 +29,7 @@
         <button
           class="action-btn-lg"
           :disabled="!table.file_exists"
-          @click="emit('queryTable', table.name)"
+          @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
         >
           <i class="fa-solid fa-code"></i>
           Query table
