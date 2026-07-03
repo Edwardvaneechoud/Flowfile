@@ -26,7 +26,7 @@ def create_flow_name() -> str:
     """Human-facing default name for a quick-created / unnamed flow. Reads clearly as
     unnamed — matching 'Untitled notebook'/'Untitled dashboard' — with a timestamp so
     multiple unnamed flows stay distinguishable in the 'Unnamed Flows' catalog namespace."""
-    return "Unnamed flow " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return "Untitled flow " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def create_unnamed_flow_filename(flow_id: int) -> str:
