@@ -514,8 +514,18 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     selectVersion(version: number | null) {
-      this.selectedVersion = version;
-      if (this.selectedTableId !== null) {
+      // Viewing the current version is the same as viewing "latest". The plain latest
+      // read stays valid after old versions are vacuumed, whereas a version-pinned read
+      // can reference files that vacuum removed — so route current → latest (null).
+      const current = this.tableHistory?.current_version ?? null;
+      this.selectedVersion = version !== null && version === current ? null : version;
+      if (this.selectedTableId === null) return;
+      // Mirror selectTable: object-storage previews load on demand (the "Load preview"
+      // button), never eagerly on a version click. Local tables still auto-load.
+      if (this.selectedTable?.is_remote_storage) {
+        this.tablePreview = null;
+        this.previewError = null;
+      } else {
         this.loadTablePreview(this.selectedTableId);
       }
     },

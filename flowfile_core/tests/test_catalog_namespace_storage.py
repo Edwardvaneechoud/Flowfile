@@ -601,3 +601,23 @@ def test_cloud_table_file_exists_false_when_connection_missing():
     with get_db_context() as db:
         out = CatalogService(SQLAlchemyCatalogRepository(db)).get_table(table_id)
         assert out.file_exists is False
+
+
+def test_cloud_catalog_bare_name_table_is_remote_storage():
+    """A physical table under a cloud-backed catalog is flagged remote even when its file_path
+    is a bare dir name (not an s3:// URI), so the UI loads its preview on demand, not eagerly."""
+    _ensure_connection()
+    cat_id = _create_catalog(storage_uri="s3://flowfile-test/remoteflag", storage_connection_name=_CONNECTION_NAME)
+    table_id = _add_physical_table(cat_id, "bare_table_dir")  # bare dir name, not a cloud URI
+    with get_db_context() as db:
+        out = CatalogService(SQLAlchemyCatalogRepository(db)).get_table(table_id)
+    assert out.is_remote_storage is True
+
+
+def test_local_catalog_table_is_not_remote_storage():
+    """A physical table under a local catalog stays non-remote (preview may auto-load)."""
+    cat_id = _create_catalog()  # no storage_uri -> local filesystem
+    table_id = _add_physical_table(cat_id, "/tmp/some_local_table")
+    with get_db_context() as db:
+        out = CatalogService(SQLAlchemyCatalogRepository(db)).get_table(table_id)
+    assert out.is_remote_storage is False
