@@ -11,6 +11,7 @@ import {
   hasColumnBinding,
   columnMatchesParamType,
   matchingColumnNames,
+  subflowInterfaceChanged,
 } from "./runFlowLogic";
 
 const param = (name: string, overrides: Partial<FlowParameter> = {}): FlowParameter => ({
@@ -203,5 +204,58 @@ describe("findDanglingEdges", () => {
     const bare = [{ id: "e5", source: "5", target: "6" }];
     expect(findDanglingEdges(bare, "5", ["input-0"], ["output-0"])).toEqual([]);
     expect(findDanglingEdges(bare, "5", ["input-0"], [])).toHaveLength(1);
+  });
+});
+
+describe("subflowInterfaceChanged", () => {
+  const iface = (
+    inputs: string[],
+    outputs: string[],
+    parameters: FlowParameter[] = [],
+  ) => ({
+    inputs: inputs.map((name) => ({ name })),
+    outputs: outputs.map((name) => ({ name })),
+    parameters,
+  });
+
+  it("is false when inputs, outputs and params all match the saved slots", () => {
+    expect(subflowInterfaceChanged(iface(["a"], ["out"], [param("p")]), ["a"], ["out"], [param("p")])).toBe(
+      false,
+    );
+  });
+
+  it("detects an added output (the stale-handles case)", () => {
+    expect(subflowInterfaceChanged(iface(["a"], ["out", "count"]), ["a"], ["out"], [])).toBe(true);
+  });
+
+  it("detects a removed input", () => {
+    expect(subflowInterfaceChanged(iface([], ["out"]), ["a"], ["out"], [])).toBe(true);
+  });
+
+  it("detects a renamed / reordered port", () => {
+    expect(subflowInterfaceChanged(iface(["a"], ["renamed"]), ["a"], ["out"], [])).toBe(true);
+    expect(subflowInterfaceChanged(iface(["a", "b"], ["out"]), ["b", "a"], ["out"], [])).toBe(true);
+  });
+
+  it("treats empty-array / null / undefined enum_values as equivalent (no false churn)", () => {
+    const live = iface([], [], [param("p", { enum_values: [] })]);
+    expect(subflowInterfaceChanged(live, [], [], [param("p", { enum_values: null })])).toBe(false);
+    expect(
+      subflowInterfaceChanged(live, [], [], [param("p", { enum_values: undefined })]),
+    ).toBe(false);
+  });
+
+  it("detects a changed parameter type or default but ignores description edits", () => {
+    expect(
+      subflowInterfaceChanged(iface([], [], [param("p", { type: "integer" })]), [], [], [param("p")]),
+    ).toBe(true);
+    expect(
+      subflowInterfaceChanged(
+        iface([], [], [param("p", { description: "new docs" })]),
+        [],
+        [],
+        [param("p")],
+      ),
+    ).toBe(false);
   });
 });

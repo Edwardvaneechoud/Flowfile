@@ -5726,7 +5726,44 @@ class FlowGraph:
             return
 
         combined_settings = combine_existing_settings_and_new_settings(existing_setting_input, new_node_settings)
-        getattr(self, f"add_{node_type}")(combined_settings)
+        # Subflow port names must stay unique; auto-rename the copy so it doesn't collide with the source.
+        if node_type == "flow_output" and isinstance(combined_settings, input_schema.NodeFlowOutput):
+            combined_settings.output_name = self._unique_subflow_port_name(
+                combined_settings.output_name, node_type, combined_settings.node_id
+            )
+        elif node_type == "flow_input" and isinstance(combined_settings, input_schema.NodeFlowInput):
+            combined_settings.input_name = self._unique_subflow_port_name(
+                combined_settings.input_name, node_type, combined_settings.node_id
+            )
+        try:
+            getattr(self, f"add_{node_type}")(combined_settings)
+        except Exception:
+            # A failed copy must not leave the pre-added promise dangling in the graph.
+            if self.get_node(new_node_settings.node_id) is not None:
+                self.delete_node(new_node_settings.node_id)
+            raise
+
+    def _unique_subflow_port_name(self, desired_name: str, node_type: str, exclude_node_id: int) -> str:
+        """Return a subflow port name not already used by another flow_input/flow_output node.
+
+        Used when copying: duplicating a 'result' output yields 'result_1', 'result_2', …
+        (a trailing '_<n>' is stripped first so copies of copies keep incrementing the base).
+        """
+        attr = "output_name" if node_type == "flow_output" else "input_name"
+        taken = {
+            getattr(node.setting_input, attr, None)
+            for node in self.nodes
+            if node.node_type == node_type and node.node_id != exclude_node_id
+        }
+        taken.discard(None)
+        if desired_name not in taken:
+            return desired_name
+        base, _, suffix = desired_name.rpartition("_")
+        base = base if base and suffix.isdigit() else desired_name
+        counter = 1
+        while f"{base}_{counter}" in taken:
+            counter += 1
+        return f"{base}_{counter}"
 
     def generate_code(self):
         """Generates code for the flow graph.

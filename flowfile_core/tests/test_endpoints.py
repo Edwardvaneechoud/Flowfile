@@ -1950,6 +1950,91 @@ def test_copy_placeholder_node():
     assert r.status_code == 200, "Node not copied"
 
 
+def test_copy_flow_output_generates_unique_name():
+    """Copying a flow_output must not fail on the duplicate output_name; it auto-renames."""
+    flow_id = create_flow_with_manual_input()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=2, node_type="flow_output"))
+    flow.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=flow_id, node_id=2, output_name="output", depending_on_id=1)
+    )
+
+    new_node = {"flow_id": flow_id, "node_id": 3, "node_type": "flow_output", "pos_x": 10, "pos_y": 10}
+    r = client.post(
+        "/editor/copy_node", params={"node_id_to_copy_from": 2, "flow_id_to_copy_from": flow_id}, json=new_node
+    )
+    assert r.status_code == 200, r.text
+    assert flow.get_node(2).setting_input.output_name == "output", "Source output must be untouched"
+    copied = flow.get_node(3)
+    assert copied is not None, "Copied flow_output not added"
+    assert copied.node_type == "flow_output"
+    assert copied.setting_input.output_name == "output_1", "Copy must get a unique output_name"
+
+    # Copying again keeps incrementing the base rather than colliding.
+    new_node_2 = {"flow_id": flow_id, "node_id": 4, "node_type": "flow_output", "pos_x": 20, "pos_y": 20}
+    r2 = client.post(
+        "/editor/copy_node", params={"node_id_to_copy_from": 2, "flow_id_to_copy_from": flow_id}, json=new_node_2
+    )
+    assert r2.status_code == 200, r2.text
+    assert flow.get_node(4).setting_input.output_name == "output_2"
+
+
+def test_add_flow_output_assigns_unique_default_name():
+    """Dragging a second flow_output must not collide on the default 'output' name."""
+    flow_id = create_flow_with_manual_input()
+    flow = flow_file_handler.get_flow(flow_id)
+    for nid in (2, 3, 4):
+        r = client.post(
+            "/editor/add_node",
+            params={"flow_id": flow_id, "node_id": nid, "node_type": "flow_output", "pos_x": 0, "pos_y": 0},
+        )
+        assert r.status_code == 200, r.text
+    assert flow.get_node(2).setting_input.output_name == "output"
+    assert flow.get_node(3).setting_input.output_name == "output_1"
+    assert flow.get_node(4).setting_input.output_name == "output_2"
+
+    # Saving a node with its auto-assigned unique name (the drawer-close path) must succeed...
+    keep = input_schema.NodeFlowOutput(flow_id=flow_id, node_id=3, output_name="output_1", depending_on_id=-1)
+    r_keep = client.post("/update_settings/", json=keep.model_dump(), params={"node_type": "flow_output"})
+    assert r_keep.status_code == 200, r_keep.text
+    # ...but explicitly renaming it to collide with another port is still rejected.
+    clash = input_schema.NodeFlowOutput(flow_id=flow_id, node_id=3, output_name="output", depending_on_id=-1)
+    r_clash = client.post("/update_settings/", json=clash.model_dump(), params={"node_type": "flow_output"})
+    assert r_clash.status_code == 419, r_clash.text
+
+
+def test_add_flow_input_assigns_unique_default_name():
+    """Dragging a second flow_input must not collide on the default 'input' name."""
+    flow_id = ensure_clean_flow()
+    flow = flow_file_handler.get_flow(flow_id)
+    for nid in (1, 2):
+        r = client.post(
+            "/editor/add_node",
+            params={"flow_id": flow_id, "node_id": nid, "node_type": "flow_input", "pos_x": 0, "pos_y": 0},
+        )
+        assert r.status_code == 200, r.text
+    assert flow.get_node(1).setting_input.input_name == "input"
+    assert flow.get_node(2).setting_input.input_name == "input_1"
+
+
+def test_copy_flow_input_generates_unique_name():
+    """Copying a flow_input must not fail on the duplicate input_name; it auto-renames."""
+    flow_id = ensure_clean_flow()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="flow_input"))
+    flow.add_flow_input(input_schema.NodeFlowInput(flow_id=flow_id, node_id=1, input_name="input"))
+
+    new_node = {"flow_id": flow_id, "node_id": 2, "node_type": "flow_input", "pos_x": 10, "pos_y": 10}
+    r = client.post(
+        "/editor/copy_node", params={"node_id_to_copy_from": 1, "flow_id_to_copy_from": flow_id}, json=new_node
+    )
+    assert r.status_code == 200, r.text
+    assert flow.get_node(1).setting_input.input_name == "input", "Source input must be untouched"
+    copied = flow.get_node(2)
+    assert copied is not None, "Copied flow_input not added"
+    assert copied.setting_input.input_name == "input_1", "Copy must get a unique input_name"
+
+
 def test_create_db_connection():
     ensure_password_is_available()
     with get_db_context() as db:
