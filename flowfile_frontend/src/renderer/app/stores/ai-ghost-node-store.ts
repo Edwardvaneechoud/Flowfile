@@ -43,8 +43,14 @@ const isAbortError = (err: unknown): boolean => {
 
 export interface GhostNodeAnchor {
   upstreamNodeId: number | string;
-  edgeMidX: number;
-  edgeMidY: number;
+  // Screen (client) coords — where the inline input / preview popover renders
+  // (position: fixed), taken from the right-click that triggered it.
+  screenX: number;
+  screenY: number;
+  // Flow coords of the upstream node — where the materialised node is placed
+  // on the canvas (distinct from the screen coords above).
+  nodeX: number;
+  nodeY: number;
 }
 
 export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
@@ -55,6 +61,12 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
   const lastError = ref<unknown>(null);
   const aiDisabled = ref(false);
   const degradedReason = ref<string | null>(null);
+  // True between the deliberate trigger (right-click → begin) and the intent
+  // submit — the popover shows its inline "what do you want?" input.
+  const awaitingIntent = ref(false);
+  // Held on the store (not the composable) so a node component can trigger the
+  // flow and the Canvas-rendered popover can complete it against the same id.
+  const flowId = ref<number | null>(null);
 
   const cancel = (): void => {
     if (inflight.value !== null) {
@@ -69,6 +81,22 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
     suggestions.value = [];
     anchor.value = null;
     degradedReason.value = null;
+    awaitingIntent.value = false;
+    flowId.value = null;
+  };
+
+  /** Open the inline intent input at the given anchor without firing a request
+   * yet — the user types what they want, then `requestSuggestions` runs. This
+   * is the entry point for the trigger (a node's context menu). */
+  const beginIntent = (anchorPos: GhostNodeAnchor, flowIdArg: number): void => {
+    cancel();
+    suggestions.value = [];
+    degradedReason.value = null;
+    lastError.value = null;
+    aiDisabled.value = false;
+    anchor.value = anchorPos;
+    flowId.value = flowIdArg;
+    awaitingIntent.value = true;
   };
 
   const _replaceController = (): AbortController => {
@@ -84,6 +112,7 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
   ): Promise<NextNodeSuggestionsResponse | null> => {
     const controller = _replaceController();
     isLoading.value = true;
+    awaitingIntent.value = false;
     anchor.value = anchorPos;
     suggestions.value = [];
     degradedReason.value = null;
@@ -165,10 +194,15 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
       // settings carry flow_id / node_id from the LLM's perspective — overwrite
       // with the real ones before sending. The backend update_settings handler
       // ignores stale flow_id but accurate values keep audit logs honest.
+      // pos_x/pos_y MUST be sent too: update_settings replaces the node's whole
+      // setting_input, and NodeBase defaults pos_x/pos_y to 0 — omitting them
+      // would reset the node to (0,0), undoing the position add_node just set.
       const settingsBody = {
         ...suggestion.settings,
         flow_id: flowId,
         node_id: newNodeId,
+        pos_x: posX,
+        pos_y: posY,
       };
       await axios.post("update_settings/", settingsBody, {
         params: { node_type: suggestion.nodeType },
@@ -205,8 +239,11 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
     lastError,
     aiDisabled,
     degradedReason,
+    awaitingIntent,
+    flowId,
     cancel,
     clear,
+    beginIntent,
     requestSuggestions,
     materialize,
   };

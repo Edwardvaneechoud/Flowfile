@@ -54,7 +54,7 @@ class SuggestNextNodeRequest(BaseModel):
     model: str | None = None
     intent: str | None = Field(default=None, max_length=500)
     max_suggestions: int = Field(default=MAX_SUGGESTIONS, ge=1, le=10)
-    timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0.0, le=10.0)
+    timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0.0, le=60.0)
 
 
 def _ensure_known_provider(name: str) -> None:
