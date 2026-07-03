@@ -305,8 +305,7 @@ class TableService:
             return True
         if not table.file_path:
             file_exists = False
-        elif _is_cloud_uri(table.file_path):
-            # Object-storage tables: skip the per-table data probe; just check the storage connection.
+        elif self._is_remote_storage(table):
             file_exists = self._cloud_storage_connection_available(table.namespace_id)
         else:
             file_exists = table_exists(table.file_path)
