@@ -285,7 +285,7 @@ describe('Code Generation', () => {
       expect(code).toContain('.head(100)')
     })
 
-    it('should generate code for explore_data node (pass-through)', () => {
+    it('should elide explore_data node (transparent pass-through, no dead code)', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'explore_data', {}, [1]))
@@ -295,7 +295,12 @@ describe('Code Generation', () => {
         edges: createEdges([[1, 2]])
       })
 
-      expect(code).toContain('# Preview (pass-through)')
+      // explore_data is interactive-only: it emits no statement and the pipeline
+      // returns its upstream frame directly.
+      expect(code).not.toContain('Preview')
+      expect(code).not.toContain('explore_data')
+      expect(code).toContain('source = pl.scan_csv')
+      expect(code).toContain('return source')
     })
 
     it('should generate code for output node with CSV', () => {
@@ -448,14 +453,19 @@ describe('Code Generation', () => {
         edges: createEdges([[1, 2], [2, 3], [3, 4]])
       })
 
-      expect(code.indexOf('df_1')).toBeLessThan(code.indexOf('df_2'))
-      expect(code.indexOf('df_2')).toBeLessThan(code.indexOf('df_3'))
-      expect(code.indexOf('df_3')).toBeLessThan(code.indexOf('df_4'))
+      // The linear read -> filter -> select chain fuses into one piped expression
+      // named after its terminal operation; no df_1/df_2/df_3 ladder remains.
+      expect(code).toContain('selected = (')
+      expect(code).not.toContain('df_1')
+      expect(code).not.toContain('df_2')
+      expect(code).not.toContain('df_3')
 
-      expect(code).toContain('scan_csv')
+      // scan_csv is the pipe root, so filter/select chain onto it (no re-assignment).
+      expect(code).not.toContain('= pl.scan_csv')
+      expect(code).toContain('pl.scan_csv')
       expect(code).toContain('.filter(')
       expect(code).toContain('.select(')
-      expect(code).toContain('.sink_csv(')
+      expect(code).toContain('selected.sink_csv(')
     })
 
     it('should generate proper function structure', () => {
@@ -476,6 +486,117 @@ describe('Code Generation', () => {
       expect(code).toContain('if __name__ == "__main__":')
       expect(code).toContain('pipeline_output = run_etl_pipeline()')
       expect(code).toContain('print(pipeline_output.collect())')
+    })
+  })
+
+  describe('Chain Fusion & Naming', () => {
+    it('fuses a linear single-use chain into one piped expression', () => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'filter', {
+        filter_input: { mode: 'basic', basic_filter: { field: 'age', operator: 'greater_than', value: '18' } }
+      }, [1]))
+      nodes.set(3, createNode(3, 'sort', { sort_input: [{ column: 'age', how: 'asc' }] }, [2]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 2], [2, 3]]) })
+
+      // Terminal operation names the pipe; intermediates are not re-bound.
+      expect(code).toContain('ordered = (')
+      expect(code).toContain('.filter(')
+      expect(code).toContain('.sort(')
+      expect(code).not.toContain('df_1')
+      expect(code).not.toContain('df_2')
+      expect(code).not.toContain('df_3')
+      expect(code).toContain('return ordered')
+    })
+
+    it('keeps a named variable at a fan-out boundary', () => {
+      // read feeds both a filter and a sort -> read must survive as its own var.
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'filter', {
+        filter_input: { mode: 'basic', basic_filter: { field: 'age', operator: 'greater_than', value: '18' } }
+      }, [1]))
+      nodes.set(3, createNode(3, 'sort', { sort_input: [{ column: 'age', how: 'asc' }] }, [1]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 2], [1, 3]]) })
+
+      expect(code).toContain('source = pl.scan_csv')
+      expect(code).toContain('source.filter')
+      expect(code).toContain('source.sort')
+    })
+
+    it('suffixes labels that collide across boundaries', () => {
+      // Two independent sources both want the "source" label.
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'a.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'read', { received_file: { name: 'b.csv', table_settings: {} } }))
+      const joinNode = createNode(3, 'join', {
+        join_input: { how: 'inner', join_mapping: [{ left_col: 'id', right_col: 'id' }] }
+      })
+      joinNode.leftInputId = 1
+      joinNode.rightInputId = 2
+      nodes.set(3, joinNode)
+
+      const code = generateCode({
+        nodes,
+        edges: [
+          { id: 'e1-3', source: '1', target: '3', sourceHandle: 'output-0', targetHandle: 'input-0' },
+          { id: 'e2-3', source: '2', target: '3', sourceHandle: 'output-0', targetHandle: 'input-1' }
+        ]
+      })
+
+      expect(code).toContain('source_1 = pl.scan_csv')
+      expect(code).toContain('source_2 = pl.scan_csv')
+      expect(code).toContain('joined = source_1.join')
+    })
+
+    it('does not fuse into a node that references its input variable elsewhere', () => {
+      // dynamic_rename's expression references `<input>.columns`, so fusing would
+      // drop the variable it relies on -> the source must survive as its own var.
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'dynamic_rename', {
+        dynamic_rename_input: { selection_mode: 'all', rename_mode: 'prefix', prefix: 'x_' }
+      }, [1]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 2]]) })
+
+      expect(code).toContain('source = pl.scan_csv')
+      expect(code).toContain('source.columns')
+      expect(code).toContain('renamed = source.rename')
+    })
+
+    it('does not rewrite a provisional token that appears inside a string literal', () => {
+      // node 1 fans out (so it survives as `source`, i.e. df_1 -> source is in the
+      // rename map). A downstream filter compares against the literal value "df_1".
+      // The variable reference must be renamed, but the string literal must not.
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'filter', {
+        filter_input: { mode: 'basic', basic_filter: { field: 'label', operator: 'equals', value: 'df_1' } }
+      }, [1]))
+      nodes.set(3, createNode(3, 'sort', { sort_input: [{ column: 'label', how: 'asc' }] }, [1]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 2], [1, 3]]) })
+
+      expect(code).toContain('source = pl.scan_csv') // df_1 -> source (real rename)
+      expect(code).toContain('source.filter') // variable reference renamed
+      expect(code).toContain('== "df_1"') // string literal left verbatim
+      expect(code).not.toContain('== "source"') // the naive-regex bug would produce this
+    })
+
+    it('names custom polars_code functions by node id', () => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(7, createNode(7, 'polars_code', {
+        polars_code_input: { polars_code: 'df.head(5)' }
+      }, [1]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 7]]) })
+
+      expect(code).toContain('def _polars_code_7(')
+      expect(code).toContain('transformed = _polars_code_7(')
     })
   })
 
@@ -669,8 +790,10 @@ describe('Code Generation', () => {
       })
 
       expect(code).toContain('custom_input = pl.LazyFrame')
-      expect(code).toContain('df_2 = custom_input.filter')
+      // Unpinned boundary gets an operation-based name, not df_2.
+      expect(code).toContain('filtered = custom_input.filter')
       expect(code).not.toContain('df_1')
+      expect(code).not.toContain('df_2')
     })
 
     it('should use node_reference in join operations', () => {
@@ -741,10 +864,12 @@ describe('Code Generation', () => {
 
       const code = generateCode({ nodes, edges: [] })
 
-      expect(code).toContain('df_1 = pl.LazyFrame')
+      // No user reference -> auto operation-based name (source), not df_1.
+      expect(code).toContain('source = pl.LazyFrame')
+      expect(code).not.toContain('df_1')
     })
 
-    it('should fall back to df_{node_id} when node_reference is undefined', () => {
+    it('should use an operation-based name when node_reference is undefined', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'manual_input', {
         raw_data_format: {
@@ -755,7 +880,8 @@ describe('Code Generation', () => {
 
       const code = generateCode({ nodes, edges: [] })
 
-      expect(code).toContain('df_1 = pl.LazyFrame')
+      expect(code).toContain('source = pl.LazyFrame')
+      expect(code).not.toContain('df_1')
     })
 
     it('should return correct node_reference in return statement', () => {

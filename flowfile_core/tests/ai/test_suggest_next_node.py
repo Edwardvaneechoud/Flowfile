@@ -75,12 +75,23 @@ def _make_node(
     *,
     predicted_schema: list[Any] | None,
     node_type: str = "manual_input",
+    compute_schema: list[Any] | None = None,
 ) -> Any:
+    """Duck-typed FlowNode stand-in.
+
+    ``predicted_schema`` is the raw cache; ``compute_schema`` (defaults to the
+    same) is what ``get_predicted_schema()`` returns — the suggest path calls
+    the method, not the attribute, so a cold cache with a computable schema
+    (``predicted_schema=None`` but ``compute_schema=[...]``) exercises the
+    on-demand warming path.
+    """
     schema = SimpleNamespace(predicted_schema=predicted_schema)
+    computed = compute_schema if compute_schema is not None else predicted_schema
     return SimpleNamespace(
         node_id=node_id,
         node_type=node_type,
         node_schema=schema,
+        get_predicted_schema=lambda force=False: computed,
     )
 
 
@@ -296,6 +307,71 @@ async def test_drops_candidate_with_invalid_pydantic_settings() -> None:
     assert response.suggestions[0].node_type == "select"
 
 
+def test_ghost_settings_examples_are_valid() -> None:
+    """Every worked example shown to the LLM must validate against its settings
+    class (with the server-injected placeholder ids). A schema change that
+    breaks an example fails here instead of silently teaching the LLM a bad
+    shape that would drop every real suggestion."""
+    from flowfile_core.ai.suggest_next_node import _GHOST_SETTINGS_EXAMPLES
+    from flowfile_core.schemas.schemas import get_settings_class_for_node_type
+
+    assert _GHOST_SETTINGS_EXAMPLES
+    for node_type, example in _GHOST_SETTINGS_EXAMPLES.items():
+        assert node_type in _ALLOWED_NODE_TYPES, node_type
+        settings_cls = get_settings_class_for_node_type(node_type)
+        assert settings_cls is not None, node_type
+        # flow_id/node_id are injected server-side — mirror that here.
+        settings_cls.model_validate({"flow_id": 0, "node_id": 0, **example})
+
+
+def test_settings_examples_injected_into_prompt() -> None:
+    """The system prompt must carry the per-node-type settings shapes so a
+    cheap model isn't guessing the nested structure (the root cause of the
+    'no schema-grounded suggestion' degrade)."""
+    from flowfile_core.ai.suggest_next_node import _build_messages
+
+    system = _build_messages(
+        upstream_columns=["region", "amount"],
+        upstream_node_type="read_csv",
+        intent=None,
+        max_suggestions=3,
+    )[0].content
+    assert "filter_input" in system
+    assert "groupby_input" in system
+    assert "flow_id" in system  # tells the model these are auto-filled
+
+
+@pytest.mark.asyncio
+async def test_accepts_candidate_without_flow_id_node_id() -> None:
+    """Regression: a real LLM omits flow_id/node_id (it can't know them). The
+    executor-seam injection means a correct-shaped candidate still validates
+    and is returned, rather than dropped as no_valid_suggestions."""
+    upstream = _make_node("u1", predicted_schema=_columns("region", "amount"))
+    graph = _FakeGraph({"u1": upstream})
+
+    provider = _FakeProvider(
+        content=_payload(
+            [
+                {
+                    "node_type": "filter",
+                    # No flow_id / node_id — exactly what a real LLM emits.
+                    "settings": {
+                        "filter_input": {
+                            "mode": "basic",
+                            "basic_filter": {"field": "region", "operator": "==", "value": "EU"},
+                        }
+                    },
+                    "label": "Filter by region",
+                },
+            ]
+        )
+    )
+    response = await suggest_next_node(graph, "u1", provider=provider, scheduler=_scheduler())
+    assert response.degraded is False
+    assert len(response.suggestions) == 1
+    assert response.suggestions[0].node_type == "filter"
+
+
 @pytest.mark.asyncio
 async def test_drops_candidate_outside_ghost_node_preset() -> None:
     """Defence-in-depth: even if the LLM ignores the prompt and proposes a
@@ -331,8 +407,39 @@ async def test_drops_candidate_outside_ghost_node_preset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_warms_cold_schema_cache_on_demand() -> None:
+    """Regression: the raw ``predicted_schema`` cache is cold (``None``) but
+    ``get_predicted_schema()`` can compute it. The suggest path must call the
+    method (like every other AI surface) and produce suggestions rather than
+    degrading early with ``upstream_schema_unknown`` — the bug that made the
+    ghost surface appear to never work."""
+    upstream = _make_node("u1", predicted_schema=None, compute_schema=_columns("region"))
+    graph = _FakeGraph({"u1": upstream})
+
+    provider = _FakeProvider(
+        content=_payload(
+            [
+                {
+                    "node_type": "filter",
+                    "settings": _filter_settings(field="region"),
+                    "label": "Filter by region",
+                },
+            ]
+        )
+    )
+    response = await suggest_next_node(graph, "u1", provider=provider, scheduler=_scheduler())
+    assert response.degraded is False
+    assert len(response.suggestions) == 1
+    assert response.suggestions[0].node_type == "filter"
+    # The LLM must have been consulted — schema was warmed, not degraded early.
+    assert provider.last_call_kwargs != {}
+
+
+@pytest.mark.asyncio
 async def test_degrades_on_cold_upstream() -> None:
-    """Upstream node has ``predicted_schema=None`` — must NOT call the LLM."""
+    """Upstream schema is genuinely unpredictable (both cache and
+    ``get_predicted_schema()`` yield ``None``) — must NOT call the LLM, and
+    must degrade with the machine-code reason the frontend switches on."""
     upstream = _make_node("u1", predicted_schema=None)
     graph = _FakeGraph({"u1": upstream})
 
@@ -340,7 +447,7 @@ async def test_degrades_on_cold_upstream() -> None:
     response = await suggest_next_node(graph, "u1", provider=provider, scheduler=_scheduler())
     assert response.degraded is True
     assert response.suggestions == []
-    assert response.reason
+    assert response.reason == "upstream_schema_unknown"
     # We must NOT have hit the LLM in the cold-flow branch.
     assert provider.last_call_kwargs == {}
 
@@ -351,6 +458,7 @@ async def test_degrades_when_upstream_missing() -> None:
     provider = _FakeProvider(content=_payload([]))
     response = await suggest_next_node(graph, "missing-id", provider=provider, scheduler=_scheduler())
     assert response.degraded is True
+    assert response.reason == "missing_upstream"
     assert provider.last_call_kwargs == {}
 
 

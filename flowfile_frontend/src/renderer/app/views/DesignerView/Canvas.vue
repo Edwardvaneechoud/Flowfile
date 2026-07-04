@@ -161,10 +161,10 @@ provide("hoveredEdgeId", hoveredEdgeId);
 provide("cancelEdgeLeave", cancelEdgeLeave);
 provide("scheduleEdgeLeave", scheduleEdgeLeave);
 
-// — schema-grounded next-node suggestions on edge hover. The composable
-// owns its own debounce + AbortController so a hover-flick doesn't fire N
-// requests; clear is wired into handleCanvasClick below so a click anywhere
-// off the popover dismisses it.
+// Schema-grounded "suggest next node" — a deliberate action (right-click a
+// node → "Suggest next node…") that opens an inline intent box and, on submit,
+// previews AI-proposed downstream nodes to confirm. The popover + request
+// state live in the composable/store; dismiss is wired into handleCanvasClick.
 const ghostNode = useGhostNodeSuggestions();
 
 function onEdgeMouseEnter(payload: {
@@ -173,19 +173,11 @@ function onEdgeMouseEnter(payload: {
 }) {
   cancelEdgeLeave();
   hoveredEdgeId.value = payload.edge.id;
-  // VueFlow's GraphEdge carries sourceX/Y/targetX/Y at runtime even though
-  // the public ``EdgeMouseEvent`` declares the narrower ``Edge`` shape; the
-  // composable defaults missing coords to 0 so this cast is safe.
-  ghostNode.onEdgeMouseEnter(
-    payload as Parameters<typeof ghostNode.onEdgeMouseEnter>[0],
-    flowStore.flowId,
-  );
 }
 
 function onEdgeMouseLeave({ edge }: { edge: { id: string } }) {
   if (hoveredEdgeId.value !== edge.id) return;
   scheduleEdgeLeave(edge.id);
-  ghostNode.onEdgeMouseLeave();
 }
 
 /**
@@ -1362,8 +1354,8 @@ defineExpose({
         @move-end="handleMoveEnd"
       >
         <MiniMap />
-        <AiGhostNode :composable="ghostNode" />
       </VueFlow>
+      <AiGhostNode :composable="ghostNode" @accepted="reloadCurrentFlow" />
       <context-menu
         v-if="showContextMenu"
         :x="clickedPosition.x"

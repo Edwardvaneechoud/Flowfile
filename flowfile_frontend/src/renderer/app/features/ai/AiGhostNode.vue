@@ -6,9 +6,20 @@
     @mousedown.stop
     @click.stop
   >
-    <div v-if="isLoading" class="ai-ghost-loading">
-      <span class="ai-ghost-spark">✨</span>
-      <span>Suggesting next node…</span>
+    <div v-if="awaitingIntent" class="ai-ghost-input">
+      <input
+        ref="intentInputRef"
+        v-model="intentText"
+        class="ai-ghost-intent-field"
+        type="text"
+        placeholder="Describe the next step…"
+        @keydown.enter.stop.prevent="onSubmitIntent"
+        @keydown.esc.stop.prevent="onDismiss"
+      />
+    </div>
+    <div v-else-if="isLoading" class="ai-ghost-loading">
+      <span class="ai-ghost-spinner" aria-hidden="true"></span>
+      <span>Finding next node…</span>
     </div>
     <div v-else-if="aiDisabled" class="ai-ghost-empty">
       AI features are disabled. Ask an admin to enable them in settings.
@@ -25,11 +36,7 @@
         @click.stop="onAccept(index)"
       >
         <div class="ai-ghost-item-header">
-          <span class="ai-ghost-spark">✨</span>
           <span class="ai-ghost-label">{{ suggestion.label || suggestion.nodeType }}</span>
-        </div>
-        <div class="ai-ghost-item-meta">
-          <span class="ai-ghost-type">{{ suggestion.nodeType }}</span>
           <span v-if="suggestion.predictedOutputSchema" class="ai-ghost-cols">
             {{ suggestion.predictedOutputSchema.length }} cols
           </span>
@@ -43,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import { useGhostNodeSuggestions } from "./useGhostNodeSuggestions";
 
@@ -52,16 +59,36 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits<{ (e: "accepted"): void }>();
 const pendingIndex = ref<number | null>(null);
+const intentText = ref("");
+const intentInputRef = ref<HTMLInputElement | null>(null);
 
 const isVisible = computed(() => props.composable.isVisible.value);
+const awaitingIntent = computed(() => props.composable.awaitingIntent.value);
 const isLoading = computed(() => props.composable.isLoading.value);
 const aiDisabled = computed(() => props.composable.aiDisabled.value);
 const degradedReason = computed(() => props.composable.degradedReason.value);
 const suggestions = computed(() => props.composable.suggestions.value);
 
-const anchorX = computed(() => props.composable.anchor.value?.edgeMidX ?? 0);
-const anchorY = computed(() => props.composable.anchor.value?.edgeMidY ?? 0);
+const anchorX = computed(() => props.composable.anchor.value?.screenX ?? 0);
+const anchorY = computed(() => props.composable.anchor.value?.screenY ?? 0);
+
+// Focus (and reset) the inline box each time it opens.
+watch(awaitingIntent, (open) => {
+  if (open) {
+    intentText.value = "";
+    void nextTick(() => intentInputRef.value?.focus());
+  }
+});
+
+const onSubmitIntent = (): void => {
+  props.composable.submitIntent(intentText.value);
+};
+
+const onDismiss = (): void => {
+  props.composable.clear();
+};
 
 const degradedMessage = computed(() => {
   switch (degradedReason.value) {
@@ -76,7 +103,7 @@ const degradedMessage = computed(() => {
     case "parse_error":
       return "AI returned an invalid response.";
     case "no_valid_suggestions":
-      return "No schema-grounded suggestion fits this edge.";
+      return "No suggestion fits this node's schema — try rephrasing.";
     default:
       return "AI couldn't suggest a next node.";
   }
@@ -86,7 +113,8 @@ const onAccept = async (index: number): Promise<void> => {
   if (pendingIndex.value !== null) return;
   pendingIndex.value = index;
   try {
-    await props.composable.acceptSuggestion(index);
+    const newNodeId = await props.composable.acceptSuggestion(index);
+    if (newNodeId !== null) emit("accepted");
   } finally {
     pendingIndex.value = null;
   }
@@ -95,29 +123,71 @@ const onAccept = async (index: number): Promise<void> => {
 
 <style scoped>
 .ai-ghost-popover {
-  position: absolute;
-  z-index: 999;
-  min-width: 280px;
-  max-width: 360px;
-  padding: 8px;
-  border: 1.5px dashed #6366f1;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  backdrop-filter: blur(2px);
+  position: fixed;
+  z-index: var(--z-index-canvas-context-menu, 100002);
+  min-width: 260px;
+  max-width: 340px;
+  padding: 4px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 6px;
+  background-color: var(--color-background-primary);
+  box-shadow: var(--shadow-lg);
   pointer-events: auto;
-  font-size: 13px;
-  color: #1f2937;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+}
+
+.ai-ghost-input {
+  padding: 4px;
+}
+
+.ai-ghost-intent-field {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+  background-color: var(--color-background-primary);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ai-ghost-intent-field::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.ai-ghost-intent-field:focus {
+  border-color: var(--color-accent);
 }
 
 .ai-ghost-loading,
 .ai-ghost-empty {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  color: #4b5563;
-  font-style: italic;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.ai-ghost-spinner {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--color-border-primary);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: ai-ghost-spin 0.7s linear infinite;
+}
+
+@keyframes ai-ghost-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .ai-ghost-list {
@@ -126,56 +196,28 @@ const onAccept = async (index: number): Promise<void> => {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
 .ai-ghost-item {
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: 8px 10px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.12s ease;
-  opacity: 0.85;
+  transition: background-color 0.15s ease;
 }
 
 .ai-ghost-item:hover {
-  background: rgba(99, 102, 241, 0.08);
-  opacity: 1;
+  background-color: var(--color-background-hover);
 }
 
 .ai-ghost-item--busy {
   pointer-events: none;
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .ai-ghost-item-header {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-}
-
-.ai-ghost-item-meta {
-  display: flex;
+  align-items: baseline;
   gap: 8px;
-  margin-top: 2px;
-  color: #6b7280;
-  font-size: 11px;
-}
-
-.ai-ghost-type {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-
-.ai-ghost-desc {
-  margin: 4px 0 0;
-  color: #4b5563;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.ai-ghost-spark {
-  color: #6366f1;
-  font-size: 14px;
 }
 
 .ai-ghost-label {
@@ -183,5 +225,20 @@ const onAccept = async (index: number): Promise<void> => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.ai-ghost-cols {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.ai-ghost-desc {
+  margin: 3px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
 }
 </style>

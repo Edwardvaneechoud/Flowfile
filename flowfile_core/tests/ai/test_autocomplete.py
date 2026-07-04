@@ -65,12 +65,27 @@ def _columns(*names: str) -> list[_FakeColumn]:
     return [_FakeColumn(n) for n in names]
 
 
-def _make_node(node_id: int | str, *, predicted_schema: list[Any] | None, all_inputs: list[Any] | None = None) -> Any:
+def _make_node(
+    node_id: int | str,
+    *,
+    predicted_schema: list[Any] | None,
+    all_inputs: list[Any] | None = None,
+    compute_schema: list[Any] | None = None,
+) -> Any:
+    """Duck-typed FlowNode stand-in.
+
+    ``compute_schema`` (defaults to ``predicted_schema``) is what
+    ``get_predicted_schema()`` returns — the surface calls the method, not the
+    raw attribute, so a cold cache with a computable schema exercises the
+    on-demand warming path.
+    """
     schema = SimpleNamespace(predicted_schema=predicted_schema)
+    computed = compute_schema if compute_schema is not None else predicted_schema
     node = SimpleNamespace(
         node_id=node_id,
         node_schema=schema,
         all_inputs=all_inputs or [],
+        get_predicted_schema=lambda force=False: computed,
     )
     return node
 
