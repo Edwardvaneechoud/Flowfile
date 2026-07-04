@@ -1,12 +1,11 @@
 # Output Nodes
 
-Output nodes represent the final steps in your data pipeline, allowing you to save your transformed data or explore it visually. These nodes help you deliver your results in the desired format or analyze them directly.
+Output nodes represent the final steps in your data pipeline, allowing you to save your transformed data or explore it visually.
 
 !!! info "Some output nodes are not in Flowfile Lite"
-    In the browser-only [Flowfile Lite](../../deployment/lite.md) build, **Write Data** downloads files to your browser and **Write to Catalog** / **Explore Data** work as usual. **Cloud Storage Writer** and **Database Writer** are not available (no backend).
+    In the browser-only [Flowfile Lite](../../deployment/lite.md) build, **Write Data** downloads a file to your browser (CSV, Parquet, or Excel — not the full desktop format set) and **Write to Catalog** / **Explore Data** work as usual. **Cloud Storage Writer** and **Database Writer** are not available (no backend).
 
 ## Node Details
-## Node Details  
 
 ### ![Write Data](../../../assets/images/nodes/output.svg){ width="50" height="50" } Write Data  
 
@@ -22,14 +21,6 @@ The **Write Data** node allows you to save your processed data in different form
 - **Arrow IPC / Feather files** (`.arrow`)  
 - **NDJSON files** (`.ndjson`)  
 - **Avro files** (`.avro`)  
-
----
-
-### **Usage**  
-
-1. Configure the **output file path**.  
-2. Select the **file format**.  
-3. Set writing options (e.g., delimiter, compression).  
 
 ---
 
@@ -55,7 +46,7 @@ When an **Excel** file is selected, additional configurations allow customizing 
 ---
 
 ### Parquet  
-When a **Parquet** file is selected, you can choose a compression codec. Parquet is a **columnar storage format**, optimized for efficient reading and writing.
+When a **Parquet** file is selected, you can choose a compression codec.
 
 | Parameter       | Description                                                                                   |
 |-----------------|------------------------------------------------------------------------------------------------|
@@ -102,9 +93,6 @@ When an **Avro** file is selected, you can choose a compression codec. Avro is a
 | **File Format**    | Selects the output format (`CSV`, `Excel`, `Parquet`, `IPC`, `NDJSON`, `Avro`).                                             |
 | **Overwrite Mode** | Controls whether to replace or append data. When `new file` is selected it will throw an error when the file already exists |
 
-This node ensures that your transformed data is **saved in the correct format**, ready for further use or analysis.
-
-
 ---
 
 ### ![Cloud Storage Writer](../../../assets/images/nodes/cloud_storage_writer.svg){ width="50" height="50" } Cloud Storage Writer
@@ -143,11 +131,14 @@ The **Cloud Storage Writer** node saves your processed data directly to cloud ob
 - Supports both `overwrite` and `append` write modes
 - Automatically handles schema evolution when appending
 
+!!! note "Parquet default differs from local Write Data"
+    The Cloud Storage Writer defaults Parquet to **Snappy**, while the local **Write Data** node defaults to **Zstd**. Set the codec explicitly if you need the two paths to match.
+
 !!! warning "Overwrite Mode"
-   When using `overwrite` mode, any existing file or data at the target path will be replaced. Make sure to verify the path before executing.
+    When using `overwrite` mode, any existing file or data at the target path will be replaced. Verify the path before running.
 
 !!! info "Append Mode"
-   Available only for Delta Lake format.
+    Available only for the Delta Lake format.
 
 ---
 
@@ -249,5 +240,45 @@ For the full guide on virtual tables, optimization, and when to use them, see [V
 
 ### ![Explore Data](../../../assets/images/nodes/explore_data.svg){ width="50" height="50" } Explore Data
 
-The Explore Data node provides interactive data exploration and analysis capabilities.
+The **Explore Data** node opens an interactive, drag-and-drop chart builder (powered by [Graphic Walker](https://github.com/Kanaries/graphic-walker)) directly on the node's input. Drag columns onto the x/y axes, color, and size shelves to build bar, line, scatter, and other chart types — no configuration up front, no code.
+
+It takes a single input and produces no output: it is a **terminal preview node** for eyeballing a dataset, not a step that transforms or writes data.
+
+#### **Usage:**
+
+1. Connect the dataset you want to explore to the **Explore Data** node.
+2. Run the flow so the node has data to visualize (the builder shows an empty state until the upstream has run).
+3. Drag fields onto the chart shelves to compose a visualization.
+4. Chart configurations are saved with the node, so they persist when you reopen the flow.
+
+!!! note "UI-only node"
+    Explore Data renders only in the visual editor. Headless runs (the `flowfile run flow` CLI, the scheduler, and other non-UI execution paths) **skip** Explore Data nodes automatically, since there is nowhere to draw the chart. It has no effect on the data flowing through the rest of the pipeline.
+
+To persist a chart as a shareable, reusable artifact rather than an ad-hoc preview, use the catalog's [visualizations](../catalog/visualizations.md) instead.
+
+---
+
+### Flow Output
+
+The **Flow Output** node is a named exit point for a [subflow](../subflows.md): each Flow Output exposes one dataset to the parent flow that calls it, appearing as an output handle on the parent's Run Flow node. A flow can carry several, each with its own name.
+
+| Parameter | Description |
+|-----------|-------------|
+| **Output name** | The port name the parent reads from (default `output`) |
+
+See [Subflows](../subflows.md) for the full pattern.
+
+---
+
+### API Response
+
+The **API Response** node marks its input as the body of an HTTP endpoint. When a flow is published as an API, the data flowing into this node is serialized and returned to the caller; a published flow must contain exactly one. During interactive runs it passes data through unchanged, so previews keep working.
+
+| Parameter | Description |
+|-----------|-------------|
+| **Orientation** | `records` (list of row objects, default) or `columns` (column-oriented) |
+| **Max rows** | Optional cap on the number of rows returned |
+
+---
+[← Aggregate data](aggregate.md) | [Next: Machine Learning →](ml.md)
 

@@ -40,15 +40,21 @@ df = df.with_columns([
 
 ## Schema Inspection
 
-```python
-# Get schema without processing data
-print(df.schema)
-# [Column(name='int_col', dtype=Int64), ...]
+`df.schema` returns a Polars `Schema` — a dict-like mapping of column name to dtype, resolved without reading any data. Access dtypes by column name, not by position.
 
-# Check specific column type
-print(df.schema[0].dtype)
+```python
+# Get the schema without processing data
+print(df.schema)
+# Schema([('int_col', Int64), ('str_col', String)])
+
+# Look up a specific column's type by name
+print(df.schema["int_col"])
 # Int64
+
+# Enumerate columns and types
+for name, dtype in df.schema.items():
+    print(name, dtype)
 ```
 
 ---
-[← Previous: Writing data](writing-data.md) | [Next: FlowFile Operations →](flowframe-operations.md)
+[← Previous: Writing Data](writing-data.md) | [Next: DataFrame Operations →](flowframe-operations.md)

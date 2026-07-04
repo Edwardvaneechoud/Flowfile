@@ -1,42 +1,21 @@
-# Manage S3 Connections
+# Connect to AWS S3 and S3-compatible storage
 
-This guide walks you through creating AWS S3 connections in Flowfile to access your cloud data.
+This guide walks you through creating an AWS S3 (or S3-compatible, such as MinIO) connection in Flowfile so you can read and write cloud data from your flows.
 
 !!! info "Not in Flowfile Lite"
     Cloud storage connections require the full desktop/server build. This guide does not apply to the browser-only [Flowfile Lite](../../deployment/lite.md) edition, which has no backend.
 
 ## Overview
 
-Cloud storage connections securely store your AWS credentials and configuration, allowing you to reuse them across multiple workflows without re-entering credentials.
+A cloud storage connection stores your AWS credentials and configuration under a name, which you reference from reader and writer nodes across workflows.
 
-## Steps to Create an S3 Connection
+## Create an S3 connection
 
-### 1. Access Cloud Storage Connections
+**1. Open the dialog.** On the **Connections** page (left sidebar), select the **Cloud Storage** tab and click **"+ Add Connection"**.
 
-Open the **Connections** page from the left sidebar and select the **Cloud Storage** tab.
-
-<details markdown="1">
-<summary>Screenshot: Cloud Storage Connections Page</summary>
-
-<!-- should show the new tabbed Connections page with the Cloud Storage tab active -->
-![Cloud storage connection page](../../../assets/images/guides/create_cloud_connection/cloud_storage_connection_page.png)
-
-
-</details>
-
-### 2. Add New Connection
-
-Click the **"+ Add Connection"** button to open the connection configuration dialog.
-
-<details markdown="1">
-<summary>Screenshot: Add Connection Dialog</summary>
-
-<!-- should show the Add Connection dialog opened from the Cloud Storage tab -->
 ![create_new_cloud_storage](../../../assets/images/guides/create_cloud_connection/add_cloud_connection.png)
 
-</details>
-
-### 3. Configure Connection Settings
+**2. Configure the connection.**
 
 #### Basic Settings
 
@@ -64,19 +43,27 @@ Choose one of the following authentication methods:
 | Field | Description |
 |-------|-------------|
 | **Custom Endpoint URL** | For S3-compatible services (e.g., MinIO) |
-| **Allow Unsafe HTML** | Enable if your S3 data contains HTML content |
+| **Allow Unsafe HTTP** | Enable for non-HTTPS endpoints, such as a local MinIO server |
 | **Verify SSL** | Disable only for testing with self-signed certificates |
 
-### 4. Save Connection
-
-Click **"Create Connection"** to save your configuration.
+**3. Save.** Click **"Create Connection"**.
 
 ## Using S3 Connections in Workflows
 
-Once created, your S3 connection will appear in the Cloud Storage Reader and Writer node's connection dropdown. Simply:
+Once created, your S3 connection will appear in the Cloud Storage Reader and Writer node's connection dropdown.
 
 1. Add a **Cloud Storage Reader** node to your workflow
 2. Select your connection from the dropdown
 3. Enter the S3 path (e.g., `s3://my-bucket/data/file.csv`)
 4. Configure file format options
 5. Run your workflow
+
+## In Python
+
+The same connection, created and used from code — this example is tested against a real S3-compatible service on every commit:
+
+```python
+--8<-- "docs/examples/integrations/cloud_storage_s3.py:example"
+```
+
+See [Cloud Connections in Python](../../python-api/reference/cloud-connections.md) for all fields and auth methods.

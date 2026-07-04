@@ -159,6 +159,9 @@ So every AI endpoint inherits the gate without per-route boilerplate. The Mutabl
 
 ## Routes catalog
 
+!!! info "Verify against the package"
+    The routes and Pydantic model names below are a snapshot of the `ai/*_routes.py` files. Request/response model names in particular drift as the surface evolves — treat this table as a map, and read the matching `*_routes.py` for the authoritative signature before depending on one.
+
 | Route | Method | Request | Response | Source |
 |-------|--------|---------|----------|--------|
 | `/ai/health` | GET | — | `{"status": "skeleton"}` | `routes.py` |
@@ -230,9 +233,12 @@ Per-vendor subclasses override class-level fields:
 | `AnthropicProvider` | `anthropic` | `anthropic/` | `claude-sonnet-4-6` | Haiku 4.5 for Cmd+K / ghost / autocomplete / agent_staged; Opus 4.7 for `agent_complex` |
 | `OpenAIProvider` | `openai` | `""` | `gpt-4.1-mini` | `gpt-4.1` for `explain` / `agent_complex` / `docgen` / `lineage` |
 | `GoogleProvider` | `google` | `gemini/` | `gemini-2.5-flash` | `gemini-2.5-pro` for `agent_complex` |
-| `GroqProvider` | `groq` | `groq/` | `qwen/qwen3-coder-30b-a3b-instruct` | One model across surfaces |
+| `GroqProvider` | `groq` | `groq/` | `qwen/qwen3-32b` | `qwen/qwen3-coder-30b-a3b-instruct` for most surfaces (ghost / explain / agent_* / docgen / lineage / …); `qwen/qwen3-32b` for `cmd_k` |
 | `OpenRouterProvider` | `openrouter` | `openrouter/` | `qwen/qwen3-coder-30b-a3b-instruct` | `meta-llama/llama-3.3-70b-instruct` for `agent_staged` (free tier) |
 | `OllamaProvider` | `ollama` | `ollama_chat/` | `llama3.1:8b` | `llama3.1:70b` for `agent_complex`. `default_api_base="http://localhost:11434"` |
+
+!!! note "`default_model` vs surface models"
+    `default_model` is the terminal fallback the class uses when no other rule fires (see the resolution order below). It is **not** the model most surfaces run on — `surface_models[surface]` usually shadows it. Groq is a good example: the class default is `qwen/qwen3-32b`, but every surface except `cmd_k` maps to `qwen/qwen3-coder-30b-a3b-instruct`. The model names in this table rot as vendors rename releases; check each provider's `surface_models` dict in `providers/{name}.py` for the current values.
 
 `provider_factory(name, *, model, surface, api_key, api_base)` in `providers/registry.py` is the construction entry point. The `PROVIDERS` dict registers all six classes; `list_supported_providers()` returns the names in registration order.
 
@@ -537,7 +543,7 @@ Components in `features/ai/`:
 - `AiAssistant.vue` — the drawer (chat + agent).
 - `AiAgentRun.vue` / `AiAgentEvent.vue` — agent panel and per-event renderers.
 - `AiDiffPanel.vue` / `AiDiffPreview.vue` — diff review UI.
-- `AiInlineActions.vue` — the ✨ menu on a node.
+- `AiInlineActions.vue` — the inline-actions (sparkle) menu on a node.
 - `AiCommandPalette.vue` — Cmd+K.
 - `AiGhostNode.vue` — edge-stub suggestions.
 - `AiMentionAutocomplete.vue` (+ `mentionVocabulary.ts`) — `@flow` / `@node:id` completion.

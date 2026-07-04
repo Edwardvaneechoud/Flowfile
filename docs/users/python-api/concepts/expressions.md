@@ -1,6 +1,9 @@
 # Expressions
 
-FlowFrame methods accept standard **Polars expressions** — `ff.col`, operators, `ff.when`, and the rest of the expression API you already know from Polars. Expressions are the default and most powerful way to express transformations, covering the entire Polars API.
+FlowFrame methods accept standard **Polars expressions** — `ff.col`, operators, `ff.when`, and most of the expression API you already know from Polars. Expressions are the default way to express transformations.
+
+!!! note "Most of Polars, not all of it"
+    Nearly every Polars `Expr` method is available, but a few names track the pinned Polars version (`cum_sum`, not `cumsum`; `dt.weekday`, not `day_of_week`), some helpers are selectors rather than top-level functions (`ff.all_()`, not `ff.all()`; use `ff.col("*").exclude(...)`, there is no `ff.exclude()`), and expressions without a dedicated node render as `polars_code` nodes in the visual editor. See [FlowFrame and FlowGraph](design-concepts.md).
 
 ## Column references and arithmetic
 
@@ -43,11 +46,7 @@ df = df.with_columns([
 ])
 ```
 
-Because expressions stay lazy, they compose into a single optimized query plan — see [FlowFrame and FlowGraph](design-concepts.md).
+Because expressions stay lazy, they compose into one query plan that runs when you `.collect()` — see [FlowFrame and FlowGraph](design-concepts.md).
 
 !!! tip "Looking for the Excel-like `[column]` syntax?"
     That is the **Flowfile formula language** — a separate, simpler syntax shared with the visual editor. See [Formulas in Python](formulas.md) for the FlowFrame methods that accept it, and the [Formula Language guide](../../formulas/index.md) for the language itself.
-
----
-
-*Want to see more of the Flowfile Python API? Check out the [reference documentation](../reference/index.md).*

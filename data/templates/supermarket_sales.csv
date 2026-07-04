@@ -1,0 +1,1031 @@
+invoice_id,city,customer_type,product_line,unit_price,quantity,gross_income,date
+INV-00516,Bago,Normal,Health and beauty,57.16,4,11.43,2024-01-11
+INV-00163,Bago,Normal,Home and lifestyle,34.84,7,12.19,2024-12-24
+INV-00047,Bago,Normal,Food and beverages,43.84,8,17.54,2024-11-19
+INV-00963,Mandalay,Normal,Food and beverages,37.55,10,18.78,2024-08-05
+INV-00882,Yangon,Normal,Fashion accessories,33.31,7,11.66,2024-05-25
+INV-00370,Mandalay,Member,Fashion accessories,51.9,6,15.57,2024-06-21
+INV-00337,Mandalay,Member,Home and lifestyle,73.47,3,11.02,2024-03-30
+INV-00257,Bago,Member,Food and beverages,69.91,7,24.47,2024-03-23
+INV-00684,Naypyitaw,Member,Sports and travel,45.13,2,4.51,2024-09-10
+INV-00663,Naypyitaw,Normal,Health and beauty,24.56,7,8.6,2024-09-26
+INV-00519,Naypyitaw,Normal,Home and lifestyle,65.29,5,16.32,2024-11-07
+INV-00087,Taunggyi,Member,Food and beverages,44.33,9,19.95,2024-12-24
+INV-00725,Taunggyi,Normal,Electronic accessories,23.49,3,3.52,2024-02-28
+INV-00108,Yangon,Normal,Sports and travel,24.78,8,9.91,2024-05-03
+INV-00431,Bago,Normal,Food and beverages,54.58,4,10.92,2024-04-16
+INV-00862,Mandalay,Normal,Fashion accessories,37.35,9,16.81,2024-01-17
+INV-00331,Yangon,Member,Food and beverages,14.33,1,0.72,2024-12-31
+INV-00405,Mandalay,Normal,Home and lifestyle,49.62,7,17.37,2024-12-05
+INV-00789,Naypyitaw,Normal,Sports and travel,95.36,3,14.3,2024-07-30
+INV-00485,Mandalay,Member,Food and beverages,73.94,9,33.27,2024-08-28
+INV-00306,Mandalay,Member,Food and beverages,61.47,9,27.66,2024-04-16
+INV-00623,Taunggyi,Member,Fashion accessories,12.22,4,2.44,2024-02-15
+INV-00755,Taunggyi,Member,Food and beverages,35.17,2,3.52,2024-02-02
+INV-00849,Mandalay,Member,Home and lifestyle,67.49,9,30.37,2024-10-23
+INV-00942,Bago,Normal,Food and beverages,88.31,3,13.25,2024-06-09
+INV-00900,Taunggyi,Normal,Sports and travel,15.83,8,6.33,2024-12-27
+INV-00269,Naypyitaw,Normal,Food and beverages,63.25,8,25.3,2024-03-26
+INV-00220,Taunggyi,Normal,Fashion accessories,41.63,3,6.24,2024-06-02
+INV-00402,Naypyitaw,Normal,Electronic accessories,78.94,7,27.63,2024-07-30
+INV-00715,Bago,Normal,Fashion accessories,12.29,6,3.69,2024-12-13
+INV-00827,Taunggyi,Normal,Sports and travel,15.59,3,2.34,2024-04-29
+INV-00599,Naypyitaw,Member,Electronic accessories,98.11,2,9.81,2024-07-12
+INV-00734,Naypyitaw,Member,Home and lifestyle,85.49,6,25.65,2024-03-28
+INV-00933,Mandalay,Member,Food and beverages,42.06,5,10.52,2024-08-09
+INV-00346,Yangon,Normal,Fashion accessories,64.95,7,22.73,2024-07-12
+INV-00064,Taunggyi,Member,Fashion accessories,45.23,3,6.78,2024-01-06
+INV-00449,Naypyitaw,Normal,Electronic accessories,73.04,3,10.96,2024-03-10
+INV-00451,Mandalay,Member,Fashion accessories,65.08,4,13.02,2024-12-07
+INV-00194,Bago,Member,Food and beverages,10.52,8,4.21,2024-12-08
+INV-00854,Taunggyi,Normal,Health and beauty,67.4,5,16.85,2024-12-18
+INV-00793,Naypyitaw,Normal,Electronic accessories,39.95,6,11.99,2024-12-07
+INV-00842,Bago,Normal,Electronic accessories,52.19,9,23.49,2024-04-12
+INV-00794,Mandalay,Member,Health and beauty,82.87,5,20.72,2024-03-28
+INV-00414,Yangon,Normal,Fashion accessories,18.77,5,4.69,2024-04-29
+INV-00168,Yangon,Member,Food and beverages,41.11,5,10.28,2024-10-25
+INV-00284,Naypyitaw,Normal,Health and beauty,53.27,4,10.65,2024-05-07
+INV-00879,Naypyitaw,Normal,Fashion accessories,10.46,2,1.05,2024-01-28
+INV-00835,Taunggyi,Normal,Health and beauty,37.07,3,5.56,2024-02-18
+INV-00044,Mandalay,Member,Fashion accessories,44.96,9,20.23,2024-04-05
+INV-00810,Yangon,Member,Health and beauty,17.54,5,4.38,2024-03-24
+INV-00430,Taunggyi,Member,Sports and travel,40.38,3,6.06,2024-04-26
+INV-00128,Taunggyi,Normal,Health and beauty,45.69,7,15.99,2024-12-26
+INV-00409,Bago,Normal,Sports and travel,42.45,7,14.86,2024-05-22
+INV-00587,Bago,Normal,Home and lifestyle,27.18,9,12.23,2024-05-10
+INV-00192,Mandalay,Normal,Electronic accessories,62.05,10,31.03,2024-07-27
+INV-00029,Naypyitaw,Member,Electronic accessories,22.05,10,11.03,2024-03-18
+INV-00670,Taunggyi,Member,Food and beverages,89.56,8,35.82,2024-12-11
+INV-00434,Naypyitaw,Member,Fashion accessories,65.45,6,19.64,2024-07-26
+INV-00496,Taunggyi,Normal,Fashion accessories,58.79,7,20.58,2024-01-25
+INV-00021,Naypyitaw,Normal,Electronic accessories,73.56,1,3.68,2024-12-08
+INV-00310,Taunggyi,Normal,Food and beverages,23.38,6,7.01,2024-04-09
+INV-00271,Taunggyi,Normal,Health and beauty,71.78,6,21.53,2024-08-18
+INV-00869,Bago,Normal,Fashion accessories,63.59,1,3.18,2024-02-21
+INV-00378,Yangon,Member,Food and beverages,64.73,6,19.42,2024-08-03
+INV-00726,Bago,Member,Health and beauty,99.97,4,19.99,2024-06-05
+INV-00322,Yangon,Member,Sports and travel,36.11,10,18.06,2024-07-12
+INV-00600,Bago,Member,Fashion accessories,58.11,1,2.91,2024-03-17
+INV-00690,Yangon,Member,Home and lifestyle,25.6,10,12.8,2024-11-07
+INV-00730,Yangon,Member,Food and beverages,85.96,4,17.19,2024-12-26
+INV-00312,Taunggyi,Normal,Food and beverages,24.41,8,9.76,2024-09-20
+INV-00446,Mandalay,Member,Electronic accessories,53.16,1,2.66,2024-06-03
+INV-00285,Bago,Member,Electronic accessories,69.24,4,13.85,2024-06-28
+INV-00742,Yangon,Normal,Health and beauty,38.61,9,17.37,2024-07-01
+INV-00239,Bago,Member,Sports and travel,92.32,3,13.85,2024-11-19
+INV-00095,Taunggyi,Normal,Home and lifestyle,27.89,9,12.55,2024-10-27
+INV-00435,Yangon,Normal,Sports and travel,36.05,9,16.22,2024-06-19
+INV-00394,Yangon,Member,Fashion accessories,32.47,10,16.23,2024-12-30
+INV-00992,Yangon,Normal,Electronic accessories,38.51,7,13.48,2024-12-09
+INV-00480,Bago,Member,Home and lifestyle,98.25,7,34.39,2024-01-26
+INV-00765,Yangon,Normal,Electronic accessories,67.43,2,6.74,2024-12-01
+INV-00401,Bago,Normal,Food and beverages,72.67,1,3.63,2024-02-17
+INV-00455,Naypyitaw,Member,Health and beauty,11.2,7,3.92,2024-06-01
+INV-00011,Taunggyi,Member,Home and lifestyle,75.55,10,37.77,2024-02-06
+INV-00836,Bago,Normal,Home and lifestyle,52.16,4,10.43,2024-01-04
+INV-00259,Taunggyi,Member,Food and beverages,40.39,6,12.12,2024-04-10
+INV-00117,Naypyitaw,Member,Sports and travel,61.14,2,6.11,2024-12-16
+INV-00110,Yangon,Normal,Health and beauty,14.88,8,5.95,2024-11-26
+INV-00300,Mandalay,Member,Electronic accessories,65.82,6,19.75,2024-01-06
+INV-00551,Naypyitaw,Normal,Electronic accessories,36.36,3,5.45,2024-08-17
+INV-00139,Taunggyi,Member,Food and beverages,38.37,10,19.18,2024-03-22
+INV-00993,Bago,Member,Electronic accessories,38.57,1,1.93,2024-01-19
+INV-00815,Yangon,Member,Fashion accessories,50.83,5,12.71,2024-07-26
+INV-00024,Taunggyi,Member,Food and beverages,87.48,9,39.37,2024-09-14
+INV-00219,Mandalay,Member,Fashion accessories,49.32,4,9.86,2024-06-10
+INV-00178,Yangon,Normal,Electronic accessories,76.06,5,19.02,2024-06-07
+INV-00205,Mandalay,Normal,Health and beauty,47.31,6,14.19,2024-06-28
+INV-00203,Yangon,Member,Sports and travel,40.66,10,20.33,2024-09-15
+INV-00018,Bago,Member,Fashion accessories,13.01,4,2.6,2024-12-10
+INV-00031,Naypyitaw,Member,Fashion accessories,73.3,3,10.99,2024-06-12
+INV-00769,Naypyitaw,Normal,Sports and travel,76.63,3,11.49,2024-12-31
+INV-00974,Naypyitaw,Member,Fashion accessories,45.09,9,20.29,2024-09-08
+INV-00688,Mandalay,Normal,Fashion accessories,40.22,7,14.08,2024-12-22
+INV-00874,Naypyitaw,Member,Sports and travel,37.18,10,18.59,2024-11-24
+INV-00344,Mandalay,Normal,Home and lifestyle,82.13,9,36.96,2024-02-27
+INV-00861,Naypyitaw,Member,Health and beauty,62.87,4,12.57,2024-12-03
+INV-00918,Bago,Normal,Sports and travel,60.83,9,27.37,2024-08-05
+INV-00148,Yangon,Member,Fashion accessories,17.12,6,5.14,2024-06-11
+INV-00707,Bago,Member,Electronic accessories,14.56,8,5.82,2024-05-05
+INV-00652,Yangon,Normal,Sports and travel,88.8,2,8.88,2024-09-29
+INV-00334,Taunggyi,Member,Home and lifestyle,28.57,5,7.14,2024-08-31
+INV-00019,Taunggyi,Normal,Home and lifestyle,94.17,7,32.96,2024-05-13
+INV-00982,Taunggyi,Normal,Fashion accessories,22.27,2,2.23,2024-01-28
+INV-00978,Taunggyi,Member,Health and beauty,98.36,2,9.84,2024-08-17
+INV-00362,Yangon,Normal,Health and beauty,35.12,7,12.29,2024-05-31
+INV-00175,Mandalay,Normal,Electronic accessories,48.78,5,12.2,2024-06-13
+INV-00422,Yangon,Normal,Home and lifestyle,98.58,3,14.79,2024-07-01
+INV-00561,Mandalay,Normal,Health and beauty,96.06,6,28.82,2024-03-26
+INV-00500,Taunggyi,Member,Sports and travel,44.81,5,11.2,2024-04-02
+INV-00695,Yangon,Normal,Home and lifestyle,42.88,7,15.01,2024-10-29
+INV-00581,Yangon,Member,Electronic accessories,17.41,6,5.22,2024-12-08
+INV-00198,Mandalay,Member,Health and beauty,86.31,6,25.89,2024-07-28
+INV-00582,Yangon,Normal,Home and lifestyle,67.0,9,30.15,2024-10-26
+INV-00464,Bago,Member,Electronic accessories,33.27,4,6.65,2024-12-16
+INV-00181,Bago,Member,Home and lifestyle,14.5,2,1.45,2024-06-03
+INV-00901,Bago,Normal,Sports and travel,41.2,4,8.24,2024-05-27
+INV-00109,Naypyitaw,Normal,Food and beverages,39.23,8,15.69,2024-08-01
+INV-00964,Naypyitaw,Member,Sports and travel,40.72,9,18.32,2024-05-16
+INV-00989,Naypyitaw,Member,Electronic accessories,57.87,10,28.93,2024-12-29
+INV-00934,Taunggyi,Member,Sports and travel,83.2,9,37.44,2024-12-02
+INV-00593,Naypyitaw,Normal,Sports and travel,92.41,2,9.24,2024-03-14
+INV-00682,Yangon,Normal,Sports and travel,68.65,2,6.87,2024-04-08
+INV-00763,Naypyitaw,Member,Food and beverages,62.16,1,3.11,2024-01-23
+INV-00949,Yangon,Member,Fashion accessories,45.77,5,11.44,2024-11-27
+INV-00702,Mandalay,Normal,Health and beauty,48.8,4,9.76,2024-07-14
+INV-00639,Taunggyi,Member,Fashion accessories,43.5,6,13.05,2024-06-21
+INV-00263,Bago,Member,Home and lifestyle,20.03,2,2.0,2024-02-15
+INV-00186,Yangon,Normal,Food and beverages,65.3,8,26.12,2024-06-15
+INV-00681,Naypyitaw,Normal,Health and beauty,26.57,2,2.66,2024-03-12
+INV-00723,Naypyitaw,Normal,Sports and travel,62.57,5,15.64,2024-02-07
+INV-00556,Mandalay,Member,Health and beauty,17.7,10,8.85,2024-10-13
+INV-00891,Mandalay,Normal,Food and beverages,14.41,2,1.44,2024-08-25
+INV-00926,Mandalay,Normal,Food and beverages,83.06,7,29.07,2024-06-11
+INV-00143,Naypyitaw,Normal,Sports and travel,12.75,8,5.1,2024-01-06
+INV-00522,Bago,Member,Electronic accessories,57.8,10,28.9,2024-10-29
+INV-00997,Taunggyi,Member,Sports and travel,89.35,6,26.8,2024-11-14
+INV-00825,Yangon,Member,Fashion accessories,58.36,5,14.59,2024-06-28
+INV-00417,Yangon,Normal,Electronic accessories,42.34,6,12.7,2024-03-14
+INV-00520,Yangon,Normal,Health and beauty,90.33,6,27.1,2024-08-20
+INV-00689,Yangon,Member,Home and lifestyle,49.58,7,17.35,2024-11-14
+INV-00984,Mandalay,Normal,Sports and travel,38.94,6,11.68,2024-07-30
+INV-00061,Yangon,Member,Health and beauty,16.8,2,1.68,2024-08-24
+INV-00408,Naypyitaw,Normal,Home and lifestyle,11.36,1,0.57,2024-07-10
+INV-00512,Mandalay,Member,Home and lifestyle,99.98,7,34.99,2024-06-29
+INV-00248,Mandalay,Member,Fashion accessories,85.99,6,25.8,2024-02-19
+INV-00548,Yangon,Normal,Electronic accessories,83.16,1,4.16,2024-11-05
+INV-00701,Yangon,Normal,Sports and travel,30.51,3,4.58,2024-03-26
+INV-00325,Naypyitaw,Member,Sports and travel,15.68,4,3.14,2024-02-12
+INV-00426,Yangon,Member,Fashion accessories,33.05,9,14.87,2024-06-08
+INV-00439,Yangon,Member,Sports and travel,68.22,3,10.23,2024-05-23
+INV-00945,Naypyitaw,Member,Electronic accessories,35.3,6,10.59,2024-03-11
+INV-00796,Taunggyi,Normal,Sports and travel,46.12,1,2.31,2024-08-22
+INV-00843,Naypyitaw,Member,Home and lifestyle,54.48,4,10.9,2024-05-16
+INV-00035,Yangon,Member,Fashion accessories,65.25,3,9.79,2024-11-06
+INV-00875,Yangon,Member,Fashion accessories,80.96,7,28.34,2024-01-07
+INV-00590,Yangon,Member,Sports and travel,38.56,7,13.5,2024-06-04
+INV-00124,Yangon,Member,Electronic accessories,88.53,7,30.99,2024-04-15
+INV-00147,Taunggyi,Member,Electronic accessories,37.12,6,11.14,2024-11-17
+INV-00494,Yangon,Member,Sports and travel,57.36,9,25.81,2024-06-05
+INV-00399,Mandalay,Member,Fashion accessories,49.83,6,14.95,2024-12-10
+INV-00022,Bago,Member,Health and beauty,41.09,4,8.22,2024-07-15
+INV-00046,Naypyitaw,Normal,Health and beauty,78.16,5,19.54,2024-02-18
+INV-00893,Naypyitaw,Normal,Home and lifestyle,22.38,4,4.48,2024-02-08
+INV-00749,Mandalay,Normal,Health and beauty,89.54,8,35.82,2024-11-11
+INV-00700,Yangon,Member,Sports and travel,22.26,9,10.02,2024-08-19
+INV-00122,Yangon,Member,Home and lifestyle,43.32,6,13.0,2024-02-06
+INV-00275,Bago,Member,Home and lifestyle,84.89,8,33.96,2024-08-17
+INV-00166,Mandalay,Normal,Electronic accessories,58.78,6,17.63,2024-01-18
+INV-00974,Naypyitaw,Member,Fashion accessories,45.09,9,20.29,2024-09-08
+INV-00884,Yangon,Member,Food and beverages,41.66,5,10.41,2024-09-05
+INV-00947,Taunggyi,Normal,Electronic accessories,24.26,9,10.92,2024-10-16
+INV-00228,Taunggyi,Member,Sports and travel,66.11,8,26.44,2024-04-12
+INV-00969,Bago,Normal,Health and beauty,85.32,1,4.27,2024-08-06
+INV-00484,Mandalay,Normal,Fashion accessories,43.43,7,15.2,2024-03-13
+INV-00302,Naypyitaw,Normal,Food and beverages,17.87,10,8.94,2024-03-28
+INV-00437,Mandalay,Member,Fashion accessories,46.06,4,9.21,2024-10-05
+INV-00559,Mandalay,Member,Home and lifestyle,16.69,2,1.67,2024-09-11
+INV-00091,Bago,Normal,Home and lifestyle,15.51,3,2.33,2024-11-16
+INV-00518,Yangon,Member,Sports and travel,97.34,5,24.34,2024-08-06
+INV-00158,Naypyitaw,Member,Home and lifestyle,12.43,9,5.59,2024-08-30
+INV-00679,Bago,Member,Food and beverages,64.34,5,16.09,2024-02-27
+INV-00564,Bago,Member,Food and beverages,58.66,5,14.66,2024-06-24
+INV-00391,Taunggyi,Normal,Health and beauty,95.75,7,33.51,2024-12-13
+INV-00970,Naypyitaw,Member,Sports and travel,82.69,4,16.54,2024-10-06
+INV-00111,Bago,Normal,Electronic accessories,89.72,5,22.43,2024-10-13
+INV-00131,Bago,Member,Food and beverages,93.84,4,18.77,2024-07-26
+INV-00367,Mandalay,Member,Sports and travel,95.78,5,23.95,2024-04-16
+INV-00005,Bago,Normal,Food and beverages,56.12,8,22.45,2024-03-06
+INV-00272,Taunggyi,Normal,Sports and travel,23.84,9,10.73,2024-01-28
+INV-00479,Naypyitaw,Member,Fashion accessories,90.22,5,22.56,2024-04-30
+INV-00629,Bago,Member,Home and lifestyle,92.65,3,13.9,2024-07-16
+INV-00027,Bago,Member,Health and beauty,66.02,4,13.2,2024-07-11
+INV-00486,Naypyitaw,Member,Fashion accessories,53.29,10,26.64,2024-02-17
+INV-00050,Yangon,Member,Home and lifestyle,23.26,3,3.49,2024-07-02
+INV-00721,Bago,Member,Electronic accessories,22.56,5,5.64,2024-04-21
+INV-00125,Bago,Member,Food and beverages,40.56,10,20.28,2024-11-08
+INV-00637,Taunggyi,Member,Food and beverages,16.44,2,1.64,2024-06-25
+INV-00258,Bago,Normal,Health and beauty,38.86,8,15.54,2024-07-02
+INV-00944,Taunggyi,Member,Sports and travel,90.96,7,31.84,2024-08-15
+INV-00786,Yangon,Member,Food and beverages,23.95,8,9.58,2024-02-21
+INV-00547,Taunggyi,Normal,Electronic accessories,87.46,9,39.36,2024-11-18
+INV-00589,Naypyitaw,Member,Sports and travel,31.49,5,7.87,2024-02-25
+INV-00133,Yangon,Normal,Fashion accessories,25.75,4,5.15,2024-02-09
+INV-00760,Taunggyi,Normal,Home and lifestyle,69.8,8,27.92,2024-04-22
+INV-00532,Naypyitaw,Member,Home and lifestyle,13.67,7,4.78,2024-12-16
+INV-00116,Bago,Member,Health and beauty,24.37,1,1.22,2024-10-09
+INV-00217,Taunggyi,Normal,Health and beauty,82.5,9,37.12,2024-07-07
+INV-00333,Mandalay,Member,Electronic accessories,78.24,10,39.12,2024-12-07
+INV-00811,Yangon,Normal,Electronic accessories,89.94,7,31.48,2024-12-06
+INV-00803,Bago,Member,Fashion accessories,77.07,2,7.71,2024-03-01
+INV-00666,Taunggyi,Normal,Health and beauty,33.86,4,6.77,2024-12-24
+INV-00665,Taunggyi,Normal,Home and lifestyle,28.52,7,9.98,2024-08-28
+INV-00185,Taunggyi,Normal,Sports and travel,44.24,10,22.12,2024-09-26
+INV-00004,Naypyitaw,Member,Electronic accessories,86.58,2,8.66,2024-07-11
+INV-00470,Mandalay,Normal,Food and beverages,24.82,8,9.93,2024-07-07
+INV-00852,Bago,Member,Sports and travel,37.58,7,13.15,2024-08-05
+INV-00325,Naypyitaw,Member,Sports and travel,15.68,4,3.14,2024-02-12
+INV-00014,Yangon,Normal,Sports and travel,75.8,10,37.9,2024-06-06
+INV-00541,Taunggyi,Member,Health and beauty,14.19,4,2.84,2024-05-31
+INV-00873,Naypyitaw,Normal,Home and lifestyle,26.39,5,6.6,2024-12-25
+INV-00871,Taunggyi,Normal,Electronic accessories,57.49,3,8.62,2024-01-03
+INV-00937,Taunggyi,Member,Sports and travel,14.8,7,5.18,2024-06-18
+INV-00127,Taunggyi,Member,Home and lifestyle,73.22,4,14.64,2024-06-19
+INV-00659,Mandalay,Member,Food and beverages,41.04,3,6.16,2024-12-17
+INV-00727,Yangon,Normal,Food and beverages,29.06,4,5.81,2024-05-13
+INV-00542,Naypyitaw,Normal,Health and beauty,70.05,8,28.02,2024-02-12
+INV-00039,Bago,Normal,Home and lifestyle,42.24,6,12.67,2024-02-21
+INV-00042,Naypyitaw,Member,Electronic accessories,67.37,3,10.11,2024-06-04
+INV-00319,Taunggyi,Normal,Health and beauty,28.15,3,4.22,2024-08-14
+INV-00820,Naypyitaw,Member,Electronic accessories,83.21,1,4.16,2024-05-07
+INV-00078,Bago,Normal,Health and beauty,91.21,5,22.8,2024-12-04
+INV-00240,Mandalay,Member,Fashion accessories,71.25,10,35.62,2024-07-28
+INV-00660,Mandalay,Member,Sports and travel,15.33,7,5.37,2024-01-28
+INV-00799,Mandalay,Member,Fashion accessories,25.75,2,2.58,2024-03-06
+INV-00155,Naypyitaw,Member,Health and beauty,16.25,7,5.69,2024-07-13
+INV-00067,Mandalay,Normal,Fashion accessories,73.04,10,36.52,2024-06-13
+INV-01000,Yangon,Normal,Home and lifestyle,45.12,10,22.56,2024-01-13
+INV-00193,Yangon,Member,Food and beverages,35.8,2,3.58,2024-02-06
+INV-00858,Yangon,Member,Food and beverages,19.22,7,6.73,2024-02-28
+INV-00114,Naypyitaw,Normal,Food and beverages,40.4,5,10.1,2024-07-02
+INV-00357,Naypyitaw,Member,Fashion accessories,62.83,3,9.42,2024-02-11
+INV-00657,Bago,Member,Sports and travel,92.3,1,4.62,2024-01-23
+INV-00936,Mandalay,Normal,Home and lifestyle,95.69,7,33.49,2024-05-27
+INV-00010,Yangon,Normal,Home and lifestyle,21.37,2,2.14,2024-06-12
+INV-00924,Naypyitaw,Normal,Health and beauty,23.8,4,4.76,2024-06-12
+INV-00932,Naypyitaw,Normal,Food and beverages,49.56,10,24.78,2024-05-14
+INV-00595,Naypyitaw,Normal,Electronic accessories,47.1,4,9.42,2024-06-26
+INV-00764,Bago,Member,Health and beauty,34.12,5,8.53,2024-05-08
+INV-00788,Naypyitaw,Normal,Sports and travel,76.56,5,19.14,2024-03-01
+INV-00578,Naypyitaw,Member,Home and lifestyle,39.3,10,19.65,2024-02-13
+INV-00778,Mandalay,Member,Health and beauty,37.29,9,16.78,2024-08-30
+INV-00206,Bago,Member,Fashion accessories,75.19,2,7.52,2024-08-15
+INV-00261,Naypyitaw,Normal,Health and beauty,35.01,7,12.25,2024-08-29
+INV-00647,Naypyitaw,Normal,Sports and travel,70.1,1,3.5,2024-09-12
+INV-00265,Mandalay,Normal,Food and beverages,40.61,7,14.21,2024-05-09
+INV-00961,Mandalay,Normal,Electronic accessories,15.13,6,4.54,2024-07-12
+INV-00550,Yangon,Normal,Health and beauty,51.38,5,12.85,2024-04-07
+INV-00737,Taunggyi,Normal,Food and beverages,97.14,7,34.0,2024-01-20
+INV-00280,Mandalay,Normal,Food and beverages,84.81,6,25.44,2024-07-24
+INV-00347,Mandalay,Normal,Home and lifestyle,71.68,3,10.75,2024-05-06
+INV-00655,Naypyitaw,Normal,Fashion accessories,44.4,8,17.76,2024-12-29
+INV-00631,Taunggyi,Member,Health and beauty,12.25,7,4.29,2024-12-02
+INV-00160,Mandalay,Member,Fashion accessories,17.72,4,3.54,2024-10-07
+INV-00513,Mandalay,Normal,Home and lifestyle,91.45,2,9.15,2024-07-06
+INV-00576,Yangon,Normal,Food and beverages,75.31,2,7.53,2024-06-08
+INV-00661,Taunggyi,Normal,Fashion accessories,75.23,6,22.57,2024-09-12
+INV-00759,Bago,Member,Sports and travel,96.07,8,38.43,2024-01-09
+INV-00237,Bago,Member,Fashion accessories,40.03,5,10.01,2024-06-20
+INV-00814,Taunggyi,Member,Electronic accessories,57.45,7,20.11,2024-10-31
+INV-00540,Bago,Member,Home and lifestyle,87.79,2,8.78,2024-07-01
+INV-00073,Yangon,Normal,Home and lifestyle,42.41,8,16.96,2024-05-24
+INV-00890,Mandalay,Member,Health and beauty,16.99,10,8.49,2024-09-06
+INV-00719,Mandalay,Member,Electronic accessories,15.16,10,7.58,2024-11-25
+INV-00088,Mandalay,Normal,Fashion accessories,84.01,6,25.2,2024-02-05
+INV-00173,Naypyitaw,Member,Sports and travel,38.46,2,3.85,2024-12-11
+INV-00033,Taunggyi,Normal,Food and beverages,75.04,8,30.02,2024-06-06
+INV-00201,Taunggyi,Normal,Electronic accessories,27.91,10,13.96,2024-06-07
+INV-00878,Bago,Member,Electronic accessories,50.21,7,17.57,2024-01-29
+INV-00713,Mandalay,Member,Food and beverages,33.38,9,15.02,2024-01-16
+INV-00161,Bago,Normal,Health and beauty,82.7,9,37.22,2024-05-01
+INV-00023,Yangon,Member,Food and beverages,51.25,1,2.56,2024-02-19
+INV-00467,Yangon,Normal,Health and beauty,71.4,5,17.85,2024-06-18
+INV-00733,Bago,Member,Sports and travel,38.36,10,19.18,2024-08-20
+INV-00382,Taunggyi,Normal,Electronic accessories,44.61,4,8.92,2024-12-14
+INV-00298,Mandalay,Member,Fashion accessories,41.38,3,6.21,2024-04-14
+INV-00466,Yangon,Normal,Electronic accessories,97.5,2,9.75,2024-03-09
+INV-00774,Mandalay,Member,Home and lifestyle,29.85,1,1.49,2024-06-11
+INV-00824,Yangon,Normal,Fashion accessories,84.57,10,42.28,2024-06-18
+INV-00899,Bago,Member,Health and beauty,55.23,8,22.09,2024-07-10
+INV-00184,Naypyitaw,Normal,Food and beverages,22.12,4,4.42,2024-12-05
+INV-00374,Naypyitaw,Member,Home and lifestyle,64.63,3,9.69,2024-05-10
+INV-00314,Yangon,Normal,Food and beverages,55.53,1,2.78,2024-10-17
+INV-00962,Bago,Member,Sports and travel,74.16,1,3.71,2024-08-23
+INV-00274,Mandalay,Normal,Electronic accessories,75.24,2,7.52,2024-08-22
+INV-00341,Bago,Normal,Food and beverages,94.3,7,33.01,2024-05-10
+INV-00207,Mandalay,Normal,Health and beauty,76.27,1,3.81,2024-07-01
+INV-00710,Taunggyi,Member,Sports and travel,12.56,6,3.77,2024-12-15
+INV-00864,Bago,Member,Electronic accessories,23.35,3,3.5,2024-04-29
+INV-00931,Bago,Normal,Health and beauty,33.37,2,3.34,2024-10-19
+INV-00856,Yangon,Member,Home and lifestyle,98.79,3,14.82,2024-09-07
+INV-00411,Naypyitaw,Normal,Electronic accessories,21.11,1,1.06,2024-03-14
+INV-00079,Mandalay,Member,Fashion accessories,11.85,1,0.59,2024-03-27
+INV-00499,Naypyitaw,Normal,Sports and travel,56.9,10,28.45,2024-08-13
+INV-00833,Naypyitaw,Normal,Electronic accessories,23.51,8,9.4,2024-08-30
+INV-00096,Naypyitaw,Normal,Health and beauty,30.6,4,6.12,2024-06-12
+INV-00350,Mandalay,Normal,Sports and travel,91.82,1,4.59,2024-11-04
+INV-00005,Bago,Normal,Food and beverages,56.12,8,22.45,2024-03-06
+INV-00698,Bago,Member,Home and lifestyle,24.75,3,3.71,2024-08-17
+INV-00145,Yangon,Normal,Food and beverages,13.04,8,5.22,2024-12-01
+INV-00048,Bago,Normal,Health and beauty,68.35,2,6.83,2024-01-05
+INV-00202,Taunggyi,Member,Home and lifestyle,80.66,9,36.3,2024-08-24
+INV-00544,Yangon,Member,Electronic accessories,67.93,2,6.79,2024-05-05
+INV-00099,Mandalay,Member,Health and beauty,45.12,1,2.26,2024-10-19
+INV-00183,Bago,Normal,Fashion accessories,43.63,1,2.18,2024-07-08
+INV-00798,Mandalay,Member,Electronic accessories,21.31,6,6.39,2024-10-07
+INV-00065,Yangon,Member,Fashion accessories,20.27,7,7.09,2024-01-20
+INV-00101,Mandalay,Member,Food and beverages,75.81,10,37.91,2024-08-06
+INV-00461,Mandalay,Normal,Food and beverages,54.69,8,21.88,2024-11-30
+INV-00303,Yangon,Normal,Home and lifestyle,44.15,3,6.62,2024-10-28
+INV-00771,Bago,Normal,Sports and travel,61.87,4,12.37,2024-08-29
+INV-00179,Taunggyi,Member,Electronic accessories,31.27,9,14.07,2024-12-17
+INV-00883,Naypyitaw,Member,Home and lifestyle,15.92,5,3.98,2024-04-11
+INV-00845,Bago,Member,Home and lifestyle,24.28,10,12.14,2024-04-30
+INV-00243,Taunggyi,Normal,Home and lifestyle,65.08,10,32.54,2024-10-10
+INV-00458,Taunggyi,Member,Electronic accessories,81.05,7,28.37,2024-02-03
+INV-00006,Taunggyi,Member,Electronic accessories,26.37,2,2.64,2024-01-26
+INV-00722,Bago,Member,Sports and travel,44.03,3,6.6,2024-06-19
+INV-00150,Naypyitaw,Normal,Health and beauty,80.42,9,36.19,2024-12-16
+INV-00075,Taunggyi,Normal,Home and lifestyle,53.1,4,10.62,2024-12-09
+INV-00986,Naypyitaw,Normal,Home and lifestyle,11.79,8,4.72,2024-11-25
+INV-00906,Mandalay,Member,Fashion accessories,22.29,6,6.69,2024-01-14
+INV-00001,Mandalay,Member,Sports and travel,13.47,3,2.02,2024-08-24
+INV-00311,Yangon,Normal,Health and beauty,87.25,8,34.9,2024-05-03
+INV-00762,Bago,Normal,Food and beverages,35.6,4,7.12,2024-07-20
+INV-00527,Mandalay,Normal,Fashion accessories,90.04,3,13.51,2024-06-12
+INV-00286,Bago,Member,Sports and travel,87.87,9,39.54,2024-04-07
+INV-00748,Mandalay,Member,Fashion accessories,44.94,2,4.49,2024-05-05
+INV-00474,Bago,Member,Fashion accessories,80.84,7,28.29,2024-12-22
+INV-00336,Mandalay,Member,Home and lifestyle,38.92,10,19.46,2024-07-02
+INV-00767,Yangon,Normal,Fashion accessories,65.71,8,26.28,2024-05-07
+INV-00643,Taunggyi,Normal,Electronic accessories,40.23,9,18.1,2024-10-16
+INV-00054,Naypyitaw,Member,Sports and travel,93.55,10,46.78,2024-04-18
+INV-00397,Mandalay,Normal,Food and beverages,39.15,5,9.79,2024-07-30
+INV-00094,Mandalay,Member,Electronic accessories,67.39,7,23.59,2024-06-20
+INV-00812,Yangon,Member,Home and lifestyle,83.12,2,8.31,2024-04-24
+INV-00808,Yangon,Member,Food and beverages,73.84,6,22.15,2024-09-19
+INV-00097,Mandalay,Member,Sports and travel,35.86,2,3.59,2024-09-03
+INV-00805,Bago,Normal,Sports and travel,97.45,9,43.85,2024-06-10
+INV-00070,Mandalay,Member,Health and beauty,36.86,6,11.06,2024-08-18
+INV-00938,Naypyitaw,Member,Sports and travel,39.89,8,15.96,2024-08-06
+INV-00267,Mandalay,Member,Home and lifestyle,90.58,9,40.76,2024-11-15
+INV-00154,Mandalay,Normal,Food and beverages,27.65,5,6.91,2024-01-27
+INV-00741,Bago,Member,Food and beverages,25.72,4,5.14,2024-12-30
+INV-00821,Naypyitaw,Member,Home and lifestyle,99.83,8,39.93,2024-03-14
+INV-00427,Bago,Normal,Home and lifestyle,17.89,5,4.47,2024-07-02
+INV-00894,Mandalay,Member,Home and lifestyle,67.57,5,16.89,2024-08-17
+INV-00137,Yangon,Normal,Sports and travel,97.45,8,38.98,2024-01-24
+INV-00552,Taunggyi,Member,Food and beverages,81.95,3,12.29,2024-07-07
+INV-00071,Mandalay,Normal,Health and beauty,94.54,7,33.09,2024-06-03
+INV-00080,Mandalay,Member,Food and beverages,41.48,10,20.74,2024-11-29
+INV-00644,Naypyitaw,Normal,Sports and travel,24.65,9,11.09,2024-10-23
+INV-00504,Bago,Normal,Health and beauty,76.34,9,34.35,2024-10-06
+INV-00282,Bago,Member,Health and beauty,24.41,4,4.88,2024-06-18
+INV-00403,Yangon,Member,Sports and travel,57.59,5,14.4,2024-01-05
+INV-00141,Mandalay,Member,Electronic accessories,53.0,10,26.5,2024-02-06
+INV-00851,Naypyitaw,Normal,Home and lifestyle,15.37,5,3.84,2024-09-26
+INV-00433,Taunggyi,Normal,Food and beverages,27.67,2,2.77,2024-10-31
+INV-00979,Taunggyi,Normal,Health and beauty,71.46,5,17.86,2024-12-31
+INV-00052,Mandalay,Member,Sports and travel,12.02,6,3.61,2024-04-14
+INV-00371,Yangon,Normal,Home and lifestyle,22.23,1,1.11,2024-01-02
+INV-00308,Yangon,Member,Fashion accessories,31.07,6,9.32,2024-11-17
+INV-00030,Mandalay,Member,Sports and travel,13.95,5,3.49,2024-09-02
+INV-00694,Taunggyi,Normal,Food and beverages,70.76,4,14.15,2024-10-28
+INV-00783,Bago,Normal,Home and lifestyle,90.23,1,4.51,2024-05-23
+INV-00459,Yangon,Normal,Food and beverages,39.62,9,17.83,2024-11-01
+INV-00115,Taunggyi,Member,Food and beverages,78.74,8,31.5,2024-09-16
+INV-00950,Yangon,Member,Health and beauty,36.99,9,16.65,2024-11-09
+INV-00156,Naypyitaw,Member,Food and beverages,62.01,2,6.2,2024-08-12
+INV-00445,Bago,Normal,Food and beverages,14.19,10,7.1,2024-07-08
+INV-00404,Naypyitaw,Normal,Sports and travel,78.22,3,11.73,2024-05-01
+INV-00938,Naypyitaw,Member,Sports and travel,39.89,8,15.96,2024-08-06
+INV-00672,Naypyitaw,Member,Sports and travel,49.83,9,22.42,2024-03-26
+INV-00016,Taunggyi,Normal,Home and lifestyle,76.11,6,22.83,2024-03-01
+INV-00107,Yangon,Normal,Fashion accessories,76.63,10,38.31,2024-09-19
+INV-00456,Bago,Member,Home and lifestyle,73.04,6,21.91,2024-04-10
+INV-00775,Taunggyi,Member,Food and beverages,81.56,8,32.62,2024-12-31
+INV-00804,Bago,Normal,Sports and travel,90.75,5,22.69,2024-04-12
+INV-00696,Yangon,Normal,Food and beverages,52.98,10,26.49,2024-07-02
+INV-00935,Bago,Member,Sports and travel,26.04,3,3.91,2024-01-12
+INV-00929,Bago,Member,Food and beverages,54.38,10,27.19,2024-01-09
+INV-00777,Taunggyi,Member,Fashion accessories,68.62,5,17.16,2024-10-30
+INV-00212,Yangon,Normal,Home and lifestyle,82.93,4,16.59,2024-02-12
+INV-00326,Taunggyi,Normal,Home and lifestyle,89.04,6,26.71,2024-06-12
+INV-00584,Mandalay,Normal,Electronic accessories,74.34,9,33.45,2024-12-22
+INV-00939,Naypyitaw,Member,Fashion accessories,17.16,9,7.72,2024-01-23
+INV-00526,Taunggyi,Normal,Home and lifestyle,27.18,4,5.44,2024-11-30
+INV-00501,Yangon,Normal,Electronic accessories,85.88,10,42.94,2024-11-11
+INV-00100,Naypyitaw,Member,Fashion accessories,52.7,2,5.27,2024-05-01
+INV-00381,Yangon,Normal,Health and beauty,23.84,3,3.58,2024-10-19
+INV-00872,Bago,Normal,Fashion accessories,79.4,2,7.94,2024-11-14
+INV-00718,Taunggyi,Normal,Sports and travel,67.71,3,10.16,2024-10-24
+INV-00625,Taunggyi,Normal,Fashion accessories,90.13,8,36.05,2024-10-17
+INV-00388,Naypyitaw,Normal,Food and beverages,71.7,5,17.93,2024-01-08
+INV-00667,Bago,Member,Home and lifestyle,89.0,6,26.7,2024-10-11
+INV-00448,Taunggyi,Normal,Electronic accessories,18.44,4,3.69,2024-12-05
+INV-00720,Naypyitaw,Member,Electronic accessories,12.27,6,3.68,2024-12-16
+INV-00008,Yangon,Member,Food and beverages,66.12,10,33.06,2024-11-30
+INV-00355,Taunggyi,Member,Home and lifestyle,35.85,4,7.17,2024-02-16
+INV-00991,Bago,Normal,Health and beauty,10.17,4,2.03,2024-10-22
+INV-00740,Yangon,Normal,Food and beverages,24.34,5,6.09,2024-09-19
+INV-00585,Mandalay,Member,Home and lifestyle,35.08,5,8.77,2024-03-09
+INV-00463,Taunggyi,Normal,Sports and travel,98.55,5,24.64,2024-02-20
+INV-00747,Yangon,Normal,Home and lifestyle,34.06,3,5.11,2024-04-29
+INV-00944,Taunggyi,Member,Sports and travel,90.96,7,31.84,2024-08-15
+INV-00678,Yangon,Member,Home and lifestyle,59.46,10,29.73,2024-09-05
+INV-00995,Bago,Member,Health and beauty,64.31,8,25.72,2024-02-02
+INV-00244,Mandalay,Member,Home and lifestyle,79.59,5,19.9,2024-08-27
+INV-00364,Taunggyi,Normal,Food and beverages,98.45,6,29.54,2024-10-01
+INV-00356,Bago,Member,Electronic accessories,44.24,5,11.06,2024-02-18
+INV-00372,Mandalay,Member,Fashion accessories,18.94,6,5.68,2024-08-16
+INV-00607,Yangon,Member,Fashion accessories,76.08,2,7.61,2024-09-01
+INV-00677,Taunggyi,Normal,Fashion accessories,81.86,6,24.56,2024-06-11
+INV-00215,Mandalay,Normal,Health and beauty,17.63,9,7.93,2024-12-04
+INV-00855,Yangon,Member,Health and beauty,69.3,5,17.32,2024-10-06
+INV-00752,Naypyitaw,Member,Electronic accessories,60.2,10,30.1,2024-12-29
+INV-00829,Taunggyi,Member,Food and beverages,27.2,8,10.88,2024-09-29
+INV-00462,Taunggyi,Member,Health and beauty,64.5,10,32.25,2024-06-01
+INV-00142,Bago,Member,Food and beverages,89.98,6,26.99,2024-09-02
+INV-00171,Bago,Member,Sports and travel,11.88,9,5.35,2024-03-24
+INV-00221,Bago,Normal,Home and lifestyle,79.46,1,3.97,2024-04-14
+INV-00262,Bago,Member,Food and beverages,20.67,8,8.27,2024-09-09
+INV-00232,Yangon,Member,Electronic accessories,14.15,9,6.37,2024-01-10
+INV-00442,Yangon,Normal,Health and beauty,41.17,2,4.12,2024-11-15
+INV-00608,Bago,Normal,Health and beauty,21.35,7,7.47,2024-02-13
+INV-00948,Bago,Normal,Fashion accessories,74.36,3,11.15,2024-07-02
+INV-00102,Bago,Member,Electronic accessories,32.37,5,8.09,2024-01-15
+INV-00782,Bago,Normal,Food and beverages,35.73,3,5.36,2024-01-15
+INV-00905,Taunggyi,Normal,Electronic accessories,20.37,2,2.04,2024-05-31
+INV-00342,Bago,Normal,Fashion accessories,52.21,5,13.05,2024-06-22
+INV-00098,Naypyitaw,Normal,Health and beauty,13.66,5,3.42,2024-06-16
+INV-00616,Naypyitaw,Member,Home and lifestyle,94.89,9,42.7,2024-11-23
+INV-00425,Naypyitaw,Member,Health and beauty,80.99,2,8.1,2024-10-14
+INV-00315,Bago,Member,Sports and travel,65.33,2,6.53,2024-12-30
+INV-00252,Naypyitaw,Member,Sports and travel,28.16,5,7.04,2024-10-09
+INV-00538,Taunggyi,Normal,Electronic accessories,18.67,9,8.4,2024-06-03
+INV-00999,Taunggyi,Member,Sports and travel,84.69,10,42.34,2024-05-31
+INV-00304,Taunggyi,Normal,Home and lifestyle,56.91,6,17.07,2024-03-31
+INV-00130,Bago,Normal,Electronic accessories,64.66,1,3.23,2024-08-25
+INV-00971,Bago,Member,Food and beverages,88.76,5,22.19,2024-02-03
+INV-00960,Mandalay,Member,Home and lifestyle,22.46,9,10.11,2024-12-08
+INV-00316,Mandalay,Normal,Food and beverages,25.32,2,2.53,2024-06-07
+INV-00943,Naypyitaw,Normal,Sports and travel,67.96,6,20.39,2024-08-16
+INV-00077,Taunggyi,Normal,Food and beverages,19.75,10,9.88,2024-09-17
+INV-00321,Yangon,Member,Home and lifestyle,37.03,3,5.55,2024-06-23
+INV-00998,Bago,Normal,Health and beauty,41.19,7,14.42,2024-11-28
+INV-00090,Mandalay,Normal,Home and lifestyle,23.86,8,9.54,2024-07-31
+INV-00692,Taunggyi,Normal,Food and beverages,58.69,8,23.48,2024-12-02
+INV-00416,Taunggyi,Normal,Sports and travel,48.7,5,12.18,2024-09-16
+INV-00904,Bago,Normal,Health and beauty,92.53,10,46.27,2024-05-12
+INV-00754,Bago,Normal,Health and beauty,64.46,1,3.22,2024-05-05
+INV-00807,Bago,Normal,Sports and travel,46.82,8,18.73,2024-02-11
+INV-00753,Naypyitaw,Member,Home and lifestyle,38.42,4,7.68,2024-12-15
+INV-00301,Yangon,Normal,Electronic accessories,78.56,10,39.28,2024-07-31
+INV-00920,Mandalay,Normal,Sports and travel,16.18,7,5.66,2024-08-30
+INV-00170,Yangon,Member,Food and beverages,11.38,2,1.14,2024-04-19
+INV-00618,Mandalay,Member,Sports and travel,95.33,6,28.6,2024-05-12
+INV-00468,Mandalay,Normal,Sports and travel,78.24,9,35.21,2024-01-06
+INV-00985,Mandalay,Member,Fashion accessories,28.72,9,12.92,2024-10-01
+INV-00658,Bago,Normal,Sports and travel,79.35,8,31.74,2024-07-11
+INV-00987,Naypyitaw,Normal,Food and beverages,36.03,3,5.4,2024-08-09
+INV-00068,Yangon,Member,Food and beverages,48.3,1,2.42,2024-08-12
+INV-00802,Bago,Normal,Electronic accessories,83.55,6,25.06,2024-02-23
+INV-00117,Naypyitaw,Member,Sports and travel,61.14,2,6.11,2024-12-16
+INV-00543,Naypyitaw,Normal,Health and beauty,18.12,4,3.62,2024-03-05
+INV-00787,Naypyitaw,Normal,Electronic accessories,30.42,10,15.21,2024-03-21
+INV-00360,Mandalay,Normal,Food and beverages,51.85,6,15.56,2024-08-05
+INV-00034,Taunggyi,Member,Electronic accessories,64.91,7,22.72,2024-09-22
+INV-00888,Taunggyi,Normal,Sports and travel,60.11,8,24.04,2024-06-28
+INV-00041,Taunggyi,Normal,Food and beverages,37.12,7,12.99,2024-05-02
+INV-00153,Taunggyi,Normal,Food and beverages,85.28,2,8.53,2024-01-07
+INV-00053,Yangon,Member,Health and beauty,51.84,1,2.59,2024-11-20
+INV-00913,Bago,Member,Fashion accessories,53.28,10,26.64,2024-02-13
+INV-00592,Yangon,Normal,Sports and travel,15.92,1,0.8,2024-02-26
+INV-00348,Bago,Normal,Fashion accessories,86.07,5,21.52,2024-05-08
+INV-00863,Naypyitaw,Normal,Sports and travel,57.77,9,26.0,2024-03-12
+INV-00675,Mandalay,Member,Health and beauty,97.82,10,48.91,2024-01-21
+INV-00296,Mandalay,Member,Home and lifestyle,62.07,9,27.93,2024-03-24
+INV-00640,Mandalay,Member,Food and beverages,41.42,9,18.64,2024-10-17
+INV-00975,Naypyitaw,Member,Home and lifestyle,17.62,3,2.64,2024-06-02
+INV-00299,Yangon,Normal,Health and beauty,55.9,7,19.57,2024-01-03
+INV-00959,Naypyitaw,Member,Food and beverages,94.62,3,14.19,2024-12-22
+INV-00886,Mandalay,Normal,Food and beverages,69.92,3,10.49,2024-02-16
+INV-00574,Taunggyi,Normal,Health and beauty,57.56,4,11.51,2024-04-03
+INV-00015,Yangon,Member,Electronic accessories,62.84,3,9.43,2024-01-02
+INV-00126,Mandalay,Member,Sports and travel,33.75,6,10.12,2024-01-22
+INV-00568,Mandalay,Member,Sports and travel,54.49,3,8.17,2024-08-30
+INV-00806,Yangon,Normal,Food and beverages,66.14,10,33.07,2024-08-24
+INV-00582,Yangon,Normal,Home and lifestyle,67.0,9,30.15,2024-10-26
+INV-00656,Bago,Normal,Health and beauty,63.92,8,25.57,2024-07-28
+INV-00384,Mandalay,Normal,Health and beauty,37.53,3,5.63,2024-10-05
+INV-00045,Bago,Normal,Food and beverages,56.39,3,8.46,2024-02-22
+INV-00624,Naypyitaw,Normal,Sports and travel,36.83,5,9.21,2024-07-30
+INV-00830,Mandalay,Member,Sports and travel,13.68,2,1.37,2024-10-28
+INV-00911,Naypyitaw,Member,Sports and travel,14.74,4,2.95,2024-07-21
+INV-00443,Mandalay,Member,Sports and travel,80.91,7,28.32,2024-08-30
+INV-00704,Yangon,Normal,Electronic accessories,49.96,6,14.99,2024-11-01
+INV-00885,Taunggyi,Member,Home and lifestyle,76.67,4,15.33,2024-04-10
+INV-00247,Mandalay,Normal,Electronic accessories,24.61,10,12.3,2024-03-15
+INV-00199,Bago,Normal,Electronic accessories,68.52,1,3.43,2024-02-22
+INV-00051,Taunggyi,Normal,Electronic accessories,39.79,1,1.99,2024-02-15
+INV-00421,Mandalay,Normal,Health and beauty,89.77,4,17.95,2024-03-13
+INV-00472,Taunggyi,Normal,Electronic accessories,65.55,7,22.94,2024-08-06
+INV-00687,Mandalay,Normal,Electronic accessories,83.59,6,25.08,2024-11-27
+INV-00038,Naypyitaw,Member,Home and lifestyle,51.26,5,12.82,2024-09-12
+INV-00469,Taunggyi,Member,Food and beverages,42.36,4,8.47,2024-01-28
+INV-00673,Taunggyi,Member,Food and beverages,71.1,9,32.0,2024-08-21
+INV-00335,Taunggyi,Normal,Health and beauty,82.51,5,20.63,2024-12-21
+INV-00340,Bago,Member,Health and beauty,27.0,8,10.8,2024-04-30
+INV-00129,Bago,Member,Fashion accessories,87.6,8,35.04,2024-05-14
+INV-00043,Naypyitaw,Normal,Sports and travel,22.61,10,11.3,2024-09-16
+INV-00988,Yangon,Normal,Fashion accessories,58.1,10,29.05,2024-07-28
+INV-00329,Mandalay,Member,Fashion accessories,36.88,1,1.84,2024-12-17
+INV-00680,Mandalay,Normal,Home and lifestyle,28.59,1,1.43,2024-04-01
+INV-00441,Mandalay,Normal,Food and beverages,78.47,9,35.31,2024-04-27
+INV-00761,Mandalay,Member,Home and lifestyle,67.72,6,20.32,2024-10-19
+INV-00558,Yangon,Normal,Sports and travel,16.91,2,1.69,2024-05-05
+INV-00708,Taunggyi,Normal,Sports and travel,16.52,2,1.65,2024-07-17
+INV-00328,Mandalay,Normal,Home and lifestyle,55.58,3,8.34,2024-12-12
+INV-00058,Mandalay,Normal,Home and lifestyle,46.93,7,16.43,2024-12-05
+INV-00507,Mandalay,Member,Home and lifestyle,63.13,3,9.47,2024-03-01
+INV-00566,Naypyitaw,Normal,Food and beverages,13.72,8,5.49,2024-11-01
+INV-00497,Mandalay,Normal,Health and beauty,20.75,10,10.38,2024-06-02
+INV-00646,Mandalay,Member,Food and beverages,55.49,5,13.87,2024-10-05
+INV-00583,Bago,Member,Health and beauty,21.51,9,9.68,2024-05-03
+INV-00429,Naypyitaw,Member,Home and lifestyle,43.39,10,21.7,2024-01-18
+INV-00478,Yangon,Normal,Health and beauty,60.12,5,15.03,2024-02-10
+INV-00167,Mandalay,Member,Home and lifestyle,82.76,3,12.41,2024-09-24
+INV-00253,Mandalay,Member,Fashion accessories,83.0,10,41.5,2024-08-19
+INV-00736,Mandalay,Normal,Electronic accessories,27.02,1,1.35,2024-01-19
+INV-00338,Taunggyi,Member,Food and beverages,53.14,4,10.63,2024-09-02
+INV-00636,Taunggyi,Member,Health and beauty,58.99,6,17.7,2024-12-27
+INV-00539,Yangon,Normal,Home and lifestyle,67.64,10,33.82,2024-09-09
+INV-00990,Taunggyi,Normal,Home and lifestyle,49.24,10,24.62,2024-07-05
+INV-00270,Mandalay,Normal,Health and beauty,80.54,10,40.27,2024-05-22
+INV-00641,Bago,Member,Fashion accessories,77.45,9,34.85,2024-12-04
+INV-00009,Taunggyi,Normal,Electronic accessories,51.17,6,15.35,2024-06-18
+INV-00731,Mandalay,Member,Sports and travel,90.43,10,45.22,2024-10-19
+INV-00273,Taunggyi,Normal,Home and lifestyle,69.93,7,24.48,2024-04-15
+INV-00480,Bago,Member,Home and lifestyle,98.25,7,34.39,2024-01-26
+INV-00251,Bago,Normal,Electronic accessories,99.41,7,34.79,2024-05-19
+INV-00025,Bago,Normal,Electronic accessories,41.1,4,8.22,2024-03-07
+INV-00174,Yangon,Normal,Health and beauty,34.84,1,1.74,2024-05-26
+INV-00653,Mandalay,Normal,Food and beverages,67.06,7,23.47,2024-07-06
+INV-00848,Mandalay,Normal,Health and beauty,54.74,2,5.47,2024-11-26
+INV-00072,Yangon,Normal,Home and lifestyle,41.77,4,8.35,2024-10-04
+INV-00083,Taunggyi,Member,Health and beauty,75.19,1,3.76,2024-10-16
+INV-00432,Bago,Normal,Electronic accessories,99.9,2,9.99,2024-07-15
+INV-00291,Yangon,Normal,Electronic accessories,90.16,9,40.57,2024-07-17
+INV-00383,Mandalay,Member,Sports and travel,54.68,8,21.87,2024-02-02
+INV-00665,Taunggyi,Normal,Home and lifestyle,28.52,7,9.98,2024-08-28
+INV-00866,Yangon,Normal,Food and beverages,28.49,6,8.55,2024-10-24
+INV-00816,Yangon,Member,Food and beverages,26.76,3,4.01,2024-11-20
+INV-00123,Mandalay,Member,Fashion accessories,72.95,10,36.48,2024-04-25
+INV-00368,Taunggyi,Normal,Home and lifestyle,47.26,7,16.54,2024-02-15
+INV-00972,Yangon,Member,Electronic accessories,53.66,10,26.83,2024-08-12
+INV-00159,Taunggyi,Normal,Electronic accessories,68.15,5,17.04,2024-09-22
+INV-00229,Mandalay,Member,Fashion accessories,22.49,6,6.75,2024-09-25
+INV-00537,Taunggyi,Member,Food and beverages,44.53,7,15.59,2024-01-02
+INV-00017,Bago,Member,Fashion accessories,94.36,8,37.74,2024-06-23
+INV-00055,Mandalay,Member,Health and beauty,13.54,2,1.35,2024-02-20
+INV-00136,Naypyitaw,Normal,Fashion accessories,37.46,6,11.24,2024-04-26
+INV-00530,Mandalay,Member,Electronic accessories,53.91,8,21.56,2024-10-28
+INV-00213,Naypyitaw,Member,Sports and travel,55.58,7,19.45,2024-03-27
+INV-00957,Naypyitaw,Normal,Fashion accessories,90.07,7,31.52,2024-07-02
+INV-00712,Bago,Member,Sports and travel,26.75,1,1.34,2024-07-25
+INV-00958,Yangon,Normal,Home and lifestyle,88.95,2,8.9,2024-08-05
+INV-00419,Bago,Normal,Sports and travel,54.12,7,18.94,2024-05-23
+INV-00571,Yangon,Member,Electronic accessories,91.72,7,32.1,2024-03-08
+INV-00317,Yangon,Normal,Food and beverages,97.34,10,48.67,2024-07-22
+INV-00831,Yangon,Member,Electronic accessories,68.93,3,10.34,2024-09-10
+INV-00860,Mandalay,Member,Fashion accessories,14.26,7,4.99,2024-05-07
+INV-00104,Mandalay,Member,Home and lifestyle,43.74,2,4.37,2024-08-10
+INV-00493,Naypyitaw,Member,Electronic accessories,98.91,8,39.56,2024-10-18
+INV-00359,Yangon,Normal,Food and beverages,21.15,3,3.17,2024-05-11
+INV-00361,Yangon,Member,Home and lifestyle,37.69,7,13.19,2024-11-26
+INV-00152,Naypyitaw,Member,Fashion accessories,93.71,5,23.43,2024-11-04
+INV-00358,Yangon,Member,Food and beverages,92.47,6,27.74,2024-06-28
+INV-00103,Bago,Normal,Fashion accessories,39.41,8,15.76,2024-11-15
+INV-00209,Bago,Normal,Fashion accessories,35.48,10,17.74,2024-05-10
+INV-00343,Yangon,Normal,Sports and travel,34.26,3,5.14,2024-08-29
+INV-00635,Bago,Normal,Home and lifestyle,64.38,3,9.66,2024-01-10
+INV-00084,Bago,Normal,Home and lifestyle,37.6,3,5.64,2024-03-02
+INV-00003,Bago,Member,Health and beauty,43.51,9,19.58,2024-08-10
+INV-00454,Taunggyi,Normal,Sports and travel,33.62,3,5.04,2024-09-09
+INV-00606,Taunggyi,Member,Food and beverages,81.85,3,12.28,2024-11-15
+INV-00686,Yangon,Normal,Home and lifestyle,63.93,3,9.59,2024-10-25
+INV-00511,Mandalay,Member,Fashion accessories,85.1,8,34.04,2024-08-30
+INV-00246,Naypyitaw,Member,Sports and travel,15.96,2,1.6,2024-03-22
+INV-00390,Taunggyi,Normal,Health and beauty,31.89,7,11.16,2024-05-23
+INV-00876,Bago,Member,Electronic accessories,27.26,7,9.54,2024-12-19
+INV-00620,Bago,Normal,Food and beverages,30.12,5,7.53,2024-11-17
+INV-00060,Yangon,Member,Health and beauty,57.02,3,8.55,2024-08-13
+INV-00776,Yangon,Normal,Food and beverages,56.89,7,19.91,2024-03-14
+INV-00699,Yangon,Member,Health and beauty,58.12,8,23.25,2024-01-12
+INV-00923,Naypyitaw,Normal,Fashion accessories,35.74,8,14.3,2024-05-29
+INV-00492,Taunggyi,Normal,Food and beverages,72.87,9,32.79,2024-02-20
+INV-00489,Naypyitaw,Member,Fashion accessories,14.48,5,3.62,2024-07-23
+INV-00332,Taunggyi,Member,Electronic accessories,20.61,10,10.3,2024-01-31
+INV-00028,Mandalay,Normal,Food and beverages,26.82,2,2.68,2024-06-17
+INV-00555,Mandalay,Normal,Food and beverages,28.48,7,9.97,2024-10-17
+INV-00739,Naypyitaw,Normal,Sports and travel,84.81,1,4.24,2024-04-14
+INV-00423,Mandalay,Normal,Health and beauty,29.96,9,13.48,2024-08-17
+INV-00946,Yangon,Normal,Food and beverages,39.8,8,15.92,2024-09-29
+INV-00233,Bago,Normal,Home and lifestyle,26.49,4,5.3,2024-09-02
+INV-00256,Naypyitaw,Member,Home and lifestyle,67.02,9,30.16,2024-08-10
+INV-00603,Taunggyi,Member,Fashion accessories,28.13,6,8.44,2024-08-29
+INV-00373,Yangon,Member,Fashion accessories,47.79,10,23.89,2024-03-06
+INV-00880,Taunggyi,Member,Fashion accessories,85.46,2,8.55,2024-03-17
+INV-00226,Mandalay,Normal,Home and lifestyle,11.75,4,2.35,2024-10-28
+INV-00996,Bago,Normal,Fashion accessories,57.19,9,25.74,2024-07-31
+INV-00577,Naypyitaw,Member,Fashion accessories,20.43,6,6.13,2024-10-29
+INV-00330,Bago,Member,Health and beauty,35.35,8,14.14,2024-10-18
+INV-00477,Naypyitaw,Normal,Home and lifestyle,35.05,7,12.27,2024-01-30
+INV-00817,Mandalay,Member,Fashion accessories,92.87,6,27.86,2024-05-18
+INV-00338,Taunggyi,Member,Food and beverages,53.14,4,10.63,2024-09-02
+INV-00642,Yangon,Normal,Food and beverages,35.38,5,8.85,2024-05-17
+INV-00049,Yangon,Normal,Sports and travel,35.85,4,7.17,2024-08-17
+INV-00134,Mandalay,Member,Fashion accessories,14.3,1,0.72,2024-08-22
+INV-00092,Naypyitaw,Member,Electronic accessories,85.38,10,42.69,2024-01-10
+INV-00683,Taunggyi,Member,Electronic accessories,49.8,7,17.43,2024-05-09
+INV-00570,Yangon,Normal,Electronic accessories,72.49,1,3.62,2024-12-02
+INV-00669,Naypyitaw,Member,Food and beverages,32.58,3,4.89,2024-04-27
+INV-00654,Taunggyi,Normal,Home and lifestyle,17.8,7,6.23,2024-07-11
+INV-00697,Naypyitaw,Normal,Fashion accessories,26.52,2,2.65,2024-08-27
+INV-00953,Naypyitaw,Member,Electronic accessories,20.35,4,4.07,2024-09-23
+INV-00967,Taunggyi,Member,Sports and travel,45.64,7,15.97,2024-11-19
+INV-00105,Yangon,Member,Electronic accessories,65.13,8,26.05,2024-10-18
+INV-00222,Naypyitaw,Member,Fashion accessories,13.31,7,4.66,2024-10-25
+INV-00651,Yangon,Member,Home and lifestyle,33.66,6,10.1,2024-09-29
+INV-00895,Yangon,Normal,Health and beauty,98.97,5,24.74,2024-06-01
+INV-00063,Mandalay,Normal,Health and beauty,54.67,1,2.73,2024-05-03
+INV-00242,Yangon,Normal,Food and beverages,92.29,8,36.92,2024-10-09
+INV-00746,Naypyitaw,Normal,Home and lifestyle,56.72,7,19.85,2024-10-17
+INV-00490,Taunggyi,Normal,Fashion accessories,93.96,8,37.58,2024-03-07
+INV-00482,Bago,Member,Home and lifestyle,73.7,2,7.37,2024-09-19
+INV-00028,Mandalay,Normal,Food and beverages,26.82,2,2.68,2024-06-17
+INV-00002,Taunggyi,Normal,Food and beverages,63.89,10,31.95,2024-01-10
+INV-00801,Mandalay,Member,Home and lifestyle,27.41,5,6.85,2024-10-06
+INV-00596,Bago,Normal,Home and lifestyle,17.0,5,4.25,2024-01-13
+INV-00278,Bago,Member,Food and beverages,97.11,4,19.42,2024-04-22
+INV-00188,Yangon,Normal,Health and beauty,39.7,2,3.97,2024-04-28
+INV-00461,Mandalay,Normal,Food and beverages,54.69,8,21.88,2024-11-30
+INV-00973,Yangon,Normal,Food and beverages,40.6,5,10.15,2024-05-04
+INV-00601,Taunggyi,Member,Health and beauty,45.48,3,6.82,2024-05-17
+INV-00562,Mandalay,Member,Sports and travel,72.09,3,10.81,2024-01-24
+INV-00717,Mandalay,Member,Fashion accessories,58.6,1,2.93,2024-10-01
+INV-00447,Bago,Normal,Fashion accessories,66.55,9,29.95,2024-10-08
+INV-00922,Taunggyi,Normal,Food and beverages,79.97,8,31.99,2024-01-02
+INV-00572,Mandalay,Member,Fashion accessories,50.13,1,2.51,2024-11-10
+INV-00385,Mandalay,Member,Food and beverages,61.42,6,18.43,2024-06-28
+INV-00089,Bago,Member,Health and beauty,42.35,2,4.24,2024-12-08
+INV-00745,Bago,Normal,Sports and travel,42.07,8,16.83,2024-03-09
+INV-00013,Naypyitaw,Member,Fashion accessories,64.17,2,6.42,2024-07-02
+INV-00245,Naypyitaw,Normal,Home and lifestyle,45.73,6,13.72,2024-11-07
+INV-00980,Bago,Normal,Electronic accessories,67.27,4,13.45,2024-04-25
+INV-00251,Bago,Normal,Electronic accessories,99.41,7,34.79,2024-05-19
+INV-00622,Mandalay,Normal,Health and beauty,15.12,9,6.8,2024-11-16
+INV-00211,Taunggyi,Normal,Electronic accessories,14.33,2,1.43,2024-03-30
+INV-00839,Naypyitaw,Member,Sports and travel,70.47,5,17.62,2024-12-17
+INV-00819,Taunggyi,Member,Food and beverages,11.28,3,1.69,2024-07-07
+INV-00242,Yangon,Normal,Food and beverages,92.29,8,36.92,2024-10-09
+INV-00549,Naypyitaw,Member,Electronic accessories,29.73,7,10.41,2024-12-12
+INV-00560,Mandalay,Normal,Food and beverages,26.95,7,9.43,2024-11-21
+INV-00826,Taunggyi,Normal,Health and beauty,68.48,10,34.24,2024-01-05
+INV-00915,Naypyitaw,Normal,Home and lifestyle,57.46,10,28.73,2024-05-19
+INV-00418,Naypyitaw,Member,Electronic accessories,56.18,5,14.04,2024-04-07
+INV-00445,Bago,Normal,Food and beverages,14.19,10,7.1,2024-07-08
+INV-00144,Bago,Normal,Home and lifestyle,33.29,6,9.99,2024-07-15
+INV-00377,Bago,Normal,Sports and travel,68.02,10,34.01,2024-04-15
+INV-00633,Bago,Member,Home and lifestyle,23.79,7,8.33,2024-02-27
+INV-00395,Naypyitaw,Member,Fashion accessories,16.86,6,5.06,2024-06-06
+INV-00157,Yangon,Member,Health and beauty,17.52,1,0.88,2024-08-22
+INV-00440,Taunggyi,Member,Home and lifestyle,57.79,4,11.56,2024-11-21
+INV-00398,Taunggyi,Member,Electronic accessories,66.43,9,29.89,2024-04-17
+INV-00941,Yangon,Member,Home and lifestyle,57.17,9,25.73,2024-07-03
+INV-00613,Bago,Normal,Fashion accessories,95.22,8,38.09,2024-12-09
+INV-00528,Bago,Normal,Food and beverages,44.78,7,15.67,2024-08-11
+INV-00505,Naypyitaw,Member,Sports and travel,30.41,2,3.04,2024-05-18
+INV-00436,Bago,Member,Health and beauty,14.37,3,2.16,2024-11-24
+INV-00061,Yangon,Member,Health and beauty,16.8,2,1.68,2024-08-24
+INV-00204,Taunggyi,Normal,Sports and travel,93.35,9,42.01,2024-12-24
+INV-00074,Bago,Normal,Sports and travel,55.29,3,8.29,2024-02-25
+INV-00758,Mandalay,Normal,Fashion accessories,66.1,10,33.05,2024-03-24
+INV-00822,Naypyitaw,Normal,Food and beverages,77.54,6,23.26,2024-10-29
+INV-00019,Taunggyi,Normal,Home and lifestyle,94.17,7,32.96,2024-05-13
+INV-00165,Bago,Member,Food and beverages,51.09,6,15.33,2024-01-18
+INV-00428,Taunggyi,Member,Fashion accessories,97.05,1,4.85,2024-03-07
+INV-00114,Naypyitaw,Normal,Food and beverages,40.4,5,10.1,2024-07-02
+INV-00119,Naypyitaw,Member,Electronic accessories,92.09,8,36.84,2024-09-25
+INV-00630,Mandalay,Member,Food and beverages,53.75,3,8.06,2024-07-27
+INV-00711,Taunggyi,Normal,Health and beauty,29.97,6,8.99,2024-07-31
+INV-00457,Yangon,Normal,Home and lifestyle,69.51,3,10.43,2024-03-08
+INV-00293,Bago,Member,Sports and travel,53.69,1,2.68,2024-05-07
+INV-00146,Yangon,Member,Electronic accessories,83.31,10,41.66,2024-01-29
+INV-00867,Naypyitaw,Member,Electronic accessories,15.65,3,2.35,2024-12-14
+INV-00790,Yangon,Normal,Fashion accessories,33.98,6,10.19,2024-09-28
+INV-00940,Mandalay,Normal,Electronic accessories,74.27,4,14.85,2024-10-31
+INV-00138,Taunggyi,Member,Sports and travel,20.38,6,6.11,2024-04-06
+INV-00909,Bago,Member,Sports and travel,12.14,6,3.64,2024-12-20
+INV-00579,Naypyitaw,Member,Sports and travel,60.63,6,18.19,2024-12-07
+INV-00012,Yangon,Normal,Sports and travel,54.54,6,16.36,2024-08-10
+INV-00056,Naypyitaw,Normal,Home and lifestyle,65.42,9,29.44,2024-12-08
+INV-00977,Naypyitaw,Normal,Fashion accessories,73.03,10,36.52,2024-01-23
+INV-00758,Mandalay,Normal,Fashion accessories,66.1,10,33.05,2024-03-24
+INV-00902,Mandalay,Member,Sports and travel,43.59,1,2.18,2024-06-30
+INV-00674,Taunggyi,Member,Sports and travel,13.03,10,6.51,2024-12-13
+INV-00523,Mandalay,Member,Fashion accessories,23.76,4,4.75,2024-03-12
+INV-00706,Bago,Member,Home and lifestyle,63.98,4,12.8,2024-05-03
+INV-00738,Mandalay,Member,Home and lifestyle,36.47,1,1.82,2024-02-27
+INV-00881,Bago,Member,Fashion accessories,65.46,1,3.27,2024-11-19
+INV-00916,Yangon,Normal,Sports and travel,65.09,2,6.51,2024-03-07
+INV-00573,Bago,Member,Fashion accessories,69.35,7,24.27,2024-11-03
+INV-00628,Yangon,Normal,Fashion accessories,20.53,8,8.21,2024-09-29
+INV-00320,Naypyitaw,Member,Electronic accessories,98.26,8,39.3,2024-05-01
+INV-00294,Bago,Member,Sports and travel,56.61,8,22.64,2024-12-24
+INV-00757,Mandalay,Normal,Health and beauty,12.53,2,1.25,2024-01-18
+INV-00546,Taunggyi,Member,Food and beverages,47.94,8,19.18,2024-12-10
+INV-00968,Naypyitaw,Member,Home and lifestyle,33.97,6,10.19,2024-10-28
+INV-00521,Naypyitaw,Normal,Sports and travel,62.41,5,15.6,2024-03-10
+INV-00531,Bago,Normal,Electronic accessories,69.43,6,20.83,2024-05-10
+INV-00919,Naypyitaw,Normal,Home and lifestyle,65.01,2,6.5,2024-08-15
+INV-00218,Mandalay,Member,Fashion accessories,43.98,10,21.99,2024-12-10
+INV-00868,Bago,Member,Home and lifestyle,69.3,10,34.65,2024-03-02
+INV-00366,Yangon,Member,Electronic accessories,45.07,4,9.01,2024-11-18
+INV-00224,Yangon,Member,Health and beauty,61.0,3,9.15,2024-12-19
+INV-00602,Bago,Member,Health and beauty,74.81,8,29.92,2024-07-09
+INV-00965,Naypyitaw,Member,Electronic accessories,57.61,6,17.28,2024-02-13
+INV-00345,Yangon,Normal,Sports and travel,33.5,4,6.7,2024-08-07
+INV-00910,Mandalay,Member,Health and beauty,36.38,6,10.91,2024-04-25
+INV-00387,Bago,Normal,Home and lifestyle,16.69,2,1.67,2024-10-20
+INV-00529,Taunggyi,Normal,Food and beverages,89.85,5,22.46,2024-05-10
+INV-00353,Bago,Normal,Electronic accessories,19.27,2,1.93,2024-11-13
+INV-00536,Bago,Member,Food and beverages,58.31,1,2.92,2024-10-23
+INV-00210,Bago,Normal,Sports and travel,67.15,3,10.07,2024-06-06
+INV-00956,Yangon,Member,Fashion accessories,47.49,3,7.12,2024-12-15
+INV-00928,Mandalay,Normal,Electronic accessories,90.57,1,4.53,2024-02-03
+INV-00255,Bago,Normal,Electronic accessories,41.17,8,16.47,2024-09-24
+INV-00132,Mandalay,Normal,Electronic accessories,23.42,10,11.71,2024-10-24
+INV-00268,Bago,Member,Home and lifestyle,54.32,6,16.3,2024-11-13
+INV-00828,Yangon,Member,Health and beauty,93.09,9,41.89,2024-11-14
+INV-00182,Yangon,Normal,Fashion accessories,21.25,8,8.5,2024-07-30
+INV-00897,Bago,Normal,Home and lifestyle,59.92,3,8.99,2024-08-24
+INV-00375,Mandalay,Member,Home and lifestyle,52.57,9,23.66,2024-05-04
+INV-00062,Taunggyi,Normal,Electronic accessories,66.62,5,16.66,2024-12-19
+INV-00307,Taunggyi,Member,Food and beverages,37.41,9,16.83,2024-06-01
+INV-00857,Yangon,Normal,Sports and travel,55.45,5,13.86,2024-10-08
+INV-00892,Bago,Normal,Health and beauty,84.81,7,29.68,2024-09-20
+INV-00264,Yangon,Member,Health and beauty,37.13,2,3.71,2024-04-02
+INV-00645,Yangon,Member,Fashion accessories,56.58,4,11.32,2024-05-03
+INV-00735,Yangon,Member,Home and lifestyle,89.95,10,44.98,2024-10-07
+INV-00208,Naypyitaw,Member,Electronic accessories,47.04,6,14.11,2024-12-03
+INV-00487,Mandalay,Member,Home and lifestyle,77.45,6,23.24,2024-10-26
+INV-00444,Taunggyi,Member,Home and lifestyle,97.97,5,24.49,2024-03-20
+INV-00135,Bago,Member,Health and beauty,74.07,5,18.52,2024-03-03
+INV-00505,Naypyitaw,Member,Sports and travel,30.41,2,3.04,2024-05-18
+INV-00488,Taunggyi,Normal,Health and beauty,20.0,2,2.0,2024-08-04
+INV-00800,Taunggyi,Normal,Sports and travel,88.93,8,35.57,2024-01-06
+INV-00085,Yangon,Normal,Home and lifestyle,23.3,4,4.66,2024-01-15
+INV-00668,Mandalay,Normal,Food and beverages,97.73,2,9.77,2024-11-01
+INV-00671,Taunggyi,Member,Electronic accessories,94.43,3,14.16,2024-08-07
+INV-00266,Yangon,Member,Health and beauty,28.58,9,12.86,2024-11-19
+INV-00621,Yangon,Normal,Health and beauty,21.26,6,6.38,2024-05-09
+INV-00907,Taunggyi,Member,Sports and travel,34.51,6,10.35,2024-07-07
+INV-00896,Bago,Normal,Food and beverages,65.36,3,9.8,2024-06-20
+INV-00870,Mandalay,Normal,Electronic accessories,18.5,6,5.55,2024-07-31
+INV-00352,Yangon,Member,Home and lifestyle,40.13,9,18.06,2024-05-27
+INV-00216,Yangon,Normal,Fashion accessories,82.72,6,24.82,2024-02-02
+INV-00649,Mandalay,Member,Fashion accessories,53.93,1,2.7,2024-03-01
+INV-00840,Naypyitaw,Normal,Sports and travel,30.68,10,15.34,2024-12-08
+INV-00664,Mandalay,Normal,Home and lifestyle,76.45,3,11.47,2024-04-15
+INV-00214,Mandalay,Normal,Fashion accessories,93.97,5,23.49,2024-07-18
+INV-00369,Bago,Member,Sports and travel,45.98,3,6.9,2024-03-26
+INV-00837,Yangon,Normal,Health and beauty,67.5,3,10.12,2024-02-16
+INV-00927,Taunggyi,Member,Home and lifestyle,24.71,2,2.47,2024-02-16
+INV-00196,Naypyitaw,Normal,Home and lifestyle,22.65,5,5.66,2024-07-04
+INV-00234,Taunggyi,Member,Sports and travel,54.67,6,16.4,2024-03-02
+INV-00563,Taunggyi,Member,Electronic accessories,27.2,5,6.8,2024-02-14
+INV-00295,Yangon,Normal,Health and beauty,77.89,6,23.37,2024-09-14
+INV-00509,Naypyitaw,Member,Electronic accessories,36.38,1,1.82,2024-06-20
+INV-00365,Bago,Normal,Health and beauty,53.57,1,2.68,2024-07-04
+INV-00180,Mandalay,Member,Sports and travel,89.6,8,35.84,2024-09-19
+INV-00925,Taunggyi,Normal,Home and lifestyle,88.54,3,13.28,2024-10-01
+INV-00614,Taunggyi,Member,Health and beauty,66.5,10,33.25,2024-01-16
+INV-00475,Taunggyi,Member,Fashion accessories,54.3,7,19.0,2024-10-27
+INV-00553,Taunggyi,Normal,Fashion accessories,57.32,6,17.2,2024-01-15
+INV-00914,Bago,Member,Home and lifestyle,91.53,1,4.58,2024-05-28
+INV-00318,Taunggyi,Normal,Health and beauty,99.52,8,39.81,2024-01-19
+INV-00611,Bago,Normal,Electronic accessories,55.76,4,11.15,2024-09-19
+INV-00768,Bago,Normal,Sports and travel,76.18,1,3.81,2024-08-12
+INV-00912,Naypyitaw,Member,Home and lifestyle,30.5,9,13.73,2024-06-13
+INV-00994,Naypyitaw,Normal,Health and beauty,21.9,7,7.66,2024-03-01
+INV-00625,Taunggyi,Normal,Fashion accessories,90.13,8,36.05,2024-10-17
+INV-00420,Taunggyi,Member,Electronic accessories,81.2,7,28.42,2024-06-11
+INV-00363,Naypyitaw,Normal,Health and beauty,69.97,2,7.0,2024-05-10
+INV-00951,Yangon,Normal,Fashion accessories,16.0,2,1.6,2024-08-31
+INV-00662,Naypyitaw,Normal,Fashion accessories,96.85,4,19.37,2024-06-04
+INV-00076,Mandalay,Normal,Home and lifestyle,54.5,7,19.07,2024-02-22
+INV-00983,Mandalay,Member,Home and lifestyle,53.06,6,15.92,2024-11-21
+INV-00580,Naypyitaw,Normal,Sports and travel,49.01,2,4.9,2024-11-25
+INV-00230,Yangon,Member,Health and beauty,57.89,3,8.68,2024-02-28
+INV-00238,Taunggyi,Member,Fashion accessories,98.01,9,44.1,2024-12-18
+INV-00452,Bago,Member,Fashion accessories,61.3,3,9.19,2024-09-13
+INV-00351,Yangon,Member,Electronic accessories,14.92,8,5.97,2024-05-30
+INV-00634,Yangon,Member,Food and beverages,73.72,9,33.17,2024-02-13
+INV-00082,Mandalay,Normal,Food and beverages,91.56,4,18.31,2024-10-11
+INV-00453,Mandalay,Normal,Sports and travel,74.07,10,37.03,2024-11-04
+INV-00508,Mandalay,Normal,Health and beauty,91.99,5,23.0,2024-03-03
+INV-00289,Taunggyi,Member,Health and beauty,47.42,7,16.6,2024-08-24
+INV-00465,Mandalay,Member,Home and lifestyle,53.34,2,5.33,2024-01-28
+INV-00691,Naypyitaw,Normal,Sports and travel,54.57,4,10.91,2024-04-30
+INV-00506,Bago,Member,Food and beverages,69.82,9,31.42,2024-04-14
+INV-00617,Mandalay,Normal,Health and beauty,68.06,8,27.22,2024-11-16
+INV-00392,Taunggyi,Member,Home and lifestyle,67.31,6,20.19,2024-06-11
+INV-00323,Bago,Normal,Health and beauty,12.61,6,3.78,2024-03-21
+INV-00438,Yangon,Member,Electronic accessories,11.47,1,0.57,2024-04-30
+INV-00061,Yangon,Member,Health and beauty,16.8,2,1.68,2024-08-24
+INV-00781,Mandalay,Normal,Electronic accessories,64.72,6,19.42,2024-05-11
+INV-00503,Naypyitaw,Member,Electronic accessories,15.62,5,3.9,2024-10-09
+INV-00619,Naypyitaw,Member,Electronic accessories,63.35,6,19.01,2024-12-30
+INV-00305,Yangon,Normal,Health and beauty,84.42,10,42.21,2024-03-21
+INV-00565,Taunggyi,Member,Fashion accessories,42.46,5,10.62,2024-06-01
+INV-00393,Mandalay,Member,Electronic accessories,18.56,4,3.71,2024-11-21
+INV-00510,Yangon,Normal,Food and beverages,27.75,6,8.33,2024-06-11
+INV-00567,Taunggyi,Normal,Home and lifestyle,48.07,10,24.04,2024-10-07
+INV-00242,Yangon,Normal,Food and beverages,92.29,8,36.92,2024-10-09
+INV-00169,Mandalay,Normal,Fashion accessories,21.69,10,10.85,2024-08-06
+INV-00424,Bago,Member,Fashion accessories,92.34,3,13.85,2024-08-27
+INV-00515,Yangon,Normal,Sports and travel,62.61,6,18.78,2024-04-01
+INV-00121,Taunggyi,Member,Sports and travel,33.8,8,13.52,2024-06-07
+INV-00292,Naypyitaw,Member,Food and beverages,52.45,4,10.49,2024-03-10
+INV-00249,Taunggyi,Normal,Sports and travel,33.78,5,8.45,2024-05-14
+INV-00032,Taunggyi,Normal,Home and lifestyle,28.67,3,4.3,2024-05-26
+INV-00809,Naypyitaw,Normal,Fashion accessories,44.27,2,4.43,2024-03-07
+INV-00797,Yangon,Member,Sports and travel,30.88,9,13.9,2024-09-02
+INV-00744,Taunggyi,Normal,Electronic accessories,22.01,1,1.1,2024-12-03
+INV-00626,Mandalay,Normal,Electronic accessories,38.68,9,17.41,2024-03-01
+INV-00190,Bago,Normal,Fashion accessories,29.16,8,11.66,2024-07-05
+INV-00732,Naypyitaw,Member,Home and lifestyle,29.72,8,11.89,2024-06-22
+INV-00036,Naypyitaw,Member,Home and lifestyle,72.97,4,14.59,2024-04-06
+INV-00413,Taunggyi,Normal,Food and beverages,94.15,10,47.08,2024-10-10
+INV-00040,Bago,Member,Home and lifestyle,37.87,4,7.57,2024-05-01
+INV-00309,Taunggyi,Member,Food and beverages,70.87,5,17.72,2024-02-11
+INV-00410,Bago,Normal,Sports and travel,35.5,3,5.33,2024-10-17
+INV-00930,Naypyitaw,Member,Home and lifestyle,38.74,3,5.81,2024-06-27
+INV-00676,Bago,Normal,Fashion accessories,26.5,4,5.3,2024-05-20
+INV-00597,Naypyitaw,Member,Home and lifestyle,83.64,10,41.82,2024-06-05
+INV-00818,Taunggyi,Member,Sports and travel,69.61,2,6.96,2024-02-06
+INV-00476,Taunggyi,Normal,Food and beverages,19.71,5,4.93,2024-06-03
+INV-00917,Mandalay,Normal,Fashion accessories,85.27,10,42.63,2024-09-18
+INV-00412,Taunggyi,Member,Fashion accessories,55.91,7,19.57,2024-01-06
+INV-00283,Naypyitaw,Member,Electronic accessories,81.61,2,8.16,2024-12-20
+INV-00610,Yangon,Member,Home and lifestyle,40.23,5,10.06,2024-11-23
+INV-00406,Taunggyi,Normal,Food and beverages,91.27,6,27.38,2024-10-04
+INV-00140,Taunggyi,Normal,Fashion accessories,35.37,9,15.92,2024-02-25
+INV-00498,Naypyitaw,Member,Sports and travel,30.64,10,15.32,2024-06-07
+INV-00813,Taunggyi,Normal,Food and beverages,88.22,3,13.23,2024-10-17
+INV-00254,Yangon,Member,Sports and travel,62.62,9,28.18,2024-09-03
+INV-00648,Yangon,Normal,Health and beauty,95.47,10,47.74,2024-01-15
+INV-00751,Mandalay,Member,Home and lifestyle,81.69,8,32.68,2024-01-16
+INV-00069,Mandalay,Normal,Food and beverages,10.93,1,0.55,2024-08-06
+INV-00981,Mandalay,Member,Health and beauty,47.06,7,16.47,2024-02-24
+INV-00473,Mandalay,Normal,Electronic accessories,69.44,9,31.25,2024-01-05
+INV-00236,Bago,Member,Sports and travel,50.48,4,10.1,2024-11-23
+INV-00288,Bago,Normal,Home and lifestyle,59.36,10,29.68,2024-05-13
+INV-00844,Bago,Member,Food and beverages,29.45,8,11.78,2024-03-17
+INV-00859,Bago,Member,Home and lifestyle,40.42,7,14.15,2024-04-25
+INV-00569,Taunggyi,Normal,Home and lifestyle,12.06,2,1.21,2024-12-03
+INV-00609,Taunggyi,Normal,Health and beauty,72.6,8,29.04,2024-05-31
+INV-00276,Yangon,Member,Food and beverages,72.27,1,3.61,2024-01-02
+INV-00743,Naypyitaw,Normal,Sports and travel,16.87,9,7.59,2024-09-12
+INV-00260,Yangon,Normal,Food and beverages,51.58,2,5.16,2024-01-14
+INV-00059,Bago,Normal,Health and beauty,63.16,4,12.63,2024-08-14
+INV-00525,Taunggyi,Normal,Food and beverages,62.04,4,12.41,2024-08-27
+INV-00591,Bago,Member,Food and beverages,10.72,1,0.54,2024-09-28
+INV-00838,Bago,Member,Fashion accessories,98.37,10,49.19,2024-01-06
+INV-00976,Taunggyi,Member,Fashion accessories,33.97,4,6.79,2024-08-14
+INV-00728,Yangon,Member,Food and beverages,71.57,8,28.63,2024-07-03
+INV-00703,Bago,Normal,Sports and travel,95.5,3,14.33,2024-01-01
+INV-00223,Taunggyi,Normal,Electronic accessories,78.18,9,35.18,2024-02-29
+INV-00037,Mandalay,Member,Home and lifestyle,25.29,8,10.12,2024-08-02
+INV-00865,Yangon,Normal,Fashion accessories,88.61,3,13.29,2024-05-24
+INV-00113,Mandalay,Normal,Health and beauty,59.53,10,29.77,2024-10-22
+INV-00290,Taunggyi,Member,Fashion accessories,46.09,7,16.13,2024-10-12
+INV-00162,Bago,Member,Sports and travel,99.68,6,29.9,2024-05-21
+INV-00287,Mandalay,Normal,Sports and travel,57.61,2,5.76,2024-03-25
+INV-00191,Yangon,Normal,Fashion accessories,51.24,8,20.5,2024-01-28
+INV-00586,Yangon,Member,Fashion accessories,56.46,8,22.58,2024-10-27
+INV-00535,Yangon,Normal,Health and beauty,79.47,3,11.92,2024-03-02
+INV-00187,Yangon,Member,Home and lifestyle,71.49,8,28.6,2024-01-09
+INV-00627,Bago,Normal,Electronic accessories,36.73,2,3.67,2024-01-09
+INV-00172,Mandalay,Member,Home and lifestyle,47.79,4,9.56,2024-01-12
+INV-00853,Yangon,Member,Sports and travel,64.04,9,28.82,2024-10-02
+INV-00785,Taunggyi,Member,Fashion accessories,51.08,5,12.77,2024-06-02
+INV-00773,Taunggyi,Normal,Food and beverages,73.94,5,18.48,2024-10-21
+INV-00026,Naypyitaw,Member,Food and beverages,32.43,2,3.24,2024-12-24
+INV-00007,Mandalay,Member,Food and beverages,94.77,3,14.22,2024-05-31
+INV-00887,Mandalay,Member,Food and beverages,98.78,7,34.57,2024-09-21
+INV-00483,Taunggyi,Normal,Health and beauty,51.84,4,10.37,2024-09-20
+INV-00400,Taunggyi,Normal,Electronic accessories,71.02,1,3.55,2024-11-13
+INV-00177,Mandalay,Member,Home and lifestyle,18.07,10,9.04,2024-10-18
+INV-00638,Bago,Member,Home and lifestyle,21.94,8,8.78,2024-01-08
+INV-00093,Taunggyi,Normal,Fashion accessories,90.66,6,27.2,2024-02-17
+INV-00604,Naypyitaw,Normal,Health and beauty,57.2,8,22.88,2024-04-01
+INV-00081,Taunggyi,Member,Home and lifestyle,63.91,8,25.56,2024-07-30
+INV-00106,Bago,Normal,Electronic accessories,18.46,5,4.62,2024-04-10
+INV-00241,Bago,Normal,Health and beauty,72.43,9,32.59,2024-12-30
+INV-00834,Naypyitaw,Member,Fashion accessories,91.88,7,32.16,2024-12-26
+INV-00189,Yangon,Member,Fashion accessories,88.98,8,35.59,2024-05-10
+INV-00083,Taunggyi,Member,Health and beauty,75.19,1,3.76,2024-10-16
+INV-00705,Mandalay,Member,Home and lifestyle,60.42,1,3.02,2024-08-31
+INV-00954,Mandalay,Normal,Home and lifestyle,70.79,3,10.62,2024-07-27
+INV-00716,Mandalay,Member,Fashion accessories,96.1,1,4.8,2024-02-20
+INV-00605,Bago,Normal,Health and beauty,15.12,7,5.29,2024-07-29
+INV-00724,Mandalay,Normal,Home and lifestyle,32.04,7,11.21,2024-03-13
+INV-00514,Mandalay,Normal,Health and beauty,17.7,9,7.96,2024-05-02
+INV-00349,Yangon,Member,Food and beverages,49.47,7,17.31,2024-07-21
+INV-00120,Yangon,Member,Home and lifestyle,31.91,5,7.98,2024-02-15
+INV-00313,Mandalay,Member,Fashion accessories,17.94,6,5.38,2024-05-18
+INV-00227,Naypyitaw,Member,Health and beauty,82.61,3,12.39,2024-10-04
+INV-00250,Bago,Member,Electronic accessories,22.04,5,5.51,2024-07-12
+INV-00632,Yangon,Normal,Sports and travel,65.37,9,29.42,2024-12-16
+INV-00339,Yangon,Normal,Food and beverages,86.51,4,17.3,2024-02-03
+INV-00020,Taunggyi,Member,Electronic accessories,45.81,1,2.29,2024-04-05
+INV-00554,Bago,Member,Sports and travel,79.24,5,19.81,2024-03-30
+INV-00450,Taunggyi,Member,Health and beauty,84.66,8,33.86,2024-10-09
+INV-00197,Naypyitaw,Member,Fashion accessories,71.17,9,32.03,2024-04-12
+INV-00685,Mandalay,Normal,Fashion accessories,17.21,9,7.74,2024-05-17
+INV-00921,Yangon,Normal,Food and beverages,31.21,1,1.56,2024-07-20
+INV-00545,Bago,Member,Sports and travel,27.58,10,13.79,2024-10-07
+INV-00297,Yangon,Normal,Sports and travel,22.16,6,6.65,2024-03-28
+INV-00396,Bago,Member,Sports and travel,29.1,9,13.1,2024-06-10
+INV-00281,Mandalay,Member,Health and beauty,23.86,3,3.58,2024-06-18
+INV-00225,Mandalay,Normal,Fashion accessories,47.45,2,4.75,2024-12-09
+INV-00195,Mandalay,Member,Home and lifestyle,69.22,8,27.69,2024-02-11
+INV-00354,Taunggyi,Member,Sports and travel,56.9,7,19.92,2024-06-09
+INV-00086,Yangon,Member,Health and beauty,25.5,8,10.2,2024-09-13
+INV-00176,Mandalay,Normal,Sports and travel,71.73,8,28.69,2024-10-23
+INV-00709,Taunggyi,Member,Sports and travel,87.0,10,43.5,2024-08-06
+INV-00598,Taunggyi,Member,Electronic accessories,76.09,7,26.63,2024-05-11
+INV-00843,Naypyitaw,Member,Home and lifestyle,54.48,4,10.9,2024-05-16
+INV-00750,Naypyitaw,Normal,Sports and travel,48.45,3,7.27,2024-10-19
+INV-00889,Mandalay,Normal,Home and lifestyle,59.65,9,26.84,2024-01-08
+INV-00877,Yangon,Member,Health and beauty,63.62,4,12.72,2024-07-05
+INV-00118,Taunggyi,Member,Electronic accessories,89.81,7,31.43,2024-08-21
+INV-00407,Mandalay,Normal,Fashion accessories,70.42,8,28.17,2024-06-17
+INV-00747,Yangon,Normal,Home and lifestyle,34.06,3,5.11,2024-04-29
+INV-00795,Naypyitaw,Normal,Fashion accessories,97.19,10,48.59,2024-09-24
+INV-00491,Naypyitaw,Normal,Health and beauty,93.42,5,23.36,2024-06-02
+INV-00898,Yangon,Normal,Home and lifestyle,87.17,7,30.51,2024-03-23
+INV-00846,Taunggyi,Normal,Food and beverages,44.2,10,22.1,2024-05-30
+INV-00784,Bago,Normal,Electronic accessories,70.19,8,28.08,2024-07-10
+INV-00615,Taunggyi,Member,Electronic accessories,60.47,7,21.16,2024-11-11
+INV-00151,Mandalay,Member,Health and beauty,14.22,2,1.42,2024-03-13
+INV-00279,Taunggyi,Member,Fashion accessories,69.46,8,27.78,2024-01-10
+INV-00376,Yangon,Member,Electronic accessories,70.22,6,21.07,2024-12-04
+INV-00823,Yangon,Member,Sports and travel,15.79,6,4.74,2024-09-08
+INV-00557,Mandalay,Member,Fashion accessories,84.49,10,42.25,2024-05-17
+INV-00766,Taunggyi,Normal,Fashion accessories,20.09,8,8.04,2024-10-07
+INV-00379,Yangon,Normal,Electronic accessories,40.85,7,14.3,2024-08-30
+INV-00277,Mandalay,Member,Food and beverages,87.03,10,43.52,2024-07-23
+INV-00547,Taunggyi,Normal,Electronic accessories,87.46,9,39.36,2024-11-18
+INV-00714,Taunggyi,Member,Fashion accessories,41.53,6,12.46,2024-06-08
+INV-00832,Taunggyi,Normal,Fashion accessories,63.35,3,9.5,2024-03-24
+INV-00460,Yangon,Member,Food and beverages,70.15,6,21.05,2024-03-25
+INV-00850,Mandalay,Member,Sports and travel,28.4,10,14.2,2024-02-15
+INV-00792,Bago,Normal,Electronic accessories,52.49,7,18.37,2024-09-16
+INV-00533,Yangon,Member,Electronic accessories,70.31,4,14.06,2024-08-26
+INV-00780,Taunggyi,Member,Food and beverages,21.39,1,1.07,2024-03-11
+INV-00650,Yangon,Normal,Electronic accessories,21.53,8,8.61,2024-05-12
+INV-00756,Bago,Normal,Health and beauty,97.08,9,43.69,2024-06-30
+INV-00235,Taunggyi,Member,Fashion accessories,86.52,3,12.98,2024-01-08
+INV-00723,Naypyitaw,Normal,Sports and travel,62.57,5,15.64,2024-02-07
+INV-00231,Naypyitaw,Member,Fashion accessories,60.55,7,21.19,2024-03-26
+INV-00380,Bago,Member,Sports and travel,88.04,7,30.81,2024-08-17
+INV-00164,Mandalay,Member,Health and beauty,18.72,3,2.81,2024-09-02
+INV-00386,Bago,Normal,Fashion accessories,15.13,2,1.51,2024-05-09
+INV-00779,Yangon,Member,Home and lifestyle,25.83,3,3.87,2024-02-14
+INV-00772,Bago,Normal,Electronic accessories,95.74,3,14.36,2024-12-29
+INV-00770,Mandalay,Member,Home and lifestyle,46.35,6,13.91,2024-01-18
+INV-00112,Mandalay,Normal,Fashion accessories,82.27,6,24.68,2024-04-26
+INV-00966,Mandalay,Member,Home and lifestyle,99.24,8,39.7,2024-04-29
+INV-00495,Naypyitaw,Normal,Health and beauty,86.31,1,4.32,2024-10-26
+INV-00952,Mandalay,Normal,Fashion accessories,61.07,5,15.27,2024-06-02
+INV-00955,Bago,Normal,Electronic accessories,11.45,4,2.29,2024-01-27
+INV-00502,Bago,Member,Food and beverages,45.71,6,13.71,2024-12-31
+INV-00575,Yangon,Normal,Food and beverages,15.31,9,6.89,2024-06-23
+INV-00903,Mandalay,Member,Health and beauty,91.34,9,41.1,2024-08-21
+INV-00004,Naypyitaw,Member,Electronic accessories,86.58,2,8.66,2024-07-11
+INV-00534,Naypyitaw,Normal,Home and lifestyle,38.19,4,7.64,2024-07-24
+INV-00327,Taunggyi,Member,Fashion accessories,80.02,2,8.0,2024-10-26
+INV-00524,Naypyitaw,Member,Food and beverages,75.36,8,30.14,2024-05-25
+INV-00693,Naypyitaw,Normal,Health and beauty,82.84,2,8.28,2024-10-27
+INV-00729,Mandalay,Member,Sports and travel,63.73,5,15.93,2024-10-17
+INV-00481,Yangon,Member,Food and beverages,60.58,10,30.29,2024-06-05
+INV-00066,Bago,Member,Home and lifestyle,69.12,9,31.1,2024-10-11
+INV-00149,Mandalay,Normal,Electronic accessories,12.8,3,1.92,2024-09-05
+INV-00415,Naypyitaw,Normal,Electronic accessories,50.99,4,10.2,2024-05-20
+INV-00791,Yangon,Member,Health and beauty,55.89,5,13.97,2024-01-02
+INV-00908,Yangon,Normal,Sports and travel,77.74,2,7.77,2024-02-14
+INV-00517,Taunggyi,Normal,Home and lifestyle,22.25,8,8.9,2024-07-08
+INV-00584,Mandalay,Normal,Electronic accessories,74.34,9,33.45,2024-12-22
+INV-00057,Mandalay,Normal,Food and beverages,45.81,3,6.87,2024-03-27
+INV-00471,Mandalay,Normal,Home and lifestyle,17.52,10,8.76,2024-04-04
+INV-00847,Naypyitaw,Member,Home and lifestyle,64.37,4,12.87,2024-05-19
+INV-00588,Naypyitaw,Normal,Home and lifestyle,76.95,3,11.54,2024-11-16
+INV-00841,Yangon,Member,Electronic accessories,93.15,7,32.6,2024-08-16
+INV-00594,Mandalay,Member,Sports and travel,80.15,9,36.07,2024-06-18
+INV-00324,Taunggyi,Normal,Sports and travel,22.95,8,9.18,2024-12-20
+INV-00389,Bago,Normal,Fashion accessories,19.08,1,0.95,2024-07-05
+INV-00200,Naypyitaw,Normal,Fashion accessories,95.78,2,9.58,2024-12-30
+INV-00612,Yangon,Member,Sports and travel,86.04,8,34.42,2024-08-08

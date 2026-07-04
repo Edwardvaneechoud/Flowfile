@@ -1,8 +1,6 @@
 # Node Designer
 
-Create custom transformation nodes visually—no Python files required.
-
-The Node Designer lets you build reusable nodes by dragging UI components onto a canvas, configuring their properties, and writing transformation logic. Your custom nodes appear in the node palette alongside built-in nodes.
+The Node Designer lets you build reusable custom nodes visually — no Python files required. Drag UI components onto a canvas, configure their properties, and write transformation logic; your nodes then appear in the palette alongside the built-in ones.
 
 !!! info "Not in Flowfile Lite"
     The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
@@ -22,7 +20,7 @@ The Node Designer lets you build reusable nodes by dragging UI components onto a
 5. Click **Save** to add your node to the palette
 
 !!! tip "Restart Required"
-    After saving a new node, refresh `cmd/cntr + r` Flowfile to load it into the node palette.
+    After saving a new node, refresh Flowfile (`Cmd/Ctrl + R`) to load it into the node palette.
 
 ---
 
@@ -65,7 +63,7 @@ The center panel is where you define your node's identity and structure.
 | Field | Description                          | Example |
 |-------|--------------------------------------|---------|
 | **Node Name** | Internal identifier (no spaces)      | `Prefixer` |
-| **Category** | Where it will appears in the palette | `Custom`, `Text`, `Transform` |
+| **Category** | Where it appears in the palette | `Custom`, `Text`, `Transform` |
 | **Title** | Display name shown on the node       | `Add prefixes to columns` |
 | **Description** | Tooltip text explaining the node     | `Make columns easy to recognize...` |
 | **Number of Inputs** | How many input connections           | `1` (most common) |
@@ -73,8 +71,8 @@ The center panel is where you define your node's identity and structure.
 | **Node Icon** | Visual identifier in the palette     | Select from icon library |
 
 !!! warning "Features Under Development"
-    **Category** and **Number of Outputs** are currently under development. 
-    For now, custom nodes will appear in the default category and support single outputs.
+    **Category** and **Number of Outputs** are currently under development.
+    For now, custom nodes appear in the default category, and locally-executed nodes support a single output. Nodes that run on a [kernel](#kernel-execution) can define multiple named outputs — see [Kernel Execution](#kernel-execution) below.
 
 ### UI Sections
 
@@ -97,27 +95,27 @@ Drag these components from the left panel into your sections:
 
 ### Input Components
 
-| Component | Use Case | Value Type |
-|-----------|----------|------------|
-| **Text Input** | Names, patterns, custom strings | `str` |
-| **Numeric Input** | Thresholds, counts, percentages | `int` or `float` |
-| **Toggle Switch** | Enable/disable features | `bool` |
-| **Single Select** | Choose one option from a list | `str` |
-| **Slider** | Select a value within a range | `int` or `float` |
+| Component | Class | Use Case | Value Type |
+|-----------|-------|----------|------------|
+| **Text Input** | `TextInput` | Names, patterns, custom strings | `str` |
+| **Numeric Input** | `NumericInput` | Thresholds, counts, percentages | `float` |
+| **Toggle Switch** | `ToggleSwitch` | Enable/disable features | `bool` |
+| **Single Select** | `SingleSelect` | Choose one option from a list | `str` |
+| **Slider** | `SliderInput` | Select a value within a range | `float` |
 
 ### Column Components
 
-| Component | Use Case | Value Type |
-|-----------|----------|------------|
-| **Column Selector** | Pick one column from input data | `str` |
-| **Multi Select** | Select multiple columns | `list[str]` |
-| **Column Action** | Column with operation choice | `dict` |
+| Component | Class | Use Case | Value Type |
+|-----------|-------|----------|------------|
+| **Column Selector** | `ColumnSelector` | Pick one column from input data | `str` |
+| **Multi Select** | `MultiSelect` | Select multiple columns | `list[str]` |
+| **Column Action** | `ColumnActionInput` | Column with operation choice | `dict` |
 
 ### Special Components
 
-| Component | Use Case | Value Type        |
-|-----------|----------|-------------------|
-| **Secret Selector** | API keys, passwords, credentials | `str` (SecretStr) |
+| Component | Class | Use Case | Value Type |
+|-----------|-------|----------|------------|
+| **Secret Selector** | `SecretSelector` | API keys, passwords, credentials | `SecretStr` |
 
 !!! note "No Secret Usage Validation"
     There is currently no scanning to verify that secrets are handled securely 
@@ -156,10 +154,10 @@ The bottom section contains the code editor where you write your transformation 
 ### Function Signature
 
 ```python
-def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
 ```
 
-Your function receives Polars LazyFrames and must return a LazyFrame.
+Your function receives Polars DataFrames and must return a DataFrame.
 
 ### Accessing Component Values
 
@@ -189,19 +187,19 @@ is_enabled: bool = self.settings_schema.options.is_enabled.value
 Here's a full example that adds a prefix to selected column names:
 
 ```python
-def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-    # Get the first input LazyFrame
-    lf = inputs[0]
+def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    # Get the first input DataFrame
+    df = inputs[0]
     prefix_text: str = self.settings_schema.main_section.prefix_text.value
     columns_to_change: list[str] = self.settings_schema.main_section.columns_to_change.value
-    
+
     # Build expressions: rename selected columns, keep others unchanged
     exprs: list[pl.Expr] = [
-        pl.col(col_name).alias(f"{prefix_text}_{col_name}") 
-        if col_name in columns_to_change else pl.col(col_name) 
-        for col_name in lf.columns
+        pl.col(col_name).alias(f"{prefix_text}_{col_name}")
+        if col_name in columns_to_change else pl.col(col_name)
+        for col_name in df.columns
     ]
-    return lf.select(exprs)
+    return df.select(exprs)
 ```
 
 ### Generated Code
@@ -244,18 +242,18 @@ class Prefixer(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: PrefixerSettings = PrefixerSettings()
 
-    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-        # Get the first input LazyFrame
-        lf = inputs[0]
+    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+        # Get the first input DataFrame
+        df = inputs[0]
         prefix_text: str = self.settings_schema.main_section.prefix_text.value
         columns_to_change: list[str] = self.settings_schema.main_section.columns_to_change.value
 
         exprs: list[pl.Expr] = [
-            pl.col(col_name).alias(f"{prefix_text}_{col_name}") 
-            if col_name in columns_to_change else pl.col(col_name) 
-            for col_name in lf.columns
+            pl.col(col_name).alias(f"{prefix_text}_{col_name}")
+            if col_name in columns_to_change else pl.col(col_name)
+            for col_name in df.columns
         ]
-        return lf.select(exprs)
+        return df.select(exprs)
 ```
 
 This generated class is what gets saved to your user-defined nodes directory.
@@ -291,7 +289,7 @@ When kernel execution is enabled:
 
 - The Node Designer auto-generates a kernel script from your `process` method
 - Your `self.settings_schema` values are baked into the script as a lightweight proxy
-- Inputs are read via `flowfile_ctx.read_input()` instead of being passed as LazyFrame arguments
+- Inputs are read via `flowfile_ctx.read_input()` instead of being passed as DataFrame arguments
 - Return values are published via `flowfile_ctx.publish_output()` for each named output
 - The full `flowfile_ctx` API is available — artifacts, display, logging, and more
 
@@ -310,13 +308,12 @@ When you use a kernel-enabled custom node in a flow, the node settings panel sho
 Here's a process method that trains a model and publishes it as an artifact:
 
 ```python
-def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
     from sklearn.ensemble import RandomForestClassifier
 
-    lf = inputs[0]
+    df = inputs[0]
     target_col: str = self.settings_schema.main_section.target_column.value
 
-    df = lf.collect()
     X = df.drop(target_col).to_numpy()
     y = df[target_col].to_numpy()
 
@@ -325,7 +322,7 @@ def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
     flowfile_ctx.log_info(f"Model trained with accuracy: {model.score(X, y):.3f}")
 
     predictions = model.predict(X)
-    return df.with_columns(pl.Series("prediction", predictions)).lazy()
+    return df.with_columns(pl.Series("prediction", predictions))
 ```
 
 For more details on the `flowfile_ctx` API available inside kernels, see [Kernel Execution](kernels.md).

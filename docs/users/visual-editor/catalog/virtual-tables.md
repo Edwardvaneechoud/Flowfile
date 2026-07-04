@@ -1,22 +1,11 @@
 # Virtual Flow Tables
 
-Create catalog tables that store **no data on disk**. When queried, a virtual table executes its producer flow on demand — delivering always-fresh results with zero storage overhead.
+A virtual table is a catalog table that stores no data on disk. Reading one executes its producer flow on demand, so the result always reflects the current source data — a computed view rather than a snapshot. Virtual tables work everywhere physical tables do: Catalog Reader nodes, SQL queries, table triggers, and schedules.
 
 !!! info "Not in Flowfile Lite"
     Virtual tables require the full desktop/server build and are not available in the browser-only [Flowfile Lite](../../deployment/lite.md) edition.
 
----
-
-## Why Virtual Tables?
-
-Virtual tables change the way you think about catalog data. Instead of materializing every intermediate result to disk, you can expose **computed views** of your data that stay up to date automatically.
-
-| Benefit | Description                                                                                                                                                                                |
-|---------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Zero storage cost** | No files are written. The catalog entry holds only metadata and (when optimized) a serialized execution plan.                                                                              |
-| **Always-fresh data** | Every time a virtual table is read, it produces results from the latest version of the source data and flow logic. No stale snapshots.                                                     |
-| **Automatic optimization** | Flowfile analyzes your pipeline and, when all upstream nodes support lazy execution, serializes the Polars execution plan for instant resolution — with predicate and projection pushdown. |
-| **Full integration** | Virtual tables work everywhere physical tables work: Catalog Reader, SQL queries, table triggers, and schedules.                                                                           |
+The trade against a physical table: nothing is written (the catalog entry holds only metadata and, when optimized, a serialized execution plan), nothing goes stale, and reads pay the producer's compute cost instead of a disk read. Whether that cost is trivial or substantial depends on the laziness classification below.
 
 ---
 
@@ -72,22 +61,23 @@ The SQL query is validated, executed once to derive the output schema, and then 
 
 ## Optimization and Laziness
 
-The key differentiator of virtual tables is the **laziness system**. Flowfile classifies every node in your pipeline as *lazy*, *eager*, or *conditional*, and uses this to determine whether a virtual table can be optimized.
+What a read costs depends on the **laziness system**. Flowfile classifies every node in your pipeline as *lazy*, *eager*, or *conditional*, and uses this to determine whether a virtual table can be optimized.
 
 ### What Makes a Flow "Fully Lazy"?
 
 A virtual table is **optimized** when every node upstream of the Catalog Writer supports Polars' lazy evaluation. This means the entire pipeline can be represented as a deferred execution plan — no intermediate computation required.
 
-When a flow is fully lazy, Flowfile serializes the Polars `LazyFrame` execution plan and stores it alongside the virtual table metadata. Reading an optimized virtual table is nearly instant — it deserializes the plan and executes it with full query optimization, including predicate pushdown and projection pushdown.
+When a flow is fully lazy, Flowfile serializes the Polars `LazyFrame` execution plan and stores it alongside the virtual table metadata. Reading an optimized virtual table deserializes that plan instead of re-executing the flow, and runs it with full query optimization, including predicate and projection pushdown.
 
 ### Node Laziness Classification
 
-Every node type has a fixed laziness classification:
+Every node type has a fixed laziness classification, defined in `flowfile_core/configs/node_store/nodes.py`. There are three classes:
 
-| Classification | Nodes | Behavior                                                                      |
-|---|---|-------------------------------------------------------------------------------|
-| **Lazy** | Manual Input, Filter, Select, Formula, Join, Group By, Sort, Add Record ID, Take Sample, Unpivot, Union, Drop Duplicates, Graph Solver, Count Records, Cross Join, Text to Rows, SQL Query, Catalog Reader | Operations are deferred — computation happens only when results are collected |
-| **Eager** | Write Data, External Source, Explore Data, Pivot, Fuzzy Match, Python Script, Database Reader, Database Writer, Cloud Storage Writer, Catalog Writer, Kafka Source | Forces execution of upstream flow — may breaks the execution plan             |
+| Classification | Nodes | Behavior |
+|---|---|---|
+| **Lazy** | Manual Input, Select data, Rename columns, Filter data, Formula, Join, Cross join, Group by, Window functions, Sort data, Add record Id, Take Sample, Random Split, Unpivot data, Union data, Drop duplicates, Graph solver, Count records, Text to rows, SQL Query, Read from Catalog, Flow Input, LazyFrame node | Operations are deferred — computation happens only when results are collected, so they keep the plan optimizable. |
+| **Eager** | External source, Write data, API response, Fuzzy match, Explore data, Pivot data, Python Script, Read from Database, Write to Database, Write to Catalog, Write to cloud provider, Kafka Source, Google Analytics, REST API, Train Model, Apply Model, Evaluate Model, Wait For, Flow Output, Run Flow | Forces execution of upstream data — breaks the lazy plan, so the virtual table falls back to standard resolution. |
+| **Conditional** | Read data, Polars code, Read from cloud provider | Lazy or eager depending on configuration (e.g. the file type read, or whether the custom Polars code stays lazy). Treated as a blocker unless the check can prove it stays lazy. |
 
 ### Optimized Resolution
 
@@ -98,7 +88,8 @@ When a virtual table is optimized (`is_optimized = true`):
 3. The query engine applies predicate pushdown, projection pushdown, and other optimizations
 4. Only the needed data is computed
 
-This path is **extremely fast**. Because the deserialized plan is a `LazyFrame`, Polars can push the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work that the consumer doesn't need never runs in the producer, and results always reflect the current source data.
+Because the deserialized plan is a `LazyFrame`, Polars pushes the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work the consumer doesn't need never runs in the producer, and results always reflect the current source data.
+
 ### Standard Resolution
 
 When a virtual table is **not** optimized (eager or conditional nodes upstream):
@@ -125,7 +116,7 @@ Each blocker identifies:
 
 ## Using Virtual Tables
 
-Virtual tables integrate seamlessly into the catalog ecosystem.
+Virtual tables work everywhere physical tables do.
 
 ### Reading in Flows
 
@@ -150,22 +141,18 @@ WHERE v.score > 0.8
 
 ### Table Triggers
 
-A schedule can fire when a virtual table's producer flow finishes running, instead of (or in addition to) a cron. When the producer of a virtual table completes, any schedule with a table trigger on that table runs.
+A [table trigger schedule](schedules.md#table-trigger) fires when a watched catalog table's `updated_at` changes, instead of (or in addition to) a cron. That change happens whenever a producer flow finishes a run that updates the table — so a virtual table's producer completing a run is one way to drive the trigger.
 
-This shines when you want to **centralize trigger logic** across a chain or fan-out of flows:
+This centralizes trigger logic across a chain of flows:
 
 ```mermaid
 flowchart LR
-    A[Flow Aproduces table X] -->|fires| B[Flow Bproduces table Y]
+    A[Flow A produces table X] -->|fires| B[Flow B produces table Y]
     B -->|fires| C[Flow C]
     B -->|fires| D[Flow D]
 ```
 
-Instead of Flow C and Flow D each managing their own cron trying to line up after A and B, one `A → B → { C, D }` trigger chain drives the whole graph off a single upstream event.
-
-**Note:** Because virtual tables recompute their full lineage on read, you could also fan out directly from A — `A → B`, `A → C`, `A → D` — and C and D would still see the effect of B's transformations. Chain vs. fan-out is a choice about *where* to express the trigger edges, not about data flow.
-
-In many cases you won't need it. If a flow runs on its own cadence, a plain schedule is simpler.
+Instead of Flow C and Flow D each managing their own cron trying to line up after A and B, one `A → B → { C, D }` trigger chain drives the whole graph off a single upstream event. If a flow runs on its own cadence, a plain schedule is simpler.
 
 !!! note
     Virtual tables store no data, so a consumer reading the table recomputes its full lineage — including the producer's logic. A table trigger is a scheduling signal, not a data hand-off.
@@ -192,7 +179,9 @@ In many cases you won't need it. If a flow runs on its own cadence, a plain sche
 - **Non-optimized tables re-execute the full producer flow** on every read. For complex or slow flows, this can add significant latency.
 - **Requires a registered producer flow** — the flow must be saved and registered in the catalog before a virtual table can reference it.
 - **No Delta versioning** — since no physical data is stored, there's no version history or time-travel capability.
-- **One virtual table per producer flow** — each registered flow can produce at most one virtual table entry (updates overwrite the existing entry).
+
+!!! note "Multiple virtual tables per flow"
+    A single producer flow can register **multiple** virtual tables — one per Catalog Writer node in virtual mode, each keyed by its table name. Re-running the flow updates each entry in place (matched by producer registration + table name); it does not overwrite the others.
 
 ---
 

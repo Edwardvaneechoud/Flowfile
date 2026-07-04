@@ -1,6 +1,6 @@
 # Writing Data
 
-Flowfile provides Polars-compatible writers with additional cloud storage integration and visual workflow features.
+Flowfile's writers are Polars-compatible, with added cloud storage integration and visual workflow features.
 
 !!! info "Polars Compatibility"
     Local file writers work identically to Polars, plus optional `description` for visual documentation.
@@ -125,7 +125,7 @@ ff.write_to_cloud_storage(
 
 ### Format-Specific Cloud Writers
 
-### Cloud CSV Writing
+#### Cloud CSV Writing
 
 ```python
 # Write to S3
@@ -145,7 +145,7 @@ df.write_csv_to_cloud_storage(
 - `delimiter`: CSV field separator (default: `;`)
 - `encoding`: File encoding (`utf8` or `utf8-lossy`)
 
-### Cloud Parquet Writing
+#### Cloud Parquet Writing
 
 ```python
 # Write to S3 with compression
@@ -163,7 +163,7 @@ df.write_parquet_to_cloud_storage(
 - `connection_name`: Name of configured cloud storage connection  
 - `compression`: Compression algorithm (`snappy`, `gzip`, `brotli`, `lz4`, `zstd`)
 
-### Cloud JSON Writing
+#### Cloud JSON Writing
 
 ```python
 # Write JSON to cloud storage
@@ -174,7 +174,7 @@ df.write_json_to_cloud_storage(
 )
 ```
 
-### Delta Lake Writing
+#### Delta Lake Writing
 
 ```python
 # Write Delta table (supports append mode)
@@ -203,6 +203,12 @@ new_data.write_delta(
 ## Catalog Writing
 
 Write data to the Flowfile catalog as managed Delta tables. Available as both a standalone function and a FlowFrame method.
+
+The tested example writes an aggregate to the catalog, then queries it back with SQL:
+
+```python
+--8<-- "docs/examples/catalog_analysis.py:example"
+```
 
 ### Standalone Function
 
@@ -328,30 +334,7 @@ ff.write_catalog_table(
 
 ## Connection Requirements
 
-All cloud storage writing requires a configured connection:
-
-```python
-import flowfile as ff
-from pydantic import SecretStr
-
-# Set up connection before writing
-ff.create_cloud_storage_connection_if_not_exists(
-    ff.FullCloudStorageConnection(
-        connection_name="data-lake",
-        storage_type="s3", 
-        auth_method="access_key",
-        aws_region="us-east-1",
-        aws_access_key_id="your-key",
-        aws_secret_access_key=SecretStr("your-secret")
-    )
-)
-
-# Now you can write to cloud storage
-df.write_parquet_to_cloud_storage(
-    "s3://data-lake/output.parquet",
-    connection_name="data-lake"
-)
-```
+All cloud storage writing requires a configured connection referenced by name. See [Cloud Connection Management](cloud-connections.md).
 
 
 --- 

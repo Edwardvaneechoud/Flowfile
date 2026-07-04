@@ -111,6 +111,10 @@ Use it whenever a downstream node depends on a side effect of a sibling
 branch — typically Apply Model needing Train Model's artifact to exist
 before it runs.
 
+Wait For is a general-purpose synchronization node (grouped under **Combine**,
+not Machine Learning), but it appears here because the train → apply chain is
+its most common use.
+
 #### Configuration
 
 There are no settings. Wire the data branch into the left input and the
@@ -225,35 +229,12 @@ Model, and you pass that frame to `apply_model(upstream=...)` to chain
 them.
 
 ```python
-import flowfile as ff
-
-raw = ff.read_csv("customer_churn.csv")
-train, test = raw.random_split([("train", 80), ("test", 20)], seed=42)
-
-trained = train.train_model(
-    target="churned",
-    features=["tenure_months", "monthly_charges", "support_calls", "has_contract"],
-    model_type="logistic_regression",
-    params={"l2_reg": 0.1},
-)
-
-scored = (
-    test.wait_for(trained)            # block apply until train is done
-        .apply_model(
-            upstream=trained,
-            output_column="predicted_churn",
-        )
-)
-
-metrics = scored.evaluate_model(
-    actual="churned",
-    predicted="predicted_churn",
-    task_type="auto",
-    upstream_train=trained,
-)
-
-ff.open_graph_in_editor(metrics.flow_graph)  # see the canvas
+--8<-- "docs/examples/ml_pipeline.py:example"
 ```
+
+`random_split` takes a mapping of split name to percentage (the percentages
+must sum to 100). `evaluate_model`'s first argument is the actual (ground-truth)
+column; the prediction column and task type are keyword-only.
 
 The catalog path is also supported — pass `model_name=` (and optionally
 `version=`) to `apply_model` instead of `upstream=`.

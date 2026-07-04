@@ -34,7 +34,7 @@ The **Agent variant** picker in settings selects execution mode:
 
 - **Live (REPL)** *(default)* — each step applies immediately, the affected subgraph runs (Performance) or samples (Development), and the runtime observation feeds back to the model. Failed steps auto-undo and retry. No diff to accept — the canvas is the running record. Higher latency per step because each one does real work.
 - **Staged** — small/local-model-friendly. A tightly-scoped state machine makes one decision per LLM round and bundles proposals into a `GraphDiff` for **Accept** (atomic, one undo point) or **Reject** with an optional note that becomes context for the next attempt.
-- **Single-shot full** — big-model mode (Sonnet, Opus, GPT-4.1, Gemini Pro). Exposes the full tool catalog in one call. Same staged-diff review flow.
+- **Single-shot full** — big-model mode (the provider's strongest tool-capable model for the `agent_complex` surface). Exposes the full tool catalog in one call. Same staged-diff review flow.
 
 The **Verify plan completion** checkbox adds one extra LLM round after the agent decides it's done, to walk its plan as a checklist — catches multi-step plans that terminate after step 1.
 

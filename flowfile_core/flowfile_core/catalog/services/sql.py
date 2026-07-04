@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING
-
+from shared._version import get_version
 from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
     SAVED_FLOW_NODE_X,
@@ -227,7 +227,7 @@ class SqlService:
         )
 
         flow_data = {
-            "flowfile_version": "0.6.3",
+            "flowfile_version": get_version(),
             "flowfile_id": flow_id,
             "flowfile_name": name,
             "flowfile_settings": {

@@ -3,7 +3,7 @@
 Transform nodes modify and shape your data. These nodes handle everything from basic operations like filtering and sorting to more complex transformations like custom formulas and text manipulation.
 
 !!! info "Some transform nodes are not in Flowfile Lite"
-    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, and **Polars Code**. **Add Record ID**, **Formula**, **Text to Rows**, and **Python Script** are not available — use the **Polars Code** node for Formula-style column logic.
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Add Record ID**, **Formula**, **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, **Rename Columns**, and **Polars Code**. **Text to Rows**, **Window Functions**, **SQL Query**, and **Python Script** are not available in Lite.
 
 ## Node Details
 
@@ -11,17 +11,6 @@ Transform nodes modify and shape your data. These nodes handle everything from b
 ### ![Add Record ID](../../../assets/images/nodes/record_id.svg){ width="50" height="50" } Add Record ID  
 
 The **Add Record ID** transformation generates a unique identifier for each record in your dataset. You can create a simple sequential ID or generate grouped IDs based on one or more columns.
-
-#### **Usage:**
-
-1. Add the **Add Record ID** node to your flow.  
-2. Configure the settings:
-   - Define the output column name.
-   - Set an optional offset for ID numbering.
-   - (Optional) Enable grouping and specify grouping columns.  
-3. Apply the transformation.  
-
----
 
 #### Configuration Options  
 
@@ -41,13 +30,11 @@ The **Add Record ID** transformation generates a unique identifier for each reco
 - **Grouped Record ID**  
   - When grouping is enabled, the record ID resets within each group based on the specified columns.  
 
-This transformation helps in creating unique keys, tracking row order, or structuring data for downstream processing.
-
 ---
 
 ### ![Formula](../../../assets/images/nodes/formula.svg){ width="50" height="50" } Formula  
 
-The **Formula** node creates a new column — or replaces an existing one — by evaluating a formula for every row. Formulas are written in the [Flowfile formula language](../../formulas/index.md): reference columns as `[column]`, call any of the [95 built-in functions](../../formulas/functions.md), and use `if ... then ... else ... endif` for conditional logic.
+The **Formula** node creates a new column — or replaces an existing one — by evaluating a formula for every row. Formulas are written in the [Flowfile formula language](../../formulas/index.md): reference columns as `[column]`, call any of the [built-in functions](../../formulas/functions.md), and use `if ... then ... elseif ... else ... endif` for conditional logic.
 
 !!! tip "Try formulas in your browser"
     The [interactive formula playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you experiment with the full language against sample data — nothing to install.
@@ -66,11 +53,9 @@ The **Formula** node creates a new column — or replaces an existing one — by
 
 #### **Usage**
 
-1. Drag the **Formula** node onto your canvas.  
-2. Connect input data.  
-3. Set the output column name.  
-4. Write your formula, e.g. `round([price] * (1 - [discount]), 2)`.  
-5. Preview the results and optionally set a data type.  
+1. Set the output column name.  
+2. Write your formula, e.g. `round([price] * (1 - [discount]), 2)`.  
+3. Preview the results and optionally set a data type.  
 
 ---
 
@@ -88,8 +73,6 @@ The **Formula** node creates a new column — or replaces an existing one — by
 
 - If the column name is **new**, the column is added to the dataset.  
 - If the column name **already exists**, its values are replaced with the formula result.  
-
-This transformation is useful for feature engineering, data cleaning, and enriching datasets with computed values.
 
 ---
 
@@ -123,9 +106,6 @@ The **Select Data** node allows you to choose which columns to keep, rename, and
 - If a selected column is missing from the input, it is marked as **unavailable**.  
 - Columns can be **renamed** without affecting their original data.  
 - Changing the order affects how the columns appear in downstream processing.  
-
-This transformation ensures that datasets are structured efficiently before further analysis or processing.
-
 
 ---
 
@@ -191,13 +171,36 @@ The **Sort Data** node orders your data based on one or more columns.
 | **Sort Columns** | Columns used to sort the dataset.             |
 | **Sort Order**   | Set ascending (`asc`) or descending (`desc`). |
 
-This node ensures structured and ordered data for better analysis.
-
 ---
 
 ### ![Take Sample](../../../assets/images/nodes/sample.svg){ width="50" height="50" } Take Sample
 
-The Take Sample node lets you work with a subset of your data.
+The **Take Sample** node keeps the first *N* rows of the input, so you can iterate on a small slice before running the full dataset.
+
+---
+
+#### **Configuration Options**
+
+| Parameter       | Description                                          |
+|-----------------|------------------------------------------------------|
+| **Sample Size** | Number of rows to keep. Default is `1000`.           |
+
+---
+
+### Rename Columns
+
+The **Rename Columns** node renames many columns at once by applying a single rule, instead of editing names one by one in a Select node.
+
+#### **Rename modes**
+
+| Mode | Effect |
+|------|--------|
+| Prefix | Prepend a fixed string to each selected column name |
+| Suffix | Append a fixed string to each selected column name |
+| Formula | Compute the new name with a [formula](../../formulas/index.md) — `[column_name]` is bound to each column's current name, e.g. `uppercase([column_name])` or `"v2_" + [column_name]` |
+| First row | Promote the first data row to column headers and drop it from the data |
+
+Only the columns you select are renamed; in first-row mode the first row is dropped regardless of the selection, and null or empty header values raise an error.
 
 ---
 
@@ -207,7 +210,7 @@ The **Drop Duplicates** node removes duplicate rows based on selected columns. O
 
 ---
 
-### **Key Features**  
+#### **Key Features**  
 
 - Remove duplicate rows  
 - Select columns to check for duplicates  
@@ -226,8 +229,6 @@ The **Drop Duplicates** node removes duplicate rows based on selected columns. O
 | Parameter   | Description                           |
 |-------------|---------------------------------------|
 | **Columns** | Columns used to check for duplicates. |
-
-This node ensures a clean dataset by eliminating redundant rows.
 
 ---
 
@@ -258,11 +259,8 @@ The **Text to Rows** node splits text from a selected column into multiple rows 
 | **Column to Split**      | The column containing text to be split.                                   |
 | **Output Column Name**   | Name of the new column after splitting (defaults to the original column). |
 | **Split by Fixed Value** | If `true`, use a fixed delimiter (default: `,`).                          |
-| **Delimiter**            | The character used to split text (e.g., `,`, `                            |`, `;`).                 |
+| **Delimiter**            | The character used to split text (e.g., `,`, `;`, or `\|`).                |
 | **Split by Column**      | Instead of a fixed delimiter, use values from another column.             |
-
-This transformation helps normalize datasets by converting **text lists into structured rows**.
-
 
 ---
 

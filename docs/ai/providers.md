@@ -1,6 +1,6 @@
 # Provider Setup (BYOK)
 
-The [AI Assistant](index.md) runs against any major LLM provider — pick the one that fits your budget, latency needs, or compliance posture. Today that's Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. You bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work, Ollama lets the entire AI layer run on your laptop with no traffic leaving your machine.
+The [AI Assistant](index.md) runs against one of six LLM providers — pick the one that fits your budget, latency needs, or compliance posture: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. You bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work, Ollama lets the entire AI layer run on your laptop with no traffic leaving your machine.
 
 !!! info "Not in Flowfile Lite"
     The AI Assistant (and BYOK provider setup) requires the full desktop/server build, not the browser-only [Flowfile Lite](../users/deployment/lite.md) edition.
@@ -9,16 +9,21 @@ The [AI Assistant](index.md) runs against any major LLM provider — pick the on
 
 ## Supported providers
 
+Default models below reflect the provider classes as of 2026-07.
+
 | Provider | Default model | Tools | Streaming | Key env var | Notes |
 |----------|---------------|:-----:|:---------:|-------------|-------|
 | **Anthropic** | `claude-sonnet-4-6` | ✓ | ✓ | `ANTHROPIC_API_KEY` | Best balance of quality and tool-use reliability. Haiku 4.5 is the default for fast surfaces (Cmd+K, ghost-node, autocomplete); Opus 4.7 for `agent_complex`. |
 | **OpenAI** | `gpt-4.1-mini` | ✓ | ✓ | `OPENAI_API_KEY` | Mini tier for the cheap surfaces; full `gpt-4.1` for `explain` / `agent_complex` / `docgen`. Strict structured outputs supported via litellm. |
 | **Google (Gemini)** | `gemini-2.5-flash` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Generous free tier (~250–1000 req/day, no card). Pro for `agent_complex`. |
-| **Groq** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `GROQ_API_KEY` | Very fast inference (~30 RPM free tier); good fit for low-TTFB surfaces (Cmd+K, ghost-node). |
-| **OpenRouter** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `OPENROUTER_API_KEY` | Unified façade for 50+ models with a single key. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
+| **Groq** | `qwen/qwen3-32b` | ✓ | ✓ | `GROQ_API_KEY` | Very fast inference (~30 RPM free tier); good fit for low-TTFB surfaces (Cmd+K, ghost-node). |
+| **OpenRouter** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `OPENROUTER_API_KEY` | One key routing to many hosted models. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
 | **Ollama** | `llama3.1:8b` | ✓ (model-dependent) | ✓ | *(none — local)* | Self-hosted; talks to your local Ollama server (default `http://localhost:11434`). Tool-use works on Llama 3.1+ and most newer instruct models. |
 
 The "Tools" column means the provider can return structured tool-call arguments — required for the Agent surface. The Agent refuses to start against a model that lacks tool support.
+
+!!! note "Model IDs drift with releases"
+    The default and per-surface model IDs are hardcoded in the provider classes at `flowfile_core/flowfile_core/ai/providers/*.py` (one file per provider) and are bumped as new models ship. The table above is a snapshot; check those files for the current values before relying on a specific model name.
 
 ---
 
@@ -29,7 +34,7 @@ The recommended path is the in-app settings panel:
 1. Open **Settings → AI Providers**.
 2. Pick a provider from the list. The panel shows class-level metadata (default model, supports tools, supports streaming) plus your current credential status: **Configured** (key saved), **Env fallback** (no key saved but a recognised env var is set on the server), or **Unconfigured**.
 3. Paste the API key into the *API key* field and click **Save**. For Ollama or self-hosted endpoints, set *API base* to the server URL.
-4. Click **Test**. Flowfile issues a 1-token ping and records the result on the credential (`last_tested_at`, `last_test_status`). A green checkmark means you're good to go.
+4. Click **Test**. Flowfile issues a 1-token ping and records the result on the credential (`last_tested_at`, `last_test_status`).
 
 ![AI Providers list with status chips](../assets/images/ai/byok_provider_list.png)
 
@@ -57,7 +62,7 @@ If no credential row exists for a user, Flowfile falls back to the standard prov
 
 ## Choosing models per surface
 
-Each AI feature is a *surface* (`chat`, `explain`, `agent_staged`, `agent_complex`, `cmd_k`, `ghost_node`, `settings_autocomplete`, `lineage`, `docgen`, `intent_classifier`). Each provider class ships sensible per-surface defaults — Haiku for fast paths, Sonnet for thinking paths, etc. — so you usually don't need to override anything.
+Each AI feature is a *surface* (`chat`, `explain`, `agent_staged`, `agent_complex`, `cmd_k`, `ghost_node`, `settings_autocomplete`, `lineage`, `docgen`, `intent_classifier`, `cron`). Each provider class ships sensible per-surface defaults — Haiku for fast paths, Sonnet for thinking paths, etc. — so you usually don't need to override anything.
 
 When you do want to override:
 

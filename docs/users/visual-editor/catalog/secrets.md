@@ -7,42 +7,58 @@ Store sensitive credentials like database passwords and API keys securely.
 
 ## How It Works
 
-Secrets are encrypted using a master key before storage. When a flow needs a credential, Flowfile decrypts it on-demand. The actual values never appear in flow definitions or logs.
+Secrets are encrypted before storage using a key derived from the **master key**. When a flow needs a credential, Flowfile decrypts it on-demand. The actual values never appear in flow definitions or logs.
+
+## Two keys, two jobs
+
+Flowfile uses two distinct keys. They are configured separately, and the one you care about depends on your mode:
+
+| Key | Encrypts | Where it lives |
+|-----|----------|----------------|
+| **`FLOWFILE_MASTER_KEY`** (Fernet) | User secrets (this page) | Env var / setup wizard — see [Master key](#master-key) |
+| Local secure-storage key (`.secret_key`) | OAuth tokens and locally-stored connection files | Auto-generated file managed by Flowfile — see below |
+
+The **local secure-storage key** is generated automatically the first time Flowfile writes locally-stored credentials, and you never configure it by hand. Its location depends on `FLOWFILE_MODE`:
+
+| Mode | Secure-storage directory |
+|------|--------------------------|
+| **Desktop (`electron` mode)** | `%APPDATA%\flowfile` on Windows, `~/.config/flowfile` elsewhere — the file is `.secret_key` |
+| **Python API / package** | `SECURE_STORAGE_PATH` if set, otherwise `/tmp/.flowfile` |
+| **Docker** | `SECURE_STORAGE_PATH` if set, otherwise `/tmp/.flowfile` |
+
+The rest of this page is about the **master key**, which is what encrypts the secrets you create in the UI.
 
 ## Master Key
 
-The master key encrypts all secrets. Without it, secrets cannot be decrypted.
+The master key is a Fernet key that encrypts all user secrets. Each user's secrets are encrypted with a per-user key derived from it. Without the master key, secrets cannot be decrypted.
 
 ### Configuration by Mode
 
 | Mode | Configuration |
 |------|---------------|
-| **Desktop (Electron)** | Auto-generated on first open, stored at `~/.config/flowfile/` |
-| **Python API** | Auto-generated on first use, stored at `~/.config/flowfile/` |
-| **Docker** | Generate via setup wizard, set as `FLOWFILE_MASTER_KEY` env variable |
+| **Desktop (`electron` mode)** | Managed automatically on first use — no manual configuration |
+| **Python API / package** | Managed automatically on first use — no manual configuration |
+| **Docker** | Generate via the setup wizard, then set as the `FLOWFILE_MASTER_KEY` env variable |
 
 ### Desktop & Python API
 
-The master key is automatically generated on first use and stored securely. No manual configuration needed.
-
-!!! note "Backup recommended"
-    The key is stored in `~/.config/flowfile/`. Back up this directory to preserve access to your encrypted secrets.
+The master key is resolved automatically on first use — no manual configuration is needed. In these modes there is no separate file for you to back up: to move an install, migrate the whole storage directory (`~/.flowfile` by default, or `FLOWFILE_STORAGE_DIR` if set) together with your database, and your secrets keep decrypting.
 
 ### Docker
 
-On first start without a master key, Flowfile shows a setup screen:
+In Docker mode the master key must be supplied explicitly — it is **not** auto-generated to a file. On first start without a key, Flowfile shows a setup screen:
 
 1. Click **Generate Master Key**
 2. Copy the generated key
-3. Add to your `.env` file: `FLOWFILE_MASTER_KEY=<your-key>`
+3. Add it to your `.env` file: `FLOWFILE_MASTER_KEY=<your-key>` (or provide it as a `master_key.txt` Docker secret — the env var wins)
 4. Restart the containers
 
 ![Setup Wizard](../../../assets/images/guides/docker-deployment/setup_wizard.png)
 
 !!! danger "Protect your master key"
-    - Back up your `.env` file securely
-    - Never commit to version control
-    - Losing it = losing access to all encrypted secrets
+    - Store the value securely (`.env` file or Docker secret) and back it up
+    - Never commit it to version control
+    - Losing it means losing access to every encrypted secret — there is no recovery
 
 ## Creating Secrets
 
@@ -75,5 +91,5 @@ id from the value and derives the owner's key to decrypt — the identity of the
 running the flow is only used to check that they have been granted access. Revoking
 the share takes effect immediately, with no rotation needed.
 
-See [Group-Based Sharing](../../../for-developers/docker-deployment.md#group-based-sharing-multi-user-mode)
+See [Group-Based Sharing](../../deployment/docker.md#group-based-sharing)
 for the full sharing model.

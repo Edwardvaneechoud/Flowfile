@@ -1,6 +1,18 @@
 # DataFrame Operations
 
-Core operations for transforming data. All standard Polars operations are supported with additional Flowfile features. The `flowfile_formula` examples below use the [Flowfile formula language](../../formulas/index.md).
+Core row- and column-level transforms: filter, select, add or modify columns, sort, deduplicate, and the string/date/list expression namespaces. Every FlowFrame method mirrors its Polars counterpart and accepts an optional `description` that shows up as node documentation in the visual editor.
+
+The `flowfile_formula` examples below use the [Flowfile formula language](../../formulas/index.md); everything else is a [Polars expression](../concepts/expressions.md).
+
+## A worked example
+
+This runs against committed data and is executed by the docs test suite:
+
+```python
+--8<-- "docs/examples/python_api_operations.py:example"
+```
+
+The sections below break down each operation.
 
 ## Filtering
 
@@ -9,52 +21,58 @@ import flowfile as ff
 
 df = ff.FlowFrame({"price": [10, 20, 30], "qty": [5, 0, 10]})
 
-# Standard Polars filter
+# Polars expression predicate
 df = df.filter(ff.col("price") > 15)
 
-# With description
+# With a description (surfaces in the visual editor)
 df = df.filter(ff.col("price") > 15, description="Keep items over $15")
 
 # Flowfile formula syntax
-df = df.filter(flowfile_formula="[price] > 15 AND [qty] > 0")
+df = df.filter(flowfile_formula="[price] > 15 and [qty] > 0")
 ```
 
-## Selecting Columns
+!!! note "Which node the filter becomes"
+    `filter(flowfile_formula=...)` emits an editable Filter node. A plain `filter(ff.col(...) > x)` predicate emits a `polars_code` node instead — the result is identical, but only the formula form is editable in the visual editor.
+
+## Selecting columns
 
 ```python
-# Select specific columns
+# Select specific columns by name
 df = df.select(["price", "qty"])
 
 # Select with expressions
 df = df.select([
     ff.col("price"),
-    ff.col("qty").alias("quantity")
+    ff.col("qty").alias("quantity"),
 ])
 
-# Exclude columns
-df = df.select(ff.exclude("internal_id"))
+# Keep everything except one column with a column selector.
+# There is no ff.exclude() — use ff.col("*").exclude(...) or the selectors module.
+df = df.select(ff.col("*").exclude("internal_id"))
 ```
 
-## Adding/Modifying Columns
+!!! tip "Selectors"
+    `ff.numeric()`, `ff.string()`, `ff.all_()`, and the other [selector helpers](../concepts/expressions.md) pick columns by dtype or pattern — e.g. `df.select(ff.numeric())` keeps only numeric columns.
+
+## Adding and modifying columns
 
 ```python
-# Standard with_columns
+# Expression form
 df = df.with_columns([
-    (ff.col("price") * ff.col("qty")).alias("total")
+    (ff.col("price") * ff.col("qty")).alias("total"),
 ])
 
-# Flowfile formula syntax
+# Flowfile formula form
 df = df.with_columns(
     flowfile_formulas=["[price] * [qty]"],
     output_column_names=["total"],
-    description="Calculate line totals"
+    description="Calculate line totals",
 )
 ```
 
 ## Sorting
 
 ```python
-# Sort by column
 df = df.sort("price")
 df = df.sort("price", descending=True)
 
@@ -62,67 +80,68 @@ df = df.sort("price", descending=True)
 df = df.sort(["category", "price"], descending=[False, True])
 ```
 
-## Unique Operations
+## Removing duplicates
 
 ```python
-# Get unique rows
+# Drop fully duplicate rows
 df = df.unique()
 
-# Unique by specific columns
+# Deduplicate on a subset of columns
 df = df.unique(subset=["product_id"])
-
-# Drop duplicates (alias)
-df = df.drop_duplicates(subset=["product_id"])
 ```
 
+!!! warning "No `drop_duplicates`"
+    FlowFrame does not expose `drop_duplicates`. Use `unique()` (optionally with `subset=[...]` and `keep="first"`).
 
-## String Operations
+## String operations
 
 ```python
 df = df.with_columns([
     ff.col("name").str.to_uppercase().alias("name_upper"),
     ff.col("code").str.slice(0, 3).alias("prefix"),
-    ff.col("text").str.contains("pattern").alias("has_pattern")
+    ff.col("text").str.contains("pattern").alias("has_pattern"),
 ])
 ```
 
-## Conditional Logic
+## Conditional logic
 
 ```python
-# When/then/otherwise
 df = df.with_columns([
     ff.when(ff.col("price") > 100)
     .then(ff.lit("Premium"))
     .when(ff.col("price") > 50)
     .then(ff.lit("Standard"))
     .otherwise(ff.lit("Budget"))
-    .alias("tier")
+    .alias("tier"),
 ])
 ```
 
-## Date Operations
+## Date operations
 
 ```python
 df = df.with_columns([
     ff.col("date").dt.year().alias("year"),
     ff.col("date").dt.month().alias("month"),
     ff.col("date").dt.day().alias("day"),
-    ff.col("date").dt.weekday().alias("weekday")
+    ff.col("date").dt.weekday().alias("weekday"),
 ])
 ```
 
-## List Operations
+!!! note "Polars renames apply"
+    The expression namespaces track the pinned Polars version: use `dt.weekday()` (not `day_of_week`) and `cum_sum()` (not `cumsum`).
+
+## List operations
 
 ```python
 df = df.with_columns([
     ff.col("tags").list.len().alias("tag_count"),
     ff.col("values").list.sum().alias("total"),
-    ff.col("items").list.first().alias("first_item")
+    ff.col("items").list.first().alias("first_item"),
 ])
 ```
 
-!!! note "Polars Compatibility"
-    All standard Polars DataFrame methods work identically. See [Polars docs](https://pola-rs.github.io/polars/py-polars/html/reference/dataframe/index.html) for complete reference.
+!!! note "Polars compatibility"
+    Most Polars `Expr` methods are available. See the [Polars docs](https://pola-rs.github.io/polars/py-polars/html/reference/dataframe/index.html) for the full method reference; a few methods are renamed or fall back to `polars_code` nodes — see [Expressions](../concepts/expressions.md).
 
 ---
 [← Previous: Data Types](data-types.md) | [Next: Aggregations →](aggregations.md)

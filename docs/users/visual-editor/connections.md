@@ -37,7 +37,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL or MySQL | `postgresql` |
+| **Database Type** | PostgreSQL, MySQL, or SQLite | `postgresql` |
 | **Host** | Database server hostname | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |
@@ -142,7 +142,7 @@ For a step-by-step tutorial, see [Manage Cloud Storage](tutorials/cloud-connecti
 
 ### Using Kafka Connections in Flows
 
-Select your saved Kafka connection when configuring Kafka Reader or Kafka Writer nodes.
+Select your saved Kafka connection when configuring the **Kafka Source** node. Kafka support is read-only — there is no Kafka writer node. See [Kafka](../connect/kafka.md) for the node's settings and a runnable example.
 
 ---
 

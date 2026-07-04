@@ -7,6 +7,7 @@ description: How the Flowfile docs site (MkDocs + Material, the docs/ tree, mkdo
 
 ## When NOT to use this skill
 
+- Editorial standard for docs pages (house style/voice rules, the persona nav map, fact-checking a docs claim against code, the tested-examples contract and add-an-example recipe) → `flowfile-docs-review` (this skill owns *how the site builds*; that one owns *what good pages say and how to verify it*).
 - CI gates that happen to touch docs (`check-formula-docs`, `check-stubs` jobs, version-sync) and release mechanics → `flowfile-change-control` (this skill explains *what* the formula-docs generator does and the doc-authoring traps; that skill owns *why the CI job exists and what blocks a merge*).
 - flowfile_frame public API design, `.pyi` stub authoring, expression codegen → `flowfile-frame-and-codegen`.
 - Writing/reviewing a custom node's `NodeSettings` docstrings for the Node Designer UI → `flowfile-node-development`.
@@ -23,7 +24,7 @@ Two documentation surfaces exist; don't confuse them:
 
 | Surface | Source | Audience |
 |---|---|---|
-| **MkDocs site** (`docs/`) | ~64 Markdown pages + `docs/index.html`, built by `mkdocs.yml`, deployed to `https://edwardvaneechoud.github.io/Flowfile/` | End users (visual editor, Python API) and external contributors |
+| **MkDocs site** (`docs/`) | Markdown pages + `docs/index.html` (count them: `find docs -name '*.md' | wc -l`), built by `mkdocs.yml`, deployed to `https://edwardvaneechoud.github.io/Flowfile/` | End users (visual editor, Python API) and external contributors |
 | **CLAUDE.md files** (9: root + 8 packages) | Not part of the MkDocs build; plain files read by AI agents and human contributors | Anyone working *inside* the repo — see §6 |
 
 The `docs/` tree structure mirrors `mkdocs.yml`'s `nav:` block almost exactly (verify by diffing them — see §3.3 for the one place they currently disagree). Top-level layout:
@@ -74,14 +75,7 @@ Every new page must be added to `mkdocs.yml`'s `nav:` block by hand — MkDocs d
 
 ### 3.3 Forgetting the `nav:` entry makes a page invisible, not broken
 
-MkDocs builds every `.md` file under `docs/` whether or not it's listed in `mkdocs.yml`'s `nav:` — a missing nav entry does **not** fail the build (§2's "no `--strict`" gotcha) and does **not** stop the page from existing at its URL if something else links to it directly. It just means the page is absent from the sidebar and site search weighting. This is not hypothetical: as of 2026-07-03, `docs/for-developers/docker-deployment.md` (the doc covering Docker deployment and Group-Based Sharing for multi-user mode) exists on disk, is linked *to* from `users/visual-editor/catalog/secrets.md` (the only real inbound page link — `users/deployment/docker.md` merely references a similarly-named image asset directory), but is **not in `mkdocs.yml`'s `nav:` at all**. Running `poetry run mkdocs build` prints exactly:
-
-```
-INFO    -  The following pages exist in the docs directory, but are not included in the "nav" configuration:
-  - for-developers/docker-deployment.md
-```
-
-and still exits 0. If you add a new page and it doesn't show up in the sidebar after a build, this is almost certainly why — check `mkdocs.yml`'s `nav:` block before assuming something is actually broken.
+MkDocs builds every `.md` file under `docs/` whether or not it's listed in `mkdocs.yml`'s `nav:` — a missing nav entry does **not** fail the build (§2's "no `--strict`" gotcha) and does **not** stop the page from existing at its URL if something else links to it directly. It just means the page is absent from the sidebar and site search weighting. The build prints an `INFO` line ("The following pages exist in the docs directory, but are not included in the 'nav' configuration") and still exits 0. If you add a new page and it doesn't show up in the sidebar after a build, this is almost certainly why — check `mkdocs.yml`'s `nav:` block before assuming something is actually broken. (The long-standing live example, an orphaned `for-developers/docker-deployment.md`, was merged into `users/deployment/docker.md` in the 2026-07 docs rebuild, with a `redirects`-plugin mapping preserving its URL — as of that rebuild the nav is orphan-free, and the redirect map in `mkdocs.yml` is where moved pages get recorded.)
 
 ### 3.4 The formula reference is generated — never hand-edit it
 
@@ -102,12 +96,7 @@ If you bump the `polars-expr-transformer` version pin (or edit `tools/generate_f
 
 ## 4. House style for docs pages
 
-Two registers coexist in `docs/`; know which one you're extending:
-
-1. **Legacy/marketing register** — `quickstart.md`, `users/index.md`, `nodes/index.md`, most `python-api/` pages, `design-philosophy.md`: first-person-plural, emoji section headers (🎨 🐍 ✅ 🚀), heavy inline-styled HTML (`clamp()` font sizing, gradient `<div>` cards), `<details markdown="1">` collapsibles, hype prose.
-2. **Modern/engineering register** — `ai/index.md`, `deployment/lite.md` + `deployment/index.md`, `kernel-architecture.md`, `ai-architecture.md`, `visualizations.md`, `docker-deployment.md`'s sharing section, `community.md`: tight declarative prose, Material admonitions (`!!! info`, `!!! tip`, `!!! warning`, with a quoted title), comparison tables, exact file paths and symbol names, explicit invariant statements ("There is no min/max gate and nothing that rejects…"), mermaid diagrams where a picture beats prose.
-
-**Write new pages in register 2.** Recent doc commits (LSP notebook docs, project-tracking docs, node-reference docs, formula-docs regeneration) all trend toward register 2, and it matches the voice of `CONTRIBUTING.md` and every `CLAUDE.md` file. Register 1 pages are legacy, not a style to imitate going forward.
+Since the 2026-07 docs rebuild there is **one register**: tight declarative prose, Material admonitions (`!!! info`, `!!! tip`, `!!! warning`, with a quoted title), comparison tables, exact file paths and symbol names, explicit invariant statements, mermaid diagrams where a picture beats prose. The old marketing register (emoji headers, gradient `<div>` cards, `clamp()` inline CSS, hype prose) was eliminated page-by-page — do not reintroduce it. The full editorial standard — voice rules (including the ban on generic "Tips for Success" filler), the persona nav map, the claim→source verification index, and the tested-examples contract — lives in `flowfile-docs-review`; read that skill before writing or reviewing any page.
 
 Admonition syntax (register 2's signature move):
 
@@ -185,9 +174,7 @@ Gaps worth knowing so you don't assume something is documented when it isn't, an
 - **No PR template, no feature-request issue template.** The only issue template (`.github/ISSUE_TEMPLATE/bug_report.md`) is GitHub's unmodified default — it still asks for "Smartphone… Device: [e.g. iPhone6]," which makes no sense for a desktop/server ETL tool. `CONTRIBUTING.md`'s prose ("what changed, why, how you tested it; screenshots for UI changes") is the only PR-description guidance that exists.
 - **No `SECURITY.md`** at the repo root or in `.github/`. The private-vulnerability-reporting policy (GitHub's private "Report a vulnerability" form) is documented only inside `CONTRIBUTING.md`'s "Reporting security issues" section.
 - **`claude.yml` and `claude-pr-review.yml`** (interactive `@claude`-mention agent, and an automatic Claude code review posted on every non-draft PR) are real, tracked workflow files in `.github/workflows/` but are not mentioned in any docs page or in `CONTRIBUTING.md`'s workflow list — a first-time contributor gets an automated review with no explanation of where it came from.
-- **Flow-in-flow** (subflows — PR #568, merged) has no docs page anywhere under `docs/` as of 2026-07-03 (a `docs/users/python-api/tutorials/flowfile_frame_api.md` hit for "Flow in Flow" is a false positive — it's a `<summary>` caption unrelated to the feature).
-- **Project git-tracking** (`flowfile project init|open|save`, `FLOWFILE_ENABLE_PROJECTS`) gets only a passing mention in `docs/users/deployment/docker.md`; there's no dedicated user guide despite it being a full feature (#524).
-- **Group-based sharing** (multi-user resource sharing) is documented for developers in the orphaned `for-developers/docker-deployment.md` (§3.3) but has no end-user guide page.
+- ~~Flow-in-flow, project git-tracking, group-based sharing undocumented~~ — closed by the 2026-07 rebuild: `users/visual-editor/subflows.md`, `users/projects.md`, `users/deployment/sharing.md`, plus `users/deployment/cli.md` (headless runs), `users/connect/{index,kafka,apis}.md`, and `users/coming-from-excel.md` now exist and are in nav.
 
 If you're asked to fill one of these gaps, write it in register 2 (§4), put user-facing content under `users/` and internals under `for-developers/`, and don't forget the `nav:` entry (§3.3).
 
@@ -200,7 +187,7 @@ All facts above were spot-verified in this repo on 2026-07-03 against app versio
 ```bash
 # Docs site config and orphan-page check (reproduces the exact CI build)
 poetry run mkdocs build 2>&1 | grep -E "not included in the|^ERROR"
-# expect: "for-developers/docker-deployment.md" flagged as not in nav, and no line starting "ERROR"
+# expect: no orphan pages and no line starting "ERROR" (orphans were eliminated in the 2026-07 rebuild)
 
 # Confirm the formula reference is still generated (not hand-edited) and current
 head -1 docs/users/formulas/functions.md   # expect the AUTO-GENERATED header

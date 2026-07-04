@@ -1,9 +1,9 @@
 # Aggregate Nodes
 
-Aggregate nodes help you summarize and analyze your data by grouping and calculating statistics. These nodes are essential for creating summaries and transforming data structure.
+Aggregate nodes summarize and analyze your data by grouping and calculating statistics.
 
-!!! tip "Available in Flowfile Lite"
-    All aggregate nodes — **Group By**, **Pivot**, and **Unpivot** — are included in the browser-only [Flowfile Lite](../../deployment/lite.md) build.
+!!! info "Aggregate nodes in Flowfile Lite"
+    **Group By**, **Pivot**, and **Unpivot** are included in the browser-only [Flowfile Lite](../../deployment/lite.md) build. **Count Records** is not — it requires the full desktop/server build.
 
 ## Node Details
 
@@ -32,10 +32,10 @@ The **Group By** node aggregates data based on selected columns, allowing calcul
 | Parameter              | Description                                         |
 |------------------------|-----------------------------------------------------|
 | **Group By Columns**   | Columns used to define groups.                      |
-| **Aggregations**       | Functions like `sum`, `count`, `avg`, `min`, `max`. |
+| **Aggregations**       | One per output column. See the list below.          |
 | **Output Column Name** | Custom name for the aggregated result (optional).   |
 
-This node is essential for summarizing datasets and preparing structured outputs.
+**Aggregation functions** (as shown in the drawer): **Sum**, **Count**, **Mean**, **Median**, **Min**, **Max**, **N_unique**, **First**, **Last**, and **Concat**. The average is **Mean** — there is no `avg` option.
 
 ### ![Pivot Data](../../../assets/images/nodes/pivot.svg){ width="50" height="50" } Pivot Data  
 
@@ -54,7 +54,7 @@ The **Pivot Data** node converts data from a long format to a wide format by cre
 1. Select **index columns** to retain in the final output.  
 2. Choose a **pivot column** whose unique values will become new columns.  
 3. Select a **value column** containing the data to fill the new columns.  
-4. Apply aggregation functions (e.g., `sum`, `count`, `avg`) if needed.  
+4. Apply aggregation functions (e.g., **Sum**, **Count**, **Mean**) if needed.  
 
 ---
 
@@ -66,8 +66,6 @@ The **Pivot Data** node converts data from a long format to a wide format by cre
 | **Pivot Column**  | Unique values from this column become new column names.              |
 | **Value Column**  | The column containing values to be placed in the new columns.        |
 | **Aggregations**  | Functions applied when multiple values exist per pivot column entry. |
-
-This node is useful for restructuring datasets into a **summary-friendly format**.
 
 ### ![Unpivot Data](../../../assets/images/nodes/unpivot.svg){ width="50" height="50" } Unpivot Data  
 
@@ -98,32 +96,9 @@ The **Unpivot Data** node transforms data from wide format to long format, makin
 | **Data Type Selector** | Automatically select columns based on data type (e.g., `string`). |
 | **Selection Mode**     | Choose between `column` or `data_type` for unpivot selection.     |
 
-This node helps in restructuring datasets, especially when working with **reporting or analytical tools**.
-
 ### ![Count Records](../../../assets/images/nodes/record_count.svg){ width="50" height="50" } Count Records
 
-The **Count Records** node calculates the total number of rows in the dataset.
-
----
-
-#### **Key Features**  
-- Simple row count operation  
-- No configuration required  
-- Adds a new column `number_of_records`  
-
----
-
-#### **Usage**  
-1. Add the **Count Records** node to your workflow.  
-2. It will automatically count the total number of rows.  
-
----
-
-#### **Configuration Options**  
-
-This node has **no additional settings**—it simply returns the record count.
-
-This transformation is useful for **quick dataset validation** and **workflow monitoring**.
+The **Count Records** node calculates the total number of rows in the dataset. It has no configuration and adds a new column `number_of_records`.
 
 ---
 [← Combine data](combine.md) | [Next: Write data →](output.md)
