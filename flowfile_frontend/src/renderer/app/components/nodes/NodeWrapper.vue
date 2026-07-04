@@ -156,6 +156,22 @@
             </svg>
             <span>Go to Flow</span>
           </div>
+          <div class="context-menu-item" @click="suggestNextNode">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12h14"></path>
+              <path d="m12 5 7 7-7 7"></path>
+            </svg>
+            <span>Suggest next node…</span>
+          </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg
@@ -235,12 +251,13 @@
 //   - NodeContextMenu.vue (~lines 92-161, with positioning at ~263-283)
 //   - NodeDescriptionEditor.vue (~lines 11-48)
 //   - NodeHandles.vue: handle rendering loops (~lines 64-89)
-import { Handle } from "@vue-flow/core";
+import { Handle, useNode } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useAiGhostNodeStore } from "../../stores/ai-ghost-node-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
@@ -254,6 +271,10 @@ import type { NodeTemplate, NodeHandle, RunFlowReference } from "../../types";
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
 const editorStore = useEditorStore();
+const ghostStore = useAiGhostNodeStore();
+// This component is the registered "custom-node", so VueFlow injects its node
+// context — read the node's own live position from it rather than a lookup.
+const currentVueFlowNode = useNode();
 const nodeEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
@@ -384,6 +405,26 @@ const openSettings = () => {
 const viewData = () => {
   editorStore.requestNodeData(props.data.id);
   closeContextMenu();
+};
+
+const suggestNextNode = () => {
+  closeContextMenu();
+  const flowId = flowStore.flowId;
+  if (flowId === null) return;
+  // Popover anchors at the menu's screen position; the materialised node is
+  // placed relative to this node's own flow-coords position.
+  const pos = currentVueFlowNode.node.computedPosition ??
+    currentVueFlowNode.node.position ?? { x: 0, y: 0 };
+  ghostStore.beginIntent(
+    {
+      upstreamNodeId: props.data.id,
+      screenX: contextMenuX.value,
+      screenY: contextMenuY.value,
+      nodeX: pos.x,
+      nodeY: pos.y,
+    },
+    flowId,
+  );
 };
 
 const openTargetFlow = async () => {

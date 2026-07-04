@@ -1,178 +1,112 @@
-// Edge-hover wiring for the ghost-node surface.
+// Popover-side wiring for the ghost-node surface.
 //
-// VueFlow exposes per-edge mouse events on
-// `<VueFlow @edge-mouse-enter>` / `@edge-mouse-leave`. This
-// composable wraps those into a debounced request to the AI store,
-// anchored at the edge midpoint, and returns visibility state the
-// popup component can render against.
+// The suggestion is "what node should follow THIS node?" — triggered by a
+// deliberate action on a node (right-click → "Suggest next node…"), which
+// calls `store.beginIntent()`. This composable powers the Canvas-rendered
+// popover that completes the flow:
+//   1. (trigger, elsewhere) store.beginIntent(anchor, flowId) — opens the
+//      inline intent input at the right-clicked node.
+//   2. submitIntent(text) — sends the user's intent to the AI store; the
+//      popover shows loading, then the proposed node(s) as a ghost to confirm.
+//   3. acceptSuggestion(index) — materialises the chosen ghost as a real node
+//      wired downstream of the source node.
 //
-// Debounce is 400 ms — short enough that a deliberate hover commits,
-// long enough that a hover-flick across multiple edges doesn't fire
-// N requests. Rate-limit accounting still applies if the timer leaks
-// (it shouldn't), so this is best-effort UX rather than a hard
-// contract.
-//
-// Lifecycle:
-//   - on edge-mouse-enter: schedule a request after the debounce window
-//   - on edge-mouse-leave: cancel any pending timer + cancel the inflight call
-//   - on viewport click: clear the popup (handled by the consumer; the
-//     composable just exposes `clear()`)
-//
-// The composable is read-only — `requestSuggestions` and `materialize` go
-// through the Pinia store so cancellation semantics are shared with any
-// other surface that wants to interrupt the hover request.
+// The composable is thin — flow id, cancellation, request state, and
+// materialisation all live in the Pinia store so the trigger (a node
+// component) and the popover (Canvas) share the same state.
 
-import type { GraphEdge } from "@vue-flow/core";
-import { computed, onUnmounted, ref } from "vue";
+import { computed, onUnmounted } from "vue";
 
 import { NextNodeSuggestion } from "../../api/ai.api";
 import { useAiGhostNodeStore } from "../../stores/ai-ghost-node-store";
 
-const DEBOUNCE_MS = 400;
+// Rightward offset (flow coords) for the materialised node relative to its
+// source. Flows read left→right (outputs on the right, inputs on the left), so
+// the next node lands to the right of the one it follows rather than below it.
+const NODE_DROP_OFFSET_X = 220;
 
 export interface GhostNodeOptions {
-  /** Provider override — defaults to the store's default (anthropic). */
+  /** Provider override — defaults to the store's per-surface resolution. */
   provider?: string;
-  /** When set, requests skip the debounce window (used in tests). */
-  skipDebounce?: boolean;
+  /** Cap on how many candidates the AI returns. */
+  maxSuggestions?: number;
 }
-
-/** Subset of VueFlow's ``GraphEdge`` we read.
- *
- * Pulled out so the composable doesn't pin a specific edge `Data` /
- * `CustomEvents` shape — VueFlow's full ``GraphEdge`` type takes generics
- * that bubble up nastily through the props chain.
- */
-type GhostEdgePayload = Pick<
-  GraphEdge,
-  "id" | "source" | "target" | "sourceX" | "sourceY" | "targetX" | "targetY"
->;
 
 export const useGhostNodeSuggestions = (options: GhostNodeOptions = {}) => {
   const store = useAiGhostNodeStore();
-  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-  const flowIdRef = ref<number | null>(null);
-  const lastEdgeId = ref<string | null>(null);
 
-  const _clearTimer = (): void => {
-    if (pendingTimer !== null) {
-      clearTimeout(pendingTimer);
-      pendingTimer = null;
-    }
+  /** Fire the request once the user has typed (or skipped) their intent. */
+  const submitIntent = (intent: string): void => {
+    const anchor = store.anchor;
+    const flowId = store.flowId;
+    if (anchor === null || flowId === null) return;
+    void store.requestSuggestions(
+      {
+        flowId,
+        upstreamNodeId: anchor.upstreamNodeId,
+        provider: options.provider,
+        intent: intent.trim() || null,
+        maxSuggestions: options.maxSuggestions,
+      },
+      anchor,
+    );
   };
 
-  /** Caller wires this into VueFlow's `<VueFlow @edge-mouse-enter>` event.
-   *
-   * `flowId` MUST be supplied — there's no canonical "current flow" coupling
-   * at the composable layer because consumers vary (designer vs preview).
-   * Calling without a `flowId` is a no-op.
-   */
-  const onEdgeMouseEnter = (
-    payload: { edge: GhostEdgePayload; event?: unknown },
-    flowId: number | null,
-  ): void => {
-    if (flowId === null) return;
-    flowIdRef.value = flowId;
-    const edge = payload.edge;
-    if (!edge?.source) return;
-    lastEdgeId.value = edge.id ?? `${edge.source}->${edge.target}`;
-
-    const upstreamNodeId = edge.source;
-    const sourceX = edge.sourceX ?? 0;
-    const sourceY = edge.sourceY ?? 0;
-    const targetX = edge.targetX ?? sourceX;
-    const targetY = edge.targetY ?? sourceY;
-
-    const anchor = {
-      upstreamNodeId,
-      edgeMidX: (sourceX + targetX) / 2,
-      edgeMidY: (sourceY + targetY) / 2,
-    };
-
-    _clearTimer();
-
-    const fire = () => {
-      pendingTimer = null;
-      void store.requestSuggestions(
-        {
-          flowId,
-          upstreamNodeId,
-          provider: options.provider,
-        },
-        anchor,
-      );
-    };
-
-    if (options.skipDebounce) {
-      fire();
-    } else {
-      pendingTimer = setTimeout(fire, DEBOUNCE_MS);
-    }
-  };
-
-  const onEdgeMouseLeave = (): void => {
-    _clearTimer();
-    // Don't clear suggestions immediately — the user may be moving toward the
-    // popup. Component-level handlers close the popup on outside click.
-  };
-
-  /** Caller wires this into the canvas's pane click handler so the popup
-   * disappears when the user clicks anywhere off the suggestion list. */
+  /** Caller wires this into the canvas pane click so an outside click dismisses
+   * the popup (input or suggestions). Ignored while a request is in flight —
+   * a stray canvas click shouldn't discard a suggestion mid-generation. */
   const onViewportClick = (): void => {
-    _clearTimer();
+    if (store.isLoading) return;
     store.clear();
   };
 
   const acceptSuggestion = async (
     indexOrSuggestion: number | NextNodeSuggestion,
   ): Promise<number | null> => {
-    if (flowIdRef.value === null) return null;
+    const flowId = store.flowId;
     const currentAnchor = store.anchor;
-    if (currentAnchor === null) return null;
+    if (flowId === null || currentAnchor === null) return null;
     const list = store.suggestions;
     const suggestion =
       typeof indexOrSuggestion === "number" ? list[indexOrSuggestion] : indexOrSuggestion;
     if (!suggestion) return null;
-    // Round-trip the upstream id through Number() — the AI route accepts
-    // string OR number; the materialise path needs an integer for
-    // ``editor/add_node/``'s NodePromise shape.
+    // The AI route accepts string OR number, but the materialise path needs an
+    // integer node id for ``editor/add_node/``'s NodePromise shape.
     const upstreamId = Number(currentAnchor.upstreamNodeId);
     if (Number.isNaN(upstreamId)) return null;
     return store.materialize(
       suggestion,
-      flowIdRef.value,
+      flowId,
       upstreamId,
-      currentAnchor.edgeMidX,
-      currentAnchor.edgeMidY + 80,
+      currentAnchor.nodeX + NODE_DROP_OFFSET_X,
+      currentAnchor.nodeY,
     );
   };
 
   const isVisible = computed(
     () =>
       store.anchor !== null &&
-      (store.suggestions.length > 0 || store.isLoading || store.degradedReason !== null),
+      (store.awaitingIntent ||
+        store.suggestions.length > 0 ||
+        store.isLoading ||
+        store.degradedReason !== null),
   );
 
   onUnmounted(() => {
-    _clearTimer();
     store.cancel();
   });
 
   return {
     isVisible,
+    awaitingIntent: computed(() => store.awaitingIntent),
     suggestions: computed(() => store.suggestions),
     anchor: computed(() => store.anchor),
     isLoading: computed(() => store.isLoading),
     aiDisabled: computed(() => store.aiDisabled),
     degradedReason: computed(() => store.degradedReason),
-    lastEdgeId: computed(() => lastEdgeId.value),
-    onEdgeMouseEnter,
-    onEdgeMouseLeave,
+    submitIntent,
     onViewportClick,
     acceptSuggestion,
-    clear: () => {
-      _clearTimer();
-      store.clear();
-    },
+    clear: () => store.clear(),
   };
 };
