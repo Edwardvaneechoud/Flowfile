@@ -38,7 +38,7 @@ Five nodes, connected left to right:
 
 Four ways to run this flow:
 
-- **In your browser, right now** — [open it in Flowfile Lite](../../../assets/try-sales-pipeline.html): the flow and its sample data are encoded in the link itself, so nothing to install and nothing uploaded. Click **Run** when it loads.
+- **In your browser, right now** — [open it in Flowfile Lite](../../../assets/try-sales-pipeline.html): the flow travels in the link and reads the sample CSV from its public URL — nothing to install. Click **Run** when it loads.
 - **From the template browser** — Create → From template → "Sales pipeline: clean, filter, aggregate". This loads the flow with the sample data already wired in. Click **Run**.
 - **Download and open** — grab [`sales_pipeline.yaml`](../../../assets/flows/sales_pipeline.yaml) and open it in the designer. Its Read node points at the sample CSV's public URL, so it runs as-is with an internet connection — or repoint it at a local copy of the file.
 - **Headless** — once a flow is saved with a real data path, run it from the command line without opening the UI:

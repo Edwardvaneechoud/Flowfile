@@ -298,6 +298,12 @@ Query catalog tables directly using SQL. See the dedicated [SQL Editor](sql-edit
 
 ---
 
+## Notebooks
+
+Notebooks live in the catalog next to the tables they analyze: Python and Markdown cells with code completions, Python executing on [Docker-isolated kernels](../kernels.md), cells reading and writing catalog tables directly through `flowfile_ctx`. See the dedicated [Notebooks](notebooks.md) page.
+
+---
+
 ## Favorites
 
 **Favorite** a flow or table (star icon) to bookmark it in the **Favorites** tab for quick access. Favorites are per-user and can be toggled from detail panels or inline in the tree.
@@ -306,7 +312,7 @@ Query catalog tables directly using SQL. See the dedicated [SQL Editor](sql-edit
 
 ## Global Artifacts
 
-Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernels.md#global-artifacts-catalog) using `flowfile_ctx.publish_global()`.
+Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernel-api.md#global-artifacts-catalog) using `flowfile_ctx.publish_global()`.
 
 Click an artifact in the tree to view its versions, metadata, and producing flow.
 

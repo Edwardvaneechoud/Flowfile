@@ -3,7 +3,9 @@
 The kernel system provides isolated Python code execution inside Docker containers. This page explains the internal architecture, component interactions, and key design decisions.
 
 !!! info "Looking for the user guide?"
-    See [Kernel Execution](../users/visual-editor/kernels.md) for the user-facing documentation on how to write code and use the `flowfile` API inside kernels.
+    See [Kernel Execution](../users/visual-editor/kernels.md) for the user-facing documentation on how to write code and use the `flowfile_ctx` API inside kernels.
+
+Kernels are one half of a pair: the catalog is where their inputs and outputs live — Delta write-back, global artifacts, and the notebooks whose Python cells execute here. [Catalog Architecture](catalog-architecture.md) (especially its [Notebooks](catalog-architecture.md#notebooks) section) covers that side of the contract.
 
 ---
 

@@ -1,6 +1,11 @@
 # Docker Reference
 
-Run Flowfile as a multi-user stack with Docker. This is the deployment for teams and servers: authentication, encrypted secrets, a shared catalog, and (optionally) Docker-spawned kernels for Python-script nodes. The bundled compose file **builds the images from source** on first `up`; pre-built images are also published to Docker Hub if you prefer `image:` entries over `build:`. This page covers quick start, configuration, security, kernels, and operations.
+Run Flowfile as a multi-user stack with Docker. This is the deployment for teams and servers: authentication, encrypted secrets, a shared catalog, and (optionally) Docker-spawned kernels for Python-script nodes. This page covers quick start, configuration, security, kernels, and operations.
+
+Two Docker paths exist, for different jobs:
+
+- **Evaluating or developing** — this repo's bundled `docker-compose.yml`, which **builds the images from source** on first `up`. That's what the quick start below uses.
+- **Deploying on a real server** — the [**flowfile-hosting kit**](https://github.com/Edwardvaneechoud/flowfile-hosting), a separate repository that runs the **published Docker Hub images** pinned to a version (`image: edwardvaneechoud/flowfile-core:${FLOWFILE_VERSION}`) and handles everything this repo deliberately doesn't: HTTPS ingress (Caddy with Let's Encrypt, a Cloudflare Tunnel for no-open-ports setups, or plain LAN), a guided installer (`./install.sh`, or `make init`) that generates secrets and verifies DNS, and day-two targets for `update`, `backup`, `restore`, and `health`. If the instance will have users other than you, start there.
 
 ## Quick Start
 

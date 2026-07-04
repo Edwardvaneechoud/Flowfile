@@ -5,6 +5,7 @@ Core examples (docs/examples/*.py) must always pass. Integration examples
 unavailable, reusing the same fixture helpers the rest of the suite gates on.
 """
 
+import re
 import runpy
 from pathlib import Path
 
@@ -23,9 +24,30 @@ def _integration_examples() -> list[Path]:
     return sorted(INTEGRATIONS_DIR.glob("*.py"))
 
 
+_REMOTE_URL_RE = re.compile(r"https://raw\.githubusercontent\.com/\S+?\.(?:csv|parquet|json)")
+
+
+def _skip_unless_remote_data_available(example_path: Path) -> None:
+    """User-facing examples read sample data by public URL so they run without a
+    checkout. Those URLs only resolve once the data is merged to main — skip (never
+    mock) when a referenced URL is unreachable, e.g. pre-merge or offline."""
+    import urllib.error
+    import urllib.request
+
+    for url in set(_REMOTE_URL_RE.findall(example_path.read_text())):
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status != 200:
+                    pytest.skip(f"remote sample data not available yet: {url} -> {resp.status}")
+        except (urllib.error.URLError, TimeoutError) as exc:
+            pytest.skip(f"remote sample data not reachable: {url} ({exc})")
+
+
 @pytest.mark.parametrize("example_path", _core_examples(), ids=lambda p: p.stem)
 def test_core_example_runs(example_path: Path, monkeypatch):
     """A core docs example runs cleanly with the repo root as CWD."""
+    _skip_unless_remote_data_available(example_path)
     monkeypatch.chdir(REPO_ROOT)
     runpy.run_path(str(example_path), run_name="__main__")
 
@@ -79,9 +101,11 @@ def test_live_demo_deep_link_matches_sources():
     envelope = json.loads(zlib.decompress(base64.b64decode(padded), -15))
 
     assert envelope["v"] == 1
-    csv_text = (REPO_ROOT / "data" / "templates" / "supermarket_sales.csv").read_text()
-    files = envelope["files"]
-    assert files.get(1, files.get("1")) == csv_text
+    assert "files" not in envelope  # data travels by public URL, not embedded
+    read_settings = envelope["flow"]["nodes"][0]["setting_input"]["received_file"]
+    from flowfile_core.templates.data_downloader import TEMPLATE_DATA_BASE_URL
+
+    assert read_settings["path"] == f"{TEMPLATE_DATA_BASE_URL}/supermarket_sales.csv"
 
     template = yaml.safe_load(
         (REPO_ROOT / "data" / "templates" / "flows" / "sales_pipeline.yaml").read_text()

@@ -4,15 +4,10 @@ The Flowfile catalog organizes tables in a two-level hierarchy: **catalogs** con
 
 `CatalogReference` and `SchemaReference` are validated, name-based handles. Construct one once at the top of your script — it resolves the name to the underlying ID and either confirms the catalog/schema exists or creates it. Pass the handle around instead of looking up integer IDs by hand.
 
+This example runs in CI on every commit:
+
 ```python
-import flowfile as ff
-
-catalog = ff.CatalogReference("sales", auto_create=True)
-schema = catalog.schema("raw", auto_create=True)
-
-# Use the schema handle anywhere a namespace_id used to be required
-df = schema.read_table("orders")
-schema.write_table(df.filter(ff.col("status") == "open"), "open_orders")
+--8<-- "docs/examples/catalog_references.py:example"
 ```
 
 ## `CatalogReference`

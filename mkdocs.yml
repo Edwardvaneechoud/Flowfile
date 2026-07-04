@@ -94,10 +94,21 @@ nav:
   - Home: index.html
 
   - Get Started:
+    - What is Flowfile:
+      - Overview: what-is-flowfile.md
+      - For Non-Technical Readers: what-is-flowfile-plain.md
+      - For Technical Readers: what-is-flowfile-technical.md
+    - Installation: installation.md
     - Quickstart: quickstart.md
-    - Guides by Audience: users/index.md
-    - Coming from Excel: users/coming-from-excel.md
     - Flowfile Lite (Browser): users/deployment/lite.md
+    - By Audience:
+      - Overview: users/index.md
+      - Coming from Excel: users/coming-from-excel.md
+      - Build Flows Visually: users/build-flows-visually.md
+      - Analyze Your Data: users/analyze-your-data.md
+      - Your Data Lives Elsewhere: users/data-elsewhere.md
+      - Write Python: users/write-python.md
+      - Run Flowfile for a Team: users/deploy-for-a-team.md
 
   - Visual Editor:
     - Overview: users/visual-editor/index.md
@@ -114,6 +125,7 @@ nav:
       - Output Nodes: users/visual-editor/nodes/output.md
       - Machine Learning Nodes: users/visual-editor/nodes/ml.md
     - Sandboxed Python (Kernels): users/visual-editor/kernels.md
+    - The flowfile_ctx API: users/visual-editor/kernel-api.md
     - Node Designer: users/visual-editor/node-designer.md
     - Worked Examples:
       - Overview: users/visual-editor/tutorials/index.md
@@ -134,6 +146,7 @@ nav:
     - Overview: users/visual-editor/catalog/index.md
     - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
     - SQL Editor: users/visual-editor/catalog/sql-editor.md
+    - Notebooks: users/visual-editor/catalog/notebooks.md
     - Visualizations: users/visual-editor/catalog/visualizations.md
     - Schedules: users/visual-editor/catalog/schedules.md
     - Subflows: users/visual-editor/subflows.md
@@ -180,6 +193,7 @@ nav:
     - Architecture: for-developers/architecture.md
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
+    - Catalog Architecture: for-developers/catalog-architecture.md
     - Kernel Architecture: for-developers/kernel-architecture.md
     - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md

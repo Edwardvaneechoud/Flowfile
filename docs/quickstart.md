@@ -4,28 +4,14 @@ Install Flowfile, build a real pipeline on the canvas, and see the same pipeline
 
 ## Install
 
-=== ":material-language-python: pip (recommended)"
+The fast path — the Python package brings the visual editor, the Python API, and all services:
 
-    Installs the visual editor, the Python API, and all services:
+```bash
+pip install flowfile
+flowfile run ui
+```
 
-    ```bash
-    pip install flowfile
-    flowfile run ui
-    ```
-
-    Your browser opens the Flowfile designer. If it doesn't, go to [http://127.0.0.1:63578/ui#/main/designer](http://127.0.0.1:63578/ui#/main/designer) manually.
-
-=== ":material-monitor: Desktop app"
-
-    Download the signed installer for macOS, Windows, or Linux from [GitHub Releases](https://github.com/edwardvaneechoud/Flowfile/releases) and run it.
-
-=== ":material-web: Browser, no install"
-
-    [Flowfile Lite](users/deployment/lite.md) runs the visual editor entirely in your browser at [demo.flowfile.org](https://demo.flowfile.org) — a subset of the full product (no backend services, databases, scheduler, or AI), good for a first look and small files.
-
-=== ":material-source-branch: From source"
-
-    Clone the repo and see [For Developers](for-developers/index.md) for the Poetry + npm setup.
+Your browser opens the Flowfile designer. If it doesn't, go to [http://127.0.0.1:63578/ui#/main/designer](http://127.0.0.1:63578/ui#/main/designer) manually. Every other way in — desktop app, Docker, browser-only, from source — is on the [Installation](installation.md) page.
 
 ## Choose your path
 
@@ -205,8 +191,11 @@ For anything else: [GitHub Discussions](https://github.com/edwardvaneechoud/Flow
 
 ## Where next
 
+Pick the route written for your situation:
+
 - [Coming from Excel](users/coming-from-excel.md) — VLOOKUP, pivot tables, and IF-formulas translated to flows.
-- [Node reference](users/visual-editor/nodes/index.md) — everything the canvas can do.
-- [Connect your data](users/visual-editor/connections.md) — databases, S3/ADLS/GCS, Kafka, APIs.
-- [The catalog](users/visual-editor/catalog/index.md) — tables, SQL, visualizations, schedules; `flowfile seed-demo` gives you a populated catalog to explore in one command.
-- [Deploy for a team](users/deployment/index.md) — Docker, users and groups, sharing.
+- [Build flows visually](users/build-flows-visually.md) — from first flow to a reusable toolkit.
+- [Analyze your data](users/analyze-your-data.md) — from question to a chart that refreshes itself.
+- [Your data lives elsewhere](users/data-elsewhere.md) — warehouse, S3, Kafka, APIs.
+- [Write Python](users/write-python.md) — the Polars-style API, connectors, and CI.
+- [Run Flowfile for a team](users/deploy-for-a-team.md) — the operator's route.

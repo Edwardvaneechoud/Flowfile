@@ -4,8 +4,10 @@
 import flowfile as ff
 from flowfile_frame import read_catalog_sql
 
+SALES = "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates/supermarket_sales.csv"
+
 income_by_city = (
-    ff.read_csv("data/templates/supermarket_sales.csv")
+    ff.read_csv(SALES)
     .group_by("city")
     .agg(ff.col("gross_income").sum().alias("total_income"))
 )

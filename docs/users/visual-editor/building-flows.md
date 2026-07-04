@@ -56,7 +56,7 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 
 ### Edge labels and Python Script nodes
 
-Each connection's name comes from the source node's **node reference** (default `df_{node_id}`). With edge labels on, the canvas shows the exact name a [Python Script node](kernels.md#writing-output-data) uses to read that input:
+Each connection's name comes from the source node's **node reference** (default `df_{node_id}`). With edge labels on, the canvas shows the exact name a [Python Script node](kernel-api.md#writing-output-data) uses to read that input:
 
 ```python
 total_sales = flowfile_ctx.read_input("total_sales")
@@ -67,6 +67,6 @@ Python Script nodes likewise publish named outputs with `flowfile_ctx.publish_ou
 
 ## From here
 
-- Open the finished sales pipeline: in-app via **Create → From template**, [as a download](../../assets/flows/sales_pipeline.yaml), or [live in the browser](../../assets/try-sales-pipeline.html) — the link carries the flow and its data.
+- Open the finished sales pipeline: in-app via **Create → From template**, [as a download](../../assets/flows/sales_pipeline.yaml), or [live in the browser](../../assets/try-sales-pipeline.html).
 - [Worked examples](tutorials/index.md) — complete flows with data and expected results.
 - [Node reference](nodes/index.md) — every node, per category.

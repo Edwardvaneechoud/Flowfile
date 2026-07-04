@@ -9,17 +9,13 @@ If you know Polars, most of this API will look familiar: the `FlowFrame` mirrors
 
 ## Quick example
 
+This snippet is a repository file executed by CI — it cannot drift from the real API:
+
 ```python
-import flowfile as ff
-
-df = ff.read_csv("sales.csv")
-result = df.filter(ff.col("amount") > 100).group_by("region").agg(
-    ff.col("amount").sum()
-)
-
-# Open the pipeline in the visual editor
-ff.open_graph_in_editor(result.flow_graph)
+--8<-- "docs/examples/sales_pipeline.py:example"
 ```
+
+Build the same chain without the final `.collect()` and the pipeline object opens on the canvas via `ff.open_graph_in_editor(pipeline.flow_graph)` — see [Visual UI Integration](reference/visual-ui.md).
 
 ## Documentation
 

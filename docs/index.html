@@ -9,13 +9,15 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
     <style>
+        /* Brand palette — the logo's wave layers:
+           cyan #2DD5D3, cerulean #26A8E0, royal #1D76D6, navy #233588 */
         :root {
-            --md-primary-fg-color: #00CED1;
-            --md-primary-fg-color--light: #20E3E6;
-            --md-primary-fg-color--dark: #008B8B;
-            --md-accent-fg-color: #6B46C1;
-            --md-accent-fg-color--light: #8B5CF6;
-            --md-accent-fg-color--dark: #4C1D95;
+            --md-primary-fg-color: #1D76D6;
+            --md-primary-fg-color--light: #26A8E0;
+            --md-primary-fg-color--dark: #233588;
+            --md-accent-fg-color: #2DD5D3;
+            --md-accent-fg-color--light: #2DD5D3;
+            --md-accent-fg-color--dark: #26A8E0;
             --md-default-fg-color: #000000de;
             --md-default-fg-color--light: #0000008a;
             --md-default-bg-color: #ffffff;
@@ -25,12 +27,12 @@
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --md-primary-fg-color: #00CED1;
-                --md-primary-fg-color--light: #20E3E6;
-                --md-primary-fg-color--dark: #008B8B;
-                --md-accent-fg-color: #8B5CF6;
-                --md-accent-fg-color--light: #A78BFA;
-                --md-accent-fg-color--dark: #6B46C1;
+                --md-primary-fg-color: #26A8E0;
+                --md-primary-fg-color--light: #2DD5D3;
+                --md-primary-fg-color--dark: #26A8E0;
+                --md-accent-fg-color: #2DD5D3;
+                --md-accent-fg-color--light: #2DD5D3;
+                --md-accent-fg-color--dark: #26A8E0;
                 --md-default-fg-color: #ffffffde;
                 --md-default-fg-color--light: #ffffff8a;
                 --md-default-bg-color: #121212;
@@ -75,7 +77,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, var(--md-primary-fg-color) 0%, var(--md-accent-fg-color) 100%);
+            background: linear-gradient(135deg, #2DD5D3 0%, #26A8E0 35%, #1D76D6 65%, #233588 100%);
             position: relative;
             overflow: hidden;
             padding: 1rem;
@@ -231,7 +233,7 @@
             left: 0;
             right: 0;
             height: 4px;
-            background: linear-gradient(90deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+            background: linear-gradient(90deg, #2DD5D3, #233588);
             transform: translateX(-100%);
             transition: transform 0.5s ease;
         }
@@ -255,13 +257,17 @@
             width: 48px;
             height: 48px;
             margin-bottom: 1rem;
-            background: linear-gradient(135deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+            background: linear-gradient(135deg, #26A8E0, #233588);
             border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 24px;
+        }
+
+        .feature-icon svg {
+            width: 26px;
+            height: 26px;
         }
 
         .feature-title {
@@ -322,7 +328,7 @@
         /* Example / two-ways section */
         .example-section {
             padding: 3rem 1rem;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: linear-gradient(135deg, #1a2560 0%, #233588 100%);
             color: white;
         }
 
@@ -345,7 +351,7 @@
         }
 
         .approach-card h3 {
-            color: var(--md-primary-fg-color);
+            color: #2DD5D3;
             margin-bottom: 1.5rem;
             font-size: 1.2rem;
         }
@@ -528,6 +534,9 @@
                 An open-source data platform with a visual pipeline builder, AI assistant, data catalog with Delta Lake storage,
                 scheduling, Kafka ingestion, sandboxed Python execution, and a Polars-compatible API — installed with a single pip install.
             </p>
+            <p class="fade-in" style="margin: -1rem auto 1.5rem; font-size: 0.95rem;">
+                <a href="what-is-flowfile.html" style="color: rgba(255,255,255,0.9); text-decoration: underline; text-underline-offset: 3px;">New here? Start with what Flowfile is →</a>
+            </p>
             <div class="hero-buttons fade-in">
                 <a href="quickstart.html" class="hero-button hero-button-primary">
                     <span>Get Started</span>
@@ -560,7 +569,7 @@
 
         <div class="features-grid">
             <a href="users/visual-editor/building-flows.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">🎨</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7.2 12h4.8m0 0 4.6-5m-4.6 5 4.6 5"/></svg></div>
                 <h3 class="feature-title">Visual Pipeline Builder</h3>
                 <p class="feature-description">
                     40+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more —
@@ -570,7 +579,7 @@
             </a>
 
             <a href="ai/index.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">✨</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M18.8 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z"/></svg></div>
                 <h3 class="feature-title">AI Assistant</h3>
                 <p class="feature-description">
                     Build pipelines from natural-language prompts, ask questions about a flow you didn't write,
@@ -581,7 +590,7 @@
             </a>
 
             <a href="users/visual-editor/catalog/index.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">📚</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
                 <h3 class="feature-title">Data Catalog &amp; Delta Lake</h3>
                 <p class="feature-description">
                     Tables stored as Delta Lake with version history and time travel. Namespaces, lineage,
@@ -591,7 +600,7 @@
             </a>
 
             <a href="users/visual-editor/catalog/sql-editor.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">📊</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20.5h17"/><path d="M6.5 20.5v-7m5.5 7V4.5m5.5 16v-10"/></svg></div>
                 <h3 class="feature-title">Analyze &amp; Explore</h3>
                 <p class="feature-description">
                     Query any catalog table in the SQL editor, explore results in Graphic Walker
@@ -601,7 +610,7 @@
             </a>
 
             <a href="users/visual-editor/catalog/schedules.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">⏰</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></div>
                 <h3 class="feature-title">Scheduling &amp; Triggers</h3>
                 <p class="feature-description">
                     Run flows on intervals or trigger them when catalog tables update.
@@ -611,7 +620,7 @@
             </a>
 
             <a href="users/visual-editor/connections.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">📡</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 15.5a4.25 4.25 0 1 1 .76-8.43A5.25 5.25 0 0 1 18.5 8.75 3.4 3.4 0 0 1 18.9 15.5"/><path d="M12 12.5v8m0 0-2.7-2.7m2.7 2.7 2.7-2.7"/></svg></div>
                 <h3 class="feature-title">Kafka, Databases &amp; Cloud Storage</h3>
                 <p class="feature-description">
                     Ingest from Kafka/Redpanda as a canvas node. Read and write S3, Azure Data Lake, and GCS.
@@ -621,7 +630,7 @@
             </a>
 
             <a href="users/visual-editor/kernels.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">🐍</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M8 10l3 3-3 3m5.5 0h3"/></svg></div>
                 <h3 class="feature-title">Sandboxed Python</h3>
                 <p class="feature-description">
                     Run arbitrary Python in isolated Docker containers. Use any library —
@@ -631,7 +640,7 @@
             </a>
 
             <a href="users/visual-editor/tutorials/code-generator.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">🔄</div>
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7 4 12l4.5 5M15.5 7 20 12l-4.5 5M13.6 5.5l-3.2 13"/></svg></div>
                 <h3 class="feature-title">Code Generation &amp; Python API</h3>
                 <p class="feature-description">
                     Export visual flows as standalone Python/Polars scripts, or build pipelines in code
@@ -709,29 +718,29 @@ print(result.collect())</code></pre>
         <p class="section-subtitle">Pick the guide written for the way you work</p>
 
         <div class="persona-grid">
-            <a href="users/visual-editor/index.html" class="persona-card">
+            <a href="users/build-flows-visually.html" class="persona-card">
                 <h3>Build flows visually</h3>
-                <p>The canvas, nodes, and formulas — no code required.</p>
+                <p>Turn messy exports into pipelines everyone can see and re-run.</p>
             </a>
             <a href="users/coming-from-excel.html" class="persona-card">
                 <h3>Coming from Excel</h3>
                 <p>VLOOKUP, pivot tables, and IF-formulas, translated to flows.</p>
             </a>
-            <a href="users/visual-editor/connections.html" class="persona-card">
-                <h3>Connect your data</h3>
-                <p>Databases, S3/ADLS/GCS, Kafka, REST APIs, Google Analytics.</p>
+            <a href="users/data-elsewhere.html" class="persona-card">
+                <h3>Your data lives elsewhere</h3>
+                <p>Warehouse, S3, Kafka, GA — work with data where it already is.</p>
             </a>
-            <a href="users/visual-editor/catalog/index.html" class="persona-card">
+            <a href="users/analyze-your-data.html" class="persona-card">
                 <h3>Analyze your data</h3>
-                <p>Catalog tables, SQL editor, visualizations, schedules.</p>
+                <p>From question to chart you trust — and it refreshes itself.</p>
             </a>
-            <a href="users/python-api/index.html" class="persona-card">
+            <a href="users/write-python.html" class="persona-card">
                 <h3>Write Python</h3>
                 <p>A Polars-compatible API that builds visual flows as a side effect.</p>
             </a>
-            <a href="users/deployment/index.html" class="persona-card">
-                <h3>Deploy &amp; operate</h3>
-                <p>Desktop, pip, or Docker — plus users, groups, and sharing.</p>
+            <a href="users/deploy-for-a-team.html" class="persona-card">
+                <h3>Run Flowfile for a team</h3>
+                <p>Auth, secrets, sharing, backups — the operator's route.</p>
             </a>
         </div>
     </section>

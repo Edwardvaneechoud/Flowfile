@@ -6,7 +6,7 @@ Download and run Flowfile as a native desktop app on macOS, Windows, or Linux.
 
 Download the latest release for your platform:
 
-[Releases on GitHub →](https://github.com/edwardvaneechoud/Flowfile/releases)
+[**Download the latest installer →**](https://github.com/edwardvaneechoud/Flowfile/releases/latest)
 
 Installers are built for macOS (Apple Silicon and Intel), Windows, and Linux.
 

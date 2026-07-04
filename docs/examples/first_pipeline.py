@@ -3,8 +3,10 @@
 # --8<-- [start:example]
 import flowfile as ff
 
+SALES = "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates/supermarket_sales.csv"
+
 revenue_by_line = (
-    ff.read_csv("data/templates/supermarket_sales.csv")
+    ff.read_csv(SALES)
     .with_columns((ff.col("unit_price") * ff.col("quantity")).alias("revenue"))
     .filter(ff.col("quantity") > 5)
     .group_by("product_line")

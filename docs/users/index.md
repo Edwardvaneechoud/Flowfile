@@ -1,6 +1,6 @@
 # Guides by audience
 
-Flowfile is one tool with several front doors. Pick the one that matches how you work — every path builds the same flows, and you can switch between them at any point.
+Flowfile is one tool with several front doors. Pick the one that matches how you work — every path builds the same flows, and you can switch between them at any point. (Not sure Flowfile is the right shape at all? Start with [What is Flowfile](../what-is-flowfile.md).)
 
 ## Find your starting point
 
@@ -10,9 +10,9 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 
     ---
 
-    Drag nodes onto a canvas and preview the data at every step — no code required.
+    You turn messy exports into clean tables others rely on — as visible, re-runnable pipelines.
 
-    [:octicons-arrow-right-24: Visual Editor](visual-editor/index.md)
+    [:octicons-arrow-right-24: Build Flows Visually](build-flows-visually.md)
 
 -   :material-microsoft-excel: **Coming from Excel**
 
@@ -22,37 +22,37 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 
     [:octicons-arrow-right-24: Coming from Excel](coming-from-excel.md)
 
--   :material-database: **Connect your data**
+-   :material-database: **Your data lives elsewhere**
 
     ---
 
-    Databases, S3/ADLS/GCS, Kafka, REST APIs — set up a connection once, use it everywhere.
+    Warehouse, S3, Kafka, GA — work with data where it already is, and stop copying it around by hand.
 
-    [:octicons-arrow-right-24: Connect Your Data](connect/index.md)
+    [:octicons-arrow-right-24: Your Data Lives Elsewhere](data-elsewhere.md)
 
 -   :material-chart-bar: **Analyze your data**
 
     ---
 
-    Query catalog tables in the SQL editor, build visualizations, schedule refreshes.
+    From question to chart you trust: shape, publish, query, visualize — and let it refresh itself.
 
-    [:octicons-arrow-right-24: Catalog](visual-editor/catalog/index.md)
+    [:octicons-arrow-right-24: Analyze Your Data](analyze-your-data.md)
 
 -   :material-language-python: **Write Python**
 
     ---
 
-    Polars-style code that builds a visual flow as a side effect.
+    Polars-style code with less I/O boilerplate — and every pipeline gets a canvas.
 
-    [:octicons-arrow-right-24: Python API](python-api/index.md)
+    [:octicons-arrow-right-24: Write Python](write-python.md)
 
--   :material-server: **Deploy for a team**
+-   :material-server: **Run Flowfile for a team**
 
     ---
 
-    Docker, users and groups, sharing, headless runs.
+    You're making it a shared tool: auth, secrets, sharing, backups, day-two operations.
 
-    [:octicons-arrow-right-24: Deploy & Operate](deployment/index.md)
+    [:octicons-arrow-right-24: Run Flowfile for a Team](deploy-for-a-team.md)
 
 </div>
 
@@ -61,7 +61,7 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 A flow built on the canvas and a pipeline written in Python construct the same graph underneath:
 
 - Write code, then inspect it on the canvas with `ff.open_graph_in_editor(df.flow_graph)`.
-- Build visually, then [export the flow as standalone Python](visual-editor/tutorials/code-generator.md) — plain Polars, no Flowfile dependency required to run it.
+- Build visually, then [export the flow as Python](visual-editor/tutorials/code-generator.md) — pure-transformation flows export as dependency-free Polars; flows with I/O nodes keep an `ff` import for their connections.
 - Hand a visual flow to a colleague who prefers code, or the other way around — both are views of the same graph.
 
 ```python

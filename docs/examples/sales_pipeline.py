@@ -3,8 +3,10 @@
 # --8<-- [start:example]
 import flowfile as ff
 
+SALES = "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates/supermarket_sales.csv"
+
 result = (
-    ff.read_csv("data/templates/supermarket_sales.csv")
+    ff.read_csv(SALES)
     .unique()
     .filter(ff.col("quantity") > 7)
     .group_by("city")

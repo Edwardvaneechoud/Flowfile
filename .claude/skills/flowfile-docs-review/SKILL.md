@@ -35,10 +35,22 @@ The canonical exemplar is `docs/ai/index.md`. Rules, all checkable:
 
 One tab per arriving audience; the Home page routes with persona cards (one hop).
 
+**Persona cards route to persona landing pages, never to feature pages** (maintainer-corrected, 2026-07). Six persona routes live under Get Started → By Audience: `coming-from-excel`, `build-flows-visually`, `analyze-your-data`, `data-elsewhere`, `write-python`, `deploy-for-a-team` (all in `docs/users/`). The bar a persona page must meet (maintainer-refined twice — narrow personas and feature-list cadence were both rejected):
+
+- **Broad opening**: describe the *situation* through several recognizable faces (roles, jobs-to-be-done), not one caricature — "finance person reconciling exports, marketer sizing a campaign, researcher cleaning waves…" beats "your job is answers about cities".
+- **A stated mental model near the top** (one or two sentences: how Flowfile thinks about this person's problem) plus an `IMAGE-PLACEHOLDER-TO-CHANGE` describing a mental-model diagram for the maintainer to draw.
+- **Depth per stop, not feature lists**: each numbered stop = the person's problem at that point → how the product's model answers it (the *why*) → a concrete example → the deep link. A stop that only names features and links is below the bar.
+- **A real example on every page**: tested `--8<--` includes for runnable Python, verified formula/shell fragments otherwise.
+- **Feature pages are linked stops** — the catalog is a stop on the analyst's route, not the destination. A persona page summarizes, it never re-teaches.
+- **No-code truth**: every route that works without code says so explicitly; never let a `ff.*` column imply Python is required.
+- **Shared shape**: numbered stops, `---` rule, one-line `**Fastest first taste:**` footer. If a card's target is a feature index, either the card is mislabeled or the persona page is missing.
+
+Above the personas sits the **identity tree** (Get Started → What is Flowfile): a short **root** `docs/what-is-flowfile.md` that does positioning only — what space the product occupies (the gap after spreadsheets stop scaling, before a data-engineering team is the only option; four bundled parts; reproducible by construction) — and forks via lens cards into two tagged branches: `what-is-flowfile-plain.md` (non-technical: reproducibility as the felt promise, catalog as where it compounds) and `what-is-flowfile-technical.md` (engineers: **absence of glue** — secrets, Python envs with the right rights, database/cloud/Kafka connection plumbing, keeping data current without an orchestrator, data organization, visualization, explaining your work). Root stays short; depth lives in the branches; branches close on the same reproducible-by-construction line. **Register split between the lenses (maintainer-directed)**: the plain branch may use warm, figurative prose (recipes, kitchens — it's the one page where that's allowed); the technical branch is flat and declarative — every claim states its mechanism, no metaphors, headers like "What it automates", not "The annoyances it eats". Technical readers parse figurative language as padding. Persona pages answer "how do I, given who I am"; the identity tree answers "what is it" — don't blur them, and keep the root-and-branch cross-tags intact.
+
 | Tab | Arriving reader | Owns |
 |---|---|---|
-| Home (`index.html`) | everyone | value prop, sales-pipeline showcase (tested flow download + demo.flowfile.org), persona router |
-| Get Started | new user, any kind | `quickstart.md` (install + first visual flow + first Python pipeline), Coming from Excel, Flowfile Lite |
+| Home (`index.html`) | everyone | value prop, sales-pipeline showcase (tested flow download + live-demo deep link), persona router |
+| Get Started | new user, any kind | the What-is identity tree, `installation.md` (**the canonical install home** — all five paths as tabs; quickstart carries only the pip fast-path and links here; deployment pages hold per-edition depth), `quickstart.md` (first visual flow + first Python pipeline), Flowfile Lite, and the six By-Audience persona routes |
 | Visual Editor | analysts building flows | overview, building flows, formulas (+ generated function reference), node reference (6 categories), kernels, node designer, worked examples |
 | Connect Your Data | "my data lives elsewhere" | connector matrix, connections & secrets, databases, cloud storage (S3/ADLS/GCS), Kafka, REST APIs & Google Analytics |
 | Catalog & Automation | analyzing/operating data | catalog, virtual tables, SQL editor, visualizations, schedules, subflows, projects & git |
@@ -68,7 +80,7 @@ Verify against code, never against another prose doc (READMEs and CLAUDE.md drif
 | Kernel images and defaults | `flowfile_core/flowfile_core/kernel/manager.py` (image tags), `kernel/models.py` (default memory 4 GB, CPU 2) |
 | Password/auth policy | `flowfile_core/auth/password.py` (8 chars + number + special; no case rules) |
 | Storage paths per mode | `shared/storage_config.py` + `docker-compose.yml` overrides (`FLOWFILE_USER_DATA_DIR=/app/user_data` in shipped compose) |
-| Docker deployment facts | `docker-compose.yml` itself (volume `flowfile-internal-storage`, `shm_size`, scheduler enabled in shipped compose, `FLOWFILE_INTERNAL_TOKEN` required) |
+| Docker deployment facts | `docker-compose.yml` itself (volume `flowfile-internal-storage`, `shm_size`, scheduler enabled in shipped compose, `FLOWFILE_INTERNAL_TOKEN` required). The bundled compose **builds from source**; server/HTTPS deployments are the separate [flowfile-hosting](https://github.com/Edwardvaneechoud/flowfile-hosting) kit (published images pinned via `FLOWFILE_VERSION`, Caddy/Cloudflare-Tunnel/LAN ingress, `./install.sh`) — verify hosting claims against that repo, and make hosting *changes* there, never in this repo |
 | Catalog internals | `flowfile_core/flowfile_core/catalog/` (services/, `constants.py` — thumbnail cap 500 KB, SQL recursion limit 5) |
 | Flow save format | `.yaml` default (`.yml`/`.json` accepted; `.flowfile` is legacy pickle, open-only) — `flowfile/manage/io_flowfile.py` |
 | Formula functions | generated `docs/users/formulas/functions.md` (never hand-edit; `make formula_docs`) |
@@ -91,6 +103,8 @@ Two example kinds, two automatic gates each (pytest at runtime, `pymdownx.snippe
 - Pages include with `--8<-- "docs/examples/<name>.py:example"`.
 
 **Data**: only committed, seeded datasets (`data/templates/*.csv` via `generate_template_data.py`; new generators use their own `random.Random(n)` and are called last so existing CSVs stay byte-identical — verify with `git diff`). Assert exact values for deterministic transforms; schema/shape only for ML and fuzzy outputs.
+
+**Reads are URL-first in user-facing examples** (maintainer-directed, 2026-07): sample reads use the public raw-GitHub URL (`TEMPLATE_DATA_BASE_URL` in `templates/data_downloader.py` + filename), not repo-relative paths — so a pasted snippet runs for pip-install users with no checkout, and flows opened in the WASM demo fetch data instead of embedding it (the share-link stays ~1 KB). The test runner skips (never mocks) URL-bearing examples when the URL is unreachable — which includes "not merged to main yet"; they execute for real once the data is public. Repo-relative paths remain fine for contributor-facing examples that already assume a checkout.
 
 **Add-a-worked-example recipe** (the "blog post" flow — no new test code, ever):
 1. Pick/extend a committed dataset.
