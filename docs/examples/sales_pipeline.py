@@ -14,11 +14,10 @@ result = (
         ff.col("gross_income").sum().alias("total_income"),
         ff.col("gross_income").median().alias("median_income"),
     )
-    .collect()
 )
 # --8<-- [end:example]
 
-by_city = {row["city"]: row for row in result.to_dicts()}
+by_city = {row["city"]: row for row in result.collect().to_dicts()}
 
 assert result.height == 5
 assert set(by_city) == {"Bago", "Mandalay", "Naypyitaw", "Taunggyi", "Yangon"}
