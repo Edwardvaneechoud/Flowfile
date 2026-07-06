@@ -12,7 +12,8 @@ The mental model is small: **nodes are operations, edges are data moving between
 
 ## 2. Know your toolbox
 
-The palette groups everything into six categories — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md). That's more surface than any one pipeline needs; most days are five nodes — Read data, Filter, Formula, Join, Group by — and the trick to reading the rest of the palette is that node names describe data operations, not software concepts: *Text to rows* splits delimited cells, *Fuzzy match* joins on almost-equal keys, *Drop duplicates* does what it says. The [node reference](visual-editor/nodes/index.md) documents every option when a new shape of problem shows up.
+<!-- draft: Fable to finalize (F5 — tightened; dropped the "trick to reading" sermon) -->
+The palette has six categories — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md) — but most flows lean on five: Read data, Filter, Formula, Join, Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), so reach for the [node reference](visual-editor/nodes/index.md) when you need a less common one.
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: the node palette annotated — the six category groups visible, with the five everyday workhorses (Read data, Filter, Formula, Join, Group by) highlighted and the rest dimmed, conveying "big toolbox, small daily set" -->
 
@@ -33,9 +34,19 @@ trim(uppercase([customer_code]))
 
 The [function reference](formulas/functions.md) lists everything available, and the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you try an expression against sample data before committing it to a node.
 
+<!-- draft: Fable to finalize (facts verified — Execution Mode lives in Flow Settings; Cache results is a per-node General Settings toggle; scheduled/headless runs execute in Performance) -->
 ## 4. Build in Development, ship in Performance
 
-Two execution modes, two jobs. **Development** materializes every node so you can inspect each intermediate result — that's your iteration loop: run, look, adjust, run again. **Performance** is for the finished flow: it executes only what the outputs actually need and lets the query optimizer work across the whole graph, so nothing is computed for a preview nobody's looking at. A node's **Cache results** toggle (in its General Settings) keeps that node's output between Performance runs — worth switching on for an expensive step whose inputs rarely change.
+This is one toggle, not a migration. **Development** — the default while you build — materializes every node so you can inspect each intermediate result: run, look, adjust, run again. **Performance** runs only what the outputs actually need and lets the query optimizer work across the whole graph, so nothing is computed for a preview nobody's looking at. You switch modes in **Flow Settings**; the flow itself never changes, and scheduled or headless runs use Performance on their own.
+
+<details markdown="1">
+<summary>See it: the execution mode in Flow Settings</summary>
+
+![Flow Settings — execution mode, location, and step previews](../assets/images/quickstart/flow_settings.gif)
+
+</details>
+
+Caching is separate and per-node: a node's **Cache results** toggle (in its **General Settings**) stores that node's output so a Performance run — and your downstream edits — reuse it instead of recomputing. Worth it for one expensive step whose inputs rarely change.
 
 ![The same flow run two ways: in Development every node is lit with a data preview beneath it; in Performance only the path to the output is lit, the exploratory branch is greyed out, and a cached node is short-circuited so its stored result is reused instead of recomputed.](../assets/images/concepts/dev-vs-performance.svg)
 
@@ -47,15 +58,23 @@ Think about who consumes your output, because each consumer has a natural landin
 - **People who'll query, chart, or build on it** — [Write to Catalog](visual-editor/nodes/output.md#catalog-writer). The result becomes a versioned table with history and lineage, and the [analyst route](analyze-your-data.md) takes over from there. This is the option that ends the `final_v3.xlsx` problem.
 - **Another system** — Database and Cloud Storage writers push results back into the warehouse or the bucket, via [saved connections](data-elsewhere.md).
 
+<!-- draft: Fable to finalize -->
 ## 6. Automate what you built
 
-A finished flow shouldn't need you to press Run. Two paths, usable together: [schedules](visual-editor/catalog/schedules.md) run the flow on a cron or when an upstream table updates; and because flows are plain `.yaml` files, anything that can run a command can run a flow:
+A finished flow shouldn't need you to press Run. In the app, open [**Schedules**](visual-editor/catalog/schedules.md) and set the flow to run on a cron or whenever an upstream table updates — no files, no command line. A fresh source then cascades into fresh results on its own.
+
+<details markdown="1">
+<summary>Run it somewhere else — CI, cron, another host</summary>
+
+Flows are plain `.yaml` files, so anything that can run a command can run one:
 
 ```bash
 flowfile run flow monthly_reconciliation.yaml --param month=2026-07
 ```
 
-Exit code 0 or 1, no UI — cron jobs and CI pipelines treat it like any other tool. The [CLI reference](deployment/cli.md) covers parameters and the packaged variants, and [Projects](projects.md) version the whole workspace in git automatically if you'd rather not manage files by hand.
+Exit code 0 or 1, no UI — cron jobs and CI pipelines treat it like any other tool. The [CLI reference](deployment/cli.md) covers parameters and the packaged variants, and [Projects](projects.md) version the whole workspace in git.
+
+</details>
 
 ## 7. Grow the toolkit
 
@@ -63,7 +82,7 @@ The habits that keep a growing collection of flows sane:
 
 - **Stop copy-pasting node chains.** Shared logic becomes a [subflow](visual-editor/subflows.md) — a flow with named inputs and outputs that other flows call, including once-per-row over a parameter table.
 - **Missing node? Make it once.** The [Node Designer](visual-editor/node-designer.md) turns a custom transformation into a real palette node with its own settings form, reusable across every flow.
-- **When someone asks "what does this actually do?"** — [export the flow as Python](visual-editor/tutorials/code-generator.md). Pure-transformation flows export as dependency-free Polars; flows with I/O nodes keep an `ff` import for their connections. Either way, the logic is readable by anyone who reads code.
+- **When someone asks "what does this actually do?"** — [export the flow as Python](visual-editor/tutorials/code-generator.md). Pure-transformation flows export as Polars with no `flowfile` import; flows with I/O nodes keep an `ff` import for their connections. Either way, the logic is readable by anyone who reads code.
 
 ---
 

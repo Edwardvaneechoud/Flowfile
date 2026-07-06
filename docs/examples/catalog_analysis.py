@@ -18,13 +18,14 @@ ff.write_catalog_table(
 
 top_cities = read_catalog_sql(
     "SELECT city, total_income FROM docs_sales_by_city ORDER BY total_income DESC"
-).collect()
+)
 # --8<-- [end:example]
 
-assert top_cities.columns == ["city", "total_income"]
-assert top_cities.height == 5
+collected = top_cities.collect()
+assert collected.columns == ["city", "total_income"]
+assert collected.height == 5
 
-rows = top_cities.to_dicts()
+rows = collected.to_dicts()
 assert rows[0]["city"] == "Taunggyi"
 assert round(rows[0]["total_income"], 2) == 3525.60
 

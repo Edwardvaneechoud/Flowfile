@@ -51,11 +51,17 @@ Once results are tables, day-to-day analysis stops needing the canvas. The [SQL 
 ![One catalog table fanning out to its consumers — the SQL editor querying it, a chart built on it, and a saved virtual table derived from it: publish once, analyze many ways.](../assets/images/concepts/catalog-fan-out.svg)
 
 
-The same works from a notebook or script — this example (executed by CI on every commit) publishes an aggregate and reads it back with SQL:
+<!-- draft: Fable to finalize -->
+Prefer to work in code? The same table is a line away from a [**notebook**](visual-editor/catalog/notebooks.md) — or any Python script — where you publish an aggregate and read it back with SQL, right next to the data.
+
+<details markdown="1">
+<summary>See the round-trip in Python (tested in CI on every commit)</summary>
 
 ```python
 --8<-- "docs/examples/catalog_analysis.py:example"
 ```
+
+</details>
 
 ## 5. Make it refresh itself
 
@@ -63,7 +69,7 @@ A report you refresh by hand is a chore you now own forever. [Schedules](visual-
 
 ## 6. When the analysis outgrows clicking
 
-Nothing above locks you in. The [Python API](write-python.md) builds the same flows in code, catalog tables pull straight into scripts and notebooks, and any visual flow [exports as Python](visual-editor/tutorials/code-generator.md) — pure-transformation flows as dependency-free Polars, I/O-bearing flows with an `ff` import for their connections — the day a pipeline graduates into an engineering codebase.
+Nothing above locks you in. The [Python API](write-python.md) builds the same flows in code, catalog tables pull straight into scripts and notebooks, and any visual flow [exports as Python](visual-editor/tutorials/code-generator.md) — pure-transformation flows as Polars with no `flowfile` import, I/O-bearing flows with an `ff` import for their connections — the day a pipeline graduates into an engineering codebase.
 
 ---
 
