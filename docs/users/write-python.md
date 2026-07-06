@@ -4,7 +4,7 @@ You already build pipelines in code — as a data scientist moving between noteb
 
 The mental model in one line: **every method call adds a node to a graph instead of executing.** The graph is the pipeline — Python and the canvas are two editors for the same object.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram of the code↔canvas duality — a short Python pipeline on the left, the identical node graph on the right, arrows both ways labeled open_graph_in_editor and "export as Python"; one shared graph object in the middle -->
+![The code-and-canvas duality: a short Python pipeline on the left and the identical node graph on the right, joined by one shared FlowGraph object in the middle — open_graph_in_editor turns code into canvas, export as Python turns canvas back into code.](../assets/images/concepts/code-canvas-duality.svg)
 
 ## 1. First pipeline
 
