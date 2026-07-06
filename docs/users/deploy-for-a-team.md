@@ -4,7 +4,7 @@ Someone has to turn "this tool is great on my laptop" into something a team logs
 
 The mental model to hold: multi-user Flowfile is **three services and two kinds of state**. A core API, a compute worker, and a frontend run as containers; everything worth backing up lives in two places — internal storage (catalog database, table data, logs) and user data (flows, uploads, outputs). Every operational question below reduces to one of those five pieces.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model architecture diagram — frontend :8080, core, worker as containers; two labeled storage volumes underneath (internal storage: catalog DB + Delta tables + logs; user data: flows + uploads); optional kernel containers to the side with the Docker socket line -->
+![A team deployment: frontend (port 8080), Core API, and Worker as containers in one docker compose stack, with optional kernel containers alongside on the Docker socket; underneath, the two volumes worth backing up — internal storage (catalog DB, Delta tables, logs) and user data (flows, uploads, outputs).](../assets/images/concepts/team-deployment-architecture.svg)
 
 ## 1. Pick the shape
 
@@ -41,7 +41,7 @@ The authorization model is worth ten minutes before the first complaint of "I ca
 
 If your team wants "everyone sees everything," you create that deliberately: one group, everyone in it, a few namespace grants.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram of the sharing model — users belonging to groups; a group receiving a use-grant on one connection and a manage-grant on a namespace; the namespace grant cascading down to the tables and flows inside it; one secret marked use-only with a crossed-out eye -->
+![The sharing model: a user group holds a use grant on a connection (run and read) and a manage grant on a namespace (edit and re-share); the namespace grant cascades to the tables and flows inside it, while a secret can only ever be use-only — never readable.](../assets/images/concepts/sharing-model.svg)
 
 
 ## 4. Know where the data lives

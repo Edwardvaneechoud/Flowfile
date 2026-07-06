@@ -4,7 +4,7 @@
 
 Flowfile bundles a visual flow editor, a data catalog, a scheduler, and a Polars-based Python API into one package. Every part has a standalone equivalent you already know; the value proposition for an experienced builder is the integration work removed. Below is what you no longer build or maintain, each with the mechanism behind it.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: draw.io — system boundary diagram: user-authored transformation logic in the center; platform-provided services around it, each labeled with its mechanism: secret store (Fernet, per-user keys), kernel containers (resource caps, pinned deps), connection layer (named references), scheduler (cron + table triggers), catalog storage (Delta, versioned), run history/lineage -->
+![System boundary: your transformation logic sits in the center, surrounded by the platform-provided services you no longer build — a secret store (Fernet, per-user keys), kernel containers (resource caps, pinned deps), a connection layer (named references), a scheduler (cron and table triggers), catalog storage (Delta, versioned), and run history and lineage.](assets/images/concepts/system-boundary.svg)
 
 ## What it automates
 

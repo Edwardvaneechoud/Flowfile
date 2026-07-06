@@ -12,7 +12,7 @@ In Flowfile, you don't transform data by editing it — you build a **flow**: a 
 
 That picture *is* the work. Next month's file arrives: run the flow again. A colleague asks how the number was made: show them the flow — it reads like a recipe card, not like code. Something looks off: click the step where it went wrong and look at the data right there.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the hero mental model — a hand-drawn-style recipe card morphing into a four-node flow with a small data preview under each node; caption energy: "the work is the recipe" -->
+![A hand-drawn recipe card on warm paper morphs into a four-node Flowfile flow — Input, Filter, Formula, Output — with a small data preview beneath each node: the work itself is the recipe, written down once and re-runnable with one click.](assets/images/concepts/recipe-to-flow.svg)
 
 Nothing about this requires programming. The logic reads like the formulas you already know — `if [amount] > 100 then "High" else "Low" endif` — and every step is a form, not a script.
 
@@ -30,7 +30,7 @@ Instead of exporting results to files that scatter across mailboxes and desktops
 
 This is the quiet shift in how the work feels: you stop producing *files* and start maintaining *a small library of living results*. The flow is the recipe; the catalog is the kitchen where the dishes stay warm.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the ecosystem loop with the catalog at the center — flows feeding tables into the catalog; SQL, charts, schedules, and teammates all drawing from it; a schedule arrow looping back to the flows; conveys "all roads lead here, and it compounds" -->
+![The catalog sits at the center: flows publish their tables into it, while the SQL editor, charts, and teammates all read from that one shared library — and a schedule refreshes the flows on a timer, so the whole loop keeps itself current.](assets/images/concepts/catalog-ecosystem-loop.svg)
 
 ## Never more complicated than your problem
 

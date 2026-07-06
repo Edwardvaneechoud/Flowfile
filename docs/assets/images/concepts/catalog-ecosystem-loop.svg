@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 600" role="img" aria-label="The catalog at the center of the loop: flows publish tables into the catalog; the SQL editor, charts, and teammates all read from it; and a schedule refreshes the flows, so the whole cycle keeps itself current.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip { fill:#eef0f2; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw  { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .hubt { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:19px; fill:#ffffff; }
+    .hubs { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#eaf6ff; }
+    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .rlbl { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12px; fill:#1D76D6; }
+  </style>
+
+  <!-- ============ CATALOG HUB ============ -->
+  <rect x="350" y="250" width="200" height="120" rx="16" fill="url(#brand)"/>
+  <g class="icw" transform="translate(434,266) scale(1.35)">
+    <path d="M12,6 C10,4.6 6.8,4.6 4.2,5.2 V17.8 C6.8,17.2 10,17.2 12,18.6 C14,17.2 17.2,17.2 19.8,17.8 V5.2 C17.2,4.6 14,4.6 12,6 Z"/>
+    <path d="M12,6 V18.6"/>
+  </g>
+  <text class="hubt" x="450" y="332" text-anchor="middle">Catalog</text>
+  <text class="hubs" x="450" y="352" text-anchor="middle">versioned tables</text>
+
+  <!-- ============ FLOWS ============ -->
+  <g>
+    <rect class="box" x="70" y="95" width="165" height="84" rx="11"/>
+    <rect class="chip" x="83" y="117" width="40" height="40" rx="8"/>
+    <g class="ic" transform="translate(91,125)">
+      <path d="M4,15 L9,9 L14,13 L20,6"/>
+      <circle cx="4" cy="15" r="1.7" fill="#5b6470"/>
+      <circle cx="9" cy="9" r="1.7" fill="#5b6470"/>
+      <circle cx="14" cy="13" r="1.7" fill="#5b6470"/>
+      <circle cx="20" cy="6" r="1.7" fill="#5b6470"/>
+    </g>
+    <text class="t" x="132" y="133">Flows</text>
+    <text class="s" x="132" y="150">shape the data</text>
+  </g>
+
+  <!-- ============ SCHEDULE ============ -->
+  <g>
+    <rect class="box" x="70" y="440" width="165" height="84" rx="11"/>
+    <rect class="chip" x="83" y="462" width="40" height="40" rx="8"/>
+    <g class="ic" transform="translate(91,470)">
+      <rect x="4" y="5" width="16" height="15" rx="2"/>
+      <line x1="4" y1="9.5" x2="20" y2="9.5"/>
+      <line x1="8" y1="3.5" x2="8" y2="6.5"/>
+      <line x1="16" y1="3.5" x2="16" y2="6.5"/>
+      <circle cx="15.5" cy="15.5" r="3.4" fill="#eef0f2"/>
+      <path d="M15.5,13.7 V15.5 L17,16.4"/>
+    </g>
+    <text class="t" x="132" y="478">Schedule</text>
+    <text class="s" x="132" y="495">keeps it fresh</text>
+  </g>
+
+  <!-- ============ SQL EDITOR ============ -->
+  <g>
+    <rect class="box" x="715" y="110" width="165" height="84" rx="11"/>
+    <rect class="chip" x="728" y="132" width="40" height="40" rx="8"/>
+    <g class="ic" transform="translate(736,140)">
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2"/>
+      <path d="M7,10 L10,12 L7,14"/>
+      <line x1="12" y1="14" x2="16" y2="14"/>
+    </g>
+    <text class="t" x="777" y="148">SQL editor</text>
+    <text class="s" x="777" y="165">ask questions</text>
+  </g>
+
+  <!-- ============ CHARTS ============ -->
+  <g>
+    <rect class="box" x="715" y="268" width="165" height="84" rx="11"/>
+    <rect class="chip" x="728" y="290" width="40" height="40" rx="8"/>
+    <g class="ic" transform="translate(736,298)">
+      <line x1="4" y1="18.5" x2="20" y2="18.5"/>
+      <line x1="7.5" y1="18.5" x2="7.5" y2="13" stroke-width="2.6"/>
+      <line x1="12" y1="18.5" x2="12" y2="8.5" stroke-width="2.6"/>
+      <line x1="16.5" y1="18.5" x2="16.5" y2="11" stroke-width="2.6"/>
+    </g>
+    <text class="t" x="777" y="306">Charts</text>
+    <text class="s" x="777" y="323">see the trend</text>
+  </g>
+
+  <!-- ============ TEAMMATES ============ -->
+  <g>
+    <rect class="box" x="715" y="426" width="165" height="84" rx="11"/>
+    <rect class="chip" x="728" y="448" width="40" height="40" rx="8"/>
+    <g class="ic" transform="translate(736,456)">
+      <circle cx="9" cy="8" r="2.6" fill="#eef0f2"/>
+      <path d="M4.5,18 C4.5,13.8 13.5,13.8 13.5,18"/>
+      <circle cx="16" cy="9" r="2.3" fill="#eef0f2"/>
+      <path d="M12.8,18 C12.8,14.6 19.6,14.6 19.6,18"/>
+    </g>
+    <text class="t" x="777" y="464">Teammates</text>
+    <text class="s" x="777" y="481">same numbers</text>
+  </g>
+
+  <!-- ============ ARROWS ============ -->
+  <path class="arw" d="M233,165 L351,266" marker-end="url(#ah)"/>
+  <path class="arw" d="M360,366 L237,462" marker-end="url(#ah)"/>
+  <path class="arw" d="M550,280 L713,158" marker-end="url(#ah)"/>
+  <path class="arw" d="M552,310 L713,310" marker-end="url(#ah)"/>
+  <path class="arw" d="M550,342 L713,462" marker-end="url(#ah)"/>
+  <path class="arwc" d="M70,474 C16,452 16,192 70,172" marker-end="url(#ahc)"/>
+
+  <!-- ============ ARROW LABELS ============ -->
+  <text class="albl" x="252" y="200">publish</text>
+  <text class="rlbl" transform="translate(46,322) rotate(-90)" text-anchor="middle">refresh</text>
+</svg>

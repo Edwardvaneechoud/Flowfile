@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 500" role="img" aria-label="The same Flowfile graph shown two ways: a short Python pipeline on the left and the identical read, filter, group-by, write node graph on the right, connected by a double-headed cyan arrow labeled open_graph_in_editor and export as Python, both resolving to one shared FlowGraph object in the center.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <linearGradient id="nIn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15B6C9"/><stop offset="1" stop-color="#0C8FA0"/>
+    </linearGradient>
+    <linearGradient id="nFilter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3D9BF2"/><stop offset="1" stop-color="#2376D8"/>
+    </linearGradient>
+    <linearGradient id="nGroup" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6E7DF7"/><stop offset="1" stop-color="#4B58DC"/>
+    </linearGradient>
+    <linearGradient id="nOut" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4FA6"/><stop offset="1" stop-color="#243A82"/>
+    </linearGradient>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+    <marker id="eah" markerWidth="9" markerHeight="9" refX="6.4" refY="4" orient="auto">
+      <path d="M1,1 L7,4 L1,7 Z" fill="#9aa8b6"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chip  { fill:#eaf3fc; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw   { fill:none; stroke:#ffffff; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .code  { font-family:ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace; font-size:11.5px; fill:#475569; }
+    .edge  { fill:none; stroke:#aeb7c4; stroke-width:2; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:2.6; stroke-linecap:round; }
+    .tick  { stroke:#cbd5e1; stroke-width:1.4; }
+    .albl  { font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:12px; font-weight:600; fill:#1D76D6; }
+    .plbl  { font-family:Roboto,Arial,sans-serif; font-size:12.5px; font-weight:600; fill:#1D76D6; }
+    .cap   { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#8a93a3; }
+    .ncap  { font-family:Roboto,Arial,sans-serif; font-size:9px; fill:#8a93a3; }
+    .hubt  { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:15px; fill:#ffffff; }
+    .hubs  { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#eaf6ff; }
+  </style>
+
+  <!-- ============ LEFT: PYTHON ============ -->
+  <rect class="box" x="44" y="70" width="306" height="330" rx="12"/>
+  <rect class="chip" x="60" y="88" width="42" height="42" rx="9"/>
+  <g class="ic" transform="translate(67,95) scale(1.15)">
+    <path d="M11,5 Q8,5 8,8 Q8,11 5,12 Q8,13 8,16 Q8,19 11,19"/>
+    <path d="M13,5 Q16,5 16,8 Q16,11 19,12 Q16,13 16,16 Q16,19 13,19"/>
+  </g>
+  <text class="t" x="116" y="104">Python</text>
+  <text class="s" x="116" y="120">the pipeline, in code</text>
+
+  <rect x="58" y="140" width="278" height="232" rx="8" fill="#f7f8fa"/>
+  <text class="code" x="72" y="180">import flowfile as ff</text>
+  <text class="code" x="72" y="214">df = ff.<tspan fill="#0E96A6">read_csv</tspan><tspan fill="#64748b">("sales.csv")</tspan></text>
+  <text class="code" x="72" y="248">df = df.<tspan fill="#2376D8">filter</tspan><tspan fill="#64748b">("[qty] &gt; 5")</tspan></text>
+  <text class="code" x="72" y="282">df = df.<tspan fill="#4B58DC">group_by</tspan><tspan fill="#64748b">("line")</tspan></text>
+  <text class="code" x="72" y="316">df.<tspan fill="#2B3E86">write_parquet</tspan><tspan fill="#64748b">("out")</tspan></text>
+
+  <!-- ============ RIGHT: CANVAS ============ -->
+  <rect class="box" x="590" y="70" width="306" height="330" rx="12"/>
+  <rect class="chip" x="598" y="88" width="42" height="42" rx="9"/>
+  <g class="ic" transform="translate(608,98)">
+    <circle cx="5" cy="6" r="2"/>
+    <circle cx="5" cy="18" r="2"/>
+    <circle cx="19" cy="12" r="2"/>
+    <line x1="6.7" y1="7" x2="17.3" y2="11"/>
+    <line x1="6.7" y1="17" x2="17.3" y2="13"/>
+  </g>
+  <text class="t" x="654" y="104">Canvas</text>
+  <text class="s" x="654" y="120">the same graph, as nodes</text>
+
+  <!-- edges (behind nodes) -->
+  <g>
+    <path class="edge" d="M678,210 L740,210" marker-end="url(#eah)"/>
+    <path class="edge" d="M766,232 L766,294" marker-end="url(#eah)"/>
+    <path class="edge" d="M788,320 L832,320" marker-end="url(#eah)"/>
+  </g>
+
+  <!-- node: read (input_data) -->
+  <g transform="translate(634,188) scale(0.44)">
+    <circle cx="50" cy="50" r="48" fill="url(#nIn)"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+      <rect x="28" y="26" width="44" height="38" rx="5" fill="#FFFFFF" fill-opacity="0.16"/>
+      <line x1="28" y1="39" x2="72" y2="39" stroke-width="4"/>
+      <line x1="46" y1="39" x2="46" y2="64" stroke-width="3.5"/>
+      <line x1="28" y1="52" x2="72" y2="52" stroke-width="3.5"/>
+      <line x1="50" y1="68" x2="50" y2="82"/>
+      <polyline points="43,75 50,82 57,75"/>
+    </g>
+  </g>
+  <text class="ncap" x="656" y="252" text-anchor="middle">read</text>
+
+  <!-- node: filter -->
+  <g transform="translate(744,188) scale(0.44)">
+    <circle cx="50" cy="50" r="48" fill="url(#nFilter)"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M28 28 H72 L56 50 V66 L44 72 V50 Z" fill="#FFFFFF" fill-opacity="0.16"/>
+      <circle cx="50" cy="80" r="2.5" fill="#FFFFFF" stroke="none"/>
+    </g>
+  </g>
+  <text class="ncap" x="766" y="252" text-anchor="middle">filter</text>
+
+  <!-- node: group_by -->
+  <g transform="translate(744,298) scale(0.44)">
+    <circle cx="50" cy="50" r="48" fill="url(#nGroup)"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+      <line x1="26" y1="34" x2="42" y2="34"/>
+      <line x1="26" y1="50" x2="42" y2="50"/>
+      <line x1="26" y1="66" x2="42" y2="66"/>
+      <line x1="50" y1="50" x2="68" y2="50" stroke-width="4"/>
+      <polyline points="61,43 68,50 61,57" stroke-width="4"/>
+    </g>
+  </g>
+  <text class="ncap" x="766" y="362" text-anchor="middle">group_by</text>
+
+  <!-- node: write (output) -->
+  <g transform="translate(836,298) scale(0.44)">
+    <circle cx="50" cy="50" r="48" fill="url(#nOut)"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M28 58 V70 a4 4 0 0 0 4 4 H68 a4 4 0 0 0 4-4 V58"/>
+      <line x1="50" y1="26" x2="50" y2="58"/>
+      <polyline points="40,48 50,59 60,48"/>
+    </g>
+  </g>
+  <text class="ncap" x="858" y="362" text-anchor="middle">write</text>
+
+  <!-- ============ CENTER: shared FlowGraph object ============ -->
+  <line class="tick" x1="470" y1="172" x2="470" y2="188"/>
+  <line class="tick" x1="470" y1="286" x2="470" y2="300"/>
+  <rect x="394" y="182" width="152" height="110" rx="17" fill="none" stroke="#2DD5D3" stroke-width="2" opacity="0.4"/>
+  <rect x="400" y="188" width="140" height="98" rx="14" fill="url(#brand)"/>
+  <g class="icw">
+    <line x1="444" y1="209" x2="470" y2="209"/>
+    <line x1="470" y1="209" x2="470" y2="231"/>
+    <line x1="470" y1="231" x2="496" y2="231"/>
+    <circle cx="444" cy="209" r="2.6" fill="#ffffff"/>
+    <circle cx="470" cy="209" r="2.6" fill="#ffffff"/>
+    <circle cx="470" cy="231" r="2.6" fill="#ffffff"/>
+    <circle cx="496" cy="231" r="2.6" fill="#ffffff"/>
+  </g>
+  <text class="hubt" x="470" y="260" text-anchor="middle">FlowGraph</text>
+  <text class="hubs" x="470" y="276" text-anchor="middle">one shared object</text>
+
+  <!-- ============ DOUBLE-HEADED CYAN ARROW ============ -->
+  <path class="arwc" d="M352,172 L586,172" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M588,300 L352,300" marker-end="url(#ahc)"/>
+  <text class="albl" x="470" y="160" text-anchor="middle">open_graph_in_editor</text>
+  <text class="plbl" x="470" y="320" text-anchor="middle">export as Python</text>
+
+  <!-- ============ CAPTION ============ -->
+  <text class="cap" x="470" y="452" text-anchor="middle">Two editors for the same object</text>
+</svg>

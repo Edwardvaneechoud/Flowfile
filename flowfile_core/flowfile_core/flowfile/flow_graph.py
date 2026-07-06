@@ -3960,6 +3960,7 @@ class FlowGraph:
             node_type=node_type,
             setting_input=node_database_writer,
             schema_callback=schema_callback,
+            input_node_ids=[node_database_writer.depending_on_id],
         )
         node = self.get_node(node_database_writer.node_id)
 

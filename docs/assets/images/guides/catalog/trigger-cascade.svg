@@ -1,0 +1,190 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 450" role="img" aria-label="Trigger cascade: a catalog write to table X fires watching schedules through the synchronous push path, spawn_flow_run launches a headless subprocess that writes table Y and cascades downstream, while the scheduler's 30-second poll loop runs as a parallel safety net guarded by a 90-second stale-takeover lock.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .nbox  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip  { fill:#eaf3fc; }
+    .chipn { fill:#eceef1; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icn   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .ttl   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:17px; fill:#26A8E0; }
+    .sub   { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:2.6; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.7; }
+    .dash  { fill:none; stroke:#b3bcc9; stroke-width:1.6; stroke-dasharray:6 6; stroke-linecap:round; }
+    .riser { fill:none; stroke:#9aa8b6; stroke-width:1.7; stroke-dasharray:5 5; }
+    .note  { fill:#ffffff; stroke:#b9c2d0; stroke-width:1.3; stroke-dasharray:5 4; }
+    .notet { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:10.5px; fill:#233588; }
+    .notes { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#6b7280; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    .cap   { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#8a93a3; }
+    .rlbl  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:11px; fill:#8a93a3; }
+    .lgd   { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    .badge { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:12px; fill:#ffffff; }
+  </style>
+
+  <!-- ============ TITLE + LEGEND ============ -->
+  <text class="ttl" x="28" y="42">Trigger cascade</text>
+  <text class="sub" x="28" y="61">How a catalog write ripples through the schedule machinery</text>
+  <line x1="628" y1="44" x2="662" y2="44" stroke="#2DD5D3" stroke-width="3" stroke-linecap="round"/>
+  <text class="lgd" x="670" y="48">trigger cascade</text>
+  <line x1="796" y1="44" x2="830" y2="44" stroke="#b3bcc9" stroke-width="2.4" stroke-dasharray="5 4" stroke-linecap="round"/>
+  <text class="lgd" x="838" y="48">poll safety net</text>
+
+  <!-- ============ CASCADE ARROWS (cyan accent) ============ -->
+  <path class="arwc" d="M182,146 H220" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M380,146 H418" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M578,146 H616" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M776,146 H814" marker-end="url(#ahc)"/>
+  <text class="albl" x="201" y="137" text-anchor="middle">push</text>
+  <text class="albl" x="399" y="137" text-anchor="middle">spawn</text>
+  <text class="albl" x="597" y="137" text-anchor="middle">run</text>
+  <text class="albl" x="795" y="137" text-anchor="middle">write</text>
+
+  <!-- ============ B1: catalog write -> X ============ -->
+  <g>
+    <rect class="box" x="24" y="100" width="158" height="92" rx="11"/>
+    <rect class="chip" x="38" y="118" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(47,127)">
+      <rect x="3.5" y="8" width="12.5" height="10.5" rx="2"/>
+      <path d="M3.5,11.7 H16"/>
+      <path d="M3.5,15.2 H16"/>
+      <path d="M20,19 V8"/>
+      <path d="M17.6,10.4 L20,8 L22.4,10.4"/>
+    </g>
+    <text class="t" x="90" y="136">Catalog write</text>
+    <text class="s" x="90" y="154">updates table X</text>
+    <circle cx="176" cy="106" r="12" fill="url(#brand)"/>
+    <text class="badge" x="176" y="110" text-anchor="middle">X</text>
+  </g>
+
+  <!-- ============ B2: fire schedules ============ -->
+  <g>
+    <rect class="box" x="222" y="100" width="158" height="92" rx="11"/>
+    <rect class="chip" x="236" y="118" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(245,127)">
+      <rect x="4" y="5" width="16" height="15" rx="2"/>
+      <line x1="4" y1="9.5" x2="20" y2="9.5"/>
+      <line x1="8" y1="3.5" x2="8" y2="6.5"/>
+      <line x1="16" y1="3.5" x2="16" y2="6.5"/>
+      <circle cx="15.5" cy="15.5" r="3.4" fill="#eaf3fc"/>
+      <path d="M15.5,13.7 V15.5 L17,16.4"/>
+    </g>
+    <text class="t" x="288" y="136">Fire schedules</text>
+    <text class="s" x="288" y="154">push path</text>
+  </g>
+
+  <!-- ============ B3: spawn_flow_run ============ -->
+  <g>
+    <rect class="box" x="420" y="100" width="158" height="92" rx="11"/>
+    <rect class="chip" x="434" y="118" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(443,127)">
+      <rect x="4" y="4" width="16" height="16" rx="3.5"/>
+      <path d="M10,8.5 L15.5,12 L10,15.5 Z"/>
+    </g>
+    <text class="t" x="486" y="136">Spawn run</text>
+    <text class="s" x="486" y="154">spawn_flow_run</text>
+  </g>
+
+  <!-- ============ B4: headless subprocess ============ -->
+  <g>
+    <rect class="box" x="618" y="100" width="158" height="92" rx="11"/>
+    <rect class="chip" x="632" y="118" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(641,127)">
+      <path d="M12,3 L20,7.4 V16.6 L12,21 L4,16.6 V7.4 Z"/>
+      <path d="M4,7.4 L12,11.8 L20,7.4"/>
+      <path d="M12,11.8 V21"/>
+    </g>
+    <text class="t" x="684" y="136">Subprocess</text>
+    <text class="s" x="684" y="154">headless run</text>
+  </g>
+
+  <!-- ============ B5: catalog write -> Y ============ -->
+  <g>
+    <rect class="box" x="816" y="100" width="158" height="92" rx="11"/>
+    <rect class="chip" x="830" y="118" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(839,127)">
+      <rect x="3.5" y="8" width="12.5" height="10.5" rx="2"/>
+      <path d="M3.5,11.7 H16"/>
+      <path d="M3.5,15.2 H16"/>
+      <path d="M20,19 V8"/>
+      <path d="M17.6,10.4 L20,8 L22.4,10.4"/>
+    </g>
+    <text class="t" x="882" y="136">Catalog write</text>
+    <text class="s" x="882" y="154">updates table Y</text>
+    <circle cx="968" cy="106" r="12" fill="url(#brand)"/>
+    <text class="badge" x="968" y="110" text-anchor="middle">Y</text>
+  </g>
+
+  <!-- ============ PRE-COMMIT GUARD NOTE (sits directly under the Fire->Spawn transition) ============ -->
+  <rect class="note" x="316" y="206" width="232" height="62" rx="8"/>
+  <text class="notet" x="328" y="224">pre-commit guard</text>
+  <text class="notes" x="328" y="240">commit updated_at before spawn —</text>
+  <text class="notes" x="328" y="254">the double-fire guard</text>
+
+  <!-- ============ DOWNSTREAM CASCADE ============ -->
+  <path class="arwc" d="M895,192 V210"/>
+  <path class="arwc" d="M895,210 H855 V236" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M895,210 H935 V236" marker-end="url(#ahc)"/>
+  <g class="icn" transform="translate(855,242)">
+    <ellipse cx="0" cy="0" rx="7" ry="2.3"/>
+    <path d="M-7,0 V9 C-7,10.3 -3.9,11.3 0,11.3 C3.9,11.3 7,10.3 7,9 V0"/>
+    <path d="M-7,4.6 C-7,5.9 -3.9,6.9 0,6.9 C3.9,6.9 7,5.9 7,4.6"/>
+  </g>
+  <g class="icn" transform="translate(935,242)">
+    <ellipse cx="0" cy="0" rx="7" ry="2.3"/>
+    <path d="M-7,0 V9 C-7,10.3 -3.9,11.3 0,11.3 C3.9,11.3 7,10.3 7,9 V0"/>
+    <path d="M-7,4.6 C-7,5.9 -3.9,6.9 0,6.9 C3.9,6.9 7,5.9 7,4.6"/>
+  </g>
+  <text class="cap" x="895" y="272" text-anchor="middle">downstream triggers cascade</text>
+
+  <!-- ============ POLL SAFETY NET (30 s) — parallel lane anchored between poll loop and the stale lock ============ -->
+  <path class="dash" d="M274,368 H792"/>
+  <path class="riser" d="M295,368 V193" marker-end="url(#ah)"/>
+  <text class="rlbl" transform="translate(283,280) rotate(-90)" text-anchor="middle">safety net</text>
+  <text class="cap" x="540" y="356" text-anchor="middle">set-triggers need all linked tables updated</text>
+  <g>
+    <rect class="nbox" x="24" y="326" width="250" height="84" rx="11"/>
+    <rect class="chipn" x="38" y="344" width="48" height="48" rx="10"/>
+    <g class="icn" transform="translate(45.2,351.2) scale(1.4)">
+      <path d="M6.5,6.5 A8,8 0 0 1 19,8"/>
+      <path d="M17.1,7.2 L19,8 L18.5,10"/>
+      <path d="M17.5,17.5 A8,8 0 0 1 5,16"/>
+      <path d="M6.9,16.8 L5,16 L5.5,14"/>
+      <circle cx="12" cy="12" r="3.3" fill="#ffffff"/>
+      <path d="M12,10 V12 L13.6,13"/>
+    </g>
+    <text class="t" x="98" y="358">Poll loop</text>
+    <text class="s" x="98" y="374">ticks every 30 s</text>
+    <text class="s" x="98" y="388">fires on newer updated_at</text>
+  </g>
+
+  <!-- ============ STALE-TAKEOVER LOCK (90 s) — corner guard, terminates the safety-net lane ============ -->
+  <g>
+    <rect class="nbox" x="792" y="326" width="184" height="92" rx="11"/>
+    <rect class="chipn" x="806" y="344" width="42" height="42" rx="9"/>
+    <g class="icn" transform="translate(815,353)">
+      <path d="M8,10 V8 A4,4 0 0 1 16,8 V10"/>
+      <rect x="5.5" y="10" width="13" height="9.5" rx="2.2"/>
+      <circle cx="12" cy="14.8" r="2.7" fill="#ffffff"/>
+      <path d="M12,13.2 V14.8 L13.7,15.6"/>
+    </g>
+    <text class="t" x="858" y="364">Stale takeover</text>
+    <text class="s" x="858" y="381">90 s advisory lock</text>
+    <text class="s" x="858" y="395">one instance runs</text>
+  </g>
+</svg>
