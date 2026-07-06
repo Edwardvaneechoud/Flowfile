@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" role="img" aria-label="Access-resolution decision flow: a request hits the restricted gate (sharing enabled, not admin, not the internal-service principal); if not restricted it bypasses to unrestricted full-catalog access, and internal constructors such as the scheduler and flow engine pass access=None straight to the same bypass; if restricted, resolution runs own-first, then group grants at use or manage level, then a namespace grant that cascades to the contained tables, flows, visualizations, dashboards, notebooks, and artifacts.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahb" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#1D76D6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .boxg  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip  { fill:#eaf3fc; }
+    .chipg { fill:#eceef1; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icg   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .dt    { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:15px; fill:#ffffff; }
+    .cond  { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#8a93a3; }
+    .lbl   { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#8a93a3; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .lgd   { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwb  { fill:none; stroke:#1D76D6; stroke-width:1.9; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:3; }
+  </style>
+
+  <!-- top-left label -->
+  <text class="lbl" x="40" y="40">Access resolution &#183; resolver injected per request</text>
+
+  <!-- ============ BYPASS LANE (grey, muted) ============ -->
+  <rect class="bound" x="28" y="340" width="500" height="138" rx="16" fill="none" stroke="#b9c2d0" stroke-width="1.4" stroke-dasharray="6 6"/>
+  <text class="lbl" x="34" y="332">bypass &#183; unrestricted</text>
+
+  <!-- Unrestricted outcome -->
+  <g>
+    <rect class="boxg" x="44" y="360" width="190" height="96" rx="11"/>
+    <rect class="chipg" x="60" y="384" width="46" height="46" rx="10"/>
+    <g class="icg" transform="translate(71,395)">
+      <path d="M11,2.5 L17.5,5.2 V10 C17.5,13.8 15,16.4 11,18 C7,16.4 4.5,13.8 4.5,10 V5.2 Z"/>
+      <path d="M4.5,3.6 L18.3,17.4"/>
+    </g>
+    <text class="t" x="118" y="400">Unrestricted</text>
+    <text class="s" x="118" y="418">full catalog access</text>
+  </g>
+
+  <!-- Internal constructors (side branch) -->
+  <g>
+    <rect class="boxg" x="300" y="360" width="202" height="96" rx="11"/>
+    <rect class="chipg" x="316" y="384" width="46" height="46" rx="10"/>
+    <g class="icg" transform="translate(327,395)">
+      <circle cx="11" cy="11" r="5"/>
+      <circle cx="11" cy="11" r="1.8" fill="#eceef1"/>
+      <path d="M11,3.5 V6"/>
+      <path d="M11,16 V18.5"/>
+      <path d="M3.5,11 H6"/>
+      <path d="M16,11 H18.5"/>
+      <path d="M5.7,5.7 L7.4,7.4"/>
+      <path d="M14.6,14.6 L16.3,16.3"/>
+      <path d="M16.3,5.7 L14.6,7.4"/>
+      <path d="M7.4,14.6 L5.7,16.3"/>
+    </g>
+    <text class="t" x="374" y="400">Internal callers</text>
+    <text class="s" x="374" y="418">scheduler &#183; flow engine</text>
+  </g>
+
+  <!-- internal callers -> unrestricted -->
+  <path class="arw" d="M300,408 L236,408" marker-end="url(#ah)"/>
+  <text class="cond" x="267" y="401" text-anchor="middle">access = None</text>
+
+  <!-- ============ ENTRY + GATE ============ -->
+  <circle cx="170" cy="86" r="26" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.5"/>
+  <g class="icg" transform="translate(170,86)">
+    <path d="M-9,0 H6.5"/>
+    <path d="M1.5,-5 L7,0 L1.5,5"/>
+  </g>
+  <text class="lbl" x="205" y="82" font-weight="600">Request</text>
+  <text class="cond" x="205" y="99">authenticated caller</text>
+
+  <!-- request -> gate -->
+  <path class="arw" d="M170,112 L170,154" marker-end="url(#ah)"/>
+
+  <!-- decision diamond (gradient hero) -->
+  <polygon points="170,156 250,212 170,268 90,212" fill="url(#brand)"/>
+  <text class="dt" x="170" y="217" text-anchor="middle">restricted?</text>
+  <text class="cond" x="170" y="289" text-anchor="middle">sharing on &#183; not admin</text>
+  <text class="cond" x="170" y="304" text-anchor="middle">&#183; not _internal_service</text>
+
+  <!-- gate NO -> bypass -->
+  <path class="arw" d="M90,212 L60,212 L60,358" marker-end="url(#ah)"/>
+  <text class="albl" x="74" y="248">no</text>
+
+  <!-- gate YES -> resolution (cyan accent) -->
+  <path class="arwc" d="M250,212 L338,212" marker-end="url(#ahc)"/>
+  <text class="albl" x="294" y="204" text-anchor="middle">yes</text>
+
+  <!-- ============ RESTRICTED RESOLUTION PIPELINE (brand) ============ -->
+  <!-- own-first -->
+  <g>
+    <rect class="box" x="340" y="170" width="186" height="84" rx="11"/>
+    <rect class="chip" x="356" y="190" width="48" height="48" rx="10"/>
+    <g class="ic" transform="translate(368,202)">
+      <circle cx="5.5" cy="11" r="4.5"/>
+      <path d="M10,11 H21"/>
+      <path d="M15,11 V14.8"/>
+      <path d="M19,11 V14.2"/>
+    </g>
+    <text class="t" x="418" y="206">Own-first</text>
+    <text class="s" x="418" y="224">rows you own</text>
+  </g>
+
+  <!-- group grants -->
+  <g>
+    <rect class="box" x="550" y="170" width="186" height="84" rx="11"/>
+    <rect class="chip" x="566" y="190" width="48" height="48" rx="10"/>
+    <g class="ic" transform="translate(578,202)">
+      <circle cx="8" cy="8" r="2.8" fill="#eaf3fc"/>
+      <path d="M3.5,18 C3.5,13.4 12.5,13.4 12.5,18"/>
+      <circle cx="15.5" cy="9" r="2.5" fill="#eaf3fc"/>
+      <path d="M12,18 C12,14 19.5,14 19.5,18"/>
+    </g>
+    <text class="t" x="628" y="206">Group grants</text>
+    <text class="s" x="628" y="224">use / manage</text>
+  </g>
+
+  <!-- namespace grant -->
+  <g>
+    <rect class="box" x="760" y="170" width="186" height="84" rx="11"/>
+    <rect class="chip" x="776" y="190" width="48" height="48" rx="10"/>
+    <g class="ic" transform="translate(788,202)">
+      <rect x="2" y="2.5" width="8" height="5.5" rx="1.4"/>
+      <path d="M6,8 V19"/>
+      <path d="M6,12 H12"/>
+      <rect x="12" y="9.5" width="7.5" height="5" rx="1.4"/>
+      <path d="M6,17 H12"/>
+      <rect x="12" y="14.5" width="7.5" height="5" rx="1.4"/>
+    </g>
+    <text class="t" x="838" y="206">Namespace grant</text>
+    <text class="s" x="838" y="224">catalog / schema</text>
+  </g>
+
+  <!-- pipeline arrows -->
+  <path class="arwb" d="M526,212 L550,212" marker-end="url(#ahb)"/>
+  <path class="arwb" d="M736,212 L760,212" marker-end="url(#ahb)"/>
+
+  <!-- namespace grant -> contained (cascade) -->
+  <path class="arwb" d="M853,254 L853,344" marker-end="url(#ahb)"/>
+  <text class="cond" x="862" y="304">cascade</text>
+
+  <!-- contained resources -->
+  <g>
+    <rect class="box" x="708" y="346" width="286" height="150" rx="11"/>
+    <rect class="chip" x="726" y="368" width="48" height="48" rx="10"/>
+    <g class="ic" transform="translate(738,380)">
+      <rect x="2" y="2" width="8" height="8" rx="1.6"/>
+      <rect x="13" y="2" width="8" height="8" rx="1.6"/>
+      <rect x="2" y="13" width="8" height="8" rx="1.6"/>
+      <rect x="13" y="13" width="8" height="8" rx="1.6"/>
+    </g>
+    <text class="t" x="788" y="388">Contained resources</text>
+    <text class="s" x="788" y="408">tables &#183; flows &#183; visualizations</text>
+    <text class="s" x="788" y="424">dashboards &#183; notebooks &#183; artifacts</text>
+    <text class="cond" x="726" y="464">one-level child expansion &#183; memoized per request</text>
+  </g>
+
+  <!-- ============ LEGEND ============ -->
+  <g>
+    <line x1="556" y1="374" x2="580" y2="374" class="arwc"/>
+    <text class="lgd" x="586" y="378">resolution arrow</text>
+    <line x1="556" y1="400" x2="580" y2="400" stroke="#1D76D6" stroke-width="3"/>
+    <text class="lgd" x="586" y="404">restricted path</text>
+    <line x1="556" y1="426" x2="580" y2="426" stroke="#b3bcc9" stroke-width="3"/>
+    <text class="lgd" x="586" y="430">bypass</text>
+  </g>
+</svg>

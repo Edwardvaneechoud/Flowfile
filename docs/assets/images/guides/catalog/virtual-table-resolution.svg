@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 656" role="img" aria-label="Virtual-table read resolution: a read request checks whether the table is query-virtual and takes the SQL context path recursing up to five levels; otherwise it checks whether the table is optimized and its source versions are current — if so it deserializes the stored plan on a fast lane, otherwise it re-executes the producer's catalog_writer node on a slow lane, which a serialized cloud plan is forced onto. Every path resolves to a LazyFrame.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahb" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#1D76D6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .boxb { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .dia  { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chip { fill:#eef0f2; }
+    .chipb{ fill:#eaf3fc; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icb  { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw  { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .tw   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#ffffff; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .sw   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#eaf6ff; }
+    .tag  { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:9px; fill:#d3f7f6; letter-spacing:1px; }
+    .q    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:11px; fill:#233588; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwb { fill:none; stroke:#1D76D6; stroke-width:1.9; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .arwd { fill:none; stroke:#b3bcc9; stroke-width:1.5; stroke-dasharray:5 5; }
+    .lgd  { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#6b7280; }
+    .pill { fill:#eef0f2; stroke:#9aa0a6; stroke-width:1.2; }
+  </style>
+
+  <!-- ================= READ REQUEST ================= -->
+  <g>
+    <rect class="boxb" x="18" y="273" width="156" height="74" rx="11"/>
+    <rect class="chipb" x="33" y="291" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(41,299)">
+      <circle cx="10" cy="10" r="6"/>
+      <line x1="14.3" y1="14.3" x2="19" y2="19"/>
+    </g>
+    <text class="t" x="84" y="306">Read request</text>
+    <text class="s" x="84" y="323">resolve a table</text>
+  </g>
+
+  <!-- ================= SQLCONTEXT PATH ================= -->
+  <g>
+    <rect class="box" x="116" y="58" width="236" height="86" rx="11"/>
+    <rect class="chip" x="130" y="80" width="40" height="40" rx="9"/>
+    <g class="ic" transform="translate(138,88)">
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2"/>
+      <path d="M7,10 L10,12 L7,14"/>
+      <line x1="12" y1="14" x2="16" y2="14"/>
+    </g>
+    <text class="t" x="182" y="92">SQLContext path</text>
+    <text class="s" x="182" y="109">register table refs</text>
+    <text class="s" x="182" y="124">resolve nested</text>
+  </g>
+  <!-- recurse loop + bound badge -->
+  <path class="arw" d="M298,58 V46 Q298,41 293,41 H167 Q162,41 162,46 V56" marker-end="url(#ah)"/>
+  <rect class="pill" x="211" y="33" width="38" height="17" rx="8.5"/>
+  <text class="q" x="230" y="45" text-anchor="middle" font-size="10">&#8804; 5</text>
+  <text class="albl" x="292" y="39" font-size="10">recurse</text>
+
+  <!-- ================= FAST LANE (HERO) ================= -->
+  <g>
+    <rect x="548" y="118" width="238" height="100" rx="12" fill="url(#brand)"/>
+    <rect x="562" y="138" width="42" height="42" rx="9" fill="#ffffff" opacity="0.18"/>
+    <g class="icw" transform="translate(571,147)">
+      <path d="M12.5,3 L6.5,13 H11 L9.5,21 L18,10.5 H12.8 Z"/>
+    </g>
+    <text class="tag" x="618" y="150">FAST LANE</text>
+    <text class="tw" x="618" y="169">Deserialize plan</text>
+    <text class="sw" x="618" y="187">no flow run</text>
+  </g>
+
+  <!-- ================= SLOW LANE ================= -->
+  <g>
+    <rect class="box" x="360" y="474" width="372" height="100" rx="12"/>
+    <rect class="chip" x="376" y="500" width="44" height="44" rx="10"/>
+    <g class="ic" transform="translate(384,510)">
+      <path d="M6.3,9.2 A6,6 0 0 1 17,7.6"/>
+      <path d="M17.4,4.4 L17.2,7.9 L13.7,7.4"/>
+      <path d="M17.7,14.8 A6,6 0 0 1 7,16.4"/>
+      <path d="M6.6,19.6 L6.8,16.1 L10.3,16.6"/>
+    </g>
+    <text class="t" x="432" y="507">Re-run writer node</text>
+    <text class="s" x="432" y="525">open producer flow &#183; execute catalog_writer</text>
+    <text class="s" x="432" y="542">worker when offloaded</text>
+    <text class="s" x="432" y="559" font-style="italic" fill="#8a93a3">standard resolution</text>
+  </g>
+
+  <!-- ================= CLOUD-PLAN EXCLUSION CALLOUT ================= -->
+  <g>
+    <rect class="box" x="116" y="478" width="224" height="92" rx="11" stroke-dasharray="5 4"/>
+    <rect class="chip" x="130" y="502" width="40" height="40" rx="9"/>
+    <g class="ic" transform="translate(138,510)">
+      <path d="M7.6,17 H16.4 C18.5,17 20,15.4 20,13.5 C20,11.7 18.5,10.4 16.6,10.4 C16.4,7.9 14.2,6 11.6,6 C10.3,6 9.1,6.5 8.2,7.3"/>
+      <path d="M6.6,10.6 C4.9,11 3.6,12.3 3.6,14 C3.6,15.6 4.9,17 6.6,17"/>
+      <line x1="4" y1="4" x2="20" y2="20"/>
+    </g>
+    <text class="t" x="182" y="512" font-size="13">Cloud plan</text>
+    <text class="s" x="182" y="529">credentials embedded</text>
+    <text class="s" x="182" y="544">never replayed</text>
+  </g>
+
+  <!-- ================= LAZYFRAME RESULT ================= -->
+  <g>
+    <rect class="boxb" x="828" y="264" width="134" height="92" rx="11"/>
+    <rect class="chipb" x="842" y="288" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(850,296)">
+      <rect x="4" y="5" width="16" height="14" rx="2"/>
+      <line x1="4" y1="9.6" x2="20" y2="9.6"/>
+      <line x1="9.3" y1="9.6" x2="9.3" y2="19"/>
+      <line x1="14.6" y1="5" x2="14.6" y2="19"/>
+    </g>
+    <text class="t" x="886" y="306" font-size="13">LazyFrame</text>
+    <text class="s" x="886" y="323">resolved</text>
+  </g>
+
+  <!-- ================= DECISION DIAMONDS ================= -->
+  <polygon class="dia" points="258,268 314,310 258,352 202,310"/>
+  <text class="q" x="258" y="306" text-anchor="middle">query-</text>
+  <text class="q" x="258" y="320" text-anchor="middle">virtual?</text>
+
+  <polygon class="dia" points="452,268 508,310 452,352 396,310"/>
+  <text class="q" x="452" y="314" text-anchor="middle">optimized?</text>
+
+  <polygon class="dia" points="648,262 714,310 648,358 582,310"/>
+  <text class="q" x="648" y="306" text-anchor="middle" font-size="10">source versions</text>
+  <text class="q" x="648" y="320" text-anchor="middle" font-size="10">current?</text>
+
+  <!-- ================= ARROWS ================= -->
+  <!-- happy path spine (brand) -->
+  <path class="arwb" d="M174,310 L200,310" marker-end="url(#ahb)"/>
+  <path class="arwb" d="M314,310 L394,310" marker-end="url(#ahb)"/>
+  <path class="arwb" d="M508,310 L582,310" marker-end="url(#ahb)"/>
+  <!-- fast lane out to result (brand) -->
+  <path class="arwb" d="M786,168 L806,168 L806,310 L826,310" marker-end="url(#ahb)"/>
+
+  <!-- cyan accent: the fast read is chosen -->
+  <path class="arwc" d="M648,262 L648,222" marker-end="url(#ahc)"/>
+
+  <!-- query-virtual branch (grey) -->
+  <path class="arw" d="M258,268 L258,146" marker-end="url(#ah)"/>
+  <path class="arw" d="M352,101 L868,101 L868,262" marker-end="url(#ah)"/>
+  <!-- slow lane feeds (grey) -->
+  <path class="arw" d="M452,352 L452,472" marker-end="url(#ah)"/>
+  <path class="arw" d="M648,358 L648,472" marker-end="url(#ah)"/>
+  <path class="arw" d="M732,524 L899,524 L899,358" marker-end="url(#ah)"/>
+  <!-- cloud exclusion into slow lane (dashed) -->
+  <path class="arwd" d="M340,524 L357,524" marker-end="url(#ah)"/>
+
+  <!-- ================= ARROW LABELS ================= -->
+  <text class="albl" x="354" y="302" text-anchor="middle">no</text>
+  <text class="albl" x="546" y="302" text-anchor="middle">yes</text>
+  <text class="albl" x="268" y="206">yes</text>
+  <text class="albl" x="660" y="246">yes</text>
+  <text class="albl" x="462" y="416">no</text>
+  <text class="albl" x="658" y="416">no</text>
+
+  <!-- ================= LEGEND ================= -->
+  <g>
+    <rect x="288" y="616" width="16" height="16" rx="3" fill="url(#brand)"/>
+    <text class="lgd" x="311" y="628">Fast lane &#183; deserialize, no run</text>
+    <rect x="560" y="616" width="16" height="16" rx="3" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.4"/>
+    <text class="lgd" x="583" y="628">Slow lane &#183; re-execute node</text>
+  </g>
+</svg>

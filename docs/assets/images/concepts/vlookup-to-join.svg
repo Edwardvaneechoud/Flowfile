@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 400" role="img" aria-label="A side-by-side translation showing that an Excel VLOOKUP formula matching on a key column is the same operation as a Flowfile Join node that combines two Read-data tables on a highlighted key column.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip  { fill:#eef0f2; }
+    .ic    { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw   { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .lbl   { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#8a93a3; }
+    .lblh  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12px; fill:#1D76D6; }
+    .fx    { font-family:Roboto,Arial,sans-serif; font-style:italic; font-size:10px; fill:#9aa0a6; }
+    .mono  { font-family:Roboto,Arial,sans-serif; font-size:12px; fill:#4b5563; letter-spacing:0.2px; }
+    .th    { font-family:Roboto,Arial,sans-serif; font-size:8px; fill:#6b7280; }
+    .thw   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:8px; fill:#ffffff; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:2.6; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#8a93a3; }
+  </style>
+
+  <!-- ============ SECTION LABELS ============ -->
+  <rect x="44" y="52" width="13" height="13" rx="3" fill="#eef0f2" stroke="#9aa0a6" stroke-width="1.4"/>
+  <text class="lbl" x="63" y="63">In Excel</text>
+  <rect x="520" y="52" width="13" height="13" rx="3" fill="url(#brand)"/>
+  <text class="lblh" x="539" y="63">In Flowfile</text>
+
+  <!-- ============ LEFT: VLOOKUP FORMULA CARD ============ -->
+  <g>
+    <rect class="box" x="44" y="104" width="346" height="100" rx="11"/>
+    <rect class="chip" x="60" y="124" width="44" height="44" rx="9"/>
+    <g class="ic" transform="translate(70,134)">
+      <rect x="2" y="2" width="20" height="20" rx="2.5"/>
+      <line x1="2" y1="9" x2="22" y2="9"/>
+      <line x1="2" y1="15.5" x2="22" y2="15.5"/>
+      <line x1="9" y1="2" x2="9" y2="22"/>
+      <line x1="15.5" y1="2" x2="15.5" y2="22"/>
+    </g>
+    <text class="t" x="118" y="139">VLOOKUP</text>
+    <text class="s" x="118" y="156">Excel lookup formula</text>
+    <rect x="62" y="172" width="320" height="24" rx="5" fill="#f6f7f9" stroke="#d9dde2" stroke-width="1"/>
+    <text class="fx" x="73" y="188">fx</text>
+    <text class="mono" x="94" y="188">=VLOOKUP(A2,Sheet2!A:C,3,FALSE)</text>
+  </g>
+
+  <!-- ============ LEFT: LOOKUP SHEET CARD ============ -->
+  <g>
+    <rect class="box" x="44" y="248" width="346" height="100" rx="11"/>
+    <rect class="chip" x="60" y="268" width="44" height="44" rx="9"/>
+    <g class="ic" transform="translate(70,278)">
+      <rect x="1" y="2" width="16" height="14" rx="2"/>
+      <line x1="1" y1="7" x2="17" y2="7"/>
+      <line x1="7" y1="2" x2="7" y2="16"/>
+      <circle cx="16" cy="16" r="5" fill="#ffffff"/>
+      <line x1="19.6" y1="19.6" x2="23" y2="23"/>
+    </g>
+    <text class="t" x="118" y="283">Lookup sheet</text>
+    <text class="s" x="118" y="300">Sheet2 &#183; columns A:C</text>
+
+    <!-- mini grey sheet: key column A muted, returns column C -->
+    <rect x="252" y="268" width="108" height="46" rx="3" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.2"/>
+    <rect x="252" y="268" width="36" height="46" fill="#e1e5ea"/>
+    <rect x="288" y="268" width="72" height="13" fill="#eef0f2"/>
+    <line x1="288" y1="268" x2="288" y2="314" stroke="#9aa0a6" stroke-width="1"/>
+    <line x1="324" y1="268" x2="324" y2="314" stroke="#9aa0a6" stroke-width="1"/>
+    <line x1="252" y1="281" x2="360" y2="281" stroke="#9aa0a6" stroke-width="1"/>
+    <text class="th" x="270" y="278" text-anchor="middle">A</text>
+    <text class="th" x="306" y="278" text-anchor="middle">B</text>
+    <text class="th" x="342" y="278" text-anchor="middle">C</text>
+    <text class="albl" x="252" y="330">match col A</text>
+  </g>
+
+  <!-- ============ CENTER: TRANSLATION SWAP ARROW ============ -->
+  <text class="albl" x="450" y="206" text-anchor="middle">same operation</text>
+  <path class="arwc" d="M402,219 L500,219" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M500,237 L402,237" marker-end="url(#ahc)"/>
+
+  <!-- ============ RIGHT: MAIN TABLE (Read data node) ============ -->
+  <g>
+    <rect class="box" x="520" y="104" width="190" height="100" rx="11"/>
+    <circle cx="548" cy="133" r="17" fill="url(#brand)"/>
+    <g class="icw" transform="translate(548,133)">
+      <rect x="-9" y="-10" width="18" height="13" rx="2.5"/>
+      <line x1="-9" y1="-5" x2="9" y2="-5"/>
+      <line x1="0" y1="-5" x2="0" y2="3"/>
+      <line x1="0" y1="4.5" x2="0" y2="9"/>
+      <polyline points="-3.6,5.6 0,9 3.6,5.6"/>
+    </g>
+    <text class="t" x="576" y="128">Main table</text>
+    <text class="s" x="576" y="144">Read data node</text>
+
+    <!-- mini table with cyan key column -->
+    <rect x="538" y="160" width="156" height="34" rx="3" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.2"/>
+    <rect x="538" y="160" width="52" height="34" fill="#2DD5D3"/>
+    <rect x="590" y="160" width="104" height="12" fill="#eef2f5"/>
+    <line x1="590" y1="160" x2="590" y2="194" stroke="#9aa0a6" stroke-width="1"/>
+    <line x1="642" y1="160" x2="642" y2="194" stroke="#9aa0a6" stroke-width="1"/>
+    <line x1="538" y1="172" x2="694" y2="172" stroke="#9aa0a6" stroke-width="1"/>
+    <text class="thw" x="564" y="170" text-anchor="middle">id</text>
+    <text class="th" x="616" y="170" text-anchor="middle">name</text>
+    <text class="th" x="668" y="170" text-anchor="middle">city</text>
+  </g>
+
+  <!-- ============ RIGHT: LOOKUP TABLE (Read data node) ============ -->
+  <g>
+    <rect class="box" x="520" y="248" width="190" height="100" rx="11"/>
+    <circle cx="548" cy="277" r="17" fill="url(#brand)"/>
+    <g class="icw" transform="translate(548,277)">
+      <rect x="-9" y="-10" width="18" height="13" rx="2.5"/>
+      <line x1="-9" y1="-5" x2="9" y2="-5"/>
+      <line x1="0" y1="-5" x2="0" y2="3"/>
+      <line x1="0" y1="4.5" x2="0" y2="9"/>
+      <polyline points="-3.6,5.6 0,9 3.6,5.6"/>
+    </g>
+    <text class="t" x="576" y="272">Lookup table</text>
+    <text class="s" x="576" y="288">Read data node</text>
+
+    <!-- mini table with cyan key column -->
+    <rect x="538" y="304" width="156" height="34" rx="3" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.2"/>
+    <rect x="538" y="304" width="52" height="34" fill="#2DD5D3"/>
+    <rect x="590" y="304" width="104" height="12" fill="#eef2f5"/>
+    <line x1="590" y1="304" x2="590" y2="338" stroke="#9aa0a6" stroke-width="1"/>
+    <line x1="642" y1="304" x2="642" y2="338" stroke="#9aa0a6" stroke-width="1"/>
+    <line x1="538" y1="316" x2="694" y2="316" stroke="#9aa0a6" stroke-width="1"/>
+    <text class="thw" x="564" y="314" text-anchor="middle">id</text>
+    <text class="th" x="616" y="314" text-anchor="middle">region</text>
+    <text class="th" x="668" y="314" text-anchor="middle">tier</text>
+  </g>
+
+  <!-- ============ JOIN NODE ============ -->
+  <circle cx="800" cy="226" r="34" fill="url(#brand)"/>
+  <g class="icw" transform="translate(800,226)">
+    <circle cx="-7" cy="0" r="9" fill="#ffffff" fill-opacity="0.15"/>
+    <circle cx="7" cy="0" r="9" fill="#ffffff" fill-opacity="0.15"/>
+  </g>
+  <path transform="translate(800,226)" d="M0,-5.6 Q2.9,0 0,5.6 Q-2.9,0 0,-5.6 Z" fill="#2DD5D3" fill-opacity="0.9"/>
+  <text x="800" y="283" text-anchor="middle" font-family="Roboto,Arial,sans-serif" font-weight="600" font-size="13.5px" fill="#1D76D6">Join</text>
+  <text class="albl" x="800" y="299" text-anchor="middle">left &#183; on id</text>
+
+  <!-- ============ FLOW ARROWS INTO JOIN ============ -->
+  <path class="arw" d="M710,152 C742,152 748,200 770,210" marker-end="url(#ah)"/>
+  <path class="arw" d="M710,300 C742,300 748,252 770,242" marker-end="url(#ah)"/>
+</svg>
