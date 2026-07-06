@@ -6,7 +6,7 @@ If your working life runs through workbooks — filters and VLOOKUPs as an analy
 
 An Excel workflow usually lives in one sheet: raw data on the left, helper columns in the middle, a pivot table somewhere else — and the *order of operations* exists only in your head. In Flowfile that same work is a **flow**: a left-to-right chain of steps on a canvas, where each step shows its output data underneath. The logic isn't hidden in cells; it *is* the picture.
 
-![On the left, one spreadsheet crams raw columns, helper-formula columns, and a pivot together with tangled arrows — the order of steps lives in your head. On the right, the same work is a left-to-right flow (read → formula → dedupe → group by) where every node shows its output data.](../assets/images/concepts/sheet-vs-flow.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram, sheet vs flow — left: one spreadsheet with raw columns, helper-formula columns, and a pivot table crammed together, arrows tangled; right: the same work as a left-to-right flow (read → formula → dedupe → group by) with a visible preview under each node -->
 
 | In Excel | In Flowfile |
 |---|---|
@@ -44,7 +44,7 @@ A VLOOKUP pulls columns from another sheet by matching a key. In Flowfile, that'
 
 Where Excel needed the key in the first column and returned one column per formula, a Join matches on any column and brings the whole row. And for the case Excel can't do at all — "Acme Corp" vs "ACME Corporation" — the [Fuzzy Match node](visual-editor/nodes/combine.md#fuzzy-match) joins on *almost*-equal keys.
 
-![A side-by-side translation: on the left an Excel =VLOOKUP(A2,Sheet2!A:C,3,FALSE) against a lookup sheet; on the right the same two tables as Read data nodes feeding a Join, with the matched key column highlighted on both sides — the same operation, two ways.](../assets/images/concepts/vlookup-to-join.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: side-by-side translation — left: a cell with =VLOOKUP(A2,Sheet2!A:C,3,FALSE) and its lookup sheet; right: the same two tables as Read data nodes feeding a Join node, the matched key columns highlighted on both sides -->
 
 
 ## 4. Pivot tables are two nodes

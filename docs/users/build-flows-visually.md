@@ -4,7 +4,7 @@ Recurring data preparation has a thousand faces: merging exports from two system
 
 A flow replaces that with something that can be *seen*: every step a labeled node, every intermediate result inspectable, the whole thing re-runnable by anyone — including you, six months from now.
 
-![A flow drawn as an assembly line: files and a database feed in on the left, pass through labeled stations — drop duplicates, join, group by — each showing its output data underneath, and arrive at one clean result on the right; a small greyed inset shows the same work as an opaque manual checklist.](../assets/images/concepts/flow-assembly-line.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram of a flow as a visible assembly line — raw inputs entering left, labeled stations (dedupe, join, aggregate) with a small data preview under each, one clean output leaving right; contrast inset: the same work as an opaque manual checklist -->
 
 ## 1. Learn the canvas with one real flow
 
@@ -37,7 +37,7 @@ The [function reference](formulas/functions.md) lists everything available, and 
 
 Two execution modes, two jobs. **Development** materializes every node so you can inspect each intermediate result — that's your iteration loop: run, look, adjust, run again. **Performance** is for the finished flow: it executes only what the outputs actually need and lets the query optimizer work across the whole graph, so nothing is computed for a preview nobody's looking at. A node's **Cache results** toggle (in its General Settings) keeps that node's output between Performance runs — worth switching on for an expensive step whose inputs rarely change.
 
-![The same flow run two ways: in Development every node is lit with a data preview beneath it; in Performance only the path to the output is lit, the exploratory branch is greyed out, and a cached node is short-circuited so its stored result is reused instead of recomputed.](../assets/images/concepts/dev-vs-performance.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram of the two modes — Development: every node lit with a preview underneath; Performance: only the path to the output lit, other branches greyed, a cached node shown short-circuited -->
 
 ## 5. Deliver the result
 

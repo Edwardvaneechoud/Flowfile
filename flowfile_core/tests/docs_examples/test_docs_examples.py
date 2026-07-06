@@ -5,7 +5,6 @@ Core examples (docs/examples/*.py) must always pass. Integration examples
 unavailable, reusing the same fixture helpers the rest of the suite gates on.
 """
 
-import os
 import re
 import runpy
 from pathlib import Path
@@ -79,7 +78,6 @@ def _kafka_available() -> bool:
 
 INTEGRATION_GATES = {
     "database_read": _postgres_available,
-    "database_transform_write": _postgres_available,
     "cloud_storage_s3": _minio_available,
     "kafka_read": _kafka_available,
 }
@@ -147,48 +145,3 @@ def test_integration_example_runs(example_path: Path, monkeypatch):
 
     monkeypatch.chdir(REPO_ROOT)
     runpy.run_path(str(example_path), run_name="__main__")
-
-
-def test_database_tutorial_flow_yaml_runs(monkeypatch):
-    """The database tutorial's downloadable flow (docs/assets/flows/database_transform_write.yaml)
-    opens and runs end-to-end against the Postgres fixture, so the visual flow shown in the docs
-    can't drift from a working read -> enrich -> aggregate -> rank -> write pipeline. Skips when
-    Postgres is unavailable, mirroring the integration-example gate."""
-    if not _postgres_available():
-        pytest.skip("Postgres fixture is not available")
-
-    import flowfile as ff
-    from flowfile_core.flowfile.manage.io_flowfile import open_flow
-
-    # The flow reads/writes in reference mode, so the named connection must exist.
-    ff.create_database_connection_if_not_exists(
-        "analytics-postgres",
-        database_type="postgresql",
-        host=os.environ.get("DOCS_PG_HOST", "localhost"),
-        port=int(os.environ.get("DOCS_PG_PORT", 5433)),
-        database="testdb",
-        username="testuser",
-        password="testpass",
-    )
-
-    from flowfile_frame.database.connection_manager import get_current_user_id
-
-    monkeypatch.chdir(REPO_ROOT)
-    flow = open_flow(REPO_ROOT / "docs" / "assets" / "flows" / "database_transform_write.yaml")
-    flow.execution_location = "local"
-    # The flow file is user-agnostic (no user_id baked in); the app supplies the executing
-    # user at open time. Headless, we stamp it so reference-mode connections resolve.
-    current_uid = get_current_user_id()
-    for node in flow.nodes:
-        if getattr(node.setting_input, "user_id", "missing") is None:
-            node.setting_input.user_id = current_uid
-    result = flow.run_graph()
-    assert result.success, "; ".join(
-        f"node {s.node_id} ({s.node_name}): {s.error}" for s in result.node_step_result if not s.success and s.error
-    )
-
-    ranked = ff.read_database(
-        "analytics-postgres", schema_name="public", table_name="language_profitability"
-    ).collect()
-    assert ranked.height == 5
-    assert ranked["original_language"].to_list()[0] == "en"

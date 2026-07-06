@@ -6,7 +6,7 @@ The catalog is Flowfile's largest subsystem: namespaces, physical and virtual ta
 
 Architecturally the catalog is **two substrates and a service layer**. Metadata — every namespace, table row, schedule, grant — lives in the shared SQLite catalog DB. Table *data* lives outside the DB as Delta directories (locally or on S3). Around those, per-domain services implement features, and everything heavy routes to neighbors: full-frame reads to the worker, user code to kernels, timed execution to the embedded scheduler.
 
-![Catalog component graph: a thin HTTP router feeds the CatalogService facade, whose ring of per-domain feature services wraps the two substrates — a SQLite metadata DB and Delta table storage (local or S3). Around the outside the neighbors sit on labeled edges: the scheduler polls the shared DB, the worker collects over IPC, projects mirror metadata to git, and kernels write Delta straight to the storage volume while POSTing only metadata to core.](../assets/images/guides/catalog/architecture-overview.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: draw.io — component graph of the catalog. Center: the two substrates (SQLite metadata DB; Delta table storage local/S3). Ring: the feature services (namespaces, tables, virtual tables, SQL, previews, visualizations, dashboards, notebooks, schedules, runs, artifacts, engagement/stats) around CatalogService as the facade. Edges out to the neighbors: worker (spawned children collect + IPC), kernels (direct Delta write-back + metadata POST), embedded scheduler (polls shared DB), projects (one-way metadata projection to git). Router on top as the thin HTTP adapter. -->
 
 ## Metadata vs data
 
@@ -33,7 +33,7 @@ Authorization is the facade's job, implemented by `AccessResolver` (`catalog/acc
 - Resolution is **own-first, then group-granted**: accessible ids = rows the user owns ∪ ids granted to any of their groups, at `use` or `manage` level. A use-level grant is read-only — `writable_namespace_ids` requires ownership or a *manage* grant.
 - **Namespace grants cascade**: a grant on a catalog or schema reaches the tables, flows, visualizations, dashboards, notebooks, and artifacts inside it (one-level child expansion, memoized per request). Tree listing prunes invisible items but keeps "context-only" ancestor namespaces as breadcrumbs with redacted descriptions, and stamps every DTO with its effective access level.
 
-![Access-resolution decision flow: a request is restricted only when sharing is on and the caller is neither an admin nor the internal service principal; if unrestricted it gets full catalog access, otherwise resolution goes own-first, then group grants (use or manage), then a namespace grant that cascades to the tables, flows, and other resources inside it. Internal callers passing access=None bypass straight to unrestricted.](../assets/images/guides/catalog/access-resolution.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: draw.io — access-resolution decision flow: request enters → restricted? (sharing enabled ∧ not admin ∧ not _internal_service) → no: unrestricted; yes: own-first check → group grants (use/manage) → namespace-grant cascade expanding to contained resources; side branch showing internal constructors (scheduler, flow engine) passing access=None -->
 
 !!! warning "The delete invariant"
     Every resource-delete path must call `sharing.delete_grants_for_resource`. SQLite reuses rowids, so a surviving grant row would silently attach itself to a future, unrelated resource. The repository does this on every delete and an ORM `after_delete` backstop covers `session.delete` — but bulk `query.delete()` bypasses ORM events and must clean up explicitly.
@@ -49,7 +49,7 @@ A `catalog_writer` node in virtual mode registers a table that stores no data; w
 
 **Query virtual tables** (the SQL editor's "save as virtual table") store a `sql_query` instead of a plan. Resolution builds a `pl.SQLContext`, registering every referenced table and recursively resolving nested virtuals — bounded by `QUERY_VIRTUAL_TABLE_RECURSION_LIMIT = 5` plus a visited-set cycle check, with per-table grant checks in restricted mode.
 
-![Virtual-table resolution: a read checks whether the table is query-virtual (the SQLContext path, recursing up to five levels); otherwise, if the plan is optimized and its source Delta versions are still current, the stored plan is deserialized with no flow run (the fast lane); if stale — or the plan embeds cloud credentials that are never replayed — it falls to the slow lane, re-executing the producer flow's catalog_writer node on the worker. Either path yields a LazyFrame.](../assets/images/guides/catalog/virtual-table-resolution.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: draw.io — virtual-table resolution sequence: read request → is query-virtual? → SQLContext path (register refs, recurse ≤5); else optimized? → source versions current? → deserialize stored plan (fast lane); else/stale → open producer flow → execute the matching catalog_writer node (worker when offloaded) → LazyFrame. Annotate the cloud-plan exclusion forcing the slow lane. -->
 
 ## SQL execution
 
@@ -66,7 +66,7 @@ Table triggers fire through **two cooperating paths**:
 
 Fired schedules execute headlessly: `spawn_flow_run` creates the `FlowRun` row and spawns a subprocess (`flowfile run flow <path> --run-id <id>`, or the frozen-binary equivalent), which reports completion back through `shared.run_completion` — again with no core import. Maintenance operations (optimize/vacuum) deliberately keep `updated_at` unchanged so they never masquerade as data changes and fire triggers.
 
-![Trigger cascade: a catalog write to table X fires its watching schedules through the push path (committing updated_at before spawn as the double-fire guard), spawn_flow_run launches a headless subprocess whose own write to table Y cascades onward; a 30-second poll loop runs as a parallel safety net, with a 90-second advisory lock ensuring a single scheduler instance fires.](../assets/images/guides/catalog/trigger-cascade.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: draw.io — trigger cascade sequence: a catalog write updating table X → push path fires watching schedules (pre-commit guard noted) → spawn_flow_run → headless subprocess runs the flow → its catalog write updates table Y → downstream triggers cascade; the scheduler's 30s poll loop drawn as the parallel safety net, with the 90s stale-takeover lock in a corner -->
 
 ## Notebooks
 
@@ -82,7 +82,7 @@ Three design decisions worth knowing before touching this code:
 
 Cell editing gets Jedi-backed code intelligence from core's LSP routes (`flowfile_core/lsp/`) — completions run server-side against the kernel's environment, not in the browser.
 
-![Notebook anatomy: a CatalogNotebook DB row (metadata, namespace, default_kernel_id) is paired with its on-disk <owner>/<uuid>.notebook.yaml file, git-tracked for projects; its cells route by type — Python cells to the bound kernel container via flowfile_ctx, SQL cells through SqlService to the worker, Markdown rendered client-side — while an LSP sidecar feeds server-side completions into the editor.](../assets/images/guides/catalog/notebook-anatomy.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: draw.io — notebook anatomy: the CatalogNotebook DB row (metadata, namespace, default_kernel_id) paired with its on-disk <owner>/<uuid>.notebook.yaml; cells fanning out by type — Python cells into the bound kernel container (flowfile_ctx), SQL cells into SqlService→worker (schema-supported), Markdown rendered client-side; the LSP sidecar feeding completions into the editor; a git branch icon on the YAML file showing project versioning -->
 
 ## Neighbors
 

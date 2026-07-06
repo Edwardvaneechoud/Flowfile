@@ -43,16 +43,7 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
 
 1. Run `flowfile run ui` and click **Create** in the toolbar.
 2. Name the flow (for example `sales_analysis`) and create it.
-3. Open **Settings** (top right) and set the execution options for step-by-step previews (see the note below).
-
-!!! tip "See your data at every step"
-    To get a data preview under every node as you build this demo, match these flow settings:
-
-    - **Execution Mode:** Development
-    - **Execution location:** Local
-    - **Show details during execution:** on
-
-    ![Flow Settings for step-by-step previews](assets/images/quickstart/flow_settings.gif)
+3. Open **Settings** (top right) and check the execution mode is **Development** — that gives you data previews at every node while you build.
 
 <details markdown="1">
 <summary>See it: the empty flow</summary>
@@ -81,7 +72,7 @@ The walkthrough uses a committed sample: [`supermarket_sales.csv`](https://raw.g
 ### 3. Drop duplicates
 
 1. Drag **Drop duplicates** from the Transform section and connect **Read data** to it.
-2. Select all columns to compare whole rows.
+2. Leave the column selection empty to compare whole rows.
 3. Run — the sample data goes from 1,030 rows to 1,000.
 
 <details markdown="1">

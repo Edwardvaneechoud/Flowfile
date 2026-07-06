@@ -105,7 +105,3 @@ error-linux
 # Signing checklist holds real cert/notarization secrets — never commit
 flowfile_frontend/src-tauri/SIGNING_CHECKLIST.md
 /.claude/agents/
-
-# Docs planning/working notes (untracked)
-DOCS_IMAGE_TODO.md
-DOCS_DIAGRAMS_AGENT_PROMPT.md

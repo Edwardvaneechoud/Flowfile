@@ -4,7 +4,7 @@ The deliverable is insight: a number someone will act on, a chart in Friday's de
 
 The route below is Flowfile's answer to a problem every analyst knows: analysis that lives in files goes stale, forks into `final_v3 (2).xlsx`, and dies when you're on holiday. The alternative is a loop — **shape → publish → query → chart → refresh** — where each piece stays connected to the ones before it.
 
-![The analyst loop: a flow shapes raw data and publishes it into a catalog table, off which a SQL editor, a chart, and a schedule all hang; a refresh arrow loops from the schedule back to the flow, so the table and everything built on it stays current.](../assets/images/concepts/analyst-loop.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram of the analyst loop — a flow shaping raw data, publishing into a catalog table, with SQL editor + visualization + schedule all hanging off that one table; arrows back from "schedule" to the flow to show the refresh cycle -->
 
 ## 1. Get the data in
 
@@ -42,13 +42,13 @@ Here's the mental shift this route turns on. An exported file is a *snapshot*: t
 
 Practically: the question "which numbers did we report in March?" becomes a version lookup instead of an archaeology dig through mail attachments.
 
-![Two ways to hand off a result: on the left a file export forks into v1, v2, and final_v3 emailed around until every inbox differs; on the right one versioned catalog table with lineage back to its flow, read live by the SQL editor, a chart, and a colleague.](../assets/images/concepts/export-vs-publish.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: side-by-side mental model — left: file exports forking into copies (v1, v2, final_v3) mailed around; right: one catalog table with version history, lineage to its flow, and consumers (SQL, chart, colleague) reading the same table -->
 
 ## 4. Query and chart it
 
 Once results are tables, day-to-day analysis stops needing the canvas. The [SQL editor](visual-editor/catalog/sql-editor.md) queries and joins anything in the catalog; a query worth keeping becomes a [virtual table](visual-editor/catalog/virtual-tables.md) — a saved view that recomputes from current data on every read, so it can never be stale. [Visualizations](visual-editor/catalog/visualizations.md) chart tables or SQL results in Graphic Walker and are stored next to the data they describe.
 
-![One catalog table fanning out to its consumers — the SQL editor querying it, a chart built on it, and a saved virtual table derived from it: publish once, analyze many ways.](../assets/images/concepts/catalog-fan-out.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: one catalog table fanning out into its consumers — the SQL editor querying it, a Graphic Walker chart built on it, and a saved virtual table derived from it; conveys "publish once, analyze many ways" -->
 
 
 The same works from a notebook or script — this example (executed by CI on every commit) publishes an aggregate and reads it back with SQL:

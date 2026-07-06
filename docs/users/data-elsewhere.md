@@ -8,7 +8,7 @@ None of this route requires code: every source below is a node in the visual edi
 
 The founding idea: **credentials and pipelines are separate things.** A connection — host, credentials, region, auth method — is saved once under a name, [encrypted at rest](visual-editor/catalog/secrets.md). Flows then reference the *name*. That split is what makes everything downstream safe and repeatable: a flow file never contains a secret (safe to share, safe to version), rotating a credential is one edit instead of a hunt through every pipeline, and the same name works from the canvas and from Python because both read one store.
 
-![One encrypted connection store in the middle holds named connections — warehouse, data-lake, events — while flows on the canvas and Python scripts around it reference those connections by name only; rotating a credential once updates every reference.](../assets/images/concepts/connection-store.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram — one encrypted connection store in the middle (named connections: "warehouse", "data-lake", "events"); many flows and scripts around it referencing connections by name only; a rotated credential updating in one place -->
 
 Supported out of the box: databases (PostgreSQL, MySQL, SQLite), cloud storage (S3, Azure Data Lake, Google Cloud Storage — with auth methods from stored keys to ambient `aws-cli`/environment credentials), Kafka/Redpanda brokers, and Google Analytics 4 properties. [Connections](visual-editor/connections.md) covers every form field.
 
@@ -51,7 +51,7 @@ Results leave the way they came in, to whichever system consumes them: a Databas
 
 The pattern that compounds: one small flow per source — read, normalize, land in the catalog — each on a [schedule](visual-editor/catalog/schedules.md). Kafka topics [sync into catalog tables](connect/kafka.md#kafka-to-catalog-sync) the same way. Downstream flows trigger off the tables they consume, so a fresh sync cascades through everything built on it, and the catalog becomes the one place where scattered systems meet as queryable, versioned tables.
 
-![Postgres, S3, Kafka, and Google Analytics each feed a small scheduled sync flow that publishes into versioned catalog tables; downstream flows, charts, and dashboards hang off those tables via table-triggers and refresh in a cascade whenever fresh data lands.](../assets/images/concepts/sync-architecture.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: mental-model diagram of the sync architecture — Postgres, S3, Kafka, GA each feeding a small scheduled sync flow into catalog tables; downstream flows and charts hanging off the tables via table-triggers, showing the cascade -->
 
 ## 6. Working in a team
 
