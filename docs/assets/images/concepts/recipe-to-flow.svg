@@ -1,0 +1,152 @@
+<svg viewBox="0 0 1040 410" xmlns="http://www.w3.org/2000/svg" font-family="'Inter','Segoe UI',system-ui,sans-serif">
+  <defs>
+    <!-- Excalidraw-style hand-drawn wobble, applied to sketch strokes only (never text) -->
+    <filter id="rough" x="-6%" y="-6%" width="112%" height="112%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <!-- arrowhead for the flow edges -->
+    <marker id="edgeHead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#2DD5D3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- ================= LEFT: the recipe (warm, muted, hand-drawn) ================= -->
+  <g transform="rotate(-2 165 235)">
+    <!-- sketch strokes (roughened) -->
+    <g filter="url(#rough)" fill="none" stroke="#9aa0a6" stroke-linecap="round" stroke-linejoin="round">
+      <!-- paper -->
+      <rect x="46" y="78" width="238" height="312" rx="12" fill="#F4EDDE" stroke-width="2.4"/>
+      <!-- clipboard clamp -->
+      <rect x="132" y="66" width="66" height="20" rx="6" fill="#F4EDDE" stroke-width="2.2"/>
+      <circle cx="165" cy="76" r="4" stroke-width="2"/>
+      <!-- fork + knife (warm recipe cue) -->
+      <path d="M66 104 v22 M72 104 v22 M78 104 v22 M72 126 v14" stroke-width="1.8"/>
+      <path d="M90 104 c8 2 8 12 0 16 v22" stroke-width="1.8"/>
+      <!-- title underline -->
+      <path d="M62 140 q40 6 96 0 t62 2" stroke-width="2.2"/>
+      <!-- ingredient rows: quantity tick + wavy text line + checkbox -->
+      <g stroke-width="2">
+        <rect x="60" y="164" width="12" height="12" rx="2"/>
+        <path d="M80 170 h18" stroke-width="2.4"/>
+        <path d="M108 170 q30 5 60 0 t62 1" stroke-width="1.8"/>
+
+        <rect x="60" y="194" width="12" height="12" rx="2"/>
+        <path d="M80 200 h14" stroke-width="2.4"/>
+        <path d="M104 200 q34 5 68 0 t54 1" stroke-width="1.8"/>
+
+        <rect x="60" y="224" width="12" height="12" rx="2"/>
+        <path d="M80 230 h20" stroke-width="2.4"/>
+        <path d="M110 230 q28 5 56 0 t50 1" stroke-width="1.8"/>
+
+        <rect x="60" y="254" width="12" height="12" rx="2"/>
+        <path d="M80 260 h12" stroke-width="2.4"/>
+        <path d="M100 260 q32 5 64 0 t44 1" stroke-width="1.8"/>
+
+        <rect x="60" y="284" width="12" height="12" rx="2"/>
+        <path d="M80 290 h16" stroke-width="2.4"/>
+        <path d="M104 290 q26 5 52 0 t40 1" stroke-width="1.8"/>
+      </g>
+    </g>
+    <!-- crisp text on top -->
+    <text x="102" y="128" font-family="'Caveat','Segoe Print','Comic Sans MS',cursive" font-size="26" fill="#7f868c">Recipe</text>
+  </g>
+
+  <!-- ================= MORPH: grey lines gather into a cyan arrow ================= -->
+  <g filter="url(#rough)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M300 178 q18 8 26 22" stroke="#9aa0a6" stroke-width="1.8"/>
+    <path d="M300 205 h28" stroke="#9aa0a6" stroke-width="1.8"/>
+    <path d="M300 232 q18 -8 26 -22" stroke="#9aa0a6" stroke-width="1.8"/>
+    <path d="M326 205 h34" stroke="#2DD5D3" stroke-width="4" marker-end="url(#edgeHead)"/>
+  </g>
+
+  <!-- ================= RIGHT: the flow (clean, brand gradient, single line) ================= -->
+  <!-- edges (cyan carries the eye) -->
+  <g fill="none" stroke="#2DD5D3" stroke-width="2.6">
+    <path d="M505 200 C525 200 525 200 545 200" marker-end="url(#edgeHead)"/>
+    <path d="M675 200 C695 200 695 200 715 200" marker-end="url(#edgeHead)"/>
+    <path d="M845 200 C865 200 865 200 885 200" marker-end="url(#edgeHead)"/>
+  </g>
+
+  <!-- NODE 1 : Input  (cyan, dark ink) -->
+  <g>
+    <rect x="375" y="154" width="130" height="92" rx="14" fill="#2DD5D3"/>
+    <g transform="translate(391,170)" fill="none" stroke="#233588" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="0" y="1" width="20" height="16" rx="2"/>
+      <path d="M0 7 h20 M7 7 v10 M13 7 v10"/>
+    </g>
+    <text x="420" y="185" font-size="15" font-weight="700" fill="#233588">Input</text>
+    <g stroke="#233588" stroke-width="2" opacity="0.32" stroke-linecap="round">
+      <path d="M389 216 h102"/><path d="M389 230 h74"/>
+    </g>
+    <circle cx="375" cy="200" r="3.6" fill="#233588"/><circle cx="505" cy="200" r="3.6" fill="#233588"/>
+    <!-- drop to preview -->
+    <path d="M440 246 v22" stroke="#2DD5D3" stroke-width="2" stroke-dasharray="3 3"/>
+  </g>
+
+  <!-- NODE 2 : Filter  (cerulean, white ink) -->
+  <g>
+    <rect x="545" y="154" width="130" height="92" rx="14" fill="#26A8E0"/>
+    <g transform="translate(561,170)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1 2 H19 L12 10 V18 L8 16 V10 Z"/>
+    </g>
+    <text x="590" y="185" font-size="15" font-weight="700" fill="#ffffff">Filter</text>
+    <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
+      <path d="M559 216 h102"/><path d="M559 230 h68"/>
+    </g>
+    <circle cx="545" cy="200" r="3.6" fill="#ffffff"/><circle cx="675" cy="200" r="3.6" fill="#ffffff"/>
+    <path d="M610 246 v22" stroke="#2DD5D3" stroke-width="2" stroke-dasharray="3 3"/>
+  </g>
+
+  <!-- NODE 3 : Formula  (royal, white ink) -->
+  <g>
+    <rect x="715" y="154" width="130" height="92" rx="14" fill="#1D76D6"/>
+    <text x="729" y="187" font-size="20" font-style="italic" font-weight="600" fill="#ffffff" font-family="Georgia,serif">&#402;x</text>
+    <text x="762" y="185" font-size="15" font-weight="700" fill="#ffffff">Formula</text>
+    <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
+      <path d="M729 216 h102"/><path d="M729 230 h72"/>
+    </g>
+    <circle cx="715" cy="200" r="3.6" fill="#ffffff"/><circle cx="845" cy="200" r="3.6" fill="#ffffff"/>
+    <path d="M780 246 v22" stroke="#2DD5D3" stroke-width="2" stroke-dasharray="3 3"/>
+  </g>
+
+  <!-- NODE 4 : Output  (navy, white ink) -->
+  <g>
+    <rect x="885" y="154" width="130" height="92" rx="14" fill="#233588"/>
+    <g transform="translate(901,168)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 1 H12 L17 6 V21 H3 Z"/>
+      <path d="M10 9 V16 M7 13 L10 16 L13 13"/>
+    </g>
+    <text x="932" y="185" font-size="15" font-weight="700" fill="#ffffff">Output</text>
+    <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
+      <path d="M901 218 h102"/><path d="M901 232 h70"/>
+    </g>
+    <circle cx="885" cy="200" r="3.6" fill="#ffffff"/><circle cx="1015" cy="200" r="3.6" fill="#ffffff"/>
+    <path d="M950 246 v22" stroke="#2DD5D3" stroke-width="2" stroke-dasharray="3 3"/>
+  </g>
+
+  <!-- ================= mini table previews under each node ================= -->
+  <!-- reusable via explicit markup; header strip in the node's own colour -->
+  <g stroke-linejoin="round">
+    <!-- preview 1 (cyan) -->
+    <rect x="388" y="270" width="104" height="74" rx="7" fill="#ffffff" stroke="#2DD5D3" stroke-width="1.6"/>
+    <path d="M388 288 h104" stroke="#2DD5D3" stroke-width="1.6"/>
+    <rect x="388" y="270" width="104" height="18" rx="7" fill="#2DD5D3" opacity="0.85"/>
+    <g stroke="#2DD5D3" stroke-width="1" opacity="0.55"><path d="M423 288 v56"/><path d="M457 288 v56"/><path d="M388 306 h104"/><path d="M388 325 h104"/></g>
+
+    <!-- preview 2 (cerulean) -->
+    <rect x="558" y="270" width="104" height="74" rx="7" fill="#ffffff" stroke="#26A8E0" stroke-width="1.6"/>
+    <rect x="558" y="270" width="104" height="18" rx="7" fill="#26A8E0" opacity="0.9"/>
+    <g stroke="#26A8E0" stroke-width="1" opacity="0.55"><path d="M593 288 v56"/><path d="M627 288 v56"/><path d="M558 306 h104"/><path d="M558 325 h104"/></g>
+
+    <!-- preview 3 (royal) -->
+    <rect x="728" y="270" width="104" height="74" rx="7" fill="#ffffff" stroke="#1D76D6" stroke-width="1.6"/>
+    <rect x="728" y="270" width="104" height="18" rx="7" fill="#1D76D6" opacity="0.92"/>
+    <g stroke="#1D76D6" stroke-width="1" opacity="0.5"><path d="M763 288 v56"/><path d="M797 288 v56"/><path d="M728 306 h104"/><path d="M728 325 h104"/></g>
+
+    <!-- preview 4 (navy) -->
+    <rect x="898" y="270" width="104" height="74" rx="7" fill="#ffffff" stroke="#233588" stroke-width="1.6"/>
+    <rect x="898" y="270" width="104" height="18" rx="7" fill="#233588" opacity="0.95"/>
+    <g stroke="#233588" stroke-width="1" opacity="0.5"><path d="M933 288 v56"/><path d="M967 288 v56"/><path d="M898 306 h104"/><path d="M898 325 h104"/></g>
+  </g>
+</svg>

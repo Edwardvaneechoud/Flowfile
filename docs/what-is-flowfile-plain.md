@@ -30,7 +30,7 @@ Instead of exporting results to files that scatter across mailboxes and desktops
 
 This is the quiet shift in how the work feels: you stop producing *files* and start maintaining *a small library of living results*. The flow is the recipe; the catalog is the kitchen where the dishes stay warm.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the ecosystem loop with the catalog at the center — flows feeding tables into the catalog; SQL, charts, schedules, and teammates all drawing from it; a schedule arrow looping back to the flows; conveys "all roads lead here, and it compounds" -->
+![The catalog sits at the center: flows publish their tables into it, while the SQL editor, charts, and teammates all read from that one shared library — and a schedule refreshes the flows on a timer, so the whole loop keeps itself current.](assets/images/concepts/catalog-ecosystem-loop.svg)
 
 ## Never more complicated than your problem
 

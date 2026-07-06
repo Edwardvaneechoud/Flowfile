@@ -52,7 +52,7 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
     - **Execution location:** Local
     - **Show details during execution:** on
 
-    ![Flow Settings for step-by-step previews](assets/images/quickstart/flow_settings.png)
+    ![Flow Settings for step-by-step previews](assets/images/quickstart/flow_settings.gif)
 
 <details markdown="1">
 <summary>See it: the empty flow</summary>

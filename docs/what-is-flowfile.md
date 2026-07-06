@@ -4,7 +4,7 @@ Flowfile is an open-source data platform that bundles what is usually bought and
 
 It lives in a specific gap: **after the spreadsheet stops scaling, before a data-engineering team becomes the only option.** The work in that gap is always the same shape — pull data from files, databases, cloud storage, or Kafka streams; clean and combine it; keep the results current; let people query, chart, and build on them. Flowfile's founding bet is that all of it should be *reproducible by construction*: the work is saved as re-runnable flows, the results live as versioned tables in the catalog, and schedules keep both fresh without anyone pressing Run.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: positioning diagram — a spectrum from "spreadsheet" (left) to "data platform + engineering team" (right), with Flowfile occupying the wide middle; beneath it, the four bundled parts (canvas, catalog, scheduler, Python API) shown as one box, with sources (files, databases, cloud, Kafka) flowing in -->
+![Where Flowfile sits: a spectrum from a spreadsheet to a full data platform with an engineering team, with Flowfile in the wide middle bundling the canvas, catalog, scheduler, and Python API — files, databases, cloud storage, and Kafka flowing in.](assets/images/concepts/positioning-spectrum.svg)
 
 The same platform reads as two different products depending on who's looking — so this page forks:
 

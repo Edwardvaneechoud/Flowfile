@@ -18,8 +18,8 @@ result = (
 # --8<-- [end:example]
 
 by_city = {row["city"]: row for row in result.collect().to_dicts()}
-
-assert result.height == 5
+df = result.collect()
+assert df.height == 5
 assert set(by_city) == {"Bago", "Mandalay", "Naypyitaw", "Taunggyi", "Yangon"}
 
 assert round(by_city["Bago"]["total_income"], 2) == 1429.66
