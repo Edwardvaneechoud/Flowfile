@@ -91,7 +91,7 @@ flowfile run flow path/to/your_flow.yaml
 
 ## In Python
 
-The same three views with the [FlowFrame API](../../python-api/index.md) — clean once into `base`, then derive each view from it:
+The same three views with the [FlowFrame API](../../python-api/index.md) — clean once into `base`, then derive each view from it. Every source is built into one `graph` (note `flow_graph=graph` on the read and the lookup), so `ff.open_graph_in_editor(graph)` opens all three branches back in the visual editor:
 
 ```python
 --8<-- "docs/examples/sales_dashboard.py:example"

@@ -547,10 +547,11 @@ class FlowToPolarsConverter {
       return
     }
 
+    // rawData.data is columnar: data[i] holds all values for columns[i]
     const dataDict: Record<string, any[]> = {}
     for (let i = 0; i < rawData.columns.length; i++) {
       const col = rawData.columns[i]
-      dataDict[col.name] = rawData.data.map(row => row[i])
+      dataDict[col.name] = rawData.data[i] ?? []
     }
 
     this.addCode(`${varName} = pl.LazyFrame({`)

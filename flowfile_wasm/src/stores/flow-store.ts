@@ -2068,11 +2068,15 @@ result
         }
 
         case 'manual_input': {
+          // raw_data_format (core-imported flows) executes without CSV text;
+          // execute_manual_input prefers it and only falls back to _temp_content.
+          const rd = (node.settings as any)?.raw_data_format
+          const hasRawData = rd?.columns?.length > 0 && rd?.data?.length > 0
           const content = getTextContent(nodeId)
-          if (!content) {
+          if (!content && !hasRawData) {
             return failNode(nodeId, 'No data entered')
           }
-          setGlobal('_temp_content', content)
+          setGlobal('_temp_content', content ?? '')
           try {
             result = await runPythonWithResult(`
 import json
@@ -3071,10 +3075,9 @@ result
     }
 
     try {
-      const dataJson = JSON.stringify(data)
       const result = await pyodideStore.runPythonWithResult(`
 import json
-data = json.loads('''${dataJson.replace(/'/g, "\\'")}''')
+data = json.loads(${toPythonJson(data)})
 result = validate_flowfile_data(data)
 result
 `)

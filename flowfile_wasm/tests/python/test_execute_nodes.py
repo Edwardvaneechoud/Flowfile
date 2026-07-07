@@ -22,6 +22,29 @@ def output(node_id, input_id, delimiter=",", name="output.csv", file_type="csv")
     )
 
 
+def test_read_csv_parses_dates_for_format_date():
+    # try_parse_dates parity with flowfile_core: a date column must land as Date
+    # so a format_date formula (.dt.to_string under the hood) works instead of
+    # raising "to_string operation not supported for dtype str".
+    r = read_csv(1, "date,qty\n2019-01-05,2\n2019-02-11,1\n")
+    assert r["success"] is True
+    assert dict((c["name"], c["data_type"]) for c in r["schema"])["date"] == "Date"
+
+    f = engine.execute_formula(
+        2, 1, {"function": {"field": {"name": "month", "data_type": "String"}, "function": 'format_date([date], "%Y-%m")'}}
+    )
+    assert f["success"] is True, f.get("error")
+    assert engine.get_lazyframe(2).collect()["month"].to_list() == ["2019-01", "2019-02"]
+
+
+def test_read_csv_falls_back_when_date_parsing_would_error():
+    # Non-date content in a mixed column must not break the read; fallback yields
+    # a successful read (as strings) rather than surfacing a parse error.
+    r = read_csv(1, "id,name\n1,alice\n2,bob\n")
+    assert r["success"] is True
+    assert [c["name"] for c in r["schema"]] == ["id", "name"]
+
+
 def test_read_filter_select_output_chain():
     assert read_csv(1, "id,name,age\n1,alice,30\n2,bob,25\n3,carol,40\n")["success"] is True
 

@@ -5,14 +5,18 @@ import flowfile as ff
 
 SALES = "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates/supermarket_sales.csv"
 
+# One graph holds every node, so all three views land in a single flow you can open.
+graph = ff.create_flow_graph()
+
 # Clean and enrich once — every view below reads from this.
 base = (
-    ff.read_csv(SALES)
+    ff.read_csv(SALES, flow_graph=graph)
     .unique()
     .with_columns((ff.col("unit_price") * ff.col("quantity")).alias("revenue"))
 )
 
 # A small lookup: each product line's department and annual revenue target.
+# Passing flow_graph=graph keeps it on the same graph, so the join below doesn't fork a new one.
 targets = ff.from_dict(
     {
         "product_line": [
@@ -21,7 +25,8 @@ targets = ff.from_dict(
         ],
         "department": ["Homeware", "Apparel", "Grocery", "Leisure", "Personal care", "Electronics"],
         "annual_target": [55000, 50000, 52000, 50000, 48000, 45000],
-    }
+    },
+    flow_graph=graph,
 )
 
 # View 1 — product leaderboard, joined to targets and ranked by revenue.
@@ -47,6 +52,9 @@ monthly = (
     .agg(ff.col("revenue").sum().alias("monthly_revenue"))
     .sort("month")
 )
+
+# All three branches live in `graph` — open the whole flow in the visual editor:
+# ff.open_graph_in_editor(graph)
 # --8<-- [end:example]
 
 prod = products.collect()
