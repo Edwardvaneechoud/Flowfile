@@ -56,10 +56,7 @@ Excel's pivot table does two jobs at once; Flowfile separates them, and most of 
 
 ## 5. Where the spreadsheet runs out
 
-!!! warning "To review (Fable)"
-    Voice draft — toned down the scale-boast (kept the Excel row-limit contrast); finalize the wording.
-
-Excel stops at 1,048,576 rows and gets painful well before that; Flowfile runs on [Polars](https://pola.rs) and stays fast well past that ceiling. But the practical wins are about *work*, not just size:
+Excel stops at 1,048,576 rows and gets painful well before that; Flowfile runs on [Polars](https://pola.rs) and doesn't have that ceiling. But the practical wins are about *work*, not just size:
 
 - **Repeatability** — point the flow at next month's file and press Run. No redoing steps, no stale pivot caches, no "which cells did I fix by hand?"
 - **Transparency** — every transformation is a labeled node a colleague can read, not a formula hidden in column Q of a workbook only you understand.

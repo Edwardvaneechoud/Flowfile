@@ -93,7 +93,7 @@
   <text class="exlbl" x="566" y="231" text-anchor="middle">HTTP ExecuteRequest</text>
   <text class="exlbl" x="588" y="402" text-anchor="middle">HTTP ExecuteRequest</text>
   <text class="albl"  x="566" y="286" text-anchor="middle">log callback</text>
-  <text class="albl"  x="588" y="452" text-anchor="middle">log callback</text>
+  <text class="albl"  x="566" y="334" text-anchor="middle">log callback</text>
   <text class="albl"  x="650" y="548" text-anchor="middle">parquet read / write</text>
 
   <!-- ============ NODES ============ -->

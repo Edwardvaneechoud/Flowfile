@@ -228,27 +228,27 @@
 
   <!-- ============ EDGES ============ -->
 
-  <!-- (1) Core API -> Worker : PRIMARY cyan -->
-  <path class="arwc" d="M500,312 V420 H420 V452" marker-end="url(#ahc)"/>
-  <text class="nlc" x="488" y="352" text-anchor="end">&#9312; run flow / execute graph</text>
-  <text class="albl" x="488" y="368" text-anchor="end">serialize LazyFrame &#8594; POST</text>
+  <!-- (1) Core API -> Worker : PRIMARY cyan (straight drop) -->
+  <path class="arwc" d="M460,312 V452" marker-end="url(#ahc)"/>
+  <text class="nlc" x="448" y="352" text-anchor="end">&#9312; run flow / execute graph</text>
+  <text class="albl" x="448" y="368" text-anchor="end">serialize LazyFrame &#8594; POST</text>
 
-  <!-- Worker -> Core API : Arrow IPC return (dotted) -->
-  <path class="dash" d="M470,452 V432 H575 V312" marker-end="url(#ah)"/>
-  <text class="albl" x="588" y="418">Arrow IPC file paths</text>
+  <!-- Worker -> Core API : Arrow IPC return (dotted, straight rise beside the primary) -->
+  <path class="dash" d="M510,452 V314" marker-end="url(#ah)"/>
+  <text class="albl" x="522" y="395">Arrow IPC file paths</text>
 
   <!-- (2)+(3) SqlService -> Worker : one shared path, used by the SQL editor and by notebook SQL cells -->
-  <path class="arw" d="M229,312 V436 H321 V452" marker-end="url(#ah)"/>
-  <text class="nl" x="188" y="374" text-anchor="end">&#9313; execute SQL</text>
-  <text class="nl" x="188" y="391" text-anchor="end">&#9314; notebook SQL cells</text>
+  <path class="arw" d="M300,312 V452" marker-end="url(#ah)"/>
+  <text class="nl" x="288" y="374" text-anchor="end">&#9313; execute SQL</text>
+  <text class="nl" x="288" y="391" text-anchor="end">&#9314; notebook SQL cells</text>
 
-  <!-- (3) Kernel Manager -> Kernel container : notebook Python cells -->
-  <path class="arw" d="M818,312 V400 H800 V452" marker-end="url(#ah)"/>
-  <text class="nl" x="836" y="392">&#9314; notebook &#8212; Python cells</text>
+  <!-- (3) Kernel Manager -> Kernel container : notebook Python cells (straight drop) -->
+  <path class="arw" d="M818,312 V452" marker-end="url(#ah)"/>
+  <text class="nl" x="830" y="392">&#9314; notebook &#8212; Python cells</text>
 
-  <!-- Kernel container -> Core API : write Delta + POST metadata (solid return) -->
-  <path class="arw" d="M718,452 V360 H642 V314" marker-end="url(#ah)"/>
-  <text class="albl" x="680" y="380" text-anchor="middle">write Delta + POST metadata</text>
+  <!-- Kernel container -> Core API : write Delta + POST metadata (elbow above the label zone) -->
+  <path class="arw" d="M718,452 V348 H640 V314" marker-end="url(#ah)"/>
+  <text class="albl" x="679" y="340" text-anchor="middle">write Delta + POST metadata</text>
 
   <!-- (4) Scheduler loop -> Headless flow run : spawn_flow_run -->
   <path class="arw" d="M1060,312 V452" marker-end="url(#ah)"/>

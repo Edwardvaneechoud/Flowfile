@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1040 410" xmlns="http://www.w3.org/2000/svg" font-family="'Inter','Segoe UI',system-ui,sans-serif">
+<svg viewBox="0 0 1040 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A hand-drawn recipe card on warm paper morphs into a four-node Flowfile flow — Read data, Filter data, Formula, Write data — with a small data preview beneath each node: the work itself is the recipe, written down once and re-runnable with one click." font-family="'Inter','Segoe UI',system-ui,sans-serif">
   <defs>
     <!-- Excalidraw-style hand-drawn wobble, applied to sketch strokes only (never text) -->
     <filter id="rough" x="-6%" y="-6%" width="112%" height="112%">
@@ -57,7 +57,7 @@
     <path d="M300 178 q18 8 26 22" stroke="#9aa0a6" stroke-width="1.8"/>
     <path d="M300 205 h28" stroke="#9aa0a6" stroke-width="1.8"/>
     <path d="M300 232 q18 -8 26 -22" stroke="#9aa0a6" stroke-width="1.8"/>
-    <path d="M326 205 h34" stroke="#2DD5D3" stroke-width="4" marker-end="url(#edgeHead)"/>
+    <path d="M326 205 h46" stroke="#2DD5D3" stroke-width="4" marker-end="url(#edgeHead)"/>
   </g>
 
   <!-- ================= RIGHT: the flow (clean, brand gradient, single line) ================= -->
@@ -79,7 +79,7 @@
       <line x1="50" y1="68" x2="50" y2="82"/>
       <polyline points="43,75 50,82 57,75"/>
     </g>
-    <text x="422" y="185" font-size="15" font-weight="700" fill="#233588">Input</text>
+    <text x="422" y="185" font-size="15" font-weight="700" fill="#233588">Read data</text>
     <g stroke="#233588" stroke-width="2" opacity="0.32" stroke-linecap="round">
       <path d="M389 216 h102"/><path d="M389 230 h74"/>
     </g>
@@ -95,7 +95,7 @@
       <path d="M28 28 H72 L56 50 V66 L44 72 V50 Z" fill="#ffffff" fill-opacity="0.16"/>
       <circle cx="50" cy="80" r="2.6" fill="#ffffff" stroke="none"/>
     </g>
-    <text x="592" y="185" font-size="15" font-weight="700" fill="#ffffff">Filter</text>
+    <text x="592" y="185" font-size="15" font-weight="700" fill="#ffffff">Filter data</text>
     <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
       <path d="M559 216 h102"/><path d="M559 230 h68"/>
     </g>
@@ -128,7 +128,7 @@
       <line x1="50" y1="26" x2="50" y2="58"/>
       <polyline points="40,48 50,59 60,48"/>
     </g>
-    <text x="932" y="185" font-size="15" font-weight="700" fill="#ffffff">Output</text>
+    <text x="932" y="185" font-size="15" font-weight="700" fill="#ffffff">Write data</text>
     <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
       <path d="M901 218 h102"/><path d="M901 232 h70"/>
     </g>

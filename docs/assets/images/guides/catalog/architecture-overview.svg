@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" role="img" aria-label="Catalog architecture in two layers. A thin HTTP router feeds the CatalogService facade. Its per-domain feature services — namespaces, tables, virtual tables, SQL, previews, visualizations, dashboards, notebooks, schedules, runs, artifacts and engagement — are how you create and query data. Beneath them a distinct storage layer holds the two substrates that persist it: a SQLite metadata DB (rows and grants) and Delta table storage (local or S3, one directory per table), linked by file_path. The scheduler and worker attach to the services; projects and kernels attach to storage.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" role="img" aria-label="Catalog architecture in two layers. A thin HTTP router feeds the CatalogService facade. Its per-domain feature services — organize: namespaces, flows, tables, virtual tables, artifacts; analyze: SQL, previews, visualizations, dashboards, notebooks; operate: schedules, runs, favorites, stats — are how you create and query data. Beneath them a distinct storage layer holds the two substrates that persist it: a SQLite metadata DB (rows and grants) and Delta table storage (local or S3, one directory per table), linked by file_path. The scheduler and worker attach to the services; projects and kernels attach to storage.">
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
@@ -122,7 +122,7 @@
     <text class="s" x="108" y="313">embedded &#183; shared DB</text>
   </g>
   <path class="arw" d="M222,300 L298,300" marker-end="url(#ah)"/>
-  <text class="albl" x="260" y="293" text-anchor="middle">polls shared DB</text>
+  <text class="ss" x="260" y="293" text-anchor="middle">polls shared DB</text>
 
   <!-- Worker (attaches to services) -->
   <g>
@@ -155,6 +155,6 @@
     <text class="s" x="846" y="508">sandboxed code</text>
   </g>
   <path class="arw" d="M776,496 L702,496" marker-end="url(#ah)"/>
-  <text class="albl" x="739" y="483" text-anchor="middle">metadata &#8594; core</text>
-  <text class="albl" x="739" y="496" text-anchor="middle">Delta &#8594; volume</text>
+  <text class="ss" x="739" y="490" text-anchor="middle">metadata &#8594; core</text>
+  <text class="ss" x="739" y="508" text-anchor="middle">Delta &#8594; volume</text>
 </svg>

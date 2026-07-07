@@ -5,7 +5,12 @@ This example cleans a raw sales export once, then forks into three views: a prod
 **Flow:** [`sales_dashboard.yaml`](https://github.com/edwardvaneechoud/Flowfile/blob/main/data/templates/flows/sales_dashboard.yaml) ·
 In-app: Create → From template → "Sales dashboard: rank, pivot, and trend" · Data: `data/templates/supermarket_sales.csv`
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the finished 15-node dashboard on the canvas, showing the three-way fork after the revenue Formula node and the Join that brings targets into the leaderboard branch -->
+<details markdown="1" open>
+<summary>See it: the finished dashboard on the canvas</summary>
+
+![The finished sales dashboard on the canvas](../../../assets/images/guides/sales_dashboard/dashboard_overview.png)
+
+</details>
 
 ## The data
 
@@ -32,6 +37,13 @@ The flow shares one cleaned, enriched stream and branches it three ways.
 2. **Drop duplicates** — Unique with strategy `any` and no key columns, removing the 30 fully-identical rows.
 3. **Formula** — adds `revenue` = `[unit_price] * [quantity]`. This node has three outgoing connections; each branch below reads from it.
 
+<details markdown="1">
+<summary>See it: the enriched trunk and its three-way fork</summary>
+
+![The trunk forking into three branches](../../../assets/images/guides/sales_dashboard/trunk_fork.png)
+
+</details>
+
 **Branch 1 — product leaderboard vs target:**
 
 4. **Group by** — groups by `product_line`, aggregating `revenue` (sum → `total_revenue`), `invoice_id` (n-unique → `orders`), and `quantity` (sum → `units_sold`).
@@ -41,10 +53,24 @@ The flow shares one cleaned, enriched stream and branches it three ways.
 8. **Sort** — `total_revenue` descending, so the best-selling line is on top.
 9. **Explore data** — opens the ranking in the Graphic Walker explorer.
 
+<details markdown="1">
+<summary>See it: the leaderboard joined to its targets</summary>
+
+![Product leaderboard joined to targets](../../../assets/images/guides/sales_dashboard/branch_leaderboard.png)
+
+</details>
+
 **Branch 2 — revenue by city and customer type:**
 
 10. **Pivot** — index `city`, pivot column `customer_type`, values `revenue`, aggregation `sum`. This reshapes the data into one row per city with a `Member` and a `Normal` column.
 11. **Explore data** — opens the matrix.
+
+<details markdown="1">
+<summary>See it: the city × customer-type pivot</summary>
+
+![The Pivot node selected on the canvas, its settings panel showing index key city, pivot column customer_type, value column revenue with sum aggregation, and the data preview underneath showing one row per city with Member and Normal revenue columns.](../../../assets/images/guides/sales_dashboard/branch_pivot.png)
+
+</details>
 
 **Branch 3 — monthly trend:**
 
@@ -52,6 +78,13 @@ The flow shares one cleaned, enriched stream and branches it three ways.
 13. **Group by** — groups by `month`, summing `revenue` → `monthly_revenue`.
 14. **Sort** — `month` ascending, so the months read in order.
 15. **Explore data** — opens the trend.
+
+<details markdown="1">
+<summary>See it: the monthly trend branch</summary>
+
+![Monthly revenue trend branch](../../../assets/images/guides/sales_dashboard/branch_trend.png)
+
+</details>
 
 ## Run it
 
@@ -77,6 +110,13 @@ flowfile run flow path/to/your_flow.yaml
 | Health and beauty | 47912.69 | 158 | 878 | Personal care | 48000 | 99.82 |
 | Electronic accessories | 46463.40 | 155 | 869 | Electronics | 45000 | 103.25 |
 
+<details markdown="1">
+<summary>See it: the leaderboard charted in Graphic Walker</summary>
+
+![Leaderboard-vs-target bar chart](../../../assets/images/guides/sales_dashboard/result_leaderboard.png)
+
+</details>
+
 **Revenue by city and customer type** (Branch 2):
 
 | `city` | `Member` | `Normal` |
@@ -87,7 +127,21 @@ flowfile run flow path/to/your_flow.yaml
 | Taunggyi | 31751.35 | 35469.53 |
 | Yangon | 30491.67 | 33509.60 |
 
+<details markdown="1">
+<summary>See it: the revenue matrix charted</summary>
+
+![City revenue matrix chart](../../../assets/images/guides/sales_dashboard/result_matrix.png)
+
+</details>
+
 **Monthly trend** (Branch 3) runs from `2024-01` at 29817.92 to `2024-12` at 29917.37, one row per month.
+
+<details markdown="1">
+<summary>See it: the monthly trend line</summary>
+
+![Monthly revenue trend line](../../../assets/images/guides/sales_dashboard/result_trend.png)
+
+</details>
 
 ## In Python
 

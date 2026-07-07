@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 540" role="img" aria-label="Two side-by-side copies of the same Flowfile flow: in Development mode every node glows in the brand gradient with a small data preview beneath it, while in Performance mode only the path to the output is lit, one exploratory branch is greyed out, and one step is short-circuited by a cache and served from stored data.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 470" role="img" aria-label="Two side-by-side copies of the same Flowfile flow: in Development mode every node glows in the brand gradient with a small data preview beneath it, while in Performance mode only the path to the output is lit, one exploratory branch is greyed out, and one step is short-circuited by a cache and served from stored data.">
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2DD5D3"/>
@@ -43,8 +43,8 @@
   <!-- =================================================================== -->
   <!-- ============================ PANELS ============================== -->
   <!-- =================================================================== -->
-  <rect class="panel" x="20"  y="52" width="448" height="470" rx="18"/>
-  <rect class="panel" x="472" y="52" width="448" height="470" rx="18"/>
+  <rect class="panel" x="20"  y="52" width="448" height="400" rx="18"/>
+  <rect class="panel" x="472" y="52" width="448" height="400" rx="18"/>
 
   <!-- ================= DEVELOPMENT header ================= -->
   <rect x="38" y="68" width="34" height="34" rx="9" fill="#eef0f2"/>
@@ -71,7 +71,7 @@
   <!-- =================================================================== -->
   <path class="arw" d="M116,250 L164,250" marker-end="url(#ah)"/>
   <path class="arw" d="M204,242 L269,213" marker-end="url(#ah)"/>
-  <path class="arw" d="M204,259 L269,290" marker-end="url(#ah)"/>
+  <path class="arw" d="M204,259 L270,297" marker-end="url(#ah)"/>
   <path class="arw" d="M309,205 L377,205" marker-end="url(#ah)"/>
 
   <!-- ==================== DEVELOPMENT nodes =========================== -->
@@ -109,7 +109,7 @@
     <path d="M4.5,5 H19.5 L13.5,12.5 V18.5 L10.5,20.5 V12.5 Z"/>
   </g>
   <g transform="translate(194,227)"><circle cx="7" cy="7" r="8" fill="#ffffff" stroke="#1D76D6" stroke-width="1.2"/><g class="icb" stroke-width="1.3"><path d="M2.4,7 C4,4.6 10,4.6 11.6,7 C10,9.4 4,9.4 2.4,7 Z"/><circle cx="7" cy="7" r="1.5"/></g></g>
-  <text class="nm" x="185" y="284" text-anchor="middle">Filter</text>
+  <text class="nm" x="185" y="284" text-anchor="middle">Filter data</text>
   <g transform="translate(163,290)">
     <rect class="pc" x="0" y="0" width="44" height="26" rx="4"/>
     <rect class="ph" x="1.4" y="1.4" width="41.2" height="6.6" rx="2.5"/>
@@ -190,7 +190,7 @@
     <polyline points="8,11 12,15.5 16,11"/>
   </g>
   <g transform="translate(407,182)"><circle cx="7" cy="7" r="8" fill="#ffffff" stroke="#1D76D6" stroke-width="1.2"/><g class="icb" stroke-width="1.3"><path d="M2.4,7 C4,4.6 10,4.6 11.6,7 C10,9.4 4,9.4 2.4,7 Z"/><circle cx="7" cy="7" r="1.5"/></g></g>
-  <text class="nm" x="398" y="239" text-anchor="middle">Output</text>
+  <text class="nm" x="398" y="239" text-anchor="middle">Write data</text>
   <g transform="translate(376,245)">
     <rect class="pc" x="0" y="0" width="44" height="26" rx="4"/>
     <rect class="ph" x="1.4" y="1.4" width="41.2" height="6.6" rx="2.5"/>
@@ -208,7 +208,7 @@
     </g>
   </g>
 
-  <text class="cap" x="244" y="500" text-anchor="middle">Run, look inside any node, adjust &#183; repeat</text>
+  <text class="cap" x="244" y="430" text-anchor="middle">Run, look inside any node, adjust &#183; repeat</text>
 
   <!-- =================================================================== -->
   <!-- ==================== PERFORMANCE arrows ========================== -->
@@ -235,7 +235,7 @@
   <g class="icw" transform="translate(625,238)">
     <path d="M4.5,5 H19.5 L13.5,12.5 V18.5 L10.5,20.5 V12.5 Z"/>
   </g>
-  <text class="nm" x="637" y="284" text-anchor="middle">Filter</text>
+  <text class="nm" x="637" y="284" text-anchor="middle">Filter data</text>
 
   <!-- Formula (exploratory branch, pruned / greyed) -->
   <circle cx="740" cy="308" r="21" fill="#e9edf1" stroke="#cdd4dc" stroke-width="1.3"/>
@@ -282,7 +282,7 @@
     <line x1="12" y1="3.5" x2="12" y2="15"/>
     <polyline points="8,11 12,15.5 16,11"/>
   </g>
-  <text class="nm" x="850" y="239" text-anchor="middle">Output</text>
+  <text class="nm" x="850" y="239" text-anchor="middle">Write data</text>
 
-  <text class="cap" x="696" y="500" text-anchor="middle">Prune the unused branch &#183; reuse the cached step</text>
+  <text class="cap" x="696" y="430" text-anchor="middle">Prune the unused branch &#183; reuse the cached step</text>
 </svg>

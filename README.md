@@ -38,7 +38,7 @@ Build pipelines on a visual canvas, run them, and export the graph as plain Pyth
 Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a SQL editor with embedded viz, flow parameters, sandboxed Python kernels, and a built-in scheduler.
 
 <div align="center">
-  <img src=".github/images/ai-overview.gif" alt="Flowfile AI assistant building a pipeline on the canvas" width="800"/>
+  <img src="docs/assets/images/ai/ai-overview.gif" alt="Flowfile AI assistant building a pipeline on the canvas" width="800"/>
   <br>
   <sub>The AI assistant building a pipeline on the canvas — describe what you want, get a runnable flow.</sub>
 </div>

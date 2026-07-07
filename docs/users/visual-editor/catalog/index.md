@@ -89,7 +89,7 @@ A default catalog (`General`) and schema (`default`) are created automatically o
 
 ## Tabs
 
-The sidebar offers four tabs:
+The Catalog view is split into tabs:
 
 | Tab | Description |
 |-----|-------------|
@@ -97,6 +97,10 @@ The sidebar offers four tabs:
 | **Favorites** | Your starred flows and tables for quick access |
 | **Run History** | Chronological list of all flow executions |
 | **Schedules** | Manage automated flow schedules — see [Schedules](schedules.md) |
+| **SQL** | Query catalog tables — see [SQL Editor](sql-editor.md) |
+| **Notebook** | Notebooks stored next to the data — see [Notebooks](notebooks.md) |
+| **Visuals** | Charts and dashboards built on catalog tables — see [Visualizations](visualizations.md) |
+| **APIs** | Publish flows as HTTP endpoints and manage their keys — see [Serve flows as APIs](#serve-flows-as-apis) |
 
 ---
 
@@ -306,18 +310,19 @@ Notebooks live in the catalog next to the tables they analyze: Python and Markdo
 
 ## Serve flows as APIs
 
-!!! warning "To review (Fable)"
-    New section (drafted by Opus) — verify the UI-flow specifics and the register-2 voice.
+Publish a registered flow as an HTTP endpoint so other systems can run it on demand. A published flow is served at `GET /api/data/{slug}`, which runs the flow synchronously and returns the output of its **API response** node as JSON.
 
-Publish a registered flow as an HTTP endpoint so other systems can run it on demand. A published flow is served at `GET /api/data/{slug}`, which runs the flow synchronously and returns the output of its **API Response** node as JSON.
+- The flow must contain exactly one **API response** node — it marks the dataset returned to the caller.
+- Endpoints are **API-key authenticated**. Keys belong to an *API consumer* — a client account that can be granted several published flows, so one key can call all of them. Publishing and key management live in the catalog's **APIs** tab.
+- Flow parameters surface as request parameters, so a single published flow can serve many variations.
 
-- The flow must contain an **API Response** node — it marks the dataset returned to the caller.
-- Endpoints are **API-key authenticated**: publish or unpublish a flow, and mint or revoke its keys, from the app. One key can call several published flows (an *API consumer*).
-- Parameters declared on the flow surface as request parameters, so a single published flow can serve many variations.
+The flow you build and test in the designer becomes a data service other systems can call — a dashboard, a scheduled job, another application.
 
-The flow you build and test in the designer becomes a reusable data service — callable from a dashboard, a scheduled job, or another application.
+![Setting up a flow to serve as an API: declaring the flow parameters, filtering by them in the flow, then configuring the API response node.](../../../assets/images/guides/catalog/set-up-for-api.gif)
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the flow's API publishing panel — the publish toggle, the /api/data/{slug} endpoint URL, and its API keys -->
+Once published, the flow's detail panel shows the **Expose as API** section: the live endpoint URL, the query parameters inherited from the flow's parameters, API-key management, and a **Try it** runner that calls the endpoint with your own values.
+
+![The Expose as API panel of a published flow: the enabled GET endpoint URL, a query-parameters table inherited from the flow parameters, API keys with create and revoke actions, and a Try it section that runs the endpoint with test values.](../../../assets/images/guides/catalog/flow-api-panel.png)
 
 ---
 

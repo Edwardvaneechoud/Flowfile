@@ -43,7 +43,7 @@ Authorization is the facade's job, implemented by `AccessResolver` (`catalog/acc
 A `catalog_writer` node in virtual mode registers a table that stores no data; what gets stored decides how reads resolve later:
 
 - At registration, `FlowGraph.check_flow_laziness` walks the writer's upstream using each node's declared `laziness` (`configs/node_store/nodes.py`). If everything is lazy *and* no source is on cloud storage, the write is **optimized**: the LazyFrame plan is serialized into `CatalogTable.serialized_lazy_frame`, together with the Delta versions of its source tables (`source_table_versions`) and a human-readable `polars_plan`.
-- _[Fable review — rewrote lazy semantics; verify technical register]_ **Optimized resolution** deserializes that stored plan — no flow run — after `check_source_versions_current` confirms every recorded source Delta version still matches; staleness falls through to the standard path.
+- **Optimized resolution** deserializes that stored plan — no flow run — after `check_source_versions_current` confirms every recorded source Delta version still matches; a stale version falls through to the standard path.
 - **Standard resolution** opens the producer flow, finds the `catalog_writer` node whose configured `table_name` matches the table's name (that name-keying is what lets one producer flow back several virtual tables), and **re-runs just that node** (performance mode; on the worker when offload is enabled) to rebuild its output. That output is returned **lazy** (`flowframe.lazy = True`) — re-running the flow *reconstructs the LazyFrame plan*, it does not materialize or store data. So the two paths differ only in how they obtain the plan (deserialize a stored one vs. re-execute the flow to rebuild it); both yield a `LazyFrame`, and nothing collects until an actual `.collect()` — a write, a visualization, or a catalog query — forces it, and then only for the parts of the plan that can't stay lazy.
 - **Serialized cloud plans are never replayed**: a serialized cloud scan embeds decrypted `storage_options`, so `serialized_frame_uses_cloud` forces such tables onto the standard path permanently.
 
@@ -86,10 +86,7 @@ Cell editing gets Jedi-backed code intelligence from core's LSP routes (`flowfil
 
 ## Serving flows as APIs
 
-!!! warning "To review (Fable)"
-    New section — verify it belongs on this page and the technical register.
-
-A registered flow can be **published** as an HTTP data endpoint (`routes/flow_api.py`): the public `data_router` serves `GET /api/data/{slug}` (API-key auth), runs the flow synchronously, and returns the output of its single `api_response` node as JSON. Publishing and per-endpoint keys are managed under `/flow-api` (JWT); one key can front several published flows as an *API consumer* (`routes/api_consumers.py`). A call drives the registered flow like any other run — Core builds the LazyFrame and offloads to the worker (path ⑤ in the [process map](architecture.md)).
+A registered flow can be **published** as an HTTP data endpoint (`routes/flow_api.py`): the public `data_router` serves `GET /api/data/{slug}` (API-key auth), runs the flow synchronously, and returns the output of its single `api_response` node as JSON. Publishing and keys are managed under `/flow-api` (JWT); keys belong to an *API consumer* — a service account that can be granted several published flows (`routes/api_consumers.py`). A call drives the registered flow like any other run — Core builds the LazyFrame and offloads to the worker (path ⑤ in the [process map](architecture.md)).
 
 ## Neighbors
 

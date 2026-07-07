@@ -57,7 +57,6 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
 <details markdown="1">
 <summary>See it: the empty flow</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: refresh this shot — current UI, empty canvas right after creating the flow -->
 ![The empty flow after creation](assets/images/quickstart/start_page.png)
 
 </details>
@@ -73,7 +72,6 @@ The walkthrough uses a committed sample: [`supermarket_sales.csv`](https://raw.g
 <details markdown="1">
 <summary>See it: the data preview after reading</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: refresh this shot — Read data node selected with supermarket_sales.csv rows in the preview panel -->
 ![Preview after reading the CSV](assets/images/quickstart/read_csv.png)
 
 </details>
@@ -87,7 +85,6 @@ The walkthrough uses a committed sample: [`supermarket_sales.csv`](https://raw.g
 <details markdown="1">
 <summary>See it: after deduplication</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: refresh this shot — Drop duplicates node connected to Read data, preview showing 1,000 rows -->
 ![After Drop duplicates](assets/images/quickstart/after_drop_duplicates.png)
 
 </details>
@@ -106,7 +103,6 @@ The walkthrough uses a committed sample: [`supermarket_sales.csv`](https://raw.g
 <details markdown="1">
 <summary>See it: after the filter</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: refresh this shot — Filter data node in advanced mode with [quantity] > 7, preview showing 314 rows -->
 ![After the quantity filter](assets/images/quickstart/after_filter.png)
 
 </details>
@@ -120,7 +116,6 @@ The walkthrough uses a committed sample: [`supermarket_sales.csv`](https://raw.g
 <details markdown="1">
 <summary>See it: the grouped result and the complete flow</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: refresh both shots — Group by node result with total_income/median_income columns, and the complete four-node flow on the canvas -->
 ![Data after Group by](assets/images/quickstart/after_group_by.png)
 
 ![The complete flow](assets/images/quickstart/result.png)
@@ -159,7 +154,6 @@ ff.open_graph_in_editor(result.flow_graph)
 <details markdown="1">
 <summary>See it: the code-built pipeline on the canvas</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: refresh this shot — the sales pipeline opened in the designer via open_graph_in_editor -->
 ![The pipeline opened in the visual editor](assets/images/quickstart/python_example.png)
 
 </details>

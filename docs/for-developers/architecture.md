@@ -4,7 +4,7 @@ Flowfile's architecture pairs visual design with data processing across three se
 
 ## Process & execution map
 
-Flowfile runs as several cooperating processes. The Frontend talks only to Core; Core orchestrates everything else and never materializes full datasets itself — heavy compute is offloaded. The diagram shows every process and how the four kinds of execution flow through them.
+Flowfile runs as several cooperating processes. The Frontend talks only to Core; Core orchestrates everything else and never materializes full datasets itself — heavy compute is offloaded. The diagram shows every process and how the five kinds of execution flow through them.
 
 ![Process and execution map: the Frontend talks only to the Core process (FastAPI :63578), which houses the Core API, SqlService, Kernel Manager, and the embedded Scheduler loop. Five execution paths fan out — ① run a flow (Core serializes LazyFrames and POSTs to the Worker, which returns Arrow-IPC file paths), ② execute SQL on the Worker, ③ run notebook cells (Python in a kernel container, SQL on the Worker), ④ scheduled runs (the Scheduler polls the SQLite catalog DB for due triggers and spawns a detached headless subprocess), and ⑤ serving a published flow as an API endpoint (a GET /api/data/{slug} with an API key runs it and returns JSON). Datasets persist to Delta tables (local or S3); metadata to the SQLite catalog DB.](../assets/images/architecture/process-map.svg)
 
@@ -14,7 +14,7 @@ The five execution paths:
 2. **Execute SQL** (SQL editor and catalog SQL) — Core's `SqlService` registers the catalog tables and runs the query on the **Worker**.
 3. **Execute a notebook** — Python cells run in the bound **kernel container** (which writes results to Delta and POSTs metadata back to Core); SQL cells take path ②; Markdown renders client-side.
 4. **Scheduled run** — the embedded **scheduler** loop (only when `FLOWFILE_SCHEDULER_ENABLED`) polls the catalog DB for due triggers and launches a detached **headless subprocess** that runs the flow locally.
-5. _[Fable review — new 5th path (API serving); verify]_ **Serve a flow as an API** — a registered flow is *published* (managed under `/flow-api`, JWT); a public, API-key-authenticated `GET /api/data/{slug}` then runs it synchronously and returns the output of its single `api_response` node as JSON. One API key can call several published flows (`routes/flow_api.py`, `routes/api_consumers.py`).
+5. **Serve a flow as an API** — a registered flow is *published* under `/flow-api` (JWT-managed); the public, API-key-authenticated `GET /api/data/{slug}` then runs it synchronously and returns the output of its single `api_response` node as JSON. One key can call several published flows (`routes/flow_api.py`, `routes/api_consumers.py`).
 
 The **scheduler is not a separate service** — it's a loop inside the Core process. The separate OS processes are the Frontend, Core, Worker (plus its compute children), the kernel containers, and each spawned headless run.
 

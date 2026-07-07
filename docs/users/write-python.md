@@ -53,15 +53,12 @@ The editor has code completions, and the same kernel machinery powers the [Pytho
 
 ![A catalog notebook open next to the catalog tree: cells with execution counters, one reading a catalog table via flowfile_ctx, and the interactive explorer rendering below.](../assets/images/guides/notebooks/catalog-notebook.png)
 
-!!! warning "To review (Fable)"
-    Rewrote §6 (facts verified: expressions carry a formula rendering; `with_columns` → native Formula nodes; `filter(expr)` stays a code node); finalize the voice.
-
 ## 6. Know the two dialects
 
 Two ways to express logic, differing in what the canvas can do with them later:
 
-- **Polars-style expressions** — `ff.col`, `when/then`, the `str`/`dt`/`list` namespaces — feel native and mostly are ([Expressions](python-api/concepts/expressions.md)); renames and gaps are in the [operations reference](python-api/reference/flowframe-operations.md). Each expression also carries a Flowfile-formula rendering — `ff.col("amount") > 100` becomes `[amount] > 100`, `&`/`|` become `and`/`or`, casts and the `str`/`dt` methods map to formula functions — so a `with_columns` built from such expressions lands on the canvas as **editable native Formula nodes**, the same ones a canvas user configures by hand. An expression with no formula equivalent renders as a generic code node, and `filter()` given an expression (rather than a formula string) is a code node too.
-- **[Flowfile formula strings](python-api/concepts/formulas.md)** — `filter(flowfile_formula="[quantity] > 7")` — always render as editable native nodes; for `filter`, this string form is the only one that yields a native Filter node.
+- **Polars-style expressions** — `ff.col`, `when/then`, the `str`/`dt`/`list` namespaces — feel native and mostly are ([Expressions](python-api/concepts/expressions.md)); renames and gaps are listed in the [operations reference](python-api/reference/flowframe-operations.md). Each expression also carries a Flowfile-formula rendering: `ff.col("amount") > 100` becomes `[amount] > 100`, `&`/`|` become `and`/`or`, and casts plus the `str`/`dt` methods map to formula functions. That rendering is why a `with_columns` built from such expressions lands on the canvas as **editable native Formula nodes** — the same nodes a canvas user configures by hand. An expression with no formula equivalent becomes a generic code node instead, and `filter()` given an expression (rather than a formula string) is always a code node.
+- **[Flowfile formula strings](python-api/concepts/formulas.md)** — `filter(flowfile_formula="[quantity] > 7")` — always render as editable native nodes. For `filter`, the string form is the only one that yields a native Filter node.
 
 Rule of thumb: simple column-derivation steps stay editable on the canvas either way; reach for a code node only when the logic is genuinely code-shaped.
 

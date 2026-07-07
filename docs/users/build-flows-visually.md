@@ -4,20 +4,17 @@ Recurring data preparation has a thousand faces: merging exports from two system
 
 A flow replaces that with something that can be *seen*: every step a labeled node, every intermediate result inspectable, the whole thing re-runnable by anyone — including you, six months from now.
 
-![A flow drawn as an assembly line: files and a database feed in on the left, pass through labeled stations — drop duplicates, join, group by — each showing its output data underneath, and arrive at one clean result on the right; a small greyed inset shows the same work as an opaque manual checklist.](../assets/images/concepts/flow-assembly-line.svg)
+![A flow drawn as an assembly line: a file and a database feed one conveyor belt riding on rollers, the labeled stations — drop duplicates, join, group by — stand on the belt, each showing a small preview of its output data, and the belt runs straight into one clean result on the right; a small greyed checklist below shows the same job done by hand.](../assets/images/concepts/flow-assembly-line.svg)
 
 ## 1. Learn the canvas with one real flow
 
-The mental model is small: **nodes are operations, edges are data moving between them, and after a run you can look inside any node.** The [Quickstart](../quickstart.md#your-first-flow-visually) makes it concrete in five steps — read a sales export, drop duplicate rows, keep the bulk orders, summarize income per city — and [Building Flows](visual-editor/building-flows.md) covers the mechanics: connecting, configuring, running, saving. Twenty minutes, and the rest of this page is vocabulary.
+The mental model is small: **nodes are operations, the connections between them carry the data, and after a run you can look inside any node.** The [Quickstart](../quickstart.md#your-first-flow-visually) makes it concrete in five steps — read a sales export, drop duplicate rows, keep the bulk orders, summarize income per city — and [Building Flows](visual-editor/building-flows.md) covers the mechanics: connecting, configuring, running, saving. Twenty minutes, and the rest of this page is vocabulary.
 
 ## 2. Know your toolbox
 
-!!! warning "To review (Fable)"
-    Voice draft — tightened the toolbox paragraph (dropped the "trick to reading" sermon); finalize the wording.
+Most flows lean on the same five nodes: Read data, Filter data, Formula, Join, and Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), and the [node reference](visual-editor/nodes/index.md) covers the rest — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md) — when you need a less common one.
 
-The palette has six categories — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md) — but most flows lean on five: Read data, Filter, Formula, Join, Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), so reach for the [node reference](visual-editor/nodes/index.md) when you need a less common one.
-
-![Flowfile's node palette across six categories — Input, Transform, Combine, Aggregate, Output, Machine learning — with the five everyday workhorses (Read data, Filter, Formula, Join, Group by) highlighted in cyan and the rest of the toolbox dimmed.](../assets/images/guides/building-flows/node-palette-annotated.svg)
+![Flowfile's node palette, grouped into its seven categories — Input Sources, Transformations, Combine Operations, Aggregations, Machine Learning, Output Operations, User Defined Operations — with the five everyday workhorses (Read data, Filter data, Formula, Join, Group by) highlighted in cyan and the rest dimmed.](../assets/images/guides/building-flows/node-palette-annotated.svg)
 
 
 ## 3. Write the logic as formulas
@@ -36,12 +33,9 @@ trim(uppercase([customer_code]))
 
 The [function reference](formulas/functions.md) lists everything available, and the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you try an expression against sample data before committing it to a node.
 
-!!! warning "To review (Fable)"
-    Voice draft — reframed Dev-vs-Performance (facts verified: Execution Mode in Flow Settings; Cache results is a per-node toggle; scheduled/headless run in Performance); finalize the wording.
-
 ## 4. Build in Development, ship in Performance
 
-This is one toggle, not a migration. **Development** — the default while you build — materializes every node so you can inspect each intermediate result: run, look, adjust, run again. **Performance** runs only what the outputs actually need and lets the query optimizer work across the whole graph, so nothing is computed for a preview nobody's looking at. You switch modes in **Flow Settings**; the flow itself never changes, and scheduled or headless runs use Performance on their own.
+This is one toggle, not a migration. **Development** — the default while you build — runs every node and keeps its result, so you can inspect each step: run, look, adjust, run again. **Performance** computes only what the outputs actually need and optimizes across the whole flow, so nothing is calculated for a preview nobody's looking at. You switch in **Flow Settings**; the flow itself never changes, and scheduled or headless runs use Performance on their own.
 
 <details markdown="1">
 <summary>See it: the execution mode in Flow Settings</summary>
@@ -62,12 +56,9 @@ Think about who consumes your output, because each consumer has a natural landin
 - **People who'll query, chart, or build on it** — [Write to Catalog](visual-editor/nodes/output.md#catalog-writer). The result becomes a versioned table with history and lineage, and the [analyst route](analyze-your-data.md) takes over from there. This is the option that ends the `final_v3.xlsx` problem.
 - **Another system** — Database and Cloud Storage writers push results back into the warehouse or the bucket, via [saved connections](data-elsewhere.md).
 
-!!! warning "To review (Fable)"
-    Voice draft — reframed Automate (frontend Schedules first, CLI in a fold-out); finalize the wording.
-
 ## 6. Automate what you built
 
-A finished flow shouldn't need you to press Run. In the app, open [**Schedules**](visual-editor/catalog/schedules.md) and set the flow to run on a cron or whenever an upstream table updates — no files, no command line. A fresh source then cascades into fresh results on its own.
+A finished flow shouldn't need you to press Run. Open [**Schedules**](visual-editor/catalog/schedules.md) in the app and set the flow to run on a schedule — every night, every Monday — or whenever a table it depends on is updated. No files, no command line: a fresh source cascades into fresh results on its own.
 
 <details markdown="1">
 <summary>Run it somewhere else — CI, cron, another host</summary>

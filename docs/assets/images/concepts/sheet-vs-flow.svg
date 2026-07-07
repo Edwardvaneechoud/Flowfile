@@ -150,7 +150,7 @@
       <polyline points="43,75 50,82 57,75"/>
     </g>
   </g>
-  <text class="nl" x="486" y="206" text-anchor="middle">Read</text>
+  <text class="nl" x="486" y="206" text-anchor="middle">Read data</text>
   <!-- preview -->
   <rect x="439" y="218" width="94" height="98" rx="6" fill="#ffffff" stroke="#cfd4da" stroke-width="1.1"/>
   <rect x="439" y="218" width="94" height="18" rx="6" fill="#eaf3fc"/>
@@ -220,7 +220,7 @@
       <line x1="28" y1="65" x2="52" y2="65" stroke-width="5"/>
     </g>
   </g>
-  <text class="nl" x="718" y="206" text-anchor="middle">Dedupe</text>
+  <text class="nl" x="718" y="206" text-anchor="middle">Drop duplicates</text>
   <rect x="671" y="218" width="94" height="98" rx="6" fill="#ffffff" stroke="#cfd4da" stroke-width="1.1"/>
   <rect x="671" y="218" width="94" height="18" rx="6" fill="#eaf3fc"/>
   <rect x="671" y="228" width="94" height="8" fill="#eaf3fc"/>
