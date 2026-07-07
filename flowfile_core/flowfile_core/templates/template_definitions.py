@@ -24,6 +24,7 @@ TEMPLATE_PATH_PLACEHOLDER = "__TEMPLATE_DATA_DIR__"
 # They live in data/templates/flows/ in the repo.
 _FLOW_YAML_FILENAMES = [
     "sales_data_overview.yaml",
+    "sales_dashboard.yaml",
     "customer_deduplication.yaml",
     "employee_directory_cleanup.yaml",
     "order_enrichment.yaml",

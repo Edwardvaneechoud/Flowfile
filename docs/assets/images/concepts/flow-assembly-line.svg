@@ -1,13 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 600" role="img" aria-label="A data flow drawn as an assembly line: a delimited file and a database feed a brand-gradient conveyor whose labeled stations drop duplicates, join and group the data, each with a small table preview beneath, before one clean result leaves on the right, contrasted with a greyed manual checklist of the same work.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 480" role="img" aria-label="A data flow drawn as an assembly line: a file and a database feed one continuous brand-gradient conveyor belt riding on rollers; the labeled stations — drop duplicates, join, group by — stand on the belt, each showing a small preview of its output data, and the belt runs straight into one clean result on the right; a small greyed checklist below shows the same job done by hand.">
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2DD5D3"/>
       <stop offset="0.55" stop-color="#26A8E0"/>
       <stop offset="1" stop-color="#1D76D6"/>
     </linearGradient>
-    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
-      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
-    </marker>
+    <linearGradient id="belt" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
     <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
       <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
     </marker>
@@ -19,126 +20,109 @@
     .icw  { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
     .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
     .s    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
-    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
     .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
-    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
     .kick { font-family:Roboto,Arial,sans-serif; font-size:12.5px; fill:#6b7280; }
-    .olt  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#6b7280; }
+    .olt  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
     .ols  { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
     .tblo { fill:#ffffff; stroke:#cbd5e1; stroke-width:1; }
     .tblh { fill:#eef0f2; }
-    .gl   { fill:none; stroke:#dde3e9; stroke-width:0.9; }
+    .gl   { stroke:#cbd5e1; stroke-width:1; }
     .gv   { stroke:#c7cfd8; stroke-width:1.3; stroke-linecap:round; }
     .gh   { stroke:#9aa8b6; stroke-width:1.6; stroke-linecap:round; }
-    .mbox { fill:rgba(120,131,146,0.14); stroke:#8a93a3; stroke-width:1.4; stroke-dasharray:6 5; }
+    .mbox { fill:rgba(120,131,146,0.13); stroke:#8a93a3; stroke-width:1.3; stroke-dasharray:6 5; }
     .mic  { fill:none; stroke:#9aa0a6; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round; }
-    .mt   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#6b7280; }
-    .ms   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#9aa0a6; }
+    .mt   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#6b7280; }
+    .ms   { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#9aa0a6; }
     @media (prefers-color-scheme: dark) {
       .kick, .olt { fill:#c7cfd8; }
-      .ols, .albl { fill:#b7bfc9; }
+      .s, .ols, .albl { fill:#aeb6c0; }
       .mt { fill:#a9b0ba; }
       .ms { fill:#8b929c; }
     }
     [data-md-color-scheme="slate"] .kick, [data-md-color-scheme="slate"] .olt { fill:#c7cfd8; }
-    [data-md-color-scheme="slate"] .ols, [data-md-color-scheme="slate"] .albl { fill:#b7bfc9; }
+    [data-md-color-scheme="slate"] .s, [data-md-color-scheme="slate"] .ols, [data-md-color-scheme="slate"] .albl { fill:#aeb6c0; }
     [data-md-color-scheme="slate"] .mt { fill:#a9b0ba; }
     [data-md-color-scheme="slate"] .ms { fill:#8b929c; }
   </style>
 
-  <!-- kicker -->
-  <text class="kick" x="470" y="50" text-anchor="middle">One flow, made visible &#8212; every step labeled, every result inspectable.</text>
+  <text class="kick" x="470" y="42" text-anchor="middle">One flow, made visible &#8212; every step labeled, every result you can look at.</text>
 
-  <!-- ============ CONVEYOR BELT (behind the cards) ============ -->
-  <circle cx="163" cy="188" r="12.5" fill="#1D76D6"/>
-  <circle cx="163" cy="188" r="4.5" fill="#ffffff"/>
-  <circle cx="789" cy="188" r="12.5" fill="#1D76D6"/>
-  <circle cx="789" cy="188" r="4.5" fill="#ffffff"/>
-  <rect x="163" y="178" width="626" height="20" rx="10" fill="url(#brand)"/>
-  <g stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" opacity="0.32">
-    <line x1="338" y1="181" x2="331" y2="195"/>
-    <line x1="360" y1="181" x2="353" y2="195"/>
-    <line x1="382" y1="181" x2="375" y2="195"/>
-    <line x1="554" y1="181" x2="547" y2="195"/>
-    <line x1="576" y1="181" x2="569" y2="195"/>
-    <line x1="598" y1="181" x2="591" y2="195"/>
-    <line x1="768" y1="181" x2="761" y2="195"/>
+  <!-- ============ CONVEYOR (slim belt on a head pulley + support rollers; stations stand on it) ============ -->
+  <g fill="#c3ccd6">
+    <circle cx="290" cy="306" r="6"/><circle cx="396" cy="306" r="6"/><circle cx="517" cy="306" r="6"/><circle cx="638" cy="306" r="6"/><circle cx="744" cy="306" r="6"/>
+  </g>
+  <circle cx="192" cy="292" r="14" fill="#1D76D6"/>
+  <circle cx="192" cy="292" r="5" fill="#ffffff"/>
+  <rect x="192" y="284" width="662" height="16" rx="8" fill="url(#belt)"/>
+  <rect x="198" y="286.5" width="650" height="2.6" rx="1.3" fill="#ffffff" opacity="0.28"/>
+  <!-- motion hatches only in the gaps between stations -->
+  <g stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" opacity="0.42">
+    <line x1="374" y1="286" x2="368" y2="298"/><line x1="390" y1="286" x2="384" y2="298"/><line x1="406" y1="286" x2="400" y2="298"/>
+    <line x1="590" y1="286" x2="584" y2="298"/><line x1="606" y1="286" x2="600" y2="298"/><line x1="622" y1="286" x2="616" y2="298"/>
+    <line x1="800" y1="286" x2="794" y2="298"/><line x1="816" y1="286" x2="810" y2="298"/>
   </g>
 
-  <!-- ============ INPUT: delimited file ============ -->
+  <!-- ============ INPUTS (feed the belt) ============ -->
   <g>
-    <rect class="box" x="20" y="120" width="120" height="52" rx="10"/>
-    <rect class="chip" x="32" y="130" width="32" height="32" rx="7"/>
-    <g class="ic" transform="translate(38,136)">
-      <path d="M3,2 H12 L16,6 V18 H3 Z"/>
-      <path d="M12,2 V6 H16"/>
-      <line x1="5" y1="10" x2="14" y2="10"/>
-      <line x1="5" y1="13" x2="14" y2="13"/>
-      <line x1="5" y1="16" x2="11" y2="16"/>
-      <line x1="9" y1="9" x2="9" y2="17" stroke-width="1"/>
+    <rect class="box" x="14" y="216" width="120" height="50" rx="10"/>
+    <rect class="chip" x="26" y="226" width="30" height="30" rx="7"/>
+    <g class="ic" transform="translate(33,231)">
+      <path d="M2,1 H10 L14,5 V17 H2 Z"/>
+      <path d="M10,1 V5 H14"/>
+      <line x1="4.5" y1="9" x2="11.5" y2="9"/>
+      <line x1="4.5" y1="12" x2="11.5" y2="12"/>
+      <line x1="4.5" y1="15" x2="9" y2="15"/>
     </g>
-    <text class="t" x="74" y="142">Files</text>
-    <text class="s" x="74" y="157">csv &#183; excel</text>
+    <text class="t" x="64" y="238">Files</text>
+    <text class="s" x="64" y="253">csv &#183; excel</text>
   </g>
-
-  <!-- ============ INPUT: database ============ -->
   <g>
-    <rect class="box" x="20" y="204" width="120" height="52" rx="10"/>
-    <rect class="chip" x="32" y="214" width="32" height="32" rx="7"/>
-    <g class="ic" transform="translate(38,220)">
-      <ellipse cx="10" cy="4" rx="7" ry="2.6"/>
-      <path d="M3,4 V15 C3,16.4 6.1,17.4 10,17.4 C13.9,17.4 17,16.4 17,15 V4"/>
-      <path d="M3,9 C3,10.4 6.1,11.4 10,11.4 C13.9,11.4 17,10.4 17,9"/>
+    <rect class="box" x="14" y="288" width="120" height="50" rx="10"/>
+    <rect class="chip" x="26" y="298" width="30" height="30" rx="7"/>
+    <g class="ic" transform="translate(33,303)">
+      <ellipse cx="8" cy="3.5" rx="6" ry="2.3"/>
+      <path d="M2,3.5 V14 C2,15.3 4.7,16.3 8,16.3 C11.3,16.3 14,15.3 14,14 V3.5"/>
+      <path d="M2,8.8 C2,10.1 4.7,11.1 8,11.1 C11.3,11.1 14,10.1 14,8.8"/>
     </g>
-    <text class="t" x="74" y="226">Database</text>
-    <text class="s" x="74" y="241">sql tables</text>
+    <text class="t" x="64" y="310">Database</text>
+    <text class="s" x="64" y="325">sql tables</text>
   </g>
+  <path class="arwc" d="M134,241 C158,247 146,283 156,291"/>
+  <path class="arwc" d="M134,313 C158,308 146,300 156,293"/>
+  <path class="arwc" d="M155,292 L180,292" marker-end="url(#ahc)"/>
 
-  <!-- input feed arrows -->
-  <path class="arw" d="M141,148 L151,181" marker-end="url(#ah)"/>
-  <path class="arw" d="M141,230 L151,195" marker-end="url(#ah)"/>
-
-  <!-- ============ STATION 1: Drop duplicates (cx=251) ============ -->
-  <g>
-    <rect class="box" x="176" y="132" width="150" height="112" rx="11"/>
-    <rect class="chip" x="229" y="146" width="44" height="44" rx="9"/>
-    <g class="ic" transform="translate(237,154)">
+  <!-- ============ STATIONS STANDING ON THE BELT (bottoms overlap the band) ============ -->
+  <!-- Station 1: Drop duplicates (cx 275) -->
+  <g transform="translate(24,0)">
+    <rect class="box" x="176" y="114" width="150" height="176" rx="12"/>
+    <rect class="chip" x="229" y="128" width="44" height="44" rx="9"/>
+    <g class="ic" transform="translate(237,136)">
       <path d="M4,6 H24 L16,16 V22 L12,24 V16 Z"/>
       <circle cx="22" cy="8" r="4" fill="#ffffff"/>
       <line x1="19.6" y1="8" x2="24.4" y2="8"/>
     </g>
-    <text class="t" x="251" y="212" text-anchor="middle">Drop duplicates</text>
-    <text class="s" x="251" y="230" text-anchor="middle">unique rows</text>
-  </g>
-  <line x1="251" y1="245" x2="251" y2="261" stroke="#b3bcc9" stroke-width="1.4" stroke-dasharray="3 3"/>
-  <!-- preview 1 -->
-  <g>
-    <rect class="tblo" x="195" y="262" width="112" height="60" rx="6"/>
-    <rect class="tblh" x="197" y="264" width="108" height="13"/>
-    <line class="gl" x1="195" y1="277" x2="307" y2="277" stroke="#cbd5e1" stroke-width="1"/>
-    <line class="gl" x1="232" y1="277" x2="232" y2="321"/>
-    <line class="gl" x1="270" y1="277" x2="270" y2="321"/>
-    <line class="gh" x1="203" y1="271" x2="223" y2="271"/>
-    <line class="gh" x1="242" y1="271" x2="260" y2="271"/>
-    <line class="gh" x1="281" y1="271" x2="299" y2="271"/>
-    <line class="gv" x1="203" y1="289" x2="221" y2="289"/>
-    <line class="gv" x1="242" y1="289" x2="258" y2="289"/>
-    <line class="gv" x1="281" y1="289" x2="297" y2="289"/>
-    <!-- removed duplicate row (faint) -->
-    <line x1="203" y1="301" x2="221" y2="301" stroke="#e4e9ee" stroke-width="1.3"/>
-    <line x1="242" y1="301" x2="258" y2="301" stroke="#e4e9ee" stroke-width="1.3"/>
-    <line x1="288" y1="298" x2="294" y2="304" stroke="#9aa8b6" stroke-width="1.4" stroke-linecap="round"/>
-    <line x1="294" y1="298" x2="288" y2="304" stroke="#9aa8b6" stroke-width="1.4" stroke-linecap="round"/>
-    <line class="gv" x1="203" y1="313" x2="221" y2="313"/>
-    <line class="gv" x1="242" y1="313" x2="258" y2="313"/>
-    <line class="gv" x1="281" y1="313" x2="297" y2="313"/>
+    <text class="t" x="251" y="192" text-anchor="middle">Drop duplicates</text>
+    <text class="s" x="251" y="208" text-anchor="middle">keep unique rows</text>
+    <!-- preview -->
+    <rect class="tblo" x="195" y="222" width="112" height="52" rx="5"/>
+    <rect class="tblh" x="196" y="223" width="110" height="12"/>
+    <line class="gl" x1="195" y1="235" x2="307" y2="235"/>
+    <line class="gl" x1="232" y1="235" x2="232" y2="274"/>
+    <line class="gl" x1="270" y1="235" x2="270" y2="274"/>
+    <line class="gh" x1="202" y1="229" x2="222" y2="229"/><line class="gh" x1="241" y1="229" x2="260" y2="229"/><line class="gh" x1="279" y1="229" x2="299" y2="229"/>
+    <line class="gv" x1="202" y1="244" x2="221" y2="244"/><line class="gv" x1="241" y1="244" x2="259" y2="244"/><line class="gv" x1="279" y1="244" x2="298" y2="244"/>
+    <!-- struck duplicate row -->
+    <line x1="202" y1="256" x2="221" y2="256" stroke="#e2e7ec" stroke-width="1.3"/><line x1="241" y1="256" x2="259" y2="256" stroke="#e2e7ec" stroke-width="1.3"/>
+    <line x1="286" y1="253" x2="292" y2="259" stroke="#9aa8b6" stroke-width="1.4" stroke-linecap="round"/><line x1="292" y1="253" x2="286" y2="259" stroke="#9aa8b6" stroke-width="1.4" stroke-linecap="round"/>
+    <line class="gv" x1="202" y1="267" x2="221" y2="267"/><line class="gv" x1="241" y1="267" x2="259" y2="267"/><line class="gv" x1="279" y1="267" x2="298" y2="267"/>
   </g>
 
-  <!-- ============ STATION 2: Join (cx=467) ============ -->
-  <g>
-    <rect class="box" x="392" y="132" width="150" height="112" rx="11"/>
-    <rect class="chip" x="445" y="146" width="44" height="44" rx="9"/>
-    <g class="ic" transform="translate(453,154)">
+  <!-- Station 2: Join (cx 491) -->
+  <g transform="translate(24,0)">
+    <rect class="box" x="392" y="114" width="150" height="176" rx="12"/>
+    <rect class="chip" x="445" y="128" width="44" height="44" rx="9"/>
+    <g class="ic" transform="translate(453,136)">
       <path d="M4,7 L14,14"/>
       <path d="M4,21 L14,14"/>
       <path d="M14,14 H25"/>
@@ -146,95 +130,66 @@
       <circle cx="4" cy="7" r="1.6" fill="#5b6470" stroke="none"/>
       <circle cx="4" cy="21" r="1.6" fill="#5b6470" stroke="none"/>
     </g>
-    <text class="t" x="467" y="212" text-anchor="middle">Join</text>
-    <text class="s" x="467" y="230" text-anchor="middle">merge two sources</text>
-  </g>
-  <line x1="467" y1="245" x2="467" y2="261" stroke="#b3bcc9" stroke-width="1.4" stroke-dasharray="3 3"/>
-  <!-- preview 2 -->
-  <g>
-    <rect class="tblo" x="411" y="262" width="112" height="60" rx="6"/>
-    <rect class="tblh" x="413" y="264" width="108" height="13"/>
-    <rect x="486" y="277" width="35" height="44" fill="#eaf3fc"/>
-    <line class="gl" x1="411" y1="277" x2="523" y2="277" stroke="#cbd5e1" stroke-width="1"/>
-    <line class="gl" x1="448" y1="277" x2="448" y2="321"/>
-    <line class="gl" x1="486" y1="277" x2="486" y2="321"/>
-    <line class="gh" x1="419" y1="271" x2="439" y2="271"/>
-    <line class="gh" x1="458" y1="271" x2="476" y2="271"/>
-    <line x1="502" y1="271" x2="512" y2="271" stroke="#1D76D6" stroke-width="1.6" stroke-linecap="round"/>
-    <line x1="507" y1="266" x2="507" y2="276" stroke="#1D76D6" stroke-width="1.4" stroke-linecap="round"/>
-    <line class="gv" x1="419" y1="289" x2="437" y2="289"/>
-    <line class="gv" x1="458" y1="289" x2="474" y2="289"/>
-    <line x1="497" y1="289" x2="513" y2="289" stroke="#7fb2e6" stroke-width="1.3" stroke-linecap="round"/>
-    <line class="gv" x1="419" y1="301" x2="437" y2="301"/>
-    <line class="gv" x1="458" y1="301" x2="474" y2="301"/>
-    <line x1="497" y1="301" x2="513" y2="301" stroke="#7fb2e6" stroke-width="1.3" stroke-linecap="round"/>
-    <line class="gv" x1="419" y1="313" x2="437" y2="313"/>
-    <line class="gv" x1="458" y1="313" x2="474" y2="313"/>
-    <line x1="497" y1="313" x2="513" y2="313" stroke="#7fb2e6" stroke-width="1.3" stroke-linecap="round"/>
+    <text class="t" x="467" y="192" text-anchor="middle">Join</text>
+    <text class="s" x="467" y="208" text-anchor="middle">merge two sources</text>
+    <!-- preview: joined column highlighted -->
+    <rect class="tblo" x="411" y="222" width="112" height="52" rx="5"/>
+    <rect class="tblh" x="412" y="223" width="110" height="12"/>
+    <rect x="486" y="235" width="36" height="39" fill="#eaf3fc"/>
+    <line class="gl" x1="411" y1="235" x2="523" y2="235"/>
+    <line class="gl" x1="448" y1="235" x2="448" y2="274"/>
+    <line class="gl" x1="486" y1="235" x2="486" y2="274"/>
+    <line class="gh" x1="418" y1="229" x2="438" y2="229"/><line class="gh" x1="457" y1="229" x2="476" y2="229"/>
+    <line x1="497" y1="229" x2="512" y2="229" stroke="#1D76D6" stroke-width="1.6" stroke-linecap="round"/>
+    <line class="gv" x1="418" y1="244" x2="437" y2="244"/><line class="gv" x1="457" y1="244" x2="475" y2="244"/><line x1="497" y1="244" x2="513" y2="244" stroke="#7fb2e6" stroke-width="1.3" stroke-linecap="round"/>
+    <line class="gv" x1="418" y1="256" x2="437" y2="256"/><line class="gv" x1="457" y1="256" x2="475" y2="256"/><line x1="497" y1="256" x2="513" y2="256" stroke="#7fb2e6" stroke-width="1.3" stroke-linecap="round"/>
+    <line class="gv" x1="418" y1="267" x2="437" y2="267"/><line class="gv" x1="457" y1="267" x2="475" y2="267"/><line x1="497" y1="267" x2="513" y2="267" stroke="#7fb2e6" stroke-width="1.3" stroke-linecap="round"/>
   </g>
 
-  <!-- ============ STATION 3: Group by (cx=683) ============ -->
-  <g>
-    <rect class="box" x="608" y="132" width="150" height="112" rx="11"/>
-    <rect class="chip" x="661" y="146" width="44" height="44" rx="9"/>
-    <g class="ic" transform="translate(669,154)">
+  <!-- Station 3: Group by (cx 707) -->
+  <g transform="translate(24,0)">
+    <rect class="box" x="608" y="114" width="150" height="176" rx="12"/>
+    <rect class="chip" x="661" y="128" width="44" height="44" rx="9"/>
+    <g class="ic" transform="translate(669,136)">
       <polyline points="21,5 7,5 14,14 7,23 21,23" fill="none"/>
     </g>
-    <text class="t" x="683" y="212" text-anchor="middle">Group by</text>
-    <text class="s" x="683" y="230" text-anchor="middle">summarize totals</text>
-  </g>
-  <line x1="683" y1="245" x2="683" y2="261" stroke="#b3bcc9" stroke-width="1.4" stroke-dasharray="3 3"/>
-  <!-- preview 3 -->
-  <g>
-    <rect class="tblo" x="627" y="262" width="112" height="60" rx="6"/>
-    <rect class="tblh" x="629" y="264" width="108" height="13"/>
-    <line class="gl" x1="627" y1="277" x2="739" y2="277" stroke="#cbd5e1" stroke-width="1"/>
-    <line class="gl" x1="664" y1="277" x2="664" y2="310"/>
-    <line class="gl" x1="702" y1="277" x2="702" y2="310"/>
-    <line class="gh" x1="635" y1="271" x2="655" y2="271"/>
-    <line class="gh" x1="674" y1="271" x2="692" y2="271"/>
-    <line class="gh" x1="713" y1="271" x2="731" y2="271"/>
-    <line class="gv" x1="635" y1="289" x2="653" y2="289"/>
-    <line class="gv" x1="674" y1="289" x2="690" y2="289"/>
-    <line class="gv" x1="713" y1="289" x2="729" y2="289"/>
-    <line class="gv" x1="635" y1="300" x2="653" y2="300"/>
-    <line class="gv" x1="674" y1="300" x2="690" y2="300"/>
-    <line class="gv" x1="713" y1="300" x2="729" y2="300"/>
-    <!-- summary row -->
-    <rect x="629" y="309" width="108" height="12" fill="#eef0f2"/>
-    <polyline points="640,312 634,312 637,315 634,318 640,318" fill="none" stroke="#6b7280" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-    <line x1="650" y1="315" x2="731" y2="315" stroke="#9aa8b6" stroke-width="1.8" stroke-linecap="round"/>
+    <text class="t" x="683" y="192" text-anchor="middle">Group by</text>
+    <text class="s" x="683" y="208" text-anchor="middle">summarize totals</text>
+    <!-- preview: totals row shaded -->
+    <rect class="tblo" x="627" y="222" width="112" height="52" rx="5"/>
+    <rect class="tblh" x="628" y="223" width="110" height="12"/>
+    <line class="gl" x1="627" y1="235" x2="739" y2="235"/>
+    <line class="gl" x1="664" y1="235" x2="664" y2="262"/>
+    <line class="gl" x1="702" y1="235" x2="702" y2="262"/>
+    <line class="gh" x1="634" y1="229" x2="654" y2="229"/><line class="gh" x1="673" y1="229" x2="692" y2="229"/><line class="gh" x1="711" y1="229" x2="731" y2="229"/>
+    <line class="gv" x1="634" y1="244" x2="653" y2="244"/><line class="gv" x1="673" y1="244" x2="690" y2="244"/><line class="gv" x1="711" y1="244" x2="730" y2="244"/>
+    <line class="gv" x1="634" y1="254" x2="653" y2="254"/><line class="gv" x1="673" y1="254" x2="690" y2="254"/><line class="gv" x1="711" y1="254" x2="730" y2="254"/>
+    <rect x="628" y="262" width="110" height="11" fill="#eef0f2"/>
+    <polyline points="639,264.5 633,264.5 636,267.5 633,270.5 639,270.5" fill="none" stroke="#6b7280" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="648" y1="267.5" x2="731" y2="267.5" stroke="#9aa8b6" stroke-width="1.8" stroke-linecap="round"/>
   </g>
 
-  <!-- ============ OUTPUT: check-circle ============ -->
-  <path class="arwc" d="M803,188 L827,188" marker-end="url(#ahc)"/>
-  <circle cx="860" cy="188" r="30" fill="url(#brand)"/>
-  <path class="icw" d="M847,189 L855,198 L874,177" stroke-width="3.4"/>
-  <text class="olt" x="860" y="238" text-anchor="middle">Output</text>
-  <text class="ols" x="860" y="253" text-anchor="middle">one clean result</text>
+  <!-- ============ OUTPUT (the belt runs under the result disc) ============ -->
+  <circle cx="862" cy="292" r="28" fill="url(#brand)"/>
+  <path class="icw" d="M850,293 L857,301 L874,282" stroke-width="3.2"/>
+  <text class="olt" x="862" y="342" text-anchor="middle">Output</text>
+  <text class="ols" x="862" y="358" text-anchor="middle">one clean result</text>
 
-  <!-- ============ CONTRAST: the manual way ============ -->
-  <line x1="470" y1="336" x2="470" y2="368" stroke="#b3bcc9" stroke-width="1.6" stroke-dasharray="4 5"/>
-  <text class="albl" x="482" y="357">the same work, by hand</text>
-
-  <rect class="mbox" x="320" y="372" width="300" height="150" rx="12"/>
-  <text class="mt" x="344" y="402">The manual way</text>
-  <text class="ms" x="344" y="420">opaque steps &#183; nothing to inspect</text>
+  <!-- ============ CONTRAST: the same job, by hand (small, secondary) ============ -->
+  <path d="M470,310 L470,352" fill="none" stroke="#b3bcc9" stroke-width="1.4" stroke-dasharray="4 5"/>
+  <text class="albl" x="482" y="336">the same job, by hand</text>
+  <rect class="mbox" x="362" y="352" width="216" height="110" rx="12"/>
+  <text class="mt" x="384" y="378">The manual way</text>
+  <text class="ms" x="384" y="395">opaque steps &#183; nothing to inspect</text>
   <g>
-    <!-- row 0 (checked) -->
-    <rect class="mic" x="344" y="434" width="13" height="13" rx="2.5" fill="none"/>
-    <path class="mic" d="M346.5,440.5 L350,444 L355,437"/>
-    <line x1="368" y1="440.5" x2="562" y2="440.5" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
-    <!-- row 1 (checked) -->
-    <rect class="mic" x="344" y="455" width="13" height="13" rx="2.5" fill="none"/>
-    <path class="mic" d="M346.5,461.5 L350,465 L355,458"/>
-    <line x1="368" y1="461.5" x2="518" y2="461.5" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
-    <!-- row 2 (empty) -->
-    <rect class="mic" x="344" y="476" width="13" height="13" rx="2.5" fill="none"/>
-    <line x1="368" y1="482.5" x2="588" y2="482.5" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
-    <!-- row 3 (empty, uncertain) -->
-    <rect class="mic" x="344" y="497" width="13" height="13" rx="2.5" fill="none"/>
-    <line x1="368" y1="503.5" x2="470" y2="503.5" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
-    <text x="486" y="508" font-family="Roboto,Arial,sans-serif" font-size="13px" fill="#9aa0a6">?</text>
+    <rect class="mic" x="384" y="406" width="12" height="12" rx="2.5"/>
+    <path class="mic" d="M386.3,412 L389.5,415 L394,409"/>
+    <line x1="406" y1="412" x2="558" y2="412" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
+    <rect class="mic" x="384" y="426" width="12" height="12" rx="2.5"/>
+    <path class="mic" d="M386.3,432 L389.5,435 L394,429"/>
+    <line x1="406" y1="432" x2="520" y2="432" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
+    <rect class="mic" x="384" y="446" width="12" height="12" rx="2.5"/>
+    <line x1="406" y1="452" x2="544" y2="452" stroke="#b3bcc9" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="528" y="457" font-family="Roboto,Arial,sans-serif" font-size="12px" fill="#9aa0a6">?</text>
   </g>
 </svg>

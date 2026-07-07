@@ -12,9 +12,9 @@ In Flowfile, you don't transform data by editing it — you build a **flow**: a 
 
 That picture *is* the work. Next month's file arrives: run the flow again. A colleague asks how the number was made: show them the flow — it reads like a recipe card, not like code. Something looks off: click the step where it went wrong and look at the data right there.
 
-![A hand-drawn recipe card on warm paper morphs into a four-node Flowfile flow — Input, Filter, Formula, Output — with a small data preview beneath each node: the work itself is the recipe, written down once and re-runnable with one click.](assets/images/concepts/recipe-to-flow.svg)
+![A hand-drawn recipe card on warm paper morphs into a four-node Flowfile flow — Read data, Filter data, Formula, Write data — with a small data preview beneath each node: the work itself is the recipe, written down once and re-runnable with one click.](assets/images/concepts/recipe-to-flow.svg)
 
-Nothing about this requires programming. The logic reads like the formulas you already know — `if [amount] > 100 then "High" else "Low" endif` — and every step is a form, not a script.
+None of this requires programming. Each step is a form you fill in — pick a column, choose a condition, name the result — the way you'd set up a formula in a spreadsheet, not the way you'd write code.
 
 ## Where it compounds: the catalog
 
@@ -45,9 +45,9 @@ Flowfile is deliberately built so you can use a tenth of it and never feel the r
 
 The same platform keeps up as the work gets more ambitious — without ever demanding it:
 
-- **More data than a spreadsheet survives?** Flowfile runs on [Polars](https://pola.rs), the same engine data teams use for speed — millions of rows on an ordinary laptop is normal, not heroic.
+- **More data than a spreadsheet survives?** Flowfile runs on [Polars](https://pola.rs), a fast data engine, so large files stay workable where a spreadsheet would stall.
 - **Data living in company systems?** Databases, cloud storage, Kafka streams, APIs — [connect once, read live](users/data-elsewhere.md), stop hand-carrying copies.
-- **Colleagues who code?** Every flow is equally real as Python: [write pipelines in code](users/write-python.md) that appear on the canvas, or take any visual flow and [export it as a plain Python script](users/visual-editor/tutorials/code-generator.md) that runs outside Flowfile entirely. Nobody is locked in — in either direction.
+- **Colleagues who code?** Every flow is equally real as Python: [write pipelines in code](users/write-python.md) that appear on the canvas, or take any visual flow and [export it as a plain Python script](users/visual-editor/tutorials/code-generator.md) that runs on its own. Nobody is locked in — in either direction.
 - **A team?** [Run it as a shared server](users/deploy-for-a-team.md) with accounts, access control, and shared data products.
 
 The through-line never changes: whatever you build, at whatever level, is reproducible by construction. That's the product.

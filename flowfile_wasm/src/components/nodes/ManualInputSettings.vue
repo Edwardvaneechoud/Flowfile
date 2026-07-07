@@ -157,11 +157,13 @@ function loadData() {
       dataType: f.data_type || 'String'
     }))
 
-    if (rd.data && rd.data.length > 0) {
-      rows.value = rd.data.map((rowData, rowIdx) => {
+    // rd.data is columnar: rd.data[colIdx][rowIdx] (matches flowfile_core RawData)
+    if (rd.data && rd.data.length > 0 && rd.data[0]?.length > 0) {
+      const numRows = rd.data[0].length
+      rows.value = Array.from({ length: numRows }, (_, rowIdx) => {
         const values: Record<number, string> = {}
         columns.value.forEach((col, colIdx) => {
-          values[col.id] = String(rowData[colIdx] ?? '')
+          values[col.id] = String(rd.data[colIdx]?.[rowIdx] ?? '')
         })
         return { id: rowIdx + 1, values }
       })

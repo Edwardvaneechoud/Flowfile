@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref, computed, onBeforeUnmount } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
@@ -134,6 +134,13 @@ const pushNodeData = async () => {
     console.log("Save process failed.");
   }
 };
+
+// Close/minimize paths hide the drawer (unmounting it) before the async
+// drawCloseFunction cleanup can run, so pushNodeData never fires — restore the
+// drawer out of fullscreen from our own teardown so it can't stay stuck.
+onBeforeUnmount(() => {
+  windowStore.setFullScreen("rightDrawer", false);
+});
 
 defineExpose({
   loadNodeData,

@@ -27,6 +27,14 @@
     .rlbl { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12px; fill:#1D76D6; }
   </style>
 
+  <!-- ============ ARROWS ============ -->
+  <path class="arw" d="M233,165 L351,266" marker-end="url(#ah)"/>
+  <path class="arw" d="M356,372 L237,462" marker-end="url(#ah)"/>
+  <path class="arw" d="M550,280 L713,158" marker-end="url(#ah)"/>
+  <path class="arw" d="M552,310 L713,310" marker-end="url(#ah)"/>
+  <path class="arw" d="M550,342 L713,462" marker-end="url(#ah)"/>
+  <path class="arwc" d="M70,474 C16,452 16,192 70,172" marker-end="url(#ahc)"/>
+
   <!-- ============ CATALOG HUB ============ -->
   <rect x="350" y="250" width="200" height="120" rx="16" fill="url(#brand)"/>
   <g class="icw" transform="translate(434,266) scale(1.35)">
@@ -108,15 +116,7 @@
     <text class="s" x="777" y="481">same numbers</text>
   </g>
 
-  <!-- ============ ARROWS ============ -->
-  <path class="arw" d="M233,165 L351,266" marker-end="url(#ah)"/>
-  <path class="arw" d="M360,366 L237,462" marker-end="url(#ah)"/>
-  <path class="arw" d="M550,280 L713,158" marker-end="url(#ah)"/>
-  <path class="arw" d="M552,310 L713,310" marker-end="url(#ah)"/>
-  <path class="arw" d="M550,342 L713,462" marker-end="url(#ah)"/>
-  <path class="arwc" d="M70,474 C16,452 16,192 70,172" marker-end="url(#ahc)"/>
-
   <!-- ============ ARROW LABELS ============ -->
-  <text class="albl" x="252" y="200">publish</text>
+  <text class="albl" x="258" y="200" text-anchor="end">publish</text>
   <text class="rlbl" transform="translate(46,322) rotate(-90)" text-anchor="middle">refresh</text>
 </svg>

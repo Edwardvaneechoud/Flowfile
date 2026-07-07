@@ -326,4 +326,96 @@ test.describe("Canvas Overlay Behaviour", () => {
       await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
     }
   });
+
+  test("swallowed Shift keyup unlatches selection mode on mouse move (Cmd+Shift+5 regression)", async ({
+    page,
+    request,
+  }) => {
+    // macOS screen-capture overlays (Cmd+Shift+4/5) eat the Shift keyup, so
+    // VueFlow's key tracking latched the canvas into rubber-band-selection
+    // mode until Shift was pressed again. useStaleModifierGuard replays the
+    // lost keyup on the first shift-less mouse move over the pane.
+    const flowName = `Stale_Shift_Test_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+      await page.waitForSelector(".vue-flow__pane", { timeout: 10000 });
+
+      // Find a spot where the pane is actually exposed (not covered by panels).
+      const paneBox = await page.locator(".vue-flow__pane").boundingBox();
+      expect(paneBox).not.toBeNull();
+      let paneX = 0;
+      let paneY = 0;
+      let found = false;
+      for (const [fx, fy] of [
+        [0.35, 0.25],
+        [0.55, 0.3],
+        [0.45, 0.45],
+        [0.6, 0.5],
+      ]) {
+        const x = paneBox!.x + paneBox!.width * fx;
+        const y = paneBox!.y + paneBox!.height * fy;
+        const isPane = await page.evaluate(
+          ([px, py]) =>
+            document.elementFromPoint(px, py)?.classList.contains("vue-flow__pane") ?? false,
+          [x, y],
+        );
+        if (isPane) {
+          paneX = x;
+          paneY = y;
+          found = true;
+          break;
+        }
+      }
+      expect(found).toBe(true);
+
+      const paneLatched = () =>
+        page.evaluate(
+          () => document.querySelector(".vue-flow__pane")?.classList.contains("selection") ?? false,
+        );
+
+      // Simulate the swallow: keydown reaches the page, keyup never does.
+      // Park the mouse off-canvas so the guard can't fire yet.
+      await page.mouse.move(5, 5);
+      await page.evaluate(() => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Shift", code: "ShiftLeft", shiftKey: true }),
+        );
+      });
+      await expect.poll(paneLatched).toBe(true);
+
+      // First shift-less mouse move over the pane must unlatch selection mode.
+      await page.mouse.move(paneX, paneY, { steps: 3 });
+      await expect.poll(paneLatched).toBe(false);
+
+      // And a plain drag must pan again, not draw a selection box.
+      const transformBefore = await page.evaluate(
+        () => document.querySelector<HTMLElement>(".vue-flow__transformationpane")?.style.transform,
+      );
+      await page.mouse.down();
+      await page.mouse.move(paneX + 60, paneY + 50, { steps: 4 });
+      const selectionBoxDrawn = await page.evaluate(
+        () => !!document.querySelector(".vue-flow__selection"),
+      );
+      await page.mouse.up();
+      const transformAfter = await page.evaluate(
+        () => document.querySelector<HTMLElement>(".vue-flow__transformationpane")?.style.transform,
+      );
+      expect(selectionBoxDrawn).toBe(false);
+      expect(transformAfter).not.toBe(transformBefore);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
 });

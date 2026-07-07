@@ -221,7 +221,7 @@
   <!-- ============ TABLE-TRIGGER NODE (cyan accent) ============ -->
   <circle cx="700" cy="300" r="16" fill="#ffffff" stroke="#2DD5D3" stroke-width="2"/>
   <path d="M701.6,290.5 L694,301.8 L699.4,301.8 L698,309.5 L707,297.8 L701.6,297.8 Z" fill="#2DD5D3"/>
-  <text class="clbl" x="700" y="271" text-anchor="middle">table-triggers</text>
+  <text class="clbl" x="687" y="253" text-anchor="middle">table-<tspan x="687" dy="14">triggers</tspan></text>
 
   <!-- ============ DOWNSTREAM (Flowfile, blue) ============ -->
   <!-- downstream flow -->

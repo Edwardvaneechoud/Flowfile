@@ -4,59 +4,17 @@ Flowfile's architecture pairs visual design with data processing across three se
 
 ## Process & execution map
 
-Flowfile runs as several cooperating processes. The Frontend talks only to Core; Core orchestrates everything else and never materializes full datasets itself — heavy compute is offloaded. The diagram shows every process and how the four kinds of execution flow through them.
+Flowfile runs as several cooperating processes. The Frontend talks only to Core; Core orchestrates everything else and never materializes full datasets itself — heavy compute is offloaded. The diagram shows every process and how the five kinds of execution flow through them.
 
-```mermaid
-graph TD
-    FE["Frontend — Tauri shell + Vue<br/>(:8080 dev, or served by Core)"]
+![Process and execution map: the Frontend talks only to the Core process (FastAPI :63578), which houses the Core API, SqlService, Kernel Manager, and the embedded Scheduler loop. Five execution paths fan out — ① run a flow (Core serializes LazyFrames and POSTs to the Worker, which returns Arrow-IPC file paths), ② execute SQL on the Worker, ③ run notebook cells (Python in a kernel container, SQL on the Worker), ④ scheduled runs (the Scheduler polls the SQLite catalog DB for due triggers and spawns a detached headless subprocess), and ⑤ serving a published flow as an API endpoint (a GET /api/data/{slug} with an API key runs it and returns JSON). Datasets persist to Delta tables (local or S3); metadata to the SQLite catalog DB.](../assets/images/architecture/process-map.svg)
 
-    subgraph coreproc["Core process · FastAPI :63578"]
-        CORE["Core API — DAG engine, routers, auth"]
-        SQL["SqlService"]
-        KM["Kernel Manager (Docker SDK)"]
-        SCH["Scheduler loop (embedded;<br/>FLOWFILE_SCHEDULER_ENABLED)"]
-    end
-
-    WK["Worker · FastAPI :63579<br/>compute in spawned subprocesses · Arrow IPC"]
-    KN["Kernel container(s) · Docker<br/>uvicorn :9999 → host 19000-19999"]
-    HL["Headless flow run (detached subprocess)<br/>flowfile run flow PATH --run-id"]
-
-    DB[("SQLite catalog DB")]
-    DL[("Delta tables · local/S3")]
-
-    FE -->|HTTP + JWT| CORE
-
-    CORE -->|"① run flow / execute graph<br/>serialize LazyFrame → POST"| WK
-    WK  -.->|Arrow IPC file paths| CORE
-
-    CORE --> SQL
-    SQL -->|"② execute SQL"| WK
-
-    CORE --> KM
-    KM  -->|"③ notebook — Python cells"| KN
-    KN  -->|write Delta + POST metadata| CORE
-    SQL -->|"③ notebook — SQL cells"| WK
-
-    SCH -->|poll due triggers| DB
-    SCH -->|"④ spawn_flow_run"| HL
-    HL  -->|runs flow locally, no worker offload| DL
-
-    CORE -. metadata .- DB
-    WK  -. datasets .- DL
-    KN  -. read/write .- DL
-
-    classDef proc fill:#26A8E0,stroke:#1D76D6,color:#fff;
-    classDef store fill:#eef2ff,stroke:#233588,color:#233588;
-    class FE,CORE,WK,KN,HL,SQL,KM,SCH proc;
-    class DB,DL store;
-```
-
-The four execution paths:
+The five execution paths:
 
 1. **Run flow / execute graph** — Core builds the LazyFrames, serializes them, and POSTs to the **Worker**, which holds dataset memory in spawned subprocesses and returns Arrow-IPC paths. Core ships paths, never collected frames.
 2. **Execute SQL** (SQL editor and catalog SQL) — Core's `SqlService` registers the catalog tables and runs the query on the **Worker**.
 3. **Execute a notebook** — Python cells run in the bound **kernel container** (which writes results to Delta and POSTs metadata back to Core); SQL cells take path ②; Markdown renders client-side.
 4. **Scheduled run** — the embedded **scheduler** loop (only when `FLOWFILE_SCHEDULER_ENABLED`) polls the catalog DB for due triggers and launches a detached **headless subprocess** that runs the flow locally.
+5. **Serve a flow as an API** — a registered flow is *published* under `/flow-api` (JWT-managed); the public, API-key-authenticated `GET /api/data/{slug}` then runs it synchronously and returns the output of its single `api_response` node as JSON. One key can call several published flows (`routes/flow_api.py`, `routes/api_consumers.py`).
 
 The **scheduler is not a separate service** — it's a loop inside the Core process. The separate OS processes are the Frontend, Core, Worker (plus its compute children), the kernel containers, and each spawned headless run.
 
