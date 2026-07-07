@@ -44,6 +44,7 @@ import {
   markHoveredEdge,
   detectEdgeUnderPointer,
 } from "../../composables/useDragAndDrop";
+import { useStaleModifierGuard } from "../../composables/useStaleModifierGuard";
 import NodeList from "./NodeList.vue";
 import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
@@ -108,6 +109,8 @@ const rawDeletableEdge = markRaw(DeletableEdge);
 const rawGroupProxyEdge = markRaw(GroupProxyEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
   useVueFlow();
+
+useStaleModifierGuard();
 
 let resolvePaneReady: () => void;
 const paneReadyPromise = new Promise<void>((resolve) => {
