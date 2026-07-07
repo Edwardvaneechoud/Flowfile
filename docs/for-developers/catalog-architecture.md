@@ -6,7 +6,7 @@ The catalog is Flowfile's largest subsystem: namespaces, physical and virtual ta
 
 Architecturally the catalog is **two substrates and a service layer**. Metadata — every namespace, table row, schedule, grant — lives in the shared SQLite catalog DB. Table *data* lives outside the DB as Delta directories (locally or on S3). Around those, per-domain services implement features, and everything heavy routes to neighbors: full-frame reads to the worker, user code to kernels, timed execution to the embedded scheduler.
 
-![Catalog component graph: a thin HTTP router feeds the CatalogService facade, whose ring of per-domain feature services wraps the two substrates — a SQLite metadata DB and Delta table storage (local or S3). Around the outside the neighbors sit on labeled edges: the scheduler polls the shared DB, the worker collects over IPC, projects mirror metadata to git, and kernels write Delta straight to the storage volume while POSTing only metadata to core.](../assets/images/guides/catalog/architecture-overview.svg)
+![Catalog architecture in two layers: a thin HTTP router feeds the CatalogService facade, whose per-domain feature services — grouped as organize (namespaces, flows, tables, virtual tables, artifacts), analyze (SQL, previews, visualizations, dashboards, notebooks), and operate (schedules, runs, favorites, stats) — are how you create and query data. Beneath them a distinct storage layer holds the two substrates that persist it: a SQLite metadata DB (rows and grants) and Delta table storage (local or S3, one directory per table), linked by file_path. The scheduler and worker attach to the services; projects and kernels attach to storage.](../assets/images/guides/catalog/architecture-overview.svg)
 
 ## Metadata vs data
 
@@ -43,13 +43,13 @@ Authorization is the facade's job, implemented by `AccessResolver` (`catalog/acc
 A `catalog_writer` node in virtual mode registers a table that stores no data; what gets stored decides how reads resolve later:
 
 - At registration, `FlowGraph.check_flow_laziness` walks the writer's upstream using each node's declared `laziness` (`configs/node_store/nodes.py`). If everything is lazy *and* no source is on cloud storage, the write is **optimized**: the LazyFrame plan is serialized into `CatalogTable.serialized_lazy_frame`, together with the Delta versions of its source tables (`source_table_versions`) and a human-readable `polars_plan`.
-- **Optimized resolution** deserializes that plan — no flow run — after `check_source_versions_current` confirms every recorded source Delta version still matches; staleness falls through to the standard path.
-- **Standard resolution** opens the producer flow, finds the `catalog_writer` node whose configured `table_name` matches the table's name (that name-keying is what lets one producer flow back several virtual tables), and executes just that node in performance mode — on the worker when offload is enabled.
+- _[Fable review — rewrote lazy semantics; verify technical register]_ **Optimized resolution** deserializes that stored plan — no flow run — after `check_source_versions_current` confirms every recorded source Delta version still matches; staleness falls through to the standard path.
+- **Standard resolution** opens the producer flow, finds the `catalog_writer` node whose configured `table_name` matches the table's name (that name-keying is what lets one producer flow back several virtual tables), and **re-runs just that node** (performance mode; on the worker when offload is enabled) to rebuild its output. That output is returned **lazy** (`flowframe.lazy = True`) — re-running the flow *reconstructs the LazyFrame plan*, it does not materialize or store data. So the two paths differ only in how they obtain the plan (deserialize a stored one vs. re-execute the flow to rebuild it); both yield a `LazyFrame`, and nothing collects until an actual `.collect()` — a write, a visualization, or a catalog query — forces it, and then only for the parts of the plan that can't stay lazy.
 - **Serialized cloud plans are never replayed**: a serialized cloud scan embeds decrypted `storage_options`, so `serialized_frame_uses_cloud` forces such tables onto the standard path permanently.
 
 **Query virtual tables** (the SQL editor's "save as virtual table") store a `sql_query` instead of a plan. Resolution builds a `pl.SQLContext`, registering every referenced table and recursively resolving nested virtuals — bounded by `QUERY_VIRTUAL_TABLE_RECURSION_LIMIT = 5` plus a visited-set cycle check, with per-table grant checks in restricted mode.
 
-![Virtual-table resolution: a read checks whether the table is query-virtual (the SQLContext path, recursing up to five levels); otherwise, if the plan is optimized and its source Delta versions are still current, the stored plan is deserialized with no flow run (the fast lane); if stale — or the plan embeds cloud credentials that are never replayed — it falls to the slow lane, re-executing the producer flow's catalog_writer node on the worker. Either path yields a LazyFrame.](../assets/images/guides/catalog/virtual-table-resolution.svg)
+![Virtual-table resolution, which always yields a lazy LazyFrame: a read checks whether the table is query-virtual (the SQLContext path, recursing up to five levels); otherwise, if the table is optimized and its source Delta versions are still current, the stored LazyFrame plan is deserialized with no flow run; if the table is not optimized, is stale, or is a cloud plan (which is never replayed), the producer flow's catalog_writer node is re-run to rebuild the plan. Both paths return a LazyFrame that stays lazy — nothing materializes until a collect (a write, a visualization, or a catalog query).](../assets/images/guides/catalog/virtual-table-resolution.svg)
 
 ## SQL execution
 
@@ -83,6 +83,13 @@ Three design decisions worth knowing before touching this code:
 Cell editing gets Jedi-backed code intelligence from core's LSP routes (`flowfile_core/lsp/`) — completions run server-side against the kernel's environment, not in the browser.
 
 ![Notebook anatomy: a CatalogNotebook DB row (metadata, namespace, default_kernel_id) is paired with its on-disk <owner>/<uuid>.notebook.yaml file, git-tracked for projects; its cells route by type — Python cells to the bound kernel container via flowfile_ctx, SQL cells through SqlService to the worker, Markdown rendered client-side — while an LSP sidecar feeds server-side completions into the editor.](../assets/images/guides/catalog/notebook-anatomy.svg)
+
+## Serving flows as APIs
+
+!!! warning "To review (Fable)"
+    New section — verify it belongs on this page and the technical register.
+
+A registered flow can be **published** as an HTTP data endpoint (`routes/flow_api.py`): the public `data_router` serves `GET /api/data/{slug}` (API-key auth), runs the flow synchronously, and returns the output of its single `api_response` node as JSON. Publishing and per-endpoint keys are managed under `/flow-api` (JWT); one key can front several published flows as an *API consumer* (`routes/api_consumers.py`). A call drives the registered flow like any other run — Core builds the LazyFrame and offloads to the worker (path ⑤ in the [process map](architecture.md)).
 
 ## Neighbors
 

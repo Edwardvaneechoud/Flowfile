@@ -53,7 +53,9 @@ The editor has code completions, and the same kernel machinery powers the [Pytho
 
 ![A catalog notebook open next to the catalog tree: cells with execution counters, one reading a catalog table via flowfile_ctx, and the interactive explorer rendering below.](../assets/images/guides/notebooks/catalog-notebook.png)
 
-<!-- draft: Fable to finalize (facts verified — expr._ff_repr renders a formula string; with_columns promotes such exprs to native Formula nodes via NodeFormula; filter(expr) stays a code node) -->
+!!! warning "To review (Fable)"
+    Rewrote §6 (facts verified: expressions carry a formula rendering; `with_columns` → native Formula nodes; `filter(expr)` stays a code node); finalize the voice.
+
 ## 6. Know the two dialects
 
 Two ways to express logic, differing in what the canvas can do with them later:

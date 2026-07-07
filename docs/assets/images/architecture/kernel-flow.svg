@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-label="Kernel architecture: the Frontend authenticates to the Core API with JWT, and Core drives Docker kernel containers two ways. The Kernel Manager owns container lifecycle, issuing docker run, stop and rm to two Kernel Containers on port 9999. Core also talks HTTP ExecuteRequest directly to each container along the primary cyan path, and each container returns log callbacks over a dotted channel. Core and both kernels exchange data through a shared volume for parquet I/O and artifacts.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.6; }
+    .hero  { fill:url(#brand); stroke:#1D76D6; stroke-width:1.6; }
+    .store { fill:#eef2ff; stroke:#233588; stroke-width:1.6; }
+    .chip  { fill:#eaf3fc; }
+    .chipw { fill:rgba(255,255,255,0.16); }
+    .chipn { fill:#e2e8fb; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw   { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .icn   { fill:none; stroke:#233588; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .tw    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#ffffff; }
+    .tn    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .sw    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#eaf6ff; }
+    .sn    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#41508a; }
+    .ttl   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:17px; fill:#26A8E0; }
+    .sub   { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    .exlbl { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:10.5px; fill:#1596b5; }
+    .lgd   { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .exec  { fill:none; stroke:#2DD5D3; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
+    .ctrl  { fill:none; stroke:#b3bcc9; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+    .life  { fill:none; stroke:#9aa8b6; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+    .ret   { fill:none; stroke:#9aa8b6; stroke-width:1.7; stroke-dasharray:1.5 5; stroke-linecap:round; }
+    .data  { fill:none; stroke:#aeb8c6; stroke-width:1.6; stroke-dasharray:6 6; }
+  </style>
+
+  <!-- ============ TITLE ============ -->
+  <text class="ttl" x="30" y="42">Kernel architecture</text>
+  <text class="sub" x="30" y="61">How Core drives Docker kernel containers</text>
+
+  <!-- ============ LEGEND ============ -->
+  <g>
+    <line class="exec" x1="972" y1="46" x2="1006" y2="46"/>
+    <text class="lgd" x="1014" y="50">HTTP execute &#183; primary</text>
+    <line class="ctrl" x1="972" y1="70" x2="1006" y2="70"/>
+    <text class="lgd" x="1014" y="74">control &#183; lifecycle</text>
+    <line class="ret" x1="972" y1="94" x2="1002" y2="94"/>
+    <path class="ret" d="M1002,94 H1006" marker-end="url(#ah)"/>
+    <text class="lgd" x="1014" y="98">log callback (return)</text>
+    <line class="data" x1="972" y1="118" x2="1006" y2="118"/>
+    <text class="lgd" x="1014" y="122">shared-volume I/O</text>
+  </g>
+
+  <!-- ============ EDGES (drawn under nodes) ============ -->
+
+  <!-- Frontend -> Core : JWT auth -->
+  <path class="ctrl" d="M192,282 H256" marker-end="url(#ah)"/>
+
+  <!-- Core -> Kernel Manager : control (no label) -->
+  <path class="ctrl" d="M344,236 V106 H492" marker-end="url(#ah)"/>
+
+  <!-- Kernel Manager -> K1 / K2 : lifecycle bus -->
+  <path class="life" d="M684,106 H708 V384"/>
+  <path class="life" d="M708,216 H740" marker-end="url(#ah)"/>
+  <path class="life" d="M708,384 H740" marker-end="url(#ah)"/>
+
+  <!-- Core -> K1 : HTTP ExecuteRequest (primary) -->
+  <path class="exec" d="M432,240 H740" marker-end="url(#ahc)"/>
+  <!-- K1 -> Core : log callback (return) -->
+  <path class="ret" d="M740,268 H432" marker-end="url(#ah)"/>
+
+  <!-- Core -> K2 : HTTP ExecuteRequest -->
+  <path class="exec" d="M432,300 H676 V408 H740" marker-end="url(#ahc)"/>
+  <!-- K2 -> Core : log callback (return) -->
+  <path class="ret" d="M740,436 H700 V320 H432" marker-end="url(#ah)"/>
+
+  <!-- K1 to Shared Volume : data link (undirected) -->
+  <path class="data" d="M940,244 H967 V300 H988"/>
+  <!-- K2 to Shared Volume : data link (undirected) -->
+  <path class="data" d="M940,416 H967 V352 H988"/>
+  <!-- Core to Shared Volume : data link (undirected) -->
+  <path class="data" d="M308,328 V556 H1083 V382"/>
+
+  <!-- ============ EDGE LABELS ============ -->
+  <text class="albl"  x="224" y="274" text-anchor="middle">JWT auth</text>
+  <text class="albl"  x="590" y="182" text-anchor="middle">docker run / stop / rm</text>
+  <text class="exlbl" x="566" y="231" text-anchor="middle">HTTP ExecuteRequest</text>
+  <text class="exlbl" x="588" y="402" text-anchor="middle">HTTP ExecuteRequest</text>
+  <text class="albl"  x="566" y="286" text-anchor="middle">log callback</text>
+  <text class="albl"  x="588" y="452" text-anchor="middle">log callback</text>
+  <text class="albl"  x="650" y="548" text-anchor="middle">parquet read / write</text>
+
+  <!-- ============ NODES ============ -->
+
+  <!-- Frontend -->
+  <g>
+    <rect class="box" x="24" y="236" width="168" height="92" rx="12"/>
+    <rect class="chip" x="40" y="258" width="44" height="44" rx="10"/>
+    <g class="ic" transform="translate(49,267)">
+      <rect x="2" y="4" width="22" height="17" rx="2.5"/>
+      <line x1="2" y1="9.5" x2="24" y2="9.5"/>
+      <circle cx="5.5" cy="6.8" r="1"/><circle cx="9" cy="6.8" r="1"/>
+    </g>
+    <text class="t" x="98" y="278">Frontend</text>
+    <text class="s" x="98" y="296">Vue / Tauri</text>
+  </g>
+
+  <!-- Core API (orchestrator hero) -->
+  <g>
+    <rect class="hero" x="256" y="236" width="176" height="92" rx="12"/>
+    <rect class="chipw" x="272" y="258" width="44" height="44" rx="10"/>
+    <g class="icw" transform="translate(281,267)">
+      <path d="M8,7 L4,12 L8,17"/><path d="M16,7 L20,12 L16,17"/><line x1="13.6" y1="6" x2="10.4" y2="18"/>
+    </g>
+    <text class="tw" x="330" y="278">Core API</text>
+    <text class="sw" x="330" y="296">:63578 &#183; orchestrator</text>
+  </g>
+
+  <!-- Kernel Manager -->
+  <g>
+    <rect class="box" x="492" y="60" width="192" height="92" rx="12"/>
+    <rect class="chip" x="508" y="82" width="44" height="44" rx="10"/>
+    <g class="ic" transform="translate(517,91)">
+      <circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="2"/>
+      <line x1="17" y1="12" x2="19.5" y2="12"/><line x1="4.5" y1="12" x2="7" y2="12"/>
+      <line x1="12" y1="17" x2="12" y2="19.5"/><line x1="12" y1="4.5" x2="12" y2="7"/>
+      <line x1="15.54" y1="15.54" x2="17.3" y2="17.3"/><line x1="6.7" y1="6.7" x2="8.46" y2="8.46"/>
+      <line x1="15.54" y1="8.46" x2="17.3" y2="6.7"/><line x1="6.7" y1="17.3" x2="8.46" y2="15.54"/>
+    </g>
+    <text class="t" x="566" y="100">Kernel Manager</text>
+    <text class="s" x="566" y="118">Docker API</text>
+  </g>
+
+  <!-- Kernel Container 1 -->
+  <g>
+    <rect class="box" x="740" y="196" width="200" height="96" rx="12"/>
+    <rect class="chip" x="756" y="220" width="44" height="44" rx="10"/>
+    <g class="ic" transform="translate(765,229)">
+      <path d="M12,3 L20,7.4 V16.6 L12,21 L4,16.6 V7.4 Z"/><path d="M4,7.4 L12,11.8 L20,7.4"/><path d="M12,11.8 V21"/>
+    </g>
+    <text class="t" x="812" y="236">Kernel Container</text>
+    <text class="s" x="812" y="254">:9999</text>
+    <text class="s" x="812" y="270">sandboxed code</text>
+  </g>
+
+  <!-- Kernel Container 2 -->
+  <g>
+    <rect class="box" x="740" y="368" width="200" height="96" rx="12"/>
+    <rect class="chip" x="756" y="392" width="44" height="44" rx="10"/>
+    <g class="ic" transform="translate(765,401)">
+      <path d="M12,3 L20,7.4 V16.6 L12,21 L4,16.6 V7.4 Z"/><path d="M4,7.4 L12,11.8 L20,7.4"/><path d="M12,11.8 V21"/>
+    </g>
+    <text class="t" x="812" y="408">Kernel Container</text>
+    <text class="s" x="812" y="426">:9999</text>
+    <text class="s" x="812" y="442">sandboxed code</text>
+  </g>
+
+  <!-- Shared Volume (storage substrate) -->
+  <g>
+    <rect class="store" x="988" y="272" width="190" height="110" rx="12"/>
+    <rect class="chipn" x="1004" y="290" width="44" height="44" rx="10"/>
+    <g class="icn" transform="translate(1013,299)">
+      <ellipse cx="12" cy="4.5" rx="8.5" ry="2.8"/>
+      <path d="M3.5,4.5 V10.5 C3.5,12 7.3,13.1 12,13.1 C16.7,13.1 20.5,12 20.5,10.5 V4.5"/>
+      <path d="M3.5,10.5 C3.5,12 7.3,13.1 12,13.1 C16.7,13.1 20.5,12 20.5,10.5"/>
+      <path d="M3.5,10.5 V16.5 C3.5,18 7.3,19.1 12,19.1 C16.7,19.1 20.5,18 20.5,16.5 V10.5"/>
+    </g>
+    <text class="tn" x="1058" y="320">Shared Volume</text>
+    <text class="sn" x="1058" y="338">parquet I/O</text>
+    <text class="sn" x="1058" y="354">artifacts</text>
+  </g>
+</svg>

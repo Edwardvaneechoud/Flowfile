@@ -45,90 +45,81 @@
   <text class="s" x="52" y="110">one sheet &#183; raw, helpers, pivot &#8212; all crammed</text>
 
   <!-- region tags -->
-  <text class="rl" x="66" y="130">RAW</text>
-  <text class="rl" x="245" y="130">HELPER FX</text>
+  <text class="rl" x="70" y="132">RAW</text>
+  <text class="rl" x="250" y="132">HELPER FX</text>
 
   <!-- helper-column tint -->
-  <rect x="238" y="138" width="114" height="182" fill="#eaf3fc"/>
+  <rect x="238" y="140" width="114" height="120" fill="#eaf3fc"/>
 
-  <!-- spreadsheet grid -->
+  <!-- spreadsheet grid (5 rows) -->
   <g class="gl">
-    <line x1="48" y1="138" x2="352" y2="138"/>
+    <line x1="48" y1="140" x2="352" y2="140"/>
     <line x1="48" y1="158" x2="352" y2="158"/>
-    <line x1="48" y1="185" x2="352" y2="185"/>
-    <line x1="48" y1="212" x2="352" y2="212"/>
-    <line x1="48" y1="239" x2="352" y2="239"/>
-    <line x1="48" y1="266" x2="352" y2="266"/>
-    <line x1="48" y1="293" x2="352" y2="293"/>
-    <line x1="48" y1="320" x2="352" y2="320"/>
-    <line x1="48" y1="138" x2="48" y2="320"/>
-    <line x1="66" y1="138" x2="66" y2="320"/>
-    <line x1="123" y1="138" x2="123" y2="320"/>
-    <line x1="180" y1="138" x2="180" y2="320"/>
-    <line x1="238" y1="138" x2="238" y2="320"/>
-    <line x1="295" y1="138" x2="295" y2="320"/>
-    <line x1="352" y1="138" x2="352" y2="320"/>
+    <line x1="48" y1="178" x2="352" y2="178"/>
+    <line x1="48" y1="199" x2="352" y2="199"/>
+    <line x1="48" y1="219" x2="352" y2="219"/>
+    <line x1="48" y1="240" x2="352" y2="240"/>
+    <line x1="48" y1="260" x2="352" y2="260"/>
+    <line x1="48" y1="140" x2="48" y2="260"/>
+    <line x1="66" y1="140" x2="66" y2="260"/>
+    <line x1="123" y1="140" x2="123" y2="260"/>
+    <line x1="180" y1="140" x2="180" y2="260"/>
+    <line x1="238" y1="140" x2="238" y2="260"/>
+    <line x1="295" y1="140" x2="295" y2="260"/>
+    <line x1="352" y1="140" x2="352" y2="260"/>
   </g>
 
   <!-- column letters -->
   <g class="cell" text-anchor="middle" fill="#7c848f">
-    <text x="94.5" y="152">A</text>
-    <text x="151.5" y="152">B</text>
-    <text x="209" y="152">C</text>
-    <text x="266.5" y="152">D</text>
-    <text x="323.5" y="152">E</text>
+    <text x="94.5" y="153">A</text>
+    <text x="151.5" y="153">B</text>
+    <text x="209" y="153">C</text>
+    <text x="266.5" y="153">D</text>
+    <text x="323.5" y="153">E</text>
   </g>
   <!-- row numbers -->
   <g class="cell" text-anchor="middle" fill="#aab0b8" font-size="9px">
-    <text x="57" y="175">1</text>
-    <text x="57" y="202">2</text>
-    <text x="57" y="229">3</text>
-    <text x="57" y="256">4</text>
-    <text x="57" y="283">5</text>
-    <text x="57" y="310">6</text>
+    <text x="57" y="172">1</text>
+    <text x="57" y="192">2</text>
+    <text x="57" y="213">3</text>
+    <text x="57" y="233">4</text>
+    <text x="57" y="254">5</text>
   </g>
-  <!-- helper formula marks (=, dragged down) -->
+  <!-- helper formula marks (=, dragged all the way down both helper columns) -->
   <g class="cell" text-anchor="middle" fill="#8aa3c4">
-    <text x="266.5" y="176">=</text>
-    <text x="323.5" y="176">=</text>
-    <text x="266.5" y="203">=</text>
-    <text x="323.5" y="203">=</text>
+    <text x="266.5" y="172">=</text><text x="323.5" y="172">=</text>
+    <text x="266.5" y="192">=</text><text x="323.5" y="192">=</text>
+    <text x="266.5" y="213">=</text><text x="323.5" y="213">=</text>
+    <text x="266.5" y="233">=</text><text x="323.5" y="233">=</text>
+    <text x="266.5" y="254">=</text><text x="323.5" y="254">=</text>
   </g>
 
-  <!-- tangled crossing arrows (the knot) -->
-  <path class="tangle" d="M100,175 C170,150 205,205 300,190" marker-end="url(#ah)"/>
-  <path class="tangle" d="M322,175 C250,205 150,175 100,247" marker-end="url(#ah)"/>
-  <path class="tangle" d="M150,205 C210,175 250,235 306,215" marker-end="url(#ah)"/>
-  <path class="tangle" d="M300,215 C220,245 180,175 110,257" marker-end="url(#ah)"/>
-  <path class="tangle" d="M312,163 C232,228 178,200 105,290" marker-end="url(#ah)"/>
+  <!-- a few deliberate tangled arrows (raw feeds helpers), routed clear of the = marks -->
+  <path class="tangle" d="M100,190 C150,166 205,151 256,151" marker-end="url(#ah)"/>
+  <path class="tangle" d="M150,233 C165,190 215,158 318,151" marker-end="url(#ah)"/>
+  <path class="tangle" d="M205,213 C150,206 120,182 101,169" marker-end="url(#ah)"/>
 
-  <!-- pivot table crammed into the lower-right -->
-  <rect x="246" y="250" width="106" height="72" rx="6" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.2"/>
-  <text class="rl" x="252" y="246">PIVOT</text>
-  <rect x="246" y="250" width="106" height="18" rx="6" fill="#eef0f2"/>
-  <rect x="246" y="256" width="106" height="12" fill="#eef0f2"/>
+  <!-- pivot table: a second thing crammed onto the same sheet, kept clear of the grid -->
+  <text class="rl" x="214" y="282">PIVOT</text>
+  <rect x="210" y="286" width="142" height="80" rx="6" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.2"/>
+  <rect x="210" y="286" width="142" height="17" rx="6" fill="#eef0f2"/>
+  <rect x="210" y="295" width="142" height="8" fill="#eef0f2"/>
   <g class="pl">
-    <line x1="246" y1="268" x2="352" y2="268"/>
-    <line x1="246" y1="285" x2="352" y2="285"/>
-    <line x1="246" y1="302" x2="352" y2="302"/>
-    <line x1="281" y1="250" x2="281" y2="322"/>
-    <line x1="316" y1="250" x2="316" y2="322"/>
+    <line x1="210" y1="303" x2="352" y2="303"/>
+    <line x1="210" y1="324" x2="352" y2="324"/>
+    <line x1="210" y1="345" x2="352" y2="345"/>
+    <line x1="258" y1="286" x2="258" y2="366"/>
+    <line x1="305" y1="286" x2="305" y2="366"/>
   </g>
   <g class="dash">
-    <line x1="253" y1="277" x2="273" y2="277"/>
-    <line x1="289" y1="277" x2="308" y2="277"/>
-    <line x1="323" y1="277" x2="343" y2="277"/>
-    <line x1="253" y1="294" x2="273" y2="294"/>
-    <line x1="289" y1="294" x2="308" y2="294"/>
-    <line x1="323" y1="294" x2="343" y2="294"/>
-    <line x1="253" y1="311" x2="273" y2="311"/>
-    <line x1="289" y1="311" x2="308" y2="311"/>
-    <line x1="323" y1="311" x2="343" y2="311"/>
+    <line x1="218" y1="314" x2="250" y2="314"/><line x1="266" y1="314" x2="297" y2="314"/><line x1="313" y1="314" x2="344" y2="314"/>
+    <line x1="218" y1="335" x2="250" y2="335"/><line x1="266" y1="335" x2="297" y2="335"/><line x1="313" y1="335" x2="344" y2="335"/>
+    <line x1="218" y1="356" x2="250" y2="356"/><line x1="266" y1="356" x2="297" y2="356"/><line x1="313" y1="356" x2="344" y2="356"/>
   </g>
-  <!-- one more tangled feed into the pivot -->
-  <path class="tangle" d="M170,300 C205,285 228,281 243,279" marker-end="url(#ah)"/>
+  <!-- one tangled feed from the sheet down into the pivot -->
+  <path class="tangle" d="M300,258 C296,268 272,277 251,284" marker-end="url(#ah)"/>
 
-  <text class="fn" x="52" y="366">the order of steps lives in your head</text>
+  <text class="fn" x="52" y="388">the order of steps lives in your head</text>
 
   <!-- ============================================================ -->
   <!-- middle: becomes                                               -->

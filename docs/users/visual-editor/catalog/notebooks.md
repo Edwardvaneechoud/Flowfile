@@ -29,6 +29,8 @@ flowfile_ctx.explore(lf)                                 # Graphic Walker explor
 
 Reads come back as LazyFrames; `flowfile_ctx.write_catalog_table` persists a result as a real catalog table, and `flowfile_ctx.publish_global` saves a Python object (a trained model, a config) as a [global artifact](index.md#global-artifacts) that survives across sessions and flows. The full cell-side API — inputs, outputs, display, artifacts — is documented in [The flowfile_ctx API](../kernel-api.md).
 
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE (gif): a catalog notebook cell in action — running flowfile_ctx.read_catalog_table then display/explore, with the interactive table / Graphic Walker explorer rendering live beneath the cell -->
+
 ## Versioned like flows
 
 A notebook's cells are stored as one clean YAML file on disk — code as readable text, not an opaque blob — which is what lets [Projects](../../projects.md) version notebooks in git exactly like flows: diffs read like code review, and a teammate pulling the project gets your notebooks along with everything else.

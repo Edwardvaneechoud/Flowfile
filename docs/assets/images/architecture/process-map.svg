@@ -1,0 +1,278 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1340 900" role="img" aria-label="Flowfile process and execution map. The Frontend (Tauri shell + Vue) talks only to the Core process over HTTP + JWT. The Core process (FastAPI :63578) groups four services: the Core API (DAG engine, routers, auth), SqlService, Kernel Manager (Docker SDK) and the embedded Scheduler loop. Five numbered execution paths radiate downward: (1) run flow — Core API serializes a LazyFrame and POSTs it to the Worker (FastAPI :63579), which computes in spawned subprocesses and returns Arrow IPC file paths; (2) SQL — SqlService executes SQL on the Worker; (3) notebook — Kernel Manager runs Python cells in a Docker kernel container that writes Delta and POSTs metadata back, while SqlService runs SQL cells on the Worker; (4) scheduled — the Scheduler loop polls due triggers in the SQLite catalog DB and spawns a detached headless flow run that writes Delta tables locally with no worker offload; (5) API endpoint — an external API consumer calls GET /api/data/{slug} with an API key, which runs the published flow synchronously and returns its api_response node output as JSON. Core writes metadata to the SQLite catalog DB, and the Worker and kernel read and write datasets in Delta tables (local or S3). The two storage substrates are drawn distinct from the process nodes.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+    <marker id="ahn" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#233588"/></marker>
+  </defs>
+  <style>
+    .cluster { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .hub   { fill:#ffffff; stroke:#1D76D6; stroke-width:2.3; }
+    .store { fill:#eef2ff; stroke:#233588; stroke-width:1.7; }
+    .chip  { fill:#eaf3fc; }
+    .chipn { fill:#dfe6ff; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icn   { fill:none; stroke:#233588; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .ctitle{ font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:14px; fill:#233588; letter-spacing:0.3px; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13px; fill:#233588; }
+    .ts    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .ss    { font-family:Roboto,Arial,sans-serif; font-size:9.5px; fill:#8a93a3; }
+    .mono  { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:9px; fill:#5b6470; }
+    .ttl   { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:18px; fill:#26A8E0; }
+    .sub   { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .arwn  { fill:none; stroke:#7e88c4; stroke-width:1.8; }
+    .dash  { fill:none; stroke:#b3bcc9; stroke-width:1.7; stroke-dasharray:5 5; stroke-linecap:round; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    .nl    { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:11.5px; fill:#2489cf; }
+    .nlc   { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:11.5px; fill:#12a8c2; }
+    .lgd   { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+  </style>
+
+  <!-- ============ TITLE (top-left) ============ -->
+  <text class="ttl" x="40" y="60">Process &amp; execution map</text>
+  <text class="sub" x="40" y="80">Every Flowfile process and the five execution paths</text>
+
+  <!-- ============ LEGEND (top-right) ============ -->
+  <line x1="972" y1="52" x2="1004" y2="52" class="arwc"/>
+  <text class="lgd" x="1012" y="56">primary path &#183; run flow</text>
+  <line x1="972" y1="74" x2="1004" y2="74" stroke="#b3bcc9" stroke-width="2.2"/>
+  <text class="lgd" x="1012" y="78">control / call</text>
+  <line x1="972" y1="96" x2="1004" y2="96" stroke="#b3bcc9" stroke-width="2.2" stroke-dasharray="5 5" stroke-linecap="round"/>
+  <text class="lgd" x="1012" y="100">data &#183; Arrow IPC / Delta</text>
+  <text class="nl" x="972" y="124">&#9312;&#9313;&#9314;&#9315;&#9316;<tspan class="lgd" fill="#8a93a3" font-weight="400" dx="8">run-flow &#183; SQL &#183; notebook &#183; scheduled &#183; API</tspan></text>
+
+  <!-- ============ FRONTEND (row 0) ============ -->
+  <g>
+    <rect class="box" x="380" y="44" width="300" height="82" rx="12"/>
+    <rect class="chip" x="398" y="62" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(409,73)">
+      <rect x="1" y="2.5" width="22" height="17" rx="2.5"/>
+      <line x1="1" y1="8" x2="23" y2="8"/>
+      <circle cx="4.5" cy="5.2" r="0.9"/><circle cx="7.5" cy="5.2" r="0.9"/>
+      <circle cx="8" cy="14" r="1.7"/><circle cx="16" cy="14" r="1.7"/>
+      <line x1="9.7" y1="14" x2="14.3" y2="14"/>
+    </g>
+    <text class="t" x="464" y="78">Frontend</text>
+    <text class="s" x="464" y="97">Tauri shell + Vue</text>
+    <text class="ss" x="464" y="114">:8080 dev &#183; or served by Core</text>
+  </g>
+
+  <!-- ============ API CONSUMER (row 0, right) ============ -->
+  <g>
+    <rect class="box" x="706" y="44" width="234" height="82" rx="12"/>
+    <rect class="chip" x="724" y="62" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(735,74)">
+      <circle cx="7" cy="8" r="4.2"/>
+      <line x1="10" y1="11" x2="19" y2="20"/>
+      <line x1="16.5" y1="17.5" x2="19" y2="15"/>
+      <line x1="13.5" y1="14.5" x2="16" y2="12"/>
+    </g>
+    <text class="t" x="790" y="72">API consumer</text>
+    <text class="s" x="790" y="91">external client</text>
+    <text class="ss" x="790" y="108">API key &#183; GET /api/data/{slug}</text>
+  </g>
+  <!-- API consumer -> Core API : serve flow as API -->
+  <path class="arw" d="M800,126 V172 H612 V198" marker-end="url(#ah)"/>
+  <text class="nl" x="708" y="149" text-anchor="middle">&#9316; serve flow as API</text>
+  <text class="albl" x="708" y="164" text-anchor="middle">runs the flow &#8594; JSON</text>
+
+  <!-- Frontend -> Core API -->
+  <path class="arw" d="M530,126 V198" marker-end="url(#ah)"/>
+  <text class="albl" x="542" y="166">HTTP + JWT</text>
+
+  <!-- ============ CORE PROCESS CLUSTER (row 1) ============ -->
+  <rect class="cluster" x="60" y="156" width="1220" height="168" rx="16"/>
+  <text class="ctitle" x="80" y="184">Core process &#183; FastAPI :63578</text>
+
+  <!-- SqlService -->
+  <g>
+    <rect class="box" x="116" y="200" width="240" height="112" rx="11"/>
+    <rect class="chip" x="132" y="233" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(143,244)">
+      <rect x="2" y="3.5" width="20" height="17" rx="2.2"/>
+      <path d="M6,9 L9.5,12 L6,15"/>
+      <line x1="12" y1="15.2" x2="17.5" y2="15.2"/>
+    </g>
+    <text class="t" x="190" y="252">SqlService</text>
+    <text class="s" x="190" y="271">SQL execution</text>
+    <text class="ss" x="190" y="288">offloads to worker</text>
+  </g>
+
+  <!-- Core API (hub) -->
+  <g>
+    <rect class="hub" x="410" y="200" width="240" height="112" rx="11"/>
+    <rect class="chip" x="426" y="233" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(437,244)">
+      <path d="M8,6 L4,12 L8,18"/><path d="M16,6 L20,12 L16,18"/><line x1="13.6" y1="5" x2="10.4" y2="19"/>
+    </g>
+    <text class="t" x="484" y="252">Core API</text>
+    <text class="s" x="484" y="271">DAG engine, routers</text>
+    <text class="ss" x="484" y="288">auth &#183; never collects</text>
+  </g>
+
+  <!-- Kernel Manager -->
+  <g>
+    <rect class="box" x="700" y="200" width="240" height="112" rx="11"/>
+    <rect class="chip" x="716" y="233" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(727,244)">
+      <rect x="2.5" y="13" width="19" height="7.5" rx="1.5"/>
+      <rect x="5" y="7.5" width="5.2" height="4.6" rx="1"/>
+      <rect x="11.5" y="7.5" width="5.2" height="4.6" rx="1"/>
+      <rect x="8.2" y="2.4" width="5.2" height="4.6" rx="1"/>
+    </g>
+    <text class="t" x="774" y="252">Kernel Manager</text>
+    <text class="s" x="774" y="271">Docker SDK</text>
+    <text class="ss" x="774" y="288">spawns kernel containers</text>
+  </g>
+
+  <!-- Scheduler loop -->
+  <g>
+    <rect class="box" x="1020" y="200" width="240" height="112" rx="11"/>
+    <rect class="chip" x="1036" y="233" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(1047,244)">
+      <rect x="3.5" y="4.5" width="15" height="14" rx="2"/>
+      <line x1="3.5" y1="8.8" x2="18.5" y2="8.8"/>
+      <line x1="7.5" y1="3" x2="7.5" y2="6"/>
+      <line x1="14.5" y1="3" x2="14.5" y2="6"/>
+      <circle cx="15" cy="15" r="4" fill="#eaf3fc"/>
+      <path d="M15,12.6 V15 L16.8,16"/>
+    </g>
+    <text class="t" x="1094" y="252">Scheduler loop</text>
+    <text class="s" x="1094" y="271">embedded</text>
+    <text class="mono" x="1094" y="288">FLOWFILE_SCHEDULER_ENABLED</text>
+  </g>
+
+  <!-- internal: Core API -> SqlService -->
+  <path class="arw" d="M410,256 H360" marker-end="url(#ah)"/>
+  <!-- internal: Core API -> Kernel Manager -->
+  <path class="arw" d="M650,256 H698" marker-end="url(#ah)"/>
+
+  <!-- ============ ROW 2 PROCESSES ============ -->
+  <!-- Worker -->
+  <g>
+    <rect class="box" x="240" y="452" width="286" height="108" rx="11"/>
+    <rect class="chip" x="256" y="483" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(267,494)">
+      <circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.9"/>
+      <line x1="12" y1="4.6" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="19.4"/>
+      <line x1="4.6" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="19.4" y2="12"/>
+      <line x1="6.75" y1="6.75" x2="8.45" y2="8.45"/><line x1="15.55" y1="15.55" x2="17.25" y2="17.25"/>
+      <line x1="15.55" y1="8.45" x2="17.25" y2="6.75"/><line x1="6.75" y1="17.25" x2="8.45" y2="15.55"/>
+    </g>
+    <text class="t" x="314" y="494">Worker &#183; FastAPI :63579</text>
+    <text class="s" x="314" y="513">compute in spawned</text>
+    <text class="ss" x="314" y="530">subprocesses &#183; Arrow IPC</text>
+  </g>
+
+  <!-- Kernel container -->
+  <g>
+    <rect class="box" x="670" y="452" width="260" height="108" rx="11"/>
+    <rect class="chip" x="686" y="483" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(697,494)">
+      <path d="M12,2.5 L20,7 V16.5 L12,21 L4,16.5 V7 Z"/>
+      <path d="M4,7 L12,11.5 L20,7"/>
+      <path d="M12,11.5 V21"/>
+    </g>
+    <text class="ts" x="744" y="494">Kernel container &#183; Docker</text>
+    <text class="s" x="744" y="513">uvicorn :9999 &#8594;</text>
+    <text class="ss" x="744" y="530">host 19000&#8211;19999</text>
+  </g>
+
+  <!-- Headless flow run -->
+  <g>
+    <rect class="box" x="970" y="452" width="240" height="108" rx="11"/>
+    <rect class="chip" x="986" y="483" width="46" height="46" rx="10"/>
+    <g class="ic" transform="translate(997,494)">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/>
+      <path d="M9.5,8 L15.5,12 L9.5,16 Z"/>
+    </g>
+    <text class="t" x="1044" y="494">Headless flow run</text>
+    <text class="s" x="1044" y="513">detached subprocess</text>
+    <text class="mono" x="1044" y="530">flowfile run flow --run-id</text>
+  </g>
+
+  <!-- ============ STORAGE SUBSTRATES (row 3) ============ -->
+  <!-- Delta tables -->
+  <g>
+    <rect class="store" x="450" y="732" width="340" height="116" rx="13"/>
+    <rect class="chipn" x="466" y="767" width="46" height="46" rx="10"/>
+    <g class="icn" transform="translate(477,778)">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/>
+      <path d="M4.5,5.5 V16 C4.5,17.6 7.9,18.9 12,18.9 C16.1,18.9 19.5,17.6 19.5,16 V5.5"/>
+      <path d="M4.5,10.7 C4.5,12.3 7.9,13.6 12,13.6 C16.1,13.6 19.5,12.3 19.5,10.7"/>
+    </g>
+    <text class="t" x="524" y="778" fill="#233588">Delta tables</text>
+    <text class="s" x="524" y="797" fill="#4a5578">local / S3</text>
+    <text class="ss" x="524" y="814" fill="#6b74a0">one dir per table</text>
+  </g>
+
+  <!-- SQLite catalog DB -->
+  <g>
+    <rect class="store" x="1075" y="732" width="210" height="116" rx="13"/>
+    <rect class="chipn" x="1091" y="767" width="46" height="46" rx="10"/>
+    <g class="icn" transform="translate(1102,778)">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/>
+      <path d="M4.5,5.5 V16 C4.5,17.6 7.9,18.9 12,18.9 C16.1,18.9 19.5,17.6 19.5,16 V5.5"/>
+      <path d="M4.5,10.7 C4.5,12.3 7.9,13.6 12,13.6 C16.1,13.6 19.5,12.3 19.5,10.7"/>
+    </g>
+    <text class="ts" x="1149" y="778" fill="#233588">SQLite catalog DB</text>
+    <text class="s" x="1149" y="797" fill="#4a5578">shared metadata</text>
+    <text class="ss" x="1149" y="814" fill="#6b74a0">rows + grants</text>
+  </g>
+
+  <!-- ============ EDGES ============ -->
+
+  <!-- (1) Core API -> Worker : PRIMARY cyan -->
+  <path class="arwc" d="M500,312 V420 H420 V452" marker-end="url(#ahc)"/>
+  <text class="nlc" x="488" y="352" text-anchor="end">&#9312; run flow / execute graph</text>
+  <text class="albl" x="488" y="368" text-anchor="end">serialize LazyFrame &#8594; POST</text>
+
+  <!-- Worker -> Core API : Arrow IPC return (dotted) -->
+  <path class="dash" d="M470,452 V432 H575 V312" marker-end="url(#ah)"/>
+  <text class="albl" x="588" y="418">Arrow IPC file paths</text>
+
+  <!-- (2)+(3) SqlService -> Worker : one shared path, used by the SQL editor and by notebook SQL cells -->
+  <path class="arw" d="M229,312 V436 H321 V452" marker-end="url(#ah)"/>
+  <text class="nl" x="188" y="374" text-anchor="end">&#9313; execute SQL</text>
+  <text class="nl" x="188" y="391" text-anchor="end">&#9314; notebook SQL cells</text>
+
+  <!-- (3) Kernel Manager -> Kernel container : notebook Python cells -->
+  <path class="arw" d="M818,312 V400 H800 V452" marker-end="url(#ah)"/>
+  <text class="nl" x="836" y="392">&#9314; notebook &#8212; Python cells</text>
+
+  <!-- Kernel container -> Core API : write Delta + POST metadata (solid return) -->
+  <path class="arw" d="M718,452 V360 H642 V314" marker-end="url(#ah)"/>
+  <text class="albl" x="680" y="380" text-anchor="middle">write Delta + POST metadata</text>
+
+  <!-- (4) Scheduler loop -> Headless flow run : spawn_flow_run -->
+  <path class="arw" d="M1060,312 V452" marker-end="url(#ah)"/>
+  <text class="nl" x="1074" y="392">&#9315; spawn_flow_run</text>
+
+  <!-- (4) Scheduler loop -> SQLite catalog DB : poll due triggers -->
+  <path class="arw" d="M1200,312 V732" marker-end="url(#ahn)"/>
+  <text class="albl" x="1212" y="596">poll due</text>
+  <text class="albl" x="1212" y="611">triggers</text>
+
+  <!-- (4) Headless flow run -> Delta tables : runs locally, no worker offload -->
+  <path class="arw" d="M1060,560 V672 H760 V732" marker-end="url(#ahn)"/>
+  <text class="albl" x="900" y="648" text-anchor="middle">runs flow locally,</text>
+  <text class="albl" x="900" y="663" text-anchor="middle">no worker offload</text>
+
+  <!-- Core API -> SQLite catalog DB : metadata (dotted data) -->
+  <path class="dash" d="M590,312 V700 H1120 V732" marker-end="url(#ahn)"/>
+  <text class="albl" x="856" y="692">metadata</text>
+
+  <!-- Worker -> Delta tables : datasets (dotted data) -->
+  <path class="dash" d="M450,560 V686 H520 V732" marker-end="url(#ahn)"/>
+  <text class="albl" x="466" y="636">datasets</text>
+
+  <!-- Kernel container -> Delta tables : read / write (dotted data) -->
+  <path class="dash" d="M720,560 V690 H680 V732" marker-end="url(#ahn)"/>
+  <text class="albl" x="700" y="636" text-anchor="middle">read / write</text>
+</svg>

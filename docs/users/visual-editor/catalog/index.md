@@ -2,7 +2,7 @@
 
 Organize, track, and govern your data flows and tables in a central catalog.
 
-The Catalog is a central place to manage flows and track execution history. It registers data tables (physical and [virtual](virtual-tables.md)), queries data with [SQL](sql-editor.md), shares artifacts across flows, and automates pipelines with [schedules](schedules.md).
+The Catalog is a central place to manage flows and track execution history. It registers data tables (physical and [virtual](virtual-tables.md)), queries data with [SQL](sql-editor.md), shares artifacts across flows, automates pipelines with [schedules](schedules.md), and serves flows as [API endpoints](#serve-flows-as-apis).
 
 !!! info "Limited in Flowfile Lite"
     The browser-only [Flowfile Lite](../../deployment/lite.md) edition includes only a **lightweight in-browser catalog** (save and reuse CSV tables). The governed catalog described here — Delta-backed storage, version history, virtual tables, lineage, SQL, schedules, and secrets — requires the full desktop/server build.
@@ -301,6 +301,23 @@ Query catalog tables directly using SQL. See the dedicated [SQL Editor](sql-edit
 ## Notebooks
 
 Notebooks live in the catalog next to the tables they analyze: Python and Markdown cells with code completions, Python executing on [Docker-isolated kernels](../kernels.md), cells reading and writing catalog tables directly through `flowfile_ctx`. See the dedicated [Notebooks](notebooks.md) page.
+
+---
+
+## Serve flows as APIs
+
+!!! warning "To review (Fable)"
+    New section (drafted by Opus) — verify the UI-flow specifics and the register-2 voice.
+
+Publish a registered flow as an HTTP endpoint so other systems can run it on demand. A published flow is served at `GET /api/data/{slug}`, which runs the flow synchronously and returns the output of its **API Response** node as JSON.
+
+- The flow must contain an **API Response** node — it marks the dataset returned to the caller.
+- Endpoints are **API-key authenticated**: publish or unpublish a flow, and mint or revoke its keys, from the app. One key can call several published flows (an *API consumer*).
+- Parameters declared on the flow surface as request parameters, so a single published flow can serve many variations.
+
+The flow you build and test in the designer becomes a reusable data service — callable from a dashboard, a scheduled job, or another application.
+
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the flow's API publishing panel — the publish toggle, the /api/data/{slug} endpoint URL, and its API keys -->
 
 ---
 

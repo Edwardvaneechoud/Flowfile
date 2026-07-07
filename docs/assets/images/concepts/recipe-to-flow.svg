@@ -71,11 +71,15 @@
   <!-- NODE 1 : Input  (cyan, dark ink) -->
   <g>
     <rect x="375" y="154" width="130" height="92" rx="14" fill="#2DD5D3"/>
-    <g transform="translate(391,170)" fill="none" stroke="#233588" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="0" y="1" width="20" height="16" rx="2"/>
-      <path d="M0 7 h20 M7 7 v10 M13 7 v10"/>
+    <g transform="translate(401,180) scale(0.42) translate(-50,-52)" fill="none" stroke="#233588" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="28" y="26" width="44" height="38" rx="5" fill="#233588" fill-opacity="0.12"/>
+      <line x1="28" y1="39" x2="72" y2="39" stroke-width="4"/>
+      <line x1="46" y1="39" x2="46" y2="64" stroke-width="3.5"/>
+      <line x1="28" y1="52" x2="72" y2="52" stroke-width="3.5"/>
+      <line x1="50" y1="68" x2="50" y2="82"/>
+      <polyline points="43,75 50,82 57,75"/>
     </g>
-    <text x="420" y="185" font-size="15" font-weight="700" fill="#233588">Input</text>
+    <text x="422" y="185" font-size="15" font-weight="700" fill="#233588">Input</text>
     <g stroke="#233588" stroke-width="2" opacity="0.32" stroke-linecap="round">
       <path d="M389 216 h102"/><path d="M389 230 h74"/>
     </g>
@@ -87,10 +91,11 @@
   <!-- NODE 2 : Filter  (cerulean, white ink) -->
   <g>
     <rect x="545" y="154" width="130" height="92" rx="14" fill="#26A8E0"/>
-    <g transform="translate(561,170)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M1 2 H19 L12 10 V18 L8 16 V10 Z"/>
+    <g transform="translate(571,180) scale(0.42) translate(-50,-52)" fill="none" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M28 28 H72 L56 50 V66 L44 72 V50 Z" fill="#ffffff" fill-opacity="0.16"/>
+      <circle cx="50" cy="80" r="2.6" fill="#ffffff" stroke="none"/>
     </g>
-    <text x="590" y="185" font-size="15" font-weight="700" fill="#ffffff">Filter</text>
+    <text x="592" y="185" font-size="15" font-weight="700" fill="#ffffff">Filter</text>
     <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
       <path d="M559 216 h102"/><path d="M559 230 h68"/>
     </g>
@@ -101,7 +106,12 @@
   <!-- NODE 3 : Formula  (royal, white ink) -->
   <g>
     <rect x="715" y="154" width="130" height="92" rx="14" fill="#1D76D6"/>
-    <text x="729" y="187" font-size="20" font-style="italic" font-weight="600" fill="#ffffff" font-family="Georgia,serif">&#402;x</text>
+    <g transform="translate(741,180) scale(0.42) translate(-50,-52)" fill="none" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M30 72 V40 a10 10 0 0 1 12 -10"/>
+      <line x1="24" y1="48" x2="42" y2="48"/>
+      <line x1="56" y1="44" x2="74" y2="72"/>
+      <line x1="74" y1="44" x2="56" y2="72"/>
+    </g>
     <text x="762" y="185" font-size="15" font-weight="700" fill="#ffffff">Formula</text>
     <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">
       <path d="M729 216 h102"/><path d="M729 230 h72"/>
@@ -113,9 +123,10 @@
   <!-- NODE 4 : Output  (navy, white ink) -->
   <g>
     <rect x="885" y="154" width="130" height="92" rx="14" fill="#233588"/>
-    <g transform="translate(901,168)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3 1 H12 L17 6 V21 H3 Z"/>
-      <path d="M10 9 V16 M7 13 L10 16 L13 13"/>
+    <g transform="translate(911,180) scale(0.42) translate(-50,-52)" fill="none" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M28 58 V70 a4 4 0 0 0 4 4 H68 a4 4 0 0 0 4-4 V58"/>
+      <line x1="50" y1="26" x2="50" y2="58"/>
+      <polyline points="40,48 50,59 60,48"/>
     </g>
     <text x="932" y="185" font-size="15" font-weight="700" fill="#ffffff">Output</text>
     <g stroke="#ffffff" stroke-width="2" opacity="0.38" stroke-linecap="round">

@@ -14,7 +14,9 @@ That picture *is* the work. Next month's file arrives: run the flow again. A col
 
 ![A hand-drawn recipe card on warm paper morphs into a four-node Flowfile flow — Input, Filter, Formula, Output — with a small data preview beneath each node: the work itself is the recipe, written down once and re-runnable with one click.](assets/images/concepts/recipe-to-flow.svg)
 
-<!-- draft: Fable to finalize (F1 — reframed off the technical formula example; plain page, warm register) -->
+!!! warning "To review (Fable)"
+    Voice draft — reframed off the technical formula example (plain page, warm register); finalize the wording.
+
 Nothing about this requires programming. Each step is a form you fill in — pick a column, choose a condition, name the result — the way you'd set up a formula in a spreadsheet, not the way you'd write code.
 
 ## Where it compounds: the catalog
@@ -46,7 +48,9 @@ Flowfile is deliberately built so you can use a tenth of it and never feel the r
 
 The same platform keeps up as the work gets more ambitious — without ever demanding it:
 
-<!-- draft: Fable to finalize (F2 — toned down the scale-boast) -->
+!!! warning "To review (Fable)"
+    Voice draft — toned down the scale-boast; finalize the wording.
+
 - **More data than a spreadsheet survives?** Flowfile runs on [Polars](https://pola.rs), a fast modern data engine, so large files stay workable where a spreadsheet would stall.
 - **Data living in company systems?** Databases, cloud storage, Kafka streams, APIs — [connect once, read live](users/data-elsewhere.md), stop hand-carrying copies.
 - **Colleagues who code?** Every flow is equally real as Python: [write pipelines in code](users/write-python.md) that appear on the canvas, or take any visual flow and [export it as a plain Python script](users/visual-editor/tutorials/code-generator.md) that runs on its own. Nobody is locked in — in either direction.

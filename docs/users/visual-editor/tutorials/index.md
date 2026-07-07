@@ -7,6 +7,7 @@ End-to-end walkthroughs that build a real flow from start to finish. Each one na
 | Example | For | Difficulty | Nodes | Data |
 |---------|-----|-----------|-------|------|
 | [Deduplicate and summarize sales data](sales-pipeline.md) | Analysts new to Flowfile | Beginner | 5 | `data/templates/supermarket_sales.csv` |
+| [Build a sales dashboard from one cleaned table](sales-dashboard.md) | Analysts wanting several views at once | Advanced | 15 | `data/templates/supermarket_sales.csv` |
 | [Export to Python](code-generator.md) | Python developers | Beginner | Any | Any flow |
 
 ## Connecting external data

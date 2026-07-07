@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 330" role="img" aria-label="Flowfile's node palette across six categories — Input, Transform, Combine, Aggregate, Output and Machine learning. The five everyday workhorse nodes — Read data, Filter, Formula, Join and Group by — are highlighted in brand cyan; the rest of the toolbox is dimmed.">
+  <defs>
+    <linearGradient id="wg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .kick { font-family:Roboto,Arial,sans-serif; font-size:12.5px; fill:#6b7280; }
+    .hd   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
+    .cn   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:11px; fill:#233588; }
+    .dn   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    .cap  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .hchip{ fill:#ffffff; stroke:#2DD5D3; stroke-width:1.7; }
+    .dchip{ fill:rgba(140,150,165,0.11); stroke:rgba(140,150,165,0.40); stroke-width:1.1; }
+    .dic  { fill:none; stroke:#aeb6c0; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+    .lart { fill:none; stroke:#ffffff; stroke-width:4.5; stroke-linecap:round; stroke-linejoin:round; }
+    @media (prefers-color-scheme: dark) {
+      .kick, .cap { fill:#aeb6c0; }
+      .hd { fill:#c7cfd8; }
+      .dn { fill:#a4acb6; }
+    }
+    [data-md-color-scheme="slate"] .kick, [data-md-color-scheme="slate"] .cap { fill:#aeb6c0; }
+    [data-md-color-scheme="slate"] .hd { fill:#c7cfd8; }
+    [data-md-color-scheme="slate"] .dn { fill:#a4acb6; }
+  </style>
+
+  <text class="kick" x="470" y="34" text-anchor="middle">A big toolbox &#8212; but most days, five nodes do the work.</text>
+
+  <!-- ============ column headers ============ -->
+  <g>
+    <text class="hd" x="90"  y="70" text-anchor="middle">Input</text><rect x="77" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="242" y="70" text-anchor="middle">Transform</text><rect x="229" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="394" y="70" text-anchor="middle">Combine</text><rect x="381" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="546" y="70" text-anchor="middle">Aggregate</text><rect x="533" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="698" y="70" text-anchor="middle">Output</text><rect x="685" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="850" y="70" text-anchor="middle">Machine learning</text><rect x="837" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+  </g>
+
+  <!-- ============ INPUT (x=24) ============ -->
+  <!-- Read data ★ -->
+  <rect class="hchip" x="24" y="92" width="132" height="32" rx="8"/>
+  <g transform="translate(46,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><rect x="28" y="26" width="44" height="38" rx="5" fill="#ffffff" fill-opacity="0.18"/><line x1="28" y1="39" x2="72" y2="39" stroke-width="4"/><line x1="46" y1="39" x2="46" y2="64" stroke-width="3.5"/><line x1="28" y1="52" x2="72" y2="52" stroke-width="3.5"/><line x1="50" y1="68" x2="50" y2="82"/><polyline points="43,75 50,82 57,75"/></g></g>
+  <text class="cn" x="66" y="112">Read data</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="24" y="132" width="132" height="32" rx="8"/><rect class="dic" x="38" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="42" y1="148" x2="50" y2="148"/><text class="dn" x="66" y="152">Database</text>
+  <rect class="dchip" x="24" y="172" width="132" height="32" rx="8"/><rect class="dic" x="38" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="42" y1="188" x2="50" y2="188"/><text class="dn" x="66" y="192">Cloud storage</text>
+
+  <!-- ============ TRANSFORM (x=176) ============ -->
+  <!-- Filter ★ -->
+  <rect class="hchip" x="176" y="92" width="132" height="32" rx="8"/>
+  <g transform="translate(198,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><path d="M28 28 H72 L56 50 V66 L44 72 V50 Z" fill="#ffffff" fill-opacity="0.18"/><circle cx="50" cy="80" r="2.6" fill="#ffffff" stroke="none"/></g></g>
+  <text class="cn" x="218" y="112">Filter</text>
+  <!-- Formula ★ -->
+  <rect class="hchip" x="176" y="132" width="132" height="32" rx="8"/>
+  <g transform="translate(198,148) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><path d="M30 72 V40 a10 10 0 0 1 12 -10"/><line x1="24" y1="48" x2="42" y2="48"/><line x1="56" y1="44" x2="74" y2="72"/><line x1="74" y1="44" x2="56" y2="72"/></g></g>
+  <text class="cn" x="218" y="152">Formula</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="176" y="172" width="132" height="32" rx="8"/><rect class="dic" x="190" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="194" y1="188" x2="202" y2="188"/><text class="dn" x="218" y="192">Select</text>
+  <rect class="dchip" x="176" y="212" width="132" height="32" rx="8"/><rect class="dic" x="190" y="221" width="16" height="12" rx="2.5"/><line class="dic" x1="194" y1="228" x2="202" y2="228"/><text class="dn" x="218" y="232">Sort</text>
+
+  <!-- ============ COMBINE (x=328) ============ -->
+  <!-- Join ★ -->
+  <rect class="hchip" x="328" y="92" width="132" height="32" rx="8"/>
+  <g transform="translate(350,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g stroke="#ffffff" stroke-width="4.5" fill="#ffffff"><circle cx="40" cy="50" r="17" fill-opacity="0.26"/><circle cx="60" cy="50" r="17" fill-opacity="0.26"/></g></g>
+  <text class="cn" x="370" y="112">Join</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="328" y="132" width="132" height="32" rx="8"/><rect class="dic" x="342" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="346" y1="148" x2="354" y2="148"/><text class="dn" x="370" y="152">Cross join</text>
+  <rect class="dchip" x="328" y="172" width="132" height="32" rx="8"/><rect class="dic" x="342" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="346" y1="188" x2="354" y2="188"/><text class="dn" x="370" y="192">Fuzzy match</text>
+  <rect class="dchip" x="328" y="212" width="132" height="32" rx="8"/><rect class="dic" x="342" y="221" width="16" height="12" rx="2.5"/><line class="dic" x1="346" y1="228" x2="354" y2="228"/><text class="dn" x="370" y="232">Union</text>
+
+  <!-- ============ AGGREGATE (x=480) ============ -->
+  <!-- Group by ★ -->
+  <rect class="hchip" x="480" y="92" width="132" height="32" rx="8"/>
+  <g transform="translate(502,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><line x1="26" y1="34" x2="42" y2="34"/><line x1="26" y1="50" x2="42" y2="50"/><line x1="26" y1="66" x2="42" y2="66"/><line x1="50" y1="50" x2="68" y2="50" stroke-width="4"/><polyline points="61,43 68,50 61,57" stroke-width="4"/></g></g>
+  <text class="cn" x="522" y="112">Group by</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="480" y="132" width="132" height="32" rx="8"/><rect class="dic" x="494" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="498" y1="148" x2="506" y2="148"/><text class="dn" x="522" y="152">Pivot</text>
+  <rect class="dchip" x="480" y="172" width="132" height="32" rx="8"/><rect class="dic" x="494" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="498" y1="188" x2="506" y2="188"/><text class="dn" x="522" y="192">Unpivot</text>
+  <rect class="dchip" x="480" y="212" width="132" height="32" rx="8"/><rect class="dic" x="494" y="221" width="16" height="12" rx="2.5"/><line class="dic" x1="498" y1="228" x2="506" y2="228"/><text class="dn" x="522" y="232">Record count</text>
+
+  <!-- ============ OUTPUT (x=632) ============ -->
+  <rect class="dchip" x="632" y="92" width="132" height="32" rx="8"/><rect class="dic" x="646" y="101" width="16" height="12" rx="2.5"/><line class="dic" x1="650" y1="108" x2="658" y2="108"/><text class="dn" x="674" y="112">Write data</text>
+  <rect class="dchip" x="632" y="132" width="132" height="32" rx="8"/><rect class="dic" x="646" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="650" y1="148" x2="658" y2="148"/><text class="dn" x="674" y="152">Cloud writer</text>
+  <rect class="dchip" x="632" y="172" width="132" height="32" rx="8"/><rect class="dic" x="646" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="650" y1="188" x2="658" y2="188"/><text class="dn" x="674" y="192">Explore data</text>
+
+  <!-- ============ MACHINE LEARNING (x=784) ============ -->
+  <rect class="dchip" x="784" y="92" width="132" height="32" rx="8"/><rect class="dic" x="798" y="101" width="16" height="12" rx="2.5"/><line class="dic" x1="802" y1="108" x2="810" y2="108"/><text class="dn" x="826" y="112">Train model</text>
+  <rect class="dchip" x="784" y="132" width="132" height="32" rx="8"/><rect class="dic" x="798" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="802" y1="148" x2="810" y2="148"/><text class="dn" x="826" y="152">Apply model</text>
+  <rect class="dchip" x="784" y="172" width="132" height="32" rx="8"/><rect class="dic" x="798" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="802" y1="188" x2="810" y2="188"/><text class="dn" x="826" y="192">Evaluate</text>
+
+  <text class="cap" x="470" y="300" text-anchor="middle">The five in cyan &#8212; Read data, Filter, Formula, Join, Group by &#8212; cover most flows. The rest waits until you need it.</text>
+</svg>

@@ -16,27 +16,7 @@ The kernel system consists of two main components:
 1. **Kernel Manager** (`flowfile_core/flowfile_core/kernel/`) — Orchestrates Docker container lifecycle and proxies execution requests from the Core API
 2. **Kernel Runtime** (`kernel_runtime/`) — A FastAPI application that runs inside each Docker container, executes user code, and manages artifacts
 
-```mermaid
-graph LR
-    Frontend["Frontend<br/>(Vue/Tauri)"]
-    Core["Core API<br/>(port 63578)"]
-    Manager["Kernel Manager<br/>(Docker API)"]
-    K1["Kernel Container<br/>(port 9999)"]
-    K2["Kernel Container<br/>(port 9999)"]
-    Shared["Shared Volume<br/>(parquet I/O, artifacts)"]
-
-    Frontend -->|JWT auth| Core
-    Core --> Manager
-    Manager -->|docker run / stop / rm| K1
-    Manager -->|docker run / stop / rm| K2
-    Core -->|HTTP ExecuteRequest| K1
-    Core -->|HTTP ExecuteRequest| K2
-    K1 -->|log callback| Core
-    K2 -->|log callback| Core
-    K1 --- Shared
-    K2 --- Shared
-    Core --- Shared
-```
+![Kernel architecture: the Frontend authenticates to the Core API (:63578) with JWT; Core drives Docker kernel containers two ways — the Kernel Manager runs the container lifecycle (docker run / stop / rm) while Core sends HTTP ExecuteRequests directly to each container, which stream log callbacks back — and Core, the kernels, and a shared volume exchange parquet I/O and artifacts.](../assets/images/architecture/kernel-flow.svg)
 
 ---
 

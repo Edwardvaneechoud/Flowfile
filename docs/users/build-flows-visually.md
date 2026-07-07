@@ -12,10 +12,12 @@ The mental model is small: **nodes are operations, edges are data moving between
 
 ## 2. Know your toolbox
 
-<!-- draft: Fable to finalize (F5 — tightened; dropped the "trick to reading" sermon) -->
+!!! warning "To review (Fable)"
+    Voice draft — tightened the toolbox paragraph (dropped the "trick to reading" sermon); finalize the wording.
+
 The palette has six categories — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md) — but most flows lean on five: Read data, Filter, Formula, Join, Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), so reach for the [node reference](visual-editor/nodes/index.md) when you need a less common one.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the node palette annotated — the six category groups visible, with the five everyday workhorses (Read data, Filter, Formula, Join, Group by) highlighted and the rest dimmed, conveying "big toolbox, small daily set" -->
+![Flowfile's node palette across six categories — Input, Transform, Combine, Aggregate, Output, Machine learning — with the five everyday workhorses (Read data, Filter, Formula, Join, Group by) highlighted in cyan and the rest of the toolbox dimmed.](../assets/images/guides/building-flows/node-palette-annotated.svg)
 
 
 ## 3. Write the logic as formulas
@@ -34,7 +36,9 @@ trim(uppercase([customer_code]))
 
 The [function reference](formulas/functions.md) lists everything available, and the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you try an expression against sample data before committing it to a node.
 
-<!-- draft: Fable to finalize (facts verified — Execution Mode lives in Flow Settings; Cache results is a per-node General Settings toggle; scheduled/headless runs execute in Performance) -->
+!!! warning "To review (Fable)"
+    Voice draft — reframed Dev-vs-Performance (facts verified: Execution Mode in Flow Settings; Cache results is a per-node toggle; scheduled/headless run in Performance); finalize the wording.
+
 ## 4. Build in Development, ship in Performance
 
 This is one toggle, not a migration. **Development** — the default while you build — materializes every node so you can inspect each intermediate result: run, look, adjust, run again. **Performance** runs only what the outputs actually need and lets the query optimizer work across the whole graph, so nothing is computed for a preview nobody's looking at. You switch modes in **Flow Settings**; the flow itself never changes, and scheduled or headless runs use Performance on their own.
@@ -58,7 +62,9 @@ Think about who consumes your output, because each consumer has a natural landin
 - **People who'll query, chart, or build on it** — [Write to Catalog](visual-editor/nodes/output.md#catalog-writer). The result becomes a versioned table with history and lineage, and the [analyst route](analyze-your-data.md) takes over from there. This is the option that ends the `final_v3.xlsx` problem.
 - **Another system** — Database and Cloud Storage writers push results back into the warehouse or the bucket, via [saved connections](data-elsewhere.md).
 
-<!-- draft: Fable to finalize -->
+!!! warning "To review (Fable)"
+    Voice draft — reframed Automate (frontend Schedules first, CLI in a fold-out); finalize the wording.
+
 ## 6. Automate what you built
 
 A finished flow shouldn't need you to press Run. In the app, open [**Schedules**](visual-editor/catalog/schedules.md) and set the flow to run on a cron or whenever an upstream table updates — no files, no command line. A fresh source then cascades into fresh results on its own.

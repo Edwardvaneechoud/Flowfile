@@ -51,7 +51,9 @@ Once results are tables, day-to-day analysis stops needing the canvas. The [SQL 
 ![One catalog table fanning out to its consumers — the SQL editor querying it, a chart built on it, and a saved virtual table derived from it: publish once, analyze many ways.](../assets/images/concepts/catalog-fan-out.svg)
 
 
-<!-- draft: Fable to finalize -->
+!!! warning "To review (Fable)"
+    Voice draft — made the notebook example prominent and folded it; finalize the wording.
+
 Prefer to work in code? The same table is a line away from a [**notebook**](visual-editor/catalog/notebooks.md) — or any Python script — where you publish an aggregate and read it back with SQL, right next to the data.
 
 <details markdown="1">
