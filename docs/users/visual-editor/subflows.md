@@ -31,7 +31,7 @@ Drop a **Flow Input** node wherever the parent should hand data in. Each carries
 
 Give each Flow Input a distinct, meaningful name (for example `orders`, `customers`) — those names are what you'll wire connections to in the parent.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a child flow on the canvas with two Flow Input nodes named "orders" and "customers", some transforms, and a Flow Output node named "result" -->
+![A child flow on the canvas: two Flow Input nodes named orders and customers, a few transforms, and a Flow Output node named result.](../../assets/images/guides/subflows/child-flow-canvas.png)
 
 ### Add Flow Output nodes
 
@@ -54,7 +54,7 @@ Register the child from its flow detail panel in the catalog (the same registrat
 
 Add a **Run Flow** node to the parent flow and pick the registered child in its settings. Flowfile reads the child's interface — its Flow Input names, Flow Output names, and parameters — and shapes the node's handles to match.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: Run Flow node settings drawer showing the selected child flow, its input slots, output slots, and a parameter binding table -->
+![The Run Flow node settings drawer: the selected child flow, its input and output slots, and a parameter binding table.](../../assets/images/guides/subflows/run-flow-settings.png)
 
 ### Wire data inputs
 

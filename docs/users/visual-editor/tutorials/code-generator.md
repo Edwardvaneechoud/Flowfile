@@ -2,14 +2,14 @@
 
 The Code Generator exports a visually designed flow as executable Python. Use it to inspect the transformation logic behind a flow, integrate a Flowfile pipeline into an existing Python project, or extend a workflow with custom scripts.
 
-For pure transformation flows (filter, join, group by, etc.), the generated code is standalone Polars — no Flowfile dependency required. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) generate code that uses `import flowfile as ff` for connection-aware operations. The transformation logic remains Polars in both cases.
+For pure transformation flows (filter, join, group by, etc.), the generated code is Polars — usually just `import polars as pl`, and never an `import flowfile`. A few nodes add a small standalone helper package instead of native Polars: formula and advanced-filter expressions that can't be lowered to native Polars pull in `polars_expr_transformer`, fuzzy match pulls in `pl_fuzzy_frame_match`, and the graph solver pulls in `polars_grouper` — each a lightweight PyPI package, not Flowfile. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) additionally use `import flowfile as ff` for connection-aware operations. The transformation logic is Polars in every case.
 
 ![code_generator](../../../assets/images/guides/code_generator/code_generator.gif)
 
 ## Key Characteristics of the Generated Code
 
 * Transformation nodes translate to Polars operations; I/O nodes (database, catalog, cloud storage, Kafka) translate to FlowFrame API calls (`ff.read_database()`, `ff.read_catalog_table()`, etc.).
-* The structure mirrors your visual flow. Pure transformation flows can be embedded anywhere; flows with I/O nodes require `pip install flowfile`.
+* The structure mirrors your visual flow. Pure transformation flows depend only on Polars (plus a small `polars_*` helper package for formula, fuzzy-match, or graph-solver nodes); flows with I/O nodes require `pip install flowfile`.
 
 ## Examples of Generated Code
 

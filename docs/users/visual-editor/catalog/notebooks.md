@@ -2,7 +2,7 @@
 
 Notebooks are the catalog's exploration console: Jupyter-style cells that live *next to your tables* instead of in a folder on someone's laptop. Open one from the catalog tree, point it at a kernel, and analyze catalog data with any Python library — with the environment pinned by the kernel, so the notebook runs the same for everyone who opens it.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a catalog notebook open in the notebook panel — the catalog tree on the left with the notebook selected, cells with execution counters, the kernel picker in the toolbar, and an interactive table rendered under a cell -->
+![A catalog notebook open in the notebook panel: the catalog tree on the left with the notebook selected, cells with execution counters, the kernel picker in the toolbar, and an interactive table rendered under a cell.](../../../assets/images/guides/notebooks/notebook-panel.png)
 
 ## Creating and organizing
 
@@ -28,6 +28,13 @@ flowfile_ctx.explore(lf)                                 # Graphic Walker explor
 ```
 
 Reads come back as LazyFrames; `flowfile_ctx.write_catalog_table` persists a result as a real catalog table, and `flowfile_ctx.publish_global` saves a Python object (a trained model, a config) as a [global artifact](index.md#global-artifacts) that survives across sessions and flows. The full cell-side API — inputs, outputs, display, artifacts — is documented in [The flowfile_ctx API](../kernel-api.md).
+
+<details markdown="1">
+<summary>See it: a catalog notebook cell in action</summary>
+
+![A catalog notebook cell running flowfile_ctx.read_catalog_table, then display and explore, with the interactive table and Graphic Walker explorer rendering live beneath the cell](../../../assets/images/guides/notebooks/notebook-in-action.gif)
+
+</details>
 
 ## Versioned like flows
 

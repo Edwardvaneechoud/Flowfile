@@ -4,17 +4,17 @@ Recurring data preparation has a thousand faces: merging exports from two system
 
 A flow replaces that with something that can be *seen*: every step a labeled node, every intermediate result inspectable, the whole thing re-runnable by anyone — including you, six months from now.
 
-![A flow drawn as an assembly line: files and a database feed in on the left, pass through labeled stations — drop duplicates, join, group by — each showing its output data underneath, and arrive at one clean result on the right; a small greyed inset shows the same work as an opaque manual checklist.](../assets/images/concepts/flow-assembly-line.svg)
+![A flow drawn as an assembly line: a file and a database feed one conveyor belt riding on rollers, the labeled stations — drop duplicates, join, group by — stand on the belt, each showing a small preview of its output data, and the belt runs straight into one clean result on the right; a small greyed checklist below shows the same job done by hand.](../assets/images/concepts/flow-assembly-line.svg)
 
 ## 1. Learn the canvas with one real flow
 
-The mental model is small: **nodes are operations, edges are data moving between them, and after a run you can look inside any node.** The [Quickstart](../quickstart.md#your-first-flow-visually) makes it concrete in five steps — read a sales export, drop duplicate rows, keep the bulk orders, summarize income per city — and [Building Flows](visual-editor/building-flows.md) covers the mechanics: connecting, configuring, running, saving. Twenty minutes, and the rest of this page is vocabulary.
+The mental model is small: **nodes are operations, the connections between them carry the data, and after a run you can look inside any node.** The [Quickstart](../quickstart.md#your-first-flow-visually) makes it concrete in five steps — read a sales export, drop duplicate rows, keep the bulk orders, summarize income per city — and [Building Flows](visual-editor/building-flows.md) covers the mechanics: connecting, configuring, running, saving. Twenty minutes, and the rest of this page is vocabulary.
 
 ## 2. Know your toolbox
 
-The palette groups everything into six categories — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md). That's more surface than any one pipeline needs; most days are five nodes — Read data, Filter, Formula, Join, Group by — and the trick to reading the rest of the palette is that node names describe data operations, not software concepts: *Text to rows* splits delimited cells, *Fuzzy match* joins on almost-equal keys, *Drop duplicates* does what it says. The [node reference](visual-editor/nodes/index.md) documents every option when a new shape of problem shows up.
+Most flows lean on the same five nodes: Read data, Filter data, Formula, Join, and Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), and the [node reference](visual-editor/nodes/index.md) covers the rest — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md) — when you need a less common one.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the node palette annotated — the six category groups visible, with the five everyday workhorses (Read data, Filter, Formula, Join, Group by) highlighted and the rest dimmed, conveying "big toolbox, small daily set" -->
+![Flowfile's node palette, grouped into its seven categories — Input Sources, Transformations, Combine Operations, Aggregations, Machine Learning, Output Operations, User Defined Operations — with the five everyday workhorses (Read data, Filter data, Formula, Join, Group by) highlighted in cyan and the rest dimmed.](../assets/images/guides/building-flows/node-palette-annotated.svg)
 
 
 ## 3. Write the logic as formulas
@@ -35,7 +35,16 @@ The [function reference](formulas/functions.md) lists everything available, and 
 
 ## 4. Build in Development, ship in Performance
 
-Two execution modes, two jobs. **Development** materializes every node so you can inspect each intermediate result — that's your iteration loop: run, look, adjust, run again. **Performance** is for the finished flow: it executes only what the outputs actually need and lets the query optimizer work across the whole graph, so nothing is computed for a preview nobody's looking at. A node's **Cache results** toggle (in its General Settings) keeps that node's output between Performance runs — worth switching on for an expensive step whose inputs rarely change.
+This is one toggle, not a migration. **Development** — the default while you build — runs every node and keeps its result, so you can inspect each step: run, look, adjust, run again. **Performance** computes only what the outputs actually need and optimizes across the whole flow, so nothing is calculated for a preview nobody's looking at. You switch in **Flow Settings**; the flow itself never changes, and scheduled or headless runs use Performance on their own.
+
+<details markdown="1">
+<summary>See it: the execution mode in Flow Settings</summary>
+
+![Flow Settings — execution mode, location, and step previews](../assets/images/quickstart/flow_settings.gif)
+
+</details>
+
+Caching is separate and per-node: a node's **Cache results** toggle (in its **General Settings**) stores that node's output so a Performance run — and your downstream edits — reuse it instead of recomputing. Worth it for one expensive step whose inputs rarely change.
 
 ![The same flow run two ways: in Development every node is lit with a data preview beneath it; in Performance only the path to the output is lit, the exploratory branch is greyed out, and a cached node is short-circuited so its stored result is reused instead of recomputed.](../assets/images/concepts/dev-vs-performance.svg)
 
@@ -49,13 +58,20 @@ Think about who consumes your output, because each consumer has a natural landin
 
 ## 6. Automate what you built
 
-A finished flow shouldn't need you to press Run. Two paths, usable together: [schedules](visual-editor/catalog/schedules.md) run the flow on a cron or when an upstream table updates; and because flows are plain `.yaml` files, anything that can run a command can run a flow:
+A finished flow shouldn't need you to press Run. Open [**Schedules**](visual-editor/catalog/schedules.md) in the app and set the flow to run on a schedule — every night, every Monday — or whenever a table it depends on is updated. No files, no command line: a fresh source cascades into fresh results on its own.
+
+<details markdown="1">
+<summary>Run it somewhere else — CI, cron, another host</summary>
+
+Flows are plain `.yaml` files, so anything that can run a command can run one:
 
 ```bash
 flowfile run flow monthly_reconciliation.yaml --param month=2026-07
 ```
 
-Exit code 0 or 1, no UI — cron jobs and CI pipelines treat it like any other tool. The [CLI reference](deployment/cli.md) covers parameters and the packaged variants, and [Projects](projects.md) version the whole workspace in git automatically if you'd rather not manage files by hand.
+Exit code 0 or 1, no UI — cron jobs and CI pipelines treat it like any other tool. The [CLI reference](deployment/cli.md) covers parameters and the packaged variants, and [Projects](projects.md) version the whole workspace in git.
+
+</details>
 
 ## 7. Grow the toolkit
 
@@ -63,7 +79,7 @@ The habits that keep a growing collection of flows sane:
 
 - **Stop copy-pasting node chains.** Shared logic becomes a [subflow](visual-editor/subflows.md) — a flow with named inputs and outputs that other flows call, including once-per-row over a parameter table.
 - **Missing node? Make it once.** The [Node Designer](visual-editor/node-designer.md) turns a custom transformation into a real palette node with its own settings form, reusable across every flow.
-- **When someone asks "what does this actually do?"** — [export the flow as Python](visual-editor/tutorials/code-generator.md). Pure-transformation flows export as dependency-free Polars; flows with I/O nodes keep an `ff` import for their connections. Either way, the logic is readable by anyone who reads code.
+- **When someone asks "what does this actually do?"** — [export the flow as Python](visual-editor/tutorials/code-generator.md). Pure-transformation flows export as Polars with no `flowfile` import; flows with I/O nodes keep an `ff` import for their connections. Either way, the logic is readable by anyone who reads code.
 
 ---
 

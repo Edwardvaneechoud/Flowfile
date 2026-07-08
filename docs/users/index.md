@@ -61,7 +61,7 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 A flow built on the canvas and a pipeline written in Python construct the same graph underneath:
 
 - Write code, then inspect it on the canvas with `ff.open_graph_in_editor(df.flow_graph)`.
-- Build visually, then [export the flow as Python](visual-editor/tutorials/code-generator.md) — pure-transformation flows export as dependency-free Polars; flows with I/O nodes keep an `ff` import for their connections.
+- Build visually, then [export the flow as Python](visual-editor/tutorials/code-generator.md) — pure-transformation flows export as Polars with no `flowfile` import (some formula, fuzzy-match, or graph nodes pull a small `polars_*` helper); flows with I/O nodes keep an `ff` import for their connections.
 - Hand a visual flow to a colleague who prefers code, or the other way around — both are views of the same graph.
 
 ```python

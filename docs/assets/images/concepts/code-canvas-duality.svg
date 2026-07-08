@@ -62,16 +62,16 @@
 
   <!-- ============ RIGHT: CANVAS ============ -->
   <rect class="box" x="590" y="70" width="306" height="330" rx="12"/>
-  <rect class="chip" x="598" y="88" width="42" height="42" rx="9"/>
-  <g class="ic" transform="translate(608,98)">
+  <rect class="chip" x="606" y="88" width="42" height="42" rx="9"/>
+  <g class="ic" transform="translate(616,98)">
     <circle cx="5" cy="6" r="2"/>
     <circle cx="5" cy="18" r="2"/>
     <circle cx="19" cy="12" r="2"/>
     <line x1="6.7" y1="7" x2="17.3" y2="11"/>
     <line x1="6.7" y1="17" x2="17.3" y2="13"/>
   </g>
-  <text class="t" x="654" y="104">Canvas</text>
-  <text class="s" x="654" y="120">the same graph, as nodes</text>
+  <text class="t" x="662" y="104">Canvas</text>
+  <text class="s" x="662" y="120">the same graph, as nodes</text>
 
   <!-- edges (behind nodes) -->
   <g>
@@ -102,7 +102,7 @@
       <circle cx="50" cy="80" r="2.5" fill="#FFFFFF" stroke="none"/>
     </g>
   </g>
-  <text class="ncap" x="766" y="252" text-anchor="middle">filter</text>
+  <text class="ncap" x="754" y="252" text-anchor="end">filter</text>
 
   <!-- node: group_by -->
   <g transform="translate(744,298) scale(0.44)">

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 600" role="img" aria-label="A left-versus-right mental model contrasting exporting a file — which forks into stale copies v1, v2 and final_v3 that get emailed around — with publishing to the Flowfile catalog, where one versioned live table with lineage back to its flow is read by a SQL editor, a chart, and a colleague.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" role="img" aria-label="A left-versus-right mental model contrasting exporting a file — which forks into stale copies v1, v2 and final_v3 that get emailed around — with publishing to the Flowfile catalog, where one versioned live table with lineage back to its flow is read by a SQL editor, a chart, and a colleague.">
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2DD5D3"/>
@@ -117,7 +117,7 @@
   </g>
 
   <!-- ============ CYAN ACCENT: PUBLISH INSTEAD ============ -->
-  <path class="arwc" d="M392,278 L554,309" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M378,278 L558,310" marker-end="url(#ahc)"/>
   <text class="rlbl" x="470" y="281" text-anchor="middle">publish instead</text>
 
   <!-- ============ RIGHT: FLOW (producer) ============ -->

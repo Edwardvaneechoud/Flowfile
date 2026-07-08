@@ -32,6 +32,6 @@ Installers are built for macOS (Apple Silicon and Intel), Windows, and Linux.
 
 ## What you get
 
-The desktop app runs offline with no Docker or terminal commands; data stays on your machine, and the setup screen generates and stores the encryption master key on first launch. It is single-user, with local flow storage (manual backup needed) and no centralized secrets management.
+The desktop app runs offline with no Docker or terminal commands; data stays on your machine, and the setup screen generates and stores the encryption master key on first launch. It is single-user, with local flow storage (manual backup needed); your secrets are encrypted on-device for you alone, with no shared, team-wide secret store (teammates can't be granted use of your saved secrets and connections).
 
 For multiple users, centralized flow storage, team collaboration, or server/production deployment, use [Docker deployment](docker.md) instead.
