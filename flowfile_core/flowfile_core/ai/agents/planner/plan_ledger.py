@@ -123,9 +123,11 @@ def annotate_done(plan_steps: list[str], completed_ops: list[CompletedOpEntry]) 
     PAIR — up to one ``connect`` AND up to one ``delete_connection`` — because
     a real re-wire executes as two recorded ops; letting each op satisfy a
     separate rewire step would over-count and silently end the run early. A
-    rewire step is done once it consumed at least one op of the pair (a
-    connect-only rewire is legitimate). An ``unknown`` step consumes any
-    leftover op. The heuristic deliberately biases toward under-counting
+    rewire is done ONLY once its ``connect`` half landed; a delete-only match
+    (disconnect done, reconnect still pending — the exact mid-plan stall this
+    ledger catches) consumes the delete from the pool but leaves the step
+    ``[pending]``, consistent with the under-count bias below. An ``unknown``
+    step consumes any leftover op. The heuristic deliberately biases toward under-counting
     (``[pending]``) over over-counting (``[done]``): a wrongly-pending step
     costs one nudge round; a wrongly-done step ends the run one op short.
     Never raises, never gates.
@@ -146,14 +148,13 @@ def annotate_done(plan_steps: list[str], completed_ops: list[CompletedOpEntry]) 
             pools["add"] -= 1
             done[i] = True
         elif kind == "rewire":
-            consumed = False
+            consumed_connect = False
             if pools["connect"] > 0:
                 pools["connect"] -= 1
-                consumed = True
+                consumed_connect = True
             if pools["delete_connection"] > 0:
                 pools["delete_connection"] -= 1
-                consumed = True
-            done[i] = consumed
+            done[i] = consumed_connect
 
     # Pass 2: unknown steps consume any leftover op, in order.
     for i, step in enumerate(plan_steps):

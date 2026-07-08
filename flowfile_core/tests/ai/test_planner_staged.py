@@ -2506,12 +2506,15 @@ def _proposed_changes(*steps: str) -> str:
     return f"## Proposed changes\n\n{body}\n"
 
 
-def _run_emit_plan(plan_md: str, *, start_max_steps: int | None = None) -> sessions.AgentSession:
+def _run_emit_plan(
+    plan_md: str, *, start_max_steps: int | None = None, explicit: bool = False
+) -> sessions.AgentSession:
     flow = _make_flow()
     sess = _make_session(flow)
     sess.stage = "plan"
     if start_max_steps is not None:
         sess.max_steps = start_max_steps
+    sess.max_steps_explicit = explicit
     steps = [_emit_plan_step(plan_md)] + [_stall() for _ in range(4)]
     provider = _ScriptedProvider(steps)
     asyncio.run(
@@ -2537,6 +2540,24 @@ def test_emit_plan_never_lowers_caller_max_steps() -> None:
     sess = _run_emit_plan(plan_md, start_max_steps=100)
     assert len(sess.plan_steps) == 3
     assert sess.max_steps == 100  # 5*3+8=23 < 100, never lowered
+
+
+def test_emit_plan_explicit_max_steps_is_hard_ceiling() -> None:
+    """A caller-supplied ``max_steps`` (``max_steps_explicit=True``) is a cost
+    cap: a long plan does NOT auto-scale past it."""
+    plan_md = _proposed_changes(*[f"filter — step {i}" for i in range(1, 13)])
+    sess = _run_emit_plan(plan_md, start_max_steps=10, explicit=True)
+    assert len(sess.plan_steps) == 12
+    assert sess.max_steps == 10  # explicit cap not raised past 10
+
+
+def test_emit_plan_default_max_steps_still_auto_scales() -> None:
+    """A default session (``max_steps_explicit=False``) with the same long plan
+    still auto-scales to 5*12+8=68."""
+    plan_md = _proposed_changes(*[f"filter — step {i}" for i in range(1, 13)])
+    sess = _run_emit_plan(plan_md, start_max_steps=10, explicit=False)
+    assert len(sess.plan_steps) == 12
+    assert sess.max_steps == 68
 
 
 def test_emit_plan_scale_clamped_to_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2771,6 +2792,32 @@ def test_prework_clarifying_question_awaiting_no_nudge() -> None:
     assert len(_nudge_events(events)) == 0
     assert sess.status == "awaiting_user_input"
     assert any(e.event == "awaiting_user_input" for e in events)
+
+
+def test_question_after_work_started_nudges_not_awaiting() -> None:
+    """The question-exemption sub-clause is narrow: once work has started
+    (staged_results non-empty), a question-shaped stall with pending steps is
+    NUDGED, not routed to awaiting_user_input (Point A, work-started side)."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — first", "filter — second")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),  # stage node 2 → work started
+            _stall("Shall I continue with the next step?"),  # question, but staged → nudge
+            *_filter_add_cycle("c2", upstream=2),
+            _stall(),  # plan complete → terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 1
+    assert not any(e.event == "awaiting_user_input" for e in events)
+    assert len(sess.staged_results) == 2
+    assert sess.status == "completed"
 
 
 def test_agent_live_plan_continuation_end_to_end() -> None:

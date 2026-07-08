@@ -1224,9 +1224,10 @@ async def _run_planner_loop(
                 session.plan_markdown = plan_text or None
                 session.plan_steps = plan_ledger.parse_plan_steps(plan_text)
                 session.plan_completed_ops = []
-                if session.plan_steps:
-                    # Auto-scale the step budget to plan length; never lower a
-                    # caller-supplied ``max_steps``, and clamp to the hard cap.
+                if session.plan_steps and not session.max_steps_explicit:
+                    # Auto-scale only the default budget to plan length, clamped
+                    # to the hard cap. A caller-supplied ``max_steps`` is a hard
+                    # ceiling (cost cap) and is never raised.
                     session.max_steps = min(
                         MAX_STEPS_HARD_CAP,
                         max(

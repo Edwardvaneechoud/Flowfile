@@ -169,6 +169,42 @@ def test_annotate_deviation_leaves_pending() -> None:
     assert plan_ledger.annotate_done(steps, completed) == [True, False, False]
 
 
+def test_annotate_delete_only_rewire_stays_pending() -> None:
+    """A rewire whose delete_connection landed but whose connect has not (the
+    disconnect-then-stall case) must stay [pending] — the delete is still
+    consumed from the pool so pass-2 unknown steps can't double-count it."""
+    steps = plan_ledger.parse_plan_steps(_WORKED_EXAMPLE)  # [add, rewire, rewire]
+    completed = [
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.add_unique", node_id=6, summary="x"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.delete_connection", summary="x"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.delete_connection", summary="x"),
+    ]
+    assert plan_ledger.annotate_done(steps, completed) == [True, False, False]
+
+
+def test_annotate_single_rewire_completes_on_connect() -> None:
+    """delete then connect (both halves) completes a single rewire step."""
+    steps = ["(re-wire) — disconnect a → b, reconnect c → b."]
+    completed = [
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.delete_connection", summary="x"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.connect", summary="x"),
+    ]
+    assert plan_ledger.annotate_done(steps, completed) == [True]
+
+
+def test_annotate_two_rewires_delete_first_ordering_all_done() -> None:
+    """Two rewires with all deletes recorded before all connects still resolve
+    to both [done]: each connect completes one step, each delete is consumed."""
+    steps = ["(re-wire) — first.", "(re-wire) — second."]
+    completed = [
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.delete_connection", summary="x"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.delete_connection", summary="x"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.connect", summary="x"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.connect", summary="x"),
+    ]
+    assert plan_ledger.annotate_done(steps, completed) == [True, True]
+
+
 def test_annotate_unknown_step_consumes_leftover() -> None:
     steps = ["group_by#2 change agg to count"]  # unknown kind
     completed = [
