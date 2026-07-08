@@ -41,13 +41,18 @@ from flowfile_core.ai.tools.registry import (
     get_staged_fill_inner_field_name,
 )
 
+from . import plan_ledger
 from ._internal import (
     _ADD_PREFIX,
     _MANDATORY_TOOL_CALL_STAGES,
+    _MAX_PLAN_NUDGES,
+    _PLAN_BUDGET_SLACK,
+    _PLAN_ROUNDS_PER_STEP,
     _STAGED_SINGLE_OP_TOOL_NAMES,
     _STAGED_STATE_MACHINE_SURFACES,
     DEFAULT_MAX_RETRIES_PER_STEP,
     DEFAULT_MAX_TOKENS,
+    MAX_STEPS_HARD_CAP,
     RATIONALE_MAX_LEN,
     PlannerEvent,
     PlannerEventName,
@@ -91,8 +96,16 @@ _VERIFY_COMPLETION_NAME = VERIFY_COMPLETION_TOOL_NAME
 # Substring scan against ``session.user_prompt``. A match releases the
 # source-only-add backstop (user explicitly named integration).
 _WIRING_INTENT_KEYWORDS: tuple[str, ...] = (
-    "connect", "wire", "join", "integrate", "link",
-    "attach", "hook", "feed into", "into node", "merge with",
+    "connect",
+    "wire",
+    "join",
+    "integrate",
+    "link",
+    "attach",
+    "hook",
+    "feed into",
+    "into node",
+    "merge with",
 )
 
 
@@ -177,15 +190,13 @@ def _build_join_pivot_steer(
     to_id = tool_args.get("to_node_id")
     target = f"node {to_id}" if to_id is not None else "the target"
     why = (
-        f"{target} is a source (no input port)"
-        if refusal_reason == "target_is_source"
-        else f"{target} does not exist"
+        f"{target} is a source (no input port)" if refusal_reason == "target_is_source" else f"{target} does not exist"
     )
     return (
         f"NOTE FROM HOST: connect rejected — {why}. To combine/join sources you "
         f'ADD a node, not connect them. Next: classify_intent op_kind="add", '
         f"then pick join (match on keys) or union (stack rows) — its inputs wire "
-        f'automatically. If every join already exists, classify_intent op_kind='
+        f"automatically. If every join already exists, classify_intent op_kind="
         f'"other" and write your wrap-up.'
     )
 
@@ -364,6 +375,10 @@ async def _run_planner_loop(
         session.drift_detail = None
         session.pause_reason = None
         session.last_assistant_text = None
+        # A followup is a new goal — clear the plan ledger so stale pending
+        # steps can't mis-nudge. (``/resume`` paths keep it: same goal, new
+        # snapshot.)
+        plan_ledger.reset_plan_ledger(session)
         session.status = "running"
         session.touch()
         yield PlannerEvent(
@@ -448,6 +463,10 @@ async def _run_planner_loop(
     # Counts connect→add-join pivots so a pathological re-pick-connect loop
     # can't spin past the cap (see ``_MAX_CONNECT_JOIN_PIVOTS``).
     connect_join_pivots = 0
+    # Plan-ledger stall nudges. Loop-local and re-armed to 0 at every
+    # ``record_completed_op`` site, so the cap (``_MAX_PLAN_NUDGES``) is
+    # per-stall, not per-session.
+    plan_nudges = 0
 
     if not session.messages:
         session.messages = _build_initial_messages(flow, session)
@@ -506,9 +525,9 @@ async def _run_planner_loop(
         _refresh_system_prompt_for_stage(session, flow)
 
         try:
-            if (
-                session.surface in _STAGED_STATE_MACHINE_SURFACES
-                and session.stage in ("pick_upstream", "fill_settings")
+            if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage in (
+                "pick_upstream",
+                "fill_settings",
             ):
                 tool_catalog, dyn_err = _build_staged_tool_catalog(session, flow)
                 if dyn_err is not None:
@@ -566,11 +585,7 @@ async def _run_planner_loop(
         # expected_tool_names" rules in ``_recover_textual_tool_call``
         # are sufficient to defend against the after-add summary pattern
         # (multiple distinct tool names → declines).
-        if (
-            not tool_calls
-            and assistant_text
-            and session.surface in _STAGED_STATE_MACHINE_SURFACES
-        ):
+        if not tool_calls and assistant_text and session.surface in _STAGED_STATE_MACHINE_SURFACES:
             expected_names = {t.name for t in tool_catalog}
             recovered = _recover_textual_tool_call(assistant_text, expected_names)
             if recovered is not None:
@@ -605,8 +620,7 @@ async def _run_planner_loop(
             # route through the retry budget. Other classify rounds keep
             # the legacy break (op_kind="other" termination).
             if session.surface in _STAGED_STATE_MACHINE_SURFACES and (
-                session.stage in _MANDATORY_TOOL_CALL_STAGES
-                or step_had_rejection
+                session.stage in _MANDATORY_TOOL_CALL_STAGES or step_had_rejection
             ):
                 retries_for_step += 1
                 if retries_for_step >= max_retries_per_step:
@@ -635,14 +649,12 @@ async def _run_planner_loop(
                         "A tool call earlier in this step was rejected and "
                         "your follow-up was prose-only. Either emit a "
                         "corrected tool call now, or call "
-                        "``classify_intent`` with ``op_kind=\"other\"`` to "
+                        '``classify_intent`` with ``op_kind="other"`` to '
                         "end the turn. Do not narrate apologies; just "
                         "decide and emit."
                     )
                 else:
-                    expected_tool = next(
-                        iter(t.name for t in tool_catalog), "the available tool"
-                    )
+                    expected_tool = next(iter(t.name for t in tool_catalog), "the available tool")
                     reminder = (
                         f"Your previous response was prose only — no function "
                         f"call. You MUST call ``{expected_tool}`` via the "
@@ -656,6 +668,36 @@ async def _run_planner_loop(
                     payload={
                         "attempt": retries_for_step,
                         "max": max_retries_per_step,
+                    },
+                )
+                continue
+            # Point A — host plan-ledger nudge. When the model stalls (no
+            # tool call) at classify but the ledger still has pending steps,
+            # nudge it to continue instead of terminating. The exemption is
+            # deliberately narrow: a genuine pre-work clarifying question
+            # (looks like a question AND nothing staged/applied yet) still
+            # reaches ``awaiting_user_input``; once work has started,
+            # "would you like me to continue?"-style stalls get nudged.
+            # Bounded by ``_MAX_PLAN_NUDGES`` per stall (re-armed on each
+            # completed op); a second consecutive stall falls through to the
+            # legacy break. No ``step_count`` bump (matches the retry path) —
+            # the nudge cap plus op rounds consuming budget bound termination.
+            if (
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
+                and session.stage == "classify"
+                and plan_ledger.has_pending_steps(session)
+                and plan_nudges < _MAX_PLAN_NUDGES
+                and not (
+                    _looks_like_question(assistant_text) and not session.staged_results and not session.applied_results
+                )
+            ):
+                plan_nudges += 1
+                session.messages.append(Message(role="user", content=plan_ledger.build_plan_nudge(session)))
+                yield PlannerEvent(
+                    event="info",
+                    payload={
+                        "message": "plan has pending steps; prompting the model to continue",
+                        "session_id": session.session_id,
                     },
                 )
                 continue
@@ -720,9 +762,7 @@ async def _run_planner_loop(
                 # OBJECT wrapper. Coerce to the proper FunctionInput
                 # envelope so the wrap can proceed normally.
                 if picked_type == "formula":
-                    tool_args = _coerce_formula_bare_string_args(
-                        tool_args, user_prompt=session.user_prompt
-                    )
+                    tool_args = _coerce_formula_bare_string_args(tool_args, user_prompt=session.user_prompt)
                 inner_field = get_staged_fill_inner_field_name(picked_type)
                 # Wrap inner-shape args under the canonical envelope
                 # field name. Stronger outer-envelope detection than the
@@ -887,9 +927,7 @@ async def _run_planner_loop(
             # the predictor's Tier 0a sees them and stops emitting
             # *"upstream not found"* warnings for nodes the agent staged
             # earlier in the same session.
-            extra_upstream_schemas: dict[int, Any] | None = (
-                _collect_staged_upstream_schemas(session) or None
-            )
+            extra_upstream_schemas: dict[int, Any] | None = _collect_staged_upstream_schemas(session) or None
 
             # ``agent_live`` applies LIVE to the canvas
             # (mode="apply"), then runs a post-apply observation (real
@@ -898,9 +936,7 @@ async def _run_planner_loop(
             # ``agent_staged`` + ``agent_complex`` stay on mode="stage" —
             # they bundle the staged ops into a diff for batch user
             # review at the end.
-            dispatch_mode: str = (
-                "apply" if session.surface == "agent_live" else "stage"
-            )
+            dispatch_mode: str = "apply" if session.surface == "agent_live" else "stage"
             # Dispatch — execute_tool_call is meant to never raise (returns rejected
             # result instead) but we wrap defensively. Offload to a worker
             # thread: the apply path runs ``flow.add_<node_type>(settings)``
@@ -980,11 +1016,8 @@ async def _run_planner_loop(
                 # target is a source / does not exist can only be "fixed" by
                 # ADDING a join — but single_stage_op exposes no add tool.
                 # Reset to classify with a steer so the agent can pivot.
-                if (
-                    connect_join_pivots < _MAX_CONNECT_JOIN_PIVOTS
-                    and _should_pivot_connect_to_add_join(
-                        session, tc.name, result.refusal_reason
-                    )
+                if connect_join_pivots < _MAX_CONNECT_JOIN_PIVOTS and _should_pivot_connect_to_add_join(
+                    session, tc.name, result.refusal_reason
                 ):
                     connect_join_pivots += 1
                     prev_stage = session.stage
@@ -992,9 +1025,7 @@ async def _run_planner_loop(
                     session.messages.append(
                         Message(
                             role="user",
-                            content=_build_join_pivot_steer(
-                                tc.arguments or {}, result.refusal_reason
-                            ),
+                            content=_build_join_pivot_steer(tc.arguments or {}, result.refusal_reason),
                         )
                     )
                     # The pivot IS forward progress (the state machine
@@ -1020,10 +1051,7 @@ async def _run_planner_loop(
                     yield PlannerEvent(
                         event="info",
                         payload={
-                            "message": (
-                                "connect targeted a source/missing node; "
-                                "pivoting to add a join node"
-                            ),
+                            "message": ("connect targeted a source/missing node; " "pivoting to add a join node"),
                             "session_id": session.session_id,
                         },
                     )
@@ -1120,6 +1148,16 @@ async def _run_planner_loop(
                 if live_node_id not in session.staged_node_ids:
                     session.staged_node_ids.append(live_node_id)
                 _update_last_added_source(session, tc.name, live_node_id)
+                # Record the applied op for the host plan ledger and re-arm
+                # the stall-nudge budget — the nudge / progress block count
+                # agent_live applied results the same as staged ones.
+                plan_ledger.record_completed_op(
+                    session,
+                    tool_name=tc.name,
+                    tool_args=tc.arguments,
+                    node_id=live_node_id,
+                )
+                plan_nudges = 0
 
                 # Reset stage so the next round starts a fresh
                 # classify→pick→fill cycle (multi-node turns
@@ -1179,6 +1217,23 @@ async def _run_planner_loop(
                 rationale = str(result.extra.get("rationale") or "")
                 prev_stage = session.stage
                 session.stage = "classify"
+                # Populate the host plan ledger: parse the numbered plan into
+                # a per-round checklist and clear any prior op record. A
+                # question-only plan parses to ``[]`` and every ledger gate
+                # stays inert.
+                session.plan_markdown = plan_text or None
+                session.plan_steps = plan_ledger.parse_plan_steps(plan_text)
+                session.plan_completed_ops = []
+                if session.plan_steps:
+                    # Auto-scale the step budget to plan length; never lower a
+                    # caller-supplied ``max_steps``, and clamp to the hard cap.
+                    session.max_steps = min(
+                        MAX_STEPS_HARD_CAP,
+                        max(
+                            session.max_steps,
+                            _PLAN_ROUNDS_PER_STEP * len(session.plan_steps) + _PLAN_BUDGET_SLACK,
+                        ),
+                    )
                 _log_stage_transition(
                     session,
                     from_stage=prev_stage,
@@ -1191,6 +1246,7 @@ async def _run_planner_loop(
                         "from": prev_stage,
                         "to": session.stage,
                         "plan": plan_text,
+                        "plan_step_count": len(session.plan_steps),
                         "rationale": rationale,
                         "session_id": session.session_id,
                         "op_kind_meta": "plan",
@@ -1207,9 +1263,22 @@ async def _run_planner_loop(
                 op_kind = result.extra.get("op_kind")
                 rationale = str(result.extra.get("rationale") or "")
                 prev_stage = session.stage
-                if isinstance(op_kind, str) and _should_force_other_after_source_add(
-                    session, op_kind
-                ):
+                # Set when the source-add backstop forces ``other`` this round
+                # — the plan ledger must NOT nudge against that decision.
+                forced_other_this_round = False
+                # Set when the plan-ledger ladder nudges instead of routing
+                # ``other`` to verify/terminate (message + info event emitted
+                # after the stage_advanced below).
+                plan_nudged_at_other = False
+                if isinstance(op_kind, str) and _should_force_other_after_source_add(session, op_kind):
+                    forced_other_this_round = True
+                    # The backstop must win over the plan ledger: disarm Point
+                    # A for this stall too, or the next round's prose wrap-up
+                    # (which the host note below explicitly asks for) would be
+                    # nudged as a mid-plan stall — ping-ponging the model
+                    # between "wrap up" and "continue". The next completed op
+                    # re-arms the nudges via the existing reset-to-0.
+                    plan_nudges = _MAX_PLAN_NUDGES
                     src_node_type, src_node_id = session.last_added_source or ("source", 0)
                     op_kind = "other"
                     rationale = (
@@ -1217,7 +1286,7 @@ async def _run_planner_loop(
                         f"It stands alone — not wired into your existing flow, "
                         f"because you didn't ask for that. If you want to "
                         f"integrate it, just say so on the next turn (e.g. "
-                        f"\"now connect node {src_node_id} to ...\")."
+                        f'"now connect node {src_node_id} to ...").'
                     )
                     session.messages.append(
                         Message(
@@ -1242,26 +1311,38 @@ async def _run_planner_loop(
                         session.stage = "pick_type"
                     elif op_kind in ("modify", "delete", "connect", "disconnect"):
                         session.stage = "single_stage_op"
-                    elif (
-                        op_kind == "other"
-                        and session.verify_plan_completion
-                        and not session.verify_round_consumed
-                    ):
-                        # Opt-in verify-completion gate. One extra LLM
-                        # round at ``verify_completion`` confirms the
-                        # plan is done before the loop terminates. The
-                        # one-shot ``verify_round_consumed`` guard (set
-                        # in the verify-result handler below) prevents
-                        # ping-pong if a follow-up classify also picks
-                        # ``op_kind="other"``.
-                        session.stage = "verify_completion"
-                    # ``other`` (no verify gate / already consumed) leaves
-                    # stage at ``classify`` — the loop will call the LLM
-                    # again, which sees the rationale already in history
-                    # and will most likely emit no tool call, ending the
-                    # loop with the rationale as the final assistant
-                    # message (question detection still routes to
-                    # ``awaiting_user_input`` if it ends in a question).
+                    elif op_kind == "other":
+                        # Point B — ``op_kind="other"`` ladder (additive
+                        # reorder). The host plan ledger gets first say:
+                        # (1) pending steps + nudges left + not a
+                        # source-add-forced ``other`` → nudge, stage stays
+                        # ``classify``; (2) else the opt-in verify gate;
+                        # (3) else the legacy stay-at-classify termination.
+                        if (
+                            session.surface in _STAGED_STATE_MACHINE_SURFACES
+                            and plan_ledger.has_pending_steps(session)
+                            and plan_nudges < _MAX_PLAN_NUDGES
+                            and not forced_other_this_round
+                        ):
+                            plan_nudges += 1
+                            plan_nudged_at_other = True
+                        elif session.verify_plan_completion and not session.verify_round_consumed:
+                            # Opt-in verify-completion gate. One extra LLM
+                            # round at ``verify_completion`` confirms the
+                            # plan is done before the loop terminates. The
+                            # one-shot ``verify_round_consumed`` guard (set
+                            # in the verify-result handler below) prevents
+                            # ping-pong if a follow-up classify also picks
+                            # ``op_kind="other"``.
+                            session.stage = "verify_completion"
+                        # ``other`` (no nudge / no verify gate / already
+                        # consumed) leaves stage at ``classify`` — the loop
+                        # calls the LLM again, which sees the rationale
+                        # already in history and will most likely emit no
+                        # tool call, ending the loop with the rationale as
+                        # the final assistant message (question detection
+                        # still routes to ``awaiting_user_input`` if it ends
+                        # in a question).
                 _log_stage_transition(
                     session,
                     from_stage=prev_stage,
@@ -1280,6 +1361,15 @@ async def _run_planner_loop(
                         "op_kind_meta": "meta",
                     },
                 )
+                if plan_nudged_at_other:
+                    session.messages.append(Message(role="user", content=plan_ledger.build_plan_nudge(session)))
+                    yield PlannerEvent(
+                        event="info",
+                        payload={
+                            "message": "plan has pending steps; prompting the model to continue",
+                            "session_id": session.session_id,
+                        },
+                    )
                 any_succeeded_this_round = True
                 continue
 
@@ -1307,6 +1397,9 @@ async def _run_planner_loop(
                     # path. Same posture as the no-verify
                     # ``op_kind="other"`` path above.
                     session.stage = "classify"
+                    # Disarm the plan-ledger nudges so Point A can't
+                    # second-guess a model-certified completion.
+                    plan_nudges = _MAX_PLAN_NUDGES
                 else:
                     # is_complete=False (or non-true). Reset to a
                     # fresh classify cycle so the LLM picks the next
@@ -1359,9 +1452,7 @@ async def _run_planner_loop(
                     to_stage=session.stage,
                     tool_name=tc.name,
                     node_type=node_type if isinstance(node_type, str) else None,
-                    upstream_node_ids=(
-                        list(session.picked_upstream_ids) if skipped_pick_upstream else None
-                    ),
+                    upstream_node_ids=(list(session.picked_upstream_ids) if skipped_pick_upstream else None),
                 )
                 stage_payload: dict[str, Any] = {
                     "from": prev_stage,
@@ -1391,12 +1482,8 @@ async def _run_planner_loop(
                 rationale = str(result.extra.get("rationale") or "")
                 prev_stage = session.stage
                 if isinstance(upstream_ids_raw, list):
-                    session.picked_upstream_ids = [
-                        u for u in upstream_ids_raw if isinstance(u, int)
-                    ]
-                    session.picked_right_input_id = (
-                        right_input_raw if isinstance(right_input_raw, int) else None
-                    )
+                    session.picked_upstream_ids = [u for u in upstream_ids_raw if isinstance(u, int)]
+                    session.picked_right_input_id = right_input_raw if isinstance(right_input_raw, int) else None
                     session.stage = "fill_settings"
                 _log_stage_transition(
                     session,
@@ -1476,11 +1563,25 @@ async def _run_planner_loop(
                 # cycle. Multi-node turns serialize naturally as N×4
                 # rounds without any history pruning.
                 if session.surface in _STAGED_STATE_MACHINE_SURFACES and (
-                    tc.name.startswith(_ADD_PREFIX)
-                    or tc.name in _STAGED_SINGLE_OP_TOOL_NAMES
+                    tc.name.startswith(_ADD_PREFIX) or tc.name in _STAGED_SINGLE_OP_TOOL_NAMES
                 ):
                     prev_stage = session.stage
                     sessions.reset_stage_state(session)
+                    # Record the completed op for the host plan ledger and
+                    # re-arm the stall-nudge budget (a completed op means the
+                    # model is making forward progress).
+                    recorded_nid = (
+                        _payload_node_id(result.staged_node_payload)
+                        if tc.name.startswith(_ADD_PREFIX)
+                        else (tc.arguments or {}).get("node_id")
+                    )
+                    plan_ledger.record_completed_op(
+                        session,
+                        tool_name=tc.name,
+                        tool_args=tc.arguments,
+                        node_id=recorded_nid if isinstance(recorded_nid, int) else None,
+                    )
+                    plan_nudges = 0
                     _log_stage_transition(
                         session,
                         from_stage=prev_stage,

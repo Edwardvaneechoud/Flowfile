@@ -14,6 +14,7 @@ from flowfile_core.ai import sessions
 from flowfile_core.ai.context.builder import render_prompt_context
 from flowfile_core.ai.providers.base import Message
 
+from . import plan_ledger
 from ._internal import _ADD_PREFIX, _STAGED_STATE_MACHINE_SURFACES
 
 if TYPE_CHECKING:
@@ -49,9 +50,7 @@ def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> 
     ]
 
 
-def _build_fill_settings_user_message(
-    session: sessions.AgentSession, flow: FlowGraph
-) -> str | None:
+def _build_fill_settings_user_message(session: sessions.AgentSession, flow: FlowGraph) -> str | None:
     """Focused user message for the ``fill_settings`` stage.
 
     By the time we reach stage 3, the only context the LLM needs is:
@@ -115,9 +114,7 @@ def _build_fill_settings_user_message(
             if staged_preds is not None:
                 for col in staged_preds:
                     if isinstance(col, dict):
-                        cols_text.append(
-                            f"- {col.get('name', '?')}: {col.get('data_type', 'Unknown')}"
-                        )
+                        cols_text.append(f"- {col.get('name', '?')}: {col.get('data_type', 'Unknown')}")
 
         label_kind = (
             "Right input"
@@ -175,9 +172,7 @@ def _build_pick_upstream_staged_addendum(
         if isinstance(preds, list):
             for col in preds:
                 if isinstance(col, dict):
-                    cols_text.append(
-                        f"  - {col.get('name', '?')}: {col.get('data_type', 'Unknown')}"
-                    )
+                    cols_text.append(f"  - {col.get('name', '?')}: {col.get('data_type', 'Unknown')}")
         header = f"- node {nid} ({node_type})"
         if cols_text:
             blocks.append(header + "\n" + "\n".join(cols_text))
@@ -194,9 +189,7 @@ def _build_pick_upstream_staged_addendum(
     return "## Staged this session\n\n" + "\n".join(blocks) + "\n"
 
 
-def _refresh_system_prompt_for_stage(
-    session: sessions.AgentSession, flow: FlowGraph | None = None
-) -> None:
+def _refresh_system_prompt_for_stage(session: sessions.AgentSession, flow: FlowGraph | None = None) -> None:
     """Replace ``session.messages[0]`` with a freshly-rendered system
     prompt for the current stage.
 
@@ -268,3 +261,26 @@ def _refresh_system_prompt_for_stage(
             role="user",
             content=base_user.rstrip() + "\n\n" + addendum,
         )
+        return
+
+    # At the classify stage, rebuild ``messages[1]`` from scratch (fresh
+    # goal + live subgraph) and append the host plan-progress checklist
+    # when a plan was parsed. Rebuilding each round drops any leftover
+    # slim ``fill_settings`` mini-prompt from a prior cycle (the stale-slim
+    # bug: cycle-2+ classify used to see the focused fill_settings prompt
+    # instead of the goal + subgraph). Nothing accumulates — the block is
+    # regenerated from the ledger each round.
+    if (
+        session.stage == "classify"
+        and flow is not None
+        and len(session.messages) >= 2
+        and session.messages[1].role == "user"
+    ):
+        rebuilt = _build_initial_messages(flow, session)
+        base_user = rebuilt[1].content if len(rebuilt) >= 2 else session.messages[1].content
+        progress = plan_ledger.build_plan_progress_block(session)
+        if progress:
+            content = base_user.rstrip() + "\n\n" + progress
+        else:
+            content = base_user
+        session.messages[1] = Message(role="user", content=content)

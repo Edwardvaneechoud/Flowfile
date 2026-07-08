@@ -518,6 +518,39 @@ def test_resume_action_discard_pops_session(
     assert sessions.get_session(sid) is None
 
 
+def test_plan_ledger_fields_survive_restart(
+    disk_session_repo: DiskSessionRepository,
+) -> None:
+    """The host-tracked plan ledger fields round-trip the disk repo (defaulted
+    fields, no SCHEMA_VERSION bump needed)."""
+    snapshot = sessions.GraphSnapshot(flow_id=1, node_ids=(1,), node_types={1: "manual_input"})
+    session = sessions.AgentSession(
+        flow_id=1,
+        user_id=1,
+        user_prompt="multi-step",
+        provider_name="anthropic",
+        snapshot=snapshot,
+        plan_markdown="## Proposed changes\n\n1. filter — x\n2. sort — y",
+        plan_steps=["filter — x", "sort — y"],
+        plan_completed_ops=[
+            sessions.CompletedOpEntry(
+                tool_name="flowfile.graph.add_filter", node_id=2, summary="add_filter — staged as node 2"
+            )
+        ],
+    )
+    sessions.register_session(session)
+
+    fresh = DiskSessionRepository(root=disk_session_repo._root)
+    fetched = fresh.get(session.session_id)
+    assert fetched is not None
+    assert fetched.plan_markdown == session.plan_markdown
+    assert fetched.plan_steps == ["filter — x", "sort — y"]
+    assert len(fetched.plan_completed_ops) == 1
+    assert fetched.plan_completed_ops[0].tool_name == "flowfile.graph.add_filter"
+    assert fetched.plan_completed_ops[0].node_id == 2
+    assert fetched.plan_completed_ops[0].summary == "add_filter — staged as node 2"
+
+
 def test_session_file_carries_schema_tag(
     disk_session_repo: DiskSessionRepository,
 ) -> None:

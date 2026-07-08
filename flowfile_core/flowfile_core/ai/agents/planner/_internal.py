@@ -25,6 +25,18 @@ DEFAULT_MAX_TOKENS: int = 2_048
 RATIONALE_MAX_LEN: int = 500
 DEFAULT_MAX_DB_READER_OPS: int = 8
 
+# Plan-ledger budget knobs (see ``plan_ledger`` + the loop's emit_plan
+# handler). On a parsed plan the step budget auto-scales to
+# ``_PLAN_ROUNDS_PER_STEP * len(steps) + _PLAN_BUDGET_SLACK`` (never lowered
+# below a caller value), clamped to ``MAX_STEPS_HARD_CAP``. ``_MAX_PLAN_NUDGES``
+# caps mid-plan stall nudges per stall (loop-local counter, re-armed on each
+# completed op). ``DEFAULT_MAX_STEPS`` stays 32 — auto-scaling covers planned
+# runs; keep it in lockstep with ``sessions.AgentSession.max_steps``.
+_MAX_PLAN_NUDGES: int = 2
+_PLAN_ROUNDS_PER_STEP: int = 5
+_PLAN_BUDGET_SLACK: int = 8
+MAX_STEPS_HARD_CAP: int = 128
+
 
 PlannerEventName = Literal[
     "thinking",
