@@ -49,7 +49,7 @@ Project actions live in the app's project controls. The core operations are:
 - **Restore a version** — resets the folder to an earlier commit and rebuilds the database to match.
 - **Reload from disk** — accepts changes made to the files outside Flowfile (for example a `git pull`) by rebuilding the database from them.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the app's project panel showing active project name, version history, and save/restore controls -->
+![The project panel in the app: the active project name, its version history, and the save, restore, and reload-from-disk controls.](../assets/images/guides/projects/projects-panel.png)
 
 !!! warning "Restore and reload rebuild from the files"
     Restoring a version and reloading from disk both reset your resources to match the folder, pruning anything not present in the files. If you have unsaved changes, Flowfile stops and asks you to confirm; when you force the action it first autosaves your current state into git history so nothing is silently lost.

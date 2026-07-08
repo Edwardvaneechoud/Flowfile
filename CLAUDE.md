@@ -55,6 +55,8 @@ Deep runbooks live in `.claude/skills/` (raw discovery evidence in
 - `flowfile-codegen-parity-campaign` — closing visual-flow ↔ exported-Python parity gaps (xfails, code_generator/).
 - `flowfile-research-frontier` — the maintainer's long-horizon bets; scoping ambitious or exploratory work.
 - `flowfile-docs-and-writing` — docs-site structure, comment doctrine, CLAUDE.md maintenance protocol.
+- `flowfile-docs-review` — editorial standard for docs pages: house style, persona nav, claim→source fact-check index, tested-examples contract.
+- `flowfile-svg-diagrams` — authoring/wiring/verifying the docs site's hand-drawn SVG diagrams; palette, component library, dark-mode technique, placeholders.
 
 ## Architecture
 

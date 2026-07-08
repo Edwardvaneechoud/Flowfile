@@ -130,6 +130,7 @@ nav:
     - Worked Examples:
       - Overview: users/visual-editor/tutorials/index.md
       - Sales Pipeline: users/visual-editor/tutorials/sales-pipeline.md
+      - Sales Dashboard: users/visual-editor/tutorials/sales-dashboard.md
       - Export to Python: users/visual-editor/tutorials/code-generator.md
     - Settings: users/visual-editor/settings.md
 

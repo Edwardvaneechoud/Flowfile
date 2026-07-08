@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 656" role="img" aria-label="Virtual-table read resolution: a read request checks whether the table is query-virtual and takes the SQL context path recursing up to five levels; otherwise it checks whether the table is optimized and its source versions are current — if so it deserializes the stored plan on a fast lane, otherwise it re-executes the producer's catalog_writer node on a slow lane, which a serialized cloud plan is forced onto. Every path resolves to a LazyFrame.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 656" role="img" aria-label="Virtual-table read resolution, which always yields a lazy LazyFrame. A read checks whether the table is query-virtual and takes the SQL-context path (recursing up to five levels); otherwise, if the table is optimized and its source Delta versions are still current, the stored LazyFrame plan is deserialized with no flow run; if the table is not optimized, is stale, or is a cloud plan (which is never replayed), the producer flow's catalog_writer node is re-run to rebuild the plan. Both paths return a LazyFrame that stays lazy — nothing is materialized until a collect (a write, a visualization, or a catalog query) forces it.">
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2DD5D3"/>
@@ -77,9 +77,9 @@
     <g class="icw" transform="translate(571,147)">
       <path d="M12.5,3 L6.5,13 H11 L9.5,21 L18,10.5 H12.8 Z"/>
     </g>
-    <text class="tag" x="618" y="150">FAST LANE</text>
+    <text class="tag" x="618" y="150">STORED PLAN</text>
     <text class="tw" x="618" y="169">Deserialize plan</text>
-    <text class="sw" x="618" y="187">no flow run</text>
+    <text class="sw" x="618" y="187">no flow run &#183; already lazy</text>
   </g>
 
   <!-- ================= SLOW LANE ================= -->
@@ -92,10 +92,10 @@
       <path d="M17.7,14.8 A6,6 0 0 1 7,16.4"/>
       <path d="M6.6,19.6 L6.8,16.1 L10.3,16.6"/>
     </g>
-    <text class="t" x="432" y="507">Re-run writer node</text>
-    <text class="s" x="432" y="525">open producer flow &#183; execute catalog_writer</text>
-    <text class="s" x="432" y="542">worker when offloaded</text>
-    <text class="s" x="432" y="559" font-style="italic" fill="#8a93a3">standard resolution</text>
+    <text class="t" x="432" y="507">Rebuild the plan</text>
+    <text class="s" x="432" y="525">re-run the producer's catalog_writer node</text>
+    <text class="s" x="432" y="542">worker when offloaded &#183; result stays lazy</text>
+    <text class="s" x="432" y="559" font-style="italic" fill="#8a93a3">standard resolution &#183; nothing materialized</text>
   </g>
 
   <!-- ================= CLOUD-PLAN EXCLUSION CALLOUT ================= -->
@@ -123,8 +123,10 @@
       <line x1="14.6" y1="5" x2="14.6" y2="19"/>
     </g>
     <text class="t" x="886" y="306" font-size="13">LazyFrame</text>
-    <text class="s" x="886" y="323">resolved</text>
+    <text class="s" x="886" y="323">lazy</text>
   </g>
+  <text class="s" x="852" y="376" text-anchor="middle" font-size="9.5">stays lazy until</text>
+  <text class="s" x="852" y="389" text-anchor="middle" font-size="9.5">a collect</text>
 
   <!-- ================= DECISION DIAMONDS ================= -->
   <polygon class="dia" points="258,268 314,310 258,352 202,310"/>
@@ -163,15 +165,15 @@
   <text class="albl" x="354" y="302" text-anchor="middle">no</text>
   <text class="albl" x="546" y="302" text-anchor="middle">yes</text>
   <text class="albl" x="268" y="206">yes</text>
-  <text class="albl" x="660" y="246">yes</text>
+  <text class="albl" x="666" y="246">yes</text>
   <text class="albl" x="462" y="416">no</text>
   <text class="albl" x="658" y="416">no</text>
 
   <!-- ================= LEGEND ================= -->
   <g>
-    <rect x="288" y="616" width="16" height="16" rx="3" fill="url(#brand)"/>
-    <text class="lgd" x="311" y="628">Fast lane &#183; deserialize, no run</text>
+    <rect x="240" y="616" width="16" height="16" rx="3" fill="url(#brand)"/>
+    <text class="lgd" x="263" y="628">Stored plan &#183; deserialize (no run)</text>
     <rect x="560" y="616" width="16" height="16" rx="3" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.4"/>
-    <text class="lgd" x="583" y="628">Slow lane &#183; re-execute node</text>
+    <text class="lgd" x="583" y="628">Rebuilt plan &#183; re-run flow, still lazy</text>
   </g>
 </svg>

@@ -29,7 +29,7 @@ Only a **global admin** creates a group; the creator is automatically added as i
 
 Create and manage groups from the **User Groups** area of the app.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the User Groups admin view listing groups with member counts and a create-group action -->
+![The User Groups admin view: groups with member counts and a create-group action.](../../assets/images/guides/settings/user-groups.gif)
 
 ## Sharing a resource
 

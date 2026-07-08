@@ -10,17 +10,9 @@ do not need scikit-learn or any extra Python environment.
 
 ## The pipeline shape
 
-A typical ML flow chains five nodes end-to-end:
+A typical ML flow chains five nodes end-to-end — here, a customer-churn classification:
 
-```mermaid
-flowchart LR
-    Read[Read] --> Split[Random Split]
-    Split -- train --> Train[Train Model]
-    Split -- test --> Wait[Wait For]
-    Train --> Wait
-    Wait --> Apply[Apply Model]
-    Apply --> Eval[Evaluate Model]
-```
+![A customer-churn classification flow on the canvas: Read → Random Split (train / test) → Train Model and Wait For → Apply Model → Evaluate Model, wired end-to-end.](../../../assets/images/guides/ml/ml-pipeline-flow.png)
 
 - **Random Split** carves the input into a `train` and `test` slice.
 - **Train Model** fits an algorithm on the `train` slice and writes the model

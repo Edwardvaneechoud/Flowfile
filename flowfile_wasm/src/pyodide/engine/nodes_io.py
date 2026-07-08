@@ -14,14 +14,32 @@ def execute_read_csv(node_id: int, file_content: str, settings: dict) -> dict:
         import io
 
         table_settings = settings.get("received_file", {}).get("table_settings", {})
+        has_header = table_settings.get("has_headers", True)
+        separator = table_settings.get("delimiter", ",")
+        skip_rows = table_settings.get("starting_from_line", 0)
+        infer_schema_length = table_settings.get("infer_schema_length") or 10_000
 
-        # Source nodes: read into DataFrame first, then convert to lazy
-        df = pl.read_csv(
-            io.StringIO(file_content),
-            has_header=table_settings.get("has_headers", True),
-            separator=table_settings.get("delimiter", ","),
-            skip_rows=table_settings.get("starting_from_line", 0),
-        )
+        # try_parse_dates mirrors flowfile_core so date columns land as Date, not
+        # str — formula format_date / .dt.* need a temporal dtype. Fall back to a
+        # plain read if an ambiguous/malformed date column would break parsing.
+        try:
+            df = pl.read_csv(
+                io.StringIO(file_content),
+                has_header=has_header,
+                separator=separator,
+                skip_rows=skip_rows,
+                infer_schema_length=infer_schema_length,
+                try_parse_dates=True,
+            )
+        except Exception:
+            df = pl.read_csv(
+                io.StringIO(file_content),
+                has_header=has_header,
+                separator=separator,
+                skip_rows=skip_rows,
+                infer_schema_length=infer_schema_length,
+                ignore_errors=True,
+            )
         lf = df.lazy()
         store_lazyframe(node_id, lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}

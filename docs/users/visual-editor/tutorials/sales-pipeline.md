@@ -5,7 +5,7 @@ This example builds a five-node flow that cleans a raw sales export, keeps the h
 **Flow:** [download `sales_pipeline.yaml`](../../../assets/flows/sales_pipeline.yaml) ·
 In-app: Create → From template → "Sales pipeline: clean, filter, aggregate" · Data: `data/templates/supermarket_sales.csv`
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the finished five-node sales pipeline on the canvas -->
+![The finished five-node sales pipeline on the canvas.](../../../assets/images/guides/sales-guidelines/finished-flow.png)
 
 ## The data
 

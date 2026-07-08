@@ -10,6 +10,7 @@ description: The editorial standard for Flowfile's docs site — the house style
 - Site build mechanics, `mkdocs.yml` traps (`use_directory_urls`, nav invisibility, the raw-HTML home page), deploy pipeline, formula-docs regeneration, comment doctrine for source code, CLAUDE.md maintenance → `flowfile-docs-and-writing` (this skill owns *what good pages say and how to verify it*; that one owns *how the site is built*).
 - CI gates and release mechanics → `flowfile-change-control`.
 - Per-package test commands and Docker fixture mechanics beyond the examples contract → `flowfile-testing-and-validation`.
+- Authoring, editing, or theme-verifying SVG diagrams and placeholder images → `flowfile-svg-diagrams` (this skill owns the page; that one owns the image file).
 
 ## 1. House style (register 2 — the only register for new/edited pages)
 
@@ -25,7 +26,7 @@ The canonical exemplar is `docs/ai/index.md`. Rules, all checkable:
 8. **Runnable code is never hand-written in a page.** Any Python block presented as runnable is a `--8<--` include from `docs/examples/` (§4). Inline fragments are allowed only for formulas, UI config values, or shell one-liners — with verified syntax.
 9. **Every page opens with one orientation paragraph**: who it's for, what they'll be able to do after reading. Then short sections; tables for enumerable facts with the explanation in surrounding prose.
 10. **Links**: relative `.md` links between pages (MkDocs rewrites them); raw `.html`/directory forms only inside `docs/index.html`. Every new page gets a `nav:` entry; moved/merged URLs get a `redirects` plugin mapping in `mkdocs.yml`.
-11. **Images**: never create or edit image files; never block on one. Reuse an existing `docs/assets/images/` asset if apt, else leave `<!-- IMAGE-PLACEHOLDER-TO-CHANGE: what the shot should show -->` at the spot. In step-by-step walkthroughs, per-step screenshots go in fold-outs so they don't break the reading flow (maintainer-preferred pattern): `<details markdown="1"><summary>See it: …</summary>` wrapping the image plus its placeholder/refresh comment.
+11. **Images**: never create or edit screenshots, gifs, or other captured images; never block on one. Hand-authored SVG diagrams and labeled placeholder SVGs are the exception — author those per `flowfile-svg-diagrams`. Reuse an existing `docs/assets/images/` asset if apt, else leave `<!-- IMAGE-PLACEHOLDER-TO-CHANGE: what the shot should show -->` at the spot (when the page already references an image path, also drop in a labeled placeholder SVG per `flowfile-svg-diagrams` §8 and add a `DOCS_IMAGE_TODO.md` row so the build stays warning-free). In step-by-step walkthroughs, per-step screenshots go in fold-outs so they don't break the reading flow (maintainer-preferred pattern): `<details markdown="1"><summary>See it: …</summary>` wrapping the image plus its placeholder/refresh comment.
 12. **Cross-page consistency beats local polish**: one canonical statement per fact, siblings link to it (the join-type list, the Lite node inventory, and the custom-node `process()` signature have each previously diverged across three pages).
 13. **No filler advice — maintainer-rejected pattern.** Generic "Tips for Success" bullet lists ("Start simple", "Save regularly", "Preview often", "Use descriptions", "Try both modes") are banned. If a tip isn't specific to the page's subject and non-obvious, cut it. Never state the obvious ("click Run to run the flow").
 14. **Length is a quality dimension.** Each page earns its length: getting-started/how-to pages are short concrete numbered steps; reference pages are complete tables; concept pages explain once and stop. If a section restates what an adjacent section or page already says, cut or link.
@@ -141,7 +142,7 @@ In-app: Create → From template → "<name>" · Data: `data/templates/<file>.cs
 3. Zero register-1 markers: emoji headings/bullets, hype adjectives, inline-styled divs, "coming soon", unverifiable stats.
 4. Links resolve; anchors exist; page is in `nav:`; moves have redirect mappings.
 5. Numbers are pointers or date-stamped.
-6. Image spots are placeholders or existing assets — no image files created/edited.
+6. Image spots are placeholders or existing assets — no captured images (screenshots/gifs) created or edited; authored SVG diagrams follow `flowfile-svg-diagrams`.
 7. `FLOWFILE_SKIP_STARTUP_MIGRATION=1 poetry run mkdocs build` exits 0 with no new WARNINGs (snippets `check_paths` makes missing includes fatal).
 8. If examples were touched: `poetry run pytest flowfile_core/tests/templates/ flowfile_core/tests/docs_examples/ -q` green.
 

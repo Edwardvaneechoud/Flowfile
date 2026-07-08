@@ -47,7 +47,7 @@ The node adds Kafka metadata columns to every row: `_kafka_key`, `_kafka_partiti
 
 Offsets are committed **broker-side by consumer group** after the run's downstream nodes succeed — a failed run does not advance the offset, so the next run re-reads the same messages. Use **Reset Offsets** in the node to rewind a consumer group to the beginning of a topic and re-read everything.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: Kafka Source node settings panel showing connection, topic, start offset, and sync name -->
+![The Kafka Source node settings panel: connection, topic, start offset, and sync name.](../../assets/images/guides/kafka/kafka-source-settings.png)
 
 ## Read Kafka in Python
 
