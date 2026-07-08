@@ -3,7 +3,7 @@
  */
 import type { AvailableComponent } from "./types";
 
-/** Session storage key for persisting designer state */
+/** Legacy sessionStorage key; kept only for the one-time draft migration in node-designer-store */
 export const STORAGE_KEY = "nodeDesigner_state";
 
 /** Available component types for the palette */

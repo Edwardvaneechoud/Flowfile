@@ -1,5 +1,4 @@
 <template>
-  <!-- Node Browser Modal -->
   <div v-if="show" class="modal-overlay" @click="emit('close')">
     <div class="modal-container modal-large" @click.stop>
       <div class="modal-header">
@@ -12,7 +11,6 @@
         </button>
       </div>
       <div class="modal-content">
-        <!-- Viewing a specific node's code -->
         <template v-if="viewingNodeCode">
           <div class="node-code-view">
             <Codemirror
@@ -26,7 +24,6 @@
           </div>
         </template>
 
-        <!-- Node list -->
         <template v-else>
           <div v-if="loading" class="loading-indicator">
             <i class="fa-solid fa-spinner fa-spin"></i>
@@ -42,18 +39,49 @@
               v-for="node in nodes"
               :key="node.file_name"
               class="node-card"
-              @click="emit('viewNode', node.file_name)"
+              :data-testid="`node-card-${node.file_name}`"
             >
               <div class="node-card-header">
                 <i class="fa-solid fa-puzzle-piece"></i>
                 <span class="node-name">{{ node.node_name || node.file_name }}</span>
+                <span v-if="node.error" class="node-broken" title="Failed to load">
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                </span>
               </div>
               <div class="node-card-body">
                 <span class="node-category">{{ node.node_category }}</span>
                 <p class="node-description">{{ node.intro || "No description" }}</p>
               </div>
-              <div class="node-card-footer">
-                <span class="node-file">{{ node.file_name }}</span>
+              <div class="node-card-actions">
+                <button
+                  class="card-action"
+                  title="Edit"
+                  :data-testid="`node-edit-${node.file_name}`"
+                  @click="emit('edit', node.file_name)"
+                >
+                  <i class="fa-solid fa-pen"></i> Edit
+                </button>
+                <button
+                  class="card-action"
+                  title="Duplicate"
+                  @click="emit('duplicate', node.file_name)"
+                >
+                  <i class="fa-solid fa-copy"></i> Duplicate
+                </button>
+                <button
+                  class="card-action"
+                  title="View code"
+                  @click="emit('viewNode', node.file_name)"
+                >
+                  <i class="fa-solid fa-code"></i> Code
+                </button>
+                <button
+                  class="card-action card-action-danger"
+                  title="Delete"
+                  @click="askDelete(node.file_name, node.node_name || node.file_name)"
+                >
+                  <i class="fa-solid fa-trash"></i>
+                </button>
               </div>
             </div>
           </div>
@@ -64,10 +92,6 @@
           <i class="fa-solid fa-arrow-left"></i>
           Back
         </button>
-        <button v-if="viewingNodeCode" class="btn btn-danger" @click="emit('confirmDelete')">
-          <i class="fa-solid fa-trash"></i>
-          Delete
-        </button>
         <button class="btn btn-secondary" @click="emit('close')">
           {{ viewingNodeCode ? "Close" : "Cancel" }}
         </button>
@@ -75,28 +99,27 @@
     </div>
   </div>
 
-  <!-- Delete Confirmation Modal -->
-  <div v-if="showDeleteConfirm" class="modal-overlay" @click="emit('cancelDelete')">
+  <div v-if="pendingDelete" class="modal-overlay" @click="pendingDelete = null">
     <div class="modal-container" @click.stop>
       <div class="modal-header modal-header-error">
         <h3 class="modal-title">
           <i class="fa-solid fa-triangle-exclamation"></i>
           Confirm Delete
         </h3>
-        <button class="modal-close" @click="emit('cancelDelete')">
+        <button class="modal-close" @click="pendingDelete = null">
           <i class="fa-solid fa-times"></i>
         </button>
       </div>
       <div class="modal-content">
         <p>
-          Are you sure you want to delete <strong>{{ viewingNodeName }}</strong
+          Are you sure you want to delete <strong>{{ pendingDelete.name }}</strong
           >?
         </p>
         <p class="delete-warning">This action cannot be undone.</p>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-secondary" @click="emit('cancelDelete')">Cancel</button>
-        <button class="btn btn-danger" @click="emit('delete')">
+        <button class="btn btn-secondary" @click="pendingDelete = null">Cancel</button>
+        <button class="btn btn-danger" @click="confirmDelete">
           <i class="fa-solid fa-trash"></i>
           Delete
         </button>
@@ -106,6 +129,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { Codemirror } from "vue-codemirror";
 import type { Extension } from "@codemirror/state";
 import type { CustomNodeInfo } from "./types";
@@ -116,18 +140,28 @@ defineProps<{
   loading: boolean;
   viewingNodeCode: string;
   viewingNodeName: string;
-  showDeleteConfirm: boolean;
   readOnlyExtensions: Extension[];
 }>();
 
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "viewNode", fileName: string): void;
+  (e: "edit", fileName: string): void;
+  (e: "duplicate", fileName: string): void;
   (e: "back"): void;
-  (e: "confirmDelete"): void;
-  (e: "cancelDelete"): void;
-  (e: "delete"): void;
+  (e: "delete", fileName: string): void;
 }>();
+
+const pendingDelete = ref<{ fileName: string; name: string } | null>(null);
+
+function askDelete(fileName: string, name: string) {
+  pendingDelete.value = { fileName, name };
+}
+
+function confirmDelete() {
+  if (pendingDelete.value) emit("delete", pendingDelete.value.fileName);
+  pendingDelete.value = null;
+}
 </script>
 
 <style scoped>
@@ -167,7 +201,7 @@ const emit = defineEmits<{
 
 .nodes-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 1rem;
 }
 
@@ -175,15 +209,9 @@ const emit = defineEmits<{
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
   overflow: hidden;
-}
-
-.node-card:hover {
-  border-color: var(--primary-color);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
+  display: flex;
+  flex-direction: column;
 }
 
 .node-card-header {
@@ -199,6 +227,11 @@ const emit = defineEmits<{
   color: var(--primary-color);
 }
 
+.node-broken {
+  margin-left: auto;
+  color: var(--color-warning, #f59e0b);
+}
+
 .node-name {
   font-weight: 600;
   font-size: 0.9375rem;
@@ -206,6 +239,7 @@ const emit = defineEmits<{
 
 .node-card-body {
   padding: 0.75rem 1rem;
+  flex: 1;
 }
 
 .node-category {
@@ -227,16 +261,39 @@ const emit = defineEmits<{
   line-height: 1.4;
 }
 
-.node-card-footer {
-  padding: 0.5rem 1rem;
+.node-card-actions {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
   border-top: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
 
-.node-file {
+.card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
-  color: var(--text-secondary);
-  font-family: var(--font-family-mono);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text-primary, #374151);
+  cursor: pointer;
+}
+
+.card-action:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.card-action-danger {
+  margin-left: auto;
+}
+
+.card-action-danger:hover {
+  border-color: var(--color-danger, #ef4444);
+  color: var(--color-danger, #ef4444);
 }
 
 .node-code-view {

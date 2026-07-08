@@ -11,11 +11,12 @@
       Write your data transformation logic. Access settings via
       <code>self.settings_schema.section_name.component_name.value</code>
     </p>
-    <div class="code-editor-wrapper">
+    <div class="code-editor-wrapper" :class="{ 'fill-height': fillHeight }">
+      <pre v-if="signature" class="signature-line">{{ signature }}</pre>
       <Codemirror
         :model-value="modelValue"
         placeholder="# Write your process logic here..."
-        :style="{ height: '300px' }"
+        :style="fillHeight ? undefined : { height: height ?? '300px' }"
         :autofocus="false"
         :indent-with-tab="false"
         :tab-size="4"
@@ -29,20 +30,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { Codemirror } from "vue-codemirror";
 import type { Extension } from "@codemirror/state";
 import ProcessCodeHelpModal from "./ProcessCodeHelpModal.vue";
 
-defineProps<{
+const props = defineProps<{
   modelValue: string;
   extensions: Extension[];
+  height?: string;
+  signature?: string;
 }>();
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
 }>();
 
+const fillHeight = computed(() => props.height === "100%");
 const showHelp = ref(false);
 </script>
 
@@ -54,6 +58,38 @@ const showHelp = ref(false);
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 8px;
+}
+
+.code-editor-section:has(.fill-height) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin-top: 0;
+  margin-bottom: 0;
+  box-sizing: border-box;
+}
+
+.code-editor-wrapper.fill-height {
+  flex: 1;
+  min-height: 0;
+}
+
+.code-editor-wrapper.fill-height :deep(.cm-editor) {
+  flex: 1;
+  min-height: 0;
+}
+
+.signature-line {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  flex-shrink: 0;
+  white-space: pre;
+  overflow-x: auto;
+  background: var(--color-background-tertiary, #f1f3f5);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  color: var(--text-secondary, #6c757d);
+  font-family: "Fira Code", "Monaco", monospace;
+  font-size: 0.8125rem;
 }
 
 .code-editor-header {
@@ -110,6 +146,8 @@ const showHelp = ref(false);
 }
 
 .code-editor-wrapper {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 6px;
   overflow: hidden;

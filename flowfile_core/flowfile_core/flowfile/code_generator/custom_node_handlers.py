@@ -1,66 +1,36 @@
 import inspect
-import typing
 
-from flowfile_core.configs import logger
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
+# Import spellings that resolve the node-designer SDK. The node's own designer
+# import is dropped from the inlined source and re-added canonically (below) so
+# both bare-symbol and ``nd.``-style node bodies resolve after inlining.
+_SDK_IMPORT_MARKERS = ("node_designer", "shared.node_designer")
+
+# Symbols an inlined bare-import node body may reference.
+_CANONICAL_SDK_SYMBOLS = (
+    "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
+    "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
+    "ColumnActionInput, SliderInput, ToggleSwitch, SecretSelector"
+)
+
 
 class CustomNodeHandlersMixin(ConverterMixinBase):
-    """User-defined custom-node source registration and call emission."""
+    """User-defined custom-node source registration and call emission.
 
-    def _check_process_method_signature(self, custom_node_class: type) -> tuple[bool, bool]:
-        """
-        Check the process method signature to determine if collect/lazy is needed.
-
-        Returns:
-            Tuple of (needs_collect, needs_lazy):
-            - needs_collect: True if inputs need to be collected to DataFrame before passing to process()
-            - needs_lazy: True if output needs to be converted to LazyFrame after process()
-        """
-        needs_collect = True
-        needs_lazy = True
-
-        process_method = getattr(custom_node_class, "process", None)
-        if process_method is None:
-            return needs_collect, needs_lazy
-
-        try:
-            type_hints = typing.get_type_hints(process_method)
-
-            return_type = type_hints.get("return")
-            if return_type is not None:
-                return_type_str = str(return_type)
-                if "LazyFrame" in return_type_str:
-                    needs_lazy = False
-
-            sig = inspect.signature(process_method)
-            params = list(sig.parameters.values())
-            for param in params[1:]:
-                if param.annotation != inspect.Parameter.empty:
-                    param_type_str = str(param.annotation)
-                    if "LazyFrame" in param_type_str:
-                        needs_collect = False
-                        break
-                if param.name in type_hints:
-                    hint_str = str(type_hints[param.name])
-                    if "LazyFrame" in hint_str:
-                        needs_collect = False
-                        break
-        except (NameError, AttributeError, ValueError, TypeError) as e:
-            # If we can't determine types, use defaults (collect + lazy)
-            logger.debug(f"Could not determine process method signature: {e}")
-
-        return needs_collect, needs_lazy
+    Contract (matches the runtime/kernel/worker paths): ``process`` receives the
+    pipeline LazyFrames directly (no hint-sniffing, no ``.collect()``); the
+    return is normalized to lazy via ``isinstance`` at the call site. Multi-input
+    order follows the node's connected inputs; multi-output dict returns are
+    unpacked into one variable per output handle.
+    """
 
     def _read_custom_node_source_file(self, custom_node_class: type) -> str | None:
-        """
-        Read the entire source file where a custom node class is defined.
-        This includes all class definitions in that file (settings schemas, etc.).
+        """Read the entire source file where a custom node class is defined.
 
-        Returns:
-            The complete source code from the file, or None if not readable.
+        Returns the complete source (settings schema + node class + helpers), or
+        None if not readable.
         """
         try:
             source_file = inspect.getfile(custom_node_class)
@@ -80,6 +50,8 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
 
     def _lookup_custom_node_class(self, node: FlowNode) -> type | None:
         """Resolve a user-defined node's class from the registry, recording unsupported on miss."""
+        from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+
         node_type = node.node_type
         custom_node_class = CUSTOM_NODE_STORE.get(node_type)
         if custom_node_class is None:
@@ -92,10 +64,10 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
     def _register_node_import(self, statement: str) -> None:
         """Carry a custom node's own import into the generated script.
 
-        The node_designer import is skipped here because it is re-added in a
-        canonical multi-symbol form by the caller.
+        The node-designer import (any spelling) is skipped here because it is
+        re-added in a canonical form by the caller.
         """
-        if "node_designer" in statement:
+        if any(marker in statement for marker in _SDK_IMPORT_MARKERS):
             return
         self.imports.add(statement.strip())
 
@@ -112,7 +84,7 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
             if file_source:
                 # Lift import lines out of the inlined source (imports are emitted
                 # separately at the top) but preserve the node's own runtime imports
-                # so its process() body still resolves. The node_designer import is
+                # so its process() body still resolves. The designer import is
                 # re-added canonically below, so it is dropped here.
                 lines = file_source.split("\n")
                 non_import_lines = []
@@ -153,13 +125,59 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
                     )
                     return False
 
-            self.imports.add(
-                "from flowfile_core.flowfile.node_designer import ("
-                "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
-                "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
-                "ColumnActionInput, SliderInput, ToggleSwitch)"
-            )
+            # nd.-style node bodies resolve via the canonical alias (importable
+            # standalone); bare-symbol bodies resolve via the side-effect-free
+            # shared SDK package (importing it never triggers core's DB).
+            self.imports.add("from flowfile import node_designer as nd")
+            self.imports.add(f"from shared.node_designer import ({_CANONICAL_SDK_SYMBOLS})")
+        # Return normalization uses isinstance(..., pl.DataFrame); ensure polars
+        # is imported even in the FlowFrame converter.
+        self.imports.add("import polars as pl")
         return True
+
+    @staticmethod
+    def _ordered_input_args(input_vars: dict[str, str]) -> list[str]:
+        """Positional args for process(), in the node's connected-input order.
+
+        ``_get_input_vars`` inserts keys in port order (main inputs in edge
+        order, then left, then right), so insertion order is the argument order.
+        The old code dropped every non-"main" key and sorted alphabetically —
+        this preserves all inputs and their order.
+        """
+        return list(input_vars.values())
+
+    @staticmethod
+    def _class_default(custom_node_class: type, name: str, fallback):
+        """Resolve a pydantic field default, honoring subclass overrides.
+
+        Subclass attribute assignments (``environment: str = "kernel"``) become
+        the field default in pydantic v2, so the field default is the source of
+        truth. Fields with only a default_factory (e.g. ``dependencies``) fall
+        back to the factory value.
+        """
+        from pydantic_core import PydanticUndefined
+
+        field = custom_node_class.model_fields.get(name)
+        if field is None:
+            return fallback
+        if field.default is not PydanticUndefined and field.default is not None:
+            return field.default
+        if field.default_factory is not None:
+            return field.default_factory()
+        return fallback
+
+    def _emit_isolated_env_header(self, node: FlowNode, custom_node_class: type) -> None:
+        """Emit a ``# Requires: pip install ...`` header for kernel-env nodes."""
+        environment = self._class_default(custom_node_class, "environment", "local")
+        requires_kernel = self._class_default(custom_node_class, "requires_kernel", False)
+        if environment != "kernel" and not requires_kernel:
+            return
+        deps = self._class_default(custom_node_class, "dependencies", [])
+        deps_list = deps if isinstance(deps, list) else []
+        if deps_list:
+            self._add_comment(f"# Requires: pip install {' '.join(deps_list)}")
+        else:
+            self._add_comment("# Requires: an isolated kernel environment (runs inline in exported code)")
 
     def _emit_user_defined_call(
         self, node: FlowNode, custom_node_class: type, var_name: str, input_vars: dict[str, str]
@@ -168,36 +186,42 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         settings = node.setting_input
         class_name = custom_node_class.__name__
         settings_dict = getattr(settings, "settings", {}) or {}
-
-        needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
+        output_names = list(getattr(settings, "output_names", None) or ["main"])
 
         _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node.node_type}))
         self._add_code(f"# User-defined node: {_node_name_field.default}")
+        self._emit_isolated_env_header(node, custom_node_class)
         self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
 
         if settings_dict:
-            self._add_code(f"_custom_node_{node.node_id}_settings = {repr(settings_dict)}")
-            self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
+            self._add_code(f"_custom_node_{node.node_id}_settings = {settings_dict!r}")
             node_var = f"_custom_node_{node.node_id}"
+            self._add_code(f"if {node_var}.settings_schema:")
             self._add_code(f"    {node_var}.settings_schema.populate_values({node_var}_settings)")
 
-        if len(input_vars) == 0:
-            input_args = ""
-        elif len(input_vars) == 1:
-            input_df = next(iter(input_vars.values()))
-            input_args = f"{input_df}.collect()" if needs_collect else input_df
-        else:
-            arg_list = []
-            for key in sorted(input_vars.keys()):
-                if key.startswith("main"):
-                    if needs_collect:
-                        arg_list.append(f"{input_vars[key]}.collect()")
-                    else:
-                        arg_list.append(input_vars[key])
-            input_args = ", ".join(arg_list)
+        input_args = ", ".join(self._ordered_input_args(input_vars))
 
-        if needs_lazy:
-            self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args}).lazy()")
+        if len(output_names) > 1:
+            self._emit_multi_output_call(node, var_name, input_args, output_names)
         else:
-            self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args})")
+            out_var = f"_out_{node.node_id}"
+            self._add_code(f"{out_var} = _custom_node_{node.node_id}.process({input_args})")
+            self._add_code(f"{var_name} = {out_var}.lazy() if isinstance({out_var}, pl.DataFrame) else {out_var}")
         self._add_code("")
+
+    def _emit_multi_output_call(self, node: FlowNode, var_name: str, input_args: str, output_names: list[str]) -> None:
+        """Emit a multi-output custom-node call: dict return unpacked per handle.
+
+        Output handle 0 reuses ``var_name`` (the node's primary var); each named
+        output registers in ``node_handle_var_mapping`` so downstream nodes wire
+        to the right handle.
+        """
+        outs_var = f"_outs_{node.node_id}"
+        self._add_code(f"{outs_var} = _custom_node_{node.node_id}.process({input_args})")
+        for index, name in enumerate(output_names):
+            out_var = var_name if index == 0 else f"{var_name}_{name}"
+            self._add_code(
+                f"{out_var} = {outs_var}[{name!r}].lazy() "
+                f"if isinstance({outs_var}[{name!r}], pl.DataFrame) else {outs_var}[{name!r}]"
+            )
+            self.node_handle_var_mapping[(node.node_id, f"output-{index}")] = out_var

@@ -266,6 +266,8 @@
           v-else-if="catalogStore.activeTab === 'apis'"
           @view-flow="navigateToFlow($event)"
         />
+        <!-- Custom nodes (root-level: default dir + mounted folders) -->
+        <CustomNodesPanel v-else-if="catalogStore.activeTab === 'customNodes'" />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -533,6 +535,7 @@ import SqlEditorPanel from "./SqlEditorPanel.vue";
 import NotebookPanel from "./NotebookPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
+import CustomNodesPanel from "./CustomNodesPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";

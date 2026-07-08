@@ -129,6 +129,28 @@ class FuzzyJoinInput(BaseModel):
     flowfile_node_id: int | str | None = -1
 
 
+class CustomNodeExecuteInput(BaseModel):
+    """Input for the /execute_custom_node endpoint.
+
+    Ships the node's source text (not a path — jobs stay immune to concurrent
+    save/delete) plus ``$ffsec$`` ciphertext secrets the child decrypts locally.
+    """
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    node_source: str
+    class_name: str | None = None
+    settings_values: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    secrets: dict[str, str] = Field(default_factory=dict)
+    inputs: list[Base64Bytes] = Field(default_factory=list)
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
+    dry_run: bool = False
+    row_limit: int | None = None
+    user_id: int | None = None
+    flowfile_flow_id: int | None = 1
+    flowfile_node_id: int | str | None = -1
+
+
 class TrainModelInput(BaseModel):
     """Input for the /train_ml_model endpoint.
 

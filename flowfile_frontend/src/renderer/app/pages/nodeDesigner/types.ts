@@ -47,6 +47,10 @@ export interface CustomNodeInfo {
   title: string;
   intro: string;
   node_icon: string;
+  node_key?: string;
+  environment?: "local" | "kernel";
+  source_hash?: string;
+  error?: string | null;
 }
 
 /** Icon info from the backend */

@@ -1,6 +1,6 @@
 # Custom Node Tutorial: Build an Emoji Generator
 
-This tutorial builds one custom node end to end — an Emoji Generator that maps numeric values to emojis. It is a small but complete example of the [Node Designer](creating-custom-nodes.md) API: a multi-section settings schema, type-filtered column selection, and a `process()` method that transforms an incoming DataFrame.
+This tutorial builds one custom node end to end — an Emoji Generator that maps numeric values to emojis. It is a small but complete example of the [Node Designer](creating-custom-nodes.md) SDK: a multi-section settings schema, type-filtered column selection, and a `process()` method that transforms an incoming frame.
 
 !!! info "What you'll build"
     By the end you will have an "Emoji Generator" node that:
@@ -14,11 +14,11 @@ This tutorial builds one custom node end to end — an Emoji Generator that maps
 
 - Flowfile installed and working (`pip install flowfile`)
 - Basic understanding of Python
-- Familiarity with Polars DataFrames (helpful but not required)
+- Familiarity with Polars (helpful but not required)
 
-## Step 1: Set Up Your Development Environment
+## Step 1: Set up your development environment
 
-First, locate your custom nodes directory:
+First, locate your custom-nodes directory:
 
 ```bash
 # Check if the directory exists
@@ -34,154 +34,133 @@ Create your node file:
 touch ~/.flowfile/user_defined_nodes/emoji_generator.py
 ```
 
-## Step 2: Import Required Components
+## Step 2: Import the SDK
 
-Start by importing all the components you'll need:
+Everything comes from the canonical `flowfile.node_designer` import, aliased `nd`:
 
 ```python
-import polars as pl
 import random
-from typing import List
 
-from flowfile_core.flowfile.node_designer import (
-    CustomNodeBase,
-    Section, 
-    NodeSettings,
-    TextInput,
-    NumericInput,
-    SingleSelect,
-    ToggleSwitch,
-    ColumnSelector,
-    MultiSelect,
-    Types
-)
+import polars as pl
+
+from flowfile import node_designer as nd
 ```
 
-## Step 3: Design Your Settings Schema
+Reference components as `nd.CustomNodeBase`, `nd.Section`, `nd.ColumnSelector`, and so on. This is the only Flowfile import a node file may use — a node runs in an isolated process (the worker or a kernel) that has the SDK but not the rest of Flowfile.
+
+## Step 3: Design the settings schema
 
 We'll create a two-section UI: one for mood detection and one for styling options.
 
-### Create the First Section
+### First section
 
 ```python
-class EmojiMoodSection(Section):
-    source_column: ColumnSelector = ColumnSelector(
+class EmojiMoodSection(nd.Section):
+    source_column: nd.ColumnSelector = nd.ColumnSelector(
         label="Analyze This Column",
         multiple=False,
         required=True,
-        data_types=Types.Numeric  # Only show numeric columns
+        data_types=nd.Types.Numeric,  # only numeric columns
     )
-    
-    mood_type: SingleSelect = SingleSelect(
+
+    mood_type: nd.SingleSelect = nd.SingleSelect(
         label="Emoji Mood Logic",
         options=[
-            ("performance", "📈 Performance Based (High = 😎, Low = 😰)"),
-            ("temperature", "🌡️ Temperature (Hot = 🔥, Cold = 🧊)"),
-            ("money", "💰 Money Mode (Rich = 🤑, Poor = 😢)"),
-            ("energy", "⚡ Energy Level (High = 🚀, Low = 🔋)"),
-            ("love", "❤️ Love Meter (High = 😍, Low = 💔)"),
-            ("chaos", "🎲 Pure Chaos (Random emojis!)"),
-            ("pizza", "🍕 Pizza Scale (Everything becomes pizza)")
+            ("performance", "Performance Based (High = 😎, Low = 😰)"),
+            ("temperature", "Temperature (Hot = 🔥, Cold = 🧊)"),
+            ("money", "Money Mode (Rich = 🤑, Poor = 😢)"),
+            ("energy", "Energy Level (High = 🚀, Low = 🔋)"),
+            ("love", "Love Meter (High = 😍, Low = 💔)"),
+            ("chaos", "Pure Chaos (Random emojis)"),
+            ("pizza", "Pizza Scale (Everything becomes pizza)"),
         ],
-        default="performance"
+        default="performance",
     )
-    
-    threshold_value: NumericInput = NumericInput(
+
+    threshold_value: nd.NumericInput = nd.NumericInput(
         label="Mood Threshold",
         default=50.0,
         min_value=0,
-        max_value=100
+        max_value=100,
     )
-    
-    emoji_column_name: TextInput = TextInput(
+
+    emoji_column_name: nd.TextInput = nd.TextInput(
         label="New Emoji Column Name",
         default="mood_emoji",
-        placeholder="Name your emoji column..."
+        placeholder="Name your emoji column...",
     )
 ```
 
-### Create the Second Section
+### Second section
 
 ```python
-class EmojiStyleSection(Section):
-    emoji_intensity: SingleSelect = SingleSelect(
+class EmojiStyleSection(nd.Section):
+    emoji_intensity: nd.SingleSelect = nd.SingleSelect(
         label="Emoji Intensity",
         options=[
-            ("subtle", "😐 Subtle (One emoji)"),
-            ("normal", "😊 Normal (1-2 emojis)"),
-            ("extra", "🤩 Extra (2-3 emojis)"),
-            ("maximum", "🤯🎉🚀 MAXIMUM OVERDRIVE")
+            ("subtle", "Subtle (One emoji)"),
+            ("normal", "Normal (1-2 emojis)"),
+            ("extra", "Extra (2-3 emojis)"),
+            ("maximum", "MAXIMUM OVERDRIVE"),
         ],
-        default="normal"
+        default="normal",
     )
-    
-    add_random_sparkle: ToggleSwitch = ToggleSwitch(
-        label="Add Random Sparkles ✨",
+
+    add_random_sparkle: nd.ToggleSwitch = nd.ToggleSwitch(
+        label="Add Random Sparkles",
         default=True,
-        description="Randomly sprinkle ✨ for extra pizzazz"
-    )
-    
-    emoji_categories: MultiSelect = MultiSelect(
-        label="Allowed Emoji Categories",
-        options=[
-            ("faces", "😀 Faces & Emotions"),
-            ("animals", "🦄 Animals"),
-            ("food", "🍔 Food & Drink"),
-            ("nature", "🌈 Nature"),
-            ("objects", "🎮 Objects"),
-            ("symbols", "💯 Symbols"),
-            ("flags", "🏴‍☠️ Flags")
-        ],
-        default=["faces", "animals", "food"]
+        description="Randomly sprinkle a sparkle for extra pizzazz",
     )
 ```
 
-### Combine Sections into Settings
+### Combine into settings
 
 ```python
-class EmojiSettings(NodeSettings):
+class EmojiSettings(nd.NodeSettings):
     mood_config: EmojiMoodSection = EmojiMoodSection(
-        title="Mood Detection 😊",
-        description="Configure how to detect the vibe of your data"
+        title="Mood Detection",
+        description="Configure how to detect the vibe of your data",
     )
-    
+
     style_options: EmojiStyleSection = EmojiStyleSection(
-        title="Emoji Style 🎨",
-        description="Fine-tune your emoji experience"
+        title="Emoji Style",
+        description="Fine-tune your emoji experience",
     )
 ```
 
-## Step 4: Create the Main Node Class
+## Step 4: Create the node class
 
 ```python
-class EmojiGenerator(CustomNodeBase):
-    # Node metadata - how it appears in Flowfile
-    node_name: str = "Emoji Generator 🎉"
-    node_category: str = "Fun Stuff"  # descriptive label only; does NOT create a palette section
-    node_group: str = "custom"        # node_group="custom" puts it under "User Defined Operations"
+class EmojiGenerator(nd.CustomNodeBase):
+    # Node metadata — how it appears in Flowfile
+    node_name: str = "Emoji Generator"
+    node_category: str = "Fun Stuff"   # a "Fun Stuff" group appears in the palette
     title: str = "Emoji Generator"
     intro: str = "Add an emoji column derived from a numeric column."
-    
+
     # I/O configuration
     number_of_inputs: int = 1
     number_of_outputs: int = 1
-    
-    # Link to our settings schema
+
+    # Link to the settings schema
     settings_schema: EmojiSettings = EmojiSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
         # Implemented in the next step
         ...
 ```
 
-## Step 5: Implement the Processing Logic
+`node_category = "Fun Stuff"` creates a **Fun Stuff** group in the palette; the default category `"Custom"` would put the node under **User Defined Operations** instead.
 
-Now the processing logic — mapping each value to an emoji. The method receives its inputs as a variadic `*inputs`; this node has one input, so it reads `inputs[0]`:
+## Step 5: Implement the processing logic
+
+`process` receives its inputs as a variadic `*inputs`; this node has one input, so it reads `inputs[0]`. Inputs are `pl.LazyFrame`. The emoji mapping uses a per-row Python callback (`map_elements`), which is an eager operation, so we `.collect()` the input first:
 
 ```python
-def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-    input_df = inputs[0]
-    # Get settings values from the UI
+def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    input_df = inputs[0].collect()
+
+    # Read settings once, up front
     column_name = self.settings_schema.mood_config.source_column.value
     mood_type = self.settings_schema.mood_config.mood_type.value
     threshold = self.settings_schema.mood_config.threshold_value.value
@@ -189,120 +168,59 @@ def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
     intensity = self.settings_schema.style_options.emoji_intensity.value
     add_sparkle = self.settings_schema.style_options.add_random_sparkle.value
 
-    # Define emoji sets for different moods
     emoji_sets = {
-        "performance": {
-            "high": ["😎", "💪", "🏆", "👑", "🌟", "💯", "🔥"],
-            "low": ["😰", "😓", "📉", "😢", "💔", "🆘", "😵"]
-        },
-        "temperature": {
-            "high": ["🔥", "🌋", "☀️", "🥵", "🌡️", "♨️", "🏖️"],
-            "low": ["🧊", "❄️", "⛄", "🥶", "🌨️", "🏔️", "🐧"]
-        },
-        "money": {
-            "high": ["🤑", "💰", "💎", "🏦", "💳", "🪙", "📈"],
-            "low": ["😢", "💸", "📉", "🏚️", "😭", "🥺", "📊"]
-        },
-        "energy": {
-            "high": ["🚀", "⚡", "💥", "🎯", "🏃", "🤸", "🎪"],
-            "low": ["🔋", "😴", "🛌", "🐌", "🥱", "😪", "💤"]
-        },
-        "love": {
-            "high": ["😍", "❤️", "💕", "🥰", "💘", "💝", "👨‍❤️‍👨"],
-            "low": ["💔", "😢", "😭", "🥀", "😔", "💀", "🖤"]
-        },
-        "chaos": {
-            "high": ["🦖", "🎸", "🚁", "🎪", "🦜", "🎭", "🏴‍☠️"],
-            "low": ["🥔", "🧦", "📎", "🦷", "🧲", "🔌", "🪣"]
-        },
-        "pizza": {
-            "high": ["🍕", "🍕🍕", "🍕🔥", "🍕😍", "🍕🎉", "🍕💯", "🍕👑"],
-            "low": ["🍕", "🍕😢", "🍕💔", "🍕😭", "🍕🥺", "🍕😔", "🍕"]
-        }
+        "performance": {"high": ["😎", "💪", "🏆", "🌟", "💯", "🔥"], "low": ["😰", "😓", "📉", "😢", "💔", "😵"]},
+        "temperature": {"high": ["🔥", "🌋", "☀️", "🥵", "♨️", "🏖️"], "low": ["🧊", "❄️", "⛄", "🥶", "🏔️", "🐧"]},
+        "money": {"high": ["🤑", "💰", "💎", "🏦", "🪙", "📈"], "low": ["😢", "💸", "📉", "🏚️", "😭", "📊"]},
+        "energy": {"high": ["🚀", "⚡", "💥", "🎯", "🏃", "🎪"], "low": ["🔋", "😴", "🛌", "🐌", "🥱", "💤"]},
+        "love": {"high": ["😍", "❤️", "💕", "🥰", "💘", "💝"], "low": ["💔", "😢", "😭", "🥀", "😔", "🖤"]},
+        "chaos": {"high": ["🦖", "🎸", "🚁", "🎪", "🦜", "🎭"], "low": ["🥔", "🧦", "📎", "🦷", "🧲", "🪣"]},
+        "pizza": {"high": ["🍕"], "low": ["🍕"]},
     }
 
-    # Helper function to get emoji based on value
-    def get_emoji(value, mood_type, threshold, intensity):
+    def get_emoji(value):
         if value is None:
             return "❓"
-
         emoji_list = emoji_sets.get(mood_type, emoji_sets["performance"])
-
         if mood_type == "chaos":
-            # Random emoji from both lists
-            all_emojis = emoji_list["high"] + emoji_list["low"]
-            base_emoji = random.choice(all_emojis)
+            base_emoji = random.choice(emoji_list["high"] + emoji_list["low"])
         elif mood_type == "pizza":
-            # Everything is pizza
             base_emoji = "🍕"
         else:
-            # Use threshold to determine high/low
-            if value >= threshold:
-                base_emoji = random.choice(emoji_list["high"])
-            else:
-                base_emoji = random.choice(emoji_list["low"])
+            base_emoji = random.choice(emoji_list["high"] if value >= threshold else emoji_list["low"])
 
-        # Add intensity
-        if intensity == "subtle":
-            result = base_emoji
-        elif intensity == "normal":
-            result = base_emoji
-            if random.random() > 0.5:
-                result += random.choice(["", "✨", ""])
-        elif intensity == "extra":
-            extras = ["✨", "💫", "⭐", ""]
-            result = base_emoji + random.choice(extras) + random.choice(extras)
-        else:  # maximum
-            chaos_emojis = ["🎉", "🚀", "💥", "🌈", "✨", "🔥", "💯", "⚡"]
-            result = base_emoji + "".join(random.choices(chaos_emojis, k=3))
+        if intensity == "extra":
+            base_emoji += random.choice(["✨", "💫", "⭐", ""])
+        elif intensity == "maximum":
+            base_emoji += "".join(random.choices(["🎉", "🚀", "💥", "🌈", "✨", "🔥"], k=3))
 
-        # Add random sparkle
         if add_sparkle and random.random() > 0.7:
-            result += "✨"
+            base_emoji += "✨"
+        return base_emoji
 
-        return result
-
-    # Create emoji column using map_elements
-    emoji_expr = (
+    result = input_df.with_columns(
         pl.col(column_name)
-        .map_elements(
-            lambda x: get_emoji(x, mood_type, threshold, intensity),
-            return_dtype=pl.String
-        )
+        .map_elements(get_emoji, return_dtype=pl.String)
         .alias(emoji_col_name)
     )
-
-    # Add bonus columns based on intensity
-    if intensity == "maximum":
-        # Add extra fun columns in maximum mode
-        return input_df.with_columns([
-            emoji_expr,
-            pl.lit("🎉 PARTY MODE 🎉").alias("vibe_check"),
-            pl.col(column_name).map_elements(
-                lambda x: "🔥" * min(int((x or 0) / 20), 5) if x else "💤",
-                return_dtype=pl.String
-            ).alias("fire_meter")
-        ])
-    else:
-        return input_df.with_columns([emoji_expr])
+    return result
 ```
 
+Returning the eager `DataFrame` is fine — the framework normalizes it. (You could also return `result.lazy()`; the effect is the same.)
 
+## Step 6: Test your node
 
-## Step 6: Test Your Node
+You have two ways to check the node works.
 
-Save your file and test it:
+### In the designer (fastest loop)
 
-1. **Restart Flowfile** completely:
-   ```bash
-   # Stop any running Flowfile processes
-   # Then start again
-   flowfile run ui
-   ```
+Open the node in the [Node Designer](../users/visual-editor/node-designer.md), go to the **Test** tab, paste a small numeric sample, and run. You see the output grid, logs, and any error without touching a flow.
 
+### In a flow
+
+1. **Save the file.** Flowfile hot-reloads the directory — no restart. If Flowfile was already open, click **Rescan** in the Node Designer browser to pick up the new file.
 2. **Create a test flow.**
-   - Create a new flow.
-   - Add a "Manual Input" node. The `source_column` selector filters to numeric columns, and the threshold logic compares numbers, so use numeric `value` entries (not quoted strings):
+   - Add a "Manual Input" node. The `source_column` selector filters to numeric columns and the threshold logic compares numbers, so use numeric `value` entries (not quoted strings):
     ```
     [
       {"name": "bob", "value": 21},
@@ -312,8 +230,8 @@ Save your file and test it:
     ]
     ```
 
-   - Find your "Emoji Generator" under **User Defined Operations** in the palette.
-   - Connect it to your manual input.
+   - Find your "Emoji Generator" under the **Fun Stuff** group in the palette.
+   - Connect it to the manual input.
    - Configure the settings and run.
 
 <details markdown="1">
@@ -321,25 +239,18 @@ Save your file and test it:
 
 ![Flow visualized](../assets/images/developers/emoji_settings.png)
 
-
 </details>
 
 ### Performance notes
 
-1. Prefer Polars expressions over Python loops where the logic allows it.
-2. `map_elements` (used here) runs a Python callback per row — fine for a small demo, slower on large data.
-3. Read settings once at the top of `process()` rather than inside the row callback.
+1. Prefer Polars expressions over Python loops where the logic allows it, and keep the frame lazy when you can.
+2. `map_elements` (used here) runs a Python callback per row — fine for a small demo, slower on large data. It forces the `.collect()` at the top of `process`.
+3. Read settings once at the top of `process`, not inside the row callback.
 
-## Complete Working Example
+## Complete working example
 
-The complete node is the assembly of Steps 3–5: the two `Section` classes and `EmojiSettings` from Step 3, the `EmojiGenerator` class from Step 4, and its `process()` body from Step 5, in one file.
-
-Save that assembled file as `~/.flowfile/user_defined_nodes/emoji_generator.py`, then restart Flowfile.
-
-!!! note "One setting is defined but unused"
-    `emoji_categories` (the `MultiSelect` in the style section) is collected by the UI but never read in `process()`. It's left in as an exercise — wire it into `get_emoji` to restrict which emoji pools a theme draws from.
+The complete node is the assembly of Steps 3–5: the two `Section` classes and `EmojiSettings` from Step 3, the `EmojiGenerator` class from Step 4, and its `process()` body from Step 5, in one file. Save it as `~/.flowfile/user_defined_nodes/emoji_generator.py`.
 
 ## Recap
 
-You built a custom node with a two-section settings panel, type-filtered column selection, and a `process()` method that maps values to emojis. See [Creating Custom Nodes](creating-custom-nodes.md) for the full component catalog and the `SecretSelector` for API-backed nodes.
-
+You built a custom node with a two-section settings panel, type-filtered column selection, and a `process()` method that maps values to emojis. See [Creating Custom Nodes](creating-custom-nodes.md) for the full component catalog, execution environments, multi-input/multi-output nodes, and the `SecretSelector` for API-backed nodes.

@@ -1,22 +1,23 @@
 <template>
   <div class="icon-selector">
     <label class="icon-label">Node Icon</label>
-    <div class="icon-selector-content">
-      <!-- Current icon preview -->
-      <div class="current-icon" @click="toggleDropdown">
-        <img
-          :src="getDisplayUrl(modelValue)"
-          :alt="modelValue"
-          class="icon-preview"
-          @error="handleImageError"
-        />
-        <span class="icon-name">{{ modelValue || "Select icon..." }}</span>
-        <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
-      </div>
+    <el-popover
+      v-model:visible="showDropdown"
+      placement="bottom-start"
+      trigger="click"
+      :width="340"
+      popper-class="icon-selector-popper"
+      @show="loadIcons"
+    >
+      <template #reference>
+        <div class="current-icon">
+          <img :src="selectedIconUrl" :alt="modelValue" class="icon-preview" />
+          <span class="icon-name">{{ selectedIconLabel }}</span>
+          <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+        </div>
+      </template>
 
-      <!-- Dropdown -->
-      <div v-if="showDropdown" class="icon-dropdown">
-        <!-- Upload section -->
+      <div class="icon-dropdown-content">
         <div class="upload-section">
           <label class="upload-btn">
             <i class="fa-solid fa-upload"></i>
@@ -30,9 +31,8 @@
           </label>
         </div>
 
-        <!-- Custom icons section -->
         <div v-if="customIcons.length > 0" class="icons-section">
-          <div class="section-title">Custom Icons</div>
+          <div class="section-title">Your Icons</div>
           <div class="icons-grid">
             <div
               v-for="icon in customIcons"
@@ -42,10 +42,9 @@
               @click="selectIcon(icon.file_name)"
             >
               <img
-                :src="getCustomIconUrl(icon.file_name)"
+                :src="customIconUrls[icon.file_name] || defaultIconUrl"
                 :alt="icon.file_name"
                 class="icon-img"
-                @error="handleImageError"
               />
               <span class="icon-filename">{{ icon.file_name }}</span>
               <button
@@ -59,41 +58,52 @@
           </div>
         </div>
 
-        <!-- Default icon -->
         <div class="icons-section">
-          <div class="section-title">Default</div>
+          <div class="section-title">Standard Icons</div>
           <div class="icons-grid">
             <div
               class="icon-option"
-              :class="{ selected: modelValue === 'user-defined-icon.png' }"
-              @click="selectIcon('user-defined-icon.png')"
+              :class="{ selected: modelValue === DEFAULT_ICON_NAME }"
+              @click="selectIcon(DEFAULT_ICON_NAME)"
             >
-              <img
-                :src="getBuiltinIconUrl('user-defined-icon.png')"
-                alt="Default"
-                class="icon-img"
-              />
+              <img :src="defaultIconUrl" alt="Default" class="icon-img" />
               <span class="icon-filename">Default</span>
+            </div>
+            <div
+              v-for="name in STANDARD_NODE_ICONS"
+              :key="name"
+              class="icon-option"
+              :class="{ selected: modelValue === name }"
+              @click="selectIcon(name)"
+            >
+              <img :src="getImageUrl(name)" :alt="name" class="icon-img" />
+              <span class="icon-filename">{{ standardIconLabel(name) }}</span>
             </div>
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- Click outside to close -->
-    <div v-if="showDropdown" class="backdrop" @click="showDropdown = false"></div>
+    </el-popover>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import axios from "axios";
+import { ElPopover } from "element-plus";
 import type { IconInfo } from "./types";
 import {
-  getImageUrl,
-  getCustomIconUrl as getCustomIconUrlUtil,
+  STANDARD_NODE_ICONS,
   getDefaultIconUrl,
+  getImageUrl,
+  isBuiltinIcon,
 } from "../../features/designer/utils";
+import {
+  fetchIconObjectUrl,
+  invalidateIconCache,
+  useNodeIconUrl,
+} from "@/composables/useCustomNodeIcon";
+
+const DEFAULT_ICON_NAME = "user-defined-icon.png";
 
 const props = defineProps<{
   modelValue: string;
@@ -105,24 +115,33 @@ const emit = defineEmits<{
 
 const showDropdown = ref(false);
 const customIcons = ref<IconInfo[]>([]);
-const loading = ref(false);
+const customIconUrls = reactive<Record<string, string>>({});
+const defaultIconUrl = getDefaultIconUrl();
 
-function toggleDropdown() {
-  showDropdown.value = !showDropdown.value;
-  if (showDropdown.value) {
-    loadIcons();
-  }
+const selectedIconUrl = useNodeIconUrl(() => props.modelValue);
+
+const selectedIconLabel = computed(() => {
+  if (!props.modelValue) return "Select icon...";
+  if (props.modelValue === DEFAULT_ICON_NAME) return "Default";
+  if (isBuiltinIcon(props.modelValue)) return standardIconLabel(props.modelValue);
+  return props.modelValue;
+});
+
+function standardIconLabel(name: string): string {
+  return name.replace(/\.svg$/, "").replace(/_/g, " ");
 }
 
 async function loadIcons() {
-  loading.value = true;
   try {
     const response = await axios.get("/user_defined_components/list-icons");
     customIcons.value = response.data;
+    for (const icon of customIcons.value) {
+      fetchIconObjectUrl(icon.file_name).then((url) => {
+        if (url) customIconUrls[icon.file_name] = url;
+      });
+    }
   } catch (error) {
     console.error("Failed to load icons:", error);
-  } finally {
-    loading.value = false;
   }
 }
 
@@ -146,6 +165,7 @@ async function handleFileUpload(event: Event) {
       },
     });
 
+    invalidateIconCache(response.data.file_name);
     emit("update:modelValue", response.data.file_name);
 
     await loadIcons();
@@ -162,9 +182,11 @@ async function deleteIcon(iconName: string) {
 
   try {
     await axios.delete(`/user_defined_components/delete-icon/${iconName}`);
+    invalidateIconCache(iconName);
+    delete customIconUrls[iconName];
 
     if (props.modelValue === iconName) {
-      emit("update:modelValue", "user-defined-icon.png");
+      emit("update:modelValue", DEFAULT_ICON_NAME);
     }
 
     await loadIcons();
@@ -174,43 +196,18 @@ async function deleteIcon(iconName: string) {
   }
 }
 
-function getDisplayUrl(iconName: string): string {
-  return getImageUrl(iconName);
-}
-
-function getCustomIconUrl(iconName: string): string {
-  return getCustomIconUrlUtil(iconName);
-}
-
-function getBuiltinIconUrl(iconName: string): string {
-  return new URL(`../../features/designer/assets/icons/${iconName}`, import.meta.url).href;
-}
-
-function handleImageError(event: Event) {
-  const img = event.target as HTMLImageElement;
-  img.src = getDefaultIconUrl();
-}
-
 onMounted(() => {
   loadIcons();
 });
 </script>
 
 <style scoped>
-.icon-selector {
-  position: relative;
-}
-
 .icon-label {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
   display: block;
   margin-bottom: var(--spacing-1);
-}
-
-.icon-selector-content {
-  position: relative;
 }
 
 .current-icon {
@@ -249,23 +246,13 @@ onMounted(() => {
   color: var(--color-text-secondary);
 }
 
-.icon-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: var(--spacing-1);
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-lg);
-  z-index: var(--z-index-dropdown);
-  max-height: 300px;
+.icon-dropdown-content {
+  max-height: 340px;
   overflow-y: auto;
 }
 
 .upload-section {
-  padding: var(--spacing-3);
+  padding-bottom: var(--spacing-2);
   border-bottom: 1px solid var(--color-border-light);
 }
 
@@ -292,7 +279,7 @@ onMounted(() => {
 }
 
 .icons-section {
-  padding: var(--spacing-2);
+  padding: var(--spacing-2) 0;
 }
 
 .section-title {
@@ -302,13 +289,12 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: var(--spacing-2);
-  padding: 0 var(--spacing-1);
 }
 
 .icons-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-  gap: var(--spacing-2);
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: var(--spacing-1);
 }
 
 .icon-option {
@@ -375,14 +361,5 @@ onMounted(() => {
 
 .delete-icon-btn:hover {
   background: var(--color-danger-hover);
-}
-
-.backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 999;
 }
 </style>

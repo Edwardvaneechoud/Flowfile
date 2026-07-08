@@ -1281,9 +1281,7 @@ class NodeFormula(NodeSingleInput):
 class NodeWindowFunctions(NodeSingleInput):
     """Settings for a node that adds rolling, cumulative, rank or tile columns."""
 
-    window_input: transform_schema.WindowFunctionsInput = Field(
-        default_factory=transform_schema.WindowFunctionsInput
-    )
+    window_input: transform_schema.WindowFunctionsInput = Field(default_factory=transform_schema.WindowFunctionsInput)
 
     def get_default_description(self) -> str:
         """Describes the configured window functions."""
@@ -1849,9 +1847,20 @@ class NodePythonScript(NodeMultiInput):
 class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 
-    settings: Any
+    settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     kernel_id: str | None = None
     output_names: list[str] = Field(default_factory=lambda: ["main"])
+    # sha256 of the node's .py file at add time; source edits invalidate the node hash/cache.
+    node_source_hash: str | None = None
+    settings_format_version: int = 1
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _coerce_legacy_settings(cls, v):
+        """Coerce legacy payloads (settings=None / non-dict) into the {section: {component: value}} envelope."""
+        if v is None or not isinstance(v, dict):
+            return {}
+        return {section: (values if isinstance(values, dict) else {"value": values}) for section, values in v.items()}
 
     @field_validator("output_names")
     @classmethod

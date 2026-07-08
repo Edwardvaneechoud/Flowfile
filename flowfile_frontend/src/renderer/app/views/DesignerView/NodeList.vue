@@ -4,122 +4,42 @@
     <input v-model="searchQuery" type="text" placeholder="Search nodes..." class="search-input" />
 
     <div
-      v-for="(categoryInfo, category) in categories"
-      v-show="!searchQuery || filteredNodes[category]"
-      :key="category"
+      v-for="group in filteredGroups"
+      :key="group.key"
       class="category-container"
-      :data-tutorial-category="category"
+      :data-tutorial-category="group.key"
     >
       <!-- Category Header -->
-      <button class="category-header" @click="toggleCategory(category as CategoryKey)">
-        <span class="category-title">{{ categoryInfo.name }}</span>
+      <button class="category-header" @click="toggleGroup(group.key)">
+        <span class="category-title">{{ group.label }}</span>
+        <span v-if="group.isDynamic" class="category-chip" title="Custom category">custom</span>
         <el-icon class="category-icon">
-          <ArrowDown v-if="isCategoryOpen(category as CategoryKey)" />
+          <ArrowDown v-if="isGroupOpen(group.key)" />
           <ArrowRight v-else />
         </el-icon>
       </button>
 
       <!-- Category Content -->
-      <div
-        v-if="isCategoryOpen(category as CategoryKey) && filteredNodes[category]"
-        class="category-content"
-      >
-        <div
-          v-for="node in filteredNodes[category]"
+      <div v-if="isGroupOpen(group.key)" class="category-content">
+        <NodeListItem
+          v-for="node in group.nodes"
           :key="node.item"
-          class="node-item"
-          :data-tutorial-node="node.item"
-          draggable="true"
-          @dragstart="$emit('dragstart', $event, node)"
-        >
-          <img :src="getImageUrl(node.image)" :alt="node.name" class="node-image" />
-          <span class="node-name">{{ node.name }}</span>
-        </div>
+          :node="node"
+          @dragstart="(event, n) => $emit('dragstart', event, n)"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
 import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
-import { getImageUrl } from "../../features/designer/utils";
 import { useNodes } from "./useNodes";
-import { NodeTemplate } from "../../types";
+import { usePaletteGroups } from "./usePaletteGroups";
+import NodeListItem from "./NodeListItem.vue";
 
 const { nodes } = useNodes();
-
-type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "ml" | "output" | "custom";
-
-interface CategoryInfo {
-  name: string;
-  isOpen: boolean;
-}
-
-type Categories = {
-  [K in CategoryKey]: CategoryInfo;
-};
-
-const categories: Categories = {
-  input: { name: "Input Sources", isOpen: true },
-  transform: { name: "Transformations", isOpen: true },
-  combine: { name: "Combine Operations", isOpen: true },
-  aggregate: { name: "Aggregations", isOpen: true },
-  ml: { name: "Machine Learning", isOpen: true },
-  output: { name: "Output Operations", isOpen: true },
-  custom: { name: "User Defined Operations", isOpen: true },
-};
-
-const openCategories = ref<{ [K in CategoryKey]: boolean }>(
-  Object.fromEntries(
-    Object.keys(categories).map((key) => [key, categories[key as CategoryKey].isOpen]),
-  ) as { [K in CategoryKey]: boolean },
-);
-
-const groupedNodes = computed(() => {
-  return nodes.value.reduce(
-    (acc, node) => {
-      const group = node.node_group as CategoryKey;
-      if (!acc[group]) {
-        acc[group] = [];
-      }
-      acc[group].push(node);
-      return acc;
-    },
-    {} as Record<CategoryKey, NodeTemplate[]>,
-  );
-});
-
-const searchQuery = ref("");
-
-const filteredNodes = computed(() => {
-  if (!searchQuery.value) return groupedNodes.value;
-
-  const query = searchQuery.value.toLowerCase();
-  const filtered = {} as Record<CategoryKey, NodeTemplate[]>;
-  for (const category in groupedNodes.value) {
-    const nodesArray = groupedNodes.value[category as CategoryKey];
-    const filteredArray = nodesArray.filter(
-      (node) =>
-        node.name.toLowerCase().includes(query) ||
-        (node.tags ?? []).some((tag) => tag.toLowerCase().includes(query)),
-    );
-    if (filteredArray.length) {
-      filtered[category as CategoryKey] = filteredArray;
-    }
-  }
-  return filtered;
-});
-
-const isCategoryOpen = (category: CategoryKey) => {
-  if (searchQuery.value) return !!filteredNodes.value[category];
-  return openCategories.value[category];
-};
-
-const toggleCategory = (category: CategoryKey) => {
-  if (searchQuery.value) return;
-  openCategories.value[category] = !openCategories.value[category];
-};
+const { searchQuery, filteredGroups, isGroupOpen, toggleGroup } = usePaletteGroups(nodes);
 
 defineEmits(["dragstart"]);
 </script>
@@ -181,9 +101,23 @@ defineEmits(["dragstart"]);
   text-align: left;
 }
 
+/* Subtle marker distinguishing dynamic user-defined category groups. */
+.category-chip {
+  margin-left: var(--spacing-2);
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-accent, #0891b2);
+  background-color: var(--color-accent-soft, rgba(8, 145, 178, 0.12));
+  border-radius: var(--border-radius-full, 999px);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .category-icon {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+  margin-left: auto;
 }
 
 .category-content {
@@ -192,34 +126,8 @@ defineEmits(["dragstart"]);
   background-color: var(--color-background-primary);
 }
 
-.node-item {
-  display: flex;
-  align-items: center;
-  padding: var(--spacing-2) var(--spacing-4);
-  cursor: pointer;
-  user-select: none;
-  transition: background-color var(--transition-fast);
-  border-bottom: 1px solid var(--color-border-light);
-  height: 32px;
-}
-
-.node-item:last-child {
+.category-content :deep(.node-item):last-child {
   border-bottom: none;
-}
-
-.node-item:hover {
-  background-color: var(--color-background-tertiary);
-}
-
-.node-image {
-  width: 24px;
-  height: 24px;
-  margin-right: var(--spacing-2-5);
-}
-
-.node-name {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
 }
 
 /* Custom scrollbar */

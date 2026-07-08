@@ -27,7 +27,7 @@ from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_nam
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.configs.node_store.nodes import get_source_node_types, get_source_node_types_str
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
@@ -54,7 +54,9 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_open_xlsx_datatypes,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    CustomNodeExecuteInput,
     ExternalCloudWriter,
+    ExternalCustomNodeFetcher,
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
@@ -107,6 +109,10 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     SqlSource,
     validate_sql_query,
 )
+from flowfile_core.flowfile.user_defined.dispatch import resolve_secret_payload
+from flowfile_core.flowfile.user_defined.kernel_codegen import generate_kernel_script
+from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, missing_custom_node_error
+from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
@@ -1155,6 +1161,7 @@ class FlowGraph:
         ):
             self.reset()
         else:
+
             def _param_state(params: list[schemas.FlowParameter]) -> dict:
                 return {p.name: (p.default_value, p.type, tuple(p.enum_values or [])) for p in params}
 
@@ -1340,6 +1347,8 @@ class FlowGraph:
 
         for node_id in ingestion_order:
             node_info = flow_info.data[node_id]
+            if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
+                register_missing_node_template(node_info.type)
             node_promise = input_schema.NodePromise(
                 flow_id=original_flow_id,
                 node_id=node_info.id,
@@ -1370,6 +1379,12 @@ class FlowGraph:
                         self.add_user_defined_node(
                             custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
                             user_defined_node_settings=node_info.setting_input,
+                        )
+                    else:
+                        self.add_missing_user_defined_node(
+                            user_defined_node_settings=node_info.setting_input,
+                            node_type=node_info.type,
+                            error=missing_custom_node_error(node_info.type),
                         )
                 else:
                     add_method = getattr(self, "add_" + node_info.type, None)
@@ -1893,10 +1908,14 @@ class FlowGraph:
             custom_node: The custom node instance to add.
             user_defined_node_settings: The settings for the user-defined node.
         """
-        if custom_node.requires_kernel and not user_defined_node_settings.kernel_id:
-            raise ValueError("Kernel selection is required to execute this custom node.")
-
         kernel_id = user_defined_node_settings.kernel_id or custom_node.kernel_id
+        if (custom_node.environment == "kernel" or custom_node.requires_kernel) and not kernel_id:
+            raise KernelRequiredError(custom_node.item)
+
+        registry_entry = user_defined_registry.get(custom_node.item)
+        if registry_entry is not None and registry_entry.source_hash:
+            user_defined_node_settings.node_source_hash = registry_entry.source_hash
+
         output_names = user_defined_node_settings.output_names or custom_node.output_names
 
         if kernel_id:
@@ -1905,11 +1924,14 @@ class FlowGraph:
                 user_defined_node_settings=user_defined_node_settings,
                 kernel_id=kernel_id,
                 output_names=output_names,
+                registry_entry=registry_entry,
             )
         else:
             _func = self._make_local_user_defined_func(
                 custom_node=custom_node,
                 user_defined_node_settings=user_defined_node_settings,
+                output_names=output_names,
+                registry_entry=registry_entry,
             )
 
         self.add_node_step(
@@ -1919,30 +1941,115 @@ class FlowGraph:
             input_node_ids=user_defined_node_settings.depending_on_ids,
             node_type=custom_node.item,
         )
+        node = self.get_node(user_defined_node_settings.node_id)
         if custom_node.number_of_inputs == 0:
-            node = self.get_node(user_defined_node_settings.node_id)
             self.add_node_to_starting_list(node)
+        if custom_node.settings_schema is not None and user_defined_node_settings.settings:
+            report = custom_node.settings_schema.populate_values_report(user_defined_node_settings.settings)
+            if report.has_drift:
+                unknown = report.unknown_sections + report.unknown_components
+                node.results.warnings = (
+                    f"Stored settings no longer match the node's schema; ignored keys: {', '.join(sorted(unknown))}"
+                )
+
+    def add_missing_user_defined_node(
+        self, *, user_defined_node_settings: input_schema.UserDefinedNode, node_type: str, error: str
+    ):
+        """Adds a placeholder for a custom node that cannot be loaded on this machine.
+
+        The stored settings are preserved verbatim (lossless re-save), the node
+        renders with its connections, and running the flow fails this node with
+        ``error`` instead of silently dropping it.
+        """
+        register_missing_node_template(node_type)
+
+        def _missing_custom_node(*_flow_data_engine: FlowDataEngine) -> FlowDataEngine:
+            raise ValueError(error)
+
+        self.add_node_step(
+            node_id=user_defined_node_settings.node_id,
+            function=_missing_custom_node,
+            setting_input=user_defined_node_settings,
+            input_node_ids=user_defined_node_settings.depending_on_ids,
+            node_type=node_type,
+        )
+        node = self.get_node(user_defined_node_settings.node_id)
+        node.results.errors = error
 
     def _make_local_user_defined_func(
-        self, *, custom_node: CustomNodeBase, user_defined_node_settings: input_schema.UserDefinedNode
+        self,
+        *,
+        custom_node: CustomNodeBase,
+        user_defined_node_settings: input_schema.UserDefinedNode,
+        output_names: list[str] | None = None,
+        registry_entry=None,
     ) -> Callable:
-        """Create the execution function for a locally-executed custom node."""
+        """Create the execution function for a non-kernel custom node.
 
-        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+        Offloads process() to the worker (which owns dataset memory in a
+        killable subprocess) whenever the flow doesn't run in local mode and
+        the node came from the registry; otherwise runs in-process (the
+        --run-flow / offload-disabled fallback, and inline test classes that
+        have no source file on disk).
+        """
+        resolved_output_names = output_names or custom_node.output_names or ["main"]
+
+        def _run_in_core(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             user_id = user_defined_node_settings.user_id
             if user_id is not None:
                 custom_node.set_execution_context(user_id)
-                if custom_node.settings_schema:
-                    custom_node.settings_schema.set_secret_context(user_id, custom_node.accessed_secrets)
 
-            output = custom_node.process(*(fde.data_frame for fde in flow_data_engine))
+            output = custom_node.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
 
             accessed_secrets = custom_node.get_accessed_secrets()
             if accessed_secrets:
                 logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
+            if isinstance(output, dict):
+                node = self.get_node(user_defined_node_settings.node_id)
+                primary = None
+                for i, name in enumerate(resolved_output_names):
+                    if name not in output:
+                        raise ValueError(f"process() did not return declared output '{name}'")
+                    fde = FlowDataEngine(output[name])
+                    node._named_outputs[f"output-{i}"] = fde
+                    if i == 0:
+                        primary = fde
+                return primary
             if isinstance(output, pl.LazyFrame | pl.DataFrame):
                 return FlowDataEngine(output)
             return None
+
+        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            if self.execution_location == "local" or registry_entry is None or registry_entry.source_text is None:
+                return _run_in_core(*flow_data_engine)
+
+            node = self.get_node(user_defined_node_settings.node_id)
+            request = CustomNodeExecuteInput(
+                task_id=node.hash,
+                node_source=registry_entry.source_text,
+                class_name=registry_entry.class_name,
+                settings_values=user_defined_node_settings.settings or {},
+                secrets=resolve_secret_payload(custom_node, user_defined_node_settings.user_id),
+                inputs=[fde.data_frame.lazy().serialize() for fde in flow_data_engine],
+                output_names=resolved_output_names,
+                user_id=user_defined_node_settings.user_id,
+                flowfile_flow_id=self.flow_id,
+                flowfile_node_id=user_defined_node_settings.node_id,
+            )
+            fetcher = ExternalCustomNodeFetcher(request)
+            node._fetch_cached_df = fetcher
+            payload = fetcher.get_payload()
+
+            primary: FlowDataEngine | None = None
+            for i, name in enumerate(resolved_output_names):
+                info = payload["outputs"].get(name)
+                if info is None:
+                    raise ValueError(f"Worker did not return declared output '{name}'")
+                fde = FlowDataEngine(pl.scan_ipc(info["path"]), number_of_records=info["row_count"])
+                node._named_outputs[f"output-{i}"] = fde
+                if i == 0:
+                    primary = fde
+            return primary
 
         return _func
 
@@ -2043,14 +2150,31 @@ class FlowGraph:
         user_defined_node_settings: input_schema.UserDefinedNode,
         kernel_id: str,
         output_names: list[str],
+        registry_entry=None,
     ) -> Callable:
-        """Create the execution function for a kernel-executed custom node."""
+        """Create the execution function for a kernel-executed custom node.
+
+        Registry-backed nodes get an AST-generated script (JSON-baked settings,
+        no return-rewriting), generated eagerly so KernelCodegenError surfaces
+        before the flow runs. Inline test classes with no source file fall back
+        to the deprecated ``generate_kernel_code`` so existing behavior survives.
+        """
+        if registry_entry is not None and registry_entry.source_text and registry_entry.class_name:
+            code = generate_kernel_script(
+                node_source=registry_entry.source_text,
+                class_name=registry_entry.class_name,
+                settings_values=user_defined_node_settings.settings or custom_node._extract_settings_values(),
+                output_names=output_names,
+                number_of_inputs=custom_node.number_of_inputs,
+            )
+        else:
+            code = custom_node.generate_kernel_code()
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             return self._execute_on_kernel(
                 node_id=user_defined_node_settings.node_id,
                 kernel_id=kernel_id,
-                code=custom_node.generate_kernel_code(),
+                code=code,
                 output_names=output_names,
                 flow_data_engine=flow_data_engine,
             )

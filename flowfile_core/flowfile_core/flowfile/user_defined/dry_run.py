@@ -1,0 +1,330 @@
+"""Dry-run backend for the Node Designer test panel.
+
+Executes a candidate custom node against bounded sample inputs in the worker
+(never in core), returning a per-output preview, buffered logs, and a typed
+error kind. Core ast-parses first so syntax errors never reach the worker;
+sample inputs come from the request or the node's ``example_inputs``; secrets
+resolve for real via the author's own/shared secrets.
+"""
+
+import ast
+import json
+import time
+import uuid
+from typing import Any, Literal
+
+import polars as pl
+import requests
+from pydantic import BaseModel, Field, model_validator
+
+from flowfile_core.configs import logger
+from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_custom_node_operation,
+)
+from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
+from flowfile_core.flowfile.node_designer.parsing import extract_example_inputs
+from flowfile_core.flowfile.node_designer.state import DesignerState, SecretSelectorState
+
+ErrorKind = Literal["syntax", "load", "settings", "execution", "timeout", "no_sample_data"]
+
+_DEFAULT_ROW_LIMIT = 100
+_MAX_ROW_LIMIT = 1000
+_DEFAULT_TIMEOUT = 30
+_MAX_TIMEOUT = 120
+_POLL_INTERVAL = 0.25
+_DRY_RUN_FLOW_ID = -1
+
+
+class DryRunColumn(BaseModel):
+    name: str
+    data_type: str
+
+
+class DryRunOutput(BaseModel):
+    name: str
+    columns: list[DryRunColumn] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    row_count: int = 0
+    truncated: bool = False
+
+
+class DryRunRequest(BaseModel):
+    designer_state: DesignerState | None = None
+    code: str | None = None
+    settings_values: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    sample_inputs: list[dict[str, list]] | None = None
+    row_limit: int = _DEFAULT_ROW_LIMIT
+    timeout_seconds: int = _DEFAULT_TIMEOUT
+
+    @model_validator(mode="after")
+    def _validate(self) -> "DryRunRequest":
+        if (self.designer_state is None) == (self.code is None):
+            raise ValueError("exactly one of designer_state or code must be provided")
+        if not 1 <= self.row_limit <= _MAX_ROW_LIMIT:
+            self.row_limit = max(1, min(self.row_limit, _MAX_ROW_LIMIT))
+        if not 1 <= self.timeout_seconds <= _MAX_TIMEOUT:
+            self.timeout_seconds = max(1, min(self.timeout_seconds, _MAX_TIMEOUT))
+        return self
+
+
+class DryRunResponse(BaseModel):
+    success: bool
+    outputs: list[DryRunOutput] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    error: str | None = None
+    error_kind: ErrorKind | None = None
+    traceback: str | None = None
+    duration_ms: float | None = None
+    executed_in: Literal["worker", "in_core"] = "worker"
+
+
+def _fail(
+    kind: ErrorKind, error: str, *, traceback: str | None = None, logs: list[str] | None = None
+) -> DryRunResponse:
+    return DryRunResponse(
+        success=False, error=error, error_kind=kind, traceback=traceback, logs=logs or [], executed_in="worker"
+    )
+
+
+def _resolve_source(request: DryRunRequest) -> tuple[str | None, DryRunResponse | None]:
+    """Return (source, None) or (None, error_response)."""
+    if request.designer_state is not None:
+        try:
+            return generate_source(request.designer_state), None
+        except CodegenError as e:
+            return None, _fail("load", f"Cannot generate node source: {e}")
+    return request.code, None
+
+
+def _resolve_output_names(request: DryRunRequest, source: str) -> list[str]:
+    if request.designer_state is not None:
+        return request.designer_state.output_names or ["main"]
+    # Code-only: lift declared output_names, else default to a single "main" output.
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        return ["main"]
+    for stmt in module.body:
+        if not isinstance(stmt, ast.ClassDef):
+            continue
+        for item in stmt.body:
+            target = None
+            value = None
+            if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
+                target, value = item.targets[0].id, item.value
+            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.value is not None:
+                target, value = item.target.id, item.value
+            if target == "output_names":
+                try:
+                    names = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    return ["main"]
+                if isinstance(names, list) and names and all(isinstance(n, str) for n in names):
+                    return names
+    return ["main"]
+
+
+def _resolve_sample_inputs(
+    request: DryRunRequest, source: str
+) -> tuple[list[dict[str, list]] | None, DryRunResponse | None]:
+    if request.sample_inputs is not None:
+        return request.sample_inputs, None
+    if request.designer_state is not None and request.designer_state.example_inputs is not None:
+        return [ex.data for ex in request.designer_state.example_inputs], None
+    lifted = extract_example_inputs(source)
+    if lifted:
+        return lifted, None
+    return None, _fail(
+        "no_sample_data",
+        "No sample inputs were provided and the node has no example_inputs; add sample data to run a dry run.",
+    )
+
+
+def _serialize_inputs(samples: list[dict[str, list]]) -> tuple[list[bytes] | None, DryRunResponse | None]:
+    serialized: list[bytes] = []
+    for i, sample in enumerate(samples):
+        try:
+            serialized.append(pl.LazyFrame(sample).serialize())
+        except Exception as e:
+            return None, _fail("no_sample_data", f"Sample input {i} is not a valid table: {e}")
+    return serialized, None
+
+
+def _resolve_secrets(request: DryRunRequest, user_id: int | None) -> tuple[dict[str, str], DryRunResponse | None]:
+    """Resolve SecretSelector values referenced in settings_values to ciphertext.
+
+    Designer mode only (code-only nodes get no secrets in v1). A missing secret
+    or access failure surfaces as an ``execution`` error.
+    """
+    if request.designer_state is None:
+        return {}, None
+
+    from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
+
+    secret_names: set[str] = set()
+    for section in request.designer_state.sections:
+        section_values = request.settings_values.get(section.name, {})
+        for component in section.components:
+            if isinstance(component, SecretSelectorState):
+                value = section_values.get(component.name)
+                if isinstance(value, str) and value:
+                    secret_names.add(value)
+
+    payload: dict[str, str] = {}
+    for name in secret_names:
+        if user_id is None:
+            return {}, _fail("execution", f"Secret '{name}' requires a signed-in user to resolve")
+        try:
+            encrypted = get_encrypted_secret(current_user_id=user_id, secret_name=name)
+        except Exception as e:
+            return {}, _fail("execution", f"Could not resolve secret '{name}': {e}")
+        if encrypted is None:
+            return {}, _fail("execution", f"Secret '{name}' not found for this user")
+        payload[name] = encrypted
+    return payload, None
+
+
+def _poll_worker(task_id: str, deadline: float) -> tuple[dict | None, DryRunResponse | None]:
+    """Poll ``/status/{task}`` until completion or the monotonic *deadline*.
+
+    On deadline the task is cancelled and a ``timeout`` error is returned. A
+    connection error becomes a ``load`` error ("worker unavailable") — user code
+    is never run in core for dry runs.
+    """
+    while True:
+        if time.monotonic() >= deadline:
+            _cancel(task_id)
+            return None, _fail("timeout", "Dry run exceeded the time limit and was cancelled.")
+        try:
+            resp = requests.get(f"{WORKER_URL}/status/{task_id}", timeout=10)
+        except requests.RequestException as e:
+            return None, _fail("load", f"The compute worker is unavailable: {e}")
+        if resp.status_code == 404:
+            return None, _fail("execution", "The dry-run task disappeared from the worker before completing.")
+        if resp.status_code != 200:
+            return None, _fail("execution", f"Worker returned HTTP {resp.status_code}: {resp.text[:300]}")
+        status = resp.json()
+        state = status.get("status")
+        if state == "Completed":
+            return status, None
+        if state in ("Error", "Unknown Error"):
+            message = status.get("error_message") or "Unknown execution error"
+            error, tb = _split_traceback(message)
+            return None, _fail("execution", error, traceback=tb)
+        if state == "Cancelled":
+            return None, _fail("timeout", "Dry run was cancelled.")
+        time.sleep(_POLL_INTERVAL)
+
+
+def _split_traceback(message: str) -> tuple[str, str | None]:
+    """The dry-run child packs ``"<error>\\n<traceback>"`` into the error message."""
+    if "\nTraceback (most recent call last):" in message:
+        head, _, tail = message.partition("\nTraceback (most recent call last):")
+        return head.strip(), ("Traceback (most recent call last):" + tail).strip()
+    return message.strip(), None
+
+
+def _cancel(task_id: str) -> None:
+    try:
+        requests.post(f"{WORKER_URL}/cancel_task/{task_id}", timeout=10)
+    except requests.RequestException:
+        logger.debug("Dry-run cancel for task %s failed (worker unreachable)", task_id)
+
+
+def _clear(task_id: str) -> None:
+    try:
+        requests.delete(f"{WORKER_URL}/clear_task/{task_id}", timeout=10)
+    except requests.RequestException:
+        logger.debug("Dry-run clear for task %s failed (worker unreachable)", task_id)
+
+
+def _map_payload(payload: dict, output_names: list[str]) -> DryRunResponse:
+    preview = payload.get("preview", {})
+    outputs: list[DryRunOutput] = []
+    for name in output_names:
+        info = payload["outputs"].get(name, {})
+        prev = preview.get(name, {})
+        columns = [DryRunColumn(name=c["name"], data_type=c["data_type"]) for c in prev.get("columns", [])]
+        outputs.append(
+            DryRunOutput(
+                name=name,
+                columns=columns,
+                rows=[list(r) for r in prev.get("rows", [])],
+                row_count=info.get("row_count", 0),
+                truncated=bool(prev.get("truncated", False)),
+            )
+        )
+    return DryRunResponse(
+        success=True,
+        outputs=outputs,
+        logs=list(payload.get("logs", [])),
+        duration_ms=payload.get("duration_ms"),
+        executed_in="worker",
+    )
+
+
+def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
+    """Execute a candidate node against bounded sample inputs in the worker."""
+    source, err = _resolve_source(request)
+    if err is not None:
+        return err
+    if not source or not source.strip():
+        return _fail("load", "No node source was provided.")
+
+    try:
+        ast.parse(source)
+    except SyntaxError as e:
+        return _fail("syntax", f"Syntax error at line {e.lineno}: {e.msg}")
+
+    output_names = _resolve_output_names(request, source)
+
+    samples, err = _resolve_sample_inputs(request, source)
+    if err is not None:
+        return err
+    serialized, err = _serialize_inputs(samples)
+    if err is not None:
+        return err
+
+    secrets, err = _resolve_secrets(request, user_id)
+    if err is not None:
+        return err
+
+    class_name = request.designer_state.class_name if request.designer_state is not None else None
+
+    task_id = str(uuid.uuid4())
+    execute_input = CustomNodeExecuteInput(
+        task_id=task_id,
+        node_source=source,
+        class_name=class_name,
+        settings_values=request.settings_values,
+        secrets=secrets,
+        inputs=serialized,
+        output_names=output_names,
+        dry_run=True,
+        row_limit=request.row_limit,
+        user_id=user_id,
+        flowfile_flow_id=_DRY_RUN_FLOW_ID,
+        flowfile_node_id=task_id,
+    )
+
+    try:
+        start_status = trigger_custom_node_operation(execute_input)
+    except Exception as e:
+        return _fail("load", f"The compute worker is unavailable: {e}")
+
+    task_id = start_status.background_task_id
+    deadline = time.monotonic() + request.timeout_seconds
+    try:
+        status, err = _poll_worker(task_id, deadline)
+        if err is not None:
+            return err
+        try:
+            raw = status.get("results")
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError) as e:
+            return _fail("execution", f"Could not read the dry-run result payload: {e}")
+        return _map_payload(payload, output_names)
+    finally:
+        _clear(task_id)

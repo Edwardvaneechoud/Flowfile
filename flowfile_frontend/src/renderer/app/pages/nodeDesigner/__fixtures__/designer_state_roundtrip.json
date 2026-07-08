@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "class_name": "SalesReport",
+  "settings_class_name": "SalesReportSettings",
+  "node_name": "Sales Report",
+  "node_category": "Analytics",
+  "node_group": "analytics",
+  "node_icon": "user-defined-icon.png",
+  "title": "Sales Report",
+  "intro": "Summarises sales by region.",
+  "number_of_inputs": 1,
+  "number_of_outputs": 1,
+  "output_names": ["main"],
+  "environment": { "kind": "local", "dependencies": [], "default_kernel_id": null },
+  "sections": [
+    {
+      "name": "main_config",
+      "title": "Main config",
+      "description": "Primary settings.",
+      "hidden": false,
+      "components": [
+        {
+          "component_type": "TextInput",
+          "name": "report_title",
+          "label": "Report title",
+          "default": "Q1",
+          "placeholder": "e.g. Q1"
+        },
+        {
+          "component_type": "ToggleSwitch",
+          "name": "include_totals",
+          "label": "Include totals",
+          "default": true,
+          "description": "Add a totals row"
+        },
+        {
+          "component_type": "SingleSelect",
+          "name": "mode",
+          "label": "Mode",
+          "options_source": "static",
+          "options": [
+            { "value": "sum", "label": "Sum" },
+            { "value": "mean", "label": "Mean" }
+          ],
+          "default": "sum"
+        },
+        {
+          "component_type": "ColumnSelector",
+          "name": "group_cols",
+          "label": "Group columns",
+          "required": true,
+          "multiple": true,
+          "data_types": "ALL"
+        }
+      ]
+    },
+    {
+      "name": "advanced",
+      "title": "Advanced",
+      "description": null,
+      "hidden": false,
+      "components": [
+        {
+          "component_type": "MultiSelect",
+          "name": "extra_cols",
+          "label": "Extra columns",
+          "options_source": "incoming_columns",
+          "options": [],
+          "default": []
+        }
+      ]
+    }
+  ],
+  "process_code": "def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n    return inputs[0]",
+  "example_inputs": [{ "data": { "region": ["NW", "SE"], "sales": [10, 20] } }],
+  "example_settings": { "main_config": { "report_title": "Q1" } },
+  "extra_imports": [],
+  "module_extra": [],
+  "class_extra": []
+}

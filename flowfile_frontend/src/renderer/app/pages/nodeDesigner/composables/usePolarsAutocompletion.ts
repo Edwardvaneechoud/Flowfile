@@ -7,15 +7,14 @@ import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import {
   autocompletion,
-  completionKeymap,
   CompletionContext,
   CompletionResult,
   acceptCompletion,
 } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
-import type { DesignerSection } from "../types";
-import { toSnakeCase } from "./useCodeGeneration";
+import type { SectionState } from "../designerState";
+import { toSnakeCase } from "../mappers";
 
 // LazyFrame methods for autocompletion
 const lazyFrameMethods = [
@@ -254,7 +253,7 @@ const secretStrMethods = [
   },
 ];
 
-export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
+export function usePolarsAutocompletion(getSections: () => SectionState[]) {
   function findSecretStrVariables(doc: string): string[] {
     const variables: string[] = [];
     // Match patterns like: var_name: SecretStr = ... or var_name: SecretStr=...
@@ -297,7 +296,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     for (const section of sections) {
       const sectionName = section.name || toSnakeCase(section.title || "section");
       for (const comp of section.components) {
-        const fieldName = toSnakeCase(comp.field_name);
+        const fieldName = toSnakeCase(comp.name);
         const valueMatch = beforeCursor.match(
           new RegExp(`self\\.settings_schema\\.${sectionName}\\.${fieldName}\\.(\\w*)$`),
         );
@@ -343,7 +342,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       if (sectionMatch) {
         const typed = sectionMatch[1];
         const componentOptions = section.components.map((comp) => {
-          const fieldName = toSnakeCase(comp.field_name);
+          const fieldName = toSnakeCase(comp.name);
           return {
             label: fieldName,
             type: "property",

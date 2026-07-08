@@ -15,6 +15,8 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
+from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.models import User
 from flowfile_core.routes.user_defined_components import (
     router,
     IconInfo,
@@ -26,9 +28,10 @@ from flowfile_core.routes.user_defined_components import (
 
 @pytest.fixture
 def app():
-    """Create a test FastAPI application with the router."""
+    """Create a test FastAPI application with the router (auth dependency stubbed)."""
     test_app = FastAPI()
     test_app.include_router(router, prefix="/user_defined_components")
+    test_app.dependency_overrides[get_current_active_user] = lambda: User(username="test_user", id=1)
     return test_app
 
 

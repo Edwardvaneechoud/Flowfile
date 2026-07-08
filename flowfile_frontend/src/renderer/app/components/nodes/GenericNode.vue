@@ -1,12 +1,17 @@
 <template>
-  <node-button
-    ref="nodeButton"
-    :node-id="nodeId"
-    :image-src="imageSrc"
-    :title="nodeTitle"
-    :drawer-component="drawerComponent"
-    :node-title-info="nodeTitleInfo"
-  />
+  <div class="generic-node-shell">
+    <node-button
+      ref="nodeButton"
+      :node-id="nodeId"
+      :image-src="imageSrc"
+      :title="nodeTitle"
+      :drawer-component="drawerComponent"
+      :node-title-info="nodeTitleInfo"
+    />
+    <span v-if="showKernelBadge" class="kernel-corner-badge" :title="kernelBadgeTooltip">
+      <KernelBadgeIcon />
+    </span>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -19,6 +24,7 @@ import {
   onMounted,
 } from "vue";
 import NodeButton from "./baseNode/nodeButton.vue";
+import KernelBadgeIcon from "../../views/DesignerView/KernelBadgeIcon.vue";
 import { toTitleCase } from "../../views/DesignerView/utils";
 import type { NodeTemplate } from "../../types";
 
@@ -106,6 +112,14 @@ const nodeTitleInfo = computed(() => {
   };
 });
 
+const showKernelBadge = computed(() => props.nodeData?.execution_environment === "kernel");
+
+const kernelBadgeTooltip = computed(() => {
+  const deps = props.nodeData?.dependencies ?? [];
+  const base = "Runs in isolated kernel";
+  return deps.length ? `${base} — deps: ${deps.join(", ")}` : base;
+});
+
 onErrorCaptured((error) => {
   console.error("Error in GenericNode component:", error);
   return false;
@@ -113,6 +127,28 @@ onErrorCaptured((error) => {
 </script>
 
 <style scoped>
+.generic-node-shell {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Subtle corner marker for isolated-kernel custom nodes; tooltip lists deps. */
+.kernel-corner-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: var(--color-background-primary);
+  color: var(--color-accent, #0891b2);
+  box-shadow: var(--shadow-sm);
+  pointer-events: auto;
+}
+
 .error-node {
   padding: 8px;
   background: var(--color-node-error-bg);

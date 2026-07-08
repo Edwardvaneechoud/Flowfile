@@ -56,6 +56,13 @@ const BUILTIN_ICONS = new Set([
 
 const DEFAULT_ICON = "user-defined-icon.png";
 
+// Built-in glyphs offered as a standard set for custom nodes (SVG operation
+// icons only — no brand marks, no PNGs). Names resolve as bundled assets.
+export const STANDARD_NODE_ICONS: string[] = [...BUILTIN_ICONS]
+  .filter((name) => name.endsWith(".svg"))
+  .filter((name) => !["google_analytics.svg", "kafka_source.svg"].includes(name))
+  .sort();
+
 /**
  * Check if an icon is a built-in icon
  */

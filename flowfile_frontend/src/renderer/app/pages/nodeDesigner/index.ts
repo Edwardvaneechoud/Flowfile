@@ -3,33 +3,21 @@
  */
 
 // Types
+export type { CustomNodeInfo, IconInfo, KernelInfo } from "./types";
+
+// DesignerState wire contract
 export type {
-  DesignerComponent,
-  DesignerSection,
-  ValidationError,
-  CustomNodeInfo,
-  NodeMetadata,
-  AvailableComponent,
-  IconInfo,
-} from "./types";
+  ComponentState,
+  ComponentType,
+  DesignerState,
+  ParseResult,
+  SectionState,
+} from "./designerState";
 
 // Constants
-export {
-  STORAGE_KEY,
-  availableComponents,
-  defaultProcessCode,
-  defaultNodeMetadata,
-  getComponentIcon,
-} from "./constants";
+export { STORAGE_KEY, availableComponents, getComponentIcon } from "./constants";
 
-// Composables
-export {
-  useNodeDesignerState,
-  useSessionStorage,
-  useNodeValidation,
-  useCodeGeneration,
-  useNodeBrowser,
-  usePolarsAutocompletion,
-  toSnakeCase,
-  toPascalCase,
-} from "./composables";
+// Composables (designer state lives in stores/node-designer-store.ts)
+export { useNodeBrowser } from "./composables/useNodeBrowser";
+export { usePolarsAutocompletion } from "./composables";
+export { toSnakeCase, toPascalCase } from "./mappers";
