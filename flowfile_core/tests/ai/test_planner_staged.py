@@ -36,6 +36,7 @@ from flowfile_core.ai.providers.base import ChatResponse, ToolCall, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
 from flowfile_core.ai.tools.meta_ops import (
     CLASSIFY_INTENT_TOOL_NAME,
+    EMIT_PLAN_TOOL_NAME,
     PICK_NODE_TYPE_TOOL_NAME,
     PICK_UPSTREAM_TOOL_NAME,
     VERIFY_COMPLETION_TOOL_NAME,
@@ -2436,3 +2437,567 @@ def test_connect_join_pivot_is_capped() -> None:
     # The uncapped 7th rejection fell through to the retry budget, which (at
     # max_retries_per_step=1) terminates the run.
     assert sess.status == "failed"
+
+
+# — host-tracked plan ledger: multi-step continuation #
+
+
+_NUDGE_MSG = "plan has pending steps; prompting the model to continue"
+
+
+def _nudge_events(events: list[PlannerEvent]) -> list[PlannerEvent]:
+    return [
+        e for e in events
+        if e.event == "info" and e.payload.get("message") == _NUDGE_MSG
+    ]
+
+
+def _emit_plan_step(plan_md: str, *, rationale: str = "the plan") -> _Step:
+    return _Step(
+        tool_calls=[
+            ToolCall(
+                id="t-plan",
+                name=EMIT_PLAN_TOOL_NAME,
+                arguments={"plan": plan_md, "rationale": rationale},
+            )
+        ]
+    )
+
+
+def _stall(content: str = "Let me proceed with the next step.") -> _Step:
+    return _Step(content=content, finish_reason="stop")
+
+
+def _classify_other(idx: int = 0) -> _Step:
+    return _Step(
+        tool_calls=[
+            ToolCall(
+                id=f"c-other-{idx}",
+                name=CLASSIFY_INTENT_TOOL_NAME,
+                arguments={"op_kind": "other", "rationale": "wrapping up"},
+            )
+        ]
+    )
+
+
+def _filter_add_cycle(prefix: str, upstream: int) -> list[_Step]:
+    """4 scripted steps: classify(add)→pick_type(filter)→pick_upstream→add_filter."""
+    return [
+        *_filter_cycle(prefix=prefix, node_type="filter", upstream=upstream),
+        _Step(
+            tool_calls=[
+                ToolCall(
+                    id=f"{prefix}-fill",
+                    name="flowfile.graph.add_filter",
+                    arguments={
+                        "filter_input": {
+                            "filter_type": "advanced",
+                            "advanced_filter": "[region]=='EU'",
+                        }
+                    },
+                )
+            ]
+        ),
+    ]
+
+
+def _proposed_changes(*steps: str) -> str:
+    body = "\n".join(f"{i}. {s}" for i, s in enumerate(steps, start=1))
+    return f"## Proposed changes\n\n{body}\n"
+
+
+def _run_emit_plan(
+    plan_md: str, *, start_max_steps: int | None = None, explicit: bool = False
+) -> sessions.AgentSession:
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    if start_max_steps is not None:
+        sess.max_steps = start_max_steps
+    sess.max_steps_explicit = explicit
+    steps = [_emit_plan_step(plan_md)] + [_stall() for _ in range(4)]
+    provider = _ScriptedProvider(steps)
+    asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    return sess
+
+
+def test_emit_plan_populates_ledger_and_scales_max_steps() -> None:
+    """A 12-step plan on ``max_steps=16`` auto-scales to 5*12+8=68 and the
+    ledger is populated with the parsed steps."""
+    plan_md = _proposed_changes(*[f"filter — step {i}" for i in range(1, 13)])
+    sess = _run_emit_plan(plan_md, start_max_steps=16)
+    assert len(sess.plan_steps) == 12
+    assert sess.plan_markdown is not None
+    assert sess.max_steps == 68
+
+
+def test_emit_plan_never_lowers_caller_max_steps() -> None:
+    """A short plan whose scaled budget is below the caller's ``max_steps``
+    must not lower it."""
+    plan_md = _proposed_changes("filter — a", "filter — b", "filter — c")
+    sess = _run_emit_plan(plan_md, start_max_steps=100)
+    assert len(sess.plan_steps) == 3
+    assert sess.max_steps == 100  # 5*3+8=23 < 100, never lowered
+
+
+def test_emit_plan_explicit_max_steps_is_hard_ceiling() -> None:
+    """A caller-supplied ``max_steps`` (``max_steps_explicit=True``) is a cost
+    cap: a long plan does NOT auto-scale past it."""
+    plan_md = _proposed_changes(*[f"filter — step {i}" for i in range(1, 13)])
+    sess = _run_emit_plan(plan_md, start_max_steps=10, explicit=True)
+    assert len(sess.plan_steps) == 12
+    assert sess.max_steps == 10  # explicit cap not raised past 10
+
+
+def test_emit_plan_default_max_steps_still_auto_scales() -> None:
+    """A default session (``max_steps_explicit=False``) with the same long plan
+    still auto-scales to 5*12+8=68."""
+    plan_md = _proposed_changes(*[f"filter — step {i}" for i in range(1, 13)])
+    sess = _run_emit_plan(plan_md, start_max_steps=10, explicit=False)
+    assert len(sess.plan_steps) == 12
+    assert sess.max_steps == 68
+
+
+def test_emit_plan_scale_clamped_to_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The min() clamp must bind. 24 steps at the real constants lands on
+    exactly 128 (5*24+8), which cannot falsify a missing clamp — so inflate
+    ``_PLAN_ROUNDS_PER_STEP`` to make the unclamped value (12*50+8=608)
+    exceed the cap and assert the clamp pulls it back to 128."""
+    from flowfile_core.ai.agents.planner import MAX_STEPS_HARD_CAP
+    from flowfile_core.ai.agents.planner import loop as loop_module
+
+    monkeypatch.setattr(loop_module, "_PLAN_ROUNDS_PER_STEP", 50)
+    plan_md = _proposed_changes(*[f"filter — step {i}" for i in range(1, 13)])
+    sess = _run_emit_plan(plan_md, start_max_steps=16)
+    assert len(sess.plan_steps) == 12
+    assert sess.max_steps == MAX_STEPS_HARD_CAP == 128
+
+
+def test_cycle2_classify_carries_goal_and_progress_block() -> None:
+    """Regression for the stale-slim bug: the cycle-2 classify round's
+    ``messages[1]`` must carry the user goal + the ``## Plan progress`` block
+    with ``[done]``/``[pending]`` markers — not the leftover fill_settings
+    mini-prompt."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — keep EU rows", "filter — keep EU rows again")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),
+            _stall(),
+            _stall(),
+            _stall(),
+        ]
+    )
+    asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    # call index: 0 emit, 1 classify, 2 pick_type, 3 pick_up, 4 fill, 5 cycle-2 classify.
+    cycle2_classify = provider.calls[5]
+    user_msg = cycle2_classify["messages"][1].content or ""
+    assert "filter to EU rows" in user_msg, f"goal must be restored at cycle-2 classify; got: {user_msg!r}"
+    assert "## Plan progress (host-tracked)" in user_msg, user_msg
+    assert "[done]" in user_msg, user_msg
+    assert "[pending]" in user_msg, user_msg
+
+
+def test_prose_stall_mid_plan_nudges_and_continues() -> None:
+    """A prose-only stall after the first add nudges the model back into the
+    plan; the run continues to a second add and completes with 2 staged
+    results and exactly one nudge."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — first", "filter — second")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),
+            _stall(),  # mid-plan prose stall → nudge
+            *_filter_add_cycle("c2", upstream=2),
+            _stall(),  # plan complete → no nudge → terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 1
+    assert len(sess.staged_results) == 2
+    assert sess.status == "completed"
+
+
+def test_nudges_capped_completes_with_partial_diff() -> None:
+    """When the model keeps stalling, nudges cap at 2 and the run terminates
+    ``completed`` (not ``failed``) with the partial diff staged so far."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — a", "filter — b", "filter — c")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),
+            _stall(),
+            _stall(),
+            _stall(),
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 2
+    assert sess.status == "completed"
+    assert len(sess.staged_results) == 1
+
+
+def test_nudge_rearms_after_each_completed_op() -> None:
+    """The nudge budget re-arms on every completed op: a 3-step plan with a
+    stall before each of the 3 adds needs 3 nudges (a per-session cap of 2
+    would leave only 1 staged) → 3 staged results, 3 nudges."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — a", "filter — b", "filter — c")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            _stall(),  # before add1 → nudge (n=1)
+            *_filter_add_cycle("c1", upstream=1),  # re-arm
+            _stall(),  # before add2 → nudge (n=1 again)
+            *_filter_add_cycle("c2", upstream=2),  # re-arm
+            _stall(),  # before add3 → nudge (n=1 again)
+            *_filter_add_cycle("c3", upstream=3),
+            _stall(),  # plan complete → terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 3
+    assert len(sess.staged_results) == 3
+    assert sess.status == "completed"
+
+
+def test_op_kind_other_mid_plan_nudged_before_terminating() -> None:
+    """A classify ``op_kind="other"`` while steps remain gets nudged (Point B)
+    instead of terminating; once all steps are done, ``other`` terminates."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — first", "filter — second")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),
+            _classify_other(1),  # mid-plan other → Point B nudge
+            *_filter_add_cycle("c2", upstream=2),
+            _classify_other(2),  # plan done → legacy stay-at-classify
+            _stall(),  # terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 1
+    assert len(sess.staged_results) == 2
+    assert sess.status == "completed"
+
+
+def test_verify_reached_after_nudge_budget_exhausted() -> None:
+    """When verify is enabled and the model keeps picking ``other`` with steps
+    pending, the ledger nudges twice, then routes to ``verify_completion``,
+    and after ``is_complete=True`` the run terminates with no further nudge.
+    (The nudge budget is already exhausted when verify runs here, so this
+    does NOT exercise the verify-disarm assignment — see
+    ``test_verify_is_complete_disarms_pending_nudges_cold_resume`` for the
+    scenario where the disarm itself is load-bearing.)"""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    sess.verify_plan_completion = True
+    plan_md = _proposed_changes("filter — never done")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            _classify_other(1),  # Point B nudge (n=1)
+            _classify_other(2),  # Point B nudge (n=2)
+            _classify_other(3),  # nudges exhausted → verify_completion
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-verify",
+                        name=VERIFY_COMPLETION_TOOL_NAME,
+                        arguments={"is_complete": True, "rationale": "calling it done"},
+                    )
+                ]
+            ),
+            _stall("All set."),  # disarmed → no further nudge → terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    verify_advances = [
+        e for e in events
+        if e.event == "stage_advanced" and e.payload.get("to") == "verify_completion"
+    ]
+    assert len(verify_advances) == 1, "verify_completion must be reached after nudges exhaust"
+    assert len(_nudge_events(events)) == 2, "no nudge after verify certified completion"
+    assert sess.status == "completed"
+
+
+def test_question_only_plan_no_nudge_terminates() -> None:
+    """A question-only plan parses to zero steps; every ledger gate is inert
+    and the run terminates exactly as before (no nudge)."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = "User asked a question; will respond without staging changes."
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            _classify_other(1),
+            _stall("Here is the answer to your question."),
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert sess.plan_steps == []
+    assert len(_nudge_events(events)) == 0
+    assert sess.status == "completed"
+
+
+def test_prework_clarifying_question_awaiting_no_nudge() -> None:
+    """A genuine pre-work clarifying question (nothing staged/applied yet)
+    reaches ``awaiting_user_input`` and is NOT nudged, even with pending
+    plan steps."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — first", "filter — second")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            _stall("Which column should I filter on?"),
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 0
+    assert sess.status == "awaiting_user_input"
+    assert any(e.event == "awaiting_user_input" for e in events)
+
+
+def test_question_after_work_started_nudges_not_awaiting() -> None:
+    """The question-exemption sub-clause is narrow: once work has started
+    (staged_results non-empty), a question-shaped stall with pending steps is
+    NUDGED, not routed to awaiting_user_input (Point A, work-started side)."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — first", "filter — second")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),  # stage node 2 → work started
+            _stall("Shall I continue with the next step?"),  # question, but staged → nudge
+            *_filter_add_cycle("c2", upstream=2),
+            _stall(),  # plan complete → terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 1
+    assert not any(e.event == "awaiting_user_input" for e in events)
+    assert len(sess.staged_results) == 2
+    assert sess.status == "completed"
+
+
+def test_agent_live_plan_continuation_end_to_end() -> None:
+    """agent_live end-to-end: plan(2 steps) → apply node 1 → prose stall →
+    nudge → apply node 2 → completed with 2 applied_results, and the ledger
+    records both applied ops."""
+    flow = _make_flow()
+    sess = _make_live_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes("filter — first", "filter — second")
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            *_filter_add_cycle("c1", upstream=1),
+            _stall(),  # mid-plan stall → nudge
+            *_filter_add_cycle("c2", upstream=2),
+            _stall(),  # plan complete → terminate
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 1
+    assert sess.status == "completed"
+    assert len(sess.applied_results) == 2
+    assert len(sess.plan_completed_ops) == 2
+    live_ids = [n.node_id for n in flow.nodes]
+    assert 2 in live_ids and 3 in live_ids, f"agent_live must apply both nodes live; got {live_ids!r}"
+
+
+def test_followup_re_entry_clears_plan_ledger() -> None:
+    """A followup is a new goal — the followup-resume preamble clears the
+    plan ledger so stale pending steps can't mis-nudge."""
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.status = "completed"
+    sess.plan_markdown = _proposed_changes("filter — x")
+    sess.plan_steps = ["filter — x"]
+    sess.plan_completed_ops = [
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.add_filter", node_id=2, summary="x")
+    ]
+    inject_followup_message(sess, action="user_message", message="please continue")
+
+    provider = _ScriptedProvider([_Step(content="acknowledged.", finish_reason="stop")])
+    asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert sess.plan_markdown is None
+    assert sess.plan_steps == []
+    assert sess.plan_completed_ops == []
+
+
+def test_session_max_steps_lockstep_with_default() -> None:
+    """``AgentSession().max_steps`` must equal the planner's
+    ``DEFAULT_MAX_STEPS`` (they are kept in lockstep by comment, not import)."""
+    from flowfile_core.ai.agents.planner import DEFAULT_MAX_STEPS
+
+    snapshot = sessions.GraphSnapshot(flow_id=1, node_ids=(1,), node_types={1: "manual_input"})
+    sess = sessions.AgentSession(
+        flow_id=1,
+        user_id=1,
+        user_prompt="x",
+        provider_name="fake",
+        snapshot=snapshot,
+    )
+    assert sess.max_steps == DEFAULT_MAX_STEPS
+
+
+def test_verify_is_complete_disarms_pending_nudges_cold_resume() -> None:
+    """The verify ``is_complete=True`` disarm must be load-bearing when the
+    nudge budget is NOT yet exhausted. That state is reachable via cold
+    resume: a session checkpointed at ``stage="verify_completion"`` re-enters
+    a fresh loop whose local ``plan_nudges`` restarts at 0. The model then
+    certifies completion while the ledger still shows a pending step; the
+    disarm must stop Point A from second-guessing the certification on the
+    following prose round (without the disarm, this script nudges, exhausts
+    the provider, and fails)."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "verify_completion"
+    sess.verify_plan_completion = True
+    sess.plan_markdown = _proposed_changes("filter — deemed unnecessary by the model")
+    sess.plan_steps = ["filter — deemed unnecessary by the model"]
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-verify-cold",
+                        name=VERIFY_COMPLETION_TOOL_NAME,
+                        arguments={"is_complete": True, "rationale": "already satisfied"},
+                    )
+                ]
+            ),
+            _stall("All set."),
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 0, "verify is_complete=True must disarm Point A"
+    assert sess.status == "completed"
+
+
+def test_source_add_backstop_wins_over_plan_nudge() -> None:
+    """Defect regression: the source-add backstop must not be contradicted by
+    the plan ledger one round later. Plan = [source add, (re-wire)]; the
+    model stages the source, then classifies ``connect`` — the backstop
+    coerces it to ``other`` and instructs a wrap-up. The following prose
+    wrap-up must NOT be nudged as a mid-plan stall (the (re-wire) step is
+    pending forever by design here): no nudge message, no nudge info event,
+    clean completion with just the source staged."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "plan"
+    plan_md = _proposed_changes(
+        "manual_input — add the city lookup data.",
+        "(re-wire) — connect the new source into the existing flow.",
+    )
+    provider = _ScriptedProvider(
+        [
+            _emit_plan_step(plan_md),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="s1-classify",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "add", "rationale": "add the source"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="s1-pick-type",
+                        name=PICK_NODE_TYPE_TOOL_NAME,
+                        arguments={"node_type": "manual_input", "rationale": "source"},
+                    )
+                ]
+            ),
+            # Source type skips pick_upstream → straight to fill_settings.
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="s1-fill",
+                        name="flowfile.graph.add_manual_input",
+                        arguments={
+                            "raw_data_format": {
+                                "columns": [{"name": "city", "data_type": "String"}],
+                                "data": [["NY", "LA"]],
+                            }
+                        },
+                    )
+                ]
+            ),
+            # The model tries to wire the fresh source → backstop coerces to
+            # ``other`` (user never asked for wiring) and disarms the nudges.
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="s2-classify",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "connect", "rationale": "wire it in"},
+                    )
+                ]
+            ),
+            # Prose wrap-up, exactly as the backstop's host note instructed.
+            _stall("The manual_input was added as node 2 standalone."),
+        ]
+    )
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+    assert len(_nudge_events(events)) == 0, "the backstop must win — no plan nudge after forced other"
+    assert not any(
+        "your plan is NOT finished" in (m.content or "") for m in sess.messages
+    ), "no nudge message may be injected after the backstop fired"
+    assert sess.status == "completed"
+    assert len(sess.staged_results) == 1
+    assert sess.staged_results[0].tool_name == "flowfile.graph.add_manual_input"

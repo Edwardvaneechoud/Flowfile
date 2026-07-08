@@ -128,6 +128,25 @@ class DriftDetail(BaseModel):
         return not (self.missing_node_ids or self.external_added_node_ids)
 
 
+class CompletedOpEntry(BaseModel):
+    """One completed planner op recorded for the host-tracked plan ledger.
+
+    Appended by the loop after each successful staged / applied op (see
+    ``planner.plan_ledger.record_completed_op``). ``annotate_done`` greedily
+    consumes these against the parsed plan steps to render a fresh
+    ``[done]``/``[pending]`` checklist every classify round. Lives here (not
+    in the planner package) so ``sessions`` stays planner-import-free and the
+    disk repo validates the full :class:`AgentSession` model.
+
+    ``summary`` is a terse human-readable line (e.g. *"add_filter — staged as
+    node 5"*, *"connect 5→2"*); ``node_id`` is set for ``add_*`` ops only.
+    """
+
+    tool_name: str
+    node_id: int | None = None
+    summary: str
+
+
 class AgentSession(BaseModel):
     """A planner session.
 
@@ -161,7 +180,11 @@ class AgentSession(BaseModel):
     pause_reason: str | None = None
     drift_detail: DriftDetail | None = None
     step_count: int = 0
-    max_steps: int = 12
+    # Keep in lockstep with ``planner._internal.DEFAULT_MAX_STEPS`` — an
+    # import here would cycle (sessions must stay planner-import-free).
+    max_steps: int = 32
+    # Caller-supplied cap; gates plan auto-scaling (True ⇒ hard ceiling).
+    max_steps_explicit: bool = False
     diff_id: str | None = None
     rationale: str | None = None
     last_assistant_text: str | None = None
@@ -176,6 +199,13 @@ class AgentSession(BaseModel):
     picked_right_input_id: int | None = None
     verify_plan_completion: bool = False
     verify_round_consumed: bool = False
+    # Host-tracked plan ledger (see ``planner.plan_ledger``). Parsed once at
+    # the emit_plan handler; ``plan_completed_ops`` accrues per successful op.
+    # All defaulted so they round-trip the session_store disk sidecar without
+    # a SCHEMA_VERSION bump.
+    plan_markdown: str | None = None
+    plan_steps: list[str] = Field(default_factory=list)
+    plan_completed_ops: list[CompletedOpEntry] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -298,7 +328,9 @@ def revalidate_staged_results_against_live(
     rebuilds ``session.staged_node_ids`` from the survivors. Returns a
     ``(kept, dropped_with_reason)`` tuple — the planner walks the dropped
     list to emit one audit row per drop. Non-``add_*`` entries (connect,
-    delete) pass through unchanged.
+    delete) pass through unchanged. Also prunes any ``add_*`` entry from
+    ``session.plan_completed_ops`` whose node was dropped, so the host-tracked
+    plan ledger re-marks that step ``[pending]`` on the resumed round.
     """
     live_ids: set[int] = set()
     for node in flow.nodes:
@@ -332,6 +364,15 @@ def revalidate_staged_results_against_live(
 
     session.staged_results = kept
     session.staged_node_ids = surviving_node_ids
+
+    dropped_node_ids = {nid for entry, _ in dropped if (nid := _entry_node_id(entry)) is not None}
+    if dropped_node_ids:
+        session.plan_completed_ops = [
+            op
+            for op in session.plan_completed_ops
+            if not (op.tool_name.startswith(_ADD_PREFIX) and op.node_id in dropped_node_ids)
+        ]
+
     return kept, dropped
 
 
@@ -504,6 +545,7 @@ def list_archived_sessions(user_id: int, flow_id: int) -> list[AgentSession]:
 
 __all__ = [
     "AgentSession",
+    "CompletedOpEntry",
     "DriftDetail",
     "GraphSnapshot",
     "PlannerOpKind",

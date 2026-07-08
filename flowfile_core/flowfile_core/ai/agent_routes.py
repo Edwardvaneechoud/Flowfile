@@ -49,8 +49,8 @@ from flowfile_core import flow_file_handler
 from flowfile_core.ai import sessions
 from flowfile_core.ai.agents.planner import (
     DEFAULT_MAX_RETRIES_PER_STEP,
-    DEFAULT_MAX_STEPS,
     DEFAULT_MAX_TOKENS,
+    MAX_STEPS_HARD_CAP,
     FollowupAction,
     inject_followup_message,
     run_planner_session,
@@ -88,7 +88,7 @@ class AgentStartRequest(BaseModel):
     samples_mode: Literal["off", "regex"] = "off"
     provider: str = Field(default="anthropic", min_length=1)
     model: str | None = None
-    max_steps: int = Field(default=DEFAULT_MAX_STEPS, ge=1, le=64)
+    max_steps: int | None = Field(default=None, ge=1, le=MAX_STEPS_HARD_CAP)
     max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, ge=64, le=16_384)
     max_retries_per_step: int = Field(default=DEFAULT_MAX_RETRIES_PER_STEP, ge=1, le=8)
     session_id: str | None = None
@@ -320,9 +320,11 @@ async def agent_start(
         "provider_name": body.provider,
         "model_name": body.model,
         "snapshot": snapshot,
-        "max_steps": body.max_steps,
         "selected_node_ids": list(body.selected_node_ids or []),
     }
+    if body.max_steps is not None:
+        session_kwargs["max_steps"] = body.max_steps
+        session_kwargs["max_steps_explicit"] = True
     if body.session_id is not None:
         session_kwargs["session_id"] = body.session_id
     if body.skip_plan:

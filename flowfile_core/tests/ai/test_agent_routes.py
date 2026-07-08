@@ -314,6 +314,67 @@ def test_start_defaults_selected_node_ids_to_empty_when_omitted(
     assert session.selected_node_ids == []
 
 
+def test_start_omitted_max_steps_uses_session_default(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting ``max_steps`` leaves the session at the default 32 and marks it
+    non-explicit (so plan auto-scaling stays enabled)."""
+    fake = _FakeProvider(
+        tool_calls_per_step=[[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]]
+    )
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    response = authed_client.post(
+        "/ai/agent/start",
+        json={
+            "flow_id": 1,
+            "prompt": "filter to EU",
+            "surface": "agent_complex",
+            "provider": "anthropic",
+            "session_id": "max-steps-default",
+        },
+    )
+    assert response.status_code == 200
+    response.text  # noqa: B018
+    session = sessions.get_session("max-steps-default", user_id=1)
+    assert session is not None
+    assert session.max_steps == 32
+    assert session.max_steps_explicit is False
+
+
+def test_start_explicit_max_steps_is_respected_and_marked(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller-supplied ``max_steps`` is stored verbatim and flagged explicit
+    so it becomes a hard ceiling (no plan auto-scale past it)."""
+    fake = _FakeProvider(
+        tool_calls_per_step=[[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]]
+    )
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    response = authed_client.post(
+        "/ai/agent/start",
+        json={
+            "flow_id": 1,
+            "prompt": "filter to EU",
+            "surface": "agent_complex",
+            "provider": "anthropic",
+            "session_id": "max-steps-explicit",
+            "max_steps": 12,
+        },
+    )
+    assert response.status_code == 200
+    response.text  # noqa: B018
+    session = sessions.get_session("max-steps-explicit", user_id=1)
+    assert session is not None
+    assert session.max_steps == 12
+    assert session.max_steps_explicit is True
+
+
 def test_start_422_session_id_collision(
     authed_client: TestClient,
     registered_flow: FlowGraph,
