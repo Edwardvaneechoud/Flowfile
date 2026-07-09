@@ -3,7 +3,7 @@
 This page is the reference for building a custom node in Python with the Node Designer SDK — its class structure, the UI components you can put in the settings panel, type filtering, the `process()` contract, execution environments, and the dry-run test loop. After reading it you can write a node file that appears in the palette with a generated settings form. For a guided end-to-end build, see the [Custom Node Tutorial](custom-node-tutorial.md).
 
 !!! tip "Visual alternative"
-    You can build the same node without writing a file directly in the [Node Designer](../users/visual-editor/node-designer.md). A node file written in the visual subset of the SDK reopens in the visual editor, so the two paths interoperate.
+    You can build the same node without writing a file directly in the [Node Designer](node-designer.md). A node file written in the visual subset of the SDK reopens in the visual editor, so the two paths interoperate.
 
 ## What are custom nodes?
 
@@ -59,7 +59,8 @@ Here is a complete node that adds a greeting column. Note the `process` signatur
 <details markdown="1">
 <summary>Visual overview of the result</summary>
 
-![Flow visualized](../assets/images/developers/basic_overview.png)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: old UI, re-capture a custom node on the canvas with its generated settings -->
+![Flow visualized](../../assets/images/developers/basic_overview.svg)
 
 </details>
 
@@ -453,12 +454,15 @@ class MyNode(nd.CustomNodeBase):
 ```
 
 - **`"local"`** (default) — `process` runs in a `flowfile_worker` subprocess: a killable, isolated child process that owns the dataset memory. The worker environment does not pip-install anything, so a local node may use only packages already available to Flowfile.
-- **`"kernel"`** — `process` runs inside an isolated Docker kernel. Use this when the node needs third-party libraries or stronger isolation. List them in `dependencies` (e.g. `dependencies = ["scikit-learn", "xgboost"]`); the kernel installs them. Kernel nodes can also declare multiple named outputs. Secrets are not available in kernel nodes.
+- **`"kernel"`** — `process` runs inside an isolated Docker kernel. Use this when the node needs third-party libraries or stronger isolation. List them in `dependencies` (e.g. `dependencies = ["scikit-learn", "xgboost"]`); the kernel installs them. Kernel nodes can also declare multiple named outputs. Secrets are not available in kernel nodes. For a full worked example, see [K-Means on a Kernel](kmeans-kernel-node.md).
+
+!!! warning "Import kernel-only libraries inside `process`"
+    Put `import`s for packages that live only in the kernel (scikit-learn, xgboost, …) **inside** `process`, not at the top of the file. Flowfile core loads your node file to register it in the palette, and core doesn't have the kernel's dependencies — a top-level `import` of one would make the node load with an error. The import runs only in the kernel, which has the package.
 
 The legacy `requires_kernel = True` flag still loads (it maps to `environment = "kernel"` with a deprecation warning), as does a class-level `kernel_id`. Prefer `environment` in new code.
 
 !!! info "Docker required for kernel nodes"
-    Kernel execution needs Docker. When Docker is unavailable, the Node Designer's environment picker shows the local option only and explains how to enable kernels. See [Kernel Execution](../users/visual-editor/kernels.md).
+    Kernel execution needs Docker. When Docker is unavailable, the Node Designer's environment picker shows the local option only and explains how to enable kernels. See [Kernel Execution](kernels.md).
 
 ## Multiple inputs
 
@@ -526,7 +530,7 @@ Every declared name must be present in the returned dict, or the run fails with 
 
 You do not need to add a node to a flow to test it. Two paths run its `process` against sample data:
 
-- **In the designer:** the [Test tab](../users/visual-editor/node-designer.md#test-tab) runs the node against a small sample you provide (grid or CSV paste) and shows a per-output preview, logs, and any error — the same execution path as a real run.
+- **In the designer:** the [Test tab](node-designer.md#test-tab) runs the node against a small sample you provide (grid or CSV paste) and shows a per-output preview, logs, and any error — the same execution path as a real run.
 - **Bake samples into the file:** two optional class attributes make the dry-run reproducible and travel with the node:
 
 ```python
@@ -669,7 +673,7 @@ Mounted directories are **read-only sources** — the designer edits and saves t
 
 ## The visual round-trip
 
-A node file written in the SDK's "designer subset" reopens in the visual editor: Browse the node, click **Edit**, and its metadata, sections, components, and `process` code load back into the Form and Code tabs. The first time you save a hand-written node from the designer, its formatting is canonicalized (the designer shows a diff preview before writing). Files that use constructs outside the subset (builder objects, dynamic construction, non-literal component kwargs) still load — they open in code-only mode, with the Test tab fully functional. See [Code-only mode](../users/visual-editor/node-designer.md#code-only-mode).
+A node file written in the SDK's "designer subset" reopens in the visual editor: Browse the node, click **Edit**, and its metadata, sections, components, and `process` code load back into the Form and Code tabs. The first time you save a hand-written node from the designer, its formatting is canonicalized (the designer shows a diff preview before writing). Files that use constructs outside the subset (builder objects, dynamic construction, non-literal component kwargs) still load — they open in code-only mode, with the Test tab fully functional. See [Code-only mode](node-designer.md#code-only-mode).
 
 ## Troubleshooting
 
@@ -691,4 +695,4 @@ A node file written in the SDK's "designer subset" reopens in the visual editor:
 
 ---
 
-For a step-by-step walkthrough, see the [Custom Node Tutorial](custom-node-tutorial.md).
+For a step-by-step walkthrough, see the [Custom Node Tutorial](custom-node-tutorial.md) (local execution) or [K-Means on a Kernel](kmeans-kernel-node.md) (kernel execution with scikit-learn).

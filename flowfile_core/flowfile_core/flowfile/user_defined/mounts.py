@@ -67,6 +67,11 @@ def save_mounts(mounts: list[NodeMount], base_dir: Path | None = None) -> None:
 
 
 def _normalize(path: Path) -> Path:
+    # Route callers validate via validate_path_under_cwd (rejects "..", confines to trusted roots in
+    # docker/package) and add/remove are admin-only; mounts are intentionally arbitrary directories,
+    # so there is no single root to contain them to. CodeQL doesn't model the commonpath barrier, so
+    # this resolve() stays flagged as py/path-injection — dismiss it as a false positive in the Code
+    # Scanning UI, same as the confined resolve()s in project/service.py::_confine_project_root.
     return path.expanduser().resolve()
 
 

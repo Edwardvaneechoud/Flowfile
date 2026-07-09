@@ -52,6 +52,9 @@ plugins:
   - redirects:
       redirect_maps:
         for-developers/docker-deployment.md: users/deployment/docker.md
+        for-developers/creating-custom-nodes.md: users/visual-editor/creating-custom-nodes.md
+        for-developers/custom-node-tutorial.md: users/visual-editor/custom-node-tutorial.md
+        for-developers/kmeans-kernel-node.md: users/visual-editor/kmeans-kernel-node.md
   - mkdocstrings:
       handlers:
         python:
@@ -126,7 +129,11 @@ nav:
       - Machine Learning Nodes: users/visual-editor/nodes/ml.md
     - Sandboxed Python (Kernels): users/visual-editor/kernels.md
     - The flowfile_ctx API: users/visual-editor/kernel-api.md
-    - Node Designer: users/visual-editor/node-designer.md
+    - Node Designer:
+      - Overview: users/visual-editor/node-designer.md
+      - 'Tutorial: Your First Custom Node': users/visual-editor/custom-node-tutorial.md
+      - 'Tutorial: K-Means on a Kernel': users/visual-editor/kmeans-kernel-node.md
+      - 'Reference: Custom Nodes in Code': users/visual-editor/creating-custom-nodes.md
     - Worked Examples:
       - Overview: users/visual-editor/tutorials/index.md
       - Sales Pipeline: users/visual-editor/tutorials/sales-pipeline.md
@@ -198,7 +205,6 @@ nav:
     - Kernel Architecture: for-developers/kernel-architecture.md
     - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md
-    - Create Custom Nodes: for-developers/creating-custom-nodes.md
-    - Building more custom Nodes: for-developers/custom-node-tutorial.md
+    - Custom Nodes (build in code): users/visual-editor/creating-custom-nodes.md
 
   - Community: community.md

@@ -7,11 +7,15 @@ The node's `.py` file is the single source of truth. The designer writes it, and
 !!! info "Not in Flowfile Lite"
     The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
 
-![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.png)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: old UI, re-capture the current Node Designer (Node Settings panel + Form / Code / Test tabs) -->
+![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.svg)
 
 ---
 
 ## Quick Start
+
+!!! tip "Prefer to follow along?"
+    The [**Build your first custom node**](custom-node-tutorial.md) tutorial walks the whole thing click-by-click in a few minutes. For a node that needs a third-party library, see [K-Means on a Kernel](kmeans-kernel-node.md). This page is the reference behind them.
 
 1. Open **Node Designer** from the sidebar menu.
 2. In the left **Node Settings** panel, set the node's name and category.
@@ -255,14 +259,15 @@ The Catalog has a **Custom Nodes** tab that lists every custom node across the d
 
 ## Programmatic alternative
 
-For version-controlled node definitions or more control, write nodes as Python files directly. The two paths interoperate: a file written in the visual subset reopens visually. See [Creating Custom Nodes](../../for-developers/creating-custom-nodes.md).
+For version-controlled node definitions or more control, write nodes as Python files directly. The two paths interoperate: a file written in the visual subset reopens visually. See [Creating Custom Nodes](creating-custom-nodes.md).
 
 ---
 
 ## Related Documentation
 
-- [Creating Custom Nodes](../../for-developers/creating-custom-nodes.md) — the Python SDK reference.
-- [Custom Node Tutorial](../../for-developers/custom-node-tutorial.md) — a guided end-to-end build.
+- [Creating Custom Nodes](creating-custom-nodes.md) — the Python SDK reference.
+- [Custom Node Tutorial](custom-node-tutorial.md) — a guided end-to-end build (local execution).
+- [K-Means on a Kernel](kmeans-kernel-node.md) — build the same node visually and as code, running scikit-learn in a kernel.
 - [Kernel Execution](kernels.md) — creating and running Docker kernels.
 - [The flowfile_ctx API](kernel-api.md) — the API available inside kernel nodes.
 - [Building Flows](building-flows.md) — using nodes in workflows.

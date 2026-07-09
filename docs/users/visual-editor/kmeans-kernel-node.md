@@ -1,10 +1,10 @@
 # Tutorial: K-Means on a Kernel
 
-This tutorial builds one custom node that runs **K-Means clustering** over the numeric columns you choose, using scikit-learn inside an [isolated kernel](../users/visual-editor/kernels.md). It's the kernel counterpart to the local-execution [Emoji Generator tutorial](custom-node-tutorial.md) — same shape, but the `process` method reaches for a third-party library the kernel installs for you.
+This tutorial builds one custom node that runs **K-Means clustering** over the numeric columns you choose, using scikit-learn inside an [isolated kernel](kernels.md). It's the kernel counterpart to the local-execution [Emoji Generator tutorial](custom-node-tutorial.md) — same shape, but the `process` method reaches for a third-party library the kernel installs for you.
 
 You'll build the **same node two ways**:
 
-1. **Visually, in the [Node Designer](../users/visual-editor/node-designer.md)** — no file to write by hand. This is the primary path here.
+1. **Visually, in the [Node Designer](node-designer.md)** — no file to write by hand. This is the primary path here.
 2. **As a plain `.py` file** — for version-controlled or programmatic authoring.
 
 The two are interchangeable: a node built in the designer's visual subset saves to a `.py` file, and that file reopens in the designer. The visual build and the file below are the *same node*.
@@ -16,14 +16,12 @@ The two are interchangeable: a node built in the designer's visual subset saves 
     - Lets the user pick numeric feature columns, the number of clusters `k`, an output column name, and whether to standardize features first.
     - Runs scikit-learn in a Docker kernel and adds a cluster-label column to the data.
 
-## Prerequisites
+## Before you start
 
-- Flowfile installed and working (`pip install flowfile`).
-- **Docker running**, and the kernel image built — kernel nodes execute inside a Docker container. See [Kernel Execution](../users/visual-editor/kernels.md) to create and start a kernel first.
-- A little Python and Polars familiarity (helpful, not required).
+This node runs its Python in a **kernel** — a Docker container that pip-installs the packages you ask for — so you'll need a running kernel to test it. Open the [Kernel Manager](kernels.md) from the sidebar and start one (Docker must be available). Everything else happens in the Node Designer.
 
-!!! note "Why a kernel?"
-    A `local` custom node runs in the `flowfile_worker` process, which installs nothing — it can only use libraries Flowfile already ships. scikit-learn isn't one of them, so this node declares `environment = "kernel"` and lists `scikit-learn` as a dependency the kernel installs before running.
+!!! note "Why a kernel here?"
+    scikit-learn isn't one of the libraries Flowfile ships with, and a **local** node can only use what's already installed. Running in a kernel lets this node list `scikit-learn` as a dependency and have it installed before it runs.
 
 ---
 
@@ -53,7 +51,7 @@ The kernel installs these packages before your node runs. (If Docker is unavaila
 <summary>Execution environment</summary>
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the Execution group with Isolated kernel selected + scikit-learn dependency tag -->
-![Execution set to Isolated kernel with a scikit-learn dependency tag](../assets/images/developers/kmeans-kernel-environment.svg)
+![Execution set to Isolated kernel with a scikit-learn dependency tag](../../assets/images/developers/kmeans-kernel-environment.svg)
 
 </details>
 
@@ -72,7 +70,7 @@ On the **Form** tab, add a group. Give it the display title **Clustering** and t
 <summary>The Clustering group</summary>
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the Form tab with the Clustering group and its four controls -->
-![Form tab with the Clustering group and its four controls](../assets/images/developers/kmeans-settings-form.svg)
+![Form tab with the Clustering group and its four controls](../../assets/images/developers/kmeans-settings-form.svg)
 
 </details>
 
@@ -119,7 +117,7 @@ On the **Test** tab, provide a small numeric sample (edit the grid or paste CSV)
 <summary>Test run</summary>
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the Test tab dry-run with the cluster column + the log line -->
-![Test tab dry-run showing the cluster column and the log line](../assets/images/developers/kmeans-test-results.svg)
+![Test tab dry-run showing the cluster column and the log line](../../assets/images/developers/kmeans-test-results.svg)
 
 </details>
 
@@ -131,7 +129,7 @@ Click **Save**. The node loads immediately — no restart — under the **ML** g
 <summary>On the canvas</summary>
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the K-Means node in the ML group and placed on the canvas with its kernel badge -->
-![The K-Means node in the ML palette group and on the canvas](../assets/images/developers/kmeans-on-canvas.svg)
+![The K-Means node in the ML palette group and on the canvas](../../assets/images/developers/kmeans-on-canvas.svg)
 
 </details>
 
@@ -217,7 +215,7 @@ class KMeansClusteringNode(nd.CustomNodeBase):
 
 ## Extensions
 
-Once the base node works, two small additions show off what a kernel node can do. Both use the [`flowfile_ctx` API](../users/visual-editor/kernel-api.md).
+Once the base node works, two small additions show off what a kernel node can do. Both use the [`flowfile_ctx` API](kernel-api.md).
 
 **Persist the fitted model** as a flow artifact, so a downstream node can reuse it:
 
@@ -245,6 +243,6 @@ return {
 
 - [Custom Node Tutorial](custom-node-tutorial.md) — the local-execution counterpart (Emoji Generator).
 - [Creating Custom Nodes](creating-custom-nodes.md) — the full SDK reference: components, execution environments, multi-output.
-- [Node Designer](../users/visual-editor/node-designer.md) — the visual designer, in depth.
-- [Kernel Execution](../users/visual-editor/kernels.md) — creating and running Docker kernels.
-- [The flowfile_ctx API](../users/visual-editor/kernel-api.md) — logging, artifacts, and catalog access inside kernels.
+- [Node Designer](node-designer.md) — the visual designer, in depth.
+- [Kernel Execution](kernels.md) — creating and running Docker kernels.
+- [The flowfile_ctx API](kernel-api.md) — logging, artifacts, and catalog access inside kernels.

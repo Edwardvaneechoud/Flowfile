@@ -30,7 +30,7 @@ You don't have to write Python or Vue to help. Useful contributions include:
 - **Improving the docs** — typos, clearer examples, missing pages
 - **Sharing flows** that show off a pattern or solve a real problem
 - **Testing pre-releases** and reporting back
-- **Building custom nodes** — see [Create Custom Nodes](for-developers/creating-custom-nodes.md)
+- **Building custom nodes** — see [Create Custom Nodes](users/visual-editor/creating-custom-nodes.md)
 - **Fixing bugs or adding features** — see [CONTRIBUTING.md](https://github.com/edwardvaneechoud/Flowfile/blob/main/CONTRIBUTING.md)
 
 ## Releases

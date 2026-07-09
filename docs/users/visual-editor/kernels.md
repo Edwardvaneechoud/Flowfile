@@ -195,7 +195,7 @@ Your `process` method code stays the same — the `self.settings_schema` access 
 
 The full `flowfile_ctx` API (artifacts, display, logging) is available inside kernel-enabled custom nodes.
 
-For details on building custom nodes, see [Node Designer](node-designer.md#kernel-execution).
+For details on building custom nodes, see [Node Designer](node-designer.md#how-kernel-execution-works), and for a full worked example — the same node built visually and as code — see [K-Means on a Kernel](kmeans-kernel-node.md).
 
 ---
 

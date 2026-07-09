@@ -449,7 +449,7 @@ Flowfile/
 Adding a **built-in native node** touches multiple layers: the frontend needs a hand-written settings form (native nodes are not auto-generated from Pydantic schemas). Smaller, self-contained tasks — new database and cloud connectors — are a good entry point, because the surrounding structure already exists.
 
 !!! tip "Prefer a custom node?"
-    If you want a new transformation without touching the frontend, build a [custom node](creating-custom-nodes.md) with the Node Designer API. Custom nodes get an auto-generated settings panel and land in the **User Defined Operations** palette section.
+    If you want a new transformation without touching the frontend, build a [custom node](../users/visual-editor/creating-custom-nodes.md) with the Node Designer API. Custom nodes get an auto-generated settings panel and land in the **User Defined Operations** palette section.
 
 ### Adding a native node: the full picture
 
