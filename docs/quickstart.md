@@ -201,4 +201,5 @@ Pick the route written for your situation:
 - [Analyze your data](users/analyze-your-data.md) — from question to a chart that refreshes itself.
 - [Your data lives elsewhere](users/data-elsewhere.md) — warehouse, S3, Kafka, APIs.
 - [Write Python](users/write-python.md) — the Polars-style API, connectors, and CI.
+- [Extend the palette](users/visual-editor/node-designer.md) — need an operation Flowfile doesn't have? Build your own node in the Node Designer, no code file required.
 - [Run Flowfile for a team](users/deploy-for-a-team.md) — the operator's route.
