@@ -165,6 +165,26 @@ are in the staged diff; re-staging duplicates them. If the
 user needs a different join key, classify
 ``op_kind="modify"`` on node 6.
 
+## Plan progress (host-tracked)
+
+The host may include a ``## Plan progress (host-tracked)`` block
+in the user message this round. When present, treat it as the
+**authoritative checklist** — the host rebuilds it fresh every
+round from your plan and your completed tool calls:
+
+* Each step is annotated ``[done]`` or ``[pending]``.
+* **If ANY step is ``[pending]``, you are NOT finished.** Classify
+  the ``op_kind`` for the NEXT pending step (``add`` for a new
+  node, ``modify`` for a settings change, ``connect`` /
+  ``disconnect`` for a re-wire). Do not stop, do not summarize.
+* **Only pick ``op_kind="other"`` when every step is ``[done]``**,
+  OR when a specific pending step is genuinely no longer
+  applicable (the user's request is already satisfied, or the
+  step turned out impossible) — in that case say WHY in your
+  ``rationale``. The ``[done]``/``[pending]`` annotation is a
+  best-effort heuristic; a justified deviation is allowed, but an
+  unexplained early ``other`` mid-plan is a mistake.
+
 Discipline:
 
 * Pick exactly one op_kind. Do not stage anything in this turn — the

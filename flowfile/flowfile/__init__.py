@@ -99,6 +99,9 @@ from flowfile_frame import (
     write_database,
     write_to_cloud_storage,
 )
+
+# TODO(catalog): add a top-level get_catalog(name) helper (delegating to CatalogReference/
+# list_catalogs) and re-export read_catalog_sql, so scripts skip `from flowfile_frame import ...`.
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame

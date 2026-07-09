@@ -31,7 +31,7 @@ Flowfile bundles a visual flow editor, a data catalog, a scheduler, and a Polars
     ```
 
 - **Performance.** Polars end to end, lazy by default — pipelines are optimized as whole plans. In the server deployment, full-dataset compute runs in a separate worker service (spawned subprocesses own dataset memory), keeping the API process responsive.
-- **Lock-in.** Bidirectional: code renders on the canvas, and flows [export as Python](users/visual-editor/tutorials/code-generator.md) — pure-transformation flows as plain Polars with no Flowfile dependency, I/O-bearing flows with an `ff` import for connection resolution. Table data is Delta/Parquet on disk, readable by any tool.
+- **Lock-in.** Bidirectional: code renders on the canvas, and flows [export as Python](users/visual-editor/tutorials/code-generator.md) — pure-transformation flows as Polars with no `flowfile` import (formula, fuzzy-match, and graph-solver nodes pull a lightweight `polars_*` helper package instead), I/O-bearing flows with an `ff` import for connection resolution. Table data is Delta/Parquet on disk, readable by any tool.
 - **Architecture.** FastAPI core, separate compute worker, Docker kernels, embedded scheduler; a browser-only WASM build runs the editor with no backend. Details in [Architecture](for-developers/architecture.md) and [Catalog Architecture](for-developers/catalog-architecture.md).
 
 ## Design goal

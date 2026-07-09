@@ -69,3 +69,9 @@ user's plan has been implemented.
   ``is_complete=false`` and the next classify round still leaves
   steps unaddressed, the loop terminates without another verify.
   So make this round count.
+* The host also keeps its own ``[done]``/``[pending]`` ledger of
+  your plan and may resolve completion (by nudging you back to
+  classify for a pending step) before this stage even runs — so if
+  you reach here, it usually means the host ledger already believes
+  the plan is done. Still walk the steps yourself and answer
+  honestly.

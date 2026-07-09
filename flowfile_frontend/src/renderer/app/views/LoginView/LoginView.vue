@@ -96,13 +96,10 @@ const handleLogin = async () => {
   isLoading.value = true;
   error.value = "";
 
+  let success = false;
   try {
-    const success = await authStore.login(username.value, password.value);
-
-    if (success) {
-      // Route through the "main" entry guard so login resumes open flows.
-      router.push({ name: "main" });
-    } else {
+    success = await authStore.login(username.value, password.value);
+    if (!success) {
       error.value = authStore.authError || "Invalid username or password";
     }
   } catch (err) {
@@ -110,6 +107,12 @@ const handleLogin = async () => {
     console.error("Login error:", err);
   } finally {
     isLoading.value = false;
+  }
+
+  // Navigate only after login succeeds, and outside the try above so a
+  // navigation failure can't be misreported as a login error.
+  if (success) {
+    router.push({ name: "home" });
   }
 };
 </script>

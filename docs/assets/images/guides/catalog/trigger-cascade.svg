@@ -19,6 +19,7 @@
     .chipn { fill:#eceef1; }
     .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     .icn   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icnf  { fill:none; stroke:#8a93a3; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
     .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
     .ttl   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:17px; fill:#26A8E0; }
@@ -140,12 +141,12 @@
   <path class="arwc" d="M895,192 V210"/>
   <path class="arwc" d="M895,210 H855 V236" marker-end="url(#ahc)"/>
   <path class="arwc" d="M895,210 H935 V236" marker-end="url(#ahc)"/>
-  <g class="icn" transform="translate(855,242)">
+  <g class="icnf" transform="translate(855,242)">
     <ellipse cx="0" cy="0" rx="7" ry="2.3"/>
     <path d="M-7,0 V9 C-7,10.3 -3.9,11.3 0,11.3 C3.9,11.3 7,10.3 7,9 V0"/>
     <path d="M-7,4.6 C-7,5.9 -3.9,6.9 0,6.9 C3.9,6.9 7,5.9 7,4.6"/>
   </g>
-  <g class="icn" transform="translate(935,242)">
+  <g class="icnf" transform="translate(935,242)">
     <ellipse cx="0" cy="0" rx="7" ry="2.3"/>
     <path d="M-7,0 V9 C-7,10.3 -3.9,11.3 0,11.3 C3.9,11.3 7,10.3 7,9 V0"/>
     <path d="M-7,4.6 C-7,5.9 -3.9,6.9 0,6.9 C3.9,6.9 7,5.9 7,4.6"/>

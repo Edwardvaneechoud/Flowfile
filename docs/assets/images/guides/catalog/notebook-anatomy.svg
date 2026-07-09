@@ -60,7 +60,7 @@
   <text class="albl" x="252" y="352">content &#183; cells</text>
   <text class="albl" x="628" y="148">execute_cell</text>
   <text class="albl" x="628" y="388">render in UI</text>
-  <text class="albl" x="486" y="458">completions</text>
+  <text class="albl" x="493" y="458">completions</text>
 
   <!-- ============ COL A: CatalogNotebook row ============ -->
   <g>

@@ -17,6 +17,12 @@ classify→pick_type→pick_upstream→fill_settings funnel without
 first reasoning globally produces narrow, tactical choices that
 miss the user's actual intent. Plan first; act second.
 
+> **The host parses your numbered ``## Proposed changes`` list**
+> into a per-round progress checklist it shows you at each classify
+> stage (annotated ``[done]``/``[pending]``). Keep each step on its
+> own numbered line so the parser can track it — that checklist is
+> what keeps you from stopping after one step of a multi-step plan.
+
 ## What the `plan` markdown should contain
 
 Three sections in this order. Treat this as the same depth of

@@ -49,18 +49,18 @@ lf = flowfile_ctx.read_catalog_table("sales_by_city")
 flowfile_ctx.explore(lf)   # interactive explorer; .display(lf) for the table view
 ```
 
-The editor has code completions, and the same kernel machinery powers the [Python Script node](visual-editor/kernels.md) when notebook logic graduates into a flow. (Cell code runs inside a kernel — the `flowfile_ctx` API above is the kernel's, documented in full on [The flowfile_ctx API](visual-editor/kernel-api.md).)
+The editor has code completions, and the same kernel machinery powers the [Python Script node](visual-editor/kernels.md) when notebook logic graduates into a flow. (Cell code runs inside a kernel — the `flowfile_ctx` API above is the kernel's, available in notebook cells and the Python Script node but not importable from an ordinary script; a plain script reaches the catalog with the `ff.*` functions from [step 4](#4-the-catalog-from-code) instead. Documented in full on [The flowfile_ctx API](visual-editor/kernel-api.md).)
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a catalog notebook open next to the catalog tree — cells with execution counters, one cell reading a catalog table via flowfile_ctx, the interactive explorer rendering below it -->
+![A catalog notebook open next to the catalog tree: cells with execution counters, one reading a catalog table via flowfile_ctx, and the interactive explorer rendering below.](../assets/images/guides/notebooks/catalog-notebook.png)
 
 ## 6. Know the two dialects
 
 Two ways to express logic, differing in what the canvas can do with them later:
 
-- **Polars-style expressions** — `ff.col`, `when/then`, the `str`/`dt`/`list` namespaces — feel native and mostly are ([Expressions](python-api/concepts/expressions.md)); renames and gaps are documented plainly in the [operations reference](python-api/reference/flowframe-operations.md). Steps built this way render on the canvas as generic code nodes: correct, but opaque to a visual editor.
-- **[Flowfile formula strings](python-api/concepts/formulas.md)** — `filter(flowfile_formula="[quantity] > 7")` — render as *editable* native nodes, the same ones a canvas user would have configured by hand.
+- **Polars-style expressions** — `ff.col`, `when/then`, the `str`/`dt`/`list` namespaces — feel native and mostly are ([Expressions](python-api/concepts/expressions.md)); renames and gaps are listed in the [operations reference](python-api/reference/flowframe-operations.md). Each expression also carries a Flowfile-formula rendering: `ff.col("amount") > 100` becomes `[amount] > 100`, `&`/`|` become `and`/`or`, and casts plus the `str`/`dt` methods map to formula functions. That rendering is why a `with_columns` built from such expressions lands on the canvas as **editable native Formula nodes** — the same nodes a canvas user configures by hand. An expression with no formula equivalent becomes a generic code node instead, and `filter()` given an expression (rather than a formula string) is always a code node.
+- **[Flowfile formula strings](python-api/concepts/formulas.md)** — `filter(flowfile_formula="[quantity] > 7")` — always render as editable native nodes. For `filter`, the string form is the only one that yields a native Filter node.
 
-Rule of thumb: if a colleague might someday edit the pipeline visually, prefer formulas for the simple steps; keep expressions for logic that's genuinely code-shaped.
+Rule of thumb: simple column-derivation steps stay editable on the canvas either way; reach for a code node only when the logic is genuinely code-shaped.
 
 ## 7. Ship and test it
 
@@ -70,7 +70,7 @@ Flows serialize to plain `.yaml`, which makes the engineering hygiene ordinary: 
 flowfile run flow pipeline.yaml --param run_date=2026-07-04
 ```
 
-— with exit code 0/1 and no UI or services required. Going the other direction, visual flows [export as Python](visual-editor/tutorials/code-generator.md): pure-transformation flows as dependency-free Polars, I/O-bearing flows with an `ff` import for their connections — either way, readable code when a pipeline graduates into a codebase.
+— with exit code 0/1 and no UI or services required. Going the other direction, visual flows [export as Python](visual-editor/tutorials/code-generator.md): pure-transformation flows as Polars with no `flowfile` import (a few formula, fuzzy-match, or graph nodes pull a small `polars_*` helper), I/O-bearing flows with an `ff` import for their connections — either way, readable code when a pipeline graduates into a codebase.
 
 ---
 

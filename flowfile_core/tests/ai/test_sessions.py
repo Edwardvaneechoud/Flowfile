@@ -406,3 +406,35 @@ def test_revalidate_staged_results_passes_through_non_add_entries() -> None:
 
     assert dropped == []
     assert kept == [connect_entry]
+
+
+def test_revalidate_prunes_plan_ledger_ops_for_dropped_nodes() -> None:
+    """Drift-resume drops a staged add whose id is now live; its plan-ledger
+    ``add_*`` op is pruned, while the surviving add op and a connect op
+    (node_id None) are left intact."""
+    sess = _make_session()
+    # Staged: node 3 (will be dropped, id now live) and node 4 (survives).
+    sess.staged_results = [
+        _staged_add_entry(node_id=3, upstream_node_ids=[1]),
+        _staged_add_entry(node_id=4, upstream_node_ids=[1]),
+    ]
+    sess.staged_node_ids = [3, 4]
+    sess.plan_completed_ops = [
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.add_filter", node_id=3, summary="a"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.add_filter", node_id=4, summary="b"),
+        sessions.CompletedOpEntry(tool_name="flowfile.graph.connect", node_id=None, summary="c"),
+    ]
+
+    # During pause the user manually created node 3 → collision drop.
+    flow = _flow_with_orders()
+    _add_orders(flow, node_id=3)
+
+    kept, dropped = sessions.revalidate_staged_results_against_live(sess, flow)
+
+    assert len(dropped) == 1
+    assert dropped[0][1] == "live_id_collision"
+    remaining = [(op.tool_name, op.node_id) for op in sess.plan_completed_ops]
+    assert remaining == [
+        ("flowfile.graph.add_filter", 4),
+        ("flowfile.graph.connect", None),
+    ]

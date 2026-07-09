@@ -38,7 +38,7 @@ Build pipelines on a visual canvas, run them, and export the graph as plain Pyth
 Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a SQL editor with embedded viz, flow parameters, sandboxed Python kernels, and a built-in scheduler.
 
 <div align="center">
-  <img src=".github/images/ai-overview.gif" alt="Flowfile AI assistant building a pipeline on the canvas" width="800"/>
+  <img src="docs/assets/images/ai/ai-overview.gif" alt="Flowfile AI assistant building a pipeline on the canvas" width="800"/>
   <br>
   <sub>The AI assistant building a pipeline on the canvas — describe what you want, get a runnable flow.</sub>
 </div>
@@ -52,9 +52,9 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 **A visual canvas** with 40+ node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, and more. Read from local files, databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), or Kafka. Write the result wherever you want. Beyond the nodes, the formula editor brings 100+ transformation functions, and a Polars code node gives you full Polars support — all running in-process, no external engine.
 
 <div align="center">
-  <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile demo — joins, fuzzy matching, transformations" width="800"/>
+  <img src=".github/images/superstore_demo.gif" alt="Building a Superstore pipeline on the canvas — filter, join, pivot, and aggregate" width="800"/>
   <br>
-  <sub>Building a flow with joins, fuzzy matching, and transformations — data preview updates as you go.</sub>
+  <sub>Building a Superstore pipeline on the canvas — filters, a join, a pivot, and aggregations, with a live data preview updating at every step.</sub>
 </div>
 
 &nbsp;
@@ -62,9 +62,9 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 **A Python API** with Polars-like syntax. Code and visual are two ways to build the same object graph — write a pipeline, call `open_graph_in_editor()`, and see it visually without re-building anything.
 
 <div align="center">
-  <img src=".github/images/flowfile_canvas_code.png" alt="Flowfile — visual pipeline designer with live code generation" width="800"/>
+  <img src="docs/assets/images/quickstart/python_example.png" alt="A pipeline built with the Flowfile Python API, opened in the visual editor" width="800"/>
   <br>
-  <sub>A three-source pipeline in the visual designer, with the generated Python code on the right.</sub>
+  <sub>A pipeline written with the Python API and opened in the visual editor — code and canvas are two views of one graph.</sub>
 </div>
 
 &nbsp;
@@ -100,6 +100,14 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 **Python Kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
 
 **Templates and clipboard import.** Get started with built-in flow templates, or paste tabular data from Excel / Google Sheets directly onto the canvas to create a pre-filled input node.
+
+**See it all together.** A single flow can filter, join, pivot, and aggregate, then branch into as many outputs as you need.
+
+<div align="center">
+  <img src="docs/assets/images/guides/sales_dashboard/dashboard_overview.png" alt="A complete Flowfile pipeline with joins, pivots, and aggregations feeding multiple outputs" width="800"/>
+  <br>
+  <sub>One flow, many outputs — joins, pivots, and aggregations feeding a product leaderboard, a monthly trend, and a city matrix.</sub>
+</div>
 
 ---
 

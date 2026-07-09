@@ -1,0 +1,400 @@
+flowfile_version: 0.12.8
+flowfile_id: 950
+flowfile_name: Sales Dashboard
+flowfile_settings:
+  description: null
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: supermarket_sales.csv (csv)
+  node_reference: null
+  x_position: 0
+  y_position: 175
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [2]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    received_file:
+      id: null
+      name: supermarket_sales.csv
+      path: __TEMPLATE_DATA_DIR__/supermarket_sales.csv
+      directory: null
+      analysis_file_available: false
+      status: null
+      fields: []
+      abs_file_path: null
+      file_type: csv
+      table_settings:
+        file_type: csv
+        reference: ''
+        starting_from_line: 0
+        delimiter: ','
+        has_headers: true
+        encoding: utf-8
+        parquet_ref: null
+        row_delimiter: '
+
+          '
+        quote_char: '"'
+        infer_schema_length: 10000
+        truncate_ragged_lines: false
+        ignore_errors: false
+- id: 2
+  type: unique
+  is_start_node: false
+  description: Unique rows (keep any)
+  node_reference: null
+  x_position: 200
+  y_position: 250
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    unique_input:
+      columns: null
+      strategy: any
+- id: 3
+  type: formula
+  is_start_node: false
+  description: revenue = [unit_price] * [quantity]
+  node_reference: null
+  x_position: 400
+  y_position: 250
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [4, 10, 12]
+  output_handles: [output-0, output-0, output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    function:
+      field:
+        name: revenue
+        data_type: Float64
+      function: '[unit_price] * [quantity]'
+- id: 4
+  type: group_by
+  is_start_node: false
+  description: 'By product_line: sum(revenue), n_unique(invoice_id), sum(quantity)'
+  node_reference: null
+  x_position: 600
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [6]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    groupby_input:
+      agg_cols:
+      - old_name: product_line
+        agg: groupby
+        new_name: product_line
+        output_type: null
+      - old_name: revenue
+        agg: sum
+        new_name: total_revenue
+        output_type: null
+      - old_name: invoice_id
+        agg: n_unique
+        new_name: orders
+        output_type: Int64
+      - old_name: quantity
+        agg: sum
+        new_name: units_sold
+        output_type: null
+- id: 5
+  type: manual_input
+  is_start_node: true
+  description: '3 cols, 6 rows: product_line, department, annual_target'
+  node_reference: null
+  x_position: 0
+  y_position: 325
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [6]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    raw_data_format:
+      columns:
+      - name: product_line
+        data_type: String
+      - name: department
+        data_type: String
+      - name: annual_target
+        data_type: Int64
+      data:
+      - [Home and lifestyle, Fashion accessories, Food and beverages, Sports and travel,
+        Health and beauty, Electronic accessories]
+      - [Homeware, Apparel, Grocery, Leisure, Personal care, Electronics]
+      - [55000, 50000, 52000, 50000, 48000, 45000]
+- id: 6
+  type: join
+  is_start_node: false
+  description: left join on product_line
+  node_reference: null
+  x_position: 800
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: 5
+  input_ids: [4]
+  outputs: [7]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: product_line
+        right_col: product_line
+      left_select:
+        select:
+        - old_name: product_line
+        - old_name: total_revenue
+        - old_name: orders
+        - old_name: units_sold
+      right_select:
+        select:
+        - old_name: product_line
+          keep: false
+        - old_name: department
+        - old_name: annual_target
+      how: left
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 7
+  type: formula
+  is_start_node: false
+  description: pct_of_target = [total_revenue] / [annual_target] * 100
+  node_reference: null
+  x_position: 1000
+  y_position: 175
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [6]
+  outputs: [8]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    function:
+      field:
+        name: pct_of_target
+        data_type: Float64
+      function: '[total_revenue] / [annual_target] * 100'
+- id: 8
+  type: sort
+  is_start_node: false
+  description: Sort by total_revenue desc
+  node_reference: null
+  x_position: 1200
+  y_position: 175
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [7]
+  outputs: [9]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    sort_input:
+    - column: total_revenue
+      how: desc
+- id: 9
+  type: explore_data
+  is_start_node: false
+  description: Product leaderboard vs target
+  node_reference: null
+  x_position: 1400
+  y_position: 250
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [8]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    graphic_walker_input: null
+- id: 10
+  type: pivot
+  is_start_node: false
+  description: Pivot revenue by customer_type (sum)
+  node_reference: null
+  x_position: 600
+  y_position: 250
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [11]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    pivot_input:
+      index_columns: [city]
+      pivot_column: customer_type
+      value_col: revenue
+      aggregations: [sum]
+    output_fields: null
+- id: 11
+  type: explore_data
+  is_start_node: false
+  description: Revenue by city and customer type
+  node_reference: null
+  x_position: 800
+  y_position: 250
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [10]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    graphic_walker_input: null
+- id: 12
+  type: formula
+  is_start_node: false
+  description: month = format_date([date], "%Y-%m")
+  node_reference: null
+  x_position: 600
+  y_position: 400
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [13]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    function:
+      field:
+        name: month
+        data_type: String
+      function: format_date([date], "%Y-%m")
+- id: 13
+  type: group_by
+  is_start_node: false
+  description: 'By month: sum(revenue)'
+  node_reference: null
+  x_position: 800
+  y_position: 400
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [12]
+  outputs: [14]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    groupby_input:
+      agg_cols:
+      - old_name: month
+        agg: groupby
+        new_name: month
+        output_type: null
+      - old_name: revenue
+        agg: sum
+        new_name: monthly_revenue
+        output_type: null
+- id: 14
+  type: sort
+  is_start_node: false
+  description: Sort by month asc
+  node_reference: null
+  x_position: 1000
+  y_position: 325
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [13]
+  outputs: [15]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    sort_input:
+    - column: month
+      how: asc
+- id: 15
+  type: explore_data
+  is_start_node: false
+  description: Monthly revenue trend
+  node_reference: null
+  x_position: 1200
+  y_position: 325
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [14]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    graphic_walker_input: null
+groups: []
+_template_meta:
+  template_id: sales_dashboard
+  name: 'Sales dashboard: rank, pivot, and trend'
+  description: 'Clean and enrich raw sales, then branch into three views: a product
+    leaderboard joined to per-line revenue targets, a city-by-customer-type revenue
+    matrix, and a monthly revenue trend.'
+  category: Advanced
+  tags: [formula, group_by, join, pivot, sort]
+  node_count: 15
+  icon: dashboard
+_required_csv_files: [supermarket_sales.csv]
