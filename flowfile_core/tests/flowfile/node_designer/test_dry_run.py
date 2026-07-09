@@ -6,6 +6,7 @@ happy path and timeout stub the worker seam so no live worker is required.
 
 import json
 
+import polars as pl
 import pytest
 
 from flowfile_core.flowfile.node_designer.state import (
@@ -331,6 +332,28 @@ def test_kernel_node_without_kernel_id_errors_before_worker(monkeypatch):
     assert resp.success is False
     assert resp.error_kind == "execution"
     assert "kernel" in resp.error.lower()
+
+
+def test_kernel_output_read_rejects_path_traversal(tmp_path):
+    """A ``../`` output name must not read another run's parquet off the shared volume."""
+    output_dir = tmp_path / "flow" / "node" / "outputs"
+    output_dir.mkdir(parents=True)
+    pl.DataFrame({"a": [1, 2]}).write_parquet(output_dir / "main.parquet")
+
+    victim_dir = tmp_path / "flow" / "victim" / "outputs"
+    victim_dir.mkdir(parents=True)
+    pl.DataFrame({"secret": [42]}).write_parquet(victim_dir / "main.parquet")
+
+    traversal = "../../victim/outputs/main"
+    outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main", traversal], object(), 100)
+
+    assert err is None
+    by_name = {o.name: o for o in outputs}
+    assert by_name["main"].rows == [[1], [2]]  # the run's own output still reads
+    # the traversal name resolves outside output_dir, so nothing is read or leaked
+    assert by_name[traversal].rows == []
+    assert by_name[traversal].columns == []
+    assert by_name[traversal].row_count == 0
 
 
 @pytest.mark.kernel

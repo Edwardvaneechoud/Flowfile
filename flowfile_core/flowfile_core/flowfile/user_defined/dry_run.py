@@ -394,6 +394,20 @@ def _kernel_logs(result) -> list[str]:
     return lines
 
 
+def _contained_output_path(output_dir: str, name: str) -> str | None:
+    """Resolve ``<output_dir>/<name>.parquet``, or None if ``name`` escapes ``output_dir``.
+
+    ``output_names`` is client-supplied and unvalidated (plain ``list[str]``), and ``output_dir``
+    lives on a volume shared across every user's dry runs — so a name with ``..`` segments could
+    otherwise read another run's parquet. Reject anything resolving outside the run's own dir.
+    """
+    root = os.path.realpath(output_dir)
+    path = os.path.realpath(os.path.join(output_dir, f"{name}.parquet"))
+    if not path.startswith(root + os.sep):
+        return None
+    return path
+
+
 def _read_kernel_output_previews(
     output_dir: str, output_names: list[str], result, row_limit: int
 ) -> tuple[list[DryRunOutput], DryRunResponse | None]:
@@ -406,8 +420,8 @@ def _read_kernel_output_previews(
     outputs: list[DryRunOutput] = []
     found = False
     for name in output_names:
-        path = os.path.join(output_dir, f"{name}.parquet")
-        if not os.path.exists(path):
+        path = _contained_output_path(output_dir, name)
+        if path is None or not os.path.exists(path):
             outputs.append(DryRunOutput(name=name))
             continue
         found = True
