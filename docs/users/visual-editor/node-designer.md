@@ -1,6 +1,6 @@
 # Node Designer
 
-The Node Designer lets you build reusable custom nodes visually — no Python file to write by hand. You lay out the settings form, write the transformation logic, test it against sample data, and save; your node then appears in the palette alongside the built-in ones.
+The Node Designer lets you build reusable custom nodes visually — no Python file to write by hand. When the palette doesn't have the operation you need, you build it here: drag controls to lay out the settings form, write the transformation as one small `process` method, test it against sample data, and save. Your node then appears in the palette alongside the built-in ones, with its own settings form — usable by anyone on your team, whether or not they code.
 
 The node's `.py` file is the single source of truth. The designer writes it, and — because a well-formed node file round-trips — it can reopen that file and load it straight back into the visual editor. Hand-written files that stay within the visual subset reopen visually too; anything more exotic opens in code-only mode.
 
@@ -172,6 +172,8 @@ Every node declares where its `process` runs. The Execution group offers two car
 - **Isolated kernel** — `process` runs inside a Docker kernel. Use it when the node needs third-party libraries or stronger isolation. A **Dependencies (pip)** tag editor on this card lists packages the kernel installs before the node runs. Kernel nodes can declare multiple named outputs. Secrets are not available here.
 
 The picker shows live Docker status. When Docker is unavailable, the Isolated-kernel card explains why and offers **Open Kernel Manager** and **Retry** — never a silent, dead dropdown. Create and start kernels in the [Kernel Manager](kernels.md) first.
+
+Local execution is the default and fully supported; the isolated-kernel environment is newer and still growing (it needs Docker and has a few [current limitations](kernels.md#current-limitations)). The designer itself is the same either way — only where `process` runs changes.
 
 !!! note "Legacy nodes still load"
     Older nodes that used a `requires_kernel` flag still load — it maps to the isolated-kernel environment automatically.

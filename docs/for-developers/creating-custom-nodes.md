@@ -47,8 +47,6 @@ Here is a complete node that adds a greeting column. Note the `process` signatur
 --8<-- "docs/examples/custom_node.py:example"
 ```
 
-This example is tested against the current API.
-
 ### 2. Use your node
 
 1. **Save the file.** Flowfile hot-reloads the custom-nodes directory on save — no restart. If the node was added while Flowfile was already open, click **Rescan** in the Node Designer's browser (or the Catalog's Custom Nodes tab) to pick it up.

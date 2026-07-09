@@ -351,3 +351,28 @@ def test_require_admin_allows_admin_and_blocks_non_admin():
     with pytest.raises(HTTPException) as exc:
         require_admin(current_user=member)
     assert exc.value.status_code == 403
+
+
+def test_add_mount_route_rejects_path_traversal():
+    """The route runs the shared validate_path_under_cwd barrier before the filesystem is touched."""
+    from fastapi import HTTPException
+
+    from flowfile_core.auth.models import User
+    from flowfile_core.routes.custom_node_mounts import AddMountRequest, add_custom_node_mount
+
+    admin = User(username="admin", id=1, disabled=False, is_admin=True, must_change_password=False)
+    with pytest.raises(HTTPException) as exc:
+        add_custom_node_mount(AddMountRequest(path="/tmp/../etc/passwd"), current_user=admin)
+    assert exc.value.status_code == 403
+
+
+def test_delete_mount_route_rejects_path_traversal():
+    from fastapi import HTTPException
+
+    from flowfile_core.auth.models import User
+    from flowfile_core.routes.custom_node_mounts import delete_custom_node_mount
+
+    admin = User(username="admin", id=1, disabled=False, is_admin=True, must_change_password=False)
+    with pytest.raises(HTTPException) as exc:
+        delete_custom_node_mount(path="/srv/../etc", current_user=admin)
+    assert exc.value.status_code == 403

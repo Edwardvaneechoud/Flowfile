@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
+from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.user_defined.mounts import (
     MountValidationError,
     add_mount,
@@ -105,8 +106,11 @@ def list_custom_node_mounts(current_user=Depends(get_current_active_user)) -> li
 
 @router.post("", summary="Register a custom-node mount directory", status_code=201)
 def add_custom_node_mount(request: AddMountRequest, current_user=Depends(require_admin)) -> dict[str, Any]:
+    # Reject traversal and confine to trusted roots in docker/package mode (any local dir in
+    # electron) before the path reaches the filesystem — the shared route path barrier.
+    mount_path = validate_path_under_cwd(request.path)
     try:
-        mount = add_mount(request.path)
+        mount = add_mount(mount_path)
     except MountValidationError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     entries = registry.scan()
@@ -124,7 +128,7 @@ def delete_custom_node_mount(
     path: str = Query(..., description="Mount path to unregister"),
     current_user=Depends(require_admin),
 ) -> dict[str, Any]:
-    removed = remove_mount(path)
+    removed = remove_mount(validate_path_under_cwd(path))
     if removed is None:
         raise HTTPException(status_code=404, detail=f"Mount not found: {path}")
     entries = registry.scan()

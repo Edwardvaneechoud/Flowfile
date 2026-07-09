@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420" role="img" aria-label="Placeholder: Test tab dry-run showing the output grid with a new cluster column and the log line from process">
+  <rect x="5" y="5" width="790" height="410" rx="14" fill="none" stroke="#8a8f98" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="400" y="198" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="600" fill="#8a8f98">Screenshot placeholder</text>
+  <text x="400" y="236" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#8a8f98">Test tab: output grid with a cluster column and the log line</text>
+</svg>

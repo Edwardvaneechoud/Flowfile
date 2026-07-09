@@ -5,8 +5,8 @@ Run custom Python code in isolated Docker containers with full access to your fl
 !!! info "Not in Flowfile Lite"
     Kernel execution requires Docker and the full desktop/server build. The browser-only [Flowfile Lite](../deployment/lite.md) edition cannot run kernels — use the **Polars Code** node for in-browser Python/Polars logic.
 
-!!! warning "Beta Feature"
-    Kernel execution is currently in **beta**. The core functionality is working, but some features are still under active development and optimization. See [Known Limitations](#known-limitations) for details.
+!!! info "Requires Docker, and still growing"
+    Kernel execution runs your Python in a Docker container, so Docker must be available. It's a capable, actively evolving part of Flowfile — a few edges are still being filled in. See [Current limitations](#current-limitations) for the specifics.
 
 Kernels provide a sandboxed execution environment for Python Script nodes. Each kernel runs inside its own Docker container with configurable resources (CPU, memory, GPU), persistent namespaces across executions, and access to the `flowfile_ctx` API for reading inputs, writing outputs, and managing artifacts.
 
@@ -199,9 +199,9 @@ For details on building custom nodes, see [Node Designer](node-designer.md#kerne
 
 ---
 
-## Known Limitations
+## Current limitations
 
-Kernel execution is in beta. The following limitations are known and being worked on:
+A few edges are still being filled in:
 
 - **Flow-to-code export** — Python Script nodes that use kernel execution are not yet included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes will be skipped in the generated code.
 - **Artifact state visibility** — There is currently no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer yet.
