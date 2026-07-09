@@ -89,6 +89,32 @@ def test_syntax_error_is_caught_in_core(monkeypatch):
     assert called["worker"] is False
 
 
+def test_oversized_sample_rows_rejected_before_worker(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("worker must not be called for oversized sample inputs")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _boom)
+    huge = [{"a": list(range(dr._MAX_SAMPLE_ROWS + 1))}]
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=huge), user_id=1)
+    assert resp.success is False
+    assert resp.error_kind == "no_sample_data"
+    assert "rows" in resp.error
+
+
+def test_sample_input_total_cell_cap_rejected(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("worker must not be called for oversized sample inputs")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _boom)
+    rows = dr._MAX_SAMPLE_ROWS // 2  # each column under the row cap
+    n_cols = (dr._MAX_SAMPLE_CELLS // rows) + 2  # ... but together over the cell cap
+    sample = {f"c{i}": list(range(rows)) for i in range(n_cols)}
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[sample]), user_id=1)
+    assert resp.success is False
+    assert resp.error_kind == "no_sample_data"
+    assert "cells" in resp.error
+
+
 def test_no_sample_data_runs_with_empty_inputs(monkeypatch):
     # No sample data no longer blocks: the node runs against one empty frame per input.
     captured = {}

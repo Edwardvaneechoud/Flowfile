@@ -37,6 +37,10 @@ _DEFAULT_TIMEOUT = 30
 _MAX_TIMEOUT = 120
 _POLL_INTERVAL = 0.25
 _DRY_RUN_FLOW_ID = -1
+# Sample inputs are materialized in core (pl.LazyFrame(...).serialize()) before shipping to the
+# worker/kernel, so bound them: core never materializes full datasets, and dry-run test data is small.
+_MAX_SAMPLE_ROWS = 10_000
+_MAX_SAMPLE_CELLS = 200_000
 
 
 class DryRunColumn(BaseModel):
@@ -148,6 +152,30 @@ def _resolve_sample_inputs(
         else extract_manifest(source).number_of_inputs
     )
     return [{} for _ in range(max(0, n))], None
+
+
+def _check_sample_size(samples: list[dict[str, list]]) -> DryRunResponse | None:
+    """Reject oversized sample inputs before any in-core ``pl.LazyFrame`` materialization.
+
+    ``sample_inputs`` comes straight from the request payload; an unbounded one would be
+    serialized in core's own process, breaking the "core never materializes full datasets"
+    contract. Guards both the worker and kernel dry-run paths.
+    """
+    total_cells = 0
+    for i, sample in enumerate(samples):
+        rows = max((len(col) for col in sample.values()), default=0)
+        if rows > _MAX_SAMPLE_ROWS:
+            return _fail(
+                "no_sample_data",
+                f"Sample input {i} has {rows} rows; the dry-run limit is {_MAX_SAMPLE_ROWS}.",
+            )
+        total_cells += sum(len(col) for col in sample.values())
+    if total_cells > _MAX_SAMPLE_CELLS:
+        return _fail(
+            "no_sample_data",
+            f"Sample inputs total {total_cells} cells; the dry-run limit is {_MAX_SAMPLE_CELLS}.",
+        )
+    return None
 
 
 def _serialize_inputs(samples: list[dict[str, list]]) -> tuple[list[bytes] | None, DryRunResponse | None]:
@@ -289,6 +317,10 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     output_names = _resolve_output_names(request, source)
 
     samples, err = _resolve_sample_inputs(request, source)
+    if err is not None:
+        return err
+
+    err = _check_sample_size(samples)
     if err is not None:
         return err
 

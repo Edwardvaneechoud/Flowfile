@@ -59,11 +59,11 @@ export async function duplicateNode(fileName: string): Promise<void> {
   if (parse.mode === "designer" && parse.designer_state) {
     store.designerState.node_name = "";
   }
+  // A duplicate is fresh unsaved work: no source file/hash, left dirty so the normal draft
+  // watcher preserves it. Don't call markSaved here — with sourceFile already null it would
+  // discardDraft() the shared "__new__" slot, silently wiping an unrelated pending new-node draft.
   store.sourceFile = null;
   store.fileHash = null;
-  store.markSaved(undefined, null);
-  // markSaved with new snapshot, but leave dirty on next edit; keep sourceFile null.
-  store.sourceFile = null;
 }
 
 export async function previewCode(): Promise<string> {

@@ -8,7 +8,7 @@ edited mounted node writes a copy into the default directory.
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
@@ -22,6 +22,14 @@ from flowfile_core.flowfile.user_defined.mounts import (
 from flowfile_core.flowfile.user_defined.registry import LoadedNode, registry
 
 router = APIRouter()
+
+
+def require_admin(current_user=Depends(get_current_active_user)):
+    """Registering a mount exec()s every .py in the directory inside core's process, and mounts
+    are install-wide (mounts.json, not per-user) — so mutating them is admin-only. Reads stay open."""
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
+    return current_user
 
 
 class MountInfo(BaseModel):
@@ -96,7 +104,7 @@ def list_custom_node_mounts(current_user=Depends(get_current_active_user)) -> li
 
 
 @router.post("", summary="Register a custom-node mount directory", status_code=201)
-def add_custom_node_mount(request: AddMountRequest, current_user=Depends(get_current_active_user)) -> dict[str, Any]:
+def add_custom_node_mount(request: AddMountRequest, current_user=Depends(require_admin)) -> dict[str, Any]:
     try:
         mount = add_mount(request.path)
     except MountValidationError as e:
@@ -114,7 +122,7 @@ def add_custom_node_mount(request: AddMountRequest, current_user=Depends(get_cur
 @router.delete("", summary="Unregister a custom-node mount directory (never deletes files)")
 def delete_custom_node_mount(
     path: str = Query(..., description="Mount path to unregister"),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_admin),
 ) -> dict[str, Any]:
     removed = remove_mount(path)
     if removed is None:

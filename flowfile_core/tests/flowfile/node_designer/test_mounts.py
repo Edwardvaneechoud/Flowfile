@@ -8,6 +8,7 @@
 - removing a mount drops its nodes from the registry on rescan
 """
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -294,3 +295,59 @@ def test_mount_module_name_is_deterministic(default_dir, extra_dir, local_regist
 
     assert first == second
     assert first.startswith("flowfile_udn_m")
+
+
+def test_concurrent_scan_and_reads_are_thread_safe(default_dir, extra_dir, local_registry):
+    """The lock keeps concurrent scan()/reads from tripping over a mutating _entries dict."""
+    write_node_file(default_dir, "a.py", "Node A", class_name="NodeA")
+    write_node_file(default_dir, "b.py", "Node B", class_name="NodeB")
+    write_node_file(extra_dir, "c.py", "Node C", class_name="NodeC")
+    add_mount(str(extra_dir), base_dir=default_dir)
+    local_registry.scan()
+
+    errors: list[Exception] = []
+
+    def scanner():
+        try:
+            for _ in range(10):
+                local_registry.scan()
+        except Exception as e:  # noqa: BLE001 — a race would surface as e.g. RuntimeError here
+            errors.append(e)
+
+    def reader():
+        try:
+            for _ in range(200):
+                local_registry.all()
+                local_registry.get("node_a")
+                local_registry.get_by_file("a.py")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=scanner) for _ in range(2)]
+    threads += [threading.Thread(target=reader) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    assert local_registry.get("node_a") is not None
+
+
+# ---------------------------------------------------------------- route authorization
+
+
+def test_require_admin_allows_admin_and_blocks_non_admin():
+    """Mount add/delete routes are admin-only: mounting exec()s every .py in the dir, install-wide."""
+    from fastapi import HTTPException
+
+    from flowfile_core.auth.models import User
+    from flowfile_core.routes.custom_node_mounts import require_admin
+
+    admin = User(username="admin", id=1, disabled=False, is_admin=True, must_change_password=False)
+    assert require_admin(current_user=admin) is admin
+
+    member = User(username="member", id=2, disabled=False, is_admin=False, must_change_password=False)
+    with pytest.raises(HTTPException) as exc:
+        require_admin(current_user=member)
+    assert exc.value.status_code == 403

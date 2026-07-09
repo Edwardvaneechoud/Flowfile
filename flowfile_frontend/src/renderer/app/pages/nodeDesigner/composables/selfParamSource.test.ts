@@ -3,10 +3,12 @@ import { EditorState } from "@codemirror/state";
 import { CompletionContext } from "@codemirror/autocomplete";
 import { selfParamSource, insideDefParams } from "./usePolarsAutocompletion";
 
-// Build a CompletionContext with the cursor at the `|` marker in `doc`.
+// Build a CompletionContext with the cursor at the (single) `|` marker in `doc`.
 function ctxAt(doc: string, explicit = false): CompletionContext {
   const pos = doc.indexOf("|");
-  const state = EditorState.create({ doc: doc.replace("|", "") });
+  // Excise exactly the marker at `pos` (not String.replace, which drops only the
+  // first `|` and would leave a stray marker if a doc ever had two).
+  const state = EditorState.create({ doc: doc.slice(0, pos) + doc.slice(pos + 1) });
   return new CompletionContext(state, pos, explicit);
 }
 

@@ -13,6 +13,7 @@ their normalized value lists (never ``nd.Types.X``) so the round-trip is stable.
 
 import json
 import keyword
+import math
 
 from flowfile_core.flowfile.node_designer.state import (
     ColumnActionInputState,
@@ -63,6 +64,12 @@ def _py_literal(value: object) -> str:
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, int | float):
+        if isinstance(value, float) and not math.isfinite(value):
+            # repr() emits the bare tokens nan/inf/-inf, which are NameErrors when the
+            # generated .py runs; float("...") is the valid literal form.
+            if math.isnan(value):
+                return 'float("nan")'
+            return 'float("-inf")' if value < 0 else 'float("inf")'
         return repr(value)
     raise CodegenError(f"value {value!r} is not a JSON-safe scalar")
 

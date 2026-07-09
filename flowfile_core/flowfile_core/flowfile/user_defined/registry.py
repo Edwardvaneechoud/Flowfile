@@ -9,6 +9,7 @@ and the palette lists track healthy entries only.
 import hashlib
 import logging
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,10 @@ class CustomNodeRegistry:
     def __init__(self, directory: Path | None = None):
         self._directory = directory
         self._entries: dict[str, LoadedNode] = {}  # keyed by str(file_path)
+        # Guards _entries + the sys.modules pops: FastAPI runs these sync handlers on a
+        # threadpool, so a save-driven load_file can race a mount-driven scan (reentrant:
+        # scan() calls load_file()/_remove_entry()/all()).
+        self._lock = threading.RLock()
         self.on_registered: Callable[[LoadedNode], None] | None = None
         self.on_unregistered: Callable[[LoadedNode], None] | None = None
 
@@ -84,23 +89,24 @@ class CustomNodeRegistry:
 
     def scan(self) -> list[LoadedNode]:
         """Full rescan of the nodes directory + mounts (non-recursive, so the icons subdir is never scanned)."""
-        for key in list(self._entries):
-            self._remove_entry(key)
-        directory = self.directory
-        if not directory.exists() or not directory.is_dir():
-            logger.warning("User-defined nodes directory %s does not exist", directory)
-            return []
-        scan_targets: list[tuple[Path, str | None]] = [(directory, None)]
-        scan_targets += [(mount, str(mount)) for mount in self.mount_directories()]
-        for base, mount_path in scan_targets:
-            if mount_path is not None and (not base.exists() or not base.is_dir()):
-                logger.warning("Custom node mount %s does not exist", base)
-                continue
-            for path in sorted(base.glob("*.py")):
-                if path.name.startswith("__"):
+        with self._lock:
+            for key in list(self._entries):
+                self._remove_entry(key)
+            directory = self.directory
+            if not directory.exists() or not directory.is_dir():
+                logger.warning("User-defined nodes directory %s does not exist", directory)
+                return []
+            scan_targets: list[tuple[Path, str | None]] = [(directory, None)]
+            scan_targets += [(mount, str(mount)) for mount in self.mount_directories()]
+            for base, mount_path in scan_targets:
+                if mount_path is not None and (not base.exists() or not base.is_dir()):
+                    logger.warning("Custom node mount %s does not exist", base)
                     continue
-                self.load_file(path, mount_path=mount_path)
-        return self.all()
+                for path in sorted(base.glob("*.py")):
+                    if path.name.startswith("__"):
+                        continue
+                    self.load_file(path, mount_path=mount_path)
+            return self.all()
 
     @staticmethod
     def _module_name_for(path: Path, mount_path: str | None) -> str:
@@ -112,57 +118,59 @@ class CustomNodeRegistry:
     def load_file(self, path: Path, mount_path: str | None = None) -> LoadedNode:
         path = Path(path)
         module_name = self._module_name_for(path, mount_path)
-        prior = self._entries.get(str(path))
-        fallback_key = prior.node_key if prior is not None else path.stem
-        try:
-            source_bytes = path.read_bytes()
-        except OSError as e:
+        with self._lock:
+            prior = self._entries.get(str(path))
+            fallback_key = prior.node_key if prior is not None else path.stem
+            try:
+                source_bytes = path.read_bytes()
+            except OSError as e:
+                entry = LoadedNode(
+                    node_key=fallback_key,
+                    file_path=path,
+                    file_name=path.name,
+                    source_text="",
+                    source_hash="",
+                    mtime=0.0,
+                    error=f"Cannot read file: {e}",
+                    mount_path=mount_path,
+                    module_name=module_name,
+                )
+                return self._finalize(entry, prior)
+
             entry = LoadedNode(
                 node_key=fallback_key,
                 file_path=path,
                 file_name=path.name,
-                source_text="",
-                source_hash="",
-                mtime=0.0,
-                error=f"Cannot read file: {e}",
+                source_text=source_bytes.decode("utf-8", errors="replace"),
+                source_hash=hashlib.sha256(source_bytes).hexdigest(),
+                mtime=path.stat().st_mtime,
                 mount_path=mount_path,
                 module_name=module_name,
             )
+            try:
+                module = load_node_module(path=str(path), module_name=module_name)
+                node_class = find_custom_node_class(module)
+                node = node_class()
+                entry.class_name = node_class.__name__
+                entry.node_key = compute_node_key(node.node_name)
+                winner = self._holder_of(entry.node_key)
+                if winner is not None and winner.file_path != entry.file_path:
+                    entry.error = f"Duplicate node name '{node.node_name}' — already provided by {winner.file_name}"
+                else:
+                    entry.node_class = node_class
+                    entry.template = node.to_node_template()
+            except SyntaxError as e:
+                entry.error = f"Syntax error at line {e.lineno}: {e.msg}"
+            except NodeLoadError as e:
+                entry.error = str(e)
+            except Exception as e:
+                entry.error = f"{type(e).__name__}: {e}"
             return self._finalize(entry, prior)
-
-        entry = LoadedNode(
-            node_key=fallback_key,
-            file_path=path,
-            file_name=path.name,
-            source_text=source_bytes.decode("utf-8", errors="replace"),
-            source_hash=hashlib.sha256(source_bytes).hexdigest(),
-            mtime=path.stat().st_mtime,
-            mount_path=mount_path,
-            module_name=module_name,
-        )
-        try:
-            module = load_node_module(path=str(path), module_name=module_name)
-            node_class = find_custom_node_class(module)
-            node = node_class()
-            entry.class_name = node_class.__name__
-            entry.node_key = compute_node_key(node.node_name)
-            winner = self._holder_of(entry.node_key)
-            if winner is not None and winner.file_path != entry.file_path:
-                entry.error = f"Duplicate node name '{node.node_name}' — already provided by {winner.file_name}"
-            else:
-                entry.node_class = node_class
-                entry.template = node.to_node_template()
-        except SyntaxError as e:
-            entry.error = f"Syntax error at line {e.lineno}: {e.msg}"
-        except NodeLoadError as e:
-            entry.error = str(e)
-        except Exception as e:
-            entry.error = f"{type(e).__name__}: {e}"
-        return self._finalize(entry, prior)
 
     def remove_file(self, file_name: str) -> LoadedNode | None:
         """Remove a default-directory file's entry; mounted entries leave via ``scan()`` after a mount change."""
-        return self._remove_entry(str(self.directory / file_name))
+        with self._lock:
+            return self._remove_entry(str(self.directory / file_name))
 
     def _remove_entry(self, key: str) -> LoadedNode | None:
         entry = self._entries.pop(key, None)
@@ -174,20 +182,23 @@ class CustomNodeRegistry:
         return entry
 
     def get(self, node_key: str) -> LoadedNode | None:
-        broken = None
-        for entry in self._entries.values():
-            if entry.node_key == node_key:
-                if entry.node_class is not None:
-                    return entry
-                broken = broken or entry
-        return broken
+        with self._lock:
+            broken = None
+            for entry in self._entries.values():
+                if entry.node_key == node_key:
+                    if entry.node_class is not None:
+                        return entry
+                    broken = broken or entry
+            return broken
 
     def get_by_file(self, file_name: str) -> LoadedNode | None:
         """Default-directory lookup by file name (mounted entries are keyed by full path)."""
-        return self._entries.get(str(self.directory / file_name))
+        with self._lock:
+            return self._entries.get(str(self.directory / file_name))
 
     def all(self, include_broken: bool = True) -> list[LoadedNode]:
-        entries = sorted(self._entries.values(), key=lambda e: (e.file_name, e.mount_path or ""))
+        with self._lock:
+            entries = sorted(self._entries.values(), key=lambda e: (e.file_name, e.mount_path or ""))
         if include_broken:
             return entries
         return [entry for entry in entries if entry.node_class is not None]
@@ -210,7 +221,6 @@ class CustomNodeRegistry:
         if entry.node_class is not None:
             if self.on_registered is not None:
                 self.on_registered(entry)
-            logger.info("Loaded custom node '%s' from %s", entry.node_key, entry.file_name)
         else:
             logger.warning("Custom node file %s failed to load: %s", entry.file_name, entry.error)
         return entry

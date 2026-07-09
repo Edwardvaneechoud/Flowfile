@@ -255,6 +255,33 @@ def test_codegen_error_on_empty_process():
         generate_source(_minimal_state(process_code=""))
 
 
+# -- non-finite floats ---------------------------------------------------------
+
+
+def test_non_finite_numeric_defaults_emit_valid_literals():
+    """NaN/Inf float fields render as float(...) calls, not the bare nan/inf NameError tokens."""
+    import ast
+
+    from flowfile_core.flowfile.node_designer.state import NumericInputState
+
+    section = SectionState(
+        name="main",
+        components=[
+            NumericInputState(
+                name="n",
+                default=float("nan"),
+                min_value=float("-inf"),
+                max_value=float("inf"),
+            )
+        ],
+    )
+    src = generate_source(_minimal_state(sections=[section]))
+    assert 'default=float("nan")' in src
+    assert 'min_value=float("-inf")' in src
+    assert 'max_value=float("inf")' in src
+    ast.parse(src)  # and it stays valid, parseable Python
+
+
 # -- ruff-format stability of the scaffolding ----------------------------------
 
 
