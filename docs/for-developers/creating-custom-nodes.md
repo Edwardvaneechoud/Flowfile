@@ -306,7 +306,7 @@ return lf.select(cols)
 
 **When to use** — the purpose-built, type-filterable column picker. Prefer it over `SingleSelect(IncomingColumns)` whenever you are choosing real input columns.
 
-### Column Action — `.value` → `dict`
+### Column Action — `.value` → `ColumnActionValue`
 
 A table where the user pairs input columns with an action and an output name, with optional group-by and order-by pickers. Built for aggregations, rolling windows, string operations, and type casts.
 
@@ -326,25 +326,33 @@ column_actions = nd.ColumnActionInput(
 
 **Configure** — `actions` (strings or `nd.ActionOption(value, label)`), `output_name_template` (`"{column}_{action}"`), `show_group_by` (False), `show_order_by` (False), `data_types`. **Needs a connected input:** yes.
 
-The value is a `dict`:
+The value is a typed `nd.ColumnActionValue` with attribute access:
 
 ```python
-{
-    "rows": [{"column": str, "action": str, "output_name": str}, ...],
-    "group_by_columns": list[str],   # [] unless show_group_by=True
-    "order_by_column": str | None,   # None unless show_order_by=True
-}
+cfg.rows              # list[nd.ColumnActionRow], each with .column / .action / .output_name (all str)
+cfg.group_by_columns  # list[str]   ([] unless show_group_by=True)
+cfg.order_by_column   # str | None  (None unless show_order_by=True)
 ```
 
 ```python
 cfg = self.settings_schema.agg.column_actions.value
-return lf.group_by(cfg["group_by_columns"]).agg([
-    getattr(pl.col(r["column"]), r["action"])().alias(r["output_name"])
-    for r in cfg["rows"]
+return lf.group_by(cfg.group_by_columns).agg([
+    getattr(pl.col(r.column), r.action)().alias(r.output_name)
+    for r in cfg.rows
 ])
 ```
 
 **When to use** — to pair many columns with an operation and an output name in one table. Column Selector only returns column names; Column Action returns column + action + output rows.
+
+!!! tip "Annotate for autocomplete"
+    Section components are populated dynamically, so the attribute chain
+    (`self.settings_schema.agg.column_actions.value`) is untyped to the editor even though the
+    value is a real `nd.ColumnActionValue` at runtime. Annotate the local once to get full
+    autocomplete on `cfg.` and each `r.`:
+
+    ```python
+    cfg: nd.ColumnActionValue = self.settings_schema.agg.column_actions.value
+    ```
 
 !!! note "You interpret the actions"
     The action strings are yours to act on in `process` — the component collects the rows, it does not run the operations for you.

@@ -80,6 +80,42 @@ class EagerNode(nd.CustomNodeBase):
         return inputs[0].collect()
 '''
 
+COLUMN_ACTION_SOURCE = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class AggSettings(nd.NodeSettings):
+    agg: nd.Section = nd.Section(
+        title="Agg",
+        column_actions=nd.ColumnActionInput(label="Aggregations", actions=["sum", "mean"]),
+    )
+
+
+class AggNode(nd.CustomNodeBase):
+    node_name: str = "Agg"
+    settings_schema: AggSettings = AggSettings()
+
+    def process(self, *inputs):
+        lf = inputs[0]
+        cfg: nd.ColumnActionValue = self.settings_schema.agg.column_actions.value
+        return lf.group_by(cfg.group_by_columns).agg([
+            getattr(pl.col(r.column), r.action)().alias(r.output_name)
+            for r in cfg.rows
+        ])
+'''
+
+COLUMN_ACTION_SETTINGS = {
+    "agg": {
+        "column_actions": {
+            "rows": [{"column": "v", "action": "sum", "output_name": "v_sum"}],
+            "group_by_columns": ["g"],
+            "order_by_column": None,
+        }
+    }
+}
+
 
 class StubCtx:
     """Minimal stand-in for the kernel runtime's flowfile_ctx."""
@@ -228,6 +264,34 @@ class JoinNode(nd.CustomNodeBase):
         out = _collect(ctx.published["main"])
         assert out.columns == ["a", "b"]
         assert out.to_dicts() == [{"a": 1, "b": 2}]
+
+
+class TestColumnActionAttributeAccess:
+    """A ColumnActionInput value is a plain dict inside the kernel; the baked wrapper
+    must still allow the typed attribute access (cfg.rows, r.column) the SDK provides."""
+
+    def test_wrap_helper_baked_in(self):
+        script = generate_kernel_script(
+            node_source=COLUMN_ACTION_SOURCE,
+            class_name="AggNode",
+            settings_values=COLUMN_ACTION_SETTINGS,
+            output_names=["main"],
+            number_of_inputs=1,
+        )
+        assert "class _AttrDict(dict):" in script
+        assert "def _wrap(value):" in script
+
+    def test_attribute_access_executes(self):
+        script = generate_kernel_script(
+            node_source=COLUMN_ACTION_SOURCE,
+            class_name="AggNode",
+            settings_values=COLUMN_ACTION_SETTINGS,
+            output_names=["main"],
+            number_of_inputs=1,
+        )
+        ctx = _run(script, {"main": [pl.LazyFrame({"g": ["a", "a", "b"], "v": [1, 2, 3]})]})
+        out = _collect(ctx.published["main"]).sort("g")
+        assert out.to_dicts() == [{"g": "a", "v_sum": 3}, {"g": "b", "v_sum": 3}]
 
 
 class TestErrorPaths:

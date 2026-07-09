@@ -47,6 +47,17 @@ export function returnsChip(returns: ComponentReturns): string {
   return `${returns.accessor} → ${returns.type}`;
 }
 
+/**
+ * Canonical Python type of a component's value as written in code — the display
+ * `returns.type` without a trailing ` | None`. ControlInspector's Insert Variable
+ * derives from this so it can't drift from the reference. (The Polars autocompletion
+ * keeps its own map, tuned for CodeMirror.)
+ */
+export function pyValueType(type: ComponentType): string {
+  const doc = componentDocs.find((c) => c.type === type);
+  return (doc?.returns.type ?? "Any").replace(/\s*\|\s*None$/, "");
+}
+
 export const componentDocs: ComponentDoc[] = [
   {
     type: "TextInput",
@@ -168,12 +179,10 @@ return lf.select(cols)`,
       "A table where the user pairs input columns with an action and an output name, with optional group-by and order-by pickers. Built for aggregations, rolling windows, string operations, and type casts.",
     returns: {
       accessor: ".value",
-      type: "dict",
-      shape: `{
-    "rows": [{"column": str, "action": str, "output_name": str}, ...],
-    "group_by_columns": list[str],   # [] unless show_group_by=True
-    "order_by_column": str | None,   # None unless show_order_by=True
-}`,
+      type: "ColumnActionValue",
+      shape: `cfg.rows              # list[nd.ColumnActionRow] — each .column / .action / .output_name (str)
+cfg.group_by_columns  # list[str]   ([] unless show_group_by=True)
+cfg.order_by_column   # str | None  (None unless show_order_by=True)`,
     },
     configure: [
       {
@@ -189,14 +198,14 @@ return lf.select(cols)`,
       { prop: "data_types", desc: "Restrict selectable columns by type." },
     ],
     needsInput: true,
-    howToUse: `cfg = self.settings_schema.agg.column_actions.value
-return lf.group_by(cfg["group_by_columns"]).agg([
-    getattr(pl.col(r["column"]), r["action"])().alias(r["output_name"])
-    for r in cfg["rows"]
+    howToUse: `cfg: nd.ColumnActionValue = self.settings_schema.agg.column_actions.value
+return lf.group_by(cfg.group_by_columns).agg([
+    getattr(pl.col(r.column), r.action)().alias(r.output_name)
+    for r in cfg.rows
 ])`,
     whenToUse:
       "Pair many columns with an operation and an output name in one table. ColumnSelector only returns the column names — this returns column + action + output rows.",
-    note: "The action strings are yours to interpret in process — the component just collects the rows; it does not run the operations for you.",
+    note: "The value is a typed nd.ColumnActionValue (attribute access: cfg.rows, r.column); annotate cfg: nd.ColumnActionValue for editor autocomplete. The action strings are yours to interpret in process — the component just collects the rows.",
   },
   {
     type: "SliderInput",

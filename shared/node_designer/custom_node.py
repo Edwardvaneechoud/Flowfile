@@ -76,7 +76,7 @@ def _convert_value(value: Any) -> Any:
     Helper function to convert any value to a frontend-ready format.
     """
     if isinstance(value, Section):
-        section_data = value.model_dump(include={"title", "description", "hidden"}, exclude_none=True)
+        section_data = value.model_dump(include={"title", "description", "hidden", "layout"}, exclude_none=True)
         section_data["component_type"] = "Section"
         section_data["components"] = {key: _convert_value(comp) for key, comp in value.get_components().items()}
         return section_data
@@ -323,8 +323,14 @@ class SectionBuilder:
         advanced_section = builder.build()
     """
 
-    def __init__(self, title: str | None = None, description: str | None = None, hidden: bool = False):
-        self._section = Section(title=title, description=description, hidden=hidden)
+    def __init__(
+        self,
+        title: str | None = None,
+        description: str | None = None,
+        hidden: bool = False,
+        layout: Literal["vertical", "horizontal"] = "vertical",
+    ):
+        self._section = Section(title=title, description=description, hidden=hidden, layout=layout)
 
     def add_component(self, name: str, component: FlowfileInComponent) -> "SectionBuilder":
         """Add a component to the section."""
@@ -566,7 +572,10 @@ class CustomNodeBase(BaseModel):
         for section_name, section in all_sections.items():
             section_vals: dict[str, Any] = {}
             for comp_name, comp in section.get_components().items():
-                section_vals[comp_name] = comp.value
+                val = comp.value
+                if isinstance(val, BaseModel):
+                    val = val.model_dump()
+                section_vals[comp_name] = val
             result[section_name] = section_vals
         return result
 
@@ -589,8 +598,22 @@ class CustomNodeBase(BaseModel):
         # --- Build settings proxy code ---
         settings_values = self._extract_settings_values()
         proxy_lines: list[str] = []
+        proxy_lines.append("class _AttrDict(dict):")
+        proxy_lines.append("    def __getattr__(self, name):")
+        proxy_lines.append("        try:")
+        proxy_lines.append("            return self[name]")
+        proxy_lines.append("        except KeyError:")
+        proxy_lines.append("            raise AttributeError(name)")
+        proxy_lines.append("")
+        proxy_lines.append("def _wrap(v):")
+        proxy_lines.append("    if isinstance(v, dict):")
+        proxy_lines.append("        return _AttrDict({k: _wrap(x) for k, x in v.items()})")
+        proxy_lines.append("    if isinstance(v, list):")
+        proxy_lines.append("        return [_wrap(x) for x in v]")
+        proxy_lines.append("    return v")
+        proxy_lines.append("")
         proxy_lines.append("class _V:")
-        proxy_lines.append("    def __init__(self, v): self.value = v")
+        proxy_lines.append("    def __init__(self, v): self.value = _wrap(v)")
         proxy_lines.append("")
         proxy_lines.append("class _Self:")
 

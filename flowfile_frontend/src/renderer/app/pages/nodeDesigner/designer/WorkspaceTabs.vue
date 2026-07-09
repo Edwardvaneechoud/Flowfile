@@ -43,7 +43,11 @@
             </div>
             <FormCanvas />
           </div>
-          <ControlInspector @insert-variable="handleInsertVariable" />
+          <ControlInspector
+            v-if="store.selectedComponent"
+            @insert-variable="handleInsertVariable"
+          />
+          <SectionInspector v-else />
         </div>
       </el-tab-pane>
 
@@ -110,6 +114,7 @@ import ProcessCodeEditor from "../ProcessCodeEditor.vue";
 import FormFieldsOverview from "./FormFieldsOverview.vue";
 import FormCanvas from "./FormCanvas.vue";
 import ControlInspector from "./ControlInspector.vue";
+import SectionInspector from "./SectionInspector.vue";
 import TestPanel from "./testPanel/TestPanel.vue";
 import CollapsibleSection from "../../../components/common/CollapsibleSection/CollapsibleSection.vue";
 import { recheckCode } from "../loadSave";

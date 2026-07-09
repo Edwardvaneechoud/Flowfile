@@ -183,9 +183,25 @@ import json as _json
 flowfile_ctx = globals()["flowfile_ctx"]
 
 
+class _AttrDict(dict):
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+
+def _wrap(value):
+    if isinstance(value, dict):
+        return _AttrDict({{_k: _wrap(_v) for _k, _v in value.items()}})
+    if isinstance(value, list):
+        return [_wrap(_v) for _v in value]
+    return value
+
+
 class _Component:
     def __init__(self, value):
-        self.value = value
+        self.value = _wrap(value)
 
     @property
     def secret_value(self):

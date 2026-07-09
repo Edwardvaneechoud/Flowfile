@@ -181,6 +181,7 @@ export function designerStateToFrontendSchema(state: DesignerState): SettingsSch
       title: section.title ?? undefined,
       description: section.description ?? undefined,
       hidden: section.hidden || undefined,
+      layout: section.layout ?? "vertical",
       components,
     };
     schema[section.name] = sectionComp;
@@ -386,6 +387,7 @@ function legacySectionToState(section: DesignerSection): SectionState {
     title: section.title ?? null,
     description: null,
     hidden: false,
+    layout: "vertical",
     components: (section.components ?? []).map(legacyComponentToState),
   };
 }

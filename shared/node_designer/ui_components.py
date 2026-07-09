@@ -280,6 +280,7 @@ class Section(BaseModel):
     title: str | None = None
     description: str | None = None
     hidden: bool = False
+    layout: Literal["vertical", "horizontal"] = "vertical"
 
     class Config:
         extra = "allow"
@@ -318,7 +319,7 @@ class Section(BaseModel):
                 components[key] = value
 
         for field_name in self.model_fields:
-            if field_name not in {"title", "description", "hidden"}:
+            if field_name not in {"title", "description", "hidden", "layout"}:
                 value = getattr(self, field_name, None)
                 if isinstance(value, FlowfileInComponent):
                     components[field_name] = value
@@ -423,6 +424,26 @@ class SecretSelector(FlowfileInComponent):
         return data
 
 
+class ColumnActionRow(BaseModel):
+    """One row of a ColumnActionInput: an input column, the action to apply, and the output name."""
+
+    column: str = ""
+    action: str = ""
+    output_name: str = ""
+
+    model_config = {"extra": "allow"}
+
+
+class ColumnActionValue(BaseModel):
+    """Typed value of a ColumnActionInput (read as ``.value`` in ``process``)."""
+
+    rows: list[ColumnActionRow] = Field(default_factory=list)
+    group_by_columns: list[str] = Field(default_factory=list)
+    order_by_column: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class ColumnActionInput(FlowfileInComponent):
     """
     A generic UI component for configuring column-based transformations.
@@ -491,18 +512,22 @@ class ColumnActionInput(FlowfileInComponent):
 
     def __init__(self, **data):
         super().__init__(**data)
-        if self.value is None:
-            self.value = {
-                "rows": [],
-                "group_by_columns": [],
-                "order_by_column": None,
-            }
+        self.value = self._coerce_value(self.value)
+
+    @staticmethod
+    def _coerce_value(value: Any) -> ColumnActionValue:
+        """Normalize a value (raw wire dict, model, or None) to a ColumnActionValue."""
+        if isinstance(value, ColumnActionValue):
+            return value
+        if isinstance(value, dict):
+            return ColumnActionValue.model_validate(value)
+        return ColumnActionValue()
 
     def set_value(self, value: Any):
         """
-        Sets the value from frontend.
+        Sets the value from frontend, coercing the raw dict into a typed ColumnActionValue.
         """
-        self.value = value
+        self.value = self._coerce_value(value)
         return self
 
     @computed_field
@@ -533,4 +558,6 @@ class ColumnActionInput(FlowfileInComponent):
             data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
         else:
             data["data_types"] = "ALL"
+        if isinstance(self.value, ColumnActionValue):
+            data["value"] = self.value.model_dump()
         return data

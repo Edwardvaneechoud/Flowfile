@@ -93,6 +93,7 @@ export interface SectionComponent {
   title?: string;
   description?: string;
   hidden?: boolean;
+  layout?: "vertical" | "horizontal";
   components: Record<string, UIComponent>;
 }
 

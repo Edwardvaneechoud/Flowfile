@@ -2,7 +2,7 @@
 // (help popover + modal) and the derived palette lists. These guard against a
 // component being added to the designer without a matching doc entry.
 import { describe, expect, it } from "vitest";
-import { componentDocs, returnsChip } from "./componentDocs";
+import { componentDocs, pyValueType, returnsChip } from "./componentDocs";
 import { availableComponents } from "./constants";
 import type { ComponentType } from "./designerState";
 
@@ -65,5 +65,15 @@ describe("componentDocs", () => {
     expect(availableComponents).toEqual(
       componentDocs.map((c) => ({ type: c.type, label: c.label, icon: c.icon })),
     );
+  });
+
+  // pyValueType is the single source ControlInspector's Insert Variable derives from.
+  it("pyValueType strips ` | None` and matches each component's return type", () => {
+    expect(pyValueType("SecretSelector")).toBe("SecretStr");
+    expect(pyValueType("ColumnActionInput")).toBe("ColumnActionValue");
+    expect(pyValueType("MultiSelect")).toBe("list[str]");
+    for (const c of componentDocs) {
+      expect(pyValueType(c.type), `${c.type} base type`).not.toContain("| None");
+    }
   });
 });

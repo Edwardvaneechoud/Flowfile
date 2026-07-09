@@ -185,6 +185,7 @@ def _section(rng: random.Random, taken: set[str]) -> SectionState:
         title=_maybe(rng, _text(rng)),
         description=_maybe(rng, _text(rng)),
         hidden=rng.random() < 0.3,
+        layout=rng.choice(["vertical", "horizontal"]),
         components=[_component(rng, taken) for _ in range(rng.randint(0, 4))],
     )
 

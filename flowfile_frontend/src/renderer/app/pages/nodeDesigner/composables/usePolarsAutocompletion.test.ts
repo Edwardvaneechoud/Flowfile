@@ -38,6 +38,27 @@ const oneSliderField = (): SectionState[] => [
   },
 ];
 
+const oneColumnActionField = (): SectionState[] => [
+  {
+    name: "agg",
+    title: "Agg",
+    description: null,
+    hidden: false,
+    components: [
+      {
+        component_type: "ColumnActionInput",
+        name: "column_actions",
+        label: "Column actions",
+        actions: [{ value: "sum", label: "sum" }],
+        output_name_template: "{column}_{action}",
+        show_group_by: true,
+        show_order_by: false,
+        data_types: "ALL",
+      },
+    ],
+  },
+];
+
 function ctxFor(code: string, pos: number = code.length, explicit = false): CompletionContext {
   const state = EditorState.create({ doc: code });
   return new CompletionContext(state, pos, explicit);
@@ -130,6 +151,7 @@ describe("settingsFieldAccessor / pyType", () => {
     expect(pyType("TextInput")).toBe("str");
     expect(pyType("ToggleSwitch")).toBe("bool");
     expect(pyType("SecretSelector")).toBe("SecretStr");
+    expect(pyType("ColumnActionInput")).toBe("ColumnActionValue");
     expect(pyType("Unknown")).toBe("Any");
   });
 });
@@ -214,6 +236,29 @@ describe("inferLocalTypes", () => {
   it("infers .secret_value as SecretStr", () => {
     const t = inferLocalTypes("k = self.settings_schema.settings.api_key.secret_value", []);
     expect(t.get("k")).toBe("SecretStr");
+  });
+
+  it("infers a ColumnActionInput value as ColumnActionValue (accessor and annotation)", () => {
+    const t = inferLocalTypes(
+      "cfg = self.settings_schema.agg.column_actions.value",
+      oneColumnActionField(),
+    );
+    expect(t.get("cfg")).toBe("ColumnActionValue");
+
+    // The ControlInspector "insert variable" annotation normalizes the same way.
+    const t2 = inferLocalTypes("cfg: nd.ColumnActionValue = something()", []);
+    expect(t2.get("cfg")).toBe("ColumnActionValue");
+  });
+});
+
+describe("memberCompletionsFor", () => {
+  it("offers ColumnActionValue attributes for a ColumnActionValue variable", () => {
+    const members = memberCompletionsFor("cfg", new Map([["cfg", "ColumnActionValue"]]));
+    expect(members?.map((m) => m.label)).toEqual(["rows", "group_by_columns", "order_by_column"]);
+  });
+
+  it("returns null for an unknown/untyped variable", () => {
+    expect(memberCompletionsFor("cfg", new Map())).toBeNull();
   });
 });
 

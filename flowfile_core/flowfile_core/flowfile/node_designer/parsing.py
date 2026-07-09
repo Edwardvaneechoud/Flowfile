@@ -470,6 +470,7 @@ class _SourceParser:
         title: str | None = None
         description: str | None = None
         hidden = False
+        layout = "vertical"
         components = []
         ok = True
         for kw in call.keywords:
@@ -481,7 +482,7 @@ class _SourceParser:
                 )
                 ok = False
                 continue
-            if kw.arg in ("title", "description", "hidden"):
+            if kw.arg in ("title", "description", "hidden", "layout"):
                 try:
                     value = self.eval_literal(kw.value)
                 except _LiteralError as e:
@@ -496,6 +497,16 @@ class _SourceParser:
                     hidden = bool(value)
                 elif kw.arg == "title":
                     title = value
+                elif kw.arg == "layout":
+                    if value not in ("vertical", "horizontal"):
+                        self.error(
+                            ParseIssueCode.NON_LITERAL_COMPONENT_KWARG,
+                            f"'{name}.layout' must be 'vertical' or 'horizontal'",
+                            kw.value,
+                        )
+                        ok = False
+                        continue
+                    layout = value
                 else:
                     description = value
                 continue
@@ -507,7 +518,9 @@ class _SourceParser:
         if not ok:
             return None
         try:
-            return SectionState(name=name, title=title, description=description, hidden=hidden, components=components)
+            return SectionState(
+                name=name, title=title, description=description, hidden=hidden, layout=layout, components=components
+            )
         except ValidationError as e:
             self.error(ParseIssueCode.NON_LITERAL_COMPONENT_KWARG, f"Section '{name}' is invalid: {e}", call)
             return None

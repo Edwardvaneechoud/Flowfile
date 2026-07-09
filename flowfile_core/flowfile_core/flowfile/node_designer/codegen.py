@@ -275,6 +275,8 @@ class _Renderer:
             kwargs.append(("description", _py_literal(section.description)))
         if section.hidden:
             kwargs.append(("hidden", _py_literal(section.hidden)))
+        if section.layout != "vertical":
+            kwargs.append(("layout", _py_literal(section.layout)))
 
         if not kwargs and not section.components:
             # ruff collapses an empty call to one line — emit it that way directly.

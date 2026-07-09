@@ -110,6 +110,7 @@ class SectionState(BaseModel):
     title: str | None = None
     description: str | None = None
     hidden: bool = False
+    layout: Literal["vertical", "horizontal"] = "vertical"
     components: list[ComponentState] = []  # ordered
 
 

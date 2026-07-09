@@ -14,6 +14,7 @@ import type {
   DesignerState,
   EnvironmentState,
   ParseIssue,
+  SectionLayout,
   SectionState,
 } from "../pages/nodeDesigner/designerState";
 import { newDesignerState } from "../pages/nodeDesigner/designerState";
@@ -540,6 +541,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
         title: "Settings",
         description: null,
         hidden: false,
+        layout: "vertical",
         components: [],
       });
     } else {
@@ -551,6 +553,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
         title: `Section ${n}`,
         description: null,
         hidden: false,
+        layout: "vertical",
         components: [],
       });
     }
@@ -588,6 +591,14 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
 
   function updateSectionTitle(index: number, title: string) {
     sections.value[index].title = title;
+  }
+
+  function updateSectionDescription(index: number, description: string) {
+    sections.value[index].description = description || null;
+  }
+
+  function setSectionLayout(index: number, layout: SectionLayout) {
+    sections.value[index].layout = layout;
   }
 
   function selectComponent(sectionIndex: number, compIndex: number) {
@@ -679,6 +690,8 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     selectSection,
     sanitizeSectionName,
     updateSectionTitle,
+    updateSectionDescription,
+    setSectionLayout,
     selectComponent,
     removeComponent,
     addComponentToSection,

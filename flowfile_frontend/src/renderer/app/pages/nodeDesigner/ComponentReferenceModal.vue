@@ -10,7 +10,7 @@
           <i class="fa-solid fa-times"></i>
         </button>
       </div>
-      <div class="modal-content">
+      <div ref="contentRef" class="modal-content">
         <section class="cr-quickref">
           <div class="cr-field-title">Quick reference</div>
           <p class="cr-lead">
@@ -35,11 +35,11 @@
           v-for="comp in componentDocs"
           :key="comp.type"
           class="cr-entry"
+          :data-cr-type="comp.type"
           :icon="comp.icon"
           :title="comp.type"
           :summary="returnsChip(comp.returns)"
-          :default-open="false"
-          :persist-key="`nodeDesigner.componentRef.${comp.type}`"
+          :default-open="comp.type === focusType"
         >
           <div class="cr-body">
             <div class="cr-meta">
@@ -104,16 +104,37 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick, ref, watch } from "vue";
 import CollapsibleSection from "../../components/common/CollapsibleSection/CollapsibleSection.vue";
 import { componentDocs, returnsChip } from "./componentDocs";
+import type { ComponentType } from "./designerState";
 
-defineProps<{
-  show: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    show: boolean;
+    /** When set, that component's entry opens expanded and scrolls into view. */
+    focusType?: ComponentType | null;
+  }>(),
+  { focusType: null },
+);
 
 const emit = defineEmits<{
   (e: "close"): void;
 }>();
+
+const contentRef = ref<HTMLElement>();
+
+watch(
+  () => props.show,
+  (visible) => {
+    if (!visible || !props.focusType) return;
+    nextTick(() => {
+      contentRef.value
+        ?.querySelector(`[data-cr-type="${props.focusType}"]`)
+        ?.scrollIntoView({ block: "start" });
+    });
+  },
+);
 
 const docsUrl = "https://edwardvaneechoud.github.io/Flowfile/for-developers/creating-custom-nodes/";
 </script>

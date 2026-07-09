@@ -10,7 +10,10 @@
     </div>
     <p v-if="section.description" class="section-description">{{ section.description }}</p>
 
-    <div class="components-container">
+    <div
+      class="components-container"
+      :class="{ 'layout-horizontal': section.layout === 'horizontal' }"
+    >
       <div
         v-for="(component, componentKey) in section.components"
         :key="componentKey"
@@ -171,6 +174,19 @@ function setValue(sectionKey: string, componentKey: string, value: unknown) {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-3, 12px);
+}
+
+/* Horizontal sections flow controls side by side; narrow controls share a row
+   while wide ones (e.g. ColumnActionInput's table) wrap to their own line. */
+.components-container.layout-horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.components-container.layout-horizontal > .component-item {
+  flex: 1 1 220px;
+  min-width: 200px;
 }
 
 .section-title {

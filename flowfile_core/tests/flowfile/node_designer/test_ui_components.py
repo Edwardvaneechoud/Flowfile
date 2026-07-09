@@ -6,6 +6,8 @@ import pytest
 from flowfile_core.flowfile.node_designer.ui_components import (
     ActionOption,
     ColumnActionInput,
+    ColumnActionRow,
+    ColumnActionValue,
     ColumnSelector,
 )
 from flowfile_core.types import DataType, TypeGroup, Types
@@ -214,9 +216,13 @@ def test_column_action_input_with_options():
 
 
 def test_column_action_input_default_value():
-    """Tests that ColumnActionInput initializes with correct default value structure."""
+    """Tests that ColumnActionInput initializes with a typed, empty ColumnActionValue."""
     comp = ColumnActionInput(label="Test")
-    assert comp.value == {
+    assert isinstance(comp.value, ColumnActionValue)
+    assert comp.value.rows == []
+    assert comp.value.group_by_columns == []
+    assert comp.value.order_by_column is None
+    assert comp.value.model_dump() == {
         "rows": [],
         "group_by_columns": [],
         "order_by_column": None,
@@ -224,7 +230,7 @@ def test_column_action_input_default_value():
 
 
 def test_column_action_input_set_value():
-    """Tests setting value from frontend data."""
+    """Tests that the raw frontend dict is coerced into a typed ColumnActionValue."""
     comp = ColumnActionInput(label="Test", actions=["sum", "mean"])
 
     frontend_value = {
@@ -237,7 +243,78 @@ def test_column_action_input_set_value():
     }
 
     comp.set_value(frontend_value)
-    assert comp.value == frontend_value
+
+    # Attribute access — the whole point of the typed value.
+    assert isinstance(comp.value, ColumnActionValue)
+    assert isinstance(comp.value.rows[0], ColumnActionRow)
+    assert comp.value.rows[0].column == "sales"
+    assert comp.value.rows[0].action == "sum"
+    assert comp.value.rows[0].output_name == "sales_sum"
+    assert comp.value.group_by_columns == ["category"]
+    assert comp.value.order_by_column == "date"
+    # And it round-trips back to the exact wire dict.
+    assert comp.value.model_dump() == frontend_value
+
+
+def test_column_action_value_exported_from_nd():
+    """The value models are reachable through the canonical `nd` namespace."""
+    from flowfile import node_designer as nd
+
+    assert nd.ColumnActionValue is ColumnActionValue
+    assert nd.ColumnActionRow is ColumnActionRow
+
+
+def test_column_action_input_model_dump_value_is_plain_dict():
+    """Frontend/flow-save paths go through model_dump — value must serialize to a plain dict."""
+    comp = ColumnActionInput(label="Test", actions=["sum"])
+    comp.set_value(
+        {
+            "rows": [{"column": "a", "action": "sum", "output_name": "a_sum"}],
+            "group_by_columns": [],
+            "order_by_column": None,
+        }
+    )
+    dumped = comp.model_dump()
+    assert isinstance(dumped["value"], dict)
+    assert dumped["value"]["rows"] == [{"column": "a", "action": "sum", "output_name": "a_sum"}]
+    # order_by_column stays present (not stripped) even when None.
+    assert dumped["value"]["order_by_column"] is None
+
+
+def test_extract_settings_values_is_json_safe():
+    """Guards the kernel/worker/save seams: extracted settings are plain, JSON-serializable dicts."""
+    import json
+
+    from flowfile import node_designer as nd
+
+    class _Settings(nd.NodeSettings):
+        agg: nd.Section = nd.Section(
+            title="Agg",
+            column_actions=nd.ColumnActionInput(label="Aggregations", actions=["sum"]),
+        )
+
+    class _Node(nd.CustomNodeBase):
+        node_name: str = "T"
+        settings_schema: _Settings = _Settings()
+
+    node = _Node()
+    node.settings_schema.populate_values(
+        {
+            "agg": {
+                "column_actions": {
+                    "rows": [{"column": "a", "action": "sum", "output_name": "a_sum"}],
+                    "group_by_columns": [],
+                    "order_by_column": None,
+                }
+            }
+        }
+    )
+
+    extracted = node._extract_settings_values()
+    ca = extracted["agg"]["column_actions"]
+    assert isinstance(ca, dict)
+    assert ca["rows"][0]["column"] == "a"
+    json.dumps(extracted)  # must not raise
 
 
 def test_column_action_input_model_dump_string_actions():

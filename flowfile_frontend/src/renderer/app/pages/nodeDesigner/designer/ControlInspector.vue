@@ -5,9 +5,20 @@
     </div>
     <div class="panel-content">
       <div v-if="comp" class="inspector-form">
-        <div class="type-badge">
-          <i :class="typeIcon"></i>
-          <span>{{ comp.component_type }}</span>
+        <div class="type-badge-row">
+          <div class="type-badge">
+            <i :class="typeIcon"></i>
+            <span>{{ comp.component_type }}</span>
+          </div>
+          <button
+            class="type-help-btn"
+            type="button"
+            title="What does this component do?"
+            data-testid="control-help"
+            @click="showHelp = true"
+          >
+            <i class="fa-solid fa-circle-question"></i>
+          </button>
         </div>
 
         <!-- Common -->
@@ -317,15 +328,26 @@
         description="Select a control in the form to edit it."
       />
     </div>
+
+    <Teleport to="body">
+      <ComponentReferenceModal
+        :show="showHelp"
+        :focus-type="comp?.component_type ?? null"
+        @close="showHelp = false"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { ComponentState, SelectOption } from "../designerState";
 import { toSnakeCase } from "../mappers";
+import { getComponentIcon } from "../constants";
+import { pyValueType } from "../componentDocs";
 import EmptyState from "../../../components/common/EmptyState/EmptyState.vue";
+import ComponentReferenceModal from "../ComponentReferenceModal.vue";
 
 const emit = defineEmits<{ (e: "insert-variable", code: string): void }>();
 
@@ -333,21 +355,9 @@ const store = useNodeDesignerStore();
 
 const comp = computed<ComponentState | null>(() => store.selectedComponent);
 
-const TYPE_ICONS: Record<string, string> = {
-  TextInput: "fa-solid fa-font",
-  NumericInput: "fa-solid fa-hashtag",
-  ToggleSwitch: "fa-solid fa-toggle-on",
-  SingleSelect: "fa-solid fa-list",
-  MultiSelect: "fa-solid fa-list-check",
-  ColumnSelector: "fa-solid fa-table-columns",
-  ColumnActionInput: "fa-solid fa-table-list",
-  SliderInput: "fa-solid fa-sliders",
-  SecretSelector: "fa-solid fa-key",
-};
+const showHelp = ref(false);
 
-const typeIcon = computed(
-  () => TYPE_ICONS[comp.value?.component_type ?? ""] ?? "fa-solid fa-puzzle-piece",
-);
+const typeIcon = computed(() => getComponentIcon(comp.value?.component_type ?? ""));
 
 function toNum(v: string): number | null {
   if (v.trim() === "") return null;
@@ -412,17 +422,6 @@ function updateDataTypes(value: string) {
   update("data_types", value === "ALL" ? "ALL" : [value]);
 }
 
-const PY_TYPE: Record<string, string> = {
-  TextInput: "str",
-  NumericInput: "float",
-  SliderInput: "float",
-  ToggleSwitch: "bool",
-  SingleSelect: "str",
-  MultiSelect: "list[str]",
-  ColumnActionInput: "dict",
-  SecretSelector: "SecretStr",
-};
-
 function insertVariable() {
   const c = comp.value;
   if (!c || store.selectedSectionIndex === null) return;
@@ -430,8 +429,9 @@ function insertVariable() {
   if (!section) return;
   const fieldName = toSnakeCase(c.name);
   const sectionName = toSnakeCase(section.name);
-  let pyType = PY_TYPE[c.component_type] ?? "Any";
+  let pyType = pyValueType(c.component_type);
   if (c.component_type === "ColumnSelector") pyType = c.multiple ? "list[str]" : "str";
+  else if (c.component_type === "ColumnActionInput") pyType = `nd.${pyType}`;
   const accessor = c.component_type === "SecretSelector" ? "secret_value" : "value";
   emit(
     "insert-variable",
@@ -459,6 +459,13 @@ function insertVariable() {
   gap: 1rem;
 }
 
+.type-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .type-badge {
   display: inline-flex;
   align-items: center;
@@ -468,6 +475,25 @@ function insertVariable() {
   border-radius: var(--border-radius-md, 6px);
   font-size: 0.875rem;
   font-weight: 500;
+}
+
+.type-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md, 6px);
+  background: transparent;
+  color: var(--color-text-tertiary, #718096);
+  cursor: pointer;
+}
+
+.type-help-btn:hover {
+  background: var(--color-background-secondary, #f3f4f6);
+  color: var(--color-accent, #0891b2);
 }
 
 .type-badge i {

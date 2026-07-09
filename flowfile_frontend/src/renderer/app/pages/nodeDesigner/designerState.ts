@@ -99,11 +99,14 @@ export type ComponentState =
   | SecretSelectorState
   | ColumnActionInputState;
 
+export type SectionLayout = "vertical" | "horizontal";
+
 export interface SectionState {
   name: string;
   title?: string | null;
   description?: string | null;
   hidden: boolean;
+  layout: SectionLayout;
   components: ComponentState[]; // ordered
 }
 
@@ -181,7 +184,14 @@ export function newDesignerState(): DesignerState {
     output_names: ["main"],
     environment: newEnvironmentState(),
     sections: [
-      { name: "settings", title: "Settings", description: null, hidden: false, components: [] },
+      {
+        name: "settings",
+        title: "Settings",
+        description: null,
+        hidden: false,
+        layout: "vertical",
+        components: [],
+      },
     ],
     process_code: "",
     example_inputs: null,

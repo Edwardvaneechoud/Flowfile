@@ -257,6 +257,28 @@ const secretStrMethods = [
   },
 ];
 
+// nd.ColumnActionValue attributes (the `.value` of a ColumnActionInput).
+const columnActionValueMembers = [
+  {
+    label: "rows",
+    type: "property",
+    info: "list[nd.ColumnActionRow] — each has .column / .action / .output_name",
+    detail: "list[ColumnActionRow]",
+  },
+  {
+    label: "group_by_columns",
+    type: "property",
+    info: "Selected group-by columns ([] unless show_group_by=True)",
+    detail: "list[str]",
+  },
+  {
+    label: "order_by_column",
+    type: "property",
+    info: "Selected order-by column (None unless show_order_by=True)",
+    detail: "str | None",
+  },
+];
+
 // Component type -> Python type of its `.value` (`.secret_value` for secrets),
 // shown as the completion `detail` so suggestions carry a type hint.
 export const PY_TYPE: Record<string, string> = {
@@ -268,7 +290,7 @@ export const PY_TYPE: Record<string, string> = {
   MultiSelect: "list",
   ColumnSelector: "str | list[str]",
   SecretSelector: "SecretStr",
-  ColumnActionInput: "dict",
+  ColumnActionInput: "ColumnActionValue",
 };
 
 export const pyType = (componentType: string): string => PY_TYPE[componentType] ?? "Any";
@@ -836,6 +858,8 @@ export function memberCompletionsFor(
       return bytesMethods;
     case "SecretStr":
       return secretStrMethods;
+    case "ColumnActionValue":
+      return columnActionValueMembers;
     default:
       return null;
   }
