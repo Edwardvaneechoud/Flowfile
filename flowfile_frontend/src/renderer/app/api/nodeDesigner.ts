@@ -84,6 +84,7 @@ export interface DryRunBody {
   sample_inputs: Array<Record<string, unknown[]>> | null;
   row_limit?: number;
   timeout_seconds?: number;
+  kernel_id?: string | null; // run on this Docker kernel instead of the worker (kernel-env nodes)
 }
 
 export interface DryRunResponse {
@@ -94,7 +95,7 @@ export interface DryRunResponse {
   error_kind: DryRunErrorKind;
   traceback: string | null;
   duration_ms: number;
-  executed_in: "worker" | "in_core";
+  executed_in: "worker" | "in_core" | "kernel";
 }
 
 /** Raised by save() when the on-disk file hash no longer matches expected_hash. */

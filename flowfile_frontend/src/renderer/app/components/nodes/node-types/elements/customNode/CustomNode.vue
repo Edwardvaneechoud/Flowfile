@@ -40,8 +40,8 @@
     </div>
 
     <generic-node-settings v-model="nodeUserDefined">
-      <!-- Execution environment row -->
-      <div class="listbox-wrapper env-section">
+      <!-- Execution environment row: kernel nodes only — local nodes need no kernel UI. -->
+      <div v-if="isKernelEnv" class="listbox-wrapper env-section">
         <div class="section-title">Execution</div>
         <div class="env-row">
           <span class="env-badge" :class="isKernelEnv ? 'env-badge--kernel' : 'env-badge--local'">
@@ -135,12 +135,14 @@ const artifactOptions = ref<string[]>([]);
 // Kernel state
 const availableKernels = ref<KernelInfo[]>([]);
 const selectedKernelId = ref<string | null>(null);
-const kernelRequiredError = ref(false);
 
 // Isolated-kernel node when environment=="kernel" (or a legacy requires_kernel flag).
 const isKernelEnv = computed(
   () => schema.value?.environment === "kernel" || !!schema.value?.requires_kernel,
 );
+
+// Reactive so the "select a kernel" warning clears the moment a kernel is chosen.
+const kernelRequiredError = computed(() => isKernelEnv.value && !selectedKernelId.value);
 
 const introHtml = computed(() =>
   schema.value?.intro ? renderSafeMarkdown(schema.value.intro) : "",
@@ -201,9 +203,7 @@ const loadNodeData = async (nodeId: number) => {
       nodeUserDefined.value.settings = {};
     }
 
-    const kernelEnv = schemaData.environment === "kernel" || !!schemaData.requires_kernel;
     selectedKernelId.value = nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
-    kernelRequiredError.value = kernelEnv && !selectedKernelId.value;
 
     const mainColumns = inputNodeData?.main_input?.columns ?? [];
     if (mainColumns.length) {
@@ -235,7 +235,6 @@ const pushNodeData = async () => {
     return;
   }
   if (nodeUserDefined.value) {
-    kernelRequiredError.value = isKernelEnv.value && !selectedKernelId.value;
     nodeUserDefined.value.settings = formData.value;
     nodeUserDefined.value.is_user_defined = true;
     nodeUserDefined.value.is_setup = true;
@@ -308,13 +307,11 @@ defineExpose({
 
 /* Kept for the kernel section header; the sections form itself renders via CustomNodeForm. */
 .section-title {
-  font-size: var(--font-size-lg, 15px);
+  font-size: var(--font-size-md, 13px);
   font-weight: var(--font-weight-semibold, 600);
   color: var(--color-text-primary);
-  padding: var(--spacing-3, 12px) var(--spacing-4, 16px);
+  padding: var(--spacing-1, 4px) 0 var(--spacing-1, 4px) var(--spacing-2, 8px);
   margin-bottom: var(--spacing-3, 12px);
-  background-color: var(--color-background-tertiary, #f1f3f5);
-  border-radius: var(--border-radius-md, 6px);
   border-left: 3px solid var(--color-accent, #0891b2);
 }
 

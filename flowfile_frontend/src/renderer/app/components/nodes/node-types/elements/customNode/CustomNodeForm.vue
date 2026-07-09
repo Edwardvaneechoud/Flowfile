@@ -160,27 +160,41 @@ function setValue(sectionKey: string, componentKey: string, value: unknown) {
 
 <style scoped>
 .section-description {
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm, 12px);
   color: var(--color-text-secondary);
   margin-top: 0.25rem;
-  margin-bottom: 1.25rem;
-  padding-left: 0.5rem;
+  margin-bottom: var(--spacing-3, 12px);
+  padding-left: var(--spacing-2, 8px);
 }
 
 .components-container {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--spacing-3, 12px);
 }
 
 .section-title {
-  font-size: var(--font-size-lg, 15px);
+  font-size: var(--font-size-md, 13px);
   font-weight: var(--font-weight-semibold, 600);
   color: var(--color-text-primary);
-  padding: var(--spacing-3, 12px) var(--spacing-4, 16px);
+  padding: var(--spacing-1, 4px) 0 var(--spacing-1, 4px) var(--spacing-2, 8px);
   margin-bottom: var(--spacing-3, 12px);
-  background-color: var(--color-background-tertiary, #f1f3f5);
-  border-radius: var(--border-radius-md, 6px);
   border-left: 3px solid var(--color-accent, #0891b2);
+}
+
+/* Normalize the field label: the global .listbox-subtitle renders a heavy gray
+   bar; here it becomes a light modern label. Targets the <label> only, so
+   ColumnActionInput's inner <div class="listbox-subtitle"> sub-headings are
+   untouched. */
+:deep(label.listbox-subtitle) {
+  display: block;
+  height: auto;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: var(--font-size-sm, 12px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-1, 4px);
 }
 </style>

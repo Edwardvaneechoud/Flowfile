@@ -9,6 +9,8 @@ resolve for real via the author's own/shared secrets.
 
 import ast
 import json
+import os
+import threading
 import time
 import uuid
 from typing import Any, Literal
@@ -24,7 +26,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_custom_node_operation,
 )
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
-from flowfile_core.flowfile.node_designer.parsing import extract_example_inputs
+from flowfile_core.flowfile.node_designer.parsing import extract_example_inputs, extract_manifest
 from flowfile_core.flowfile.node_designer.state import DesignerState, SecretSelectorState
 
 ErrorKind = Literal["syntax", "load", "settings", "execution", "timeout", "no_sample_data"]
@@ -57,6 +59,7 @@ class DryRunRequest(BaseModel):
     sample_inputs: list[dict[str, list]] | None = None
     row_limit: int = _DEFAULT_ROW_LIMIT
     timeout_seconds: int = _DEFAULT_TIMEOUT
+    kernel_id: str | None = None  # run on this Docker kernel instead of the worker (kernel-env nodes)
 
     @model_validator(mode="after")
     def _validate(self) -> "DryRunRequest":
@@ -77,7 +80,7 @@ class DryRunResponse(BaseModel):
     error_kind: ErrorKind | None = None
     traceback: str | None = None
     duration_ms: float | None = None
-    executed_in: Literal["worker", "in_core"] = "worker"
+    executed_in: Literal["worker", "in_core", "kernel"] = "worker"
 
 
 def _fail(
@@ -283,6 +286,20 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     samples, err = _resolve_sample_inputs(request, source)
     if err is not None:
         return err
+
+    # Kernel-environment nodes run in their Docker kernel (which has the node's pip
+    # deps), not the worker. designer-state carries the environment kind directly;
+    # code-only nodes surface it via the exec-free manifest.
+    env_kind = (
+        request.designer_state.environment.kind
+        if request.designer_state is not None
+        else extract_manifest(source).environment.kind
+    )
+    if env_kind == "kernel":
+        if not request.kernel_id:
+            return _fail("execution", "This node runs in an isolated kernel — select a kernel to run the test.")
+        return _run_dry_run_on_kernel(request, source, output_names, samples)
+
     serialized, err = _serialize_inputs(samples)
     if err is not None:
         return err
@@ -328,3 +345,152 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
         return _map_payload(payload, output_names)
     finally:
         _clear(task_id)
+
+
+def _kernel_logs(result) -> list[str]:
+    """Flatten a kernel ExecuteResult's captured stdout/stderr into log lines."""
+    lines: list[str] = []
+    if getattr(result, "stdout", None):
+        lines.extend(f"[stdout] {ln}" for ln in result.stdout.strip().splitlines())
+    if getattr(result, "stderr", None):
+        lines.extend(f"[stderr] {ln}" for ln in result.stderr.strip().splitlines())
+    return lines
+
+
+def _read_kernel_output_previews(
+    output_dir: str, output_names: list[str], result, row_limit: int
+) -> tuple[list[DryRunOutput], DryRunResponse | None]:
+    """Build a bounded preview per declared output from the kernel's parquet files.
+
+    Mirrors read_kernel_outputs' ``<name>.parquet`` convention and its guard: if the
+    kernel reported published files but none match the expected names, surface a clear
+    error instead of silently returning empty outputs.
+    """
+    outputs: list[DryRunOutput] = []
+    found = False
+    for name in output_names:
+        path = os.path.join(output_dir, f"{name}.parquet")
+        if not os.path.exists(path):
+            outputs.append(DryRunOutput(name=name))
+            continue
+        found = True
+        lf = pl.scan_parquet(path)
+        head = lf.head(row_limit).collect()
+        row_count = int(lf.select(pl.len()).collect().item())
+        outputs.append(
+            DryRunOutput(
+                name=name,
+                columns=[
+                    DryRunColumn(name=c, data_type=str(dt))
+                    for c, dt in zip(head.columns, head.dtypes, strict=True)
+                ],
+                rows=[list(r) for r in head.iter_rows()],
+                row_count=row_count,
+                truncated=row_count > head.height,
+            )
+        )
+    if getattr(result, "output_paths", None) and not found:
+        published = [p.replace("\\", "/").rsplit("/", 1)[-1] for p in result.output_paths]
+        expected = [f"{name}.parquet" for name in output_names]
+        detail = (
+            f"published {published} but the node expects {expected} — match the name passed to "
+            "flowfile_ctx.publish_output(df, name=...) with the node's output names."
+            if not set(published) & set(expected)
+            else f"reported outputs {published} but none were found on the shared volume."
+        )
+        return [], _fail("execution", f"Kernel {detail}")
+    return outputs, None
+
+
+def _run_dry_run_on_kernel(
+    request: DryRunRequest, source: str, output_names: list[str], samples: list[dict[str, list]]
+) -> DryRunResponse:
+    """Execute a kernel-environment candidate node on its Docker kernel.
+
+    Mirrors production kernel execution (generate_kernel_script + the kernel manager)
+    against bounded sample inputs, reusing the FlowGraph-free helpers in
+    kernel/execution.py. Secrets aren't available inside kernels, so none are resolved.
+    """
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.user_defined.kernel_codegen import KernelCodegenError, generate_kernel_script
+    from flowfile_core.kernel import get_kernel_manager
+    from flowfile_core.kernel.execution import build_execute_request, clear_stale_parquets, write_inputs_to_parquet
+
+    if request.designer_state is not None:
+        class_name = request.designer_state.class_name
+        number_of_inputs = request.designer_state.number_of_inputs
+    else:
+        manifest = extract_manifest(source)
+        class_name = manifest.class_name
+        number_of_inputs = manifest.number_of_inputs
+    if not class_name:
+        return _fail("load", "Could not find a CustomNodeBase subclass in the node source.")
+
+    try:
+        code = generate_kernel_script(
+            node_source=source,
+            class_name=class_name,
+            settings_values=request.settings_values,
+            output_names=output_names,
+            number_of_inputs=number_of_inputs,
+        )
+    except KernelCodegenError as e:
+        return _fail("load", f"Cannot generate kernel script: {e}")
+
+    try:
+        frames = tuple(FlowDataEngine(pl.LazyFrame(s)) for s in samples)
+    except Exception as e:
+        return _fail("no_sample_data", f"Sample input is not a valid table: {e}")
+
+    manager = get_kernel_manager()
+    node_id = uuid.uuid4().int % 1_000_000_000  # unique per-run dir; avoids concurrent-dry-run collisions
+    input_dir = os.path.join(manager.shared_volume_path, str(_DRY_RUN_FLOW_ID), str(node_id), "inputs")
+    output_dir = os.path.join(manager.shared_volume_path, str(_DRY_RUN_FLOW_ID), str(node_id), "outputs")
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    clear_stale_parquets(input_dir)
+    clear_stale_parquets(output_dir)
+
+    started = time.monotonic()
+    try:
+        input_paths = write_inputs_to_parquet(frames, manager, input_dir, _DRY_RUN_FLOW_ID, node_id)
+        execute_request = build_execute_request(
+            node_id=node_id,
+            code=code,
+            input_paths=input_paths,
+            output_dir=output_dir,
+            flow_id=_DRY_RUN_FLOW_ID,
+            manager=manager,
+            source_registration_id=None,
+        )
+    except Exception as e:
+        return _fail("execution", f"Could not prepare kernel inputs: {e}")
+
+    cancel_event = threading.Event()
+    timer = threading.Timer(request.timeout_seconds, cancel_event.set)
+    timer.start()
+    try:
+        result = manager.execute_sync(request.kernel_id, execute_request, cancel_event=cancel_event)
+    except KeyError:
+        return _fail("execution", "The selected kernel is no longer available — pick another kernel.")
+    except Exception as e:
+        return _fail("load", f"The kernel is unavailable: {e}")
+    finally:
+        timer.cancel()
+
+    if not result.success:
+        if cancel_event.is_set():
+            return _fail("timeout", "Dry run exceeded the time limit and was cancelled.")
+        error, tb = _split_traceback(result.error or "Kernel execution failed")
+        return _fail("execution", error, traceback=tb, logs=_kernel_logs(result))
+
+    outputs, err = _read_kernel_output_previews(output_dir, output_names, result, request.row_limit)
+    if err is not None:
+        return err
+    return DryRunResponse(
+        success=True,
+        outputs=outputs,
+        logs=_kernel_logs(result),
+        duration_ms=(time.monotonic() - started) * 1000,
+        executed_in="kernel",
+    )

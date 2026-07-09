@@ -214,7 +214,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
-  padding: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
   border: 1px solid var(--color-border-primary);
   border-radius: var(--border-radius-sm);
   background: var(--color-background-primary);
@@ -227,14 +227,14 @@ onMounted(() => {
 }
 
 .icon-preview {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
 }
 
 .icon-name {
   flex: 1;
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;

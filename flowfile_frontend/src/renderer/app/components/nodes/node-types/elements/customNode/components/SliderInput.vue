@@ -8,7 +8,7 @@
         :max="schema.max_value"
         :step="schema.step || 1"
         :show-input="true"
-        size="large"
+        size="small"
         style="width: 100%"
         @update:model-value="$emit('update:modelValue', $event)"
       />

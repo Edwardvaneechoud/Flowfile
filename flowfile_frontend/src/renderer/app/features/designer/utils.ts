@@ -54,7 +54,8 @@ const BUILTIN_ICONS = new Set([
   "unpivot.svg",
 ]);
 
-const DEFAULT_ICON = "user-defined-icon.png";
+const DEFAULT_ICON = "user-defined-icon.png"; // persisted contract key (state.py / codegen)
+const DEFAULT_ICON_ASSET = "user-defined-icon.svg"; // bundled artwork for that key
 
 // Built-in glyphs offered as a standard set for custom nodes (SVG operation
 // icons only — no brand marks, no PNGs). Names resolve as bundled assets.
@@ -75,8 +76,8 @@ export const isBuiltinIcon = (name: string): boolean => {
  * Returns a static asset URL for built-in icons, or an API URL for custom icons
  */
 export const getImageUrl = (name: string): string => {
-  if (!name) {
-    return new URL(`./assets/icons/${DEFAULT_ICON}`, import.meta.url).href;
+  if (!name || name === DEFAULT_ICON) {
+    return new URL(`./assets/icons/${DEFAULT_ICON_ASSET}`, import.meta.url).href;
   }
 
   if (isBuiltinIcon(name)) {
@@ -90,7 +91,7 @@ export const getImageUrl = (name: string): string => {
  * Get the URL for the default fallback icon
  */
 export const getDefaultIconUrl = (): string => {
-  return new URL(`./assets/icons/${DEFAULT_ICON}`, import.meta.url).href;
+  return new URL(`./assets/icons/${DEFAULT_ICON_ASSET}`, import.meta.url).href;
 };
 
 /**

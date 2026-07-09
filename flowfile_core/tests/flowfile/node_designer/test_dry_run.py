@@ -8,7 +8,12 @@ import json
 
 import pytest
 
-from flowfile_core.flowfile.node_designer.state import DesignerState, SectionState, TextInputState
+from flowfile_core.flowfile.node_designer.state import (
+    DesignerState,
+    EnvironmentState,
+    SectionState,
+    TextInputState,
+)
 from flowfile_core.flowfile.user_defined import dry_run as dr
 from flowfile_core.flowfile.user_defined.dry_run import (
     DryRunRequest,
@@ -239,3 +244,73 @@ def test_multi_output_designer_state_maps_all_outputs(monkeypatch):
     assert [o.name for o in resp.outputs] == ["pass", "fail"]
     assert resp.outputs[0].row_count == 2
     assert resp.outputs[1].row_count == 1
+
+
+# -- kernel-environment routing ------------------------------------------------
+
+
+def _kernel_designer_state() -> DesignerState:
+    return DesignerState(
+        class_name="Passthrough",
+        settings_class_name="PassthroughSettings",
+        node_name="Passthrough",
+        environment=EnvironmentState(kind="kernel"),
+        sections=[],
+        process_code="def process(self, *inputs):\n    return inputs[0]",
+        example_inputs=None,
+    )
+
+
+def test_kernel_node_without_kernel_id_errors_before_worker(monkeypatch):
+    """A kernel-env node with no kernel selected fails clearly, never in the worker."""
+
+    def _boom(*a, **k):
+        raise AssertionError("worker must not be called for a kernel-env node")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _boom)
+    resp = run_dry_run(
+        DryRunRequest(designer_state=_kernel_designer_state(), sample_inputs=[{"a": [1]}]),
+        user_id=1,
+    )
+    assert resp.success is False
+    assert resp.error_kind == "execution"
+    assert "kernel" in resp.error.lower()
+
+
+@pytest.mark.kernel
+def test_dry_run_executes_on_kernel(monkeypatch):
+    """A kernel-env dry-run runs process() inside the Docker kernel (Docker required).
+
+    Points the kernel-manager singleton at the fixture's manager and writes sample
+    parquet locally (OFFLOAD_TO_WORKER off) so no live worker is needed.
+    """
+    import flowfile_core.kernel as kernel_pkg
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.tests.kernel_fixtures import managed_kernel
+
+    code = (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n\n\n"
+        "class KernelNode(nd.CustomNodeBase):\n"
+        '    node_name: str = "KernelNode"\n'
+        '    environment: str = "kernel"\n'
+        "    def process(self, *inputs):\n"
+        "        return inputs[0].with_columns(pl.lit(1).alias('added'))\n"
+    )
+
+    prev = bool(OFFLOAD_TO_WORKER)
+    OFFLOAD_TO_WORKER.set(False)
+    try:
+        with managed_kernel() as (manager, kernel_id):
+            monkeypatch.setattr(kernel_pkg, "get_kernel_manager", lambda: manager)
+            resp = run_dry_run(
+                DryRunRequest(code=code, sample_inputs=[{"a": [1, 2, 3]}], kernel_id=kernel_id),
+                user_id=1,
+            )
+    finally:
+        OFFLOAD_TO_WORKER.set(prev)
+
+    assert resp.success is True, resp.error
+    assert resp.executed_in == "kernel"
+    assert resp.outputs[0].row_count == 3
+    assert "added" in [c.name for c in resp.outputs[0].columns]

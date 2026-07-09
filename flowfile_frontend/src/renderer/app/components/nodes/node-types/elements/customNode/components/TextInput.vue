@@ -5,7 +5,7 @@
       :model-value="modelValue"
       :placeholder="schema.placeholder || 'Enter value...'"
       clearable
-      size="large"
+      size="small"
       @update:model-value="$emit('update:modelValue', $event)"
     />
   </div>

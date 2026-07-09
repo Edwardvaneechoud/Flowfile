@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   show: boolean;
   code: string;
 }>();
@@ -34,7 +34,7 @@ const emit = defineEmits<{
 }>();
 
 function copyCode() {
-  navigator.clipboard.writeText(arguments[0]);
+  navigator.clipboard.writeText(props.code);
   alert("Code copied to clipboard!");
 }
 </script>

@@ -66,12 +66,23 @@
                 </li>
               </ul>
             </div>
-            <ProcessCodeEditor
-              v-model="processCode"
-              :extensions="extensions"
-              :signature="store.codeOnly ? undefined : store.processSignature"
-              height="100%"
-            />
+            <div class="code-editor-wrap">
+              <ProcessCodeEditor
+                v-model="processCode"
+                :extensions="extensions"
+                :signature="store.codeOnly ? undefined : store.processSignature"
+                height="100%"
+              />
+            </div>
+            <CollapsibleSection
+              title="Test"
+              icon="fa-solid fa-flask"
+              persist-key="nd-code-test"
+              :default-open="false"
+              class="code-test-dock"
+            >
+              <TestPanel />
+            </CollapsibleSection>
           </div>
         </div>
       </el-tab-pane>
@@ -93,6 +104,7 @@ import FormFieldsOverview from "./FormFieldsOverview.vue";
 import FormCanvas from "./FormCanvas.vue";
 import ControlInspector from "./ControlInspector.vue";
 import TestPanel from "./testPanel/TestPanel.vue";
+import CollapsibleSection from "../../../components/common/CollapsibleSection/CollapsibleSection.vue";
 import { recheckCode } from "../loadSave";
 
 defineProps<{
@@ -210,6 +222,8 @@ function handleInsertVariable(code: string) {
   flex-direction: column;
   gap: 0.25rem;
   margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
   flex-shrink: 0;
 }
 
@@ -257,6 +271,24 @@ function handleInsertVariable(code: string) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  gap: 0.5rem;
+}
+
+.code-editor-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Test dock: sits below the editor; the editor keeps the remaining height, and
+   the dock body is capped with its own scroll so it reads like an IDE panel. */
+.code-test-dock {
+  flex-shrink: 0;
+}
+
+.code-test-dock :deep(.cs-body) {
+  height: 320px;
+  overflow: hidden;
+  margin-top: 0.5rem;
 }
 
 .mode-banner,

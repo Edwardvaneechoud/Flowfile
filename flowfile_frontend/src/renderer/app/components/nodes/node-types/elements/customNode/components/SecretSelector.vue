@@ -11,7 +11,7 @@
       clearable
       placeholder="Select a secret"
       style="width: 100%"
-      size="large"
+      size="small"
       :loading="loading"
       @update:model-value="$emit('update:modelValue', $event)"
     >

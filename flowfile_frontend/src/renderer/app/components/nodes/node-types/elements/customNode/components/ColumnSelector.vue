@@ -10,7 +10,7 @@
       filterable
       :placeholder="schema.multiple ? 'Select columns...' : 'Select a column...'"
       style="width: 100%"
-      size="large"
+      size="small"
       @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option

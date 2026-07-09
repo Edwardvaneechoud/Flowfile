@@ -71,7 +71,10 @@ import { deleteCustomNode } from "../api/nodeDesigner";
 
 const store = useNodeDesignerStore();
 const browser = useNodeBrowser();
-const autocompletion = usePolarsAutocompletion(() => store.sections);
+const autocompletion = usePolarsAutocompletion(
+  () => store.sections,
+  () => store.codeOnly,
+);
 
 const saving = ref(false);
 const showPreviewModal = ref(false);

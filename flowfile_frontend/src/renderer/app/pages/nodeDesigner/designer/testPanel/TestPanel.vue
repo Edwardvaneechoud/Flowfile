@@ -5,13 +5,34 @@
         class="run-btn"
         type="button"
         data-testid="test-run"
-        :disabled="store.dryRun.running"
+        :disabled="!canRun"
+        :title="isKernelEnv && !selectedKernelId ? 'Select a kernel to run the test' : undefined"
         @click="run"
       >
         <i v-if="store.dryRun.running" class="fa-solid fa-spinner fa-spin"></i>
         <i v-else class="fa-solid fa-play"></i>
         {{ store.dryRun.running ? "Running..." : "Run test" }}
       </button>
+
+      <div v-if="isKernelEnv" class="kernel-picker">
+        <template v-if="kernelsAvailable && kernels.length">
+          <label class="kernel-label" for="test-kernel">Kernel</label>
+          <select id="test-kernel" v-model="selectedKernelId" class="kernel-select">
+            <option v-for="k in kernels" :key="k.id" :value="k.id">
+              {{ k.name }} ({{ k.state }})
+            </option>
+          </select>
+          <button class="kernel-refresh" type="button" title="Refresh kernels" @click="loadKernels">
+            <i class="fa-solid fa-rotate" :class="{ 'fa-spin': kernelsLoading }"></i>
+          </button>
+        </template>
+        <span v-else class="kernel-empty">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          This node runs in an isolated kernel, but none are available —
+          <router-link :to="{ name: 'kernelManager' }">Open Kernel Manager</router-link>
+        </span>
+      </div>
+
       <label class="save-toggle">
         <input v-model="saveWithNode" type="checkbox" />
         Save test setup with node
@@ -20,8 +41,14 @@
 
     <div class="test-body">
       <div class="inputs-column">
-        <div v-if="hasParameters" class="test-block">
-          <div class="block-title">Parameters</div>
+        <CollapsibleSection
+          v-if="hasParameters"
+          title="Parameters"
+          icon="fa-solid fa-sliders"
+          persist-key="nd-test-params"
+          :default-open="true"
+          class="test-section params-section"
+        >
           <p class="block-hint">
             Values passed to <code>self.settings_schema</code> for this test run.
           </p>
@@ -32,10 +59,15 @@
             :column-types="paramColumnTypes"
             @update:form-data="store.setPreviewValues"
           />
-        </div>
+        </CollapsibleSection>
 
-        <div class="test-block">
-          <div v-if="hasParameters" class="block-title">Sample input</div>
+        <CollapsibleSection
+          title="Sample input"
+          icon="fa-solid fa-table-cells"
+          persist-key="nd-test-sample"
+          :default-open="true"
+          class="test-section"
+        >
           <div v-if="inputCount === 0" class="no-inputs">This node takes no inputs.</div>
           <div v-else class="input-tabs">
             <div v-if="inputCount > 1" class="input-tab-row">
@@ -53,10 +85,10 @@
             <SampleInputEditor
               :key="activeInput"
               :table="tables[activeInput]"
-              @update:table="onTableUpdate(activeInput, $event)"
+              @update:table="setTable(activeInput, $event)"
             />
           </div>
-        </div>
+        </CollapsibleSection>
       </div>
 
       <div class="results-column">
@@ -75,99 +107,39 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import SampleInputEditor from "./SampleInputEditor.vue";
 import DryRunResults from "./DryRunResults.vue";
 import CustomNodeForm from "../../../../components/nodes/node-types/elements/customNode/CustomNodeForm.vue";
-import type { FileColumn } from "../../../../components/nodes/baseNode/nodeInterfaces";
-import {
-  columnDataToTable,
-  emptyTable,
-  tableToColumnData,
-  type SampleTable,
-} from "../../sampleData";
-import { dryRunCustomNode, type DryRunBody } from "../../../../api/nodeDesigner";
-import type { ExampleInput } from "../../designerState";
+import CollapsibleSection from "../../../../components/common/CollapsibleSection/CollapsibleSection.vue";
+import { useDryRunTest } from "../../composables/useDryRunTest";
 
 const store = useNodeDesignerStore();
 
-const inputCount = computed(() => Math.max(0, store.designerState.number_of_inputs));
-const activeInput = ref(0);
-const saveWithNode = ref(store.designerState.example_inputs !== null);
+// Shared singleton state so the Test tab and the Code-tab test dock stay in sync.
+const {
+  tables,
+  activeInput,
+  saveWithNode,
+  inputCount,
+  hasParameters,
+  paramColumns,
+  paramColumnTypes,
+  setTable,
+  run,
+  isKernelEnv,
+  kernels,
+  kernelsLoading,
+  kernelsAvailable,
+  selectedKernelId,
+  loadKernels,
+} = useDryRunTest();
 
-// One SampleTable per input port, seeded from example_inputs when present.
-const tables = ref<SampleTable[]>([]);
-
-function seedTables() {
-  const count = inputCount.value;
-  const examples = store.designerState.example_inputs;
-  const next: SampleTable[] = [];
-  for (let i = 0; i < count; i++) {
-    const example = examples?.[i];
-    next.push(example ? columnDataToTable(example.data) : emptyTable());
-  }
-  tables.value = next;
-  if (activeInput.value >= count) activeInput.value = 0;
-}
-
-seedTables();
-watch(inputCount, seedTables);
-
-// Column-driven controls (ColumnSelector, IncomingColumns selects) preview against
-// the first sample input's columns, mirroring the Form-tab live preview.
-const hasParameters = computed(() => store.sections.some((s) => s.components.length > 0));
-const paramColumns = computed<string[]>(() => tables.value[0]?.columns.map((c) => c.name) ?? []);
-const paramColumnTypes = computed<FileColumn[]>(() =>
-  paramColumns.value.map((name) => ({ name, data_type: "String" }) as FileColumn),
+// A kernel-env node can't run in the worker, so gate Run until a kernel is chosen.
+const canRun = computed(
+  () => !store.dryRun.running && !(isKernelEnv.value && !selectedKernelId.value),
 );
-
-function onTableUpdate(index: number, table: SampleTable) {
-  tables.value[index] = table;
-  persistExampleInputs();
-}
-
-function persistExampleInputs() {
-  if (!saveWithNode.value) {
-    store.designerState.example_inputs = null;
-    return;
-  }
-  const examples: ExampleInput[] = tables.value.map((t) => ({ data: tableToColumnData(t) }));
-  store.designerState.example_inputs = examples;
-  store.designerState.example_settings = snapshotSettings();
-}
-
-watch(saveWithNode, persistExampleInputs);
-
-function snapshotSettings(): Record<string, Record<string, unknown>> {
-  return JSON.parse(JSON.stringify(store.previewValues));
-}
-
-async function run() {
-  const sampleInputs = tables.value.map((t) => tableToColumnData(t));
-  const body: DryRunBody = {
-    settings_values: snapshotSettings(),
-    sample_inputs: sampleInputs.length ? sampleInputs : null,
-    row_limit: 100,
-    timeout_seconds: 30,
-  };
-  if (store.codeOnly) body.code = store.codeText;
-  else body.designer_state = store.designerState;
-
-  store.dryRun.running = true;
-  store.dryRun.error = null;
-  try {
-    const result = await dryRunCustomNode(body);
-    store.dryRun.result = result;
-    if (saveWithNode.value) persistExampleInputs();
-  } catch (err: unknown) {
-    const e = err as { response?: { data?: { detail?: string } }; message?: string };
-    store.dryRun.error = e.response?.data?.detail || e.message || "Dry run failed";
-    store.dryRun.result = null;
-  } finally {
-    store.dryRun.running = false;
-  }
-}
 </script>
 
 <style scoped>
@@ -184,6 +156,8 @@ async function run() {
   align-items: center;
   gap: 1rem;
   flex-shrink: 0;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
 }
 
 .run-btn {
@@ -213,6 +187,51 @@ async function run() {
   color: var(--color-text-secondary, #6b7280);
 }
 
+.kernel-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.kernel-label {
+  font-weight: 500;
+}
+
+.kernel-select {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8125rem;
+  border: 1px solid var(--color-border-primary, #d1d5db);
+  border-radius: var(--border-radius-sm, 4px);
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-primary, #374151);
+  max-width: 16rem;
+}
+
+.kernel-refresh {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-border-primary, #d1d5db);
+  border-radius: var(--border-radius-sm, 4px);
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+}
+
+.kernel-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.kernel-empty i {
+  color: var(--color-warning, #f59e0b);
+}
+
+.kernel-empty a {
+  color: var(--color-button-primary, #4a6cf7);
+}
+
 .test-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -227,19 +246,17 @@ async function run() {
   min-height: 0;
 }
 
-.test-block + .test-block {
+/* Divider between the config (left) and results (right) columns. */
+.results-column {
+  border-left: 1px solid var(--color-border-light, #e5e7eb);
+  padding-left: 1rem;
+}
+
+/* Divider between the Parameters and Sample-input sections. */
+.test-section + .test-section {
   margin-top: 1rem;
   padding-top: 1rem;
   border-top: 1px solid var(--color-border-light, #e5e7eb);
-}
-
-.block-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary, #6b7280);
-  margin-bottom: 0.25rem;
 }
 
 .block-hint {
@@ -251,6 +268,19 @@ async function run() {
 .block-hint code {
   font-family: var(--font-family-mono, monospace);
   font-size: 0.6875rem;
+}
+
+/* Flatten CustomNodeForm's card chrome inside the params section: the collapsible
+   header already groups it, so drop the inner white card and align to the edge. */
+.params-section :deep(.listbox-wrapper) {
+  margin: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.params-section :deep(.listbox-wrapper + .listbox-wrapper) {
+  margin-top: 0.75rem;
 }
 
 .input-tab-row {

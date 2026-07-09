@@ -7,7 +7,7 @@
       filterable
       placeholder="Select one or more options"
       style="width: 100%"
-      size="large"
+      size="small"
       @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option
