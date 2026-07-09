@@ -139,10 +139,15 @@ def _resolve_sample_inputs(
     lifted = extract_example_inputs(source)
     if lifted:
         return lifted, None
-    return None, _fail(
-        "no_sample_data",
-        "No sample inputs were provided and the node has no example_inputs; add sample data to run a dry run.",
+    # No sample data at all: run against one empty frame per declared input (none for
+    # a source node) so nodes that don't need input data are still testable, rather
+    # than hard-blocking with "add sample data".
+    n = (
+        request.designer_state.number_of_inputs
+        if request.designer_state is not None
+        else extract_manifest(source).number_of_inputs
     )
+    return [{} for _ in range(max(0, n))], None
 
 
 def _serialize_inputs(samples: list[dict[str, list]]) -> tuple[list[bytes] | None, DryRunResponse | None]:

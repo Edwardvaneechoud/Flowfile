@@ -22,36 +22,37 @@ defineProps<{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--spacing-3, 0.75rem);
-  padding: var(--spacing-8, 2rem) var(--spacing-4, 1rem);
-  color: var(--color-text-secondary, #718096);
+  gap: var(--spacing-2);
+  padding: var(--spacing-6) var(--spacing-4);
+  color: var(--color-text-tertiary);
   text-align: center;
 }
 
 .empty-state-icon {
-  font-size: 48px;
-  color: var(--color-primary, #4299e1);
-  opacity: 0.5;
-  margin-bottom: var(--spacing-2, 0.5rem);
+  font-size: var(--font-size-4xl);
+  color: var(--color-text-muted);
+  opacity: 0.6;
+  margin-bottom: var(--spacing-1);
 }
 
 .empty-state-title {
   margin: 0;
-  font-size: var(--font-size-lg, 1rem);
-  color: var(--color-text-primary, #2d3748);
-  font-weight: var(--font-weight-semibold, 600);
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
 }
 
 .empty-state-description {
   margin: 0;
-  max-width: 400px;
-  font-size: var(--font-size-sm, 0.875rem);
-  line-height: 1.5;
+  max-width: 320px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-normal);
 }
 
 .empty-state-actions {
-  margin-top: var(--spacing-3, 0.75rem);
+  margin-top: var(--spacing-3);
   display: flex;
-  gap: var(--spacing-2, 0.5rem);
+  gap: var(--spacing-2);
 }
 </style>

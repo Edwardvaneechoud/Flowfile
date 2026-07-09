@@ -89,10 +89,40 @@ def test_syntax_error_is_caught_in_core(monkeypatch):
     assert called["worker"] is False
 
 
-def test_no_sample_data_error():
+def test_no_sample_data_runs_with_empty_inputs(monkeypatch):
+    # No sample data no longer blocks: the node runs against one empty frame per input.
+    captured = {}
+
+    def _capture(request):
+        captured["inputs"] = request.inputs
+        raise ConnectionError("stop here")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _capture)
     resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=None), user_id=1)
-    assert resp.success is False
-    assert resp.error_kind == "no_sample_data"
+    assert resp.error_kind != "no_sample_data"
+    assert len(captured["inputs"]) == 1  # CODE_OK defaults to number_of_inputs=1
+
+
+def test_zero_input_node_runs_without_sample_data(monkeypatch):
+    captured = {}
+
+    def _capture(request):
+        captured["inputs"] = request.inputs
+        raise ConnectionError("stop here")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _capture)
+    code = (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n\n\n"
+        "class Src(nd.CustomNodeBase):\n"
+        '    node_name: str = "Src"\n'
+        "    number_of_inputs: int = 0\n"
+        "    def process(self, *inputs):\n"
+        '        return pl.LazyFrame({"x": [1, 2, 3]})\n'
+    )
+    resp = run_dry_run(DryRunRequest(code=code, sample_inputs=None), user_id=1)
+    assert resp.error_kind != "no_sample_data"
+    assert captured["inputs"] == []  # a source node runs with zero inputs
 
 
 def test_example_inputs_lifted_from_code(monkeypatch):

@@ -34,7 +34,7 @@
         rows="8"
         placeholder="col_a,col_b&#10;1,hello&#10;2,world"
       ></textarea>
-      <button class="csv-apply" type="button" @click="applyCsv">
+      <button class="btn btn-sm btn-primary csv-apply" type="button" @click="applyCsv">
         <i class="fa-solid fa-check"></i> Apply to grid
       </button>
     </div>
@@ -121,15 +121,5 @@ function applyCsv() {
 
 .csv-apply {
   align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.75rem;
-  border: none;
-  border-radius: 4px;
-  background: var(--color-button-primary, #4a6cf7);
-  color: #fff;
-  cursor: pointer;
 }
 </style>

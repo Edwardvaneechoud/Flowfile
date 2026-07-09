@@ -1,19 +1,24 @@
 <template>
   <div class="form-canvas">
     <div class="form-canvas-inner">
-      <div v-if="store.sections.length === 0" class="empty-canvas">
-        <i class="fa-solid fa-layer-group"></i>
-        <p>This node has no controls yet.</p>
-        <button
-          class="add-group-btn"
-          type="button"
-          data-testid="add-group"
-          @click="store.addSection()"
-        >
-          <i class="fa-solid fa-plus"></i>
-          Add group
-        </button>
-      </div>
+      <EmptyState
+        v-if="store.sections.length === 0"
+        icon="fa-solid fa-layer-group"
+        title="No controls yet"
+        description="Add a group to start building this node's settings form."
+      >
+        <template #actions>
+          <button
+            class="btn btn-secondary"
+            type="button"
+            data-testid="add-group"
+            @click="store.addSection()"
+          >
+            <i class="fa-solid fa-plus"></i>
+            Add group
+          </button>
+        </template>
+      </EmptyState>
 
       <template v-else>
         <CustomNodeForm
@@ -84,7 +89,11 @@
           </template>
         </CustomNodeForm>
 
-        <button class="add-group-btn add-group-trailing" type="button" @click="store.addSection()">
+        <button
+          class="btn btn-secondary add-group-trailing"
+          type="button"
+          @click="store.addSection()"
+        >
           <i class="fa-solid fa-plus"></i>
           Add group
         </button>
@@ -99,6 +108,7 @@ import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { ComponentType } from "../designerState";
 import type { FileColumn } from "../../../components/nodes/baseNode/nodeInterfaces";
 import CustomNodeForm from "../../../components/nodes/node-types/elements/customNode/CustomNodeForm.vue";
+import EmptyState from "../../../components/common/EmptyState/EmptyState.vue";
 import AddControlMenu from "./AddControlMenu.vue";
 
 const store = useNodeDesignerStore();
@@ -175,21 +185,6 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
 
 .form-canvas-inner {
   padding: 0.5rem 0.25rem 1.5rem;
-}
-
-.empty-canvas {
-  text-align: center;
-  padding: 3rem 1rem;
-  color: var(--text-secondary, #6b7280);
-}
-
-.empty-canvas i {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-}
-
-.empty-canvas p {
-  margin: 0 0 1rem;
 }
 
 .control-chrome {
@@ -271,24 +266,6 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
 
 .remove-group-btn:hover {
   color: var(--color-text-danger, #dc2626);
-}
-
-.add-group-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  background: transparent;
-  color: var(--color-button-primary, #4a6cf7);
-  border: 1px dashed var(--color-button-primary, #4a6cf7);
-  border-radius: var(--border-radius-sm, 4px);
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-
-.add-group-btn:hover {
-  background: var(--color-button-primary, #4a6cf7);
-  color: var(--color-text-inverse, #fff);
 }
 
 .add-group-trailing {

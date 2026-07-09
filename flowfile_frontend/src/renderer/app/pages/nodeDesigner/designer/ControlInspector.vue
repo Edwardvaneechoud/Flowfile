@@ -303,7 +303,7 @@
         </div>
 
         <div class="action-section">
-          <button class="ins-btn" type="button" @click="insertVariable">
+          <button class="btn btn-primary" type="button" @click="insertVariable">
             <i class="fa-solid fa-code"></i>
             Insert Variable
           </button>
@@ -311,10 +311,11 @@
         </div>
       </div>
 
-      <div v-else class="no-selection">
-        <i class="fa-solid fa-arrow-pointer"></i>
-        <p>Select a control in the form to edit it</p>
-      </div>
+      <EmptyState
+        v-else
+        icon="fa-solid fa-arrow-pointer"
+        description="Select a control in the form to edit it."
+      />
     </div>
   </div>
 </template>
@@ -324,6 +325,7 @@ import { computed } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { ComponentState, SelectOption } from "../designerState";
 import { toSnakeCase } from "../mappers";
+import EmptyState from "../../../components/common/EmptyState/EmptyState.vue";
 
 const emit = defineEmits<{ (e: "insert-variable", code: string): void }>();
 
@@ -440,9 +442,9 @@ function insertVariable() {
 
 <style scoped>
 .control-inspector {
-  border: 1px solid var(--border-color, #e0e0e0);
-  border-radius: 8px;
-  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
+  background: var(--color-background-primary);
   overflow-y: auto;
   min-height: 0;
 }
@@ -522,30 +524,14 @@ function insertVariable() {
 
 .ins-input:focus {
   outline: none;
-  border-color: var(--input-border-focus, #4a6cf7);
+  border-color: var(--color-accent);
 }
 
 .ins-checkbox {
   width: 18px;
   height: 18px;
   cursor: pointer;
-  accent-color: var(--primary-color, #4a6cf7);
-}
-
-.no-selection {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 200px;
-  color: var(--color-text-secondary, #6b7280);
-  text-align: center;
-}
-
-.no-selection i {
-  font-size: 2rem;
-  margin-bottom: 0.75rem;
-  opacity: 0.5;
+  accent-color: var(--color-accent);
 }
 
 .action-section {
@@ -554,25 +540,6 @@ function insertVariable() {
   gap: 0.5rem;
   padding-top: 1rem;
   border-top: 1px solid var(--color-border-light, #e5e7eb);
-}
-
-.ins-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
-  background: var(--primary-color, #4a6cf7);
-  color: #fff;
-  border: none;
-  border-radius: var(--border-radius-md, 6px);
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.ins-btn:hover {
-  background: var(--primary-color-hover, #3d5bd9);
 }
 
 .field-hint {

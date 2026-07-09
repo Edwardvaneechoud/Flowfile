@@ -1,12 +1,11 @@
 <template>
   <div class="page-header">
     <div class="header-left">
-      <h2 class="page-title">
-        Node Designer
-        <span v-if="nodeName" class="node-name-chip">{{ nodeName }}</span>
-        <span v-if="isDirty" class="dirty-dot" title="Unsaved changes"></span>
+      <span class="page-eyebrow">Node Designer</span>
+      <h2 class="working-title">
+        {{ nodeName || "Untitled node" }}
+        <span v-if="isDirty" class="status-badge status-badge--warning">Unsaved</span>
       </h2>
-      <p class="page-description">Design custom nodes visually</p>
     </div>
     <div class="header-actions">
       <HelpPopover />
@@ -67,38 +66,27 @@ const emit = defineEmits<{
 .header-left {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
-.page-title {
+/* Small page-context label (where you are) above the node name (what you edit). */
+.page-eyebrow {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+
+.working-title {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 600;
-}
-
-.node-name-chip {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary, #6b7280);
-  background: var(--color-background-tertiary, #f1f3f5);
-  border-radius: 999px;
-  padding: 0.125rem 0.625rem;
-}
-
-.dirty-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-warning, #f59e0b);
-  flex-shrink: 0;
-}
-
-.page-description {
-  margin: 0.25rem 0 0 0;
-  color: var(--text-secondary);
-  font-size: 0.875rem;
+  margin: 0.125rem 0 0;
+  min-width: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
 
 .header-actions {

@@ -14,10 +14,11 @@
 
     <template v-else>
       <div class="run-meta">
-        <span class="meta-chip">
-          <i class="fa-solid fa-clock"></i> {{ result.duration_ms }} ms
-        </span>
-        <span class="meta-chip"> <i class="fa-solid fa-server"></i> {{ executedInLabel }} </span>
+        <span class="status-badge status-badge--success">Success</span>
+        <span class="status-badge status-badge--info">{{ executedInLabel }}</span>
+        <span class="run-duration"
+          ><i class="fa-solid fa-clock"></i> {{ result.duration_ms }} ms</span
+        >
       </div>
 
       <div v-for="output in result.outputs" :key="output.name" class="output-block">
@@ -146,18 +147,16 @@ function formatCell(value: unknown): string {
 
 .run-meta {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
 
-.meta-chip {
+.run-duration {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.6875rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 999px;
-  background: var(--color-background-secondary, #f3f4f6);
-  color: var(--color-text-secondary, #6b7280);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 .output-block {

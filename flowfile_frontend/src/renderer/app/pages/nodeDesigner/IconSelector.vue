@@ -19,7 +19,7 @@
 
       <div class="icon-dropdown-content">
         <div class="upload-section">
-          <label class="upload-btn">
+          <label class="btn btn-secondary upload-btn">
             <i class="fa-solid fa-upload"></i>
             Upload Icon
             <input
@@ -257,25 +257,7 @@ onMounted(() => {
 }
 
 .upload-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
   width: 100%;
-  padding: var(--spacing-2);
-  background: var(--color-background-secondary);
-  border: 1px dashed var(--color-border-primary);
-  border-radius: var(--border-radius-sm);
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-normal);
-}
-
-.upload-btn:hover {
-  background: var(--color-background-tertiary);
-  border-color: var(--color-accent);
-  color: var(--color-accent);
 }
 
 .icons-section {

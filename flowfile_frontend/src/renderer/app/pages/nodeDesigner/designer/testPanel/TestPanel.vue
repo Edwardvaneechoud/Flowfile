@@ -2,7 +2,7 @@
   <div class="test-panel">
     <div class="test-toolbar">
       <button
-        class="run-btn"
+        class="btn btn-primary"
         type="button"
         data-testid="test-run"
         :disabled="!canRun"
@@ -22,7 +22,12 @@
               {{ k.name }} ({{ k.state }})
             </option>
           </select>
-          <button class="kernel-refresh" type="button" title="Refresh kernels" @click="loadKernels">
+          <button
+            class="btn btn-sm btn-icon btn-secondary"
+            type="button"
+            title="Refresh kernels"
+            @click="loadKernels"
+          >
             <i class="fa-solid fa-rotate" :class="{ 'fa-spin': kernelsLoading }"></i>
           </button>
         </template>
@@ -92,14 +97,17 @@
       </div>
 
       <div class="results-column">
-        <div v-if="!store.dryRun.result && !store.dryRun.running" class="results-empty">
-          <i class="fa-solid fa-flask"></i>
-          <p>Run the node against your sample data to see results.</p>
-        </div>
-        <div v-else-if="store.dryRun.running" class="results-empty">
-          <i class="fa-solid fa-spinner fa-spin"></i>
-          <p>Running…</p>
-        </div>
+        <EmptyState
+          v-if="!store.dryRun.result && !store.dryRun.running"
+          icon="fa-solid fa-flask"
+          title="No results yet"
+          description="Run the node against your sample data to see results."
+        />
+        <EmptyState
+          v-else-if="store.dryRun.running"
+          icon="fa-solid fa-spinner fa-spin"
+          title="Running…"
+        />
         <DryRunResults v-else-if="store.dryRun.result" :result="store.dryRun.result" />
       </div>
     </div>
@@ -113,6 +121,7 @@ import SampleInputEditor from "./SampleInputEditor.vue";
 import DryRunResults from "./DryRunResults.vue";
 import CustomNodeForm from "../../../../components/nodes/node-types/elements/customNode/CustomNodeForm.vue";
 import CollapsibleSection from "../../../../components/common/CollapsibleSection/CollapsibleSection.vue";
+import EmptyState from "../../../../components/common/EmptyState/EmptyState.vue";
 import { useDryRunTest } from "../../composables/useDryRunTest";
 
 const store = useNodeDesignerStore();
@@ -157,65 +166,37 @@ const canRun = computed(
   gap: 1rem;
   flex-shrink: 0;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
-}
-
-.run-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: var(--color-button-primary, #4a6cf7);
-  color: #fff;
-  border: none;
-  border-radius: var(--border-radius-sm, 4px);
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.run-btn:disabled {
-  opacity: 0.7;
-  cursor: default;
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .save-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary, #6b7280);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .kernel-picker {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary, #6b7280);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .kernel-label {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .kernel-select {
   padding: 0.3rem 0.5rem;
-  font-size: 0.8125rem;
-  border: 1px solid var(--color-border-primary, #d1d5db);
-  border-radius: var(--border-radius-sm, 4px);
-  background: var(--color-background-primary, #fff);
-  color: var(--color-text-primary, #374151);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
   max-width: 16rem;
-}
-
-.kernel-refresh {
-  padding: 0.25rem 0.4rem;
-  border: 1px solid var(--color-border-primary, #d1d5db);
-  border-radius: var(--border-radius-sm, 4px);
-  background: var(--color-background-primary, #fff);
-  color: var(--color-text-secondary, #6b7280);
-  cursor: pointer;
 }
 
 .kernel-empty {
@@ -225,11 +206,11 @@ const canRun = computed(
 }
 
 .kernel-empty i {
-  color: var(--color-warning, #f59e0b);
+  color: var(--color-warning);
 }
 
 .kernel-empty a {
-  color: var(--color-button-primary, #4a6cf7);
+  color: var(--color-accent);
 }
 
 .test-body {
@@ -248,7 +229,7 @@ const canRun = computed(
 
 /* Divider between the config (left) and results (right) columns. */
 .results-column {
-  border-left: 1px solid var(--color-border-light, #e5e7eb);
+  border-left: 1px solid var(--color-border-light);
   padding-left: 1rem;
 }
 
@@ -256,18 +237,18 @@ const canRun = computed(
 .test-section + .test-section {
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--color-border-light, #e5e7eb);
+  border-top: 1px solid var(--color-border-light);
 }
 
 .block-hint {
   margin: 0 0 0.75rem;
-  font-size: 0.75rem;
-  color: var(--color-text-secondary, #6b7280);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .block-hint code {
-  font-family: var(--font-family-mono, monospace);
-  font-size: 0.6875rem;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
 }
 
 /* Flatten CustomNodeForm's card chrome inside the params section: the collapsible
@@ -291,34 +272,24 @@ const canRun = computed(
 
 .input-tab {
   padding: 0.25rem 0.625rem;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--border-radius-sm);
   background: transparent;
-  color: var(--color-text-secondary, #6b7280);
+  color: var(--color-text-secondary);
   cursor: pointer;
 }
 
 .input-tab.active {
-  background: var(--color-background-secondary, #f3f4f6);
-  border-color: var(--color-border-primary, #d1d5db);
-  color: var(--color-text-primary, #374151);
+  background: var(--color-background-secondary);
+  border-color: var(--color-border-primary);
+  color: var(--color-text-primary);
 }
 
-.no-inputs,
-.results-empty {
+.no-inputs {
   text-align: center;
   padding: 2rem 1rem;
-  color: var(--color-text-secondary, #6b7280);
-}
-
-.results-empty i {
-  font-size: 1.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.results-empty p {
-  margin: 0;
-  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 </style>

@@ -15,7 +15,10 @@
 }
 
 .panel-header {
-  padding: var(--spacing-3) var(--spacing-4);
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--spacing-4);
   border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
   background-color: var(--color-background-secondary);
@@ -23,11 +26,9 @@
 
 .panel-header h3 {
   margin: 0;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .panel-content {

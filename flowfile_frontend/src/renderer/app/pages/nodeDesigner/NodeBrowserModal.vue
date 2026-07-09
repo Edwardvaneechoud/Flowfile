@@ -29,11 +29,12 @@
             <i class="fa-solid fa-spinner fa-spin"></i>
             Loading custom nodes...
           </div>
-          <div v-else-if="nodes.length === 0" class="empty-nodes">
-            <i class="fa-solid fa-folder-open"></i>
-            <p>No custom nodes found</p>
-            <p class="empty-hint">Save a node to see it here</p>
-          </div>
+          <EmptyState
+            v-else-if="nodes.length === 0"
+            icon="fa-solid fa-folder-open"
+            title="No custom nodes found"
+            description="Save a node to see it here."
+          />
           <div v-else class="nodes-grid">
             <div
               v-for="node in nodes"
@@ -54,7 +55,7 @@
               </div>
               <div class="node-card-actions">
                 <button
-                  class="card-action"
+                  class="btn btn-sm"
                   title="Edit"
                   :data-testid="`node-edit-${node.file_name}`"
                   @click="emit('edit', node.file_name)"
@@ -62,21 +63,21 @@
                   <i class="fa-solid fa-pen"></i> Edit
                 </button>
                 <button
-                  class="card-action"
+                  class="btn btn-sm"
                   title="Duplicate"
                   @click="emit('duplicate', node.file_name)"
                 >
                   <i class="fa-solid fa-copy"></i> Duplicate
                 </button>
                 <button
-                  class="card-action"
+                  class="btn btn-sm"
                   title="View code"
                   @click="emit('viewNode', node.file_name)"
                 >
                   <i class="fa-solid fa-code"></i> Code
                 </button>
                 <button
-                  class="card-action card-action-danger"
+                  class="btn btn-sm btn-icon btn-danger card-action-danger"
                   title="Delete"
                   @click="askDelete(node.file_name, node.node_name || node.file_name)"
                 >
@@ -119,7 +120,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" @click="pendingDelete = null">Cancel</button>
-        <button class="btn btn-danger" @click="confirmDelete">
+        <button class="btn btn-danger-filled" @click="confirmDelete">
           <i class="fa-solid fa-trash"></i>
           Delete
         </button>
@@ -133,6 +134,7 @@ import { ref } from "vue";
 import { Codemirror } from "vue-codemirror";
 import type { Extension } from "@codemirror/state";
 import type { CustomNodeInfo } from "./types";
+import EmptyState from "../../components/common/EmptyState/EmptyState.vue";
 
 defineProps<{
   show: boolean;
@@ -171,32 +173,11 @@ function confirmDelete() {
   justify-content: center;
   gap: 0.5rem;
   padding: 2rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .loading-indicator i {
   font-size: 1.25rem;
-}
-
-.empty-nodes {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-secondary);
-}
-
-.empty-nodes i {
-  font-size: 3rem;
-  margin-bottom: 1rem;
-  opacity: 0.5;
-}
-
-.empty-nodes p {
-  margin: 0;
-}
-
-.empty-hint {
-  font-size: 0.8125rem;
-  margin-top: 0.5rem !important;
 }
 
 .nodes-grid {
@@ -206,9 +187,9 @@ function confirmDelete() {
 }
 
 .node-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -219,22 +200,22 @@ function confirmDelete() {
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
 }
 
 .node-card-header i {
-  color: var(--primary-color);
+  color: var(--color-accent);
 }
 
 .node-broken {
   margin-left: auto;
-  color: var(--color-warning, #f59e0b);
+  color: var(--color-warning);
 }
 
 .node-name {
-  font-weight: 600;
-  font-size: 0.9375rem;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
 }
 
 .node-card-body {
@@ -244,62 +225,41 @@ function confirmDelete() {
 
 .node-category {
   display: inline-block;
-  font-size: 0.6875rem;
-  font-weight: 500;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   padding: 0.125rem 0.5rem;
-  background: var(--primary-color);
-  color: var(--color-text-inverse);
-  border-radius: 3px;
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-radius: var(--border-radius-full);
   margin-bottom: 0.5rem;
 }
 
 .node-description {
   margin: 0;
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
 .node-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0.5rem 0.75rem;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-}
-
-.card-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--card-bg);
-  color: var(--text-primary, #374151);
-  cursor: pointer;
-}
-
-.card-action:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
+  border-top: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
 }
 
 .card-action-danger {
   margin-left: auto;
 }
 
-.card-action-danger:hover {
-  border-color: var(--color-danger, #ef4444);
-  color: var(--color-danger, #ef4444);
-}
-
 .node-code-view {
-  border-radius: 6px;
+  border-radius: var(--border-radius-md);
   overflow: hidden;
-  border: 1px solid var(--border-color, #3a3a4a);
+  border: 1px solid var(--color-border-primary);
 }
 
 .modal-header-error {
@@ -317,16 +277,7 @@ function confirmDelete() {
 
 .delete-warning {
   color: var(--color-danger-hover);
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
   margin-top: 0.5rem;
-}
-
-.btn-danger {
-  background: var(--color-danger-hover);
-  color: var(--color-text-inverse);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: var(--color-danger-dark);
 }
 </style>

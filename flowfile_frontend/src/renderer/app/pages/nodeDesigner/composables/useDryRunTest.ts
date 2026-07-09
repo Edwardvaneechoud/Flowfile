@@ -118,6 +118,9 @@ function create() {
       store.dryRun.result = null;
     } finally {
       store.dryRun.running = false;
+      // The run may have started/warmed the kernel, so refresh the list — otherwise
+      // the picker keeps showing the stale state from the initial load.
+      if (isKernelEnv.value) loadKernels();
     }
   }
 

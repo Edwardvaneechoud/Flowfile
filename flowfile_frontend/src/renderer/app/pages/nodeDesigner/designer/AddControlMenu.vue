@@ -7,7 +7,7 @@
     popper-class="add-control-popper"
   >
     <template #reference>
-      <button class="add-control-trigger" type="button" data-testid="add-control-trigger">
+      <button class="btn btn-sm btn-secondary" type="button" data-testid="add-control-trigger">
         <i class="fa-solid fa-plus"></i>
         {{ label }}
       </button>
@@ -64,25 +64,6 @@ function pick(type: ComponentType) {
 </script>
 
 <style scoped>
-.add-control-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.375rem 0.75rem;
-  background: transparent;
-  color: var(--color-button-primary, #4a6cf7);
-  border: 1px dashed var(--color-button-primary, #4a6cf7);
-  border-radius: var(--border-radius-sm, 4px);
-  font-size: 0.8125rem;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.add-control-trigger:hover {
-  background: var(--color-button-primary, #4a6cf7);
-  color: var(--color-text-inverse, #fff);
-}
-
 .control-menu {
   display: flex;
   flex-direction: column;

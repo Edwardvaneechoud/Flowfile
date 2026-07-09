@@ -55,7 +55,12 @@
               <div class="code-only-head">
                 <i class="fa-solid fa-triangle-exclamation"></i>
                 <span>Written outside the visual subset — showing the full file.</span>
-                <button class="recheck-btn" type="button" :disabled="rechecking" @click="recheck">
+                <button
+                  class="btn btn-sm btn-secondary recheck-btn"
+                  type="button"
+                  :disabled="rechecking"
+                  @click="recheck"
+                >
                   <i v-if="rechecking" class="fa-solid fa-spinner fa-spin"></i>
                   Re-check
                 </button>
@@ -195,6 +200,16 @@ function handleInsertVariable(code: string) {
 .workspace-tabs :deep(.el-tabs__content) {
   flex: 1;
   min-height: 0;
+}
+
+/* Line the tab bar's content start up with the left panel's content (40px header
+   + 16px gap), so both designer columns share the same top baseline. */
+.workspace-tabs :deep(.el-tabs__header) {
+  margin-bottom: var(--spacing-4);
+}
+
+.workspace-tabs :deep(.el-tabs__nav-wrap) {
+  min-height: 40px;
 }
 
 .workspace-tabs :deep(.el-tab-pane) {
@@ -337,12 +352,6 @@ function handleInsertVariable(code: string) {
 
 .recheck-btn {
   margin-left: auto;
-  padding: 0.25rem 0.625rem;
-  font-size: 0.75rem;
-  border: 1px solid var(--color-border-primary, #d1d5db);
-  border-radius: 4px;
-  background: var(--color-background-primary, #fff);
-  cursor: pointer;
 }
 
 .issue-list {
