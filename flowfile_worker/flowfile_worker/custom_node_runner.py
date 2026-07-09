@@ -130,7 +130,7 @@ def execute_custom_node_task(
     flowfile_flow_id: int,
     flowfile_node_id: int | str,
 ):
-    started = time.monotonic()
+    started = time.perf_counter()
     buffer_handler: _BufferingLogHandler | None = None
     root_capture_handler: logging.Handler | None = None
     root_logger = logging.getLogger()
@@ -198,7 +198,7 @@ def execute_custom_node_task(
         if dry_run:
             payload["preview"] = preview
             payload["logs"] = buffer_handler.records if buffer_handler else []
-            payload["duration_ms"] = (time.monotonic() - started) * 1000
+            payload["duration_ms"] = (time.perf_counter() - started) * 1000
         queue.put(json.dumps(payload))
         with progress.get_lock():
             progress.value = 100

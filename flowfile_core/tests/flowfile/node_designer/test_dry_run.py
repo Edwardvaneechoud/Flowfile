@@ -316,7 +316,7 @@ def test_dry_run_executes_on_kernel(monkeypatch):
     """
     import flowfile_core.kernel as kernel_pkg
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-    from flowfile_core.tests.kernel_fixtures import managed_kernel
+    from tests.kernel_fixtures import managed_kernel
 
     code = (
         "import polars as pl\n"
