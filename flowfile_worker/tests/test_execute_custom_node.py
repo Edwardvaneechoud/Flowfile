@@ -102,7 +102,7 @@ def serialize_input(df: pl.DataFrame) -> bytes:
 
 
 def run_task(tmp_path, node_source, *, inputs, settings_values=None, secrets=None, output_names=None,
-             class_name=None, dry_run=False, row_limit=None):
+             class_name=None, dry_run=False, row_limit=None, flow_id=-1, node_id=1):
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
     q = mp_context.Queue(maxsize=1)
@@ -122,8 +122,8 @@ def run_task(tmp_path, node_source, *, inputs, settings_values=None, secrets=Non
         error_message=error_message,
         queue=q,
         file_path=file_path,
-        flowfile_flow_id=-1,
-        flowfile_node_id=1,
+        flowfile_flow_id=flow_id,
+        flowfile_node_id=node_id,
     )
     payload = None
     if progress.value == 100:
@@ -294,6 +294,47 @@ class ChattyNode(CustomNodeBase):
     assert any("INFO: hello from info" in line for line in logs)
     assert any("DEBUG: a debug detail" in line for line in logs)
     assert any(line == "a print line" for line in logs)
+
+
+def test_run_ships_user_logging_to_flow_log(tmp_path, monkeypatch):
+    # In a real run, the node's own logging.info(...) should ship to core's /raw_logs
+    # with the `Node Id: N - ` prefix, alongside the framework lines. Debug stays local.
+    import flowfile_worker.flow_logger as fl
+
+    posts = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+    def _fake_post(url, json=None, headers=None):
+        posts.append(json)
+        return _Resp()
+
+    monkeypatch.setattr(fl.requests, "post", _fake_post)
+
+    source = '''
+from shared.node_designer import CustomNodeBase
+
+
+class RunLogNode(CustomNodeBase):
+    node_name: str = "Run Log"
+
+    def process(self, *inputs):
+        logging.info("hello from run")
+        logging.debug("nope should not ship")
+        return inputs[0]
+'''
+    df = pl.DataFrame({"a": [1]})
+    progress, error, _, _ = run_task(
+        tmp_path, source, inputs=[serialize_input(df)], flow_id=42, node_id=777,
+    )
+    assert progress == 100, error
+    messages = [p["log_message"] for p in posts]
+    assert any("Node Id: 777 - hello from run" in m for m in messages), messages
+    assert all("nope should not ship" not in m for m in messages)
+    shipped = next(p for p in posts if "hello from run" in p["log_message"])
+    assert shipped["log_type"] == "INFO"
 
 
 def test_dry_run_error_carries_traceback(tmp_path):

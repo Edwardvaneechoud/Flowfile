@@ -18,7 +18,7 @@ from multiprocessing import Array, Queue, Value
 import polars as pl
 from pydantic import SecretStr
 
-from flowfile_worker.flow_logger import get_worker_logger
+from flowfile_worker.flow_logger import FlowfileLogHandler, get_worker_logger
 from flowfile_worker.secrets import decrypt_secret
 from flowfile_worker.utils import collect_lazy_frame
 
@@ -132,6 +132,7 @@ def execute_custom_node_task(
 ):
     started = time.monotonic()
     buffer_handler: _BufferingLogHandler | None = None
+    root_capture_handler: logging.Handler | None = None
     root_logger = logging.getLogger()
     prev_root_level = root_logger.level
     if dry_run:
@@ -140,11 +141,18 @@ def execute_custom_node_task(
         # This child is a dedicated spawned process, so mutating the root logger is safe.
         buffer_handler = _BufferingLogHandler()
         buffer_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-        root_logger.addHandler(buffer_handler)
+        root_capture_handler = buffer_handler
         root_logger.setLevel(logging.DEBUG)
         flowfile_logger = logging.getLogger(f"custom_node_dry_run_{flowfile_node_id}")
     else:
         flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+
+        root_capture_handler = FlowfileLogHandler(flowfile_flow_id, flowfile_node_id)
+        root_capture_handler.setLevel(logging.INFO)
+        root_capture_handler.setFormatter(logging.Formatter("%(message)s"))
+        root_logger.setLevel(logging.INFO)
+    if root_capture_handler is not None:
+        root_logger.addHandler(root_capture_handler)
 
     try:
         from shared.node_designer.loading import find_custom_node_class, install_import_aliases, load_node_module
@@ -208,6 +216,6 @@ def execute_custom_node_task(
         with progress.get_lock():
             progress.value = -1
     finally:
-        if buffer_handler is not None:
-            root_logger.removeHandler(buffer_handler)
+        if root_capture_handler is not None:
+            root_logger.removeHandler(root_capture_handler)
             root_logger.setLevel(prev_root_level)
