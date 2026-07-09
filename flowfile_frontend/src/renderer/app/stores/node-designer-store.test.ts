@@ -400,15 +400,15 @@ describe("multi-output signature & scaffold", () => {
     expect(store.processSignature).toBe(SINGLE_SIG);
   });
 
-  it("scaffolds a runnable dict body keyed by output_names when pristine", async () => {
+  it("scaffolds a dict body keyed by output_names when pristine", async () => {
     const store = useNodeDesignerStore();
     store.nodeMetadata.number_of_outputs = 2;
     await nextTick();
     const code = store.designerState.process_code;
     expect(code).toContain(MULTI_SIG);
-    expect(code).toContain("# Return one LazyFrame per output, keyed by output name.");
-    expect(code).toContain('"main": inputs[0],');
-    expect(code).toContain('"output_1": inputs[0],');
+    expect(code).toContain("return {");
+    expect(code).toContain('"main": ...,  # replace ... with the output');
+    expect(code).toContain('"output_1": ...,  # replace ... with the output');
   });
 
   it("recomposes an edited body with the derived signature", async () => {
@@ -427,7 +427,7 @@ describe("multi-output signature & scaffold", () => {
     const code = store.designerState.process_code;
     expect(code).toContain("head(5)");
     expect(code).toContain(MULTI_SIG);
-    expect(code).not.toContain("Return one LazyFrame per output");
+    expect(code).not.toContain("replace ... with the output");
   });
 
   it("keeps output_names length in sync with number_of_outputs", async () => {

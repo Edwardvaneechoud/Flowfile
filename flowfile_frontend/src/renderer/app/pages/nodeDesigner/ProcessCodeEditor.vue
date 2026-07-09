@@ -13,10 +13,16 @@
     </p>
     <div v-if="multiOutputKeys" class="multi-output-hint">
       <i class="fa-solid fa-diagram-project"></i>
-      <span>
-        Return a <code>dict</code> with one LazyFrame per output — keys:
-        <code v-for="(name, i) in multiOutputKeys" :key="i" class="key-chip">{{ name }}</code>
-      </span>
+      <div class="multi-output-hint-body">
+        <span>
+          Return a <code>dict</code> with one LazyFrame per output — keys:
+          <code v-for="(name, i) in multiOutputKeys" :key="i" class="key-chip">{{ name }}</code>
+        </span>
+        <button type="button" class="insert-return-btn" @click="insertReturnTemplate">
+          <i class="fa-solid fa-plus"></i>
+          Insert return template
+        </button>
+      </div>
     </div>
     <div class="code-editor-wrapper" :class="{ 'fill-height': fillHeight }">
       <div v-if="signature" class="signature-line">
@@ -58,6 +64,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
+  (e: "insert", code: string): void;
 }>();
 
 const fillHeight = computed(() => props.height === "100%");
@@ -69,6 +76,17 @@ const showHelp = ref(false);
 const multiOutputKeys = computed(() =>
   props.outputNames && props.outputNames.length > 1 ? props.outputNames : null,
 );
+
+// Insert a ready-to-edit `return {...}` keyed by the declared outputs, so authors
+// see the exact dict shape their node must return. Reuses the editor's insert path.
+function insertReturnTemplate() {
+  const keys = multiOutputKeys.value;
+  if (!keys) return;
+  const entries = keys
+    .map((n) => `        ${JSON.stringify(n)}: ...,  # replace ... with the output`)
+    .join("\n");
+  emit("insert", `    return {\n${entries}\n    }`);
+}
 
 // The read-only signature above the editor occupies line(s) 1..N, so number the
 // editable body continuing from N+1 — making `def process(...)` visibly row 1.
@@ -225,10 +243,36 @@ const editorExtensions = computed<Extension[]>(() => {
   color: var(--color-text-secondary);
 }
 
-.multi-output-hint i {
+.multi-output-hint > i {
   color: var(--color-accent, #0891b2);
   flex-shrink: 0;
   margin-top: 0.15rem;
+}
+
+.multi-output-hint-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.insert-return-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--color-accent, #0891b2);
+  border-radius: var(--border-radius-sm, 4px);
+  background: transparent;
+  color: var(--color-accent, #0891b2);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.insert-return-btn:hover {
+  background: var(--color-accent, #0891b2);
+  color: #fff;
 }
 
 .multi-output-hint code {

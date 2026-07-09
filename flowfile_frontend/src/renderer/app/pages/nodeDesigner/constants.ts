@@ -1,23 +1,18 @@
 /**
  * Constants for the Node Designer
  */
+import { componentDocs } from "./componentDocs";
 import type { AvailableComponent } from "./types";
 
 /** Legacy sessionStorage key; kept only for the one-time draft migration in node-designer-store */
 export const STORAGE_KEY = "nodeDesigner_state";
 
-/** Available component types for the palette */
-export const availableComponents: AvailableComponent[] = [
-  { type: "TextInput", label: "Text Input", icon: "fa-solid fa-font" },
-  { type: "NumericInput", label: "Numeric Input", icon: "fa-solid fa-hashtag" },
-  { type: "ToggleSwitch", label: "Toggle Switch", icon: "fa-solid fa-toggle-on" },
-  { type: "SingleSelect", label: "Single Select", icon: "fa-solid fa-list" },
-  { type: "MultiSelect", label: "Multi Select", icon: "fa-solid fa-list-check" },
-  { type: "ColumnSelector", label: "Column Selector", icon: "fa-solid fa-table-columns" },
-  { type: "ColumnActionInput", label: "Column Action", icon: "fa-solid fa-table-list" },
-  { type: "SliderInput", label: "Slider", icon: "fa-solid fa-sliders" },
-  { type: "SecretSelector", label: "Secret Selector", icon: "fa-solid fa-key" },
-];
+/** Available component types for the palette, derived from the component reference. */
+export const availableComponents: AvailableComponent[] = componentDocs.map((c) => ({
+  type: c.type,
+  label: c.label,
+  icon: c.icon,
+}));
 
 /** Default process code template */
 export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:

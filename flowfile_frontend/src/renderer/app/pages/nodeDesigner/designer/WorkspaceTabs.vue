@@ -78,6 +78,7 @@
                 :signature="store.codeOnly ? undefined : store.processSignature"
                 :output-names="store.codeOnly ? undefined : store.nodeMetadata.output_names"
                 height="100%"
+                @insert="handleInsertVariable"
               />
             </div>
             <CollapsibleSection

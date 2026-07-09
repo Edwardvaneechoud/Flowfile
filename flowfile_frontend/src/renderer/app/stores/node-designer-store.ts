@@ -225,13 +225,10 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
 
   const singleOutputBody = () => splitProcessCode(defaultProcessCode).body;
   const knownPristineBodies = () => [splitProcessCode(defaultProcessCode).body.trim()];
+  const multiOutputEntry = (name: string) =>
+    `        ${JSON.stringify(name)}: ...,  # replace ... with the output`;
   const multiOutputBody = (names: string[]) =>
-    [
-      "    # Return one LazyFrame per output, keyed by output name.",
-      "    return {",
-      ...names.map((n) => `        ${JSON.stringify(n)}: inputs[0],`),
-      "    }",
-    ].join("\n");
+    ["    return {", ...names.map(multiOutputEntry), "    }"].join("\n");
 
   const processSignature = computed(() => derivedSignature());
 

@@ -3,9 +3,9 @@
     <div class="form-canvas-inner">
       <EmptyState
         v-if="store.sections.length === 0"
-        icon="fa-solid fa-layer-group"
-        title="No controls yet"
-        description="Add a group to start building this node's settings form."
+        icon="fa-solid fa-puzzle-piece"
+        title="Build a custom node"
+        description="Design its settings form here, write the Python transform in the Code tab, then try it on sample data in Test. Saved nodes show up in your palette."
       >
         <template #actions>
           <button

@@ -6,9 +6,12 @@
         {{ nodeName || "Untitled node" }}
         <span v-if="isDirty" class="status-badge status-badge--warning">Unsaved</span>
       </h2>
+      <p class="page-purpose">
+        Build a reusable node for your palette — a settings form plus a Python transform.
+      </p>
     </div>
     <div class="header-actions">
-      <HelpPopover />
+      <HelpButton />
       <button class="btn btn-secondary" data-testid="designer-browse" @click="emit('browse')">
         <i class="fa-solid fa-folder-open"></i>
         Browse
@@ -35,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import HelpPopover from "./HelpPopover.vue";
+import HelpButton from "./HelpButton.vue";
 
 withDefaults(
   defineProps<{
@@ -87,6 +90,12 @@ const emit = defineEmits<{
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.page-purpose {
+  margin: 0.25rem 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .header-actions {

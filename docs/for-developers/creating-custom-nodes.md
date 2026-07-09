@@ -130,7 +130,13 @@ class MyNodeSettings(nd.NodeSettings):
 
 ## Available UI components
 
-### Text Input
+Flowfile ships nine settings components. Each one below is documented the same way: **what it does**, **what it returns** (shown in the heading as `accessor → type`, plus how you read it in `process`), how to **configure** it, whether it **needs a connected input**, and **when to reach for it**.
+
+Read a component's value in `process` with `self.settings_schema.<section>.<field>.value` — the one exception is `SecretSelector`, which uses `.secret_value`.
+
+### Text Input — `.value` → `str`
+
+A single-line text field for a free-form string.
 
 ```python
 text_field = nd.TextInput(
@@ -140,7 +146,18 @@ text_field = nd.TextInput(
 )
 ```
 
-### Numeric Input
+**Configure** — `default`, `placeholder`. **Needs a connected input:** no.
+
+```python
+prefix = self.settings_schema.options.prefix.value
+return lf.with_columns((pl.lit(prefix) + pl.col("name")).alias("greeting"))
+```
+
+**When to use** — free-form text, or a column name typed by hand.
+
+### Numeric Input — `.value` → `float`
+
+A number field with optional minimum and maximum bounds. The value is always a `float`, even when a whole number is entered — cast with `int(...)` if you need an integer.
 
 ```python
 number_field = nd.NumericInput(
@@ -151,7 +168,63 @@ number_field = nd.NumericInput(
 )
 ```
 
-### Single Select
+**Configure** — `default`, `min_value`, `max_value`. **Needs a connected input:** no.
+
+```python
+threshold = self.settings_schema.options.threshold.value
+return lf.filter(pl.col("amount") > threshold)
+```
+
+**When to use** — exact numeric entry with optional bounds (use **Slider** when a bounded slider is friendlier than typing).
+
+### Slider — `.value` → `float`
+
+A slider for choosing a numeric value within a fixed range. When no `default` is given the value starts at `min_value`.
+
+```python
+sample_field = nd.SliderInput(
+    label="Rows to keep",
+    min_value=0,
+    max_value=100,
+    step=5,
+    default=10,
+)
+```
+
+**Configure** — `min_value` (0), `max_value` (100), `step` (1), `default`. **Needs a connected input:** no.
+
+```python
+top_n = self.settings_schema.options.top_n.value
+return lf.head(int(top_n))
+```
+
+**When to use** — a bounded numeric value where dragging beats typing.
+
+### Toggle Switch — `.value` → `bool`
+
+A boolean on/off switch.
+
+```python
+toggle_field = nd.ToggleSwitch(
+    label="Enable feature",
+    default=True,
+    description="Turn this on to enable the feature",
+)
+```
+
+**Configure** — `default` (False), `description`. **Needs a connected input:** no.
+
+```python
+if self.settings_schema.options.drop_nulls.value:
+    lf = lf.drop_nulls()
+return lf
+```
+
+**When to use** — a single on/off feature flag.
+
+### Single Select — `.value` → `str`
+
+A dropdown for picking one option from a list.
 
 ```python
 choice_field = nd.SingleSelect(
@@ -164,7 +237,18 @@ choice_field = nd.SingleSelect(
 )
 ```
 
-### Multi Select
+**Configure** — `options` (a static list, or the `IncomingColumns` / `AvailableArtifacts` marker), `default`. **Needs a connected input:** only with `options=nd.IncomingColumns` (see [Dynamic options](#dynamic-options-from-the-input)).
+
+```python
+op = self.settings_schema.options.aggregation.value  # e.g. "sum"
+return lf.select(getattr(pl.col("amount"), op)())
+```
+
+**When to use** — one choice from a fixed list. For picking a single input column, prefer **Column Selector**; reach for `options=nd.IncomingColumns` only for a lightweight column dropdown.
+
+### Multi Select — `.value` → `list[str]`
+
+A dropdown for picking several options from a list.
 
 ```python
 multi_field = nd.MultiSelect(
@@ -178,19 +262,21 @@ multi_field = nd.MultiSelect(
 )
 ```
 
-### Toggle Switch
+**Configure** — `options` (same as Single Select), `default` (an empty list). **Needs a connected input:** only with `options=nd.IncomingColumns`.
 
 ```python
-toggle_field = nd.ToggleSwitch(
-    label="Enable feature",
-    default=True,
-    description="Turn this on to enable the feature",
-)
+ops = self.settings_schema.cleaning.operations.value  # ["lowercase", "trim"]
+expr = pl.col("text")
+if "lowercase" in ops:
+    expr = expr.str.to_lowercase()
+return lf.with_columns(expr.alias("clean"))
 ```
 
-### Column Selector
+**When to use** — several choices from a fixed list.
 
-Type-filtered column picker:
+### Column Selector — `.value` → `str | list[str]`
+
+A picker for one or more columns from the input frame, optionally filtered by data type (see [Type filtering](#type-filtering)). Returns a single column name, or a `list[str]` when `multiple=True`.
 
 ```python
 # Any column
@@ -211,9 +297,61 @@ text_columns = nd.ColumnSelector(
 )
 ```
 
-### Secret Selector
+**Configure** — `required` (False), `multiple` (False), `data_types` ("ALL"). **Needs a connected input:** yes — the choices come from the input schema.
 
-Access stored secrets (API keys, credentials, tokens). Add `SecretSelector` inside a `Section` like any other component — the keyword is the field name. It has only a `label`, no `name=`:
+```python
+cols = self.settings_schema.config.columns.value  # str, or list[str] when multiple=True
+return lf.select(cols)
+```
+
+**When to use** — the purpose-built, type-filterable column picker. Prefer it over `SingleSelect(IncomingColumns)` whenever you are choosing real input columns.
+
+### Column Action — `.value` → `dict`
+
+A table where the user pairs input columns with an action and an output name, with optional group-by and order-by pickers. Built for aggregations, rolling windows, string operations, and type casts.
+
+```python
+column_actions = nd.ColumnActionInput(
+    label="Aggregations",
+    actions=[
+        nd.ActionOption("sum", "Sum"),
+        nd.ActionOption("mean", "Average"),
+        "min",  # plain strings also work
+    ],
+    output_name_template="{column}_{action}",
+    show_group_by=True,
+    data_types=nd.Types.Numeric,
+)
+```
+
+**Configure** — `actions` (strings or `nd.ActionOption(value, label)`), `output_name_template` (`"{column}_{action}"`), `show_group_by` (False), `show_order_by` (False), `data_types`. **Needs a connected input:** yes.
+
+The value is a `dict`:
+
+```python
+{
+    "rows": [{"column": str, "action": str, "output_name": str}, ...],
+    "group_by_columns": list[str],   # [] unless show_group_by=True
+    "order_by_column": str | None,   # None unless show_order_by=True
+}
+```
+
+```python
+cfg = self.settings_schema.agg.column_actions.value
+return lf.group_by(cfg["group_by_columns"]).agg([
+    getattr(pl.col(r["column"]), r["action"])().alias(r["output_name"])
+    for r in cfg["rows"]
+])
+```
+
+**When to use** — to pair many columns with an operation and an output name in one table. Column Selector only returns column names; Column Action returns column + action + output rows.
+
+!!! note "You interpret the actions"
+    The action strings are yours to act on in `process` — the component collects the rows, it does not run the operations for you.
+
+### Secret Selector — `.secret_value` → `SecretStr | None`
+
+A dropdown listing the secrets the current user has stored (API keys, credentials, tokens). Only the secret's name shows in the UI; its value is resolved at run time. Add it inside a `Section` like any other component — it has only a `label`, no `name=`.
 
 ```python
 class ApiSettings(nd.NodeSettings):
@@ -228,18 +366,22 @@ class MyNode(nd.CustomNodeBase):
     settings_schema: ApiSettings = ApiSettings()
 
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-        key = self.settings_schema.connection.api_key.secret_value
+        secret = self.settings_schema.connection.api_key.secret_value
+        if secret is not None:
+            api_key = secret.get_secret_value()  # the decrypted string
         ...
 ```
 
-The dropdown lists the secrets configured by the current user. Read the decrypted value with `self.settings_schema.connection.api_key.secret_value` — it is only resolvable during execution. On a run, core pre-resolves the secret to its `$ffsec$` ciphertext and ships that to the worker, which decrypts it locally; the plaintext never leaves the worker process.
+**Configure** — `required` (False), `description`, `name_prefix`. **Needs a connected input:** no.
+
+`secret_value` returns a `SecretStr` (or `None` when nothing is selected); call `.get_secret_value()` for the plaintext. It is only resolvable during execution. On a run, core pre-resolves the secret to its `$ffsec$` ciphertext and ships that to the worker, which decrypts it locally; the plaintext never leaves the worker process.
 
 !!! warning "Secrets are not available in isolated kernels"
     A node whose `environment = "kernel"` runs its `process` in a Docker kernel that has no access to the secret store. Reading `secret_value` inside a kernel node raises at runtime. Use `environment = "local"` (the default) for secret-backed nodes.
 
-### Dynamic Column Options
+### Dynamic options from the input
 
-Use `IncomingColumns` for a dropdown that populates with the input's column names:
+`SingleSelect` and `MultiSelect` can populate their choices from the input's column names instead of a static list — pass the `IncomingColumns` marker:
 
 ```python
 column_dropdown = nd.SingleSelect(
@@ -248,9 +390,11 @@ column_dropdown = nd.SingleSelect(
 )
 ```
 
-## Type filtering in Column Selector
+For choosing columns to operate on, **Column Selector** is usually the better fit — it adds type filtering, multi-select, and a required flag.
 
-`nd.Types` provides type groups and specific types:
+### Type filtering
+
+`ColumnSelector` and `ColumnActionInput` accept a `data_types` filter. `nd.Types` provides type groups and specific types:
 
 ```python
 # Type groups

@@ -32,24 +32,13 @@
 import { ref } from "vue";
 import { ElPopover } from "element-plus";
 import type { ComponentType } from "../designerState";
+import { componentDocs } from "../componentDocs";
 
-interface ControlDef {
-  type: ComponentType;
-  label: string;
-  icon: string;
-}
-
-const AVAILABLE_CONTROLS: ControlDef[] = [
-  { type: "TextInput", label: "Text Input", icon: "fa-solid fa-font" },
-  { type: "NumericInput", label: "Numeric Input", icon: "fa-solid fa-hashtag" },
-  { type: "ToggleSwitch", label: "Toggle Switch", icon: "fa-solid fa-toggle-on" },
-  { type: "SingleSelect", label: "Single Select", icon: "fa-solid fa-list" },
-  { type: "MultiSelect", label: "Multi Select", icon: "fa-solid fa-list-check" },
-  { type: "ColumnSelector", label: "Column Selector", icon: "fa-solid fa-table-columns" },
-  { type: "ColumnActionInput", label: "Column Action", icon: "fa-solid fa-table-list" },
-  { type: "SliderInput", label: "Slider", icon: "fa-solid fa-sliders" },
-  { type: "SecretSelector", label: "Secret Selector", icon: "fa-solid fa-key" },
-];
+const AVAILABLE_CONTROLS = componentDocs.map((c) => ({
+  type: c.type,
+  label: c.label,
+  icon: c.icon,
+}));
 
 withDefaults(defineProps<{ label?: string }>(), { label: "Add a control" });
 
