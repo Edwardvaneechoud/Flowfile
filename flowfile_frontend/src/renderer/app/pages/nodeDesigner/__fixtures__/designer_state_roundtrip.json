@@ -18,6 +18,7 @@
       "title": "Main config",
       "description": "Primary settings.",
       "hidden": false,
+      "layout": "horizontal",
       "components": [
         {
           "component_type": "TextInput",
@@ -59,6 +60,7 @@
       "title": "Advanced",
       "description": null,
       "hidden": false,
+      "layout": "vertical",
       "components": [
         {
           "component_type": "MultiSelect",

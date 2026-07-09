@@ -38,10 +38,22 @@
         </span>
       </div>
 
-      <label class="save-toggle">
-        <input v-model="saveWithNode" type="checkbox" />
-        Save test setup with node
-      </label>
+      <div class="save-toggle-group">
+        <label class="save-toggle">
+          <input v-model="saveWithNode" type="checkbox" />
+          Save test setup with node
+        </label>
+        <el-tooltip placement="top" :show-after="150">
+          <template #content>
+            <div style="max-width: 15rem; line-height: 1.5">
+              Keeps the sample data and settings from this panel <strong>inside the node</strong>,
+              so they're ready the next time you open it — and travel with the node when you share
+              or export it. Uncheck to test without saving anything to the node.
+            </div>
+          </template>
+          <i class="fa-solid fa-circle-info help-icon" aria-hidden="true"></i>
+        </el-tooltip>
+      </div>
     </div>
 
     <div class="test-body">
@@ -169,12 +181,28 @@ const canRun = computed(
   border-bottom: 1px solid var(--color-border-light);
 }
 
+.save-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
 .save-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+
+.help-icon {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  cursor: help;
+}
+
+.help-icon:hover {
+  color: var(--color-accent);
 }
 
 .kernel-picker {

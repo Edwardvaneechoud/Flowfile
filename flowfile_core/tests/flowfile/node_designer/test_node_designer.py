@@ -243,6 +243,7 @@ def test_to_frontend_schema_structure(sample_node_settings: NodeSettings):
     config_section = schema["config"]
     assert config_section["component_type"] == "Section"
     assert config_section["title"] == "Main Config"
+    assert config_section["layout"] == "vertical"
     assert "components" in config_section
 
     components = config_section["components"]
@@ -250,6 +251,15 @@ def test_to_frontend_schema_structure(sample_node_settings: NodeSettings):
     assert components["text_input"]["component_type"] == "TextInput"
     assert components["text_input"]["label"] == "Name"
     assert components["text_input"]["value"] == "Default Name"
+
+
+def test_to_frontend_schema_horizontal_layout():
+    """A section built with layout='horizontal' carries that into the frontend schema."""
+    settings = NodeSettings(
+        config=Section(title="Row", layout="horizontal", note=TextInput(label="Note"))
+    )
+    schema = to_frontend_schema(settings)
+    assert schema["config"]["layout"] == "horizontal"
 
 
 def test_to_frontend_schema_incoming_columns(sample_node_settings: NodeSettings):

@@ -24,6 +24,11 @@ describe("designerStateToFrontendSchema", () => {
     expect(schema.main_config.description).toBe("Primary settings.");
   });
 
+  it("carries the section layout through to the runtime schema", () => {
+    expect(schema.main_config.layout).toBe("horizontal");
+    expect(schema.advanced.layout).toBe("vertical");
+  });
+
   it("keys components by name and carries component_type", () => {
     const comps = schema.main_config.components;
     expect(Object.keys(comps)).toEqual(["report_title", "include_totals", "mode", "group_cols"]);

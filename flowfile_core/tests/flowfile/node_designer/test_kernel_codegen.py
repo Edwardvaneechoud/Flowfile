@@ -5,6 +5,8 @@ Asserts generated script content and executes the script against a stub
 """
 
 import ast
+import contextlib
+import io
 
 import polars as pl
 import pytest
@@ -78,6 +80,21 @@ class EagerNode(nd.CustomNodeBase):
 
     def process(self, *inputs):
         return inputs[0].collect()
+'''
+
+LOGGING_SOURCE = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class LogNode(nd.CustomNodeBase):
+    node_name: str = "Log"
+
+    def process(self, *inputs):
+        logging.info("hello from process")
+        logging.debug("debug detail")
+        return inputs[0]
 '''
 
 COLUMN_ACTION_SOURCE = '''
@@ -292,6 +309,40 @@ class TestColumnActionAttributeAccess:
         ctx = _run(script, {"main": [pl.LazyFrame({"g": ["a", "a", "b"], "v": [1, 2, 3]})]})
         out = _collect(ctx.published["main"]).sort("g")
         assert out.to_dicts() == [{"g": "a", "v_sum": 3}, {"g": "b", "v_sum": 3}]
+
+
+class TestLoggingCapture:
+    """The node body can use `logging.*` without importing it; the generated script
+    binds `import logging` and routes records to stderr (captured by the kernel)."""
+
+    def test_logging_preamble_present_and_valid(self):
+        script = generate_kernel_script(
+            node_source=LOGGING_SOURCE,
+            class_name="LogNode",
+            settings_values={},
+            output_names=["main"],
+            number_of_inputs=1,
+        )
+        assert "import logging" in script
+        assert "_root_logger.setLevel(logging.DEBUG)" in script
+        assert "_root_logger.removeHandler(_log_handler)" in script
+        ast.parse(script)  # must not raise
+
+    def test_logging_routes_to_stderr_and_returns_output(self):
+        script = generate_kernel_script(
+            node_source=LOGGING_SOURCE,
+            class_name="LogNode",
+            settings_values={},
+            output_names=["main"],
+            number_of_inputs=1,
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            ctx = _run(script, {"main": [pl.LazyFrame({"x": [1, 2]})]})
+        logs = buf.getvalue()
+        assert "INFO: hello from process" in logs
+        assert "DEBUG: debug detail" in logs
+        assert _collect(ctx.published["main"])["x"].to_list() == [1, 2]
 
 
 class TestErrorPaths:

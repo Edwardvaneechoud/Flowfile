@@ -14,33 +14,6 @@
         </div>
         <div v-else class="form-tab-layout">
           <div class="form-groups-column">
-            <div class="group-titles">
-              <div
-                v-for="(section, index) in store.sections"
-                :key="index"
-                class="group-title-row"
-                :class="{ active: store.selectedSectionIndex === index }"
-                @click="store.selectSection(index)"
-              >
-                <input
-                  :value="section.title ?? ''"
-                  class="group-title-input"
-                  type="text"
-                  placeholder="Group title"
-                  @input="
-                    store.updateSectionTitle(index, ($event.target as HTMLInputElement).value)
-                  "
-                />
-                <input
-                  :value="section.name"
-                  class="group-name-input"
-                  type="text"
-                  title="Python attribute name"
-                  @input="section.name = ($event.target as HTMLInputElement).value"
-                  @change="store.sanitizeSectionName(index)"
-                />
-              </div>
-            </div>
             <FormCanvas />
           </div>
           <ControlInspector
@@ -237,47 +210,6 @@ function handleInsertVariable(code: string) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-}
-
-.group-titles {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
-  flex-shrink: 0;
-}
-
-.group-title-row {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.25rem;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.group-title-row.active {
-  background: var(--color-focus-ring-accent, rgba(8, 145, 178, 0.06));
-}
-
-.group-title-input {
-  flex: 2;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid var(--color-border-primary, #d1d5db);
-  border-radius: 4px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-
-.group-name-input {
-  flex: 1;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid var(--color-border-light, #e5e7eb);
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-family: var(--font-family-mono, monospace);
-  color: var(--color-text-secondary, #6b7280);
 }
 
 .code-tab-layout {

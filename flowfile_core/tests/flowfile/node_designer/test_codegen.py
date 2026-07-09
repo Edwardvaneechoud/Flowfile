@@ -169,6 +169,25 @@ def test_incoming_columns_marker_emitted():
     assert parse_source(src).designer_state.sections[0].components[0].options_source == "incoming_columns"
 
 
+def test_section_layout_horizontal_emitted_and_round_trips():
+    section = SectionState(
+        name="main",
+        title="Main",
+        layout="horizontal",
+        components=[TextInputState(name="note", label="Note")],
+    )
+    src = generate_source(_minimal_state(sections=[section]))
+    assert 'layout="horizontal"' in src
+    assert parse_source(src).designer_state.sections[0] == section
+
+
+def test_section_default_layout_emits_no_kwarg():
+    section = SectionState(name="main", title="Main", components=[TextInputState(name="note")])
+    assert section.layout == "vertical"
+    src = generate_source(_minimal_state(sections=[section]))
+    assert "layout=" not in src
+
+
 def test_empty_section_collapses_to_single_line():
     """A section with no kwargs and no components emits ``nd.Section()`` inline (ruff-stable)."""
     section = SectionState(name="bare")

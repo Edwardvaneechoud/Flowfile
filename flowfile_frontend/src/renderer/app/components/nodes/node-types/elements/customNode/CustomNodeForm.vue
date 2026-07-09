@@ -4,10 +4,13 @@
     v-show="!section.hidden"
     :key="sectionKey"
     class="listbox-wrapper"
+    :class="{ 'section-selected': editMode && sectionKey.toString() === selectedSectionKey }"
   >
-    <div class="section-title">
-      {{ section.title || sectionKey.toString().replace(/_/g, " ") }}
-    </div>
+    <slot name="section-header" :section-key="sectionKey.toString()" :section="section">
+      <div class="section-title">
+        {{ section.title || sectionKey.toString().replace(/_/g, " ") }}
+      </div>
+    </slot>
     <p v-if="section.description" class="section-description">{{ section.description }}</p>
 
     <div
@@ -18,6 +21,7 @@
         v-for="(component, componentKey) in section.components"
         :key="componentKey"
         class="component-item"
+        @click="onComponentClick(sectionKey, componentKey)"
       >
         <slot
           v-if="editMode"
@@ -139,18 +143,27 @@ const props = withDefaults(
     columnTypes?: FileColumn[];
     artifactOptions?: string[];
     editMode?: boolean;
+    selectedSectionKey?: string | null;
   }>(),
   {
     incomingColumns: () => [],
     columnTypes: () => [],
     artifactOptions: () => [],
     editMode: false,
+    selectedSectionKey: null,
   },
 );
 
 const emit = defineEmits<{
   (e: "update:formData", value: CustomNodeFormData): void;
+  (e: "select-component", sectionKey: string, componentKey: string): void;
 }>();
+
+// In the designer, clicking a control selects it (mirrors clicking a section
+// header) so the pencil affordance isn't needed. No-op at runtime.
+function onComponentClick(sectionKey: string | number, componentKey: string | number) {
+  if (props.editMode) emit("select-component", String(sectionKey), String(componentKey));
+}
 
 // Never mutates the prop: emits a shallow-updated copy so hosts bind v-model:form-data.
 function setValue(sectionKey: string, componentKey: string, value: unknown) {

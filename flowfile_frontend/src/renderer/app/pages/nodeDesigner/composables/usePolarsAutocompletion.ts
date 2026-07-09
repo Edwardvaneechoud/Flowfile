@@ -114,6 +114,12 @@ const polarsCompletions = [
   { label: "self", type: "keyword", info: "Access node instance" },
   { label: "inputs[0]", type: "variable", info: "First input LazyFrame" },
   { label: "inputs[1]", type: "variable", info: "Second input LazyFrame" },
+  {
+    label: "logging",
+    type: "module",
+    info: "Python logging module — output shows in the Test panel's Logs",
+    apply: "logging.",
+  },
 
   // Polars expressions
   { label: "pl.col", type: "function", info: "Select a column by name", apply: 'pl.col("")' },
@@ -657,6 +663,23 @@ const plModuleMethods: Completion[] = [
   { label: "Series", type: "class", info: "One-dimensional series", apply: "Series()" },
 ];
 
+// Methods shared by the `logging` module and a `logging.getLogger()` Logger.
+// Output lands in the Test panel's Logs (captured at DEBUG on dry-run).
+const loggerMethods: Completion[] = [
+  meth("debug", "Log a DEBUG message", 'debug("")'),
+  meth("info", "Log an INFO message", 'info("")'),
+  meth("warning", "Log a WARNING message", 'warning("")'),
+  meth("error", "Log an ERROR message", 'error("")'),
+  meth("critical", "Log a CRITICAL message", 'critical("")'),
+  meth("exception", "Log an ERROR with the current traceback", 'exception("")'),
+  meth("log", "Log at an explicit level", "log()"),
+];
+
+const loggingMethods: Completion[] = [
+  ...loggerMethods,
+  meth("getLogger", "Get a named logger", "getLogger()"),
+];
+
 interface Assignment {
   name: string;
   annotation: string | null;
@@ -785,6 +808,7 @@ function inferFromRhs(
     if (/^pl\.concat\b/.test(s)) return "LazyFrame";
     return "Expr";
   }
+  if (/^logging\.getLogger\b/.test(s)) return "Logger";
   // Chain off a known variable: alias, or a method that preserves the frame kind.
   const root = s.match(/^([A-Za-z_]\w*)\b/);
   if (root) {
@@ -860,6 +884,8 @@ export function memberCompletionsFor(
       return secretStrMethods;
     case "ColumnActionValue":
       return columnActionValueMembers;
+    case "Logger":
+      return loggerMethods;
     default:
       return null;
   }
@@ -1083,6 +1109,13 @@ export function usePolarsAutocompletion(
     if (inputsMemberMatch) {
       const typed = inputsMemberMatch[1];
       return { from: context.pos - typed.length, options: lazyFrameMethods, validFor: /^\w*$/ };
+    }
+
+    // logging.<method> — the module and a getLogger()-returned Logger share members.
+    const loggingMatch = beforeCursor.match(/\blogging\.(\w*)$/);
+    if (loggingMatch) {
+      const typed = loggingMatch[1];
+      return { from: context.pos - typed.length, options: loggingMethods, validFor: /^\w*$/ };
     }
 
     // Member access on a plain identifier: offer methods for its inferred type,

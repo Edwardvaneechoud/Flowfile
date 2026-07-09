@@ -176,9 +176,35 @@ def generate_kernel_script(
     if imports_block:
         imports_block += "\n"
 
+    # Route the node's logging (and any bare `logging.*`) to stderr at DEBUG while
+    # process() runs; the kernel runtime captures stderr into the Test panel. The
+    # handler is torn down in `finally` so the long-lived kernel never leaks handlers.
+    exec_body = (
+        "_inputs_by_name = flowfile_ctx.read_inputs()\n"
+        "_inputs = [_lf for _lfs in _inputs_by_name.values() for _lf in _lfs]\n"
+        "_result = _Node().process(*_inputs)\n"
+        "\n"
+        f"{epilogue}"
+    )
+    capture_tail = (
+        "_log_handler = logging.StreamHandler(_sys.stderr)\n"
+        '_log_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))\n'
+        "_root_logger = logging.getLogger()\n"
+        "_prev_log_level = _root_logger.level\n"
+        "_root_logger.addHandler(_log_handler)\n"
+        "_root_logger.setLevel(logging.DEBUG)\n"
+        "try:\n"
+        f"{_indent(exec_body)}\n"
+        "finally:\n"
+        "    _root_logger.removeHandler(_log_handler)\n"
+        "    _root_logger.setLevel(_prev_log_level)"
+    )
+
     script = f"""\
 import polars as pl
 import json as _json
+import logging
+import sys as _sys
 {imports_block}
 flowfile_ctx = globals()["flowfile_ctx"]
 
@@ -229,11 +255,7 @@ class _Node:
 {_indent(class_body)}
 
 
-_inputs_by_name = flowfile_ctx.read_inputs()
-_inputs = [_lf for _lfs in _inputs_by_name.values() for _lf in _lfs]
-_result = _Node().process(*_inputs)
-
-{epilogue}
+{capture_tail}
 """
 
     try:

@@ -27,23 +27,31 @@
           :incoming-columns="incomingColumns"
           :column-types="columnTypes"
           :edit-mode="true"
+          :selected-section-key="selectedSectionName"
           @update:form-data="onPreviewUpdate"
+          @select-component="select"
         >
-          <template #component-chrome="{ sectionKey, componentKey }">
+          <template #section-header="{ sectionKey, section }">
             <div
-              class="control-chrome"
-              :class="{ selected: isSelected(sectionKey, componentKey) }"
-              @click.stop="select(sectionKey, componentKey)"
+              class="section-header-edit"
+              :class="{ selected: editingSectionName === sectionKey }"
+              role="button"
+              tabindex="0"
+              title="Edit this group"
+              @click="selectSectionByKey(sectionKey)"
+              @keydown.enter="selectSectionByKey(sectionKey)"
             >
+              <span class="section-header-title">
+                {{ section.title || sectionKey.replace(/_/g, " ") }}
+              </span>
+              <span class="section-header-name">{{ sectionKey }}</span>
+              <i class="fa-solid fa-sliders section-header-icon"></i>
+            </div>
+          </template>
+
+          <template #component-chrome="{ sectionKey, componentKey }">
+            <div class="control-chrome" :class="{ selected: isSelected(sectionKey, componentKey) }">
               <div class="control-chrome-actions">
-                <button
-                  class="chrome-btn chrome-btn-select"
-                  type="button"
-                  title="Edit this control"
-                  @click.stop="select(sectionKey, componentKey)"
-                >
-                  <i class="fa-solid fa-pen"></i>
-                </button>
                 <button
                   class="chrome-btn"
                   type="button"
@@ -123,8 +131,29 @@ const columnTypes = computed<FileColumn[]>(() =>
   incomingColumns.value.map((name) => ({ name, data_type: "String" }) as FileColumn),
 );
 
+// The section that contains the current selection (section or one of its
+// controls) — frames the whole card so you can see which group you're in.
+const selectedSectionName = computed<string | null>(() => {
+  const idx = store.selectedSectionIndex;
+  if (idx === null) return null;
+  return store.sections[idx]?.name ?? null;
+});
+
+// The section that is itself the edit target (no control selected) — drives the
+// header's strong "editing this group" fill, kept distinct from control editing.
+const editingSectionName = computed<string | null>(() => {
+  const idx = store.selectedSectionIndex;
+  if (idx === null || store.selectedComponentIndex !== null) return null;
+  return store.sections[idx]?.name ?? null;
+});
+
 function sectionIndex(sectionKey: string): number {
   return store.sections.findIndex((s) => s.name === sectionKey);
+}
+
+function selectSectionByKey(sectionKey: string) {
+  const idx = sectionIndex(sectionKey);
+  if (idx >= 0) store.selectSection(idx);
 }
 
 function componentIndex(sectionKey: string, componentKey: string): number {
@@ -185,6 +214,88 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
 
 .form-canvas-inner {
   padding: 0.5rem 0.25rem 1.5rem;
+}
+
+/* Each section renders as a distinct card so it's clear where one group ends and
+   the next begins; the selected group gets an accent frame. */
+.form-canvas-inner :deep(.listbox-wrapper) {
+  border: 1px solid var(--color-border-light, #e5e7eb);
+  border-radius: var(--border-radius-lg, 8px);
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  background: var(--color-background-primary, #fff);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.form-canvas-inner :deep(.listbox-wrapper.section-selected) {
+  border-color: var(--color-accent, #0891b2);
+  box-shadow: 0 0 0 1px var(--color-accent, #0891b2);
+}
+
+/* Full-bleed title band: sits at the top of the card, its content left-aligned
+   with the controls below, closed off from the body by a thin divider. */
+.section-header-edit {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -0.75rem -0.75rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-top-left-radius: var(--border-radius-lg, 8px);
+  border-top-right-radius: var(--border-radius-lg, 8px);
+  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
+  cursor: pointer;
+}
+
+.section-header-edit:hover {
+  background: var(--color-background-secondary, #f3f4f6);
+}
+
+/* Section edit-target: a solid accent fill, deliberately unlike the control's
+   subtle dashed tint so "editing the group" reads differently from "editing a
+   control". */
+.section-header-edit.selected {
+  background: var(--color-accent, #0891b2);
+  border-bottom-color: var(--color-accent, #0891b2);
+}
+
+.section-header-title {
+  font-size: var(--font-size-md, 13px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary);
+}
+
+.section-header-name {
+  font-size: 0.7rem;
+  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.section-header-edit.selected .section-header-title {
+  color: #fff;
+}
+
+.section-header-edit.selected .section-header-name {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.section-header-icon {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary, #9ca3af);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.section-header-edit:hover .section-header-icon {
+  opacity: 1;
+  color: var(--color-accent, #0891b2);
+}
+
+.section-header-edit.selected .section-header-icon {
+  opacity: 1;
+  color: #fff;
 }
 
 .control-chrome {

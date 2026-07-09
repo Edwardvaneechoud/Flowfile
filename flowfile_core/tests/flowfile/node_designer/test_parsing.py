@@ -174,6 +174,7 @@ def test_docs_example_designer_state():
     assert section.title == "Greeting Configuration"
     assert section.description == "Configure how to greet each row"
     assert section.hidden is False
+    assert section.layout == "vertical"
 
     name_column, greeting = section.components
     assert isinstance(name_column, ColumnSelectorState)
@@ -295,6 +296,64 @@ def test_nd_attribute_style_components():
     assert isinstance(strict, ToggleSwitchState)
     assert strict.default is True
     assert strict.description == "Fail on unknown columns"
+
+
+def _layout_source(layout_kwarg: str) -> str:
+    return textwrap.dedent(
+        f"""
+        import polars as pl
+
+        from flowfile import node_designer as nd
+
+
+        class LayoutSettings(nd.NodeSettings):
+            main: nd.Section = nd.Section(
+                title="Main",
+                {layout_kwarg}
+                threshold=nd.NumericInput(label="Threshold"),
+            )
+
+
+        class LayoutNode(nd.CustomNodeBase):
+            node_name: str = "Layout"
+            settings_schema: LayoutSettings = LayoutSettings()
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                return inputs[0]
+        """
+    )
+
+
+def test_section_layout_horizontal_lifts_and_round_trips():
+    result = parse_source(_layout_source('layout="horizontal",'))
+    assert result.mode == "designer"
+    assert error_codes(result) == set()
+    section = result.designer_state.sections[0]
+    assert section.layout == "horizontal"
+
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+
+    generated = generate_source(result.designer_state)
+    assert 'layout="horizontal"' in generated
+    reparsed = parse_source(generated)
+    assert reparsed.designer_state == result.designer_state
+
+
+def test_section_layout_defaults_to_vertical_and_emits_no_kwarg():
+    result = parse_source(_layout_source(""))
+    assert result.mode == "designer"
+    section = result.designer_state.sections[0]
+    assert section.layout == "vertical"
+
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+
+    assert "layout=" not in generate_source(result.designer_state)
+
+
+def test_section_invalid_layout_is_code_only():
+    result = parse_source(_layout_source('layout="sideways",'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
 
 
 def test_multi_input_node_without_settings():

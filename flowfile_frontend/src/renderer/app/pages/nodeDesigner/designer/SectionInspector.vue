@@ -25,6 +25,18 @@
             />
           </div>
           <div class="field-row">
+            <label>Python name <span class="req">*</span></label>
+            <input
+              :value="section.name"
+              type="text"
+              class="ins-input ins-mono"
+              title="Attribute used in self.settings_schema.<name>"
+              placeholder="section_name"
+              @input="updateName(($event.target as HTMLInputElement).value)"
+              @change="commitName"
+            />
+          </div>
+          <div class="field-row">
             <label>Description</label>
             <textarea
               :value="section.description ?? ''"
@@ -95,6 +107,16 @@ const section = computed<SectionState | null>(() => {
 function updateTitle(value: string) {
   if (store.selectedSectionIndex === null) return;
   store.updateSectionTitle(store.selectedSectionIndex, value);
+}
+
+function updateName(value: string) {
+  if (store.selectedSectionIndex === null) return;
+  store.sections[store.selectedSectionIndex].name = value;
+}
+
+function commitName() {
+  if (store.selectedSectionIndex === null) return;
+  store.sanitizeSectionName(store.selectedSectionIndex);
 }
 
 function updateDescription(value: string) {
@@ -196,6 +218,15 @@ function setLayout(layout: SectionLayout) {
   resize: vertical;
   font-family: inherit;
   line-height: 1.4;
+}
+
+.ins-mono {
+  font-family: var(--font-family-mono, monospace);
+  font-size: 0.8125rem;
+}
+
+.req {
+  color: var(--color-danger, #ef4444);
 }
 
 .layout-switch {

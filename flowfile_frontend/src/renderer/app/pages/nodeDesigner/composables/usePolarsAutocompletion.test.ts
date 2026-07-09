@@ -14,6 +14,7 @@ import {
   scanLocalSymbols,
   scanSelfMethods,
   settingsFieldAccessor,
+  usePolarsAutocompletion,
 } from "./usePolarsAutocompletion";
 import type { SectionState } from "../designerState";
 
@@ -25,6 +26,7 @@ const oneSliderField = (): SectionState[] => [
     title: "Settings",
     description: null,
     hidden: false,
+    layout: "vertical",
     components: [
       {
         component_type: "SliderInput",
@@ -44,6 +46,7 @@ const oneColumnActionField = (): SectionState[] => [
     title: "Agg",
     description: null,
     hidden: false,
+    layout: "vertical",
     components: [
       {
         component_type: "ColumnActionInput",
@@ -323,6 +326,34 @@ describe("local-variable suggestions carry the inferred type", () => {
     const src = makeLocalVariableSource(() => []);
     const result = src(ctxFor("test: float = self.settings_schema.settings.x.value\ntes"));
     expect(result!.options.find((o) => o.label === "test")?.detail).toBe("float");
+  });
+});
+
+describe("logging completions", () => {
+  const { schemaCompletions } = usePolarsAutocompletion(() => []);
+
+  it("offers `logging` as a top-level suggestion", () => {
+    const result = schemaCompletions(ctxFor("log", 3));
+    expect(result!.options.map((o) => o.label)).toContain("logging");
+  });
+
+  it("suggests logging methods after `logging.`", () => {
+    const result = schemaCompletions(ctxFor("logging."));
+    expect(result).not.toBeNull();
+    const labels = result!.options.map((o) => o.label);
+    expect(labels).toEqual(
+      expect.arrayContaining(["info", "debug", "warning", "error", "getLogger"]),
+    );
+  });
+
+  it("infers logging.getLogger(...) as a Logger", () => {
+    expect(inferLocalTypes("lg = logging.getLogger(__name__)", []).get("lg")).toBe("Logger");
+  });
+
+  it("gives logger methods (not getLogger) for a Logger local", () => {
+    const labels = memberCompletionsFor("lg", new Map([["lg", "Logger"]]))!.map((o) => o.label);
+    expect(labels).toContain("info");
+    expect(labels).not.toContain("getLogger");
   });
 });
 

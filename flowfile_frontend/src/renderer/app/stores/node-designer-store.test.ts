@@ -130,6 +130,18 @@ describe("state transitions", () => {
     expect(store.sections[1].name).toBe("_1_my_section");
   });
 
+  it("seeds sections with a vertical layout and toggles description/layout", () => {
+    const store = useNodeDesignerStore();
+    expect(store.sections[0].layout).toBe("vertical");
+    store.setSectionLayout(0, "horizontal");
+    expect(store.sections[0].layout).toBe("horizontal");
+    store.updateSectionDescription(0, "Row of controls");
+    expect(store.sections[0].description).toBe("Row of controls");
+    store.updateSectionDescription(0, "");
+    expect(store.sections[0].description).toBeNull();
+    expect(store.frontendSchema.settings.layout).toBe("horizontal");
+  });
+
   it("resetState restores the defaults", () => {
     const store = useNodeDesignerStore();
     store.nodeMetadata.node_name = "Something";
@@ -255,7 +267,7 @@ describe("draft restore", () => {
     const state = newDesignerState();
     state.node_name = name;
     state.sections = [
-      { name: "opts", title: "Options", description: null, hidden: false, components: [] },
+      { name: "opts", title: "Options", description: null, hidden: false, layout: "vertical", components: [] },
     ];
     state.process_code = "return inputs[0]";
     localStorageMock.setItem(NEW_DRAFT_KEY, v2Draft(state));

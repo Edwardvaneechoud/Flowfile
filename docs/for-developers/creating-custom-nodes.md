@@ -128,6 +128,27 @@ class MyNodeSettings(nd.NodeSettings):
     )
 ```
 
+A `Section` accepts a few non-component keywords alongside its controls:
+
+- `title` — the panel heading.
+- `description` — helper text shown under the title.
+- `layout` — `"vertical"` (default, controls stacked) or `"horizontal"`. Horizontal
+  flows controls side by side and wraps wide controls to their own row — handy for
+  lining up a few small inputs instead of a tall stack.
+
+```python
+class MyNodeSettings(nd.NodeSettings):
+    bounds: nd.Section = nd.Section(
+        title="Bounds",
+        layout="horizontal",
+        lower=nd.NumericInput(label="Lower"),
+        upper=nd.NumericInput(label="Upper"),
+    )
+```
+
+`title`, `description`, and `layout` are all editable from the visual designer's
+Section inspector (select a group with no control selected).
+
 ## Available UI components
 
 Flowfile ships nine settings components. Each one below is documented the same way: **what it does**, **what it returns** (shown in the heading as `accessor → type`, plus how you read it in `process`), how to **configure** it, whether it **needs a connected input**, and **when to reach for it**.
@@ -528,6 +549,20 @@ class MyNode(nd.CustomNodeBase):
 `example_inputs` is column-oriented — one `{column: [values]}` dict per input port, directly constructible with `pl.LazyFrame(...)`. Both attributes round-trip through the designer: saving "test setup with node" in the Test tab writes them into the file, and reopening the node restores them.
 
 Under the hood, both the designer's Test tab and the `example_inputs` path call the dry-run endpoint (`POST /user_defined_components/dry-run`), which runs the candidate node against the bounded sample frames through the same worker seam as a real run (with `flow_id = -1` and row/timeout caps).
+
+### Logging from `process`
+
+To trace what a node is doing during a dry run, call `logging` or `print` inside `process` — the output appears in the Test tab's **Logs** panel, one line per call, tagged with its level:
+
+```python
+def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    logging.info("rows in: %d", inputs[0].select(pl.len()).collect().item())
+    logging.debug("threshold = %s", self.settings_schema.config.threshold.value)
+    print("checkpoint reached")
+    return inputs[0].filter(...)
+```
+
+You do not need `import logging` — the name is available inside `process`, and everything from `DEBUG` up is captured (the editor autocompletes `logging.` too). This is dry-run only; in a real flow run these lines go to the flow log instead.
 
 ## Worker execution semantics
 

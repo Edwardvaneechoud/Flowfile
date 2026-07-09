@@ -269,6 +269,33 @@ def test_dry_run_returns_preview_and_logs(tmp_path):
     assert any("Executing custom node" in line for line in payload["logs"])
 
 
+def test_dry_run_captures_user_logging_and_print(tmp_path):
+    # The node uses `logging.*` and `print()` without importing logging — the runner
+    # injects the name (no NameError) and captures root-logger + stdout into the logs.
+    source = '''
+from shared.node_designer import CustomNodeBase
+
+
+class ChattyNode(CustomNodeBase):
+    node_name: str = "Chatty"
+
+    def process(self, *inputs):
+        logging.info("hello from info")
+        logging.debug("a debug detail")
+        print("a print line")
+        return inputs[0]
+'''
+    df = pl.DataFrame({"a": [1, 2]})
+    progress, error, payload, _ = run_task(
+        tmp_path, source, inputs=[serialize_input(df)], dry_run=True,
+    )
+    assert progress == 100, error
+    logs = payload["logs"]
+    assert any("INFO: hello from info" in line for line in logs)
+    assert any("DEBUG: a debug detail" in line for line in logs)
+    assert any(line == "a print line" for line in logs)
+
+
 def test_dry_run_error_carries_traceback(tmp_path):
     source = '''
 from shared.node_designer import CustomNodeBase

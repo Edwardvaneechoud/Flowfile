@@ -7,6 +7,7 @@ and writes every named output as Arrow IPC. The child is the memory
 blast-radius boundary; core only ever sees file paths and row counts.
 """
 
+import contextlib
 import io
 import json
 import logging
@@ -50,6 +51,27 @@ class _BufferingLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(self.format(record))
+
+
+class _StreamToRecords(io.TextIOBase):
+    """Tee ``print()`` / stderr writes into the dry-run log buffer, line by line,
+    so they interleave with captured logging records in call order."""
+
+    def __init__(self, records: list[str]):
+        self._records = records
+        self._partial = ""
+
+    def write(self, s: str) -> int:
+        self._partial += s
+        while "\n" in self._partial:
+            line, self._partial = self._partial.split("\n", 1)
+            self._records.append(line)
+        return len(s)
+
+    def flush(self) -> None:
+        if self._partial:
+            self._records.append(self._partial)
+            self._partial = ""
 
 
 def _normalize_outputs(result, output_names: list[str]) -> dict[str, pl.LazyFrame]:
@@ -110,13 +132,17 @@ def execute_custom_node_task(
 ):
     started = time.monotonic()
     buffer_handler: _BufferingLogHandler | None = None
+    root_logger = logging.getLogger()
+    prev_root_level = root_logger.level
     if dry_run:
-        flowfile_logger = logging.getLogger(f"custom_node_dry_run_{flowfile_node_id}")
-        flowfile_logger.setLevel(logging.INFO)
+        # Capture the author's own root-logger output (bare logging.debug/info(...))
+        # plus the framework lines into one ordered buffer surfaced in the Test panel.
+        # This child is a dedicated spawned process, so mutating the root logger is safe.
         buffer_handler = _BufferingLogHandler()
         buffer_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-        flowfile_logger.handlers = [buffer_handler]
-        flowfile_logger.propagate = False
+        root_logger.addHandler(buffer_handler)
+        root_logger.setLevel(logging.DEBUG)
+        flowfile_logger = logging.getLogger(f"custom_node_dry_run_{flowfile_node_id}")
     else:
         flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
 
@@ -125,6 +151,9 @@ def execute_custom_node_task(
 
         install_import_aliases()
         module = load_node_module(source=node_source)
+        # The designer never emits `import logging`, so bind it in the node's module
+        # namespace — otherwise a bare `logging.debug(...)` in process() raises NameError.
+        module.__dict__.setdefault("logging", logging)
         node_cls = find_custom_node_class(module, class_name)
         node = node_cls()
 
@@ -135,19 +164,27 @@ def execute_custom_node_task(
         lazy_inputs = [pl.LazyFrame.deserialize(io.BytesIO(raw)) for raw in inputs]
         flowfile_logger.info(f"Executing custom node '{node.node_name}' with {len(lazy_inputs)} input(s)")
 
-        outputs = _normalize_outputs(node.process(*lazy_inputs), output_names or ["main"])
-
-        payload: dict = {"outputs": {}, "accessed_secret_count": len(node.get_accessed_secrets())}
+        payload: dict = {}
         preview: dict = {}
-        primary_name = (output_names or ["main"])[0]
-        for name, lf in outputs.items():
-            path = _output_path(file_path, name, primary_name)
-            df = collect_lazy_frame(lf)
-            df.write_ipc(path)
-            payload["outputs"][name] = {"path": path, "row_count": df.height}
+        with contextlib.ExitStack() as stack:
             if dry_run:
-                preview[name] = _preview_payload(df, row_limit or PREVIEW_ROW_LIMIT_DEFAULT)
-            del df
+                stream = _StreamToRecords(buffer_handler.records)
+                stack.enter_context(contextlib.redirect_stdout(stream))
+                stack.enter_context(contextlib.redirect_stderr(stream))
+            outputs = _normalize_outputs(node.process(*lazy_inputs), output_names or ["main"])
+
+            payload = {"outputs": {}, "accessed_secret_count": len(node.get_accessed_secrets())}
+            primary_name = (output_names or ["main"])[0]
+            for name, lf in outputs.items():
+                path = _output_path(file_path, name, primary_name)
+                df = collect_lazy_frame(lf)
+                df.write_ipc(path)
+                payload["outputs"][name] = {"path": path, "row_count": df.height}
+                if dry_run:
+                    preview[name] = _preview_payload(df, row_limit or PREVIEW_ROW_LIMIT_DEFAULT)
+                del df
+            if dry_run:
+                stream.flush()
 
         flowfile_logger.info(f"Custom node '{node.node_name}' completed")
         if dry_run:
@@ -170,3 +207,7 @@ def execute_custom_node_task(
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
+    finally:
+        if buffer_handler is not None:
+            root_logger.removeHandler(buffer_handler)
+            root_logger.setLevel(prev_root_level)
