@@ -32,6 +32,33 @@
         </div>
 
         <div class="help-section">
+          <h4>Multiple Outputs</h4>
+          <p>
+            When your node declares more than one output, return a <code>dict</code> mapping each
+            output name to its LazyFrame instead of a single LazyFrame. The keys must match the
+            names under <b>I/O &rarr; Output Names</b>.
+          </p>
+          <pre
+            class="help-code"
+          ><code>def process(self, *inputs: pl.LazyFrame) -> dict[str, pl.LazyFrame]:</code></pre>
+          <pre class="help-code"><code>lf = inputs[0]
+# One entry per declared output; keys = output names.
+return {
+    "main": lf.filter(pl.col("amount") &gt; 0),
+    "rejected": lf.filter(pl.col("amount") &lt;= 0),
+}</code></pre>
+          <ul class="help-list">
+            <li>Every declared output name must be a key in the returned dict.</li>
+            <li>Each value is an independent LazyFrame routed to that output handle.</li>
+          </ul>
+          <p class="help-note">
+            <i class="fa-solid fa-lightbulb"></i>
+            Add or rename outputs under <code>I/O</code> in Node Settings — the return type and
+            required keys update automatically.
+          </p>
+        </div>
+
+        <div class="help-section">
           <h4>Accessing Settings</h4>
           <p>Access user-configured values from your UI components:</p>
           <pre

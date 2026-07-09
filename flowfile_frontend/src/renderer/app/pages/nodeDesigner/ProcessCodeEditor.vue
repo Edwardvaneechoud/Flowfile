@@ -11,6 +11,13 @@
       Write your data transformation logic. Access settings via
       <code>self.settings_schema.section_name.component_name.value</code>
     </p>
+    <div v-if="multiOutputKeys" class="multi-output-hint">
+      <i class="fa-solid fa-diagram-project"></i>
+      <span>
+        Return a <code>dict</code> with one LazyFrame per output — keys:
+        <code v-for="(name, i) in multiOutputKeys" :key="i" class="key-chip">{{ name }}</code>
+      </span>
+    </div>
     <div class="code-editor-wrapper" :class="{ 'fill-height': fillHeight }">
       <div v-if="signature" class="signature-line">
         <span class="signature-gutter">
@@ -46,6 +53,7 @@ const props = defineProps<{
   extensions: Extension[];
   height?: string;
   signature?: string;
+  outputNames?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -54,6 +62,13 @@ const emit = defineEmits<{
 
 const fillHeight = computed(() => props.height === "100%");
 const showHelp = ref(false);
+
+// Multi-output nodes must return a dict keyed by output name; surface the exact
+// required keys, live, so the contract is visible even when the body was edited
+// past the scaffold. Single-output nodes (and code-only mode) show nothing.
+const multiOutputKeys = computed(() =>
+  props.outputNames && props.outputNames.length > 1 ? props.outputNames : null,
+);
 
 // The read-only signature above the editor occupies line(s) 1..N, so number the
 // editable body continuing from N+1 — making `def process(...)` visibly row 1.
@@ -192,6 +207,43 @@ const editorExtensions = computed<Extension[]>(() => {
   font-size: var(--font-size-xs);
   border: 1px solid var(--color-border-primary);
   font-family: "Fira Code", "Monaco", monospace;
+}
+
+/* Multi-output contract callout: same accent-wash + left-rail idiom as the
+   help modal's .help-note, so guidance reads consistently across the designer. */
+.multi-output-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0 0 1rem 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-accent-subtle, #ecfeff);
+  border-left: 3px solid var(--color-accent, #0891b2);
+  border-radius: var(--border-radius-sm, 4px);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.multi-output-hint i {
+  color: var(--color-accent, #0891b2);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.multi-output-hint code {
+  background: var(--color-background-primary);
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--border-radius-sm, 3px);
+  border: 1px solid var(--color-border-primary);
+  font-family: "Fira Code", "Monaco", monospace;
+  font-size: var(--font-size-xs);
+}
+
+.multi-output-hint .key-chip {
+  margin: 0 0.15rem;
+  color: var(--color-accent, #0891b2);
+  font-weight: 500;
 }
 
 .code-editor-wrapper {

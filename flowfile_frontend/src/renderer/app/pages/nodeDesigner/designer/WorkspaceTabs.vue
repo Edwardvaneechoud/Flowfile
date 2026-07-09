@@ -76,6 +76,7 @@
                 v-model="processCode"
                 :extensions="extensions"
                 :signature="store.codeOnly ? undefined : store.processSignature"
+                :output-names="store.codeOnly ? undefined : store.nodeMetadata.output_names"
                 height="100%"
               />
             </div>

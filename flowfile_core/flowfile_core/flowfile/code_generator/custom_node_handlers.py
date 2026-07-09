@@ -1,3 +1,4 @@
+import ast
 import inspect
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
@@ -14,6 +15,7 @@ _CANONICAL_SDK_SYMBOLS = (
     "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
     "ColumnActionInput, SliderInput, ToggleSwitch, SecretSelector"
 )
+_CANONICAL_SDK_SYMBOL_SET = frozenset(name.strip() for name in _CANONICAL_SDK_SYMBOLS.split(","))
 
 
 class CustomNodeHandlersMixin(ConverterMixinBase):
@@ -71,6 +73,20 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
             return
         self.imports.add(statement.strip())
 
+    @staticmethod
+    def _body_uses_bare_sdk_symbols(source: str) -> bool:
+        """True if the inlined node source references an SDK symbol unqualified.
+
+        ``nd.CustomNodeBase`` reads as an attribute (the bare name is ``nd``); only a
+        bare ``CustomNodeBase`` shows up as an ``ast.Name`` in the canonical set.
+        Unparseable source falls back to True so the import is emitted defensively.
+        """
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return True
+        return any(isinstance(node, ast.Name) and node.id in _CANONICAL_SDK_SYMBOL_SET for node in ast.walk(tree))
+
     def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
         """Capture the custom node's class source for inlining into the generated script.
 
@@ -125,15 +141,34 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
                     )
                     return False
 
-            # nd.-style node bodies resolve via the canonical alias (importable
-            # standalone); bare-symbol bodies resolve via the side-effect-free
-            # shared SDK package (importing it never triggers core's DB).
+            # The canonical alias resolves nd.-style bodies (what the designer emits).
+            # The bare-symbol import is added only when the inlined body actually uses
+            # unqualified SDK names (hand-authored nodes) — designer nodes never do, so
+            # emitting it there would just be a dead import.
             self.imports.add("from flowfile import node_designer as nd")
-            self.imports.add(f"from shared.node_designer import ({_CANONICAL_SDK_SYMBOLS})")
-        # Return normalization uses isinstance(..., pl.DataFrame); ensure polars
-        # is imported even in the FlowFrame converter.
+            if self._body_uses_bare_sdk_symbols(self.custom_node_classes[class_name]):
+                self.imports.add(f"from flowfile.node_designer import ({_CANONICAL_SDK_SYMBOLS})")
+        # The inlined node body references pl. (and the Polars converter's return
+        # normalization uses isinstance(..., pl.DataFrame)), so polars is needed
+        # in both converters.
         self.imports.add("import polars as pl")
         return True
+
+    def _custom_node_input_expr(self, input_var: str) -> str:
+        """Render one input argument for ``process()``.
+
+        Base (Polars): upstream vars are already polars LazyFrames — pass through.
+        The FlowFrame converter overrides this to bridge FlowFrame → polars LazyFrame.
+        """
+        return input_var
+
+    def _normalize_custom_output(self, out_expr: str) -> str:
+        """Normalize ``process()``'s return to the converter's frame type.
+
+        Base (Polars): a lazy polars frame (eager returns coerced via ``isinstance``).
+        The FlowFrame converter overrides this to re-wrap the return as a FlowFrame.
+        """
+        return f"{out_expr}.lazy() if isinstance({out_expr}, pl.DataFrame) else {out_expr}"
 
     @staticmethod
     def _ordered_input_args(input_vars: dict[str, str]) -> list[str]:
@@ -199,14 +234,14 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
             self._add_code(f"if {node_var}.settings_schema:")
             self._add_code(f"    {node_var}.settings_schema.populate_values({node_var}_settings)")
 
-        input_args = ", ".join(self._ordered_input_args(input_vars))
+        input_args = ", ".join(self._custom_node_input_expr(arg) for arg in self._ordered_input_args(input_vars))
 
         if len(output_names) > 1:
             self._emit_multi_output_call(node, var_name, input_args, output_names)
         else:
             out_var = f"_out_{node.node_id}"
             self._add_code(f"{out_var} = _custom_node_{node.node_id}.process({input_args})")
-            self._add_code(f"{var_name} = {out_var}.lazy() if isinstance({out_var}, pl.DataFrame) else {out_var}")
+            self._add_code(f"{var_name} = {self._normalize_custom_output(out_var)}")
         self._add_code("")
 
     def _emit_multi_output_call(self, node: FlowNode, var_name: str, input_args: str, output_names: list[str]) -> None:
@@ -220,8 +255,5 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         self._add_code(f"{outs_var} = _custom_node_{node.node_id}.process({input_args})")
         for index, name in enumerate(output_names):
             out_var = var_name if index == 0 else f"{var_name}_{name}"
-            self._add_code(
-                f"{out_var} = {outs_var}[{name!r}].lazy() "
-                f"if isinstance({outs_var}[{name!r}], pl.DataFrame) else {outs_var}[{name!r}]"
-            )
+            self._add_code(f"{out_var} = {self._normalize_custom_output(f'{outs_var}[{name!r}]')}")
             self.node_handle_var_mapping[(node.node_id, f"output-{index}")] = out_var

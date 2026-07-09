@@ -192,17 +192,92 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     };
   };
 
-  const processSignature = computed(
-    () => splitProcessCode(designerState.value.process_code).signature,
-  );
+  // The process() return type depends on the output count: a single frame for one
+  // output, a dict keyed by output name for many. Derive the signature from
+  // number_of_outputs so the read-only header is always correct and live, and so
+  // the saved .py (which ships process_code verbatim) never carries a stale hint.
+  const RETURN_SINGLE = "pl.LazyFrame";
+  const RETURN_MULTI = "dict[str, pl.LazyFrame]";
+  const derivedSignature = () =>
+    `def process(self, *inputs: pl.LazyFrame) -> ${
+      designerState.value.number_of_outputs > 1 ? RETURN_MULTI : RETURN_SINGLE
+    }:`;
+
+  const normalizeProcessSignature = () => {
+    const { body } = splitProcessCode(designerState.value.process_code);
+    designerState.value.process_code = `${derivedSignature()}\n${body}`;
+  };
+
+  // Keep output_names length matched to number_of_outputs (the spinner sets the
+  // count directly; the name editor only appends/removes). Preserves existing
+  // names; appended names follow MetadataPanel's `output_${index}` scheme.
+  const reconcileOutputNames = (n: number) => {
+    if (n < 1) return;
+    const names = designerState.value.output_names;
+    if (names.length > n) {
+      designerState.value.output_names = names.slice(0, n);
+    } else if (names.length < n) {
+      const next = names.slice();
+      while (next.length < n) next.push(`output_${next.length}`);
+      designerState.value.output_names = next;
+    }
+  };
+
+  const singleOutputBody = () => splitProcessCode(defaultProcessCode).body;
+  const knownPristineBodies = () => [splitProcessCode(defaultProcessCode).body.trim()];
+  const multiOutputBody = (names: string[]) =>
+    [
+      "    # Return one LazyFrame per output, keyed by output name.",
+      "    return {",
+      ...names.map((n) => `        ${JSON.stringify(n)}: inputs[0],`),
+      "    }",
+    ].join("\n");
+
+  const processSignature = computed(() => derivedSignature());
 
   const processBody = computed({
     get: () => splitProcessCode(designerState.value.process_code).body,
     set: (v: string) => {
-      const { signature } = splitProcessCode(designerState.value.process_code);
-      designerState.value.process_code = `${signature}\n${v}`;
+      designerState.value.process_code = `${derivedSignature()}\n${v}`;
     },
   });
+
+  // Coherence: when the output count changes, resize output_names to match and
+  // refresh the stored signature line (covers an edited body that won't be
+  // rescaffolded below). Created before the scaffold watcher so names are settled
+  // before it reads them.
+  watch(
+    () => designerState.value.number_of_outputs,
+    (n) => {
+      if (codeOnly.value) return;
+      reconcileOutputNames(n);
+      normalizeProcessSignature();
+    },
+  );
+
+  // While the body is still a known template/scaffold, keep it in step with the
+  // declared outputs: a runnable dict keyed by output_names for multi-output, or
+  // the single-output default otherwise. A body the user has edited is left alone.
+  let lastScaffoldBody = "";
+  watch(
+    () =>
+      [designerState.value.number_of_outputs, designerState.value.output_names.slice()] as const,
+    ([count]) => {
+      if (codeOnly.value) return;
+      const body = processBody.value.trim();
+      const pristine =
+        body === "" || knownPristineBodies().includes(body) || body === lastScaffoldBody.trim();
+      if (!pristine) return;
+      if (count > 1) {
+        const scaffold = multiOutputBody(designerState.value.output_names);
+        lastScaffoldBody = scaffold;
+        processBody.value = scaffold;
+      } else {
+        lastScaffoldBody = "";
+        processBody.value = singleOutputBody();
+      }
+    },
+  );
 
   const frontendSchema = computed(() => designerStateToFrontendSchema(designerState.value));
 
@@ -349,6 +424,10 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
 
   function loadDesignerState(state: DesignerState) {
     designerState.value = state;
+    // Fold count/name coherence and the derived signature into the loaded state
+    // BEFORE markSaved snapshots it, so a stale-but-valid file never opens dirty.
+    reconcileOutputNames(state.number_of_outputs);
+    normalizeProcessSignature();
     codeOnly.value = false;
     codeText.value = "";
     resetPreviewValues();

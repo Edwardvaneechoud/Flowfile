@@ -119,6 +119,9 @@
                 Add Output
               </button>
             </div>
+            <p class="field-hint">
+              Your <code>process()</code> must return a dict keyed by these names.
+            </p>
           </div>
         </div>
       </CollapsibleSection>
@@ -274,6 +277,14 @@ onMounted(() => {
   margin: 0.25rem 0 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+}
+
+.field-hint code {
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  background: var(--color-background-tertiary);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 0.95em;
 }
 
 .form-input {

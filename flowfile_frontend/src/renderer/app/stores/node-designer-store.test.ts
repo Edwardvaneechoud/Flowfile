@@ -387,4 +387,84 @@ describe("without storage available", () => {
   });
 });
 
+describe("multi-output signature & scaffold", () => {
+  const SINGLE_SIG = "def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:";
+  const MULTI_SIG = "def process(self, *inputs: pl.LazyFrame) -> dict[str, pl.LazyFrame]:";
+
+  it("derives the return type live from the output count", () => {
+    const store = useNodeDesignerStore();
+    expect(store.processSignature).toBe(SINGLE_SIG);
+    store.nodeMetadata.number_of_outputs = 2;
+    expect(store.processSignature).toBe(MULTI_SIG);
+    store.nodeMetadata.number_of_outputs = 1;
+    expect(store.processSignature).toBe(SINGLE_SIG);
+  });
+
+  it("scaffolds a runnable dict body keyed by output_names when pristine", async () => {
+    const store = useNodeDesignerStore();
+    store.nodeMetadata.number_of_outputs = 2;
+    await nextTick();
+    const code = store.designerState.process_code;
+    expect(code).toContain(MULTI_SIG);
+    expect(code).toContain("# Return one LazyFrame per output, keyed by output name.");
+    expect(code).toContain('"main": inputs[0],');
+    expect(code).toContain('"output_1": inputs[0],');
+  });
+
+  it("recomposes an edited body with the derived signature", async () => {
+    const store = useNodeDesignerStore();
+    store.nodeMetadata.number_of_outputs = 2;
+    await nextTick();
+    store.processBody = '    return {"main": inputs[0], "output_1": inputs[0]}';
+    expect(store.designerState.process_code.split("\n")[0]).toBe(MULTI_SIG);
+  });
+
+  it("never clobbers a body the user has edited", async () => {
+    const store = useNodeDesignerStore();
+    store.processBody = "    return inputs[0].head(5)";
+    store.nodeMetadata.number_of_outputs = 2;
+    await nextTick();
+    const code = store.designerState.process_code;
+    expect(code).toContain("head(5)");
+    expect(code).toContain(MULTI_SIG);
+    expect(code).not.toContain("Return one LazyFrame per output");
+  });
+
+  it("keeps output_names length in sync with number_of_outputs", async () => {
+    const store = useNodeDesignerStore();
+    store.nodeMetadata.number_of_outputs = 3;
+    await nextTick();
+    expect(store.nodeMetadata.output_names).toEqual(["main", "output_1", "output_2"]);
+    store.nodeMetadata.number_of_outputs = 1;
+    await nextTick();
+    expect(store.nodeMetadata.output_names).toEqual(["main"]);
+  });
+
+  it("normalizes a stale signature on load without opening dirty", async () => {
+    const state = newDesignerState();
+    state.node_name = "Multi";
+    state.node_category = "Custom";
+    state.number_of_outputs = 2;
+    state.output_names = ["main", "second"];
+    state.process_code = `${SINGLE_SIG}\n    return {"main": inputs[0], "second": inputs[0]}`;
+    const store = useNodeDesignerStore();
+    store.loadDesignerState(state);
+    store.markSaved();
+    expect(store.designerState.process_code).toContain(MULTI_SIG);
+    expect(store.isDirty).toBe(false);
+    await nextTick();
+    expect(store.isDirty).toBe(false);
+  });
+
+  it("leaves process_code untouched in code-only mode", async () => {
+    const store = useNodeDesignerStore();
+    store.loadCodeOnly("def process(self, *inputs):\n    return inputs[0]");
+    const before = store.designerState.process_code;
+    store.nodeMetadata.number_of_outputs = 2;
+    await nextTick();
+    expect(store.codeOnly).toBe(true);
+    expect(store.designerState.process_code).toBe(before);
+  });
+});
+
 export { defaultProcessCode };

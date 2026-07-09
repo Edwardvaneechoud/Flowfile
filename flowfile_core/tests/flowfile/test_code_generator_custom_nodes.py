@@ -7,7 +7,10 @@ import polars as pl
 import pytest
 
 from flowfile_core.configs.node_store import add_to_custom_node_store
-from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
+from flowfile_core.flowfile.code_generator.code_generator import (
+    export_flow_to_flowframe,
+    export_flow_to_polars,
+)
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.node_designer import (
@@ -109,6 +112,15 @@ def connect(graph: FlowGraph, from_id: int, to_id: int, input_handle: str = "inp
     add_connection(graph, conn)
 
 
+def add_record_count(graph: FlowGraph, node_id: int, depends_on: int) -> FlowGraph:
+    """Wire a downstream record_count node — a FlowFrame-only op (emits ff.len())."""
+    graph.add_record_count(
+        input_schema.NodeRecordCount(flow_id=graph.flow_id, node_id=node_id, depending_on_id=depends_on)
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depends_on, node_id))
+    return graph
+
+
 @pytest.fixture
 def AddColumnNode():
     """A custom node that adds a column with a fixed value."""
@@ -147,7 +159,10 @@ def AddColumnNode():
 class TestCustomNodeCodeGeneration:
     """Integration tests for generating code with custom nodes."""
 
-    def test_generated_code_includes_custom_node_imports(self, AddColumnNode):
+    @pytest.mark.parametrize(
+        "export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"]
+    )
+    def test_generated_code_includes_custom_node_imports(self, AddColumnNode, export_func):
         """Test that generated code includes necessary imports."""
         add_to_custom_node_store(AddColumnNode)
 
@@ -158,14 +173,15 @@ class TestCustomNodeCodeGeneration:
         add_custom_node_to_graph(graph, AddColumnNode, node_id=2, settings=settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-        code = export_flow_to_polars(graph)
+        code = export_func(graph)
 
-        # Canonical re-added imports: nd alias (importable standalone) plus the
-        # side-effect-free shared SDK symbols. The old core.node_designer import
-        # no longer appears.
+        # Canonical re-added imports: nd alias plus the public node_designer SDK
+        # symbols. Neither the internal shared.* nor core.node_designer spelling
+        # leaks into user-facing exported code.
         assert "from flowfile import node_designer as nd" in code
-        assert "from shared.node_designer import (" in code
+        assert "from flowfile.node_designer import (" in code
         assert "CustomNodeBase" in code
+        assert "from shared.node_designer import" not in code
         assert "from flowfile_core.flowfile.node_designer import" not in code
 
     def test_generated_code_no_unnecessary_collect_lazy(self, AddColumnNode):
@@ -229,6 +245,123 @@ class TestReturnNormalization:
         assert any(
             "isinstance(_out_2, pl.DataFrame)" in l and "_out_2.lazy()" in l for l in code.split("\n")
         )
+
+
+class TestFlowFrameConverter:
+    """FlowFrame export wraps a custom node's polars output back into a FlowFrame and
+    bridges FlowFrame inputs down to polars for the process() contract."""
+
+    def test_output_wrapped_and_input_bridged(self, AddColumnNode):
+        add_to_custom_node_store(AddColumnNode)
+        graph = create_graph()
+        add_manual_input(graph, [{"Column 1": "test"}], node_id=1)
+        settings = {"config": {"column_name": "new_col", "fixed_value": "hello"}}
+        add_custom_node_to_graph(graph, AddColumnNode, node_id=2, settings=settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_flowframe(graph)
+
+        process_line = next(l for l in code.split("\n") if "_out_2 = " in l and ".process(" in l)
+        # Input bridged to the underlying polars LazyFrame via .data (no eager collect).
+        assert ".data" in process_line
+        assert ".collect()" not in process_line
+        # Output re-wrapped as a FlowFrame (not the polars isinstance/.lazy() form).
+        assert any("ff.FlowFrame(_out_2)" in l for l in code.split("\n"))
+        assert "isinstance(_out_2, pl.DataFrame)" not in code
+
+    def test_custom_node_executes_with_downstream_ff_op(self, AddColumnNode):
+        """Regression guard: the custom-node output feeds a FlowFrame-only op
+        (record_count -> ff.len()), which only runs if the output is a FlowFrame."""
+        add_to_custom_node_store(AddColumnNode)
+        graph = create_graph()
+        add_manual_input(graph, [{"Column 1": "test"}], node_id=1)
+        settings = {"config": {"column_name": "new_col", "fixed_value": "hello"}}
+        add_custom_node_to_graph(graph, AddColumnNode, node_id=2, settings=settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        add_record_count(graph, node_id=3, depends_on=2)
+
+        code = export_flow_to_flowframe(graph)
+
+        ns: dict = {}
+        exec(compile(code, "<gen>", "exec"), ns)
+        result = ns["run_etl_pipeline"]()
+        collected = result.collect() if hasattr(result, "collect") else result
+        assert collected.columns == ["number_of_records"]
+        assert collected["number_of_records"].to_list() == [1]
+
+
+class TestSdkImportIsConditional:
+    """The bare-symbol SDK import is emitted only when the node body needs it."""
+
+    def test_nd_style_node_omits_bare_import(self, tmp_path):
+        source = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class NdNode(nd.CustomNodeBase):
+    node_name: str = "Nd Node"
+    node_category: str = "Transform"
+    number_of_inputs: int = 1
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+        mod = _write_node_module(tmp_path, "nd_style_mod", source)
+        try:
+            add_to_custom_node_store(mod.NdNode)
+            graph = create_graph()
+            add_manual_input(graph, [{"x": 1}], node_id=1)
+            add_custom_node_to_graph(graph, mod.NdNode, node_id=2, settings={})
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            code = export_flow_to_polars(graph)
+        finally:
+            import sys
+
+            sys.modules.pop("nd_style_mod", None)
+
+        # Body only uses nd.* → the bare-symbol import would be dead, so it is dropped.
+        assert "from flowfile import node_designer as nd" in code
+        assert "from flowfile.node_designer import (" not in code
+
+    def test_bare_symbol_node_emits_bare_import(self, tmp_path):
+        source = '''
+import polars as pl
+
+from flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
+
+
+class BareSettings(NodeSettings):
+    cfg: Section = Section(title="C", lab=TextInput(label="L", default="x"))
+
+
+class BareNode(CustomNodeBase):
+    node_name: str = "Bare Node"
+    node_category: str = "Transform"
+    number_of_inputs: int = 1
+    settings_schema: BareSettings = BareSettings()
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+        mod = _write_node_module(tmp_path, "bare_symbol_mod", source)
+        try:
+            add_to_custom_node_store(mod.BareNode)
+            graph = create_graph()
+            add_manual_input(graph, [{"x": 1}], node_id=1)
+            add_custom_node_to_graph(graph, mod.BareNode, node_id=2, settings={})
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            code = export_flow_to_polars(graph)
+        finally:
+            import sys
+
+            sys.modules.pop("bare_symbol_mod", None)
+
+        # Body uses unqualified CustomNodeBase/Section/... → the bare import is needed.
+        assert "from flowfile.node_designer import (" in code
 
 
 class TestMultiInputOrdering:
