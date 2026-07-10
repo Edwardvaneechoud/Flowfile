@@ -2,9 +2,9 @@ from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, Field, SecretStr, computed_field
 
-from shared.node_designer._type_registry import normalize_type_spec, normalize_type_spec_preserving_groups
+from shared.node_designer._type_registry import normalize_type_spec_preserving_groups
 from shared.node_designer.secrets import SecretResolutionError, SecretResolver
-from shared.node_designer.types import DataType, TypeSpec
+from shared.node_designer.types import TypeSpec
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 
@@ -29,31 +29,6 @@ class ActionOption(NamedTuple):
 
 
 ActionSpec = str | ActionOption
-
-
-def normalize_input_to_data_types(v: Any) -> Literal["ALL"] | list[DataType]:
-    """
-    Normalizes a wide variety of inputs to either 'ALL' or a sorted list of DataType enums.
-    This function is used as a Pydantic BeforeValidator.
-
-    Args:
-        v: The input value to normalize. Can be a string, a list of strings,
-           a DataType, a TypeGroup, or a list of those.
-
-    Returns:
-        Either the string "ALL" or a sorted list of unique DataType enums.
-    """
-    if v == "ALL":
-        return "ALL"
-    if isinstance(v, list) and all(isinstance(item, DataType) for item in v):
-        return v
-
-    normalized_set = normalize_type_spec(v)
-
-    if normalized_set == set(DataType):
-        return "ALL"
-
-    return sorted(list(normalized_set), key=lambda x: x.value)
 
 
 def normalize_input_to_data_types_preserving_groups(v: Any) -> Literal["ALL"] | list[str]:

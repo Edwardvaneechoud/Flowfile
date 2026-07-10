@@ -66,7 +66,7 @@ The tag declares what the node needs; it shows on the node's kernel badge so any
 <details markdown="1" open>
 <summary>Execution environment</summary>
 
-![Execution set to Isolated kernel with a scikit-learn dependency tag](../../assets/images/guides/node-designer/kmeans-kernel-environment.png)
+![Execution set to Isolated kernel with a scikit-learn dependency tag](../../assets/images/guides/node-designer/kmeans-kernel-environment.png){ width="420" }
 
 </details>
 
@@ -115,13 +115,13 @@ flowfile_ctx.log_info(
 return df.with_columns(pl.Series(label_col, labels))
 ```
 
-Three things in that body are worth calling out — they're the difference between a kernel node that runs and one that doesn't:
-
-!!! warning "Import third-party libraries *inside* `process`"
-    `from sklearn... import ...` lives **inside** `process`, not at the top of the file. Flowfile's core loads your node file to register it in the palette, and core does **not** have the kernel's dependencies installed. A top-level `import sklearn` would make the node load with an error. Importing inside `process` keeps registration clean — the import only runs in the kernel, which has the package.
+Two details in the body are worth a look:
 
 - **`int(cfg.n_clusters.value)`** — a Numeric Input value is always a `float`; `KMeans` wants an `int`, so cast it.
 - **`flowfile_ctx`** — available directly inside a kernel node's `process`. Use it for run feedback (`log_info`), and — see [Extensions](#extensions) — artifacts. (`flowfile_ctx` is *not* available in a `local` node.)
+
+??? info "For Python developers: why the `sklearn` imports sit inside the code"
+    In the designer you only write the body, so this happens naturally — but it matters when you write the node [as a file](#the-same-node-as-a-file). Flowfile's core loads the node file to register it in the palette, and core does **not** have the kernel's dependencies installed. A top-level `import sklearn` would make the node load with an error; an import inside `process` runs only in the kernel, which has the package. That's why custom nodes import third-party libraries lazily.
 
 ### 5. Test it
 
@@ -144,7 +144,12 @@ C009,58,71.3,15,saver
 
 Set the feature columns to `age`, `annual_income_k`, and `spending_score`, and leave **k** at 3. The output grid gains a `cluster` column, and the three groups fall into three clusters that line up with the `segment` label — which the numeric picker leaves alone. You also get the schema, row count, and your `log_info` line in the **Logs** panel — the same execution path a real run uses. Tick **Save test setup with node** to keep the sample and settings in the file.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Test tab for a kernel node — the Kernel selector set to the ML kernel, the dry-run output grid with the cluster column, and the log_info line in Logs (save as docs/assets/images/guides/node-designer/kmeans-test-tab.png) -->
+<details markdown="1">
+<summary>The Test tab: Kernel selector on the ML kernel, cluster column in the output</summary>
+
+![Test tab with the Kernel selector set to the ML kernel and the dry-run output grid showing the cluster column](../../assets/images/guides/node-designer/kmeans-test-tab.png)
+
+</details>
 
 ### 6. Save and use it in a flow
 

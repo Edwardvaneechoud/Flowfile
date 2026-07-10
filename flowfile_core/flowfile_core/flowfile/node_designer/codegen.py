@@ -113,7 +113,7 @@ def _render_data_literal(value: object, indent: str) -> list[str]:
     return [_py_literal(value)]
 
 
-def _options_literal(options: list[SelectOption]) -> str:
+def _options_literal(options: list[SelectOption]) -> list[str]:
     parts: list[str] = []
     for opt in options:
         if opt.label is None or opt.label == opt.value:
@@ -227,7 +227,7 @@ class _Renderer:
             kwargs.append(("data_types", dt))
         return kwargs
 
-    def _actions_literal(self, actions: list[SelectOption]) -> str:
+    def _actions_literal(self, actions: list[SelectOption]) -> list[str]:
         parts: list[str] = []
         for opt in actions:
             if opt.label is None or opt.label == opt.value:

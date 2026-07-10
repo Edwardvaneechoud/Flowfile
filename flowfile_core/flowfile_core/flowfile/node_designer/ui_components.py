@@ -20,7 +20,6 @@ from shared.node_designer.ui_components import (
     SliderInput,
     TextInput,
     ToggleSwitch,
-    normalize_input_to_data_types,
 )
 
 __all__ = [
@@ -43,5 +42,4 @@ __all__ = [
     "SliderInput",
     "TextInput",
     "ToggleSwitch",
-    "normalize_input_to_data_types",
 ]

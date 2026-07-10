@@ -664,7 +664,6 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     selectedComponentIndex,
     previewValues,
     dryRun,
-    savedSnapshot,
     restoreAvailable,
     // getters
     isDirty,

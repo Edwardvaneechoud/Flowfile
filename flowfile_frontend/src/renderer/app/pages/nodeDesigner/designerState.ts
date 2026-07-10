@@ -3,8 +3,6 @@
 // the AST parser produces this shape and the canonical code generator consumes it.
 // Discriminated on `component_type`.
 
-export const DESIGNER_STATE_VERSION = 1 as const;
-
 export type ComponentType =
   | "TextInput"
   | "NumericInput"

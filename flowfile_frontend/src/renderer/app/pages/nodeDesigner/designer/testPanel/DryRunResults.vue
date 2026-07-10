@@ -78,8 +78,10 @@ const errorKindLabel = computed(() => {
   return kind.charAt(0).toUpperCase() + kind.slice(1) + " error";
 });
 
-const executedInLabel = computed(() =>
-  props.result.executed_in === "worker" ? "Worker" : "In core",
+const executedInLabel = computed(
+  () =>
+    ({ worker: "Worker", kernel: "Kernel", in_core: "In core" })[props.result.executed_in] ??
+    "In core",
 );
 
 // Rows may arrive as arrays (positional) or objects (keyed); normalize to objects.

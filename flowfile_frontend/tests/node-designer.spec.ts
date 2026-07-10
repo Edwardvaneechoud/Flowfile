@@ -163,7 +163,7 @@ test.describe('Node Designer E2E', () => {
     const row = page.getByText(NODE_NAME, { exact: true }).first();
     await expect(row).toBeVisible({ timeout: 15000 });
 
-    await page.getByRole('button', { name: /Open in Node Designer/i }).first().click();
+    await page.getByRole('button', { name: 'Open', exact: true }).first().click();
     await expect(page).toHaveURL(new RegExp(`openFile=${NODE_FILE}`));
     await expect(page.locator('#node-name')).toHaveValue(NODE_NAME, { timeout: 15000 });
   });

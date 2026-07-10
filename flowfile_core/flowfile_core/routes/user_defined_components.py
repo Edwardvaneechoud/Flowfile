@@ -338,79 +338,16 @@ def get_custom_node(file_name: str, current_user=Depends(get_current_active_user
 
     parse_result = _parse_result_for_file(file_path, content)
 
-    result = {
+    return {
         "file_name": safe_name,
         "code": content,
         "parse_result": parse_result.model_dump(),
         "file_hash": hashlib.sha256(content_bytes).hexdigest(),
         "designer_state": parse_result.designer_state.model_dump() if parse_result.designer_state else None,
         "supports_visual_edit": parse_result.mode == "designer",
-        # Legacy fields kept for back-compat during the transition.
+        # Legacy alias for `code`; pre-designer-rewrite callers read `content`.
         "content": content,
-        "metadata": {},
-        "sections": [],
-        "processCode": "",
     }
-
-    try:
-        tree = ast.parse(content)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                # Check if this looks like a custom node class (has node_name attribute)
-                is_custom_node = False
-                for item in node.body:
-                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                        if item.target.id == "node_name":
-                            is_custom_node = True
-                            break
-                    elif isinstance(item, ast.Assign):
-                        for target in item.targets:
-                            if isinstance(target, ast.Name) and target.id == "node_name":
-                                is_custom_node = True
-                                break
-
-                if is_custom_node:
-                    for item in node.body:
-                        attr_name = None
-                        value = None
-
-                        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                            attr_name = item.target.id
-                            if item.value and isinstance(item.value, ast.Constant):
-                                value = item.value.value
-                        elif isinstance(item, ast.Assign):
-                            for target in item.targets:
-                                if isinstance(target, ast.Name):
-                                    attr_name = target.id
-                                    if isinstance(item.value, ast.Constant):
-                                        value = item.value.value
-                                    break
-
-                        if attr_name and value is not None:
-                            if attr_name in ["node_name", "node_category", "title", "intro", "node_icon"]:
-                                result["metadata"][attr_name] = value
-                            elif attr_name == "number_of_inputs":
-                                result["metadata"]["number_of_inputs"] = value
-                            elif attr_name == "number_of_outputs":
-                                result["metadata"]["number_of_outputs"] = value
-
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef) and item.name == "process":
-                            start_line = item.lineno - 1
-                            end_line = item.end_lineno if hasattr(item, "end_lineno") else start_line + 20
-                            lines = content.split("\n")
-                            process_lines = lines[start_line:end_line]
-                            result["processCode"] = "\n".join(process_lines)
-                            break
-
-                    break
-
-    except Exception as e:
-        logger.warning(f"Failed to parse custom node file: {e}")
-        # Return the raw content even if parsing fails
-
-    return result
 
 
 @router.delete("/delete-custom-node/{file_name}", summary="Delete a custom node")

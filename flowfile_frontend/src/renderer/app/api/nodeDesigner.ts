@@ -47,11 +47,8 @@ export interface GetCustomNodeResponse {
   code: string;
   parse_result: ParseResult;
   file_hash: string;
-  // Legacy fields kept for back-compat during the transition.
+  // Legacy alias for `code`; pre-designer-rewrite callers read `content`.
   content?: string;
-  metadata?: Record<string, unknown>;
-  sections?: unknown[];
-  processCode?: string;
   designer_state?: DesignerState | null;
   supports_visual_edit?: boolean;
 }

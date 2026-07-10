@@ -207,8 +207,7 @@ async function rescan() {
 }
 
 function openDesigner(fileName?: string) {
-  // The designer page does not yet preselect a file from the query; the param is
-  // forwarded for when it does. Today this opens the designer at its landing state.
+  // NodeDesigner.vue reads `openFile` and loads that node for editing.
   router.push({
     name: "nodeDesigner",
     query: fileName ? { openFile: fileName } : {},

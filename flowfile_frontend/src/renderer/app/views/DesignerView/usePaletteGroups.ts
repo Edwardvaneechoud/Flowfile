@@ -139,7 +139,6 @@ export function usePaletteGroups(nodes: Ref<NodeTemplate[]>) {
 
   return {
     searchQuery,
-    allGroups,
     filteredGroups,
     isGroupOpen,
     toggleGroup,

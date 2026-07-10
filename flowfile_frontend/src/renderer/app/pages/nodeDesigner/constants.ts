@@ -24,20 +24,6 @@ export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> p
 
     return lf`;
 
-/** Default node metadata */
-export const defaultNodeMetadata = {
-  node_name: "",
-  node_category: "Custom",
-  title: "",
-  intro: "",
-  number_of_inputs: 1,
-  number_of_outputs: 1,
-  node_icon: "user-defined-icon.png",
-  requires_kernel: false,
-  kernel_id: null as string | null,
-  output_names: ["main"],
-};
-
 /** Get component icon by type */
 export function getComponentIcon(type: string): string {
   const comp = availableComponents.find((c) => c.type === type);

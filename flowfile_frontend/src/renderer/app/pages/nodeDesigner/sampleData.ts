@@ -161,7 +161,7 @@ export function emptyTable(): SampleTable {
 
 // The grid's coarse dtype -> the Polars type-name the ColumnSelector data_types
 // filter matches against (DataType.value in the node_designer SDK).
-export const SAMPLE_DTYPE_TO_POLARS: Record<SampleDtype, string> = {
+const SAMPLE_DTYPE_TO_POLARS: Record<SampleDtype, string> = {
   str: "String",
   int: "Int64",
   float: "Float64",
@@ -172,7 +172,7 @@ export const SAMPLE_DTYPE_TO_POLARS: Record<SampleDtype, string> = {
 
 // The grid's coarse dtype -> its readable data_type_group, mirroring the backend
 // classifier so group-based data_types filters ("Numeric", …) match sample columns.
-export const SAMPLE_DTYPE_TO_GROUP: Record<SampleDtype, string> = {
+const SAMPLE_DTYPE_TO_GROUP: Record<SampleDtype, string> = {
   str: "String",
   int: "Numeric",
   float: "Numeric",

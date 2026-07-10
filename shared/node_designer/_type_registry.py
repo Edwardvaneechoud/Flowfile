@@ -90,74 +90,6 @@ class TypeRegistry:
             # Register "pl.TypeName" format
             self._by_alias[f"pl.{mapping.polars_type.__name__}".lower()] = mapping
 
-    def normalize(self, type_spec: Any) -> set[DataType]:
-        """
-        Normalize any type specification to a set of DataType enums.
-        This is the main internal API for type resolution.
-        """
-        # Handle special case: All types
-
-        if type_spec == TypeGroup.All or type_spec == "ALL":
-            return set(self._by_data_type.keys())
-
-        # Handle TypeGroup
-        if isinstance(type_spec, TypeGroup):
-            return {m.data_type for m in self._by_group.get(type_spec, [])}
-
-        # Handle DataType
-        if isinstance(type_spec, DataType):
-            return {type_spec}
-
-        # Handle Polars type class
-        if isinstance(type_spec, type) and issubclass(type_spec, pl.DataType):
-            mapping = self._by_polars_type.get(type_spec)
-            if mapping:
-                return {mapping.data_type}
-
-        # Handle Polars type instance
-        if isinstance(type_spec, pl.DataType):
-            base_type = type_spec.base_type() if hasattr(type_spec, "base_type") else type(type_spec)
-            mapping = self._by_polars_type.get(base_type)
-            if mapping:
-                return {mapping.data_type}
-
-        # Handle string aliases
-        if isinstance(type_spec, str):
-            type_spec_lower = type_spec.lower()
-            group: TypeGroup
-            for group in TypeGroup:
-                if group.lower() == type_spec_lower:
-                    return {m.data_type for m in (self._by_group.get(group) or [])}
-
-            # Try TypeGroup name
-            try:
-                group = TypeGroup(type_spec)
-                return {m.data_type for m in self._by_group.get(group, [])}
-            except (ValueError, KeyError):
-                pass
-
-            # Try DataType name
-            try:
-                dt = DataType(type_spec)
-                return {dt}
-            except (ValueError, KeyError):
-                pass
-
-            # Check aliases
-            mapping = self._by_alias.get(type_spec_lower)
-            if mapping:
-                return {mapping.data_type}
-
-        # Default to empty set if unrecognized
-        return set()
-
-    def normalize_list(self, type_specs: list[Any]) -> set[DataType]:
-        """Normalize a list of type specifications."""
-        result = set()
-        for spec in type_specs:
-            result.update(self.normalize(spec))
-        return result
-
     def normalize_preserving_groups(self, type_spec: Any) -> str | set[str]:
         """Map a TypeSpec to canonical tokens WITHOUT expanding groups.
 
@@ -165,8 +97,8 @@ class TypeRegistry:
         specific input yields its canonical DataType value (e.g. ``{"Int64"}``).
         Returns the ``"ALL"`` sentinel or a set of canonical token strings. A bare
         string that names both a group and a specific type (``"String"``, ``"Date"``,
-        ``"Boolean"``, ``"Binary"``) resolves to the group — matching the branch
-        order of ``normalize`` and the frontend's ``data_type_group`` semantics.
+        ``"Boolean"``, ``"Binary"``) resolves to the group — matching the frontend's
+        ``data_type_group`` semantics.
         """
         if type_spec == TypeGroup.All or type_spec == "ALL":
             return "ALL"
@@ -198,7 +130,7 @@ class TypeRegistry:
         return set()
 
     def normalize_list_preserving_groups(self, type_specs: list[Any]) -> str | set[str]:
-        """Group-preserving variant of ``normalize_list``; any ``ALL`` collapses to ``"ALL"``."""
+        """List form of ``normalize_preserving_groups``; any ``ALL`` collapses to ``"ALL"``."""
         result: set[str] = set()
         for spec in type_specs:
             item = self.normalize_preserving_groups(spec)
@@ -207,31 +139,9 @@ class TypeRegistry:
             result.update(item)
         return result
 
-    def get_polars_types(self, data_types: set[DataType]) -> set[type[pl.DataType]]:
-        """Convert a set of DataType enums to Polars types."""
-        result = set()
-        for dt in data_types:
-            mapping = self._by_data_type.get(dt)
-            if mapping:
-                result.add(mapping.polars_type)
-        return result
-
-    def get_polars_type(self, data_type: DataType) -> type[pl.DataType]:
-        """Get the Polars type for a single DataType."""
-        mapping = self._by_data_type.get(data_type)
-        return mapping.polars_type if mapping else pl.String  # Default fallback
-
 
 # Singleton instance
 _registry = TypeRegistry()
-
-
-# Internal API functions (not for public use)
-def normalize_type_spec(type_spec: Any) -> set[DataType]:
-    """Internal function to normalize type specifications."""
-    if isinstance(type_spec, list):
-        return _registry.normalize_list(type_spec)
-    return _registry.normalize(type_spec)
 
 
 def normalize_type_spec_preserving_groups(type_spec: Any) -> str | set[str]:
@@ -239,14 +149,3 @@ def normalize_type_spec_preserving_groups(type_spec: Any) -> str | set[str]:
     if isinstance(type_spec, list):
         return _registry.normalize_list_preserving_groups(type_spec)
     return _registry.normalize_preserving_groups(type_spec)
-
-
-def get_polars_types(data_types: set[DataType]) -> set[type[pl.DataType]]:
-    """Internal function to get Polars types."""
-    return _registry.get_polars_types(data_types)
-
-
-def check_column_type(column_dtype: pl.DataType, accepted_types: set[DataType]) -> bool:
-    """Check if a column's dtype matches the accepted types."""
-    normalized = _registry.normalize(column_dtype)
-    return bool(normalized & accepted_types)

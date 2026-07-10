@@ -2,7 +2,6 @@ import logging
 
 from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.configs.node_store.user_defined_node_registry import (
-    get_all_nodes_from_standard_location,
     load_single_node_from_file,
     unload_node_by_name,
 )
@@ -12,7 +11,6 @@ from flowfile_core.schemas.schemas import NodeTemplate
 
 __all__ = [
     "load_single_node_from_file",
-    "get_all_nodes_from_standard_location",
     "unload_node_by_name",
     "CustomNodeBase",
     "NodeTemplate",

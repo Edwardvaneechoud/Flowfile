@@ -56,9 +56,12 @@ Here is a complete node that adds a greeting column. Note the `process` signatur
 5. **Configure the settings** in the right panel.
 6. **Run your flow.**
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the greeting node on the canvas with its generated settings and result (save as docs/assets/images/guides/node-designer/basic_overview.png) -->
+<details markdown="1">
+<summary>The result: the node on the canvas with its generated settings form</summary>
 
-For what this looks like in practice, the [Custom Node Tutorial](custom-node-tutorial.md) has current screenshots of a node on the canvas with its generated settings form.
+![The Greeting Generator in the Text Processing palette group, on the canvas with its generated settings drawer and the greeting column in the results](../../assets/images/guides/node-designer/basic_overview.png)
+
+</details>
 
 ## Node structure
 
