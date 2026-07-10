@@ -133,7 +133,6 @@ nav:
       - Overview: users/visual-editor/node-designer.md
       - 'Tutorial: Your First Custom Node': users/visual-editor/custom-node-tutorial.md
       - 'Tutorial: K-Means on a Kernel': users/visual-editor/kmeans-kernel-node.md
-      - 'Reference: Custom Nodes in Code': users/visual-editor/creating-custom-nodes.md
     - Worked Examples:
       - Overview: users/visual-editor/tutorials/index.md
       - Sales Pipeline: users/visual-editor/tutorials/sales-pipeline.md
@@ -205,6 +204,6 @@ nav:
     - Kernel Architecture: for-developers/kernel-architecture.md
     - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md
-    - Custom Nodes (build in code): users/visual-editor/creating-custom-nodes.md
+    - Custom Nodes in Code: users/visual-editor/creating-custom-nodes.md
 
   - Community: community.md

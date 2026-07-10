@@ -5,8 +5,8 @@ Run custom Python code in isolated Docker containers with full access to your fl
 !!! info "Not in Flowfile Lite"
     Kernel execution requires Docker and the full desktop/server build. The browser-only [Flowfile Lite](../deployment/lite.md) edition cannot run kernels — use the **Polars Code** node for in-browser Python/Polars logic.
 
-!!! info "Requires Docker, and still growing"
-    Kernel execution runs your Python in a Docker container, so Docker must be available. It's a capable, actively evolving part of Flowfile — a few edges are still being filled in. See [Current limitations](#current-limitations) for the specifics.
+!!! info "Requires Docker"
+    Kernel execution runs your Python in Docker containers, so Docker must be available on the host. A few [current limitations](#current-limitations) apply.
 
 Kernels provide a sandboxed execution environment for Python Script nodes. Each kernel runs inside its own Docker container with configurable resources (CPU, memory, GPU), persistent namespaces across executions, and access to the `flowfile_ctx` API for reading inputs, writing outputs, and managing artifacts.
 
@@ -18,11 +18,7 @@ Kernels provide a sandboxed execution environment for Python Script nodes. Each 
 ## Prerequisites
 
 - **Docker** must be installed and running on the host machine
-- The **flowfile-kernel** Docker image must be built:
-
-```bash
-docker compose build flowfile-kernel
-```
+- A kernel **image** must be installed — the Kernel Manager lists the standard images and pulls them for you with one click (see [Kernel images](#kernel-images)); no manual build needed
 
 !!! tip "Desktop App"
     When running Flowfile as a desktop application, Docker must be available on your local machine. Verify with `docker info`.
@@ -36,7 +32,7 @@ The Kernel Manager is the central dashboard for creating, starting, stopping, an
 
 *The Kernel Manager showing configured kernels with status, resource usage, and actions*
 
-When Docker is not running or the kernel image has not been built, a status banner appears at the top of the page with instructions on how to resolve the issue.
+When Docker is not running or no kernel image is installed, a status banner appears at the top of the page with instructions on how to resolve the issue.
 
 ![Docker status warning](../../assets/images/guides/kernels/docker-status-warning.png)
 
@@ -44,9 +40,24 @@ When Docker is not running or the kernel image has not been built, a status bann
 
 ---
 
+## Kernel images
+
+Every kernel is created from an **image flavour** that decides which packages are pre-installed. The Kernel Manager's images panel lists the standard flavours and installs (pulls) them on demand:
+
+| Flavour | Ships | Use for |
+|---------|-------|---------|
+| **Base** | Polars, PyArrow, NumPy | Plain data work |
+| **ML** | Base + scikit-learn, XGBoost, LightGBM, statsmodels | Machine-learning nodes and scripts |
+| **Lite** | Same packages as Base, but only Polars and the kernel runtime are version-pinned | Installing large extra libraries whose own dependency trees need room to resolve |
+| **Custom image** | Whatever you put in it | Your own published Docker image URI |
+
+A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](node-designer.md#execution-environment) declares the packages it needs, and those are **not installed automatically** — the node must run on a kernel whose image provides them. For scikit-learn and friends, that means an ML kernel (or a kernel with the package added — see below).
+
+---
+
 ## Creating a Kernel
 
-1. In the Kernel Manager, click **Create Kernel** to expand the creation form
+1. In the Kernel Manager, click **Create new kernel** to expand the creation form
 2. Fill in the configuration fields:
 
 ![Create Kernel form](../../assets/images/guides/kernels/create-kernel-form.png)
@@ -57,13 +68,16 @@ When Docker is not running or the kernel image has not been built, a status bann
 |---------|-------------|---------|
 | **Kernel ID** | Unique identifier (alphanumeric) | — |
 | **Name** | A human-readable display label | — |
-| **Packages** | Comma-separated pip packages to install at startup | *(none)* |
+| **Image flavour** | Base, ML, Lite, or a custom image URI (see [Kernel images](#kernel-images)) | `Base` |
+| **Packages** | Extra pip packages baked into the kernel's image on top of the flavour (version pins encouraged) | *(none)* |
 | **Memory (GB)** | Maximum memory the container can use (0.5–64 GB) | `4` |
 | **CPU Cores** | Number of CPU cores allocated (0.5–32) | `2` |
 | **GPU** | Enable GPU passthrough (requires NVIDIA Docker) | `false` |
 
 3. Click **Create Kernel** to save the configuration
 4. Click **Start** on the kernel card to launch the container
+
+Extra packages are resolved against the flavour's version constraints and baked into a per-kernel image when the kernel is created — not installed on every start. Editing a stopped kernel's package list rebuilds its image.
 
 ### Kernel Cards
 
@@ -176,13 +190,9 @@ Custom nodes built with the [Node Designer](node-designer.md) can also run on ke
 
 ### Enabling Kernel Mode
 
-In the Node Designer, check **Require Kernel Execution** in the metadata section. This reveals a kernel selector and output name configuration.
+In the Node Designer's **Execution** group, choose the **Isolated kernel** card. A **Dependencies (pip)** editor records the packages the node needs — a requirement to satisfy, not an install step, so run and test the node on a kernel whose image provides them (for ML libraries, the [ML flavour](#kernel-images)). See [Execution environment](node-designer.md#execution-environment) for the full picture.
 
-*The Node Designer with kernel execution enabled, showing the kernel dropdown and output names*
-
-When a user drops your kernel-enabled custom node into a flow, the node settings panel shows a kernel dropdown so they can choose which kernel runs it.
-
-*A kernel-enabled custom node in a flow with the kernel selector visible*
+When a user drops your kernel-enabled custom node into a flow, the node settings drawer shows a kernel picker, with the node's dependencies listed beside it, so they can choose which kernel runs it.
 
 ### What Changes
 
@@ -201,11 +211,8 @@ For details on building custom nodes, see [Node Designer](node-designer.md#how-k
 
 ## Current limitations
 
-A few edges are still being filled in:
-
-- **Flow-to-code export** — Python Script nodes that use kernel execution are not yet included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes will be skipped in the generated code.
-- **Artifact state visibility** — There is currently no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer yet.
-- **Python package versioning** — Packages specified during kernel creation are installed via `pip install` at container startup without version pinning. There is no lock file or reproducible environment mechanism yet. To pin versions, specify them explicitly in the packages field (e.g. `scikit-learn==1.4.0, pandas==2.1.0`).
+- **Flow-to-code export** — Python Script nodes that use kernel execution are not included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes are skipped in the generated code.
+- **Artifact state visibility** — There is no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer.
 
 ---
 

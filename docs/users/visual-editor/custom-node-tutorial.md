@@ -34,7 +34,7 @@ Leave **Execution** on **Local (Polars)** — this node uses only Polars and the
 
 On the **Form** tab you assemble the settings panel by dragging in controls. Add **two groups**.
 
-**Group one — "Mood Detection"** (Python attribute name `mood_config`). Add four controls:
+**Group one — "Mood Detection"** (Python name `mood_config`). Add four controls:
 
 | Control | Field name | Configure |
 |---------|------------|-----------|
@@ -43,7 +43,7 @@ On the **Form** tab you assemble the settings panel by dragging in controls. Add
 | **Numeric Input** | `threshold_value` | Label "Mood Threshold", default `50`, min `0`, max `100` |
 | **Text Input** | `emoji_column_name` | Label "New Emoji Column Name", default `mood_emoji` |
 
-**Group two — "Emoji Style"** (attribute name `style_options`). Add two controls:
+**Group two — "Emoji Style"** (Python name `style_options`). Add two controls:
 
 | Control | Field name | Configure |
 |---------|------------|-----------|
@@ -51,6 +51,13 @@ On the **Form** tab you assemble the settings panel by dragging in controls. Add
 | **Toggle Switch** | `add_random_sparkle` | Label "Add Random Sparkles", default on |
 
 Selecting a control opens the **Control Inspector** on the right, where you set its label, field name, and type-specific options (the option list for a select, min/max for a number, and so on). The **field name** you give each control is exactly what you'll read in the code — `self.settings_schema.mood_config.source_column.value`, and so on.
+
+<details markdown="1">
+<summary>The two form groups</summary>
+
+![Form tab with the Mood Detection and Emoji Style groups](../../assets/images/guides/node-designer/emoji-settings-form.png)
+
+</details>
 
 ## 3. Write the transform
 
@@ -111,28 +118,40 @@ Returning an eager `DataFrame` is fine — the framework normalizes it.
 !!! tip "Performance"
     `map_elements` runs a Python callback per row — fine for a demo, slower on large data, and it forces the `.collect()` at the top. Prefer native Polars expressions when the logic allows, keep the frame lazy when you can, and read settings once up front (not inside the row callback).
 
+<details markdown="1">
+<summary>The Code tab</summary>
+
+![Code tab with the process body](../../assets/images/guides/node-designer/emoji-code-tab.png)
+
+</details>
+
 ## 4. Test it
 
-On the **Test** tab, paste a small numeric sample and click **Run test** — you see the output grid, logs, and any error without touching a flow. Use numeric `value` entries (the `source_column` picker filters to numeric columns):
+On the **Test** tab, paste this sample and click **Run test** — you see the output grid, logs, and any error without touching a flow. The `source_column` picker filters to numeric columns, so point it at `value`:
 
-```json
-[
-  {"name": "bob", "value": 21},
-  {"name": "magret", "value": 62.1},
-  {"name": "fish", "value": 1.2},
-  {"name": "dog", "value": 20}
-]
+```csv
+name,value
+bob,21
+magret,62.1
+fish,1.2
+dog,20
 ```
+
+<details markdown="1">
+<summary>The mood_emoji column in the result</summary>
+
+![Test tab dry-run showing the mood_emoji column](../../assets/images/guides/node-designer/emoji-test-results.png)
+
+</details>
 
 ## 5. Save and use it
 
 Click **Save**. The node loads immediately — no restart — under the **Fun Stuff** group in the palette. Drag it onto the canvas, connect a "Manual Input" (or any numeric source), configure it, and run.
 
 <details markdown="1">
-<summary>Visual overview of the result</summary>
+<summary>The node in a flow: settings drawer and emoji column</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: old UI, re-capture the Emoji Generator settings and its emoji column result -->
-![Flow visualized](../../assets/images/developers/emoji_settings.svg)
+![The Emoji Generator on the canvas with its settings drawer and the mood_emoji result column](../../assets/images/guides/node-designer/emoji_settings.png)
 
 </details>
 
@@ -269,6 +288,6 @@ You built a custom node with a two-section settings form, a type-filtered column
 
 Next:
 
-- [Creating Custom Nodes](creating-custom-nodes.md) — the full component catalog, execution environments, multi-input/multi-output nodes, and the `SecretSelector` for API-backed nodes.
+- [Custom Nodes in Code](creating-custom-nodes.md) — the full component catalog, execution environments, multi-input/multi-output nodes, and the `SecretSelector` for API-backed nodes.
 - [K-Means on a Kernel](kmeans-kernel-node.md) — a node that needs a third-party library (scikit-learn), run in an isolated kernel.
 - [Node Designer](node-designer.md) — the designer, in depth.

@@ -7,8 +7,7 @@ The node's `.py` file is the single source of truth. The designer writes it, and
 !!! info "Not in Flowfile Lite"
     The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: old UI, re-capture the current Node Designer (Node Settings panel + Form / Code / Test tabs) -->
-![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.png)
+![Node Designer Interface](../../assets/images/guides/node-designer/custom-node-designer.gif)
 
 ---
 
@@ -85,7 +84,7 @@ The **Form** tab is the settings form your node's users will see — built WYSIW
 A **group** is a titled, collapsible section of the form (a `Section` in the SDK). Add groups from the group list at the top of the tab. Each group has:
 
 - A **display title** (shown to users), inline-editable.
-- A **Python attribute name** (used in your `process` code, e.g. `main_section`), editable next to the title and sanitized to a valid identifier.
+- A **Python name** (used in your `process` code, e.g. `main_section`), editable next to the title and sanitized to a valid identifier.
 
 Click a group to select it; the controls you add land in the selected group.
 
@@ -160,7 +159,7 @@ The **Test** tab runs the node against sample data without adding it to a flow �
 2. Click **Run test**.
 3. The results show a **per-output preview grid**, the output schema, row count, run duration, and which environment ran it. **Logs** and any **error** (with a collapsible traceback) appear alongside.
 
-The settings used are your Form-tab preview values.
+The settings used are your Form-tab preview values. For an isolated-kernel node, the Test tab also has a **Kernel** selector: the dry run executes on that kernel, so pick one whose image has the node's [dependencies](#execution-environment).
 
 ### Save the test setup with the node
 
@@ -173,11 +172,14 @@ Tick **Save test setup with node** to persist the samples and settings into the 
 Every node declares where its `process` runs. The Execution group offers two cards:
 
 - **Local (Polars)** — the default. `process` runs in a `flowfile_worker` subprocess: a killable, isolated child that owns the dataset memory. Fast, no Docker. The worker does not pip-install anything, so a local node may use only packages already available to Flowfile.
-- **Isolated kernel** — `process` runs inside a Docker kernel. Use it when the node needs third-party libraries or stronger isolation. A **Dependencies (pip)** tag editor on this card lists packages the kernel installs before the node runs. Kernel nodes can declare multiple named outputs. Secrets are not available here.
+- **Isolated kernel** — `process` runs inside a Docker kernel. Use it when the node needs third-party libraries or stronger isolation. A **Dependencies (pip)** tag editor on this card records the packages the node needs — they show on the node's kernel badge and tell users which kernel to pick. Kernel nodes can declare multiple named outputs. Secrets are not available here.
+
+!!! warning "Dependencies are a requirement, not an install step"
+    Flowfile does not pip-install a node's dependencies at run time. The kernel you run the node on must already provide them — through its image flavour (the standard **ML** image ships scikit-learn, XGBoost, LightGBM, and statsmodels) or through packages added to the kernel itself in the [Kernel Manager](kernels.md#creating-a-kernel). Running a scikit-learn node on a Base kernel fails with a `ModuleNotFoundError`.
 
 The picker shows live Docker status. When Docker is unavailable, the Isolated-kernel card explains why and offers **Open Kernel Manager** and **Retry** — never a silent, dead dropdown. Create and start kernels in the [Kernel Manager](kernels.md) first.
 
-Local execution is the default and fully supported; the isolated-kernel environment is newer and still growing (it needs Docker and has a few [current limitations](kernels.md#current-limitations)). The designer itself is the same either way — only where `process` runs changes.
+Local execution needs nothing beyond Flowfile itself; the isolated-kernel environment needs Docker. The designer itself is the same either way — only where `process` runs changes.
 
 !!! note "Legacy nodes still load"
     Older nodes that used a `requires_kernel` flag still load — it maps to the isolated-kernel environment automatically.
@@ -205,7 +207,7 @@ For the full `flowfile_ctx` API (artifacts, display, logging, catalog access) av
 
 ### Kernel selector in a flow
 
-When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it.
+When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it. Pick one whose image provides the node's dependencies — the drawer shows the required packages next to the picker. The same applies in the designer's Test tab, which has its own Kernel selector.
 
 ---
 
@@ -259,13 +261,13 @@ The Catalog has a **Custom Nodes** tab that lists every custom node across the d
 
 ## Programmatic alternative
 
-For version-controlled node definitions or more control, write nodes as Python files directly. The two paths interoperate: a file written in the visual subset reopens visually. See [Creating Custom Nodes](creating-custom-nodes.md).
+Everything the designer builds is also writable as a plain Python file — useful for version control or generating nodes programmatically. The two paths interoperate: a file written in the visual subset reopens visually. The SDK reference lives under For Developers: [Custom Nodes in Code](creating-custom-nodes.md).
 
 ---
 
 ## Related Documentation
 
-- [Creating Custom Nodes](creating-custom-nodes.md) — the Python SDK reference.
+- [Custom Nodes in Code](creating-custom-nodes.md) — the Python SDK reference (For Developers).
 - [Custom Node Tutorial](custom-node-tutorial.md) — a guided end-to-end build (local execution).
 - [K-Means on a Kernel](kmeans-kernel-node.md) — build the same node visually and as code, running scikit-learn in a kernel.
 - [Kernel Execution](kernels.md) — creating and running Docker kernels.

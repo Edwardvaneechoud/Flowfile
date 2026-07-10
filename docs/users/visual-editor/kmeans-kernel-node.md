@@ -1,6 +1,6 @@
 # Tutorial: K-Means on a Kernel
 
-This tutorial builds one custom node that runs **K-Means clustering** over the numeric columns you choose, using scikit-learn inside an [isolated kernel](kernels.md). It's the kernel counterpart to the local-execution [Emoji Generator tutorial](custom-node-tutorial.md) — same shape, but the `process` method reaches for a third-party library the kernel installs for you.
+This tutorial builds one custom node that runs **K-Means clustering** over the numeric columns you choose, using scikit-learn inside an [isolated kernel](kernels.md). It's the kernel counterpart to the local-execution [Emoji Generator tutorial](custom-node-tutorial.md) — same shape, but the `process` method reaches for a third-party library, so it runs on a kernel that provides it.
 
 You'll build the **same node two ways**:
 
@@ -16,12 +16,28 @@ The two are interchangeable: a node built in the designer's visual subset saves 
     - Lets the user pick numeric feature columns, the number of clusters `k`, an output column name, and whether to standardize features first.
     - Runs scikit-learn in a Docker kernel and adds a cluster-label column to the data.
 
-## Before you start
+## Before you start: a kernel with scikit-learn
 
-This node runs its Python in a **kernel** — a Docker container that pip-installs the packages you ask for — so you'll need a running kernel to test it. Open the [Kernel Manager](kernels.md) from the sidebar and start one (Docker must be available). Everything else happens in the Node Designer.
+This node runs its Python in a **kernel** — a Docker container managed from the [Kernel Manager](kernels.md). The kernel you run it on must already have scikit-learn: Flowfile does not install a node's dependencies at run time. Of the standard kernel images, **only the ML flavour ships scikit-learn** (along with XGBoost, LightGBM, and statsmodels) — on a Base or Lite kernel this tutorial fails with a `ModuleNotFoundError`.
+
+Set the kernel up once (Docker must be running):
+
+1. Open the **Kernel Manager** from the sidebar.
+2. If the **ML** image isn't installed yet, click **Install** next to it in the images panel.
+3. Click **Create new kernel** and pick **Image flavour → ML**; name it something you'll recognize later, like `ml`.
+4. Click **Start** on the new kernel's card and wait for the green **Ready** badge.
+
+Everything else happens in the Node Designer.
+
+<details markdown="1">
+<summary>The ML kernel in the Kernel Manager — scikit-learn pre-installed</summary>
+
+![Kernel details showing the ML image flavour with scikit-learn, XGBoost, and LightGBM pre-installed](../../assets/images/guides/node-designer/kernel-example.png)
+
+</details>
 
 !!! note "Why a kernel here?"
-    scikit-learn isn't one of the libraries Flowfile ships with, and a **local** node can only use what's already installed. Running in a kernel lets this node list `scikit-learn` as a dependency and have it installed before it runs.
+    scikit-learn isn't one of the libraries Flowfile ships with, and a **local** node can only use what's already installed. A kernel gives the node its own Docker environment that does have it. Need a package no standard image provides? Add it to the kernel's **Packages** field when you create the kernel — extra packages are baked into the kernel's image.
 
 ---
 
@@ -45,19 +61,18 @@ Open the **Execution** group and choose the **Isolated kernel** card. A **Depend
 scikit-learn
 ```
 
-The kernel installs these packages before your node runs. (If Docker is unavailable, the card explains why and links to the Kernel Manager — start a kernel there first.)
+The tag declares what the node needs; it shows on the node's kernel badge so anyone using the node knows to pick a kernel that has it — your ML kernel does. (If Docker is unavailable, the card explains why and links to the Kernel Manager.)
 
 <details markdown="1" open>
 <summary>Execution environment</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the Execution group with Isolated kernel selected + scikit-learn dependency tag -->
-![Execution set to Isolated kernel with a scikit-learn dependency tag](../../assets/images/developers/kmeans-kernel-environment.svg)
+![Execution set to Isolated kernel with a scikit-learn dependency tag](../../assets/images/guides/node-designer/kmeans-kernel-environment.png)
 
 </details>
 
 ### 3. The settings form
 
-On the **Form** tab, add a group. Give it the display title **Clustering** and the Python attribute name `clustering` (this is what you'll type in the code). Then **Add a control** four times:
+On the **Form** tab, add a group. Give it the display title **Clustering** and the Python name `clustering` (this is what you'll type in the code). Then **Add a control** four times:
 
 | Control | Field name | Configure |
 |---------|------------|-----------|
@@ -69,8 +84,7 @@ On the **Form** tab, add a group. Give it the display title **Clustering** and t
 <details markdown="1">
 <summary>The Clustering group</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the Form tab with the Clustering group and its four controls -->
-![Form tab with the Clustering group and its four controls](../../assets/images/developers/kmeans-settings-form.svg)
+![Form tab with the Clustering group and its four controls](../../assets/images/guides/node-designer/kmeans-settings-form.png)
 
 </details>
 
@@ -111,7 +125,9 @@ Three things in that body are worth calling out — they're the difference betwe
 
 ### 5. Test it
 
-On the **Test** tab, pick a kernel from the **Kernel** selector, then paste this sample — nine customers in three obvious groups — and click **Run test**:
+On the **Test** tab, pick your **ML kernel** from the **Kernel** selector — the dry run executes on that kernel, so this choice decides whether `from sklearn...` works. If the test fails with `ModuleNotFoundError: No module named 'sklearn'`, the selected kernel doesn't have scikit-learn: switch to the ML kernel from [Before you start](#before-you-start-a-kernel-with-scikit-learn).
+
+Then paste this sample — nine customers in three obvious groups — and click **Run test**:
 
 ```csv
 customer_id,age,annual_income_k,spending_score,segment
@@ -128,26 +144,29 @@ C009,58,71.3,15,saver
 
 Set the feature columns to `age`, `annual_income_k`, and `spending_score`, and leave **k** at 3. The output grid gains a `cluster` column, and the three groups fall into three clusters that line up with the `segment` label — which the numeric picker leaves alone. You also get the schema, row count, and your `log_info` line in the **Logs** panel — the same execution path a real run uses. Tick **Save test setup with node** to keep the sample and settings in the file.
 
-!!! tip "A bigger sample to test with"
-    For a fuller run, the repo ships [`customer_segments.csv`](https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/data/templates/customer_segments.csv) — 45 customers across the same three segments (`budget`, `premium`, `saver`). Read it with a **Read data** node and feed it into the K-Means node on the canvas.
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Test tab for a kernel node — the Kernel selector set to the ML kernel, the dry-run output grid with the cluster column, and the log_info line in Logs (save as docs/assets/images/guides/node-designer/kmeans-test-tab.png) -->
+
+### 6. Save and use it in a flow
+
+Click **Save**. The node loads immediately — no restart — under the **ML** group in the palette, with a small kernel badge marking it as kernel-backed. For a fuller dataset than the nine-row test sample, the repo ships [`customer_segments.csv`](https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/data/templates/customer_segments.csv) — 45 customers across the same three segments (`budget`, `premium`, `saver`).
+
+Drag the node onto the canvas, connect the data, and open its settings drawer: next to the **Kernel instance** picker the drawer shows the node's dependencies (`deps: scikit-learn`), so pick the ML kernel here too, then run.
 
 <details markdown="1">
-<summary>Test run</summary>
+<summary>On the canvas: ML palette group, kernel picker, and the cluster column</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the Test tab dry-run with the cluster column + the log line -->
-![Test tab dry-run showing the cluster column and the log line](../../assets/images/developers/kmeans-test-results.svg)
+![The K-Means node in a flow, with the Kernel instance picker set to the ML kernel and the cluster column in the results](../../assets/images/guides/node-designer/kmeans-test-results.png)
 
 </details>
 
-### 6. Save
+### 7. Explore the clusters
 
-Click **Save**. The node loads immediately — no restart — under the **ML** group in the palette, with a small kernel badge marking it as kernel-backed. Drag it onto the canvas, connect numeric input, choose a kernel in its settings drawer, and run.
+To see what K-Means found, connect an **Explore Data** node to the output and open its **Visualization** tab: plot the feature columns against each other and drag `cluster` onto **Color**. With the 45-customer sample from step 6, the three segments separate cleanly.
 
 <details markdown="1">
-<summary>On the canvas</summary>
+<summary>Feature scatter plots colored by cluster</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: capture the K-Means node in the ML group and placed on the canvas with its kernel badge -->
-![The K-Means node in the ML palette group and on the canvas](../../assets/images/developers/kmeans-on-canvas.svg)
+![Explore Data scatter plots of the feature columns colored by the cluster column](../../assets/images/guides/node-designer/kmeans-results-analysis.png)
 
 </details>
 
@@ -260,7 +279,7 @@ return {
 ## Related Documentation
 
 - [Custom Node Tutorial](custom-node-tutorial.md) — the local-execution counterpart (Emoji Generator).
-- [Creating Custom Nodes](creating-custom-nodes.md) — the full SDK reference: components, execution environments, multi-output.
+- [Custom Nodes in Code](creating-custom-nodes.md) — the full SDK reference: components, execution environments, multi-output.
 - [Node Designer](node-designer.md) — the visual designer, in depth.
 - [Kernel Execution](kernels.md) — creating and running Docker kernels.
 - [The flowfile_ctx API](kernel-api.md) — logging, artifacts, and catalog access inside kernels.

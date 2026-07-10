@@ -10,6 +10,7 @@ import {
   emptyTable,
   sampleColumnsToFileColumns,
   tableToColumnData,
+  tableToRawData,
   type SampleTable,
 } from "../sampleData";
 import { dryRunCustomNode, type DryRunBody } from "../../../api/nodeDesigner";
@@ -101,7 +102,9 @@ function create() {
   }
 
   async function run() {
-    const sampleInputs = tables.value.map((t) => tableToColumnData(t));
+    // Typed RawData (not bare {col: values}) so the grid's dtypes survive the wire —
+    // JSON can't distinguish 21 from 21.0, so a float column would otherwise arrive mixed.
+    const sampleInputs = tables.value.map((t) => tableToRawData(t));
     const body: DryRunBody = {
       settings_values: snapshotSettings(),
       sample_inputs: sampleInputs.length ? sampleInputs : null,

@@ -13,7 +13,7 @@ import os
 import threading
 import time
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import polars as pl
 import requests
@@ -28,6 +28,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
 from flowfile_core.flowfile.node_designer.parsing import extract_example_inputs, extract_manifest
 from flowfile_core.flowfile.node_designer.state import DesignerState, SecretSelectorState
+from flowfile_core.schemas.input_schema import RawData
 
 ErrorKind = Literal["syntax", "load", "settings", "execution", "timeout", "no_sample_data"]
 
@@ -37,8 +38,9 @@ _DEFAULT_TIMEOUT = 30
 _MAX_TIMEOUT = 120
 _POLL_INTERVAL = 0.25
 _DRY_RUN_FLOW_ID = -1
-# Sample inputs are materialized in core (pl.LazyFrame(...).serialize()) before shipping to the
-# worker/kernel, so bound them: core never materializes full datasets, and dry-run test data is small.
+# Sample inputs are materialized in core (schema-typed FlowDataEngine construction) before shipping
+# to the worker/kernel, so bound them: core never materializes full datasets, and dry-run test data
+# is small.
 _MAX_SAMPLE_ROWS = 10_000
 _MAX_SAMPLE_CELLS = 200_000
 
@@ -60,7 +62,10 @@ class DryRunRequest(BaseModel):
     designer_state: DesignerState | None = None
     code: str | None = None
     settings_values: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    sample_inputs: list[dict[str, list]] | None = None
+    # Typed RawData (schema + columnar data) preferred; bare {col: values} dicts still
+    # accepted, with dtypes inferred (mixed int/float columns promote to Float64).
+    # left_to_right: smart union would match a RawData payload as the bare dict.
+    sample_inputs: list[Annotated[RawData | dict[str, list], Field(union_mode="left_to_right")]] | None = None
     row_limit: int = _DEFAULT_ROW_LIMIT
     timeout_seconds: int = _DEFAULT_TIMEOUT
     kernel_id: str | None = None  # run on this Docker kernel instead of the worker (kernel-env nodes)
@@ -133,16 +138,26 @@ def _resolve_output_names(request: DryRunRequest, source: str) -> list[str]:
     return ["main"]
 
 
-def _resolve_sample_inputs(
-    request: DryRunRequest, source: str
-) -> tuple[list[dict[str, list]] | None, DryRunResponse | None]:
+def _coerce_samples(
+    samples: list[RawData | dict[str, list]],
+) -> tuple[list[RawData] | None, DryRunResponse | None]:
+    coerced: list[RawData] = []
+    for i, sample in enumerate(samples):
+        try:
+            coerced.append(sample if isinstance(sample, RawData) else RawData.from_pydict(sample))
+        except Exception as e:
+            return None, _fail("no_sample_data", f"Sample input {i} is not a valid table: {e}")
+    return coerced, None
+
+
+def _resolve_sample_inputs(request: DryRunRequest, source: str) -> tuple[list[RawData] | None, DryRunResponse | None]:
     if request.sample_inputs is not None:
-        return request.sample_inputs, None
+        return _coerce_samples(request.sample_inputs)
     if request.designer_state is not None and request.designer_state.example_inputs is not None:
-        return [ex.data for ex in request.designer_state.example_inputs], None
+        return _coerce_samples([ex.data for ex in request.designer_state.example_inputs])
     lifted = extract_example_inputs(source)
     if lifted:
-        return lifted, None
+        return _coerce_samples(lifted)
     # No sample data at all: run against one empty frame per declared input (none for
     # a source node) so nodes that don't need input data are still testable, rather
     # than hard-blocking with "add sample data".
@@ -151,11 +166,11 @@ def _resolve_sample_inputs(
         if request.designer_state is not None
         else extract_manifest(source).number_of_inputs
     )
-    return [{} for _ in range(max(0, n))], None
+    return [RawData(columns=[], data=[]) for _ in range(max(0, n))], None
 
 
-def _check_sample_size(samples: list[dict[str, list]]) -> DryRunResponse | None:
-    """Reject oversized sample inputs before any in-core ``pl.LazyFrame`` materialization.
+def _check_sample_size(samples: list[RawData]) -> DryRunResponse | None:
+    """Reject oversized sample inputs before any in-core materialization.
 
     ``sample_inputs`` comes straight from the request payload; an unbounded one would be
     serialized in core's own process, breaking the "core never materializes full datasets"
@@ -163,13 +178,13 @@ def _check_sample_size(samples: list[dict[str, list]]) -> DryRunResponse | None:
     """
     total_cells = 0
     for i, sample in enumerate(samples):
-        rows = max((len(col) for col in sample.values()), default=0)
+        rows = max((len(col) for col in sample.data), default=0)
         if rows > _MAX_SAMPLE_ROWS:
             return _fail(
                 "no_sample_data",
                 f"Sample input {i} has {rows} rows; the dry-run limit is {_MAX_SAMPLE_ROWS}.",
             )
-        total_cells += sum(len(col) for col in sample.values())
+        total_cells += sum(len(col) for col in sample.data)
     if total_cells > _MAX_SAMPLE_CELLS:
         return _fail(
             "no_sample_data",
@@ -178,11 +193,15 @@ def _check_sample_size(samples: list[dict[str, list]]) -> DryRunResponse | None:
     return None
 
 
-def _serialize_inputs(samples: list[dict[str, list]]) -> tuple[list[bytes] | None, DryRunResponse | None]:
+def _serialize_inputs(samples: list[RawData]) -> tuple[list[bytes] | None, DryRunResponse | None]:
+    # FlowDataEngine applies the RawData schema — the same typed construction as manual input,
+    # so declared dtypes (e.g. Float64 over mixed int/float cells) cast instead of erroring.
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
     serialized: list[bytes] = []
     for i, sample in enumerate(samples):
         try:
-            serialized.append(pl.LazyFrame(sample).serialize())
+            serialized.append(FlowDataEngine(sample).data_frame.serialize())
         except Exception as e:
             return None, _fail("no_sample_data", f"Sample input {i} is not a valid table: {e}")
     return serialized, None
@@ -432,8 +451,7 @@ def _read_kernel_output_previews(
             DryRunOutput(
                 name=name,
                 columns=[
-                    DryRunColumn(name=c, data_type=str(dt))
-                    for c, dt in zip(head.columns, head.dtypes, strict=True)
+                    DryRunColumn(name=c, data_type=str(dt)) for c, dt in zip(head.columns, head.dtypes, strict=True)
                 ],
                 rows=[list(r) for r in head.iter_rows()],
                 row_count=row_count,
@@ -454,7 +472,7 @@ def _read_kernel_output_previews(
 
 
 def _run_dry_run_on_kernel(
-    request: DryRunRequest, source: str, output_names: list[str], samples: list[dict[str, list]]
+    request: DryRunRequest, source: str, output_names: list[str], samples: list[RawData]
 ) -> DryRunResponse:
     """Execute a kernel-environment candidate node on its Docker kernel.
 
@@ -489,7 +507,7 @@ def _run_dry_run_on_kernel(
         return _fail("load", f"Cannot generate kernel script: {e}")
 
     try:
-        frames = tuple(FlowDataEngine(pl.LazyFrame(s)) for s in samples)
+        frames = tuple(FlowDataEngine(s) for s in samples)
     except Exception as e:
         return _fail("no_sample_data", f"Sample input is not a valid table: {e}")
 

@@ -149,7 +149,7 @@
               v-model="nodeMetadata.title"
               type="text"
               class="form-input"
-              placeholder="My Custom Node"
+              :placeholder="nodeMetadata.node_name || 'My Custom Node'"
             />
           </div>
           <div class="form-field">

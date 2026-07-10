@@ -4,6 +4,7 @@
 // must match the FastAPI routes exactly or a 307 redirect drops the body in Docker.
 import axios, { AxiosError } from "axios";
 import type { DesignerState, ParseResult } from "../pages/nodeDesigner/designerState";
+import type { RawDataInput } from "../pages/nodeDesigner/sampleData";
 
 const BASE = "/user_defined_components";
 
@@ -81,7 +82,7 @@ export interface DryRunBody {
   designer_state?: DesignerState | null;
   code?: string | null;
   settings_values: Record<string, Record<string, unknown>>;
-  sample_inputs: Array<Record<string, unknown[]>> | null;
+  sample_inputs: RawDataInput[] | null;
   row_limit?: number;
   timeout_seconds?: number;
   kernel_id?: string | null; // run on this Docker kernel instead of the worker (kernel-env nodes)

@@ -4,6 +4,7 @@ Error paths (syntax / no-sample-data / worker-down) run without a worker; the
 happy path and timeout stub the worker seam so no live worker is required.
 """
 
+import io
 import json
 
 import polars as pl
@@ -150,6 +151,43 @@ def test_zero_input_node_runs_without_sample_data(monkeypatch):
     resp = run_dry_run(DryRunRequest(code=code, sample_inputs=None), user_id=1)
     assert resp.error_kind != "no_sample_data"
     assert captured["inputs"] == []  # a source node runs with zero inputs
+
+
+def _capture_first_input_frame(monkeypatch, request: DryRunRequest) -> pl.DataFrame:
+    """Run up to the worker seam and return the first serialized sample as a DataFrame."""
+    captured = {}
+
+    def _capture(req):
+        captured["inputs"] = req.inputs
+        raise ConnectionError("stop here")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _capture)
+    resp = run_dry_run(request, user_id=1)
+    assert resp.error_kind == "load", resp.error  # reached the worker seam, not a sample error
+    return pl.LazyFrame.deserialize(io.BytesIO(captured["inputs"][0])).collect()
+
+
+def test_typed_sample_inputs_cast_to_declared_schema(monkeypatch):
+    """RawData samples cast cells to the declared dtypes (whole numbers -> Float64)."""
+    sample = {
+        "columns": [
+            {"name": "name", "data_type": "String"},
+            {"name": "value", "data_type": "Float64"},
+        ],
+        "data": [["bob", "magret", "fish", "dog"], [21, 62.1, 1.2, 20]],
+    }
+    df = _capture_first_input_frame(monkeypatch, DryRunRequest(code=CODE_OK, sample_inputs=[sample]))
+    assert df.schema["value"] == pl.Float64
+    assert df["value"].to_list() == [21.0, 62.1, 1.2, 20.0]
+    assert df["name"].to_list() == ["bob", "magret", "fish", "dog"]
+
+
+def test_dict_sample_input_mixed_int_float_promotes_to_float(monkeypatch):
+    """Legacy {col: values} samples with mixed int/float build a Float64 column, not an error."""
+    sample = {"name": ["bob", "magret", "fish", "dog"], "value": [21, 62.1, 1.2, 20]}
+    df = _capture_first_input_frame(monkeypatch, DryRunRequest(code=CODE_OK, sample_inputs=[sample]))
+    assert df.schema["value"] == pl.Float64
+    assert df["value"].to_list() == [21.0, 62.1, 1.2, 20.0]
 
 
 def test_example_inputs_lifted_from_code(monkeypatch):

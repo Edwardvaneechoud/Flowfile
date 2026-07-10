@@ -8,6 +8,7 @@ import {
   parseCsv,
   sampleColumnsToFileColumns,
   tableToColumnData,
+  tableToRawData,
   type SampleTable,
 } from "./sampleData";
 
@@ -44,6 +45,39 @@ describe("tableToColumnData", () => {
       city: ["NY", "SF"],
       sales: [10, 20],
     });
+  });
+});
+
+describe("tableToRawData", () => {
+  it("carries each column's Polars dtype so whole numbers stay floats on the wire", () => {
+    const table: SampleTable = {
+      columns: [
+        { name: "name", dtype: "str" },
+        { name: "value", dtype: "float" },
+      ],
+      rows: [
+        { name: "bob", value: "21" },
+        { name: "magret", value: "62.1" },
+      ],
+    };
+    expect(tableToRawData(table)).toEqual({
+      columns: [
+        { name: "name", data_type: "String" },
+        { name: "value", data_type: "Float64" },
+      ],
+      data: [
+        ["bob", "magret"],
+        [21, 62.1],
+      ],
+    });
+  });
+
+  it("coerces empty cells to null per column", () => {
+    const table: SampleTable = {
+      columns: [{ name: "n", dtype: "int" }],
+      rows: [{ n: "1" }, { n: "" }],
+    };
+    expect(tableToRawData(table).data).toEqual([[1, null]]);
   });
 });
 

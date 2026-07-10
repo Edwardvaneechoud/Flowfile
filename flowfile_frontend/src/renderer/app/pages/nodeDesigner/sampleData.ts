@@ -59,6 +59,25 @@ export function tableToColumnData(table: SampleTable): Record<string, unknown[]>
   return data;
 }
 
+/** Wire shape of the backend's input_schema.RawData: typed schema + columnar values. */
+export interface RawDataInput {
+  columns: Array<{ name: string; data_type: string }>;
+  data: unknown[][];
+}
+
+/** Grid table -> typed RawData so the backend casts cells to each column's chosen dtype. */
+export function tableToRawData(table: SampleTable): RawDataInput {
+  return {
+    columns: table.columns.map((c) => ({
+      name: c.name,
+      data_type: SAMPLE_DTYPE_TO_POLARS[c.dtype],
+    })),
+    data: table.columns.map((col) =>
+      table.rows.map((row) => coerceCell(row[col.name] ?? "", col.dtype)),
+    ),
+  };
+}
+
 function inferDtype(values: unknown[]): SampleDtype {
   const nonNull = values.filter((v) => v !== null && v !== undefined);
   if (nonNull.length === 0) return "str";

@@ -71,7 +71,10 @@
           @blur="addDep"
         />
       </div>
-      <p class="deps-hint">Installed inside the kernel container before the node runs.</p>
+      <p class="deps-hint">
+        Packages the node needs at run time — run it on a kernel whose image provides them (e.g. the
+        ML image for scikit-learn).
+      </p>
     </div>
   </div>
 </template>

@@ -1,9 +1,9 @@
-# Creating Custom Nodes
+# Custom Nodes in Code
 
-This page is the reference for building a custom node in Python with the Node Designer SDK — its class structure, the UI components you can put in the settings panel, type filtering, the `process()` contract, execution environments, and the dry-run test loop. After reading it you can write a node file that appears in the palette with a generated settings form. For a guided end-to-end build, see the [Custom Node Tutorial](custom-node-tutorial.md).
+This page is the SDK reference for writing a custom node as a Python file by hand — the class structure, the settings components, type filtering, the `process()` contract, execution environments, and the dry-run test loop. It's written for developers who want node definitions in version control, generated programmatically, or shared as plain files.
 
-!!! tip "Visual alternative"
-    You can build the same node without writing a file directly in the [Node Designer](node-designer.md). A node file written in the visual subset of the SDK reopens in the visual editor, so the two paths interoperate.
+!!! tip "You don't need this page to build a custom node"
+    The [Node Designer](node-designer.md) builds the same nodes visually — settings form, transform, test run, save — and writes this file for you. If you're new to custom nodes, start with the [guided tutorial](custom-node-tutorial.md) instead. The two paths interoperate: a file that stays within the visual subset of the SDK reopens in the visual editor, so you can start visually and drop to code later (or the other way around).
 
 ## What are custom nodes?
 
@@ -56,13 +56,9 @@ Here is a complete node that adds a greeting column. Note the `process` signatur
 5. **Configure the settings** in the right panel.
 6. **Run your flow.**
 
-<details markdown="1">
-<summary>Visual overview of the result</summary>
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the greeting node on the canvas with its generated settings and result (save as docs/assets/images/guides/node-designer/basic_overview.png) -->
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: old UI, re-capture a custom node on the canvas with its generated settings -->
-![Flow visualized](../../assets/images/developers/basic_overview.svg)
-
-</details>
+For what this looks like in practice, the [Custom Node Tutorial](custom-node-tutorial.md) has current screenshots of a node on the canvas with its generated settings form.
 
 ## Node structure
 
@@ -150,7 +146,21 @@ Section inspector (select a group with no control selected).
 
 ## Available UI components
 
-Flowfile ships nine settings components. Each one below is documented the same way: **what it does**, **what it returns** (shown in the heading as `accessor → type`, plus how you read it in `process`), how to **configure** it, whether it **needs a connected input**, and **when to reach for it**.
+Flowfile ships nine settings components:
+
+| Component | Value in `process` | Reach for it when |
+|-----------|--------------------|-------------------|
+| [Text Input](#text-input-value-str) | `str` | Free-form text, or a column name typed by hand |
+| [Numeric Input](#numeric-input-value-float) | `float` | Exact numeric entry, optional bounds |
+| [Slider](#slider-value-float) | `float` | A bounded value where dragging beats typing |
+| [Toggle Switch](#toggle-switch-value-bool) | `bool` | A single on/off flag |
+| [Single Select](#single-select-value-str) | `str` | One choice from a fixed list |
+| [Multi Select](#multi-select-value-liststr) | `list[str]` | Several choices from a fixed list |
+| [Column Selector](#column-selector-value-str-liststr) | `str` / `list[str]` | Picking input columns, with type filtering |
+| [Column Action](#column-action-value-columnactionvalue) | `ColumnActionValue` | Pairing columns with an operation and output name |
+| [Secret Selector](#secret-selector-secret_value-secretstr-none) | `SecretStr \| None` | Stored credentials (API keys, passwords) |
+
+Each one below is documented the same way: **what it does**, **what it returns** (shown in the heading as `accessor → type`, plus how you read it in `process`), how to **configure** it, whether it **needs a connected input**, and **when to reach for it**.
 
 Read a component's value in `process` with `self.settings_schema.<section>.<field>.value` — the one exception is `SecretSelector`, which uses `.secret_value`.
 
@@ -454,7 +464,7 @@ class MyNode(nd.CustomNodeBase):
 ```
 
 - **`"local"`** (default) — `process` runs in a `flowfile_worker` subprocess: a killable, isolated child process that owns the dataset memory. The worker environment does not pip-install anything, so a local node may use only packages already available to Flowfile.
-- **`"kernel"`** — `process` runs inside an isolated Docker kernel. Use this when the node needs third-party libraries or stronger isolation. List them in `dependencies` (e.g. `dependencies = ["scikit-learn", "xgboost"]`); the kernel installs them. Kernel nodes can also declare multiple named outputs. Secrets are not available in kernel nodes. For a full worked example, see [K-Means on a Kernel](kmeans-kernel-node.md).
+- **`"kernel"`** — `process` runs inside an isolated Docker kernel. Use this when the node needs third-party libraries or stronger isolation. Declare them in `dependencies` (e.g. `dependencies = ["scikit-learn", "xgboost"]`) — the list travels with the node and is shown to users next to the kernel picker, but it is a **requirement, not an install step**: run the node on a kernel that already has the packages. The standard **ML** kernel image ships scikit-learn, XGBoost, LightGBM, and statsmodels; anything else can be baked into a kernel when it's created in the [Kernel Manager](kernels.md#creating-a-kernel). Kernel nodes can also declare multiple named outputs. Secrets are not available in kernel nodes. For a full worked example — including setting up the right kernel — see [K-Means on a Kernel](kmeans-kernel-node.md).
 
 !!! warning "Import kernel-only libraries inside `process`"
     Put `import`s for packages that live only in the kernel (scikit-learn, xgboost, …) **inside** `process`, not at the top of the file. Flowfile core loads your node file to register it in the palette, and core doesn't have the kernel's dependencies — a top-level `import` of one would make the node load with an error. The import runs only in the kernel, which has the package.
@@ -530,7 +540,7 @@ Every declared name must be present in the returned dict, or the run fails with 
 
 You do not need to add a node to a flow to test it. Two paths run its `process` against sample data:
 
-- **In the designer:** the [Test tab](node-designer.md#test-tab) runs the node against a small sample you provide (grid or CSV paste) and shows a per-output preview, logs, and any error — the same execution path as a real run.
+- **In the designer:** the [Test tab](node-designer.md#test-tab) runs the node against a small sample you provide (grid or CSV paste) and shows a per-output preview, logs, and any error — the same execution path as a real run. A kernel-environment node runs on the kernel you pick in the Test tab's **Kernel** selector, so pick one that has the node's dependencies.
 - **Bake samples into the file:** two optional class attributes make the dry-run reproducible and travel with the node:
 
 ```python

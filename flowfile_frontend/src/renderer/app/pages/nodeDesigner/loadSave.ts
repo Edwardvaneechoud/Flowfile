@@ -20,6 +20,12 @@ export function nodeFileName(state: DesignerState): string {
   return `${base}.py`;
 }
 
+/** State to persist/preview: an empty title defaults to the node name so the two stay
+ *  in sync by default (the node shows its name rather than a generic "Custom Node"). */
+function withEffectiveTitle(state: DesignerState): DesignerState {
+  return state.title.trim() ? state : { ...state, title: state.node_name };
+}
+
 /** Apply a parse_result to the store: designer mode -> visual, else code-only. */
 function applyParseResult(parse: ParseResult, code: string) {
   const store = useNodeDesignerStore();
@@ -69,7 +75,7 @@ export async function duplicateNode(fileName: string): Promise<void> {
 export async function previewCode(): Promise<string> {
   const store = useNodeDesignerStore();
   if (store.codeOnly) return store.codeText;
-  return previewCustomNode(store.designerState);
+  return previewCustomNode(withEffectiveTitle(store.designerState));
 }
 
 /** Re-check code-only text by round-tripping through get after a save... but re-check
@@ -102,7 +108,7 @@ export async function saveNode(): Promise<boolean> {
     body.code = store.codeText;
   } else {
     body.mode = "designer";
-    body.designer_state = store.designerState;
+    body.designer_state = withEffectiveTitle(store.designerState);
   }
 
   try {
