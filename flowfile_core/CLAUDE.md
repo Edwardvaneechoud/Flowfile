@@ -9,11 +9,13 @@ Central FastAPI backend and DAG execution engine for Flowfile: manages flows as 
 
 ## Layout
 - `flowfile_core/main.py` — FastAPI app, lifespan (scheduler/kernel/local-model shutdown), CORS (Tauri origin regex + explicit dev/Docker origins), all router mounts, `--run-flow` CLI.
-- `flowfile_core/routes/` — REST routers: `routes.py` (editor/transform, JWT-gated), `flow_api.py` (`data_router` API-key data + `management_router` JWT), `auth.py`, `secrets.py`, `catalog.py`, `cloud_connections.py`, `ga_connections.py`, `kafka.py`, `file_manager.py`, `api_consumers.py`, `user_defined_components.py`, `logs.py`, `public.py`. (More routers live under `ai/`, `kernel/`, `artifacts/`, `ml/`.)
+- `flowfile_core/routes/` — REST routers: `routes.py` (editor/transform, JWT-gated), `flow_api.py` (`data_router` API-key data + `management_router` JWT), `auth.py`, `secrets.py`, `catalog.py`, `cloud_connections.py`, `ga_connections.py`, `kafka.py`, `file_manager.py`, `api_consumers.py`, `user_defined_components.py` (all JWT-gated; save/preview/dry-run/rescan), `custom_node_mounts.py`, `logs.py`, `public.py`. (More routers live under `ai/`, `kernel/`, `artifacts/`, `ml/`.)
 - `flowfile_core/flowfile/flow_graph.py` — DAG execution engine (`FlowGraph`, node add/run, worker offload). `flowfile/handler.py` — `FlowfileHandler` in-memory flow registry.
 - `flowfile_core/flowfile/flow_data_engine/flow_data_engine.py` — per-node Polars compute wrapper (lazy frames, previews; `join/`, `fuzzy_matching/`, `subprocess_operations/` subdirs).
 - `flowfile_core/flowfile/sources/external_sources/` — SQL / REST API / Google Analytics / custom source connectors (`factory.py`).
 - `flowfile_core/configs/node_store/nodes.py` — node template/default registry (`get_all_standard_nodes`).
+- `flowfile_core/flowfile/user_defined/` — custom-node runtime: `registry.py` (file-backed `CustomNodeRegistry`, hot reload, visible-with-error entries, `KernelRequiredError`), `dispatch.py` (secret ciphertext payloads for worker offload), `kernel_codegen.py` (AST kernel scripts, JSON-baked settings), `dry_run.py` (Test-tab endpoint engine), `mounts.py` (extra node directories, `mounts.json`).
+- `flowfile_core/flowfile/node_designer/` — designer round-trip seam: `state.py` (`DesignerState`/`ParseResult` wire contracts), `parsing.py` (pure-AST `.py` → DesignerState; never executes user code), `codegen.py` (backend-canonical DesignerState → `.py`; fixed-point with the parser); the legacy modules here are re-export shims over `shared/node_designer`.
 - `flowfile_core/schemas/input_schema.py` — Pydantic node-config models (one per node type, large file); other request/response schemas alongside.
 - `flowfile_core/ai/` — AI subsystem (see patterns); routers under `ai/*_routes.py`, plus `agents/`, `providers/`, `tools/` (incl. `tools/executor/`), `local_model/`, `context/`.
 - `flowfile_core/auth/` — JWT (`jwt.py`), API keys (`api_key.py`), passwords (`password.py`).

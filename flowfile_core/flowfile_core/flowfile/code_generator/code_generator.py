@@ -1058,6 +1058,14 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         super().__init__(flow_graph)
         self.imports.add("import flowfile as ff")
 
+    def _custom_node_input_expr(self, input_var: str) -> str:
+        """Bridge a FlowFrame input down to the polars LazyFrame ``process()`` expects."""
+        return f"{input_var}.data"
+
+    def _normalize_custom_output(self, out_expr: str) -> str:
+        """Re-wrap ``process()``'s polars return as a FlowFrame for downstream ff.* ops."""
+        return f"ff.FlowFrame({out_expr})"
+
     def _translate_to_ff_code(self, formula: str) -> str | None:
         """Translate a formula to native ff code, registering the imports the snippet needs.
 

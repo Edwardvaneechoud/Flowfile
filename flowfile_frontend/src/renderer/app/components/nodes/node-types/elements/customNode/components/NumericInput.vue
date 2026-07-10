@@ -7,7 +7,7 @@
       :max="schema.max_value"
       :placeholder="schema.placeholder || 'Enter number...'"
       controls-position="right"
-      size="large"
+      size="small"
       style="width: 100%"
       @update:model-value="$emit('update:modelValue', $event)"
     />

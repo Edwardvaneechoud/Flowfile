@@ -5,7 +5,7 @@
     </div>
 
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-      <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="40" />
+      <img :src="iconUrl" :alt="props.title" width="40" />
     </button>
   </div>
 </template>
@@ -13,7 +13,7 @@
 <script setup lang="ts">
 import { defineProps, defineEmits, computed, onMounted, ref, nextTick, watch } from "vue";
 import type { Component } from "vue"; // <-- Import as a TYPE, not a value
-import { getImageUrl } from "../../../features/designer/utils";
+import { useNodeIconUrl } from "../../../composables/useCustomNodeIcon";
 import { useNodeStore } from "../../../stores/column-store";
 import { NodeTitleInfo } from "./nodeInterfaces";
 const description = ref<string>("");
@@ -27,6 +27,10 @@ const props = defineProps<{
   drawerProps?: Record<string, any>;
   nodeTitleInfo: NodeTitleInfo;
 }>();
+
+// Built-in glyphs resolve to bundled assets; custom-node icons come from the
+// JWT-gated endpoint via an authed blob fetch.
+const iconUrl = useNodeIconUrl(() => props.imageSrc);
 
 const isSelected = computed(() => {
   return nodeStore.node_id == props.nodeId;

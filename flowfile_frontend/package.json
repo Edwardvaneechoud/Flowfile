@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.12.8",
+  "version": "0.13.0",
   "description": "A tool for designing and executing data flows",
   "scripts": {
     "dev": "tauri dev",
@@ -59,6 +59,7 @@
     "@ag-grid-community/vue3": "^31.1.1",
     "@codemirror/lang-python": "^6.1.6",
     "@codemirror/lang-sql": "^6.6.4",
+    "@codemirror/lint": "^6.9.6",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@element-plus/icons-vue": "^2.3.1",
     "@fortawesome/fontawesome-free": "^6.1.1",

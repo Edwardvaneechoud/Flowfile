@@ -4583,57 +4583,10 @@ def test_csv_read_with_skip_rows(tmp_path):
     assert len(result_df.collect()) == 2
 
 
-# Custom Node DataFrame Input/Output Tests
-
-def test_custom_node_dataframe_signature_detection():
-    """Test that custom nodes with DataFrame signature get correct collect/lazy handling."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
-
-    class DataFrameProcessNode:
-        def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-            return inputs[0]
-
-    flow = create_basic_flow()
-    converter = FlowGraphToPolarsConverter(flow)
-
-    needs_collect, needs_lazy = converter._check_process_method_signature(DataFrameProcessNode)
-
-    assert needs_collect is True, "Should need collect for DataFrame input"
-    assert needs_lazy is True, "Should need lazy for DataFrame output"
-
-
-def test_custom_node_lazyframe_signature_detection():
-    """Test that custom nodes with LazyFrame signature skip unnecessary collect/lazy."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
-
-    class LazyFrameProcessNode:
-        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-            return inputs[0]
-
-    flow = create_basic_flow()
-    converter = FlowGraphToPolarsConverter(flow)
-
-    needs_collect, needs_lazy = converter._check_process_method_signature(LazyFrameProcessNode)
-
-    assert needs_collect is False, "Should not need collect for LazyFrame input"
-    assert needs_lazy is False, "Should not need lazy for LazyFrame output"
-
-
-def test_custom_node_mixed_signature_detection():
-    """Test custom node with LazyFrame input and DataFrame output."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
-
-    class MixedProcessNode:
-        def process(self, *inputs: pl.LazyFrame) -> pl.DataFrame:
-            return inputs[0].collect()
-
-    flow = create_basic_flow()
-    converter = FlowGraphToPolarsConverter(flow)
-
-    needs_collect, needs_lazy = converter._check_process_method_signature(MixedProcessNode)
-
-    assert needs_collect is False, "Should not need collect for LazyFrame input"
-    assert needs_lazy is True, "Should need lazy for DataFrame output"
+# Custom Node Input/Output contract: process() always receives LazyFrames and
+# the return is isinstance-normalized to lazy — no hint-sniffing. The dropped
+# _check_process_method_signature tests lived here; the current contract is
+# covered by test_code_generator_custom_nodes.py (TestReturnNormalization etc.).
 
 
 # Edge Cases and Error Handling Tests

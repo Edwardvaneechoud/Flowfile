@@ -428,7 +428,8 @@ export type CatalogTab =
   | "sql"
   | "notebook"
   | "visuals"
-  | "apis";
+  | "apis"
+  | "customNodes";
 
 // SQL Query types
 

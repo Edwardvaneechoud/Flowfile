@@ -55,7 +55,7 @@ Adding a built-in native node touches the whole stack:
 - **Backend**: define Pydantic settings models, implement the transformation logic on `FlowDataEngine`, and register the node on `FlowGraph`.
 - **Frontend**: hand-write a Vue component for the node's settings form. Native nodes do not get an auto-generated form.
 
-Custom (user-defined) nodes are the exception: they get a schema-driven settings panel generated from the [Node Designer](../users/visual-editor/node-designer.md) API, so no Vue is needed. See [Creating Custom Nodes](creating-custom-nodes.md).
+Custom (user-defined) nodes are the exception: they get a schema-driven settings panel generated from the [Node Designer](../users/visual-editor/node-designer.md) API, so no Vue is needed. See [Custom Nodes in Code](../users/visual-editor/creating-custom-nodes.md).
 
 For the full walkthrough, read the [Contributing section of the Design Philosophy guide](design-philosophy.md#contributing).
 

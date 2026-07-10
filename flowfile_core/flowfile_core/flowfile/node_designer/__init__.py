@@ -1,23 +1,22 @@
-# flowfile_core/flowfile/node_designer/__init__.py
+"""Re-export shim — the custom-node authoring SDK moved to shared/node_designer.
 
-"""
-Tools for creating custom Flowfile nodes.
-
-This package provides all the necessary components for developers to build their own
-custom nodes, define their UI, and implement their data processing logic.
+Kept so existing user node files importing ``flowfile_core.flowfile.node_designer``
+keep working inside core. New code (and generated nodes) should use
+``from flowfile import node_designer as nd``.
 """
 
-from flowfile_core.types import Types
-
-from .custom_node import CustomNodeBase, NodeSettings
-from .ui_components import (
+from shared.node_designer import (
     ActionOption,
     AvailableArtifacts,
     AvailableSecrets,
     ColumnActionInput,
+    ColumnActionRow,
+    ColumnActionValue,
     ColumnSelector,
+    CustomNodeBase,
     IncomingColumns,
     MultiSelect,
+    NodeSettings,
     NumericInput,
     SecretSelector,
     Section,
@@ -25,6 +24,7 @@ from .ui_components import (
     SliderInput,
     TextInput,
     ToggleSwitch,
+    Types,
 )
 
 __all__ = [
@@ -41,6 +41,8 @@ __all__ = [
     "NodeSettings",
     "ColumnSelector",
     "ColumnActionInput",
+    "ColumnActionRow",
+    "ColumnActionValue",
     "ActionOption",
     "IncomingColumns",
     "AvailableArtifacts",

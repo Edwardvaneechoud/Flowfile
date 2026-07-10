@@ -344,3 +344,45 @@ def start_fuzzy_process(
 
     process_manager.add_process(task_id, p)
     handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+
+
+def start_custom_node_process(
+    custom_node_input: "models.CustomNodeExecuteInput",
+    file_ref: str,
+    task_id: str,
+) -> None:
+    """Spawn the custom-node subprocess.
+
+    Mirrors :func:`start_fuzzy_process`; the child target lives in
+    ``custom_node_runner`` and puts a JSON payload with output paths /
+    row counts (plus preview + logs for dry runs) on the queue.
+    """
+    from flowfile_worker import custom_node_runner
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+
+    kwargs = {
+        "node_source": custom_node_input.node_source,
+        "class_name": custom_node_input.class_name,
+        "settings_values": custom_node_input.settings_values,
+        "secrets": custom_node_input.secrets,
+        "inputs": list(custom_node_input.inputs),
+        "output_names": custom_node_input.output_names,
+        "dry_run": custom_node_input.dry_run,
+        "row_limit": custom_node_input.row_limit,
+        "user_id": custom_node_input.user_id,
+        "progress": progress,
+        "error_message": error_message,
+        "queue": q,
+        "file_path": file_ref,
+        "flowfile_flow_id": custom_node_input.flowfile_flow_id,
+        "flowfile_node_id": custom_node_input.flowfile_node_id,
+    }
+
+    p: Process = mp_context.Process(target=custom_node_runner.execute_custom_node_task, kwargs=kwargs)
+    p.start()
+
+    process_manager.add_process(task_id, p)
+    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)

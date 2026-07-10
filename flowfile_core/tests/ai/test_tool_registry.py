@@ -630,7 +630,7 @@ def test_w56v2_agent_payload_examples_surface_on_agent_only() -> None:
 
 def test_w56v2_sidebar_labels_match_frontend() -> None:
     """v2 — every NODE_GROUP_TO_SIDEBAR_LABEL value appears verbatim
-    in the frontend's NodeList.vue.
+    in the frontend's usePaletteGroups.ts (BUILTIN_GROUPS, extracted from NodeList.vue).
 
     Brittle by design: a frontend rename must propagate to the catalog,
     or this test fails. Catches drift like "Aggregations" → "Group / Pivot"
@@ -642,21 +642,28 @@ def test_w56v2_sidebar_labels_match_frontend() -> None:
 
     # Walk up from this test file to the repo root, then to the frontend.
     repo_root = Path(__file__).resolve().parents[3]
-    nodelist_path = (
-        repo_root / "flowfile_frontend" / "src" / "renderer" / "app" / "views" / "DesignerView" / "NodeList.vue"
+    palette_groups_path = (
+        repo_root
+        / "flowfile_frontend"
+        / "src"
+        / "renderer"
+        / "app"
+        / "views"
+        / "DesignerView"
+        / "usePaletteGroups.ts"
     )
-    if not nodelist_path.is_file():
-        pytest.skip(f"frontend NodeList.vue not found at {nodelist_path}")
-    nodelist_text = nodelist_path.read_text(encoding="utf-8")
+    if not palette_groups_path.is_file():
+        pytest.skip(f"frontend usePaletteGroups.ts not found at {palette_groups_path}")
+    palette_groups_text = palette_groups_path.read_text(encoding="utf-8")
 
     drift: list[tuple[str, str]] = []
     for node_group, sidebar_label in NODE_GROUP_TO_SIDEBAR_LABEL.items():
-        if sidebar_label not in nodelist_text:
+        if sidebar_label not in palette_groups_text:
             drift.append((node_group, sidebar_label))
     assert not drift, (
-        "NODE_GROUP_TO_SIDEBAR_LABEL drifted from frontend NodeList.vue:\n"
+        "NODE_GROUP_TO_SIDEBAR_LABEL drifted from frontend usePaletteGroups.ts:\n"
         + "\n".join(f"  - node_group={ng!r} → label={label!r} not found" for ng, label in drift)
-        + f"\n(checked against {nodelist_path})"
+        + f"\n(checked against {palette_groups_path})"
     )
 
 

@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
 
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
+from flowfile_core.flowfile.user_defined.registry import missing_custom_node_error
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 from shared.storage_config import storage
@@ -151,7 +152,8 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
     for node in flowfile_data.nodes:
         setting_input = None
         if node.setting_input is not None:
-            model_class = get_settings_class_for_node_type(node.type)
+            raw_setting = node.setting_input if isinstance(node.setting_input, dict) else None
+            model_class = get_settings_class_for_node_type(node.type, raw_setting)
 
             if model_class is None:
                 raise ValueError(f"Unknown node type: {node.type}")
@@ -310,6 +312,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
+        if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
+            register_missing_node_template(node_info.type)
         node_promise = input_schema.NodePromise(
             flow_id=new_flow.flow_id,
             node_id=node_info.id,
@@ -328,12 +332,19 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
                 node_info.setting_input.user_id = user_id
             if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
                 if node_info.type not in CUSTOM_NODE_STORE:
-                    continue
-                user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
-                new_flow.add_user_defined_node(
-                    custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
-                    user_defined_node_settings=node_info.setting_input,
-                )
+                    # A flow always opens; the node stays in error state with its
+                    # settings preserved verbatim instead of being dropped.
+                    new_flow.add_missing_user_defined_node(
+                        user_defined_node_settings=node_info.setting_input,
+                        node_type=node_info.type,
+                        error=missing_custom_node_error(node_info.type),
+                    )
+                else:
+                    user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
+                    new_flow.add_user_defined_node(
+                        custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
+                        user_defined_node_settings=node_info.setting_input,
+                    )
             else:
                 getattr(new_flow, "add_" + node_info.type)(node_info.setting_input)
 

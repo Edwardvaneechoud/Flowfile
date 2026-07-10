@@ -14,6 +14,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     ApplyModelInput,
+    CustomNodeExecuteInput,
     FuzzyJoinInput,
     OperationType,
     PolarsOperation,
@@ -100,6 +101,17 @@ def trigger_fuzzy_match_operation(
     v = requests.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
+    return Status(**v.json())
+
+
+def trigger_custom_node_operation(request: CustomNodeExecuteInput) -> Status:
+    v = requests.post(
+        f"{WORKER_URL}/execute_custom_node",
+        data=request.model_dump_json(),
+        headers={"Content-Type": "application/json"},
+    )
+    if not v.ok:
+        raise Exception(f"trigger_custom_node_operation: Could not start the custom node, {v.text}")
     return Status(**v.json())
 
 
@@ -1142,6 +1154,24 @@ class MLApplyFetcher(BaseFetcher):
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
+
+
+class ExternalCustomNodeFetcher(BaseFetcher):
+    """Runs a custom node's process() in the worker; result is the JSON payload
+    with per-output IPC paths and row counts (result_type="other")."""
+
+    def __init__(self, request: CustomNodeExecuteInput, wait_on_completion: bool = False):
+        super().__init__(file_ref=request.task_id)
+        request.task_id = self.file_ref
+        r = trigger_custom_node_operation(request)
+        self.file_ref = r.background_task_id
+        self.running = r.status in ("Processing", "Starting")
+        if wait_on_completion:
+            _ = self.get_result()
+
+    def get_payload(self) -> dict:
+        result = self.get_result()
+        return json.loads(result) if isinstance(result, str) else result
 
 
 class ExternalCreateFetcher(BaseFetcher):

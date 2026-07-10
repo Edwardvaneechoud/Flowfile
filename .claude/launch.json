@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:web", "--prefix", "flowfile_frontend"],
+      "port": 8080
+    },
+    {
       "name": "wasm",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "flowfile_wasm"],

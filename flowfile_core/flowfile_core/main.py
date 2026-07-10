@@ -31,6 +31,7 @@ from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
+from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
@@ -170,6 +171,7 @@ app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=[
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
+app.include_router(custom_node_mounts_router, prefix="/custom-node-mounts", tags=["custom_node_mounts"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])

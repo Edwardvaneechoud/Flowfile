@@ -1,23 +1,18 @@
 /**
  * Constants for the Node Designer
  */
+import { componentDocs } from "./componentDocs";
 import type { AvailableComponent } from "./types";
 
-/** Session storage key for persisting designer state */
+/** Legacy sessionStorage key; kept only for the one-time draft migration in node-designer-store */
 export const STORAGE_KEY = "nodeDesigner_state";
 
-/** Available component types for the palette */
-export const availableComponents: AvailableComponent[] = [
-  { type: "TextInput", label: "Text Input", icon: "fa-solid fa-font" },
-  { type: "NumericInput", label: "Numeric Input", icon: "fa-solid fa-hashtag" },
-  { type: "ToggleSwitch", label: "Toggle Switch", icon: "fa-solid fa-toggle-on" },
-  { type: "SingleSelect", label: "Single Select", icon: "fa-solid fa-list" },
-  { type: "MultiSelect", label: "Multi Select", icon: "fa-solid fa-list-check" },
-  { type: "ColumnSelector", label: "Column Selector", icon: "fa-solid fa-table-columns" },
-  { type: "ColumnActionInput", label: "Column Action", icon: "fa-solid fa-table-list" },
-  { type: "SliderInput", label: "Slider", icon: "fa-solid fa-sliders" },
-  { type: "SecretSelector", label: "Secret Selector", icon: "fa-solid fa-key" },
-];
+/** Available component types for the palette, derived from the component reference. */
+export const availableComponents: AvailableComponent[] = componentDocs.map((c) => ({
+  type: c.type,
+  label: c.label,
+  icon: c.icon,
+}));
 
 /** Default process code template */
 export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
@@ -29,33 +24,45 @@ export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> p
 
     return lf`;
 
-/** Default process code template for kernel mode */
-export const defaultKernelProcessCode = `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-    # Get the first input LazyFrame
-    lf = inputs[0]
-
-    # Your transformation logic here
-    # You can use any packages installed on your kernel
-    # Example: lf = lf.filter(pl.col("column") > 0)
-
-    return lf`;
-
-/** Default node metadata */
-export const defaultNodeMetadata = {
-  node_name: "",
-  node_category: "Custom",
-  title: "",
-  intro: "",
-  number_of_inputs: 1,
-  number_of_outputs: 1,
-  node_icon: "user-defined-icon.png",
-  requires_kernel: false,
-  kernel_id: null as string | null,
-  output_names: ["main"],
-};
-
 /** Get component icon by type */
 export function getComponentIcon(type: string): string {
   const comp = availableComponents.find((c) => c.type === type);
   return comp?.icon || "fa-solid fa-puzzle-piece";
 }
+
+/** Canonical type-group tokens for a ColumnSelector/ColumnActionInput data_types filter
+ *  (mirrors the SDK TypeGroup; a bare group token means "any column in that group"). */
+export const DATA_TYPE_GROUP_OPTIONS = [
+  "Numeric",
+  "String",
+  "Date",
+  "Boolean",
+  "Binary",
+  "Complex",
+] as const;
+
+/** Canonical specific-type tokens (SDK DataType values, minus those that collide with a
+ *  group name — "String"/"Date"/"Boolean"/"Binary" are only offered as groups). */
+export const DATA_TYPE_SPECIFIC_OPTIONS = [
+  "Int8",
+  "Int16",
+  "Int32",
+  "Int64",
+  "Int128",
+  "UInt8",
+  "UInt16",
+  "UInt32",
+  "UInt64",
+  "UInt128",
+  "Float16",
+  "Float32",
+  "Float64",
+  "Decimal",
+  "Categorical",
+  "Datetime",
+  "Time",
+  "Duration",
+  "List",
+  "Struct",
+  "Array",
+] as const;

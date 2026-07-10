@@ -54,6 +54,14 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 
     [:octicons-arrow-right-24: Run Flowfile for a Team](deploy-for-a-team.md)
 
+-   :material-toy-brick-outline: **Build a node the palette lacks**
+
+    ---
+
+    The operation you need isn't built in? Make it once in the Node Designer — visually, no code file — and reuse it everywhere.
+
+    [:octicons-arrow-right-24: Node Designer](visual-editor/node-designer.md)
+
 </div>
 
 ## Visual and code are the same pipeline

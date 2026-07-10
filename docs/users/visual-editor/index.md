@@ -45,7 +45,7 @@ If you haven't built a flow yet, the [Quickstart](../../quickstart.md#your-first
 
     ---
 
-    Build your own reusable nodes.
+    Missing a node you need? Build your own — visually, no Python file to write by hand — and it joins the palette with its own settings form.
 
 -   :material-school-outline: **[Worked Examples](tutorials/index.md)**
 
