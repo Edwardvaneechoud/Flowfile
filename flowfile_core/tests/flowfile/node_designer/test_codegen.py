@@ -76,7 +76,6 @@ def test_golden_docs_example():
         '            label="Name Column",\n'
         "            required=True,\n"
         "            data_types=[\n"
-        '                "Categorical",\n'
         '                "String",\n'
         "            ],\n"
         "        ),\n"

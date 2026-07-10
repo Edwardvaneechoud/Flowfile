@@ -81,6 +81,23 @@ describe("sampleColumnsToFileColumns", () => {
       ["active", "Boolean"],
     ]);
   });
+
+  it("tags each column with its readable data_type_group for group filters", () => {
+    const result = sampleColumnsToFileColumns([
+      { name: "age", dtype: "int" },
+      { name: "income", dtype: "float" },
+      { name: "city", dtype: "str" },
+      { name: "active", dtype: "bool" },
+      { name: "created", dtype: "datetime" },
+    ]);
+    expect(result.map((c) => c.data_type_group)).toEqual([
+      "Numeric",
+      "Numeric",
+      "String",
+      "Boolean",
+      "Date",
+    ]);
+  });
 });
 
 describe("parseCsv", () => {

@@ -33,7 +33,7 @@ from flowfile_core.flowfile.node_designer.state import (
 )
 from shared import node_designer as _sdk
 from shared.node_designer.types import DataType, TypeGroup, Types
-from shared.node_designer.ui_components import normalize_input_to_data_types
+from shared.node_designer.ui_components import normalize_input_to_data_types_preserving_groups
 
 
 class ParseIssueCode(str, Enum):
@@ -707,10 +707,7 @@ class _SourceParser:
             value = list(value)
         if isinstance(value, list) and any(isinstance(item, _Marker) for item in value):
             raise _LiteralError(expr, "marker classes are not valid inside data_types")
-        normalized = normalize_input_to_data_types(value)
-        if normalized == "ALL":
-            return "ALL"
-        return sorted(dt.value for dt in normalized)
+        return normalize_input_to_data_types_preserving_groups(value)
 
     # -- node class lifting ----------------------------------------------------
 

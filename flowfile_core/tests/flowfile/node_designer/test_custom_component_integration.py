@@ -783,12 +783,8 @@ class TestCustomNodeSchema:
         node = ColumnsToStringNode()
         selector = node.settings_schema.input_section.numeric_columns
 
-        expected_numeric_types = {
-            DataType.Int8, DataType.Int16, DataType.Int32, DataType.Int64, DataType.Int128,
-            DataType.UInt8, DataType.UInt16, DataType.UInt32, DataType.UInt64, DataType.UInt128,
-            DataType.Float16, DataType.Float32, DataType.Float64, DataType.Decimal
-        }
-        assert set(selector.data_types_filter) == expected_numeric_types
+        # Types.Numeric is preserved as the canonical group token, not expanded.
+        assert selector.data_types_filter == ["Numeric"]
 
 
 # Source Node Fixtures (No Inputs, Only Outputs)

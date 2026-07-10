@@ -182,7 +182,7 @@ def test_docs_example_designer_state():
     assert name_column.label == "Name Column"
     assert name_column.required is True
     assert name_column.multiple is False
-    assert name_column.data_types == ["Categorical", "String"]  # Types.String is the String type group
+    assert name_column.data_types == ["String"]  # Types.String preserved as the String group token
 
     assert isinstance(greeting, SelectState)
     assert greeting.component_type == "SingleSelect"
@@ -447,7 +447,7 @@ def test_shared_sdk_import_is_not_legacy():
     state = result.designer_state
     assert state.class_name == "TrimNode"
     (column,) = state.sections[0].components
-    assert column.data_types == ["Categorical", "String"]
+    assert column.data_types == ["String"]
 
 
 def test_section_builder_is_code_only():

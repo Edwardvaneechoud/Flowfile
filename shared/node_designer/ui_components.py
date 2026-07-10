@@ -2,7 +2,7 @@ from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, Field, SecretStr, computed_field
 
-from shared.node_designer._type_registry import normalize_type_spec
+from shared.node_designer._type_registry import normalize_type_spec, normalize_type_spec_preserving_groups
 from shared.node_designer.secrets import SecretResolutionError, SecretResolver
 from shared.node_designer.types import DataType, TypeSpec
 
@@ -54,6 +54,21 @@ def normalize_input_to_data_types(v: Any) -> Literal["ALL"] | list[DataType]:
         return "ALL"
 
     return sorted(list(normalized_set), key=lambda x: x.value)
+
+
+def normalize_input_to_data_types_preserving_groups(v: Any) -> Literal["ALL"] | list[str]:
+    """
+    Normalize any TypeSpec to ``"ALL"`` or a sorted, de-duplicated list of canonical
+    tokens. Type groups are preserved as their canonical name (``"Numeric"``) rather
+    than expanded to members; specific types are canonicalized (``"int"`` → ``"Int64"``).
+    Idempotent on an already-canonical token list.
+    """
+    if v == "ALL":
+        return "ALL"
+    result = normalize_type_spec_preserving_groups(v)
+    if result == "ALL" or not result:
+        return "ALL"
+    return sorted(result)
 
 
 class FlowfileInComponent(BaseModel):
@@ -139,12 +154,12 @@ class ColumnSelector(FlowfileInComponent):
 
     @computed_field
     @property
-    def data_types_filter(self) -> Literal["ALL"] | list[DataType]:
+    def data_types_filter(self) -> Literal["ALL"] | list[str]:
         """
         A computed field that normalizes the `data_type_filter_input` into a
-        standardized format for the frontend.
+        standardized format for the frontend (canonical tokens, groups preserved).
         """
-        return normalize_input_to_data_types(self.data_type_filter_input)
+        return normalize_input_to_data_types_preserving_groups(self.data_type_filter_input)
 
     def model_dump(self, **kwargs) -> dict:
         """
@@ -153,7 +168,7 @@ class ColumnSelector(FlowfileInComponent):
         """
         data = super().model_dump(**kwargs)
         if "data_types_filter" in data and data["data_types_filter"] != "ALL":
-            data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
+            data["data_types"] = data["data_types_filter"]
         return data
 
 
@@ -532,12 +547,12 @@ class ColumnActionInput(FlowfileInComponent):
 
     @computed_field
     @property
-    def data_types_filter(self) -> Literal["ALL"] | list[DataType]:
+    def data_types_filter(self) -> Literal["ALL"] | list[str]:
         """
         A computed field that normalizes the `data_type_filter_input` into a
-        standardized format for the frontend.
+        standardized format for the frontend (canonical tokens, groups preserved).
         """
-        return normalize_input_to_data_types(self.data_type_filter_input)
+        return normalize_input_to_data_types_preserving_groups(self.data_type_filter_input)
 
     def model_dump(self, **kwargs) -> dict:
         """
@@ -555,7 +570,7 @@ class ColumnActionInput(FlowfileInComponent):
         data["show_group_by"] = self.show_group_by
         data["show_order_by"] = self.show_order_by
         if "data_types_filter" in data and data["data_types_filter"] != "ALL":
-            data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
+            data["data_types"] = data["data_types_filter"]
         else:
             data["data_types"] = "ALL"
         if isinstance(self.value, ColumnActionValue):

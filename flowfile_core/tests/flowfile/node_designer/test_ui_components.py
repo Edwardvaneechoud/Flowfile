@@ -12,22 +12,6 @@ from flowfile_core.flowfile.node_designer.ui_components import (
 )
 from flowfile_core.types import DataType, TypeGroup, Types
 
-# Helper lists for expected sorted outputs from TypeGroups
-NUMERIC_TYPES_SORTED = sorted([
-    DataType.Int8, DataType.Int16, DataType.Int32, DataType.Int64, DataType.Int128,
-    DataType.UInt8, DataType.UInt16, DataType.UInt32, DataType.UInt64, DataType.UInt128,
-    DataType.Float16, DataType.Float32, DataType.Float64, DataType.Decimal
-], key=lambda x: x.value)
-
-STRING_TYPES_SORTED = sorted([
-    DataType.String, DataType.Categorical
-], key=lambda x: x.value)
-
-DATE_TYPES_SORTED = sorted([
-    DataType.Date, DataType.Datetime, DataType.Time, DataType.Duration
-], key=lambda x: x.value)
-
-
 def test_column_selector_default_initialization():
     """Tests that the default data type filter is 'ALL' when no input is given."""
     selector = ColumnSelector()
@@ -35,56 +19,49 @@ def test_column_selector_default_initialization():
 
 
 @pytest.mark.parametrize("input_spec, expected_output", [
-    # Case 1: "ALL" string literal
+    # "ALL" sentinel
     ("ALL", "ALL"),
 
-    # Case 2: Single DataType as a string
-    ("Int64", [DataType.Int64]),
+    # Specific type as a canonical string / alias -> canonical DataType name
+    ("Int64", ["Int64"]),
+    ("int", ["Int64"]),
+    ("str", ["String"]),
+    ("float", ["Float64"]),
 
-    # Case 3: Single DataType alias string
-    ("int", [DataType.Int64]),
-    ("str", [DataType.String]),
-    ("float", [DataType.Float64]),
+    # TypeGroups are preserved as their canonical group name (NOT expanded to members)
+    ("Numeric", ["Numeric"]),
+    (TypeGroup.String, ["String"]),
 
-    # Case 4: Single TypeGroup as a string
-    ("Numeric", NUMERIC_TYPES_SORTED),
+    # Specific DataType enum -> canonical name
+    (DataType.Boolean, ["Boolean"]),
 
-    # Case 5: Single DataType as an enum
-    (DataType.Boolean, [DataType.Boolean]),
+    # Polars type class / instance -> canonical specific name
+    (pl.Int32, ["Int32"]),
+    (pl.Utf8, ["String"]),  # pl.String is an alias for pl.Utf8
+    (pl.Datetime(time_unit="ms"), ["Datetime"]),
 
-    # Case 6: Single TypeGroup as an enum
-    (TypeGroup.String, STRING_TYPES_SORTED),
+    # A bare "String" string resolves to the group; "Int32" stays specific
+    (["String", "Int32"], ["Int32", "String"]),
 
-    # Case 7: Polars data type class
-    (pl.Int32, [DataType.Int32]),
-    (pl.Utf8, [DataType.String]), # pl.String is an alias for pl.Utf8
+    # List of specific enums, sorted
+    ([DataType.String, DataType.Boolean], ["Boolean", "String"]),
 
-    # Case 8: Polars data type instance
-    (pl.Datetime(time_unit="ms"), [DataType.Datetime]),
+    # Mixed: alias -> specific, enum -> specific, group -> canonical group name
+    (["int", DataType.Boolean, TypeGroup.Date], ["Boolean", "Date", "Int64"]),
 
-    # Case 9: List of strings (should be sorted in output)
-    (["String", "Int32"], [DataType.Categorical, DataType.Int32, DataType.String]),
-
-    # Case 10: List of enums (unsorted, should be sorted in output)
-    ([DataType.String, DataType.Boolean], [DataType.Boolean, DataType.String]),
-
-    # Case 11: Mixed list of aliases, enums, and groups (should be flattened and sorted)
-    (["int", DataType.Boolean, TypeGroup.Date], sorted(
-        [DataType.Int64, DataType.Boolean] + DATE_TYPES_SORTED,
-        key=lambda x: x.value
-    )),
-
-    # Case 12: List of Polars types (should be sorted in output)
-    ([pl.Float32, pl.Int16], [DataType.Float32, DataType.Int16]),
-
+    # List of polars types -> specific names
+    ([pl.Float32, pl.Int16], ["Float32", "Int16"]),
 ])
-def test_column_selector_data_type_normalization(input_spec: Any, expected_output: Literal["ALL"] | list[DataType]):
+def test_column_selector_data_type_normalization(input_spec, expected_output):
     """
-    Tests various inputs for the `data_types` field and verifies
-    the computed `data_types_filter` is correctly normalized and sorted.
+    Tests various inputs for the `data_types` field and verifies the computed
+    `data_types_filter` is normalized to canonical tokens with groups preserved.
     """
     selector = ColumnSelector(data_types=input_spec)
-    assert set(selector.data_types_filter) == set(expected_output)
+    if expected_output == "ALL":
+        assert selector.data_types_filter == "ALL"
+    else:
+        assert set(selector.data_types_filter) == set(expected_output)
 
 
 def test_model_dump_when_filter_is_all():
@@ -360,8 +337,8 @@ def test_column_action_input_model_dump_with_data_types():
 
     dumped = comp.model_dump()
     assert "data_types" in dumped
-    assert isinstance(dumped["data_types"], list)
-    assert "Int64" in dumped["data_types"] or "Float64" in dumped["data_types"]
+    # Groups are preserved as their canonical name, not expanded to member types.
+    assert dumped["data_types"] == ["Numeric"]
 
 
 def test_column_action_input_model_dump_all_options():

@@ -175,12 +175,15 @@ const firstSelectedIndex = ref<number | null>(null);
 const allColumns = computed(() => props.incomingColumns);
 
 const filteredColumns = computed(() => {
-  if (!props.schema.data_types || props.schema.data_types === "ALL") {
+  const dataTypes = props.schema.data_types;
+  if (!dataTypes || dataTypes === "ALL") {
     return props.incomingColumns;
   }
-  if (Array.isArray(props.schema.data_types)) {
-    return props.incomingColumns.filter((column) =>
-      props.schema.data_types.includes(column.data_type),
+  if (Array.isArray(dataTypes)) {
+    // Match on a column's concrete dtype ("Int64") or its group ("Numeric").
+    return props.incomingColumns.filter(
+      (column) =>
+        dataTypes.includes(column.data_type) || dataTypes.includes(column.data_type_group),
     );
   }
   return props.incomingColumns;

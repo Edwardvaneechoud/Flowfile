@@ -151,9 +151,25 @@ export const SAMPLE_DTYPE_TO_POLARS: Record<SampleDtype, string> = {
   datetime: "Datetime",
 };
 
+// The grid's coarse dtype -> its readable data_type_group, mirroring the backend
+// classifier so group-based data_types filters ("Numeric", …) match sample columns.
+export const SAMPLE_DTYPE_TO_GROUP: Record<SampleDtype, string> = {
+  str: "String",
+  int: "Numeric",
+  float: "Numeric",
+  bool: "Boolean",
+  date: "Date",
+  datetime: "Date",
+};
+
 /** SampleColumns -> typed FileColumns for column-driven controls (ColumnSelector, …). */
 export function sampleColumnsToFileColumns(columns: SampleColumn[]): FileColumn[] {
   return columns.map(
-    (c) => ({ name: c.name, data_type: SAMPLE_DTYPE_TO_POLARS[c.dtype] }) as FileColumn,
+    (c) =>
+      ({
+        name: c.name,
+        data_type: SAMPLE_DTYPE_TO_POLARS[c.dtype],
+        data_type_group: SAMPLE_DTYPE_TO_GROUP[c.dtype],
+      }) as FileColumn,
   );
 }

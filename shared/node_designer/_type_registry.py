@@ -158,6 +158,55 @@ class TypeRegistry:
             result.update(self.normalize(spec))
         return result
 
+    def normalize_preserving_groups(self, type_spec: Any) -> str | set[str]:
+        """Map a TypeSpec to canonical tokens WITHOUT expanding groups.
+
+        A group input yields its canonical group name (e.g. ``{"Numeric"}``); a
+        specific input yields its canonical DataType value (e.g. ``{"Int64"}``).
+        Returns the ``"ALL"`` sentinel or a set of canonical token strings. A bare
+        string that names both a group and a specific type (``"String"``, ``"Date"``,
+        ``"Boolean"``, ``"Binary"``) resolves to the group — matching the branch
+        order of ``normalize`` and the frontend's ``data_type_group`` semantics.
+        """
+        if type_spec == TypeGroup.All or type_spec == "ALL":
+            return "ALL"
+        if isinstance(type_spec, TypeGroup):
+            return {type_spec.value}
+        if isinstance(type_spec, DataType):
+            return {type_spec.value}
+        if isinstance(type_spec, type) and issubclass(type_spec, pl.DataType):
+            mapping = self._by_polars_type.get(type_spec)
+            if mapping:
+                return {mapping.data_type.value}
+        if isinstance(type_spec, pl.DataType):
+            base_type = type_spec.base_type() if hasattr(type_spec, "base_type") else type(type_spec)
+            mapping = self._by_polars_type.get(base_type)
+            if mapping:
+                return {mapping.data_type.value}
+        if isinstance(type_spec, str):
+            type_spec_lower = type_spec.lower()
+            for group in TypeGroup:
+                if group.lower() == type_spec_lower:
+                    return "ALL" if group == TypeGroup.All else {group.value}
+            try:
+                return {DataType(type_spec).value}
+            except (ValueError, KeyError):
+                pass
+            mapping = self._by_alias.get(type_spec_lower)
+            if mapping:
+                return {mapping.data_type.value}
+        return set()
+
+    def normalize_list_preserving_groups(self, type_specs: list[Any]) -> str | set[str]:
+        """Group-preserving variant of ``normalize_list``; any ``ALL`` collapses to ``"ALL"``."""
+        result: set[str] = set()
+        for spec in type_specs:
+            item = self.normalize_preserving_groups(spec)
+            if item == "ALL":
+                return "ALL"
+            result.update(item)
+        return result
+
     def get_polars_types(self, data_types: set[DataType]) -> set[type[pl.DataType]]:
         """Convert a set of DataType enums to Polars types."""
         result = set()
@@ -183,6 +232,13 @@ def normalize_type_spec(type_spec: Any) -> set[DataType]:
     if isinstance(type_spec, list):
         return _registry.normalize_list(type_spec)
     return _registry.normalize(type_spec)
+
+
+def normalize_type_spec_preserving_groups(type_spec: Any) -> str | set[str]:
+    """Normalize a type spec to canonical tokens, keeping group names un-expanded."""
+    if isinstance(type_spec, list):
+        return _registry.normalize_list_preserving_groups(type_spec)
+    return _registry.normalize_preserving_groups(type_spec)
 
 
 def get_polars_types(data_types: set[DataType]) -> set[type[pl.DataType]]:

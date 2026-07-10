@@ -211,16 +211,24 @@
           </div>
           <div class="field-row">
             <label>Data Types Filter</label>
-            <select
-              :value="dataTypesValue"
-              class="ins-input"
-              @change="updateDataTypes(($event.target as HTMLSelectElement).value)"
+            <el-select
+              :model-value="dataTypesValue"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="All types"
+              size="small"
+              style="width: 100%"
+              @update:model-value="updateDataTypes"
             >
-              <option value="ALL">All Types</option>
-              <option value="numeric">Numeric</option>
-              <option value="string">String</option>
-              <option value="date">Date/Time</option>
-            </select>
+              <el-option-group label="Groups">
+                <el-option v-for="g in DATA_TYPE_GROUP_OPTIONS" :key="g" :label="g" :value="g" />
+              </el-option-group>
+              <el-option-group label="Specific types">
+                <el-option v-for="t in DATA_TYPE_SPECIFIC_OPTIONS" :key="t" :label="t" :value="t" />
+              </el-option-group>
+            </el-select>
           </div>
         </div>
 
@@ -282,16 +290,24 @@
           </div>
           <div class="field-row">
             <label>Data Types Filter</label>
-            <select
-              :value="dataTypesValue"
-              class="ins-input"
-              @change="updateDataTypes(($event.target as HTMLSelectElement).value)"
+            <el-select
+              :model-value="dataTypesValue"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="All types"
+              size="small"
+              style="width: 100%"
+              @update:model-value="updateDataTypes"
             >
-              <option value="ALL">All Types</option>
-              <option value="numeric">Numeric</option>
-              <option value="string">String</option>
-              <option value="date">Date/Time</option>
-            </select>
+              <el-option-group label="Groups">
+                <el-option v-for="g in DATA_TYPE_GROUP_OPTIONS" :key="g" :label="g" :value="g" />
+              </el-option-group>
+              <el-option-group label="Specific types">
+                <el-option v-for="t in DATA_TYPE_SPECIFIC_OPTIONS" :key="t" :label="t" :value="t" />
+              </el-option-group>
+            </el-select>
           </div>
           <div class="field-row checkbox-row">
             <label>Show Group By</label>
@@ -344,7 +360,11 @@ import { computed, ref } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { ComponentState, SelectOption } from "../designerState";
 import { toSnakeCase } from "../mappers";
-import { getComponentIcon } from "../constants";
+import {
+  DATA_TYPE_GROUP_OPTIONS,
+  DATA_TYPE_SPECIFIC_OPTIONS,
+  getComponentIcon,
+} from "../constants";
 import { pyValueType } from "../componentDocs";
 import EmptyState from "../../../components/common/EmptyState/EmptyState.vue";
 import ComponentReferenceModal from "../ComponentReferenceModal.vue";
@@ -410,16 +430,16 @@ function updateActions(raw: string) {
   update("actions", acts);
 }
 
-const dataTypesValue = computed(() => {
+const dataTypesValue = computed<string[]>(() => {
   const c = comp.value;
   if (c && (c.component_type === "ColumnSelector" || c.component_type === "ColumnActionInput")) {
-    return c.data_types === "ALL" ? "ALL" : (c.data_types[0] ?? "ALL");
+    return c.data_types === "ALL" ? [] : c.data_types;
   }
-  return "ALL";
+  return [];
 });
 
-function updateDataTypes(value: string) {
-  update("data_types", value === "ALL" ? "ALL" : [value]);
+function updateDataTypes(values: string[]) {
+  update("data_types", values.length ? values : "ALL");
 }
 
 function insertVariable() {

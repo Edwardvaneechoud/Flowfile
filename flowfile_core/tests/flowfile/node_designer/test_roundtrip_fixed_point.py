@@ -48,6 +48,12 @@ _LEAF_TYPES = [
     "Binary",
     "List",
     "Struct",
+    # Canonical group tokens are preserved verbatim (not expanded), so they must
+    # round-trip through parse/codegen too.
+    "Numeric",
+    "String",
+    "Date",
+    "Complex",
 ]
 
 _WORDS = ["alpha", "beta", "gamma", "delta", "col", "value", "x", "y", "score", "name"]

@@ -442,32 +442,12 @@ class TestColumnSelectorInNodeSettings:
 
         return ColumnsToString
 
-    @staticmethod
-    def get_expected_numeric_types() -> set:
-        """Helper to get all expected numeric DataTypes."""
-        return {
-            DataType.Int8,
-            DataType.Int16,
-            DataType.Int32,
-            DataType.Int64,
-            DataType.Int128,
-            DataType.UInt8,
-            DataType.UInt16,
-            DataType.UInt32,
-            DataType.UInt64,
-            DataType.UInt128,
-            DataType.Float16,
-            DataType.Float32,
-            DataType.Float64,
-            DataType.Decimal,
-        }
-
     def test_column_selector_has_all_numeric_types(self, numeric_column_selector_node):
-        """Verify that Types.Numeric includes all numeric data types."""
+        """Verify that Types.Numeric is preserved as the 'Numeric' group token."""
         node = numeric_column_selector_node()
         selector = node.settings_schema.input.numeric_columns
 
-        assert set(selector.data_types_filter) == self.get_expected_numeric_types()
+        assert selector.data_types_filter == ["Numeric"]
 
     def test_column_selector_frontend_schema(self, numeric_column_selector_node):
         """Test that the frontend schema contains correct data_types."""
@@ -479,10 +459,7 @@ class TestColumnSelectorInNodeSettings:
         assert selector_schema["component_type"] == "ColumnSelector"
         assert selector_schema["multiple"] is True
         assert selector_schema["required"] is True
-        assert "data_types" in selector_schema
-        assert "Int64" in selector_schema["data_types"]
-        assert "Float64" in selector_schema["data_types"]
-        assert "Decimal" in selector_schema["data_types"]
+        assert selector_schema["data_types"] == ["Numeric"]
 
     def test_column_selector_populate_values(self, numeric_column_selector_node):
         """Test that column selections can be populated from settings dict."""
@@ -518,57 +495,17 @@ class TestColumnSelectorInNodeSettings:
         assert result["str_col"].dtype == pl.Utf8
 
 
-class TestNumericStringAliasBug:
-    """
-    Tests documenting the bug where data_types="numeric" only returns Decimal.
-    """
+class TestNumericGroupNormalization:
+    """Both the 'numeric' alias and Types.Numeric normalize to the canonical 'Numeric'
+    group token — groups are preserved, not expanded to their member types."""
 
-    @pytest.mark.xfail(reason="Bug: 'numeric' string alias maps to Decimal only")
-    def test_numeric_string_should_return_all_numeric_types(self):
-        """Using data_types="numeric" should return all numeric types."""
+    def test_numeric_string_alias_maps_to_group(self):
         selector = ColumnSelector(data_types="numeric")
+        assert selector.data_types_filter == ["Numeric"]
 
-        expected = {
-            DataType.Int8,
-            DataType.Int16,
-            DataType.Int32,
-            DataType.Int64,
-            DataType.Int128,
-            DataType.UInt8,
-            DataType.UInt16,
-            DataType.UInt32,
-            DataType.UInt64,
-            DataType.UInt128,
-            DataType.Float16,
-            DataType.Float32,
-            DataType.Float64,
-            DataType.Decimal,
-        }
-
-        assert set(selector.data_types_filter) == expected
-
-    def test_types_numeric_works_correctly(self):
-        """Demonstrates the workaround using Types.Numeric."""
+    def test_types_numeric_maps_to_group(self):
         selector = ColumnSelector(data_types=Types.Numeric)
-
-        expected = {
-            DataType.Int8,
-            DataType.Int16,
-            DataType.Int32,
-            DataType.Int64,
-            DataType.Int128,
-            DataType.UInt8,
-            DataType.UInt16,
-            DataType.UInt32,
-            DataType.UInt64,
-            DataType.UInt128,
-            DataType.Float16,
-            DataType.Float32,
-            DataType.Float64,
-            DataType.Decimal,
-        }
-
-        assert set(selector.data_types_filter) == expected
+        assert selector.data_types_filter == ["Numeric"]
 
 
 if __name__ == "__main__":

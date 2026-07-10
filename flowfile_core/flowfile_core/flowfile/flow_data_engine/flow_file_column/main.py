@@ -225,12 +225,17 @@ class FlowfileColumn:
     def get_readable_datatype_group(self) -> ReadableDataTypeGroup:
         if self.data_type in ("Utf8", "VARCHAR", "CHAR", "NVARCHAR", "String"):
             return "String"
+        elif self.data_type in ("boolean", "Boolean"):
+            return "Boolean"
+        elif self.data_type in ("binary", "Binary"):
+            return "Binary"
+        elif self.data_type in ("list", "struct", "array", "List", "Struct", "Array"):
+            return "Complex"
         elif self.data_type in (
             "fixed_decimal",
             "decimal",
             "float",
             "integer",
-            "boolean",
             "double",
             "Int8",
             "Int16",
@@ -241,8 +246,6 @@ class FlowfileColumn:
             "Float32",
             "Float64",
             "Decimal",
-            "Binary",
-            "Boolean",
             "Uint8",
             "Uint16",
             "Uint32",
@@ -254,7 +257,7 @@ class FlowfileColumn:
             "UInt128",
         ):
             return "Numeric"
-        elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):
+        elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time", "time", "Duration", "duration"):
             return "Date"
         else:
             return "Other"
