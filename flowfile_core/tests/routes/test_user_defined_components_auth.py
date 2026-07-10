@@ -104,11 +104,13 @@ class TestAuthedHappyPath:
         get_response = authed_client.get(f"/user_defined_components/get-custom-node/{node_file}")
         assert get_response.status_code == 200
         detail = get_response.json()
+        assert detail["code"] == code
         assert detail["content"] == code
         assert detail["file_hash"] == body["node"]["source_hash"]
-        assert detail["designer_state"] is None
-        assert detail["supports_visual_edit"] is False
-        assert detail["metadata"]["node_name"] == node_name
+        # An in-subset node parses to designer mode (see corpus insubset_legacy_kernel.py).
+        assert detail["supports_visual_edit"] is True
+        assert detail["designer_state"] is not None
+        assert detail["designer_state"]["node_name"] == node_name
 
         rescan_response = authed_client.post("/user_defined_components/rescan")
         assert rescan_response.status_code == 200
