@@ -6,6 +6,7 @@ import {
   coerceCell,
   columnDataToTable,
   parseCsv,
+  sampleColumnsToFileColumns,
   tableToColumnData,
   type SampleTable,
 } from "./sampleData";
@@ -62,6 +63,23 @@ describe("columnDataToTable", () => {
   it("round trips through tableToColumnData for the same values", () => {
     const original = { a: [1, 2, 3], b: ["x", "y", "z"] };
     expect(tableToColumnData(columnDataToTable(original))).toEqual(original);
+  });
+});
+
+describe("sampleColumnsToFileColumns", () => {
+  it("maps grid dtypes to the Polars type-names the ColumnSelector filters on", () => {
+    const result = sampleColumnsToFileColumns([
+      { name: "age", dtype: "int" },
+      { name: "income", dtype: "float" },
+      { name: "city", dtype: "str" },
+      { name: "active", dtype: "bool" },
+    ]);
+    expect(result.map((c) => [c.name, c.data_type])).toEqual([
+      ["age", "Int64"],
+      ["income", "Float64"],
+      ["city", "String"],
+      ["active", "Boolean"],
+    ]);
   });
 });
 

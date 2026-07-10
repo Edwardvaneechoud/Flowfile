@@ -143,6 +143,8 @@ def execute_custom_node_task(
         buffer_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         root_capture_handler = buffer_handler
         root_logger.setLevel(logging.DEBUG)
+        for noisy in ("httpx", "httpcore", "urllib3", "asyncio"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
         flowfile_logger = logging.getLogger(f"custom_node_dry_run_{flowfile_node_id}")
     else:
         flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)

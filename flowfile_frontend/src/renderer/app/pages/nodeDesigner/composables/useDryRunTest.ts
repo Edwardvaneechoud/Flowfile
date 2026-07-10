@@ -5,7 +5,13 @@
 import { computed, effectScope, ref, watch } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { FileColumn } from "../../../components/nodes/baseNode/nodeInterfaces";
-import { columnDataToTable, emptyTable, tableToColumnData, type SampleTable } from "../sampleData";
+import {
+  columnDataToTable,
+  emptyTable,
+  sampleColumnsToFileColumns,
+  tableToColumnData,
+  type SampleTable,
+} from "../sampleData";
 import { dryRunCustomNode, type DryRunBody } from "../../../api/nodeDesigner";
 import type { ExampleInput } from "../designerState";
 import { KernelApi } from "@/api/kernel.api";
@@ -58,10 +64,10 @@ function create() {
 
   // Column-driven controls (ColumnSelector, IncomingColumns selects) preview against
   // the first sample input's columns, mirroring the Form-tab live preview.
-  const paramColumns = computed<string[]>(() => tables.value[0]?.columns.map((c) => c.name) ?? []);
   const paramColumnTypes = computed<FileColumn[]>(() =>
-    paramColumns.value.map((name) => ({ name, data_type: "String" }) as FileColumn),
+    sampleColumnsToFileColumns(tables.value[0]?.columns ?? []),
   );
+  const paramColumns = computed<string[]>(() => paramColumnTypes.value.map((c) => c.name));
 
   function seedTables() {
     const count = inputCount.value;

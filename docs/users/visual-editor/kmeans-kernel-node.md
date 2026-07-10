@@ -111,7 +111,25 @@ Three things in that body are worth calling out — they're the difference betwe
 
 ### 5. Test it
 
-On the **Test** tab, provide a small numeric sample (edit the grid or paste CSV), pick a kernel from the **Kernel** selector, and click **Run test**. You'll see the output grid with the new `cluster` column, the schema and row count, and your `log_info` line in the **Logs** panel — the same execution path a real run uses. Tick **Save test setup with node** to keep the sample and settings in the file.
+On the **Test** tab, pick a kernel from the **Kernel** selector, then paste this sample — nine customers in three obvious groups — and click **Run test**:
+
+```csv
+customer_id,age,annual_income_k,spending_score,segment
+C001,24,27.5,33,budget
+C002,26,30.1,38,budget
+C003,23,25.8,31,budget
+C004,45,95.6,81,premium
+C005,47,101.5,86,premium
+C006,44,90.2,79,premium
+C007,57,74.0,18,saver
+C008,60,68.5,22,saver
+C009,58,71.3,15,saver
+```
+
+Set the feature columns to `age`, `annual_income_k`, and `spending_score`, and leave **k** at 3. The output grid gains a `cluster` column, and the three groups fall into three clusters that line up with the `segment` label — which the numeric picker leaves alone. You also get the schema, row count, and your `log_info` line in the **Logs** panel — the same execution path a real run uses. Tick **Save test setup with node** to keep the sample and settings in the file.
+
+!!! tip "A bigger sample to test with"
+    For a fuller run, the repo ships [`customer_segments.csv`](https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/data/templates/customer_segments.csv) — 45 customers across the same three segments (`budget`, `premium`, `saver`). Read it with a **Read data** node and feed it into the K-Means node on the canvas.
 
 <details markdown="1">
 <summary>Test run</summary>

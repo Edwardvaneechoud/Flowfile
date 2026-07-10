@@ -3,6 +3,8 @@
 // (ExampleInput.data); the grid edits a row-oriented view. Unit-tested in
 // sampleData.test.ts.
 
+import type { FileColumn } from "@/types";
+
 export type SampleDtype = "str" | "int" | "float" | "bool" | "date" | "datetime";
 
 export const SAMPLE_DTYPES: SampleDtype[] = ["str", "int", "float", "bool", "date", "datetime"];
@@ -136,4 +138,22 @@ export function emptyTable(): SampleTable {
     columns: [{ name: "column_1", dtype: "str" }],
     rows: [{ column_1: "" }],
   };
+}
+
+// The grid's coarse dtype -> the Polars type-name the ColumnSelector data_types
+// filter matches against (DataType.value in the node_designer SDK).
+export const SAMPLE_DTYPE_TO_POLARS: Record<SampleDtype, string> = {
+  str: "String",
+  int: "Int64",
+  float: "Float64",
+  bool: "Boolean",
+  date: "Date",
+  datetime: "Datetime",
+};
+
+/** SampleColumns -> typed FileColumns for column-driven controls (ColumnSelector, …). */
+export function sampleColumnsToFileColumns(columns: SampleColumn[]): FileColumn[] {
+  return columns.map(
+    (c) => ({ name: c.name, data_type: SAMPLE_DTYPE_TO_POLARS[c.dtype] }) as FileColumn,
+  );
 }

@@ -326,6 +326,9 @@ class TestLoggingCapture:
         assert "import logging" in script
         assert "_root_logger.setLevel(logging.DEBUG)" in script
         assert "_root_logger.removeHandler(_log_handler)" in script
+        # Root-DEBUG must not unmute httpx/httpcore's per-request debug spam.
+        assert 'logging.getLogger(_noisy).setLevel(logging.WARNING)' in script
+        assert '"httpx", "httpcore"' in script
         ast.parse(script)  # must not raise
 
     def test_logging_routes_to_stderr_and_returns_output(self):

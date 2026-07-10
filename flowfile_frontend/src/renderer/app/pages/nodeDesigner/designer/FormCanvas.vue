@@ -115,6 +115,7 @@ import { computed } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { ComponentType } from "../designerState";
 import type { FileColumn } from "../../../components/nodes/baseNode/nodeInterfaces";
+import { columnDataToTable, sampleColumnsToFileColumns } from "../sampleData";
 import CustomNodeForm from "../../../components/nodes/node-types/elements/customNode/CustomNodeForm.vue";
 import EmptyState from "../../../components/common/EmptyState/EmptyState.vue";
 import AddControlMenu from "./AddControlMenu.vue";
@@ -123,13 +124,11 @@ const store = useNodeDesignerStore();
 
 // Live preview has no upstream connection, so column-driven controls show samples
 // pulled from the Test-tab sample data (first input's columns) when present.
-const incomingColumns = computed<string[]>(() => {
+const columnTypes = computed<FileColumn[]>(() => {
   const first = store.designerState.example_inputs?.[0];
-  return first ? Object.keys(first.data) : [];
+  return first ? sampleColumnsToFileColumns(columnDataToTable(first.data).columns) : [];
 });
-const columnTypes = computed<FileColumn[]>(() =>
-  incomingColumns.value.map((name) => ({ name, data_type: "String" }) as FileColumn),
-);
+const incomingColumns = computed<string[]>(() => columnTypes.value.map((c) => c.name));
 
 // The section that contains the current selection (section or one of its
 // controls) — frames the whole card so you can see which group you're in.

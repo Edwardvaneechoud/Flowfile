@@ -8,7 +8,7 @@ The node's `.py` file is the single source of truth. The designer writes it, and
     The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: old UI, re-capture the current Node Designer (Node Settings panel + Form / Code / Test tabs) -->
-![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.svg)
+![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.png)
 
 ---
 
