@@ -53,6 +53,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_calamine_xlsx_data_types,
     get_open_xlsx_datatypes,
 )
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import custom_node_task_id
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     CustomNodeExecuteInput,
     ExternalCloudWriter,
@@ -1916,7 +1917,10 @@ class FlowGraph:
         if registry_entry is not None and registry_entry.source_hash:
             user_defined_node_settings.node_source_hash = registry_entry.source_hash
 
-        output_names = user_defined_node_settings.output_names or custom_node.output_names
+        # Output handles are structural — the node class declares them; the settings
+        # copy is a persistence snapshot kept in sync for save/codegen.
+        output_names = list(custom_node.output_names or user_defined_node_settings.output_names)
+        user_defined_node_settings.output_names = output_names
 
         if kernel_id:
             _func = self._make_kernel_user_defined_func(
@@ -2025,7 +2029,7 @@ class FlowGraph:
 
             node = self.get_node(user_defined_node_settings.node_id)
             request = CustomNodeExecuteInput(
-                task_id=node.hash,
+                task_id=custom_node_task_id(node.hash),
                 node_source=registry_entry.source_text,
                 class_name=registry_entry.class_name,
                 settings_values=user_defined_node_settings.settings or {},

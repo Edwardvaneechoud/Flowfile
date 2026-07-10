@@ -167,10 +167,13 @@ class CustomNodeRegistry:
                 entry.error = f"{type(e).__name__}: {e}"
             return self._finalize(entry, prior)
 
-    def remove_file(self, file_name: str) -> LoadedNode | None:
-        """Remove a default-directory file's entry; mounted entries leave via ``scan()`` after a mount change."""
+    def remove_file(self, file_name: str | Path) -> LoadedNode | None:
+        """Remove a file's entry by name (default directory) or absolute path (symmetric with ``load_file``);
+        mounted entries leave via ``scan()`` after a mount change."""
         with self._lock:
-            return self._remove_entry(str(self.directory / file_name))
+            path = Path(file_name)
+            key = str(path) if path.is_absolute() else str(self.directory / path)
+            return self._remove_entry(key)
 
     def _remove_entry(self, key: str) -> LoadedNode | None:
         entry = self._entries.pop(key, None)

@@ -1,5 +1,6 @@
 import ast
 import inspect
+import textwrap
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -96,7 +97,11 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         node_type = node.node_type
         class_name = custom_node_class.__name__
         if class_name not in self.custom_node_classes:
-            file_source = self._read_custom_node_source_file(custom_node_class)
+            # A class defined inside a function (e.g. a test fixture) shares its file
+            # with unrelated code, so whole-file inlining would embed all of it —
+            # fall through to the class-scoped getsource route instead.
+            is_nested = custom_node_class.__qualname__ != custom_node_class.__name__
+            file_source = None if is_nested else self._read_custom_node_source_file(custom_node_class)
             if file_source:
                 # Lift import lines out of the inlined source (imports are emitted
                 # separately at the top) but preserve the node's own runtime imports
@@ -131,7 +136,7 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
                 self.custom_node_classes[class_name] = "\n".join(non_import_lines)
             else:
                 try:
-                    self.custom_node_classes[class_name] = inspect.getsource(custom_node_class)
+                    source = textwrap.dedent(inspect.getsource(custom_node_class))
                 except (OSError, TypeError) as e:
                     self.unsupported_nodes.append(
                         (node.node_id, node_type, f"Could not retrieve source code for user-defined node: {e}")
@@ -140,6 +145,10 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
                         f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable"
                     )
                     return False
+                settings_source = self._companion_settings_source(custom_node_class)
+                self.custom_node_classes[class_name] = (
+                    f"{settings_source}\n\n{source}" if settings_source else source
+                )
 
             # The canonical alias resolves nd.-style bodies (what the designer emits).
             # The bare-symbol import is added only when the inlined body actually uses
@@ -153,6 +162,21 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         # in both converters.
         self.imports.add("import polars as pl")
         return True
+
+    def _companion_settings_source(self, custom_node_class: type) -> str | None:
+        """Source of the node's settings-schema class when it lives in the same module —
+        the class-scoped route can't pick it up from the file, and the inlined node
+        class references it at class-creation time."""
+        settings_schema = self._class_default(custom_node_class, "settings_schema", None)
+        if settings_schema is None:
+            return None
+        settings_cls = type(settings_schema)
+        if settings_cls.__module__ != custom_node_class.__module__:
+            return None
+        try:
+            return textwrap.dedent(inspect.getsource(settings_cls))
+        except (OSError, TypeError):
+            return None
 
     def _custom_node_input_expr(self, input_var: str) -> str:
         """Render one input argument for ``process()``.

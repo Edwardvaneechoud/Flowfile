@@ -13,6 +13,7 @@ import pytest
 import requests
 
 from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import custom_node_task_id
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.user_defined.registry import registry as singleton_registry
@@ -69,7 +70,7 @@ def registered_node(tmp_path):
     yield _register
 
     for entry in loaded_entries:
-        singleton_registry.remove_file(entry.file_name)
+        singleton_registry.remove_file(entry.file_path)
 
 
 def create_graph(execution_location: str = "remote") -> FlowGraph:
@@ -111,8 +112,9 @@ def run_and_check(graph: FlowGraph):
 
 
 def worker_executed_custom_node(node) -> bool:
-    """The custom-node worker task is keyed by the node hash; a Completed status proves offload."""
-    response = requests.get(f"{WORKER_URL}/status/{node.hash}", timeout=10)
+    """The custom-node worker task is keyed by the node hash (suffixed to stay distinct
+    from the result-store task); a Completed status proves offload."""
+    response = requests.get(f"{WORKER_URL}/status/{custom_node_task_id(node.hash)}", timeout=10)
     if not response.ok:
         return False
     payload = response.json()

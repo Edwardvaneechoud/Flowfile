@@ -73,6 +73,12 @@ class CustomNodeExecuteInput(BaseModel):
     flowfile_node_id: int | str | None = -1
 
 
+def custom_node_task_id(node_hash: str) -> str:
+    """Distinct from the bare node-hash id used by the later result-store task,
+    so neither the worker status entry nor the ``<hash>.arrow`` file is overwritten."""
+    return f"{node_hash}-custom-node"
+
+
 class TrainModelInput(BaseModel):
     """Outgoing payload for ``POST /train_ml_model`` on the worker."""
 
