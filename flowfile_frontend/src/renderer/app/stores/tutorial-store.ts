@@ -7,7 +7,7 @@ import {
   applyEvent,
   computeEntryIndex,
   emptyContext,
-  matches,
+  matchesAny,
   type Tutorial,
   type TutorialContext,
   type TutorialEvent,
@@ -108,9 +108,8 @@ export const useTutorialStore = defineStore("tutorial", () => {
     await currentStep.value?.onEnter?.();
   }
 
-  // Single entry point for app events. Context is always recorded (even while
-  // inactive/paused/suspended) so out-of-order user actions are remembered;
-  // advancing is gated on the CURRENT step's condition.
+  // Context is always recorded (even inactive/paused/suspended) so out-of-order
+  // actions are remembered; advancing is gated on the current step's condition.
   function notify(event: TutorialEvent) {
     context.value = applyEvent(context.value, event);
     if (!isActive.value || tutorialPaused.value || suspended.value || isTransitioning.value) {
@@ -118,7 +117,7 @@ export const useTutorialStore = defineStore("tutorial", () => {
     }
     const step = currentStep.value;
     if (!step) return;
-    if (step.advanceWhen && matches(event, step.advanceWhen, context.value)) {
+    if (step.advanceWhen && matchesAny(event, step.advanceWhen, context.value)) {
       wrongActionHint.value = null;
       void advanceFrom(step.id);
       return;
@@ -186,10 +185,8 @@ export const useTutorialStore = defineStore("tutorial", () => {
     if (idx !== currentStepIndex.value) void transitionTo(idx, 1);
   }
 
-  // Re-derive canvas-owned context (nodes/edges/flowId) from live app state.
-  // Heals every path that mutates the canvas without notify(): undo/redo,
-  // paste, edge deletion, flow load/switch, and the canvas still loading when
-  // the tutorial starts from the Home page.
+  // Re-derive canvas-owned context from live app state — heals paths that
+  // mutate the canvas without notify() (undo, paste, edge delete, flow reload).
   function resyncFromApp() {
     if (!seedProvider) return;
     const seed = seedProvider();

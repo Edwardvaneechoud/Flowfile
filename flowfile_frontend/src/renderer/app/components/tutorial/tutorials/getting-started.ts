@@ -10,10 +10,8 @@ import {
 } from "../tutorial-engine";
 import { useEditorStore, useFlowStore, useNodeStore } from "../../../stores/column-store";
 
-// Leaving a configure step applies pending settings, then closes the drawer so
-// it can't cover the next node the tour points at. The explicit pushNodeData is
-// load-bearing: unmounting the drawer in the same tick kills the watcher that
-// normally applies settings on node deselect.
+// Apply pending settings before closing: unmounting the drawer in the same
+// tick kills the watcher that normally pushes settings on node deselect.
 const closeSettingsDrawer = () => {
   const editorStore = useEditorStore();
   const nodeStore = useNodeStore();
@@ -23,10 +21,8 @@ const closeSettingsDrawer = () => {
   editorStore.activeDrawerComponent = null;
 };
 
-// Steps that point at canvas nodes bring them into view first — a node the
-// user panned away would otherwise leave the step pointing at nothing visible.
-// Only fits when something is actually out of view: fitting a fully visible
-// canvas re-zooms it and can shove nodes under the floating palette.
+// Bring an off-view target node into view; skip when everything is visible —
+// re-fitting a visible canvas can shove nodes under the floating palette.
 const fitCanvas = () => {
   const vueFlow = useFlowStore().vueFlowInstance;
   if (!vueFlow?.fitView) return;
@@ -46,6 +42,17 @@ const fitCanvas = () => {
   if (allVisible) return;
   vueFlow.fitView({ padding: 0.3, duration: 300 });
 };
+
+const SAMPLE_ROWS = [
+  { country: "USA", product: "Widget", revenue: 1000 },
+  { country: "Germany", product: "Gadget", revenue: 2500 },
+  { country: "France", product: "Widget", revenue: 1800 },
+  { country: "USA", product: "Gadget", revenue: 3200 },
+  { country: "Germany", product: "Widget", revenue: 1500 },
+  { country: "France", product: "Gadget", revenue: 2100 },
+];
+const SAMPLE_JSON = `[${SAMPLE_ROWS.map((row) => JSON.stringify(row)).join(",\n")}]`;
+const SAMPLE_JSON_HTML = `[${SAMPLE_ROWS.map((row) => JSON.stringify(row)).join(",<br>")}]`;
 
 const nodeTarget = (item: string) => (ctx: TutorialContext) => {
   const id = firstNodeOfItem(ctx, item);
@@ -170,16 +177,12 @@ export const gettingStartedTutorial: Tutorial = {
       id: "enter-sample-data",
       title: "Add Sample Data",
       content: `
-        <p>Click <strong>Edit JSON</strong>, paste this, then click <strong>Apply JSON to Table</strong>:</p>
-        <div style="background: var(--color-background-muted); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace; font-size: 11px; max-height: 120px; overflow: auto;">
-[{"country":"USA","product":"Widget","revenue":1000},<br>
-{"country":"Germany","product":"Gadget","revenue":2500},<br>
-{"country":"France","product":"Widget","revenue":1800},<br>
-{"country":"USA","product":"Gadget","revenue":3200},<br>
-{"country":"Germany","product":"Widget","revenue":1500},<br>
-{"country":"France","product":"Gadget","revenue":2100}]
-        </div>
-        <p style="font-size: 12px; color: var(--color-text-secondary);">Column types are detected automatically. If you type rows by hand instead, set each column's type in its header. Closed the panel? Click the node to reopen it.</p>
+        <p><strong>Copy</strong> the sample data below, click <strong>Edit JSON</strong>, paste it, then click <strong>Apply JSON to Table</strong>:</p>
+        <div style="background: var(--color-background-muted); padding: 8px; border-radius: 4px; margin: 8px 0 4px; font-family: monospace; font-size: 11px; max-height: 120px; overflow: auto;">${SAMPLE_JSON_HTML}</div>
+        <button class="tutorial-copy-btn" data-copy="${encodeURIComponent(SAMPLE_JSON)}">
+          <span class="material-icons">content_copy</span> Copy sample data
+        </button>
+        <p style="font-size: 12px; color: var(--color-text-secondary); margin-top: 10px;">Column types are detected automatically. If you type rows by hand instead, set each column's type in its header. Closed the panel? Click the node to reopen it.</p>
       `,
       target: "#rightDrawer",
       position: "left",
@@ -250,8 +253,8 @@ export const gettingStartedTutorial: Tutorial = {
       id: "configure-groupby",
       title: "Configure the Aggregation",
       content: `
-        <p>Group by <strong>country</strong>, and aggregate <strong>revenue</strong> with <strong>sum</strong>.</p>
-        <p>That answers: what is the total revenue per country?</p>
+        <p>In the column list, <strong>right-click country</strong> and choose <strong>Group by</strong>. Then <strong>right-click revenue</strong> and choose <strong>Sum</strong>.</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary);">You can also drag a column into the Settings table and pick its action there. Result: total revenue per country.</p>
       `,
       target: "#rightDrawer",
       position: "left",
@@ -332,11 +335,45 @@ export const gettingStartedTutorial: Tutorial = {
     },
 
     {
+      id: "open-flow-settings",
+      title: "Check the Flow Settings",
+      content: `
+        <p>Before running, click the <strong>gear icon</strong> to open the Flow Settings.</p>
+      `,
+      target: "[data-tutorial='settings-btn']",
+      position: "bottom",
+      interaction: "spotlight",
+      requires: ["flow"],
+      advanceWhen: { event: "flow-settings-opened" },
+      isSatisfied: (ctx) => ctx.flowSettingsOpened,
+      hint: "Click the gear icon",
+      showNextButton: false,
+      highlightPadding: 4,
+    },
+
+    {
+      id: "execution-settings",
+      title: "Execution Settings",
+      content: `
+        <p>Set <strong>Execution Mode</strong> to <strong>Development</strong> for this tutorial — it runs every node and keeps its result so you can inspect each step. <strong>Performance</strong> computes only what the outputs need: faster, but no previews.</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary);"><strong>Execution location</strong> picks where the flow runs (local or remote worker); <strong>Parallel workers</strong> caps how many independent nodes run at once on remote runs. More in the
+        <a href="https://edwardvaneechoud.github.io/Flowfile/users/build-flows-visually.html?h=build+ship+performanc+development#4-build-in-development-ship-in-performance" target="_blank" rel="noopener" style="color: var(--color-accent); text-decoration: underline;">docs</a>.</p>
+        <p>Close the settings when you're done.</p>
+      `,
+      position: "center",
+      corner: "bottom-left",
+      interaction: "free",
+      veil: false,
+      requires: ["flow"],
+      nextLabel: "Done",
+    },
+
+    {
       id: "run-flow",
       title: "Run Your Flow",
       content: `
         <p>Click <strong>Run</strong> to execute the flow.</p>
-        <p style="font-size: 12px; color: var(--color-text-secondary);">Flows run in <strong>Development</strong> mode by default, which caches every node's result so you can preview it. You can change this later in flow settings (the gear icon).</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary);">In Development mode every node's result is cached, so you can preview each step afterwards.</p>
       `,
       target: "[data-tutorial='run-btn']",
       position: "bottom",
@@ -380,6 +417,28 @@ export const gettingStartedTutorial: Tutorial = {
     },
 
     {
+      id: "layout-controls",
+      title: "Tidy Up with Layout Controls",
+      content: `
+        <p>Panels piling up? <strong>Click the highlighted button</strong> to open the <strong>Layout Controls</strong> and try them:</p>
+        <ul style="margin: 12px 0; padding-left: 20px;">
+          <li><strong>Reset Layout Graph</strong> - auto-arrange the nodes on your canvas</li>
+          <li><strong>Reset window Layout</strong> - put the panels back in their default spots</li>
+          <li><strong>Tile / Cascade</strong> - organize the open panels</li>
+        </ul>
+      `,
+      target: "[data-tutorial='layout-trigger-btn']",
+      position: "beside",
+      // clears the Layout Controls panel (60px offset + 238px wide, see
+      // layoutControls.vue) so the row reads [button][panel][card]
+      sideOffset: 314,
+      compact: true,
+      interaction: "free",
+      spotlightShape: "circle",
+      highlightPadding: 6,
+    },
+
+    {
       id: "save-flow",
       title: "Save Your Flow",
       content: `
@@ -390,11 +449,29 @@ export const gettingStartedTutorial: Tutorial = {
       position: "bottom",
       interaction: "free",
       requires: ["flow"],
-      advanceWhen: { event: "flow-saved" },
-      isSatisfied: (ctx) => ctx.flowSaved,
+      advanceWhen: [{ event: "save-dialog-opened" }, { event: "flow-saved" }],
+      isSatisfied: (ctx) => ctx.flowSaved || ctx.saveDialogOpen,
       hint: "Save your flow",
       showNextButton: false,
       highlightPadding: 4,
+    },
+
+    {
+      id: "save-location",
+      title: "Pick a Location",
+      content: `
+        <p>Choose a folder and file name, then click <strong>Create New File Here</strong>.</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary);">The <strong>Catalog</strong> tab registers the flow in the Data Catalog instead — handy for tracking and managing flows from one central place. For now, just save it on your local machine. Closed the dialog? Use ▼ → Save As… again, or plain Save for the default location.</p>
+      `,
+      position: "center",
+      corner: "bottom-left",
+      interaction: "free",
+      veil: false,
+      requires: ["flow"],
+      advanceWhen: { event: "flow-saved" },
+      isSatisfied: (ctx) => ctx.flowSaved,
+      hint: "Choose where to save, then create the file",
+      showNextButton: false,
     },
 
     {

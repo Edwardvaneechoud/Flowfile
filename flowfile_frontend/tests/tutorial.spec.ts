@@ -55,14 +55,6 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string, fl
   await page.waitForLoadState('networkidle');
 }
 
-async function readStep(page: Page): Promise<{ title: string; progress: string }> {
-  const tooltip = page.locator('.tutorial-tooltip');
-  return {
-    title: (await tooltip.locator('.tooltip-title').textContent()) ?? '',
-    progress: (await tooltip.locator('.progress-text').textContent()) ?? '',
-  };
-}
-
 async function expectStep(page: Page, title: string) {
   await expect(page.locator('.tutorial-tooltip .tooltip-title')).toHaveText(title, {
     timeout: 15000,
@@ -139,6 +131,7 @@ async function nodeIdsByItem(page: Page): Promise<Record<string, string[]>> {
 }
 
 test.describe('Interactive tutorial', () => {
+  test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
   let authToken: string;
 
   test.beforeAll(async ({ request }) => {
@@ -194,6 +187,15 @@ test.describe('Interactive tutorial', () => {
     await expect(page.locator('.tutorial-spotlight')).toBeVisible();
     await page.locator(`.vue-flow__node[data-id='${manualId}']`).click();
     await expectStep(page, 'Add Sample Data');
+
+    // The copy button puts the sample JSON on the clipboard
+    await page.locator('.tutorial-tooltip .tutorial-copy-btn').click();
+    await expect(page.locator('.tutorial-tooltip .tutorial-copy-btn')).toContainText('Copied');
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+    const rows = JSON.parse(clipboard);
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toEqual({ country: 'USA', product: 'Widget', revenue: 1000 });
+
     await page.locator('.tutorial-tooltip .next-btn').click();
 
     // add-group-by is auto-skipped: the "wrong" drag already satisfied it
@@ -217,6 +219,13 @@ test.describe('Interactive tutorial', () => {
     await expectStep(page, 'Set the Output File');
     await page.locator('.tutorial-tooltip .next-btn').click();
 
+    // Flow settings: gear opens the modal, explainer step, close via Escape
+    await expectStep(page, 'Check the Flow Settings');
+    await page.locator("[data-tutorial='settings-btn']").click();
+    await expectStep(page, 'Execution Settings');
+    await page.keyboard.press('Escape');
+    await page.locator('.tutorial-tooltip .next-btn').click();
+
     // Run: spotlight mode, advance on flow-run-started, then run-completed
     await expectStep(page, 'Run Your Flow');
     await page.locator("[data-tutorial='run-btn'] button").first().click();
@@ -224,6 +233,11 @@ test.describe('Interactive tutorial', () => {
     await expectStep(page, 'Explore Your Results');
     await page.locator('.tutorial-tooltip .next-btn').click();
 
+    await expectStep(page, 'Tidy Up with Layout Controls');
+    await page.locator('.tutorial-tooltip .next-btn').click();
+
+    // Silent save fires flow-saved: save-flow advances and the satisfied
+    // save-location (dialog) step auto-skips
     await expectStep(page, 'Save Your Flow');
     await page.locator("[data-tutorial='save-main-btn']").click();
     await expectStep(page, 'Generate Python Code');

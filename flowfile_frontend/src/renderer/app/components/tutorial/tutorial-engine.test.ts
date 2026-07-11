@@ -8,6 +8,7 @@ import {
   hasEdgeBetweenItems,
   hasNodeOfItem,
   matches,
+  matchesAny,
   requiresMet,
   resolveTarget,
   type TutorialContext,
@@ -115,6 +116,26 @@ describe("matches", () => {
     expect(matches({ type: "flow-run-started" }, { event: "flow-saved" }, emptyContext())).toBe(
       false,
     );
+  });
+
+  it("matchesAny accepts any of several conditions", () => {
+    const ctx = emptyContext();
+    const conds = [{ event: "save-dialog-opened" as const }, { event: "flow-saved" as const }];
+    expect(matchesAny({ type: "save-dialog-opened" }, conds, ctx)).toBe(true);
+    expect(matchesAny({ type: "flow-saved", flowId: 1 }, conds, ctx)).toBe(true);
+    expect(matchesAny({ type: "flow-run-started" }, conds, ctx)).toBe(false);
+    expect(matchesAny({ type: "flow-saved", flowId: 1 }, { event: "flow-saved" }, ctx)).toBe(true);
+  });
+});
+
+describe("dialog and settings state", () => {
+  it("tracks the save dialog open/close and flow settings", () => {
+    let ctx = applyEvent(emptyContext(), { type: "save-dialog-opened" });
+    expect(ctx.saveDialogOpen).toBe(true);
+    ctx = applyEvent(ctx, { type: "save-dialog-closed" });
+    expect(ctx.saveDialogOpen).toBe(false);
+    ctx = applyEvent(ctx, { type: "flow-settings-opened" });
+    expect(ctx.flowSettingsOpened).toBe(true);
   });
 });
 

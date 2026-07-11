@@ -11,6 +11,9 @@ export type TutorialEvent =
   | { type: "node-settings-opened"; nodeId: number }
   | { type: "node-settings-closed" }
   | { type: "code-generator-opened" }
+  | { type: "save-dialog-opened" }
+  | { type: "save-dialog-closed" }
+  | { type: "flow-settings-opened" }
   | { type: "flow-run-started" }
   | { type: "flow-run-completed"; success: boolean };
 
@@ -24,6 +27,8 @@ export interface TutorialContext {
   openSettingsNodeId: number | null;
   settingsEverOpenedFor: number[];
   codeGeneratorOpened: boolean;
+  saveDialogOpen: boolean;
+  flowSettingsOpened: boolean;
   runStarted: boolean;
   runCompleted: boolean;
   runSucceeded: boolean;
@@ -49,19 +54,26 @@ export interface TutorialStep {
   // park the tooltip in the corner so it can't cover canvas elements the step
   // needs (connect steps); the spotlight still points at the target
   tooltipCorner?: boolean;
-  position?: "top" | "bottom" | "left" | "right" | "center";
+  // "beside" places the card next to the target on its screen-center side,
+  // sideOffset px away — set sideOffset past UI that unfolds from the target
+  position?: "top" | "bottom" | "left" | "right" | "center" | "beside";
+  sideOffset?: number;
   // modal: backdrop blocks all clicks; spotlight: only the target is clickable;
   // free: no click interception (drag/connect/drawer steps)
   interaction?: "modal" | "spotlight" | "free";
   // dark backdrop; defaults to true except on "free" steps
   veil?: boolean;
-  advanceWhen?: StepAdvanceCondition;
+  // corner used for untargeted/tooltipCorner tooltips (default bottom-right)
+  corner?: "bottom-right" | "bottom-left" | "top-right" | "top-left";
+  // narrower card for steps squeezed between UI elements
+  compact?: boolean;
+  // a list advances when ANY condition matches
+  advanceWhen?: StepAdvanceCondition | StepAdvanceCondition[];
   // convention: every step with advanceWhen defines isSatisfied, so events that
   // land mid-transition or while suspended are never lost
   isSatisfied?: (ctx: TutorialContext) => boolean;
-  // Prerequisites; unmet -> described mode (centered, free, hint + Next)
-  // instead of pointing at nothing. Entries are nodesByItem keys, plus the
-  // special key "flow" meaning an open flow.
+  // nodesByItem keys (plus special "flow" = an open flow) this step needs;
+  // unmet -> described mode (centered, free, hint + Next) instead of a dead target
   requires?: string[];
   hint?: string;
   wrongActionHint?: (event: TutorialEvent, ctx: TutorialContext) => string | null;
@@ -92,6 +104,8 @@ export function emptyContext(): TutorialContext {
     openSettingsNodeId: null,
     settingsEverOpenedFor: [],
     codeGeneratorOpened: false,
+    saveDialogOpen: false,
+    flowSettingsOpened: false,
     runStarted: false,
     runCompleted: false,
     runSucceeded: false,
@@ -142,6 +156,15 @@ export function applyEvent(ctx: TutorialContext, ev: TutorialEvent): TutorialCon
       break;
     case "code-generator-opened":
       next.codeGeneratorOpened = true;
+      break;
+    case "save-dialog-opened":
+      next.saveDialogOpen = true;
+      break;
+    case "save-dialog-closed":
+      next.saveDialogOpen = false;
+      break;
+    case "flow-settings-opened":
+      next.flowSettingsOpened = true;
       break;
     case "flow-run-started":
       next.runStarted = true;
@@ -194,6 +217,14 @@ export function matches(
     if (!(ctx.nodesByItem[cond.nodeOfItem] ?? []).includes(ev.nodeId)) return false;
   }
   return true;
+}
+
+export function matchesAny(
+  ev: TutorialEvent,
+  cond: StepAdvanceCondition | StepAdvanceCondition[],
+  ctx: TutorialContext,
+): boolean {
+  return Array.isArray(cond) ? cond.some((c) => matches(ev, c, ctx)) : matches(ev, cond, ctx);
 }
 
 // Monotonic forward skip over satisfied steps; never skips the final step so

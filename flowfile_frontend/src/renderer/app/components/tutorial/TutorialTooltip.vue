@@ -5,7 +5,16 @@ import type { TutorialStep } from "../../stores/tutorial-store";
 const props = defineProps<{
   step: TutorialStep;
   position: { x: number; y: number };
-  placement?: "top" | "bottom" | "left" | "right" | "center";
+  placement?:
+    | "top"
+    | "bottom"
+    | "left"
+    | "right"
+    | "center"
+    | "beside-right-top"
+    | "beside-right-bottom"
+    | "beside-left-top"
+    | "beside-left-bottom";
   isCenterMode: boolean;
   currentStepIndex: number;
   totalSteps: number;
@@ -49,9 +58,8 @@ onUnmounted(() => {
 });
 
 const tooltipStyle = computed(() => {
-  // placement "center" also arrives when a positioned step's target element
-  // unmounts mid-step (e.g. the drawer closes) — fall back to corner/center
-  // instead of anchoring to a stale point.
+  // placement "center" also arrives when a positioned step's target unmounts
+  // mid-step — fall back to corner/center instead of a stale anchor point.
   if (props.isCenterMode || props.placement === "center") {
     if (props.step.centerInScreen) {
       return {
@@ -63,12 +71,14 @@ const tooltipStyle = computed(() => {
         transform: "translate(-50%, -50%)",
       };
     }
+    const corner = props.step.corner ?? "bottom-right";
+    const [vertical, horizontal] = corner.split("-") as ["top" | "bottom", "left" | "right"];
     return {
       position: "fixed" as const,
-      right: "24px",
-      bottom: "24px",
-      left: "auto",
-      top: "auto",
+      [horizontal]: "24px",
+      [vertical]: "24px",
+      [horizontal === "left" ? "right" : "left"]: "auto",
+      [vertical === "top" ? "bottom" : "top"]: "auto",
       transform: "none",
     };
   }
@@ -85,6 +95,18 @@ const tooltipStyle = computed(() => {
   switch (position) {
     case "top":
       transform = "translate(-50%, -100%)";
+      break;
+    case "beside-right-top":
+      transform = "translate(0, 0)";
+      break;
+    case "beside-right-bottom":
+      transform = "translate(0, -100%)";
+      break;
+    case "beside-left-top":
+      transform = "translate(-100%, 0)";
+      break;
+    case "beside-left-bottom":
+      transform = "translate(-100%, -100%)";
       break;
     case "bottom":
       transform = "translate(-50%, 0)";
@@ -107,6 +129,13 @@ const tooltipStyle = computed(() => {
     effectiveX = x - tooltipWidth / 2;
   } else if (transform.includes("-50%, -100%)")) {
     effectiveX = x - tooltipWidth / 2;
+    effectiveY = y - tooltipHeight;
+  } else if (transform.includes("-100%, -100%")) {
+    effectiveX = x - tooltipWidth;
+    effectiveY = y - tooltipHeight;
+  } else if (transform.includes("(-100%, 0")) {
+    effectiveX = x - tooltipWidth;
+  } else if (transform.includes("(0, -100%")) {
     effectiveY = y - tooltipHeight;
   } else if (transform.includes("-100%, -50%")) {
     effectiveX = x - tooltipWidth;
@@ -160,11 +189,67 @@ function handleNext() {
     emit("next");
   }
 }
+
+// Step content is rendered HTML, so copy buttons are wired by delegation:
+// any [data-copy] element copies its (URI-encoded) payload to the clipboard.
+async function handleContentClick(event: MouseEvent) {
+  const button = (event.target as HTMLElement).closest?.("[data-copy]") as HTMLElement | null;
+  if (!button) return;
+  const payload = decodeURIComponent(button.getAttribute("data-copy") ?? "");
+  if (!payload) return;
+  const copied = await copyToClipboard(payload);
+  if (copied) {
+    flashCopyFeedback(button, "check", "Copied!");
+  } else {
+    flashCopyFeedback(button, "error_outline", "Copy failed — select the text instead");
+  }
+}
+
+// navigator.clipboard needs a secure context (breaks on plain-http LAN
+// deployments); fall back to the legacy textarea + execCommand path.
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to the legacy path */
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function flashCopyFeedback(button: HTMLElement, icon: string, label: string) {
+  if (button.dataset.flashing === "1") return;
+  button.dataset.flashing = "1";
+  const original = button.innerHTML;
+  button.innerHTML = `<span class="material-icons">${icon}</span> ${label}`;
+  setTimeout(() => {
+    button.innerHTML = original;
+    delete button.dataset.flashing;
+  }, 1500);
+}
 </script>
 
 <template>
-  <div ref="tooltipRef" class="tutorial-tooltip" :style="tooltipStyle">
-    <!-- Progress bar -->
+  <div
+    ref="tooltipRef"
+    class="tutorial-tooltip"
+    :class="{ 'tutorial-tooltip--compact': step.compact }"
+    :style="tooltipStyle"
+  >
     <div class="tooltip-progress">
       <div class="progress-bar">
         <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
@@ -172,10 +257,9 @@ function handleNext() {
       <span class="progress-text">{{ currentStepIndex + 1 }} / {{ totalSteps }}</span>
     </div>
 
-    <!-- Content -->
     <div class="tooltip-content">
       <h3 class="tooltip-title">{{ step.title }}</h3>
-      <p class="tooltip-description" v-html="step.content"></p>
+      <p class="tooltip-description" @click="handleContentClick" v-html="step.content"></p>
 
       <p v-if="prereqMissing" class="tooltip-notice tooltip-notice--warn">
         <span class="notice-icon material-icons">info</span>
@@ -197,7 +281,6 @@ function handleNext() {
       </template>
     </div>
 
-    <!-- Navigation -->
     <div class="tooltip-navigation">
       <button v-if="canSkip" class="nav-btn skip-btn" @click="emit('skip')">Exit tutorial</button>
 
@@ -248,6 +331,10 @@ function handleNext() {
   to {
     opacity: 1;
   }
+}
+
+.tutorial-tooltip--compact {
+  width: 300px;
 }
 
 .tooltip-progress {
@@ -319,6 +406,29 @@ function handleNext() {
   border-radius: 4px;
   font-family: var(--font-family-mono, monospace);
   font-size: 13px;
+}
+
+.tooltip-description :deep(.tutorial-copy-btn) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border-primary, #ddd);
+  border-radius: 6px;
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-primary, #1a1a1a);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.tooltip-description :deep(.tutorial-copy-btn:hover) {
+  background: var(--color-background-tertiary, #eee);
+}
+
+.tooltip-description :deep(.tutorial-copy-btn .material-icons) {
+  font-size: 14px;
 }
 
 .tooltip-action-hint {

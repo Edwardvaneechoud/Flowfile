@@ -119,11 +119,22 @@ const holeEdges = computed(() => {
 const TOOLTIP_WIDTH = 380;
 const TOOLTIP_HEIGHT = 300;
 
-const effectivePosition = ref<"top" | "bottom" | "left" | "right" | "center">("bottom");
+type TooltipPlacement =
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "center"
+  | "beside-right-top"
+  | "beside-right-bottom"
+  | "beside-left-top"
+  | "beside-left-bottom";
+
+const effectivePosition = ref<TooltipPlacement>("bottom");
 
 // Flip to the opposite side when the preferred side lacks room — a clamped
 // tooltip would otherwise cover the very element the step asks to click.
-function pickSide(rect: DOMRect): "top" | "bottom" | "left" | "right" | "center" {
+function pickSide(rect: DOMRect) {
   const preferred = currentStep.value?.position || "bottom";
   const margin = 60;
   switch (preferred) {
@@ -154,8 +165,23 @@ function calculateTooltipPosition() {
 
   const rect = targetRect.value;
   const padding = 16;
+
+  if (currentStep.value.position === "beside") {
+    // Next to the target on its screen-center side (where attached UI
+    // unfolds), edge-aligned vertically with the target's screen half.
+    const offset = currentStep.value.sideOffset ?? padding;
+    const toRight = rect.left + rect.width / 2 < window.innerWidth / 2;
+    const bottomHalf = rect.top + rect.height / 2 >= window.innerHeight / 2;
+    tooltipPosition.value = {
+      x: toRight ? rect.right + offset : rect.left - offset,
+      y: bottomHalf ? rect.bottom : rect.top,
+    };
+    effectivePosition.value = `beside-${toRight ? "right" : "left"}-${bottomHalf ? "bottom" : "top"}`;
+    return;
+  }
+
   const side = pickSide(rect);
-  effectivePosition.value = side;
+  effectivePosition.value = side as TooltipPlacement;
 
   switch (side) {
     case "top":
@@ -186,9 +212,8 @@ function rectsAlmostEqual(a: DOMRect | null, b: DOMRect | null): boolean {
   );
 }
 
-// rAF loop follows canvas pans and node drags smoothly; a coarse interval
-// backs it up where rAF is throttled (occluded/headless windows), and step
-// changes update immediately so the spotlight never shows a stale target.
+// rAF follows canvas pans/drags; the interval backs it up where rAF throttles
+// (occluded windows) and step changes update immediately (no stale target).
 let rafId = 0;
 let intervalId = 0;
 let resyncIntervalId = 0;
@@ -293,7 +318,6 @@ function resumeTutorial() {
          immediately (transitionend never fires in throttled/hidden windows,
          which would leave an invisible blocker behind). -->
     <div v-if="overlayVisible" class="tutorial-overlay">
-      <!-- Dark veil with spotlight cutout -->
       <div v-if="veilEnabled && spotlightStyle" class="tutorial-backdrop">
         <svg class="tutorial-mask" width="100%" height="100%">
           <defs>
@@ -367,7 +391,6 @@ function resumeTutorial() {
         ></div>
       </template>
 
-      <!-- Spotlight border - visual only -->
       <div v-if="spotlightStyle" class="tutorial-spotlight" :style="spotlightStyle">
         <div class="spotlight-border"></div>
       </div>

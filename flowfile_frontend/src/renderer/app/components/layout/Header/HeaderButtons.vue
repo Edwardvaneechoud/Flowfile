@@ -491,6 +491,7 @@ const runFlow = () => {
 
 const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
+  tutorialStore.notify({ type: "flow-settings-opened" });
 };
 
 // Allow other components (e.g. the Performance-mode notice in the run results)
