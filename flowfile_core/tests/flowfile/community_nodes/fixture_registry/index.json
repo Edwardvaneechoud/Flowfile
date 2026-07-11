@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-01-01T00:00:00Z",
+  "registry": {
+    "repo": "edwardvaneechoud/flowfile-community-nodes",
+    "commit": "0000000000000000000000000000000000000000",
+    "min_supported_app_version": "0.1.0"
+  },
+  "categories": [
+    "Fun",
+    "Text"
+  ],
+  "nodes": [
+    {
+      "id": "mood_emoji",
+      "node_name": "Mood Emoji",
+      "version": "1.0.0",
+      "description": "Map a numeric column to mood-based emojis with configurable themes and intensity.",
+      "author": {
+        "github": "edwardvaneechoud",
+        "name": "Edward van Eechoud",
+        "url": ""
+      },
+      "maintainers": [],
+      "license": "MIT",
+      "category": "Fun",
+      "palette_category": "Fun",
+      "tags": [
+        "fun",
+        "emoji",
+        "text"
+      ],
+      "environment": "local",
+      "dependencies": [],
+      "number_of_inputs": 1,
+      "number_of_outputs": 1,
+      "min_flowfile_version": "0.1.0",
+      "designer_editable": true,
+      "risk_flags": [],
+      "published_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "changelog": "1.0.0 - initial release.",
+      "path": "nodes/mood_emoji",
+      "artifacts": {
+        "node": {
+          "path": "nodes/mood_emoji/node.py",
+          "sha256": "d9a0b0cfb38d9fa4a3190cfe0a53153bc48f9422d1f7325bbd2805060b8f799b",
+          "size": 5426
+        },
+        "manifest": {
+          "path": "nodes/mood_emoji/manifest.json",
+          "sha256": "3470da7ad2583af0cab45b6fd56efafaa2d87a993008afafd3db5b2f01242926",
+          "size": 583
+        },
+        "icon": {
+          "path": "nodes/mood_emoji/icon.png",
+          "sha256": "28bf4768069d23eed4546dbd15ed6d142a523fd312afc3da9fbf3598f8dc9d1c",
+          "size": 74
+        },
+        "readme": {
+          "path": "nodes/mood_emoji/README.md",
+          "sha256": "68c378b3bfeb3c0145b692eae094d1f5f778413056249d98399b8190224e1142",
+          "size": 463
+        },
+        "screenshots": [
+          {
+            "path": "nodes/mood_emoji/screenshots/form.png",
+            "sha256": "7de86778b1177aefc9810ed3b5f0988078487c88ef18871a2ce7eba2b088e846",
+            "size": 503
+          }
+        ]
+      }
+    },
+    {
+      "id": "uppercase_text",
+      "node_name": "Uppercase Text",
+      "version": "1.0.0",
+      "description": "Uppercase every string column in the input, leaving all other columns untouched.",
+      "author": {
+        "github": "edwardvaneechoud",
+        "name": "Edward van Eechoud",
+        "url": ""
+      },
+      "maintainers": [],
+      "license": "MIT",
+      "category": "Text",
+      "palette_category": "Text",
+      "tags": [
+        "text",
+        "cleaning"
+      ],
+      "environment": "local",
+      "dependencies": [],
+      "number_of_inputs": 1,
+      "number_of_outputs": 1,
+      "min_flowfile_version": "0.1.0",
+      "designer_editable": true,
+      "risk_flags": [],
+      "published_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "changelog": "1.0.0 - initial release.",
+      "path": "nodes/uppercase_text",
+      "artifacts": {
+        "node": {
+          "path": "nodes/uppercase_text/node.py",
+          "sha256": "739d70830472397d772312b3f889104252853351390461621100f596d25d5620",
+          "size": 682
+        },
+        "manifest": {
+          "path": "nodes/uppercase_text/manifest.json",
+          "sha256": "e9afbfafe17c2fa7c0c54281342cc8695a74753c0ba76f3d58e475e9c1a214b3",
+          "size": 522
+        },
+        "icon": null,
+        "readme": null,
+        "screenshots": []
+      }
+    }
+  ],
+  "yanked": [],
+  "blocked": []
+}

@@ -450,6 +450,32 @@ def test_shared_sdk_import_is_not_legacy():
     assert column.data_types == ["String"]
 
 
+def test_publish_metadata_fields_lift():
+    result = parse("insubset_publish_metadata.py")
+    assert result.mode == "designer"
+    assert codes(result) == set()
+
+    state = result.designer_state
+    assert state.author == "Jane Doe"
+    assert state.version == "1.2.0"
+    assert state.tags == ["text", "demo"]
+
+
+def test_publish_metadata_tags_must_be_list_of_strings():
+    source = (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n\n\n"
+        "class BadTags(nd.CustomNodeBase):\n"
+        '    node_name: str = "Bad Tags"\n'
+        '    tags: str = "not-a-list"\n\n'
+        "    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n"
+        "        return inputs[0]\n"
+    )
+    result = parse_source(source)
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_ATTR.value in error_codes(result)
+
+
 def test_section_builder_is_code_only():
     result = parse("codeonly_section_builder.py")
     assert result.mode == "code_only"
@@ -610,6 +636,19 @@ def test_extract_manifest_never_fails_hard():
 
     manifest = extract_manifest("")
     assert manifest.node_name is None
+
+
+def test_extract_manifest_publish_metadata():
+    manifest = extract_manifest(load("insubset_publish_metadata.py"))
+    assert manifest.author == "Jane Doe"
+    assert manifest.version == "1.2.0"
+    assert manifest.tags == ["text", "demo"]
+
+    # absent fields stay at their defaults
+    manifest = extract_manifest(load("insubset_docs_example.py"))
+    assert manifest.author == ""
+    assert manifest.version == ""
+    assert manifest.tags == []
 
 
 def test_extract_manifest_environment_normalization():

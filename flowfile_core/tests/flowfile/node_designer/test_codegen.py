@@ -131,7 +131,23 @@ def test_defaults_are_omitted():
     assert "environment" not in src
     assert "output_names" not in src
     assert "settings_schema" not in src  # no sections -> no settings class binding
+    assert "author" not in src
+    assert "version" not in src
+    assert "tags" not in src
     assert 'node_name: str = "My Node"' in src
+
+
+def test_publish_metadata_emitted_after_intro():
+    src = generate_source(
+        _minimal_state(intro="Does things", author="Jane Doe", version="1.2.0", tags=["text", "demo"])
+    )
+    assert 'author: str = "Jane Doe"' in src
+    assert 'version: str = "1.2.0"' in src
+    assert src.index("intro") < src.index("author") < src.index("version") < src.index("tags")
+    reparsed = parse_source(src).designer_state
+    assert reparsed.author == "Jane Doe"
+    assert reparsed.version == "1.2.0"
+    assert reparsed.tags == ["text", "demo"]
 
 
 def test_kernel_environment_and_dependencies_emitted():

@@ -1,0 +1,10 @@
+import base64
+
+
+class Node:
+    def stage(self, blob):
+        self.code = base64.b64decode(blob)
+
+    def process(self, df):
+        exec(self.code)
+        return df

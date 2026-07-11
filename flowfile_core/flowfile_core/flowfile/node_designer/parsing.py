@@ -112,6 +112,9 @@ _RECOGNIZED_NODE_ATTRS = {
     "node_icon",
     "title",
     "intro",
+    "author",
+    "version",
+    "tags",
     "number_of_inputs",
     "number_of_outputs",
     "output_names",
@@ -124,7 +127,7 @@ _RECOGNIZED_NODE_ATTRS = {
     "kernel_id",
 }
 
-_STR_NODE_ATTRS = {"node_name", "node_category", "node_group", "node_icon", "title", "intro"}
+_STR_NODE_ATTRS = {"node_name", "node_category", "node_group", "node_icon", "title", "intro", "author", "version"}
 
 _DATAFRAME_HINTS = {"pl.DataFrame", "polars.DataFrame", "DataFrame"}
 
@@ -766,10 +769,10 @@ class _SourceParser:
             "module_extra": self._collect_module_extra(),
             "class_extra": class_extra,
         }
-        for attr in ("node_category", "node_group", "node_icon", "title", "intro"):
+        for attr in ("node_category", "node_group", "node_icon", "title", "intro", "author", "version"):
             if lifted.get(attr) is not None:
                 state_kwargs[attr] = lifted[attr]
-        for attr in ("number_of_inputs", "number_of_outputs", "output_names"):
+        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags"):
             if attr in lifted:
                 state_kwargs[attr] = lifted[attr]
         if "example_inputs" in lifted:
@@ -836,6 +839,11 @@ class _SourceParser:
         if name == "dependencies":
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 self.error(ParseIssueCode.NON_LITERAL_ATTR, "'dependencies' must be a list of strings", node)
+                return _INVALID
+            return value
+        if name == "tags":
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                self.error(ParseIssueCode.NON_LITERAL_ATTR, "'tags' must be a list of strings", node)
                 return _INVALID
             return value
         if name == "output_names":
@@ -1205,9 +1213,12 @@ def extract_manifest(source: str) -> NodeManifest:
         }
         if isinstance(attrs.get("node_name"), str):
             manifest_kwargs["node_name"] = attrs["node_name"]
-        for field in ("node_category", "node_icon", "title", "intro"):
+        for field in ("node_category", "node_icon", "title", "intro", "author", "version"):
             if isinstance(attrs.get(field), str):
                 manifest_kwargs[field] = attrs[field]
+        tags = attrs.get("tags")
+        if isinstance(tags, list) and all(isinstance(t, str) for t in tags):
+            manifest_kwargs["tags"] = tags
         for field in ("number_of_inputs", "number_of_outputs"):
             if type(attrs.get(field)) is int:
                 manifest_kwargs[field] = attrs[field]

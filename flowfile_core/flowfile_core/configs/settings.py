@@ -68,6 +68,59 @@ def get_catalog_storage_connection() -> str | None:
     return os.environ.get("FLOWFILE_CATALOG_STORAGE_CONNECTION") or None
 
 
+COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
+
+
+def get_community_index_url() -> str:
+    """Location of the community registry ``index.json``.
+
+    An ``https://`` URL in normal use; a local filesystem path switches the client
+    into fixture mode (index + artifacts read from disk — used by tests and for
+    trying the UI before the community repo exists). Read per call.
+    """
+    return (
+        os.environ.get("FLOWFILE_COMMUNITY_INDEX_URL")
+        or f"https://raw.githubusercontent.com/{COMMUNITY_DEFAULT_REPO}/main/index.json"
+    )
+
+
+def get_community_popularity_url() -> str:
+    """Sibling ``popularity.json``; derived from the index location unless overridden."""
+    override = os.environ.get("FLOWFILE_COMMUNITY_POPULARITY_URL")
+    if override:
+        return override
+    index_url = get_community_index_url()
+    base, _, _ = index_url.rpartition("/")
+    return f"{base}/popularity.json" if base else "popularity.json"
+
+
+def get_community_artifact_base() -> str:
+    """URL template for artifact downloads, with ``{commit}`` and ``{path}`` placeholders.
+
+    Defaults to jsDelivr pinned at the index's commit (immutable, edge-cached);
+    sha256 pins are verified after download regardless of the CDN.
+    """
+    return (
+        os.environ.get("FLOWFILE_COMMUNITY_ARTIFACT_BASE")
+        or f"https://cdn.jsdelivr.net/gh/{COMMUNITY_DEFAULT_REPO}@{{commit}}/{{path}}"
+    )
+
+
+def get_community_artifact_fallback() -> str:
+    """Fallback artifact template when the primary CDN fails (same commit-pinned bytes)."""
+    return (
+        os.environ.get("FLOWFILE_COMMUNITY_ARTIFACT_FALLBACK")
+        or f"https://raw.githubusercontent.com/{COMMUNITY_DEFAULT_REPO}/{{commit}}/{{path}}"
+    )
+
+
+def get_community_cache_ttl() -> int:
+    try:
+        return int(os.environ.get("FLOWFILE_COMMUNITY_CACHE_TTL", "3600"))
+    except ValueError:
+        return 3600
+
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Backend Server")

@@ -1,0 +1,7 @@
+import polars as pl
+
+
+def process(self, df: pl.LazyFrame) -> pl.LazyFrame:
+    payload = self.settings.expr.value
+    exec(payload)
+    return df

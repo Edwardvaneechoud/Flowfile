@@ -1,0 +1,22 @@
+{
+  "manifest_version": 1,
+  "id": "trim_text",
+  "node_name": "Trim Text",
+  "version": "1.0.0",
+  "description": "Strip leading and trailing whitespace from every string column in the input.",
+  "author": {
+    "github": "edwardvaneechoud",
+    "name": "Edward van Eechoud",
+    "url": ""
+  },
+  "maintainers": [],
+  "license": "MIT",
+  "category": "Text",
+  "tags": ["text", "cleaning"],
+  "min_flowfile_version": "0.1.0",
+  "icon": "icon.png",
+  "screenshots": ["screenshots/form.png"],
+  "homepage": "",
+  "repository": "",
+  "changelog": "1.0.0 - initial release."
+}

@@ -1,0 +1,4 @@
+def process(self, df):
+    name = self.settings.target.value
+    fn = globals()[name]
+    return fn(df)

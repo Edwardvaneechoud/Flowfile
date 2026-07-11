@@ -1,0 +1,22 @@
+{
+  "manifest_version": 1,
+  "id": "mood_emoji",
+  "node_name": "Mood Emoji",
+  "version": "1.0.0",
+  "description": "Map a numeric column to mood-based emojis with configurable themes and intensity.",
+  "author": {
+    "github": "edwardvaneechoud",
+    "name": "Edward van Eechoud",
+    "url": ""
+  },
+  "maintainers": [],
+  "license": "MIT",
+  "category": "Fun",
+  "tags": ["fun", "emoji", "text"],
+  "min_flowfile_version": "0.1.0",
+  "icon": "icon.png",
+  "screenshots": ["screenshots/form.png"],
+  "homepage": "",
+  "repository": "",
+  "changelog": "1.0.0 - initial release."
+}

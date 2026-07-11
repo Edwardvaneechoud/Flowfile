@@ -164,6 +164,51 @@
           </div>
         </div>
       </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Publishing"
+        icon="fa-solid fa-share-nodes"
+        persist-key="nd-meta-publishing"
+      >
+        <div class="form-stack">
+          <div class="form-field">
+            <label for="node-author">Author</label>
+            <input
+              id="node-author"
+              v-model="nodeMetadata.author"
+              type="text"
+              class="form-input"
+              placeholder="Your name or GitHub handle"
+            />
+          </div>
+          <div class="form-field">
+            <label for="node-version">Version</label>
+            <input
+              id="node-version"
+              v-model="nodeMetadata.version"
+              type="text"
+              class="form-input"
+              placeholder="1.0.0"
+            />
+          </div>
+          <div class="form-field">
+            <label for="node-tags">Tags</label>
+            <el-select
+              id="node-tags"
+              v-model="nodeMetadata.tags"
+              data-testid="node-tags-select"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="Add search keywords"
+            >
+              <el-option v-for="tag in nodeMetadata.tags" :key="tag" :label="tag" :value="tag" />
+            </el-select>
+            <p class="field-hint">Used when sharing the node via the community registry.</p>
+          </div>
+        </div>
+      </CollapsibleSection>
     </div>
   </div>
 </template>

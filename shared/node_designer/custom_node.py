@@ -413,6 +413,11 @@ class CustomNodeBase(BaseModel):
     title: str | None = "Custom Node"
     intro: str | None = "A custom node for data processing"
 
+    # Publishing metadata (optional; used when sharing via the community registry)
+    author: str | None = None
+    version: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
     # Behavior properties
     node_type: NodeTypeLiteral = "process"
     transform_type: TransformTypeLiteral = "wide"

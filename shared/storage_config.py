@@ -119,6 +119,16 @@ class FlowfileStorage:
         return self.user_defined_nodes_directory / "icons"
 
     @property
+    def user_defined_nodes_screenshots(self) -> Path:
+        """Parent for per-node publish-prep screenshot folders.
+
+        Deliberately NOT created in ``_ensure_directories`` — created lazily
+        where used (only when a user actually uploads a publish screenshot),
+        mirroring the ``local_model_directory`` opt-in precedent.
+        """
+        return self.user_defined_nodes_directory / "screenshots"
+
+    @property
     def outputs_directory(self) -> Path:
         """Directory for user outputs (user-accessible)."""
         if _is_docker_mode():

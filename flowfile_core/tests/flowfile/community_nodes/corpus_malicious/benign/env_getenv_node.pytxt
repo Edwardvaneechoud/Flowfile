@@ -1,0 +1,8 @@
+import os
+
+import polars as pl
+
+
+def process(self, df: pl.LazyFrame) -> pl.LazyFrame:
+    region = os.getenv("AWS_REGION")
+    return df.with_columns(region=pl.lit(region))

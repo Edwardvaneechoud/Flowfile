@@ -328,6 +328,12 @@ class _Renderer:
             attrs.append(("title", "str", state.title))
         if state.intro:
             attrs.append(("intro", "str", state.intro))
+        if state.author:
+            attrs.append(("author", "str", state.author))
+        if state.version:
+            attrs.append(("version", "str", state.version))
+        if state.tags:
+            attrs.append(("tags", "list[str]", list(state.tags)))
         if state.number_of_inputs != 1:
             attrs.append(("number_of_inputs", "int", state.number_of_inputs))
         if state.number_of_outputs != 1:

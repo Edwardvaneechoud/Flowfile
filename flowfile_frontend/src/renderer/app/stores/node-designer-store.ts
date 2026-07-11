@@ -111,6 +111,24 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     set intro(v: string) {
       designerState.value.intro = v;
     },
+    get author() {
+      return designerState.value.author;
+    },
+    set author(v: string) {
+      designerState.value.author = v;
+    },
+    get version() {
+      return designerState.value.version;
+    },
+    set version(v: string) {
+      designerState.value.version = v;
+    },
+    get tags() {
+      return designerState.value.tags;
+    },
+    set tags(v: string[]) {
+      designerState.value.tags = v;
+    },
     get number_of_inputs() {
       return designerState.value.number_of_inputs;
     },
@@ -329,6 +347,15 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     { deep: true },
   );
 
+  // Drafts saved before the publishing-metadata fields existed lack these keys;
+  // fill defaults so they never leak undefined into save payloads.
+  const normalizeDraftState = (state: DesignerState): DesignerState => ({
+    ...state,
+    author: state.author ?? "",
+    version: state.version ?? "",
+    tags: state.tags ?? [],
+  });
+
   function parseDraft(raw: string): DesignerState | null {
     let parsed: unknown;
     try {
@@ -338,7 +365,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     }
     const obj = parsed as Record<string, unknown>;
     if (obj && obj.version === DRAFT_VERSION && obj.designerState) {
-      return obj.designerState as DesignerState;
+      return normalizeDraftState(obj.designerState as DesignerState);
     }
     // Legacy v1 draft: { nodeMetadata, sections, processCode }.
     if (obj && obj.nodeMetadata && Array.isArray(obj.sections)) {

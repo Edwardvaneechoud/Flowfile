@@ -1,0 +1,20 @@
+{
+  "manifest_version": 1,
+  "id": "uppercase_text",
+  "node_name": "Uppercase Text",
+  "version": "1.0.0",
+  "description": "Uppercase every string column in the input, leaving all other columns untouched.",
+  "author": {
+    "github": "edwardvaneechoud",
+    "name": "Edward van Eechoud",
+    "url": ""
+  },
+  "maintainers": [],
+  "license": "MIT",
+  "category": "Text",
+  "tags": ["text", "cleaning"],
+  "min_flowfile_version": "0.1.0",
+  "homepage": "",
+  "repository": "",
+  "changelog": "1.0.0 - initial release."
+}

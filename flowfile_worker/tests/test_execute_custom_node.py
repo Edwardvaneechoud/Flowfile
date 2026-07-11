@@ -65,6 +65,21 @@ class SplitNode(CustomNodeBase):
         return {"high": lf.filter(pl.col("value") > 10), "low": lf.filter(pl.col("value") <= 10)}
 '''
 
+METADATA_NODE_SOURCE = '''
+import polars as pl
+from shared.node_designer import CustomNodeBase
+
+
+class MetadataNode(CustomNodeBase):
+    node_name: str = "Metadata Node"
+    author: str = "octocat"
+    version: str = "1.2.3"
+    tags: list[str] = ["community", "demo"]
+
+    def process(self, *inputs):
+        return inputs[0].with_columns(pl.lit(self.version).alias("node_version"))
+'''
+
 SECRET_NODE_SOURCE = '''
 import polars as pl
 from shared.node_designer import AvailableSecrets, CustomNodeBase, NodeSettings, SecretSelector, Section
@@ -141,6 +156,18 @@ def test_single_input_with_settings(tmp_path):
     assert payload["outputs"]["main"]["row_count"] == 2
     result = pl.read_ipc(file_path)
     assert result["up_name"].to_list() == ["ALICE", "BOB"]
+
+
+def test_node_with_author_version_tags_executes(tmp_path):
+    # Proves the worker exec path accepts the Workstream-A subclass fields
+    # (author/version/tags) that community nodes carry.
+    df = pl.DataFrame({"name": ["alice"]})
+    progress, error, payload, file_path = run_task(
+        tmp_path, METADATA_NODE_SOURCE, inputs=[serialize_input(df)],
+    )
+    assert progress == 100, error
+    assert payload["outputs"]["main"]["row_count"] == 1
+    assert pl.read_ipc(file_path)["node_version"].to_list() == ["1.2.3"]
 
 
 def run_in_subprocess(code: str) -> subprocess.CompletedProcess:

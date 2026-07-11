@@ -32,6 +32,9 @@ class CustomNodeInfo(BaseModel):
     node_category: str = ""
     title: str = ""
     intro: str = ""
+    author: str = ""
+    version: str = ""
+    tags: list[str] = []
     node_icon: str = "user-defined-icon.png"
     node_key: str = ""
     environment: Literal["local", "kernel"] = "local"
@@ -113,6 +116,10 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
                             info.title = value
                         elif attr_name == "intro":
                             info.intro = value
+                        elif attr_name == "author":
+                            info.author = value
+                        elif attr_name == "version":
+                            info.version = value
                         elif attr_name == "node_icon":
                             info.node_icon = value
 
@@ -140,6 +147,9 @@ def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
         node_category=node.node_category,
         title=node.title or "",
         intro=node.intro or "",
+        author=node.author or "",
+        version=node.version or "",
+        tags=list(node.tags),
         node_icon=node.node_icon,
         node_key=entry.node_key,
         environment=node.environment,

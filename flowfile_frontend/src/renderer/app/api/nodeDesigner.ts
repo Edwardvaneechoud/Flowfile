@@ -15,6 +15,9 @@ export interface CustomNodeInfoResponse {
   node_category?: string;
   title?: string;
   intro?: string;
+  author?: string;
+  version?: string;
+  tags?: string[];
   node_icon?: string;
   node_key?: string;
   environment?: "local" | "kernel";

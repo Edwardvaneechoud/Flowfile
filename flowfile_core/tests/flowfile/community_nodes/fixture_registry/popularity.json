@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-01-01T00:00:00Z",
+  "repo_stars": 128,
+  "nodes": {
+    "mood_emoji": {
+      "thumbs_up": 42,
+      "comments": 7,
+      "discussion_number": 12,
+      "discussion_url": "https://github.com/edwardvaneechoud/flowfile-community-nodes/discussions/12"
+    }
+  }
+}

