@@ -10,7 +10,11 @@
         :show-arrow="true"
       >
         <template #reference>
-          <button class="action-btn action-btn--split-main" @click="openSaveModal">
+          <button
+            class="action-btn action-btn--split-main"
+            data-tutorial="save-main-btn"
+            @click="openSaveModal"
+          >
             <span class="material-icons btn-icon">save</span>
             <span class="btn-text">Save</span>
           </button>
@@ -85,7 +89,11 @@
         :show-arrow="true"
       >
         <template #reference>
-          <button class="action-btn action-btn--split-main" @click="handleQuickCreate">
+          <button
+            class="action-btn action-btn--split-main"
+            data-tutorial="quick-create-main-btn"
+            @click="handleQuickCreate"
+          >
             <span class="material-icons btn-icon">add_circle_outline</span>
             <span class="btn-text">Create</span>
           </button>
@@ -302,7 +310,7 @@ const handleQuickCreate = async () => {
     await recordCurrentFlowAsRecent();
     emit("refreshFlow");
     ElMessage.success("Flow created");
-    advanceQuickCreateTutorial();
+    tutorialStore.notify({ type: "flow-created", flowId: createdFlowId });
   } catch (error) {
     console.error("Failed to create flow:", error);
     ElMessage.error("Failed to create flow");
@@ -313,24 +321,14 @@ const openCreateDialog = () => {
   modalVisibleForCreate.value = true;
 };
 
-const advanceQuickCreateTutorial = () => {
-  if (!tutorialStore.isActive) return;
-  const stepId = tutorialStore.currentStep?.id;
-  if (stepId === "click-quick-create" || stepId === "confirm-create-flow") {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 200);
-  }
-};
-
 const handleCreateComplete = async (flowId: number, catalogRef?: string) => {
   modalVisibleForCreate.value = false;
   if (flowId) {
     nodeStore.setFlowId(flowId);
     await recordCurrentFlowAsRecent(catalogRef);
     emit("refreshFlow");
+    tutorialStore.notify({ type: "flow-created", flowId });
   }
-  advanceQuickCreateTutorial();
 };
 
 // Created flows never pass through DesignerView's reloadCanvas (the open-path
@@ -430,11 +428,7 @@ const handleSaveDialogComplete = (flowId: number) => {
   // the Catalog view and recents reflect it without a manual reload.
   catalogStore.loadAllFlows();
   refreshCatalogRefs();
-  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 300);
-  }
+  tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
 };
 
 function handleOpenFromDialog(payload: {
@@ -461,11 +455,7 @@ const openSaveModal = async () => {
       emit("flowSaved", nodeStore.flow_id);
       projectStore.onSourceChanged();
       ElMessage.success("Flow saved successfully");
-      if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
-        setTimeout(() => {
-          tutorialStore.nextStep();
-        }, 300);
-      }
+      tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
     } catch (error: any) {
       ElMessage.error({
         message: error.message || "Failed to save flow",
