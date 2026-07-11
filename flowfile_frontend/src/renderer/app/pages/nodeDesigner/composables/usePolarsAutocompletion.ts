@@ -797,7 +797,7 @@ function inferFromRhs(
   }
   // flowfile_ctx kernel reads (kernel-environment nodes): frame readers return
   // LazyFrames (DataFrame once .collect()ed); read_inputs() yields a dict.
-  const ctxRead = s.match(/^flowfile_ctx\.(\w+)\s*\(/);
+  const ctxRead = s.match(/^(?:flowfile_ctx|flowfile)\.(\w+)\s*\(/);
   if (ctxRead) {
     const fn = ctxRead[1];
     if (fn === "read_input" || fn === "read_first" || fn === "read_catalog_table") {
@@ -1185,7 +1185,7 @@ export function usePolarsAutocompletion(
     if (precededByDot(context) || insideDefParams(context)) return null;
     const word = context.matchBefore(/[A-Za-z_]\w*/);
     if (!word && !context.explicit) return null;
-    if (word && word.from === word.to) return null;
+    if (!context.explicit && word && word.text.length < 2) return null;
     return {
       from: word ? word.from : context.pos,
       options: FLOWFILE_CTX_GLOBAL_ENTRIES,
