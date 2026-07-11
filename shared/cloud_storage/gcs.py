@@ -12,9 +12,7 @@ import tempfile
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-import gcsfs
 import polars as pl
-from deltalake import DeltaTable, write_deltalake
 
 
 def use_pyarrow_for_gcs(storage_type: str, endpoint_url: str | None) -> bool:
@@ -80,6 +78,7 @@ def get_lazy_frame_from_gcs_pyarrow_dataset(
     is_directory
         If True, glob/wildcard patterns are stripped to get the base directory path.
     """
+    import gcsfs
     import pyarrow.dataset as ds
 
     clean_path = (
@@ -117,6 +116,7 @@ def sink_to_gcs(
     **kwargs
         Additional arguments passed to the underlying writer.
     """
+    import gcsfs
     import pyarrow.parquet as pq
 
     fs = gcsfs.GCSFileSystem(**storage_options)
@@ -161,6 +161,9 @@ def write_delta_to_gcs(
     partition_by
         Delta partition columns (applied at table creation).
     """
+    import gcsfs
+    from deltalake import write_deltalake
+
     clean_path = get_path_without_scheme(path)
 
     fs = gcsfs.GCSFileSystem(**storage_options)
@@ -205,6 +208,9 @@ def scan_delta_from_gcs(
     pl.LazyFrame
         A lazy frame backed by the Delta table's PyArrow dataset.
     """
+    import gcsfs
+    from deltalake import DeltaTable
+
     fs = gcsfs.GCSFileSystem(**storage_options)
     clean_path = get_path_without_scheme(resource_path)
 

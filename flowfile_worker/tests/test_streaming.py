@@ -7,12 +7,14 @@ results as raw binary frames (no base64 encoding).
 
 import io
 import json
+from base64 import b64decode
 
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from flowfile_worker import main, models
+from flowfile_worker import funcs, main, models, mp_context, status_dict, status_dict_lock
+from flowfile_worker.spawner import drain_result_queue, handle_task, process_manager
 
 client = TestClient(main.app)
 
@@ -85,6 +87,7 @@ class TestWsStoreOperation:
         assert complete["result_type"] == "polars"
         assert complete["has_result"] is True
         assert complete["file_ref"].endswith(".arrow")
+        assert complete["number_of_records"] == 3, "store must ride-along the row count on the complete frame"
 
         assert len(binary_frames) == 1, "Expected exactly 1 binary frame with result"
         result_lf = pl.LazyFrame.deserialize(io.BytesIO(binary_frames[0]))
@@ -174,6 +177,7 @@ class TestWsStoreSampleOperation:
         assert complete["result_type"] == "other"
         assert complete["has_result"] is False
         assert complete["file_ref"].endswith(".arrow")
+        assert complete.get("number_of_records") is None, "store_sample does not ride-along a count"
 
         assert len(binary_frames) == 0
 
@@ -230,6 +234,7 @@ class TestWsCalculateNumberOfRecords:
 
         complete = [m for m in json_msgs if m.get("type") == "complete"][0]
         assert complete["result_type"] == "other"
+        assert complete.get("number_of_records") is None, "the count is the result_data payload, not a ride-along"
 
         result_data_msgs = [m for m in json_msgs if m.get("type") == "result_data"]
         assert len(result_data_msgs) == 1
@@ -260,8 +265,7 @@ class TestRestCompatibilityAfterStreamingChanges:
         r = client.get(f"/status/{status.background_task_id}")
         status = models.Status.model_validate(r.json())
         assert status.status == "Completed", f"Expected Completed, got {status.status}: {status.error_message}"
-
-        from base64 import b64decode
+        assert status.number_of_records == 2, "REST /status must surface the store ride-along count"
 
         result_df = pl.LazyFrame.deserialize(io.BytesIO(b64decode(status.results))).collect()
         assert result_df.equals(lf.collect())
@@ -323,3 +327,74 @@ class TestWsErrorHandling:
         assert r.status_code == 200
         status = models.Status.model_validate(r.json())
         assert status.status == "Completed"
+
+
+# Tests: Row-count ride-along (Work Item 2)
+
+class TestStoreRowCountRideAlong:
+    """funcs.store queues (plan_bytes, row_count); the count surfaces on Status."""
+
+    def _spawn_store(self, lf: pl.LazyFrame, file_path: str):
+        progress = mp_context.Value("i", 0)
+        error_message = mp_context.Array("c", 1024)
+        q = mp_context.Queue(maxsize=1)
+        p = mp_context.Process(
+            target=funcs.store,
+            kwargs=dict(
+                polars_serializable_object=lf.serialize(),
+                progress=progress,
+                error_message=error_message,
+                queue=q,
+                file_path=file_path,
+                flowfile_flow_id=-1,
+                flowfile_node_id=-1,
+            ),
+        )
+        p.start()
+        return p, progress, error_message, q
+
+    def test_store_queues_plan_bytes_and_count(self, tmp_path):
+        lf = pl.LazyFrame({"a": [1, 2, 3, 4, 5]})
+        file_path = str(tmp_path / "store.arrow")
+        p, progress, error_message, q = self._spawn_store(lf, file_path)
+        try:
+            result = drain_result_queue(q, p, timeout=30.0)
+            p.join(timeout=30)
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+
+        assert isinstance(result, tuple) and len(result) == 2, "store must put a (payload, count) tuple"
+        plan_bytes, row_count = result
+        assert isinstance(plan_bytes, bytes)
+        assert row_count == 5
+        restored = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
+        assert restored.collect().equals(lf.collect())
+
+    def test_handle_task_surfaces_count_and_keeps_plan_bytes(self, tmp_path):
+        task_id = "test-store-ride-along-e2e"
+        lf = pl.LazyFrame({"x": list(range(7))})
+        file_path = str(tmp_path / "store-e2e.arrow")
+        p, progress, error_message, q = self._spawn_store(lf, file_path)
+        process_manager.add_process(task_id, p)
+        with status_dict_lock:
+            status_dict[task_id] = models.Status(
+                background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars"
+            )
+        try:
+            handle_task(task_id, p, progress, error_message, q)
+            with status_dict_lock:
+                status = status_dict[task_id]
+            assert status.status == "Completed", status.error_message
+            assert status.number_of_records == 7
+            # element 0 stays the byte-identical scan_ipc plan, b64-encoded at the REST boundary
+            restored = pl.LazyFrame.deserialize(io.BytesIO(b64decode(status.results)))
+            assert restored.collect().equals(lf.collect())
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            with status_dict_lock:
+                status_dict.pop(task_id, None)
+            process_manager.remove_process(task_id)

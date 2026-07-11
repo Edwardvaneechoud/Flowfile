@@ -27,11 +27,17 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
-from flowfile_worker.spawner import drain_result_queue, process_manager
+from flowfile_worker.spawner import drain_result_queue, process_manager, unpack_result
 
 streaming_router = APIRouter()
 
 _POLARS_RESULT_OPERATIONS = frozenset({"store"})
+
+# Poll the child's progress with exponential backoff: snappy at first, capped low
+# so the async monitor yields to the event loop without busy-waiting.
+_MONITOR_INITIAL_DELAY = 0.005
+_MONITOR_MAX_DELAY = 0.3
+_MONITOR_BACKOFF = 1.5
 
 
 def _get_result_type(operation: str) -> str:
@@ -148,9 +154,8 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
     """
     last_progress = -1
 
+    delay = _MONITOR_INITIAL_DELAY
     while p.is_alive():
-        await asyncio.sleep(0.3)
-
         with progress.get_lock():
             current = progress.value
 
@@ -173,17 +178,22 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
         if current == 100:
             return False
 
+        await asyncio.sleep(delay)
+        delay = min(delay * _MONITOR_BACKOFF, _MONITOR_MAX_DELAY)
+
     return False
 
 
 # Result handling
 
 
-def _update_completed_status(task_id: str, result_data: Any) -> None:
+def _update_completed_status(task_id: str, result_data: Any, number_of_records: int | None) -> None:
     """Update status_dict for a successfully completed task."""
     with status_dict_lock:
         status_dict[task_id].status = "Completed"
         status_dict[task_id].progress = 100
+        if number_of_records is not None:
+            status_dict[task_id].number_of_records = number_of_records
         if result_data is not None:
             if isinstance(result_data, bytes):
                 status_dict[task_id].results = b64encode(result_data).decode("ascii")
@@ -192,14 +202,19 @@ def _update_completed_status(task_id: str, result_data: Any) -> None:
 
 
 async def _send_completion(
-    websocket: WebSocket, task_id: str, result_type: str, file_path: str, result_data: Any
+    websocket: WebSocket,
+    task_id: str,
+    result_type: str,
+    file_path: str,
+    result_data: Any,
+    number_of_records: int | None,
 ) -> None:
     """Send completion message and result data over WebSocket.
 
     *result_data* is drained from the result queue by the caller before joining the
     child, so this coroutine never touches the queue (draining after join can deadlock).
     """
-    _update_completed_status(task_id, result_data)
+    _update_completed_status(task_id, result_data, number_of_records)
 
     has_result = result_data is not None
     await websocket.send_json(
@@ -208,6 +223,7 @@ async def _send_completion(
             "result_type": result_type,
             "file_ref": file_path,
             "has_result": has_result,
+            "number_of_records": number_of_records,
         }
     )
 
@@ -313,11 +329,15 @@ async def ws_submit(websocket: WebSocket):
         if final == 100:
             # Drain the queue BEFORE joining: a large put() blocks the child's feeder
             # thread until read, so joining first would deadlock.
-            result_data = await asyncio.to_thread(drain_result_queue, queue, p)
-            p.join()
-            await _send_completion(websocket, task_id, ctx.result_type, ctx.file_path, result_data)
+            result_data, number_of_records = unpack_result(
+                await asyncio.to_thread(drain_result_queue, queue, p)
+            )
+            await asyncio.to_thread(p.join)
+            await _send_completion(
+                websocket, task_id, ctx.result_type, ctx.file_path, result_data, number_of_records
+            )
         else:
-            p.join()
+            await asyncio.to_thread(p.join)
             await _send_final_error(websocket, task_id, progress, error_message)
 
     except WebSocketDisconnect:
@@ -335,6 +355,7 @@ async def ws_submit(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        _cleanup_process(task_id, p)
+        if p is not None:
+            await asyncio.to_thread(_cleanup_process, task_id, p)
         del p, progress, error_message
-        gc.collect()
+        gc.collect(0)

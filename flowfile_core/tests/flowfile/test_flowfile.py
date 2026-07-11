@@ -382,6 +382,39 @@ def test_running_performance_mode():
     assert slow.node_step_result[1].run_time_ms > 10, 'Run time should be at least 10 ms, confirming ms units'
 
 
+def test_remote_run_skips_count_roundtrip(monkeypatch):
+    """A remote node gets its row count from the store ride-along, not a second
+    ``calculate_number_of_records`` worker round-trip."""
+    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
+
+    real_fetcher = flow_node_module.ExternalDfFetcher
+    constructed_ops = []
+
+    class RecordingFetcher(real_fetcher):
+        def __init__(self, *args, **kwargs):
+            constructed_ops.append(kwargs.get('operation_type', 'store'))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(flow_node_module, 'ExternalDfFetcher', RecordingFetcher)
+
+    graph = create_graph(execution_location='remote')
+    add_manual_input(graph, data=[{'g': 'a', 'v': 1}, {'g': 'a', 'v': 2}, {'g': 'b', 'v': 3}])
+    add_node_promise_on_type(graph, 'group_by', 2)  # wide transform -> REMOTE strategy
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    group_by_input = transform_schema.GroupByInput(
+        [transform_schema.AggColl('g', 'groupby'),
+         transform_schema.AggColl('v', 'sum', 'v_sum')]
+    )
+    graph.add_group_by(input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input))
+
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+    assert 'calculate_number_of_records' not in constructed_ops, constructed_ops
+    node = graph.get_node(2)
+    assert node.results.resulting_data.number_of_records == 2, 'row count must ride along, not fall back to -1'
+
+
 def test_adding_graph_solver(execution_location):
     graph = create_graph(execution_location=execution_location)
     input_data = [{'from': 'a', 'to': 'b'}, {'from': 'b', 'to': 'c'}, {'from': 'g', 'to': 'd'}]

@@ -16,6 +16,12 @@ flowfile_node_id_type = int | str
 # still allowing a large payload's feeder thread time to flush to the pipe.
 RESULT_QUEUE_TIMEOUT = 30.0
 
+# Poll the child with exponential backoff: snappy at first, but capped so idle
+# long-running jobs don't busy-wait. The 1.0s steady-state cap is deliberate.
+_POLL_INITIAL_DELAY = 0.01
+_POLL_MAX_DELAY = 1.0
+_POLL_BACKOFF = 1.5
+
 
 def drain_result_queue(q: Queue, p: Process, timeout: float = RESULT_QUEUE_TIMEOUT):
     """Read the single result a child puts on *q*, draining BEFORE the caller joins *p*.
@@ -40,6 +46,13 @@ def drain_result_queue(q: Queue, p: Process, timeout: float = RESULT_QUEUE_TIMEO
                 return None
 
 
+def unpack_result(result):
+    """store/generic_task put (payload, row_count); every other op puts a bare payload."""
+    if isinstance(result, tuple) and len(result) == 2:
+        return result
+    return result, None
+
+
 def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_message: mp_context.Array, q: Queue):
     """
     Monitors and manages a running process task, updating its status and handling completion/errors.
@@ -60,8 +73,8 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         with status_dict_lock:
             status_dict[task_id].status = "Processing"
 
+        delay = _POLL_INITIAL_DELAY
         while p.is_alive():
-            sleep(1)
             with progress.get_lock():
                 current_progress = progress.value
             with status_dict_lock:
@@ -84,6 +97,9 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             if current_progress == 100:
                 break
 
+            sleep(delay)
+            delay = min(delay * _POLL_BACKOFF, _POLL_MAX_DELAY)
+
         with status_dict_lock:
             cancelled = status_dict[task_id].status == "Cancelled"
         with progress.get_lock():
@@ -92,8 +108,9 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         # Drain the queue BEFORE joining (see drain_result_queue). Only the success path
         # (progress == 100) puts a result; errors travel via the shared Array.
         result = None
+        number_of_records = None
         if not cancelled and final_progress == 100:
-            result = drain_result_queue(q, p)
+            result, number_of_records = unpack_result(drain_result_queue(q, p))
 
         p.join()
 
@@ -102,6 +119,8 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             if status.status != "Cancelled":
                 if final_progress == 100:
                     status.status = "Completed"
+                    if number_of_records is not None:
+                        status.number_of_records = number_of_records
                     if result is not None:
                         # b64-encode bytes for JSON-safe storage in status_dict (REST responses)
                         if isinstance(result, bytes):
@@ -117,7 +136,7 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         p.join()
         process_manager.remove_process(task_id)
         del p, progress, error_message
-        gc.collect()
+        gc.collect(0)
 
 
 def start_process(
