@@ -239,6 +239,7 @@ def test_uninstall_removes_and_unregisters(isolated_storage, make_registry):
     installer.uninstall(node_id)
 
     assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+    assert not (storage.user_defined_nodes_icons / f"{node_id}__icon.png").exists()
     assert node_id not in load_receipts()
     assert registry.get(node_id) is None
 

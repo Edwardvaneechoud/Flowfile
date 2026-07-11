@@ -11,17 +11,27 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.community_nodes import installer
+from flowfile_core.configs.app_settings import get_user_secret
+from flowfile_core.database.connection import get_db
+from flowfile_core.flowfile.community_nodes import github_client, installer, publish
 from flowfile_core.flowfile.community_nodes.client import (
     CommunityClient,
     CommunityUnavailableError,
     PinMismatchError,
     get_community_client,
+)
+from flowfile_core.flowfile.community_nodes.github_client import (
+    ForkPendingError,
+    GithubApiError,
+    GithubAuthError,
+    GithubNotConfiguredError,
 )
 from flowfile_core.flowfile.community_nodes.installer import (
     BlockedNodeError,
@@ -32,8 +42,15 @@ from flowfile_core.flowfile.community_nodes.installer import (
     ReceiptRequiredError,
     ScanRejectedError,
 )
-from flowfile_core.flowfile.community_nodes.models import CommunityIndex, InstallRequest, get_app_version
-from flowfile_core.flowfile.community_nodes.receipts import load_receipts
+from flowfile_core.flowfile.community_nodes.models import (
+    CommunityIndex,
+    InstallRequest,
+    get_app_version,
+    semver_gt,
+)
+from flowfile_core.flowfile.node_designer.parsing import extract_manifest
+from flowfile_core.flowfile.user_defined.registry import registry
+from flowfile_core.routes.community_github import GITHUB_PUBLISH_TOKEN_KEY
 from flowfile_core.routes.custom_node_mounts import require_admin
 from flowfile_core.routes.user_defined_components import _node_info_from_entry
 from shared import storage
@@ -47,9 +64,15 @@ _MEDIA_CONTENT_TYPES = {
     ".webp": "image/webp",
     ".gif": "image/gif",
 }
-ALLOWED_SCREENSHOT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+# PNG only: the community pipeline (validation, bundle export) is PNG-only, so
+# accepting other formats here would silently drop them from exported bundles.
+ALLOWED_SCREENSHOT_EXTENSIONS = {".png"}
 MAX_SCREENSHOT_SIZE = 5 * 1024 * 1024
 MAX_SCREENSHOTS_PER_STEM = 5
+
+
+def _safe_node_id(node_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_]", "_", node_id)
 
 
 def _safe_media_name(name: str) -> str:
@@ -78,8 +101,9 @@ def get_index(refresh: bool = False, current_user=Depends(get_current_active_use
     client = get_community_client()
     index, meta = _get_index_or_503(client, refresh=refresh)
     popularity = client.get_popularity()
-    receipts = load_receipts()
-    modified_map = {node.receipt.node_id: node.modified_locally for node in installer.list_installed()}
+    # list_installed prunes receipts for vanished files, so it is the one source
+    # of both the receipt and the modified_locally flag for this response.
+    installed = {node.receipt.node_id: node for node in installer.list_installed()}
     app_version = get_app_version()
 
     nodes: list[dict[str, Any]] = []
@@ -89,8 +113,9 @@ def get_index(refresh: bool = False, current_user=Depends(get_current_active_use
         node["popularity"] = (
             {"thumbs_up": pop.thumbs_up, "discussion_url": pop.discussion_url} if pop is not None else None
         )
+        local = installed.get(entry.id)
         node["install_state"] = installer.install_state(
-            entry, receipts.get(entry.id), modified_map.get(entry.id, False), app_version
+            entry, local.receipt if local else None, local.modified_locally if local else False, app_version
         )
         nodes.append(node)
 
@@ -106,7 +131,7 @@ def get_index(refresh: bool = False, current_user=Depends(get_current_active_use
 
 @router.get("/node/{node_id}", summary="Community node detail")
 def get_node_detail(node_id: str, current_user=Depends(get_current_active_user)) -> dict[str, Any]:
-    safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", node_id)
+    safe_id = _safe_node_id(node_id)
     client = get_community_client()
     index, _ = _get_index_or_503(client)
     entry = index.entry(safe_id)
@@ -124,8 +149,7 @@ def get_node_detail(node_id: str, current_user=Depends(get_current_active_user))
 
     popularity = client.get_popularity()
     pop = popularity.nodes.get(entry.id) if popularity else None
-    receipts = load_receipts()
-    modified_map = {node.receipt.node_id: node.modified_locally for node in installer.list_installed()}
+    local = installer.get_installed(entry.id)
 
     detail = entry.model_dump()
     detail["readme_text"] = readme_text
@@ -135,14 +159,14 @@ def get_node_detail(node_id: str, current_user=Depends(get_current_active_user))
         {"thumbs_up": pop.thumbs_up, "discussion_url": pop.discussion_url} if pop is not None else None
     )
     detail["install_state"] = installer.install_state(
-        entry, receipts.get(entry.id), modified_map.get(entry.id, False), get_app_version()
+        entry, local.receipt if local else None, local.modified_locally if local else False, get_app_version()
     )
     return detail
 
 
 @router.get("/media/{node_id}/{file_name}", summary="Serve pin-verified community media")
 def get_media(node_id: str, file_name: str, current_user=Depends(get_current_active_user)) -> FileResponse:
-    safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", node_id)
+    safe_id = _safe_node_id(node_id)
     safe_name = _safe_media_name(file_name)
     suffix = Path(safe_name).suffix.lower()
     if suffix not in _MEDIA_CONTENT_TYPES:
@@ -178,15 +202,11 @@ def install_node(request: InstallRequest, current_user=Depends(require_admin)) -
             user_email=getattr(current_user, "email", "") or "",
         )
     except NodeNotFoundError as e:
-        raise HTTPException(
-            status_code=404, detail={"error_code": "NODE_NOT_FOUND", "node_id": request.node_id}
-        ) from e
+        raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "node_id": request.node_id}) from e
     except BlockedNodeError as e:
         raise HTTPException(status_code=410, detail={"error_code": "BLOCKED", "node_id": request.node_id}) from e
     except ConsentRequiredError as e:
-        raise HTTPException(
-            status_code=400, detail={"error_code": "CONSENT_REQUIRED", "message": str(e)}
-        ) from e
+        raise HTTPException(status_code=400, detail={"error_code": "CONSENT_REQUIRED", "message": str(e)}) from e
     except CollisionError as e:
         raise HTTPException(
             status_code=409,
@@ -204,9 +224,7 @@ def install_node(request: InstallRequest, current_user=Depends(require_admin)) -
     except PinMismatchError as e:
         raise HTTPException(status_code=502, detail={"error_code": "PIN_MISMATCH", "message": str(e)}) from e
     except CommunityUnavailableError as e:
-        raise HTTPException(
-            status_code=503, detail={"error_code": "COMMUNITY_UNAVAILABLE", "message": str(e)}
-        ) from e
+        raise HTTPException(status_code=503, detail={"error_code": "COMMUNITY_UNAVAILABLE", "message": str(e)}) from e
 
     return {
         "success": True,
@@ -218,13 +236,11 @@ def install_node(request: InstallRequest, current_user=Depends(require_admin)) -
 
 @router.delete("/uninstall/{node_id}", summary="Uninstall a community node (admin)")
 def uninstall_node(node_id: str, current_user=Depends(require_admin)) -> dict[str, Any]:
-    safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", node_id)
+    safe_id = _safe_node_id(node_id)
     try:
         installer.uninstall(safe_id)
     except ReceiptRequiredError as e:
-        raise HTTPException(
-            status_code=404, detail={"error_code": "NOT_INSTALLED", "node_id": safe_id}
-        ) from e
+        raise HTTPException(status_code=404, detail={"error_code": "NOT_INSTALLED", "node_id": safe_id}) from e
     return {"success": True, "node_id": safe_id}
 
 
@@ -240,7 +256,7 @@ def check_updates(current_user=Depends(get_current_active_user)) -> list[dict[st
     return [update.model_dump() for update in installer.check_updates(index)]
 
 
-# ==================== Publish-prep screenshots (Workstream C) ====================
+# Publish-prep screenshots: staged per node file-stem, bundled by /publish-bundle.
 
 
 @router.post("/screenshots/{file_stem}", summary="Upload a publish-prep screenshot")
@@ -296,9 +312,7 @@ def list_screenshots(file_stem: str, current_user=Depends(get_current_active_use
 
 
 @router.get("/screenshots/{file_stem}/{file_name}", summary="Serve a publish-prep screenshot")
-def get_screenshot(
-    file_stem: str, file_name: str, current_user=Depends(get_current_active_user)
-) -> FileResponse:
+def get_screenshot(file_stem: str, file_name: str, current_user=Depends(get_current_active_user)) -> FileResponse:
     safe_stem = _safe_stem(file_stem)
     safe_name = _safe_media_name(file_name)
     suffix = Path(safe_name).suffix.lower()
@@ -316,9 +330,7 @@ def get_screenshot(
 
 
 @router.delete("/screenshots/{file_stem}/{file_name}", summary="Delete a publish-prep screenshot")
-def delete_screenshot(
-    file_stem: str, file_name: str, current_user=Depends(get_current_active_user)
-) -> dict[str, Any]:
+def delete_screenshot(file_stem: str, file_name: str, current_user=Depends(get_current_active_user)) -> dict[str, Any]:
     safe_stem = _safe_stem(file_stem)
     safe_name = _safe_media_name(file_name)
     file_path = storage.user_defined_nodes_screenshots / safe_stem / safe_name
@@ -329,3 +341,198 @@ def delete_screenshot(
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete screenshot: {e}") from e
     return {"success": True, "file_name": safe_name}
+
+
+class PublishBundleRequest(BaseModel):
+    file_name: str
+    license: str
+    repository: str = ""
+    description: str = ""
+    category: str = "Utilities"
+    # check_only returns the completeness report as JSON instead of a zip, so the
+    # designer modal can render the checklist (incl. warnings) without downloading.
+    check_only: bool = False
+
+
+def _issue_payload(issue) -> dict[str, str]:
+    severity = "warning" if issue.code in publish.WARNING_CODES else "error"
+    return {"code": issue.code, "message": issue.message, "severity": severity}
+
+
+@router.post("/publish-bundle", summary="Export a publishable community-node bundle")
+def publish_bundle(request: PublishBundleRequest, current_user=Depends(get_current_active_user)):
+    entry = registry.get_by_file(request.file_name)
+    if entry is None:
+        raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "file_name": request.file_name})
+
+    issues = publish.completeness_check(
+        entry, license=request.license, repository=request.repository, description=request.description
+    )
+    errors = [issue for issue in issues if issue.code not in publish.WARNING_CODES]
+
+    if request.check_only:
+        return {"ok": not errors, "issues": [_issue_payload(issue) for issue in issues]}
+
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "INCOMPLETE", "issues": [_issue_payload(issue) for issue in issues]},
+        )
+
+    screenshots = publish.png_screenshots(entry)
+    data = publish.build_bundle(
+        entry,
+        license=request.license,
+        repository=request.repository,
+        description=request.description,
+        category=request.category,
+        screenshots=screenshots,
+    )
+    file_name = f"{publish.node_id_for(entry)}-bundle.zip"
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+class PublishPrRequest(BaseModel):
+    file_name: str
+    license: str
+    repository: str = ""
+    description: str = ""
+    category: str = "Utilities"
+
+
+class PublishPrResponse(BaseModel):
+    status: str  # created | already_open | fork_creating
+    pr_url: str = ""
+    pr_number: int | None = None
+    branch: str = ""
+    node_id: str = ""
+    version: str = ""
+    is_update: bool = False
+
+
+def _resolve_pr_description(description: str, intro: str | None) -> str:
+    # Mirror build_publish_files' manifest description resolution so the PR body matches the manifest.
+    intro = (intro or "").strip()
+    resolved = (description or intro).strip()[:300]
+    if len(resolved) < publish.MIN_DESCRIPTION_LEN:
+        resolved = intro[:300] if len(intro) >= publish.MIN_DESCRIPTION_LEN else "A Flowfile community node."
+    return resolved
+
+
+def _pr_api_http(e: GithubApiError) -> HTTPException:
+    code = "GITHUB_RATE_LIMITED" if e.reason == "rate_limited" else "GITHUB_API_ERROR"
+    return HTTPException(status_code=502, detail={"error_code": code, "message": str(e)})
+
+
+@router.post("/publish-pr", summary="Publish a community node via a GitHub pull request")
+def publish_pr(
+    request: PublishPrRequest,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> PublishPrResponse:
+    entry = registry.get_by_file(request.file_name)
+    if entry is None:
+        raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "file_name": request.file_name})
+
+    issues = publish.completeness_check(
+        entry, license=request.license, repository=request.repository, description=request.description
+    )
+    errors = [issue for issue in issues if issue.code not in publish.WARNING_CODES]
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "INCOMPLETE", "issues": [_issue_payload(issue) for issue in issues]},
+        )
+
+    token = get_user_secret(db, GITHUB_PUBLISH_TOKEN_KEY, current_user.id)
+    if not token:
+        raise HTTPException(
+            status_code=412,
+            detail={"error_code": "GITHUB_NOT_CONNECTED", "message": "Connect a GitHub account before publishing."},
+        )
+
+    try:
+        login = github_client.fetch_login(token)
+    except GithubAuthError as e:
+        # Leave the rows in place — the user may reconnect; don't wipe on a transient revoke read.
+        raise HTTPException(status_code=412, detail={"error_code": "GITHUB_TOKEN_INVALID", "message": str(e)}) from e
+    except GithubApiError as e:
+        raise _pr_api_http(e) from e
+
+    meta = extract_manifest(entry.source_text or "")
+    node_id = publish.node_id_for(entry)
+    version = meta.version or "0.0.0"
+    resolved_description = _resolve_pr_description(request.description, meta.intro)
+
+    # Best-effort live-index pre-check so a stale version fails before any GitHub write;
+    # when the index is unreachable, CI stays authoritative and we proceed as a new node.
+    is_update = False
+    try:
+        index, _ = get_community_client().get_index()
+    except CommunityUnavailableError:
+        index = None
+    if index is not None:
+        published = index.entry(node_id)
+        if published is not None:
+            is_update = True
+            if not semver_gt(version, published.version):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error_code": "VERSION_NOT_INCREMENTED",
+                        "published_version": published.version,
+                        "message": f"Version {version} is not newer than the published {published.version}. "
+                        "Bump the version in the Publishing section.",
+                    },
+                )
+
+    screenshots = publish.png_screenshots(entry)
+    pf = publish.build_publish_files(
+        entry,
+        license=request.license,
+        repository=request.repository,
+        description=request.description,
+        category=request.category,
+        screenshots=screenshots,
+        author_github=login,
+    )
+
+    publisher = github_client.GithubPublisher(token)
+    branch = publish.pr_branch_name(pf.node_id, pf.version)
+    try:
+        fork = publisher.ensure_fork()
+        default_branch, base = publisher.base_sha(fork)
+        publisher.sync_fork(fork, default_branch)
+        _, base = publisher.base_sha(fork)
+        publisher.ensure_branch(fork, branch, base)
+        message = f"{'Update' if is_update else 'Add'} {pf.node_id} v{pf.version}"
+        publisher.commit_files(fork, branch, base, pf.files, message)
+        pr = publisher.open_or_get_pr(
+            branch,
+            publish.pr_title(pf.node_id, pf.node_name, pf.version, is_update),
+            publish.build_pr_body(pf.node_id, pf.version, is_update, resolved_description),
+        )
+    except ForkPendingError:
+        return PublishPrResponse(
+            status="fork_creating", node_id=pf.node_id, version=pf.version, branch=branch, is_update=is_update
+        )
+    except GithubAuthError as e:
+        raise HTTPException(status_code=412, detail={"error_code": "GITHUB_TOKEN_INVALID", "message": str(e)}) from e
+    except GithubNotConfiguredError as e:  # PAT path can't reach this; mapped defensively.
+        raise HTTPException(status_code=503, detail={"error_code": "GITHUB_NOT_CONFIGURED", "message": str(e)}) from e
+    except GithubApiError as e:
+        raise _pr_api_http(e) from e
+
+    return PublishPrResponse(
+        status="created" if pr.created else "already_open",
+        pr_url=pr.url,
+        pr_number=pr.number,
+        branch=branch,
+        node_id=pf.node_id,
+        version=pf.version,
+        is_update=is_update,
+    )

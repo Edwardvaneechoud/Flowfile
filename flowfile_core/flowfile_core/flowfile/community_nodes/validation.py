@@ -10,7 +10,6 @@ key off it. The reviewed PR remains the real security gate; this ladder blocks
 the cheap footguns and surfaces capabilities for the consent dialog.
 """
 
-import ast
 import re
 import struct
 from pathlib import Path
@@ -26,9 +25,13 @@ from flowfile_core.flowfile.community_nodes.models import (
 from flowfile_core.flowfile.community_nodes.security_scan import ScanReport, scan_source
 from flowfile_core.flowfile.node_designer.parsing import (
     extract_example_inputs,
+    extract_example_settings,
     extract_manifest,
     parse_source,
 )
+
+# Back-compat alias; the lift lives in parsing.py next to extract_example_inputs.
+_extract_example_settings = extract_example_settings
 
 REPO_MAINTAINER = "edwardvaneechoud"
 
@@ -94,55 +97,19 @@ def _looks_like_svg(data: bytes) -> bool:
     return head.startswith(b"<?xml") or head.startswith(b"<svg") or b"<svg" in head
 
 
-def _extract_example_settings(source: str) -> dict | None:
-    """Exec-free lift of the node class's ``example_settings`` literal.
-
-    Mirrors ``extract_example_inputs`` for the settings companion. Returns the
-    section->values dict, or None when absent / non-literal / wrong shape.
-    """
-    try:
-        module = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return None
-    for stmt in module.body:
-        if not isinstance(stmt, ast.ClassDef):
-            continue
-        if not any(_is_custom_node_base(base) for base in stmt.bases):
-            continue
-        for item in stmt.body:
-            if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
-                target, value = item.targets[0].id, item.value
-            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.value is not None:
-                target, value = item.target.id, item.value
-            else:
-                continue
-            if target != "example_settings":
-                continue
-            try:
-                data = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                return None
-            if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
-                return None
-            return data
-        return None
-    return None
-
-
-def _is_custom_node_base(base: ast.expr) -> bool:
-    name = _dotted(base)
-    return bool(name) and name.split(".")[-1] == "CustomNodeBase"
-
-
-def _dotted(expr: ast.expr) -> str | None:
-    parts: list[str] = []
-    while isinstance(expr, ast.Attribute):
-        parts.append(expr.attr)
-        expr = expr.value
-    if not isinstance(expr, ast.Name):
-        return None
-    parts.append(expr.id)
-    return ".".join(reversed(parts))
+def sniff_image_format(data: bytes) -> str:
+    """Best-effort magic-byte format name, so a mislabeled file names its real type."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "JPEG"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "GIF"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "WebP"
+    if data[:2] == b"BM":
+        return "BMP"
+    if _looks_like_svg(data):
+        return "SVG"
+    return "unrecognized data"
 
 
 def _valid_dependency_spec(spec: str) -> bool:
@@ -367,7 +334,7 @@ def _check_parse(source: str, errors: list[Issue]) -> str:
 def _check_examples(source: str, errors: list[Issue]) -> None:
     if extract_example_inputs(source) is None:
         errors.append(Issue(code="EXAMPLES_REQUIRED", message="example_inputs is required and must be a literal list"))
-    if _extract_example_settings(source) is None:
+    if extract_example_settings(source) is None:
         errors.append(
             Issue(code="EXAMPLES_REQUIRED", message="example_settings is required and must be a literal dict")
         )
@@ -406,7 +373,9 @@ def _check_png(path: Path, label: str, dim_max: int, errors: list[Issue]) -> Non
         return
     dims = png_dimensions(data)
     if dims is None:
-        errors.append(Issue(code="INVALID_PNG", message=f"{label} is not a valid PNG"))
+        errors.append(
+            Issue(code="INVALID_PNG", message=f"{label} is not a valid PNG (looks like {sniff_image_format(data)})")
+        )
         return
     width, height = dims
     if width > dim_max or height > dim_max:

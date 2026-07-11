@@ -201,6 +201,12 @@ def uninstall(node_id: str) -> InstallReceipt:
             file_path.unlink()
         except OSError as e:
             logger.warning("Could not delete community node file %s: %s", file_path, e)
+    # Community icons are namespaced "<node_id>__…" at install, so only those are removed.
+    if receipt.icon_file and receipt.icon_file.startswith(f"{node_id}__"):
+        try:
+            (storage.user_defined_nodes_icons / receipt.icon_file).unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("Could not delete community node icon %s: %s", receipt.icon_file, e)
     remove_receipt(node_id)
     logger.info("Uninstalled community node %s", node_id)
     return receipt
@@ -214,6 +220,22 @@ def _file_sha256(file_name: str) -> str | None:
         return None
 
 
+def _joined(receipt: InstallReceipt, current_hash: str) -> InstalledCommunityNode:
+    entry = registry.get(receipt.node_key)
+    node_name = ""
+    error = None
+    if entry is not None:
+        error = entry.error
+        if entry.node_class is not None:
+            node_name = entry.node_class().node_name
+    return InstalledCommunityNode(
+        receipt=receipt,
+        node_name=node_name,
+        modified_locally=current_hash != receipt.sha256,
+        error=error,
+    )
+
+
 def list_installed() -> list[InstalledCommunityNode]:
     """Receipts joined with registry state; prunes receipts whose file vanished."""
     receipts = load_receipts()
@@ -224,26 +246,31 @@ def list_installed() -> list[InstalledCommunityNode]:
         if current_hash is None:
             pruned.append(node_id)
             continue
-        entry = registry.get(receipt.node_key)
-        node_name = ""
-        error = None
-        if entry is not None:
-            error = entry.error
-            if entry.node_class is not None:
-                node_name = entry.node_class().node_name
-        installed.append(
-            InstalledCommunityNode(
-                receipt=receipt,
-                node_name=node_name,
-                modified_locally=current_hash != receipt.sha256,
-                error=error,
-            )
-        )
+        installed.append(_joined(receipt, current_hash))
     if pruned:
         remaining = {nid: r for nid, r in receipts.items() if nid not in pruned}
         save_receipts(remaining)
         logger.info("Pruned %d community receipt(s) with missing files", len(pruned))
     return installed
+
+
+def get_installed(node_id: str) -> InstalledCommunityNode | None:
+    """Single-node variant of list_installed: one receipt read, one file hash."""
+    receipt = load_receipts().get(node_id)
+    if receipt is None:
+        return None
+    current_hash = _file_sha256(receipt.file_name)
+    if current_hash is None:
+        remove_receipt(node_id)
+        return None
+    return _joined(receipt, current_hash)
+
+
+def _has_update(entry: CommunityIndexEntry, receipt: InstallReceipt) -> bool:
+    """Newer semver, or the same version republished with different pinned bytes."""
+    return semver_gt(entry.version, receipt.version) or (
+        entry.version == receipt.version and entry.artifacts.node.sha256 != receipt.sha256
+    )
 
 
 def check_updates(index: CommunityIndex) -> list[UpdateInfo]:
@@ -252,9 +279,8 @@ def check_updates(index: CommunityIndex) -> list[UpdateInfo]:
         entry = index.entry(receipt.node_id)
         if entry is None:
             continue
-        newer = semver_gt(entry.version, receipt.version)
         sha_changed = entry.version == receipt.version and entry.artifacts.node.sha256 != receipt.sha256
-        if newer or sha_changed:
+        if _has_update(entry, receipt):
             updates.append(
                 UpdateInfo(
                     node_id=receipt.node_id,
@@ -278,9 +304,7 @@ def install_state(
         if not is_version_compatible(entry.min_flowfile_version, app_version):
             return "incompatible"
         return "not_installed"
-    if semver_gt(entry.version, receipt.version) or (
-        entry.version == receipt.version and entry.artifacts.node.sha256 != receipt.sha256
-    ):
+    if _has_update(entry, receipt):
         return "update_available"
     if modified_locally:
         return "modified_locally"

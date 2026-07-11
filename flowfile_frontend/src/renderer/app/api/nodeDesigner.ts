@@ -210,3 +210,249 @@ export async function listCatalogCustomNodes(): Promise<CatalogCustomNode[]> {
   const response = await axios.get<CatalogCustomNode[]>(`${MOUNTS_BASE}/nodes`);
   return response.data;
 }
+
+// ---- Publish bundle + publish-prep screenshots ----
+// Router mounted at /community_nodes with NO trailing slash.
+const COMMUNITY_BASE = "/community_nodes";
+
+export type PublishSeverity = "error" | "warning";
+
+export interface PublishIssue {
+  code: string;
+  message: string;
+  severity: PublishSeverity;
+}
+
+export interface PublishBundleBody {
+  file_name: string;
+  license: string;
+  repository?: string;
+  description?: string;
+  category?: string;
+}
+
+export interface PublishCompletenessResponse {
+  ok: boolean;
+  issues: PublishIssue[];
+}
+
+export interface PublishScreenshot {
+  file_name: string;
+}
+
+/** Raised by publishBundle() when the backend 422s with the INCOMPLETE issue list. */
+export class PublishIncompleteError extends Error {
+  constructor(public readonly issues: PublishIssue[]) {
+    super("Node is not ready to publish");
+    this.name = "PublishIncompleteError";
+  }
+}
+
+async function issuesFromErrorBody(data: unknown): Promise<PublishIssue[]> {
+  try {
+    // responseType "blob" means a 422 error body arrives as a Blob, not parsed JSON.
+    let parsed: unknown = data;
+    if (data instanceof Blob) parsed = JSON.parse(await data.text());
+    else if (typeof data === "string") parsed = JSON.parse(data);
+    const detail = (parsed as { detail?: { issues?: PublishIssue[] } })?.detail;
+    return detail?.issues ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Dry check_only POST: the completeness report (errors + warnings) as JSON. */
+export async function checkPublishCompleteness(
+  body: PublishBundleBody,
+): Promise<PublishCompletenessResponse> {
+  const response = await axios.post<PublishCompletenessResponse>(
+    `${COMMUNITY_BASE}/publish-bundle`,
+    { ...body, check_only: true },
+  );
+  return response.data;
+}
+
+export async function publishBundle(body: PublishBundleBody): Promise<Blob> {
+  try {
+    const response = await axios.post(`${COMMUNITY_BASE}/publish-bundle`, body, {
+      responseType: "blob",
+    });
+    return response.data as Blob;
+  } catch (err) {
+    const axiosErr = err as AxiosError;
+    if (axiosErr.response?.status === 422) {
+      throw new PublishIncompleteError(await issuesFromErrorBody(axiosErr.response.data));
+    }
+    throw err;
+  }
+}
+
+export async function listPublishScreenshots(fileStem: string): Promise<PublishScreenshot[]> {
+  const response = await axios.get<PublishScreenshot[]>(
+    `${COMMUNITY_BASE}/screenshots/${encodeURIComponent(fileStem)}`,
+  );
+  return response.data;
+}
+
+export async function uploadPublishScreenshot(
+  fileStem: string,
+  file: File,
+): Promise<{ file_name: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await axios.post<{ file_name: string }>(
+    `${COMMUNITY_BASE}/screenshots/${encodeURIComponent(fileStem)}`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return response.data;
+}
+
+export async function deletePublishScreenshot(fileStem: string, fileName: string): Promise<void> {
+  await axios.delete(
+    `${COMMUNITY_BASE}/screenshots/${encodeURIComponent(fileStem)}/${encodeURIComponent(fileName)}`,
+  );
+}
+
+/** JWT-gated screenshot bytes as an object URL (raw <img src> would 401). */
+export async function fetchPublishScreenshotUrl(
+  fileStem: string,
+  fileName: string,
+): Promise<string | null> {
+  try {
+    const response = await axios.get(
+      `${COMMUNITY_BASE}/screenshots/${encodeURIComponent(fileStem)}/${encodeURIComponent(fileName)}`,
+      { responseType: "blob" },
+    );
+    return URL.createObjectURL(response.data as Blob);
+  } catch {
+    return null;
+  }
+}
+
+// ---- In-app GitHub publishing (device flow + PAT + PR) ----
+// Router mounted at /community_nodes/github with NO trailing slash. GitHub-domain
+// failures never return 401 (that would trip the JWT-refresh interceptor); they
+// carry a typed detail.error_code we surface as PublishPrBlockedError.
+const GITHUB_BASE = `${COMMUNITY_BASE}/github`;
+
+export interface GithubConnectStatus {
+  configured: boolean;
+  connected: boolean;
+  login: string;
+}
+
+export interface DeviceStartResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+export interface DevicePollResponse {
+  status: "pending" | "slow_down" | "connected";
+  interval?: number;
+  login?: string;
+}
+
+export interface GithubPatResponse {
+  login: string;
+  scopes_warning: string;
+}
+
+export interface PublishPrBody {
+  file_name: string;
+  license: string;
+  repository?: string;
+  description?: string;
+  category?: string;
+}
+
+export interface PublishPrResponse {
+  status: "created" | "already_open" | "fork_creating";
+  pr_url: string;
+  pr_number: number | null;
+  branch: string;
+  node_id: string;
+  version: string;
+  is_update: boolean;
+}
+
+/** A GitHub-domain publish failure carrying the backend's typed error_code. */
+export class PublishPrBlockedError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message || code);
+    this.name = "PublishPrBlockedError";
+  }
+}
+
+const GITHUB_BLOCKED_STATUSES = [400, 409, 410, 412, 502, 503];
+
+// Turn a typed GitHub-domain error body into PublishPrBlockedError; other errors
+// (network, unexpected) pass through unchanged for generic handling.
+function asGithubError(err: unknown): unknown {
+  const axiosErr = err as AxiosError;
+  const status = axiosErr.response?.status;
+  if (status && GITHUB_BLOCKED_STATUSES.includes(status)) {
+    const detail = (
+      axiosErr.response?.data as { detail?: { error_code?: string; message?: string } }
+    )?.detail;
+    return new PublishPrBlockedError(detail?.error_code ?? `HTTP_${status}`, detail?.message ?? "");
+  }
+  return err;
+}
+
+export async function getGithubStatus(): Promise<GithubConnectStatus> {
+  const response = await axios.get<GithubConnectStatus>(`${GITHUB_BASE}/status`);
+  return response.data;
+}
+
+export async function startGithubDevice(): Promise<DeviceStartResponse> {
+  try {
+    const response = await axios.post<DeviceStartResponse>(`${GITHUB_BASE}/device/start`);
+    return response.data;
+  } catch (err) {
+    throw asGithubError(err);
+  }
+}
+
+export async function pollGithubDevice(deviceCode: string): Promise<DevicePollResponse> {
+  try {
+    const response = await axios.post<DevicePollResponse>(`${GITHUB_BASE}/device/poll`, {
+      device_code: deviceCode,
+    });
+    return response.data;
+  } catch (err) {
+    throw asGithubError(err);
+  }
+}
+
+export async function saveGithubPat(token: string): Promise<GithubPatResponse> {
+  try {
+    const response = await axios.post<GithubPatResponse>(`${GITHUB_BASE}/pat`, { token });
+    return response.data;
+  } catch (err) {
+    throw asGithubError(err);
+  }
+}
+
+export async function disconnectGithub(): Promise<void> {
+  await axios.delete(`${GITHUB_BASE}/token`);
+}
+
+export async function publishPr(body: PublishPrBody): Promise<PublishPrResponse> {
+  try {
+    const response = await axios.post<PublishPrResponse>(`${COMMUNITY_BASE}/publish-pr`, body);
+    return response.data;
+  } catch (err) {
+    const axiosErr = err as AxiosError;
+    if (axiosErr.response?.status === 422) {
+      throw new PublishIncompleteError(await issuesFromErrorBody(axiosErr.response.data));
+    }
+    throw asGithubError(err);
+  }
+}

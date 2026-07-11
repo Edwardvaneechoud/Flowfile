@@ -1166,6 +1166,41 @@ def extract_example_inputs(source: str) -> list[dict[str, list]] | None:
     return None
 
 
+def extract_example_settings(source: str) -> dict | None:
+    """Best-effort exec-free lift of the node class's ``example_settings`` literal.
+
+    Mirrors ``extract_example_inputs`` for the settings companion. Returns the
+    section->values dict, or None when absent/non-literal/wrong shape.
+    """
+    try:
+        module = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    for stmt in module.body:
+        if not isinstance(stmt, ast.ClassDef):
+            continue
+        if not any((name := _dotted(base)) and name.split(".")[-1] == "CustomNodeBase" for base in stmt.bases):
+            continue
+        for item in stmt.body:
+            if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
+                target, value = item.targets[0].id, item.value
+            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.value is not None:
+                target, value = item.target.id, item.value
+            else:
+                continue
+            if target != "example_settings":
+                continue
+            try:
+                data = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return None
+            if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+                return None
+            return data
+        return None
+    return None
+
+
 def extract_manifest(source: str) -> NodeManifest:
     """Best-effort exec-free listing metadata; never raises."""
     try:

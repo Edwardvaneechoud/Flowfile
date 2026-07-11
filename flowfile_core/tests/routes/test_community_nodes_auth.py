@@ -62,6 +62,7 @@ UNAUTHENTICATED_REQUESTS = [
     ("GET", "/community_nodes/screenshots/some_stem", {}),
     ("GET", "/community_nodes/screenshots/some_stem/shot.png", {}),
     ("DELETE", "/community_nodes/screenshots/some_stem/shot.png", {}),
+    ("POST", "/community_nodes/publish-bundle", {"json": {"file_name": "x.py", "license": "MIT"}}),
 ]
 
 

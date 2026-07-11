@@ -215,9 +215,7 @@ async function wrap<T>(p: Promise<{ data: T }>): Promise<T> {
 }
 
 export function fetchIndex(refresh = false): Promise<CommunityIndexResponse> {
-  return wrap(
-    axios.get<CommunityIndexResponse>(`${BASE}/index`, { params: { refresh } }),
-  );
+  return wrap(axios.get<CommunityIndexResponse>(`${BASE}/index`, { params: { refresh } }));
 }
 
 export function fetchNode(nodeId: string): Promise<CommunityNodeDetail> {

@@ -121,6 +121,27 @@ def get_community_cache_ttl() -> int:
         return 3600
 
 
+# OAuth App client id for GitHub device-flow publishing ("Flowfile Community
+# Publishing", public by design; no secret exists). Empty ⇒ device flow disabled
+# (PAT paste + bundle download still work).
+COMMUNITY_GITHUB_CLIENT_ID_DEFAULT = "Ov23liiN1Z7z70Reg0zI"
+
+
+def get_community_github_client_id() -> str:
+    """Client id of the GitHub OAuth App used for device-flow publishing.
+
+    Empty ⇒ device flow disabled; the PAT-paste path and bundle download still work
+    (fixture mode never touches GitHub). Resolution: ``FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID``
+    env var (an explicitly empty value force-disables — tests rely on this), then the
+    local ``.env`` file, then ``COMMUNITY_GITHUB_CLIENT_ID_DEFAULT`` (baked for releases).
+    Read per call; the ``.env`` file is snapshotted at import by Starlette ``Config``.
+    """
+    env_value = os.environ.get("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID")
+    if env_value is not None:
+        return env_value
+    return config("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID", cast=str, default="") or COMMUNITY_GITHUB_CLIENT_ID_DEFAULT
+
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Backend Server")

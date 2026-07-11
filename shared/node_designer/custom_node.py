@@ -373,6 +373,11 @@ class NodeSettingsBuilder:
         return self._settings
 
 
+def node_key_for(node_name: str) -> str:
+    """Canonical node-type slug for a node name; flows persist it as node_type."""
+    return node_name.replace(" ", "_").lower()
+
+
 class CustomNodeBase(BaseModel):
     """
     The base class for creating a custom node in Flowfile.
@@ -429,7 +434,7 @@ class CustomNodeBase(BaseModel):
     @property
     def item(self):
         """A unique identifier for the node, derived from its name."""
-        return self.node_name.replace(" ", "_").lower()
+        return node_key_for(self.node_name)
 
     class Config:
         arbitrary_types_allowed = True

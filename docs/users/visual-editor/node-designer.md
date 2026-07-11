@@ -41,7 +41,7 @@ The toolbar at the top has **Browse** (open an existing node), **New** (start bl
 
 ## Node Settings panel
 
-The left panel holds everything about the node except its form and logic. It is organized into four collapsible groups.
+The left panel holds everything about the node except its form and logic. It is organized into five collapsible groups.
 
 ### Identity
 
@@ -64,6 +64,16 @@ The [execution environment picker](#execution-environment) — Local or Isolated
 
 - **Title** — the display name shown on the node.
 - **Description** — the intro text shown in the node's settings drawer and the palette tooltip. [Markdown is supported](#markdown-in-descriptions).
+
+### Publishing
+
+Optional metadata used when you share the node through the community registry:
+
+- **Author** — your name or GitHub handle.
+- **Version** — a semver string (for example `1.0.0`).
+- **Tags** — search keywords for the community browser.
+
+These fields are absent by default and don't affect how the node runs — they only matter when you publish it. **Publish** saves any pending changes automatically before it opens, so these edits are the ones it uses. See [Community Nodes](community-nodes.md) for the full publish-and-install walkthrough.
 
 ---
 

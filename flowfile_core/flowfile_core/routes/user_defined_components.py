@@ -13,7 +13,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
-from flowfile_core.flowfile.node_designer.parsing import parse_source
+from flowfile_core.flowfile.node_designer.parsing import extract_manifest, parse_source
 from flowfile_core.flowfile.node_designer.state import DesignerState, ParseResult
 from flowfile_core.flowfile.user_defined.dry_run import DryRunRequest, DryRunResponse, run_dry_run
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, LoadedNode, registry
@@ -80,55 +80,25 @@ def _parse_result_for_file(path: Path, content: str) -> ParseResult:
 
 
 def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
-    """Extract node metadata from a Python file by parsing its AST (no code execution)."""
+    """Best-effort exec-free metadata for a broken node file, mirroring the healthy-path shape."""
     info = CustomNodeInfo(file_name=file_path.name)
-
     try:
-        with open(file_path, encoding="utf-8") as f:
-            content = f.read()
+        content = file_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Failed to read node info from {file_path}: {e}")
+        return info
 
-        tree = ast.parse(content)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                for item in node.body:
-                    attr_name = None
-                    value = None
-
-                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                        attr_name = item.target.id
-                        if item.value and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
-                            value = item.value.value
-                    elif isinstance(item, ast.Assign):
-                        for target in item.targets:
-                            if isinstance(target, ast.Name):
-                                attr_name = target.id
-                                if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
-                                    value = item.value.value
-                                break
-
-                    if attr_name and value:
-                        if attr_name == "node_name":
-                            info.node_name = value
-                        elif attr_name == "node_category":
-                            info.node_category = value
-                        elif attr_name == "title":
-                            info.title = value
-                        elif attr_name == "intro":
-                            info.intro = value
-                        elif attr_name == "author":
-                            info.author = value
-                        elif attr_name == "version":
-                            info.version = value
-                        elif attr_name == "node_icon":
-                            info.node_icon = value
-
-                if info.node_name:
-                    break
-
-    except Exception as e:
-        logger.warning(f"Failed to parse node info from {file_path}: {e}")
-
+    manifest = extract_manifest(content)
+    if manifest.node_name:
+        info.node_name = manifest.node_name
+    info.node_category = manifest.node_category
+    info.title = manifest.title
+    info.intro = manifest.intro
+    info.author = manifest.author
+    info.version = manifest.version
+    info.tags = list(manifest.tags)
+    info.node_icon = manifest.node_icon
+    info.environment = manifest.environment.kind
     return info
 
 
@@ -385,7 +355,22 @@ def delete_custom_node(file_name: str, current_user=Depends(get_current_active_u
         logger.error(f"Failed to delete custom node file: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}") from e
 
+    _drop_community_receipt_for(safe_name)
+
     return {"success": True, "file_name": safe_name, "message": f"Node '{safe_name}' deleted successfully"}
+
+
+def _drop_community_receipt_for(file_name: str) -> None:
+    """Deleting an installed community node through this legacy route must not orphan its receipt."""
+    try:
+        from flowfile_core.flowfile.community_nodes.receipts import load_receipts, remove_receipt
+
+        for node_id, receipt in load_receipts().items():
+            if receipt.file_name == file_name:
+                remove_receipt(node_id)
+                return
+    except Exception as e:
+        logger.warning(f"Could not reconcile community receipts after deleting {file_name}: {e}")
 
 
 @router.post("/rescan", summary="Rescan the custom nodes directory")

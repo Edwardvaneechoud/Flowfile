@@ -27,8 +27,10 @@ ALLOWED_LICENSES = ("MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "MPL-2.
 
 
 def slugify_node_name(node_name: str) -> str:
-    """Must stay byte-identical to CustomNodeBase.item — flows persist this slug as node_type."""
-    return node_name.replace(" ", "_").lower()
+    """Canonical node-type slug (CustomNodeBase.item); flows persist it as node_type."""
+    from shared.node_designer.custom_node import node_key_for
+
+    return node_key_for(node_name)
 
 
 def parse_semver(value: str) -> tuple[int, int, int] | None:

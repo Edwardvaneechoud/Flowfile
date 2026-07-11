@@ -15,6 +15,7 @@ Two modes, selected by ``settings.get_community_index_url()``:
 """
 
 import hashlib
+import shutil
 import threading
 import time
 from datetime import datetime, timezone
@@ -82,6 +83,11 @@ class CommunityClient:
         self._mem_url: str = ""
         self._mem_at: float = 0.0
         self._mem_fetched_at: str = ""
+        # Popularity is memory-cached (None included) so a browse never re-fetches
+        # within the TTL and a dead endpoint is not hammered per request.
+        self._mem_popularity: PopularityData | None = None
+        self._mem_popularity_url: str = ""
+        self._mem_popularity_at: float = 0.0
 
     def _http(self) -> httpx.Client:
         if self._http_client is None:
@@ -132,12 +138,7 @@ class CommunityClient:
 
         now = time.monotonic()
         ttl = get_community_cache_ttl()
-        if (
-            not refresh
-            and self._mem_index is not None
-            and self._mem_url == url
-            and (now - self._mem_at) < ttl
-        ):
+        if not refresh and self._mem_index is not None and self._mem_url == url and (now - self._mem_at) < ttl:
             return self._mem_index, {"fetched_at": self._mem_fetched_at, "source": "remote", "stale": False}
 
         etag = self._read_cached_etag()
@@ -175,7 +176,18 @@ class CommunityClient:
 
         self._write_cached_index(data, resp.headers.get("etag", ""))
         self._store_mem(url, index)
+        self._prune_media_cache(index)
         return index, {"fetched_at": self._mem_fetched_at, "source": "remote", "stale": False}
+
+    def _prune_media_cache(self, index: CommunityIndex) -> None:
+        """Drop cached media for nodes no longer in the index so the cache cannot grow unbounded."""
+        media_root = self._cache_dir() / "media"
+        if not media_root.is_dir():
+            return
+        keep = {entry.id for entry in index.nodes}
+        for child in media_root.iterdir():
+            if child.is_dir() and child.name not in keep:
+                shutil.rmtree(child, ignore_errors=True)
 
     def _store_mem(self, url: str, index: CommunityIndex) -> None:
         self._mem_index = index
@@ -227,6 +239,15 @@ class CommunityClient:
             return self._read_popularity_file(Path(url))
         if not url.startswith("https://"):
             return None
+        if self._mem_popularity_url == url and (time.monotonic() - self._mem_popularity_at) < get_community_cache_ttl():
+            return self._mem_popularity
+        popularity = self._fetch_popularity(url)
+        self._mem_popularity = popularity
+        self._mem_popularity_url = url
+        self._mem_popularity_at = time.monotonic()
+        return popularity
+
+    def _fetch_popularity(self, url: str) -> PopularityData | None:
         try:
             resp = self._http().get(url)
         except httpx.HTTPError:
@@ -272,12 +293,16 @@ class CommunityClient:
         return data
 
     def _fetch_artifact_bytes(self, path: str, commit: str, cap: int) -> bytes:
-        if ".." in Path(path).parts:
+        if Path(path).is_absolute() or ".." in Path(path).parts:
             raise CommunityUnavailableError(f"Illegal artifact path: {path!r}")
 
         index_url = get_community_index_url()
         if _is_fixture(index_url):
-            file_path = Path(index_url).parent / path
+            fixture_root = Path(index_url).parent.resolve()
+            file_path = (fixture_root / path).resolve()
+            # An index file is untrusted input: never read outside its own tree.
+            if not file_path.is_relative_to(fixture_root):
+                raise CommunityUnavailableError(f"Illegal artifact path: {path!r}")
             try:
                 data = file_path.read_bytes()
             except OSError as e:

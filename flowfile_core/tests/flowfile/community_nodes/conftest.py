@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from flowfile_core.flowfile.user_defined.registry import registry
+from shared import storage
+
 BUNDLE_CORPUS = Path(__file__).parent / "bundle_corpus"
 VALID_BUNDLE = BUNDLE_CORPUS / "valid"
 VALID_ID = "trim_text"
@@ -42,3 +45,91 @@ def copy_valid_bundle(dst: Path, *, name: str = VALID_ID) -> Path:
 def valid_bundle(tmp_path: Path) -> Path:
     """A correctly-named copy of the canonical valid bundle in a temp dir."""
     return copy_valid_bundle(tmp_path)
+
+
+# ------------------------------------------------ designed-node fixtures (publish / PR)
+# Shared so the publish and community-github route suites write nodes identically.
+
+NODE_TEMPLATE = '''
+import polars as pl
+from shared.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
+
+
+class {class_name}(CustomNodeBase):
+    node_name: str = "{node_name}"
+    node_category: str = "Community Test"
+    node_icon: str = "{node_icon}"
+    intro: str = "{intro}"
+    author: str = "{author}"
+    version: str = "{version}"
+    tags: list = {tags}
+{examples}
+    settings_schema: NodeSettings = NodeSettings(
+        main=Section(title="Main", value=TextInput(label="Value", default="x")),
+    )
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+
+EXAMPLES_BLOCK = (
+    '    example_inputs: list = [{"value": ["a", "b"]}]\n'
+    '    example_settings: dict = {"main": {"value": "x"}}\n'
+)
+
+
+def _valid_png(width: int = 32, height: int = 32) -> bytes:
+    """Minimal PNG whose IHDR carries the given dimensions (png_dimensions-parseable)."""
+    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", width, height) + b"\x00" * 20
+
+
+@pytest.fixture
+def isolated_storage(tmp_path):
+    original_base = storage._base_dir
+    storage._base_dir = tmp_path / "storage"
+    storage.user_defined_nodes_icons.mkdir(parents=True, exist_ok=True)
+    storage.user_defined_nodes_screenshots.mkdir(parents=True, exist_ok=True)
+    registry.scan()
+    yield tmp_path
+    storage._base_dir = original_base
+    registry.scan()
+
+
+def _write_node(
+    *,
+    node_name: str = "Mood Emoji",
+    class_name: str = "MoodEmoji",
+    node_icon: str = "user-defined-icon.png",
+    intro: str = "Adds a mood emoji column to your rows",
+    author: str = "octocat",
+    version: str = "1.0.0",
+    tags: list | None = None,
+    with_examples: bool = True,
+):
+    source = NODE_TEMPLATE.format(
+        class_name=class_name,
+        node_name=node_name,
+        node_icon=node_icon,
+        intro=intro,
+        author=author,
+        version=version,
+        tags=repr(tags or ["fun"]),
+        examples=EXAMPLES_BLOCK if with_examples else "",
+    )
+    file_name = node_name.replace(" ", "_").lower() + ".py"
+    path = storage.user_defined_nodes_directory / file_name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    registry.load_file(path)
+    return registry.get_by_file(file_name)
+
+
+def _add_icon(name: str, data: bytes) -> None:
+    storage.user_defined_nodes_icons.mkdir(parents=True, exist_ok=True)
+    (storage.user_defined_nodes_icons / name).write_bytes(data)
+
+
+def _add_screenshot(file_stem: str, name: str, data: bytes) -> None:
+    d = storage.user_defined_nodes_screenshots / file_stem
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_bytes(data)

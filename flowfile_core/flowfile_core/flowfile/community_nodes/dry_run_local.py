@@ -18,8 +18,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from flowfile_core.flowfile.community_nodes.validation import _extract_example_settings
-from flowfile_core.flowfile.node_designer.parsing import extract_example_inputs, extract_manifest
+from flowfile_core.flowfile.node_designer.parsing import (
+    extract_example_inputs,
+    extract_example_settings,
+    extract_manifest,
+)
 
 _MAX_ROW_LIMIT = 1000
 _MAX_TIMEOUT = 120
@@ -130,16 +133,18 @@ def run_bundle_dry_run(folder: Path, *, timeout_seconds: int = 120, row_limit: i
         "number_of_inputs": manifest.number_of_inputs,
         "row_limit": row_limit,
         "example_inputs": extract_example_inputs(source) or [],
-        "example_settings": _extract_example_settings(source) or {},
+        "example_settings": extract_example_settings(source) or {},
     }
 
     started = time.monotonic()
-    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=True) as cfg:
-        json.dump(config, cfg)
-        cfg.flush()
+    # Windows cannot open a NamedTemporaryFile that the parent still holds, so the
+    # config lives in its own temp dir and is closed before the child starts.
+    with tempfile.TemporaryDirectory(prefix="ff-dry-run-") as tmp_dir:
+        cfg_path = Path(tmp_dir) / "config.json"
+        cfg_path.write_text(json.dumps(config), encoding="utf-8")
         try:
             completed = subprocess.run(
-                [sys.executable, "-c", _RUNNER, str(folder), cfg.name],
+                [sys.executable, "-c", _RUNNER, str(folder), str(cfg_path)],
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
