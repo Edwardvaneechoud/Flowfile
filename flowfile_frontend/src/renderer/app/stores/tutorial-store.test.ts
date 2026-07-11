@@ -105,7 +105,7 @@ describe("notify / advance", () => {
   });
 
   it("ignores events during a slow transition, then catches up on landing", async () => {
-    let release: () => void = () => {};
+    let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const tutorial = makeTutorial([
       step("welcome", { onExit: () => gate }),
