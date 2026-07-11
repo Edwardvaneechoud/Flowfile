@@ -27,7 +27,7 @@ app.use(stores);
 app.use(router);
 app.use(i18n);
 app.use(ElementPlus, {
-  size: "large",
+  size: "small",
   zIndex: 2000,
 });
 

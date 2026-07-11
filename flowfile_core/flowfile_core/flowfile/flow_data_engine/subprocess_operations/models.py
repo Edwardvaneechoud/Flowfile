@@ -52,6 +52,33 @@ class FuzzyJoinInput(BaseModel):
     flowfile_flow_id: int
 
 
+class CustomNodeExecuteInput(BaseModel):
+    """Outgoing payload for ``POST /execute_custom_node`` on the worker.
+
+    Mirrors flowfile_worker.models.CustomNodeExecuteInput — keep in sync.
+    """
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    node_source: str
+    class_name: str | None = None
+    settings_values: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    secrets: dict[str, str] = Field(default_factory=dict)
+    inputs: list[Base64Bytes] = Field(default_factory=list)
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
+    dry_run: bool = False
+    row_limit: int | None = None
+    user_id: int | None = None
+    flowfile_flow_id: int | None = 1
+    flowfile_node_id: int | str | None = -1
+
+
+def custom_node_task_id(node_hash: str) -> str:
+    """Distinct from the bare node-hash id used by the later result-store task,
+    so neither the worker status entry nor the ``<hash>.arrow`` file is overwritten."""
+    return f"{node_hash}-custom-node"
+
+
 class TrainModelInput(BaseModel):
     """Outgoing payload for ``POST /train_ml_model`` on the worker."""
 

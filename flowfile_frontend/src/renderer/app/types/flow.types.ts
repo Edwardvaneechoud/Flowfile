@@ -106,10 +106,15 @@ export interface NodeTemplate {
   image: string;
   multi: boolean;
   node_group: string;
+  // Display name for dynamic (custom-category) palette groups; null for built-ins.
+  node_group_label?: string | null;
   prod_ready: boolean;
   drawer_title: string;
   drawer_intro: string;
   custom_node: boolean;
+  // "local" | "kernel" for custom nodes; null for built-ins.
+  execution_environment?: string | null;
+  dependencies?: string[] | null;
   tags?: string[];
   output_names?: string[];
   // True for nodes whose handles come from per-instance input_names/output_names

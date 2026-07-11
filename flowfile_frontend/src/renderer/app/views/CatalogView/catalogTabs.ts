@@ -12,6 +12,7 @@ export const CATALOG_TAB_KEYS = [
   "notebook",
   "visuals",
   "apis",
+  "customNodes",
 ] as const;
 
 export type CatalogTabKey = (typeof CATALOG_TAB_KEYS)[number];
@@ -71,5 +72,11 @@ export const catalogTabs: CatalogTabDef[] = [
     label: "APIs",
     icon: "fa-solid fa-plug",
     sidebarKey: "menu.catalogApis",
+  },
+  {
+    key: "customNodes",
+    label: "Custom Nodes",
+    icon: "fa-solid fa-cube",
+    sidebarKey: "menu.catalogCustomNodes",
   },
 ];

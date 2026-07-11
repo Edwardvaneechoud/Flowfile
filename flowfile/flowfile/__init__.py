@@ -13,6 +13,7 @@ __version__ = get_version()
 
 import logging
 import os
+import sys
 
 os.environ["FLOWFILE_WORKER_PORT"] = "63578"
 os.environ["FLOWFILE_SINGLE_FILE_MODE"] = "1"
@@ -130,6 +131,10 @@ from flowfile_frame.utils import create_flow_graph
 
 LazyFrame = FlowFrame
 DataFrame = FlowFrame
+
+# Bind node_designer as a real submodule so `from flowfile.node_designer import ...`
+# resolves (it is otherwise only an attribute); the os.path idiom.
+sys.modules[f"{__name__}.node_designer"] = node_designer
 
 __all__ = [
     # Core FlowFrame classes

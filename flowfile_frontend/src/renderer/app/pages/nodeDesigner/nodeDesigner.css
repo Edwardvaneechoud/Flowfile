@@ -15,7 +15,10 @@
 }
 
 .panel-header {
-  padding: var(--spacing-3) var(--spacing-4);
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--spacing-4);
   border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
   background-color: var(--color-background-secondary);
@@ -23,11 +26,9 @@
 
 .panel-header h3 {
   margin: 0;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .panel-content {
@@ -38,43 +39,7 @@
   height: 0;
 }
 
-/* Node Designer specific layout */
-.node-designer-container {
-  display: flex;
-  height: 100%;
-  background-color: var(--color-background-secondary);
-}
-
-.node-designer-sidebar {
-  width: 280px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--color-border-primary);
-  background-color: var(--color-background-primary);
-  overflow-y: auto;
-}
-
-.node-designer-canvas {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-}
-
-.node-designer-properties {
-  width: 320px;
-  flex-shrink: 0;
-  border-left: 1px solid var(--color-border-primary);
-  background-color: var(--color-background-primary);
-  overflow-y: auto;
-}
-
-/* Component list styles
-   Note: .component-list is currently unused, .component-item is used. */
-.component-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
+/* Component row inside the WYSIWYG form canvas / drawer */
 .component-item {
   display: flex;
   align-items: center;
@@ -93,87 +58,4 @@
 
 .component-item:last-child {
   border-bottom: none;
-}
-
-.component-icon {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-secondary);
-}
-
-/* Property editor styles */
-.property-group {
-  margin-bottom: var(--spacing-4);
-}
-
-.property-group-title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: var(--spacing-2);
-  padding-bottom: var(--spacing-1);
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.property-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-  margin-bottom: var(--spacing-3);
-}
-
-.property-label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
-}
-
-.property-input {
-  width: 100%;
-  padding: var(--spacing-2);
-  font-size: var(--font-size-sm);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background-color: var(--color-background-primary);
-  color: var(--color-text-primary);
-  transition: border-color var(--transition-fast);
-}
-
-.property-input:focus {
-  outline: none;
-  border-color: var(--input-border-focus);
-}
-
-/* Validation message styles */
-.validation-message {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  margin-bottom: var(--spacing-2);
-}
-
-.validation-message.is-error {
-  background-color: var(--color-danger-light);
-  color: var(--color-danger);
-  border: 1px solid var(--color-danger);
-}
-
-.validation-message.is-warning {
-  background-color: var(--color-warning-light);
-  color: var(--color-warning);
-  border: 1px solid var(--color-warning);
-}
-
-.validation-message.is-success {
-  background-color: var(--color-success-light);
-  color: var(--color-success);
-  border: 1px solid var(--color-success);
 }

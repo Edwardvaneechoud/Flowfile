@@ -10,7 +10,7 @@
       filterable
       :placeholder="schema.multiple ? 'Select columns...' : 'Select a column...'"
       style="width: 100%"
-      size="large"
+      size="small"
       @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option
@@ -49,14 +49,18 @@ const props = defineProps({
 defineEmits(["update:modelValue"]);
 
 const filteredColumns = computed(() => {
-  if (!props.schema.data_types || props.schema.data_types === "ALL") {
+  const dataTypes = props.schema.data_types;
+  if (!dataTypes || dataTypes === "ALL") {
     return props.incomingColumns;
   }
 
-  if (Array.isArray(props.schema.data_types)) {
-    return props.incomingColumns.filter((column) => {
-      return props.schema.data_types.includes(column.data_type);
-    });
+  if (Array.isArray(dataTypes)) {
+    // A data_types entry is a specific polars type ("Int64") or a group ("Numeric"),
+    // so a column matches on either its concrete dtype or its data_type_group.
+    return props.incomingColumns.filter(
+      (column) =>
+        dataTypes.includes(column.data_type) || dataTypes.includes(column.data_type_group),
+    );
   }
 
   return props.incomingColumns;

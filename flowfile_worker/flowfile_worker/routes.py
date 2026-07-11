@@ -23,6 +23,7 @@ from flowfile_worker.external_sources.sql_source.models import DatabaseReadSetti
 from flowfile_worker.spawner import (
     process_manager,
     start_apply_model_process,
+    start_custom_node_process,
     start_fuzzy_process,
     start_generic_process,
     start_process,
@@ -1091,6 +1092,44 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
         return status
     except Exception as e:
         logger.error(f"Error in fuzzy join: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/execute_custom_node")
+async def execute_custom_node(
+    custom_node_input: models.CustomNodeExecuteInput, background_tasks: BackgroundTasks
+) -> models.Status:
+    """Execute a user custom node's process() in a spawned subprocess.
+
+    The result payload (output paths + row counts, preview/logs for dry runs)
+    comes back as JSON via the status endpoint (result_type="other").
+    """
+    logger.info("Starting custom node execution")
+    try:
+        default_cache_dir = create_and_get_default_cache_dir(custom_node_input.flowfile_flow_id)
+        custom_node_input.task_id = (
+            str(uuid.uuid4()) if custom_node_input.task_id is None else custom_node_input.task_id
+        )
+        cache_dir = custom_node_input.cache_dir if custom_node_input.cache_dir is not None else default_cache_dir
+
+        file_path = os.path.join(cache_dir, f"{custom_node_input.task_id}.arrow")
+        status = models.Status(
+            background_task_id=custom_node_input.task_id,
+            status="Starting",
+            file_ref=file_path,
+            result_type="other",
+        )
+        status_dict[custom_node_input.task_id] = status
+        background_tasks.add_task(
+            start_custom_node_process,
+            custom_node_input=custom_node_input,
+            file_ref=file_path,
+            task_id=custom_node_input.task_id,
+        )
+        logger.info(f"Started custom node task: {custom_node_input.task_id}")
+        return status
+    except Exception as e:
+        logger.error(f"Error starting custom node execution: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

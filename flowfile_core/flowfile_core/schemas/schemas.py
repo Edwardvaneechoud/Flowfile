@@ -97,14 +97,21 @@ def _get_custom_node_store():
     return _custom_node_store_cache
 
 
-def get_settings_class_for_node_type(node_type: str):
-    """Get the settings class for a node type, supporting both standard and user-defined nodes."""
+def get_settings_class_for_node_type(node_type: str, setting_data: dict | None = None):
+    """Get the settings class for a node type, supporting both standard and user-defined nodes.
+
+    ``setting_data`` (the raw stored settings dict, when available) lets flows
+    referencing a custom node that is missing from the store still resolve to
+    ``UserDefinedNode`` instead of failing as an unknown type.
+    """
     model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
-    if model_class is None:
-        if node_type in _get_custom_node_store():
-            return input_schema.UserDefinedNode
-        return None
-    return model_class
+    if model_class is not None:
+        return model_class
+    if node_type in _get_custom_node_store():
+        return input_schema.UserDefinedNode
+    if isinstance(setting_data, dict) and (setting_data.get("is_user_defined") or "settings" in setting_data):
+        return input_schema.UserDefinedNode
+    return None
 
 
 def is_valid_execution_location_in_current_global_settings(execution_location: ExecutionLocationsLiteral) -> bool:
@@ -320,6 +327,12 @@ class FlowfileNode(BaseModel):
             return value
         if hasattr(value, "to_yaml_dict"):
             return value.to_yaml_dict()
+        if isinstance(value, input_schema.UserDefinedNode):
+            # Persist the marker so flows reopen gracefully even when the node
+            # type is no longer installed (settings-class resolution).
+            data = value.model_dump(exclude=self._setting_input_exclude)
+            data["is_user_defined"] = True
+            return data
         return value.model_dump(exclude=self._setting_input_exclude)
 
 
@@ -601,11 +614,15 @@ class NodeTemplate(BaseModel):
     node_type: NodeTypeLiteral
     transform_type: TransformTypeLiteral
     node_group: str
+    # Display name for dynamic (custom-category) palette groups; None for built-ins.
+    node_group_label: str | None = None
     prod_ready: bool = True
     can_be_start: bool = False
     drawer_title: str = "Node title"
     drawer_intro: str = "Drawer into"
     custom_node: bool | None = False
+    execution_environment: str | None = None
+    dependencies: list[str] | None = None
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
     # Per-instance input handles (run_flow): connections are keyed by target
@@ -653,7 +670,7 @@ class NodeInformation(BaseModel):
             return v
 
         node_type = info.data.get("type")
-        model_class = get_settings_class_for_node_type(node_type)
+        model_class = get_settings_class_for_node_type(node_type, v if isinstance(v, dict) else None)
 
         if model_class is None:
             raise ValueError(f"Unknown node type: {node_type}")

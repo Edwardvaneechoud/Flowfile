@@ -34,12 +34,12 @@ class GreetingNode(nd.CustomNodeBase):
 
     settings_schema: GreetingSettings = GreetingSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-        df = inputs[0]
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        lf = inputs[0]
         name_col = self.settings_schema.main_config.name_column.value
         style = self.settings_schema.main_config.greeting.value
         word = "Hello" if style == "formal" else "Hey"
-        return df.with_columns(
+        return lf.with_columns(
             pl.concat_str([pl.lit(f"{word}, "), pl.col(name_col)]).alias("greeting")
         )
 # --8<-- [end:example]
@@ -49,8 +49,8 @@ node.settings_schema.populate_values(
     {"main_config": {"name_column": "name", "greeting": "formal"}}
 )
 
-frame = pl.DataFrame({"name": ["Alice", "Bob"]})
-result = node.process(frame)
+frame = pl.LazyFrame({"name": ["Alice", "Bob"]})
+result = node.process(frame).collect()
 
 assert result.columns == ["name", "greeting"]
 assert result["greeting"].to_list() == ["Hello, Alice", "Hello, Bob"]

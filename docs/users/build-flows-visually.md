@@ -16,6 +16,8 @@ Most flows lean on the same five nodes: Read data, Filter data, Formula, Join, a
 
 ![Flowfile's node palette, grouped into its seven categories — Input Sources, Transformations, Combine Operations, Aggregations, Machine Learning, Output Operations, User Defined Operations — with the five everyday workhorses (Read data, Filter data, Formula, Join, Group by) highlighted in cyan and the rest dimmed.](../assets/images/guides/building-flows/node-palette-annotated.svg)
 
+And if the palette doesn't have the operation you need, you can add it yourself — the [Node Designer](visual-editor/node-designer.md) builds a custom transformation into a real palette node with its own settings form, no code file to write by hand. More on that in [Grow the toolkit](#7-grow-the-toolkit).
+
 
 ## 3. Write the logic as formulas
 

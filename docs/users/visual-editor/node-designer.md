@@ -1,353 +1,275 @@
 # Node Designer
 
-The Node Designer lets you build reusable custom nodes visually — no Python files required. Drag UI components onto a canvas, configure their properties, and write transformation logic; your nodes then appear in the palette alongside the built-in ones.
+The Node Designer lets you build reusable custom nodes visually — no Python file to write by hand. When the palette doesn't have the operation you need, you build it here: drag controls to lay out the settings form, write the transformation as one small `process` method, test it against sample data, and save. Your node then appears in the palette alongside the built-in ones, with its own settings form — usable by anyone on your team, whether or not they code.
+
+The node's `.py` file is the single source of truth. The designer writes it, and — because a well-formed node file round-trips — it can reopen that file and load it straight back into the visual editor. Hand-written files that stay within the visual subset reopen visually too; anything more exotic opens in code-only mode.
 
 !!! info "Not in Flowfile Lite"
     The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
 
-![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.png)
-
-*The Node Designer with a "Prefixer" node being created*
+![Node Designer Interface](../../assets/images/guides/node-designer/custom-node-designer.gif)
 
 ---
 
 ## Quick Start
 
-1. Open **Node Designer** from the sidebar menu
-2. Set your node's name and category
-3. Drag components from the left panel into a section
-4. Write your transformation code in the Process Method editor
-5. Click **Save** to add your node to the palette
+!!! tip "Prefer to follow along?"
+    The [**Build your first custom node**](custom-node-tutorial.md) tutorial walks the whole thing click-by-click in a few minutes. For a node that needs a third-party library, see [K-Means on a Kernel](kmeans-kernel-node.md). This page is the reference behind them.
 
-!!! tip "Restart Required"
-    After saving a new node, refresh Flowfile (`Cmd/Ctrl + R`) to load it into the node palette.
+1. Open **Node Designer** from the sidebar menu.
+2. In the left **Node Settings** panel, set the node's name and category.
+3. On the **Form** tab, add a group and drop controls into it with **Add a control**.
+4. On the **Code** tab, write your `process` logic (body only — the signature is fixed).
+5. On the **Test** tab, paste a small sample and run the node to confirm it works.
+6. Click **Save**. The node loads immediately — no restart.
 
----
-
-## Interface Overview
-
-The Node Designer uses a three-panel layout:
-
-<div class="grid cards" markdown>
-
--   **Component Palette** (Left)
-
-    ---
-
-    Draggable UI components for building your node's settings interface
-
--   **Design Canvas** (Center)
-
-    ---
-
-    Visual preview of your node's configuration panel with metadata settings
-
--   **Properties Panel** (Right)
-
-    ---
-
-    Configuration options for the currently selected component
-
-</div>
+!!! tip "No restart needed"
+    Flowfile hot-reloads the custom-nodes directory. A saved node is available in the palette right away. If a file was added outside the designer while Flowfile was open, click **Rescan** (in the Node Designer's **Browse** dialog or the Catalog's **Custom Nodes** tab) to pick it up.
 
 ---
 
-## Design Canvas
+## Layout
 
-The center panel is where you define your node's identity and structure.
+The designer has two regions:
 
-### Node Metadata
+- **Node Settings** (left) — the node's identity, I/O, execution environment, and description, grouped into collapsible sections.
+- **Workspace** (center/right) — three tabs: **Form**, **Code**, and **Test**.
 
-![Node Metadata Section](../../assets/images/guides/node-designer/node-metadata.png)
-
-| Field | Description                          | Example |
-|-------|--------------------------------------|---------|
-| **Node Name** | Internal identifier (no spaces)      | `Prefixer` |
-| **Category** | Where it appears in the palette | `Custom`, `Text`, `Transform` |
-| **Title** | Display name shown on the node       | `Add prefixes to columns` |
-| **Description** | Tooltip text explaining the node     | `Make columns easy to recognize...` |
-| **Number of Inputs** | How many input connections           | `1` (most common) |
-| **Number of Outputs** | How many output connections          | `1` (most common) |
-| **Node Icon** | Visual identifier in the palette     | Select from icon library |
-
-!!! warning "Features Under Development"
-    **Category** and **Number of Outputs** are currently under development.
-    For now, custom nodes appear in the default category, and locally-executed nodes support a single output. Nodes that run on a [kernel](#kernel-execution) can define multiple named outputs — see [Kernel Execution](#kernel-execution) below.
-
-### UI Sections
-
-Sections group related components together. Each section:
-
-- Has a **Variable Name** (used in code, e.g., `main_section`)
-- Has a **Display Title** (shown in UI, e.g., "Section 1")
-- Can contain multiple components
-- Appears as a collapsible group in the node's settings panel
-
-Click **+ Add Section** to create a new section, then drag components into it.
-
-![UI Sections](../../assets/images/guides/node-designer/ui-sections.png)
+The toolbar at the top has **Browse** (open an existing node), **New** (start blank), **View code** (see the full generated file), and **Save**. A dot next to the node name marks unsaved changes.
 
 ---
 
-## Component Palette
+## Node Settings panel
 
-Drag these components from the left panel into your sections:
+The left panel holds everything about the node except its form and logic. It is organized into four collapsible groups.
 
-### Input Components
+### Identity
 
-| Component | Class | Use Case | Value Type |
-|-----------|-------|----------|------------|
-| **Text Input** | `TextInput` | Names, patterns, custom strings | `str` |
-| **Numeric Input** | `NumericInput` | Thresholds, counts, percentages | `float` |
-| **Toggle Switch** | `ToggleSwitch` | Enable/disable features | `bool` |
-| **Single Select** | `SingleSelect` | Choose one option from a list | `str` |
-| **Slider** | `SliderInput` | Select a value within a range | `float` |
+| Field | Description |
+|-------|-------------|
+| **Node Name** | The node's name and internal identifier. |
+| **Category** | The palette group the node lands in — a real combobox (see [Category](#category-real-palette-groups)). |
+| **Node Icon** | The icon shown on the canvas and in the palette (see [Icons](#icons)). |
 
-### Column Components
+### I/O
 
-| Component | Class | Use Case | Value Type |
-|-----------|-------|----------|------------|
-| **Column Selector** | `ColumnSelector` | Pick one column from input data | `str` |
-| **Multi Select** | `MultiSelect` | Select multiple columns | `list[str]` |
-| **Column Action** | `ColumnActionInput` | Column with operation choice | `dict` |
+- **Number of Inputs** — how many input ports the node has (0–10). Inputs arrive positionally in `process`.
+- **Number of Outputs** — how many output ports (1–10). When there is more than one output, an **Output Names** editor appears; each name becomes a separate output handle. (For the isolated-kernel environment, output names are always editable.)
 
-### Special Components
+### Execution
 
-| Component | Class | Use Case | Value Type |
-|-----------|-------|----------|------------|
-| **Secret Selector** | `SecretSelector` | API keys, passwords, credentials | `SecretStr` |
+The [execution environment picker](#execution-environment) — Local or Isolated kernel.
 
-!!! note "No Secret Usage Validation"
-    There is currently no scanning to verify that secrets are handled securely 
-    in your process code. You are responsible for ensuring secrets are not 
-    logged, exposed in error messages, or written to output data.
+### Description
+
+- **Title** — the display name shown on the node.
+- **Description** — the intro text shown in the node's settings drawer and the palette tooltip. [Markdown is supported](#markdown-in-descriptions).
 
 ---
 
-## Properties Panel
+## Category (real palette groups)
 
-![Properties Panel](../../assets/images/guides/node-designer/properties-panel.png){ align=right width="280" }
+**Category** is a combobox: pick a standard group (Custom, Input, Transform, Combine, Aggregate, ML, Output) or type a new name to create your own group. Existing custom categories from your other nodes appear under **Your categories**.
 
-When you select a component on the canvas, configure it in the right panel.
-
-### Basic Properties
-
-All components share these basic properties:
-
-| Property | Description |
-|----------|-------------|
-| **Field Name** | Internal identifier used in code (e.g., `columns_to_change`) |
-| **Label** | Display text shown to users (e.g., "Columns To Prefix") |
-
-Additional options vary depending on the selected UI component (e.g., min/max for Numeric Input, data type filters for Column Selector, options list for Single Select).
-
-Click **Insert Variable** to copy the accessor path for use in your process code.
+The category is a real palette group. A node with category `Text Processing` appears under a **Text Processing** group in the palette; the group is created from the name. The default, `Custom`, keeps the historical **User Defined Operations** group. Naming a built-in group exactly places the node in that group.
 
 ---
 
-## Process Method
+## Form tab
 
-The bottom section contains the code editor where you write your transformation logic.
+The **Form** tab is the settings form your node's users will see — built WYSIWYG. What you assemble here is exactly what renders in the node's settings drawer.
 
-![Process Method Editor](../../assets/images/guides/node-designer/process-method.png)
+### Groups
 
-### Function Signature
+A **group** is a titled, collapsible section of the form (a `Section` in the SDK). Add groups from the group list at the top of the tab. Each group has:
+
+- A **display title** (shown to users), inline-editable.
+- A **Python name** (used in your `process` code, e.g. `main_section`), editable next to the title and sanitized to a valid identifier.
+
+Click a group to select it; the controls you add land in the selected group.
+
+### Adding controls
+
+Inside a group, click **Add a control** to open a popover of the available control types:
+
+| Control | Use case | Value type |
+|---------|----------|-----------|
+| **Text Input** | Names, patterns, custom strings | `str` |
+| **Numeric Input** | Thresholds, counts, percentages | `float` |
+| **Toggle Switch** | Enable/disable a feature | `bool` |
+| **Single Select** | Choose one option from a list | `str` |
+| **Multi Select** | Choose several options | `list[str]` |
+| **Column Selector** | Pick column(s) from the input data | `str` / `list[str]` |
+| **Column Action** | A column paired with an operation choice | `dict` |
+| **Slider** | A value within a range | `float` |
+| **Secret Selector** | API keys, passwords, credentials | `SecretStr` |
+
+The keyword name you give a control is the field name you read in `process`.
+
+!!! note "Secrets are your responsibility"
+    Flowfile does not scan your `process` code to verify a secret is handled safely. Don't log secrets, expose them in error messages, or write them to output. Secrets are also **not available in the isolated-kernel environment** — reading one there fails at run time.
+
+### The Control Inspector
+
+Selecting a control opens the **Control Inspector** on the right. It edits that control's properties — the field name, label, and type-specific options (min/max for a numeric input, the option list for a select, allowed data types for a column selector, and so on).
+
+The inspector also has an **Insert Variable** action that copies the accessor path (`self.settings_schema.<group>.<field>.value`) so you can paste it straight into your `process` code.
+
+### Preview values double as test settings
+
+The values you enter in the form preview are functional: they are the settings used when you run the **Test** tab, and "Save test setup with node" persists them as the node's `example_settings`.
+
+---
+
+## Code tab
+
+The **Code** tab is where you write the `process` method.
+
+- A **read-only signature header** shows the fixed signature: `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:`. You edit the **body only** — the designer composes the header and body back into the full method when it saves.
+- The editor has Polars-aware autocompletion.
+- The **Form fields** panel on the left lists every control you added with its accessor path. Click a field to insert its accessor into the editor.
+
+### The `process` contract
+
+- Inputs are **`pl.LazyFrame`**, one per input port, passed positionally: `inputs[0]`, `inputs[1]`, …
+- Return a `pl.LazyFrame` or `pl.DataFrame` (the framework normalizes either), or a `dict` keyed by output name for a multi-output node.
+- Read a control's value with `self.settings_schema.<group>.<field>.value`.
+
+Because inputs are lazy, prefer lazy Polars operations and return the frame unmaterialized. If a step genuinely needs eager data (a per-row Python callback, a shape-dependent branch), call `.collect()` **inside** `process` — it materializes in the isolated worker process, not in Flowfile's core.
 
 ```python
-def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    lf = inputs[0]
+    prefix = self.settings_schema.main_section.prefix_text.value
+    cols = self.settings_schema.main_section.columns_to_change.value
+    return lf.rename({c: f"{prefix}_{c}" for c in cols})
 ```
 
-Your function receives Polars DataFrames and must return a DataFrame.
+### View code
 
-### Accessing Component Values
-
-Use `self.settings_schema` to access values from your UI components:
-
-```python
-# Pattern: self.settings_schema.<section_name>.<component_name>.value
-
-# Get text input value
-prefix_text: str = self.settings_schema.main_section.prefix_text.value
-
-# Get selected columns (list)
-columns_to_change: list[str] = self.settings_schema.main_section.columns_to_change.value
-
-# Get numeric value
-threshold: float = self.settings_schema.options.threshold.value
-
-# Get toggle state
-is_enabled: bool = self.settings_schema.options.is_enabled.value
-```
-
-!!! tip "Use Insert Variable"
-    Click **Insert Variable** in the Properties panel to automatically insert the correct accessor path for any component.
-
-### Complete Example
-
-Here's a full example that adds a prefix to selected column names:
-
-```python
-def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-    # Get the first input DataFrame
-    df = inputs[0]
-    prefix_text: str = self.settings_schema.main_section.prefix_text.value
-    columns_to_change: list[str] = self.settings_schema.main_section.columns_to_change.value
-
-    # Build expressions: rename selected columns, keep others unchanged
-    exprs: list[pl.Expr] = [
-        pl.col(col_name).alias(f"{prefix_text}_{col_name}")
-        if col_name in columns_to_change else pl.col(col_name)
-        for col_name in df.columns
-    ]
-    return df.select(exprs)
-```
-
-### Generated Code
-
-When you click **Preview**, the Node Designer shows the complete Python class that will be generated:
-
-```python
-# Auto-generated custom node
-# Generated by Node Designer
-
-import polars as pl
-from flowfile_core.flowfile.node_designer import (
-    CustomNodeBase, Section, NodeSettings, TextInput, ColumnSelector
-)
-
-# Section 1
-main_section = Section(
-    title="Section 1",
-    prefix_text=TextInput(
-        label="PrefixText",
-    ),
-    columns_to_change=ColumnSelector(
-        label="Columns To Prefix",
-        required=True,
-        multiple=True,
-    ),
-)
-
-class PrefixerSettings(NodeSettings):
-    main_section: Section = main_section
-
-
-class Prefixer(CustomNodeBase):
-    node_name: str = "Prefixer"
-    node_category: str = "Custom"
-    node_icon: str = "ruler-plus.svg"
-    title: str = "Add prefixes to columns"
-    intro: str = "Make columns easy to recognize by adding a prefix value to them"
-    number_of_inputs: int = 1
-    number_of_outputs: int = 1
-    settings_schema: PrefixerSettings = PrefixerSettings()
-
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-        # Get the first input DataFrame
-        df = inputs[0]
-        prefix_text: str = self.settings_schema.main_section.prefix_text.value
-        columns_to_change: list[str] = self.settings_schema.main_section.columns_to_change.value
-
-        exprs: list[pl.Expr] = [
-            pl.col(col_name).alias(f"{prefix_text}_{col_name}")
-            if col_name in columns_to_change else pl.col(col_name)
-            for col_name in df.columns
-        ]
-        return df.select(exprs)
-```
-
-This generated class is what gets saved to your user-defined nodes directory.
+The toolbar's **View code** button (and the Browse dialog's **Code** action) shows the full generated `.py` file — the class, settings schema, and process method the designer will write. The frontend never generates this Python itself; the backend renders it from your design, which is what guarantees the file round-trips.
 
 ---
 
-## Kernel Execution
+## Test tab
 
-Custom nodes can run their process method inside a Docker-based kernel instead of the local Polars engine. This is useful when your node needs third-party libraries (e.g. scikit-learn, XGBoost), requires more isolation, or produces artifacts.
+The **Test** tab runs the node against sample data without adding it to a flow — the same execution path a real run uses.
 
-### Enabling Kernel Mode
+1. Provide a **sample input** per input port. Edit the grid directly or paste CSV. For a multi-input node, switch between input ports with the tabs.
+2. Click **Run test**.
+3. The results show a **per-output preview grid**, the output schema, row count, run duration, and which environment ran it. **Logs** and any **error** (with a collapsible traceback) appear alongside.
 
-1. In the Node Metadata section, check **Require Kernel Execution**
+The settings used are your Form-tab preview values. For an isolated-kernel node, the Test tab also has a **Kernel** selector: the dry run executes on that kernel, so pick one whose image has the node's [dependencies](#execution-environment).
 
-![Require Kernel checkbox](../../assets/images/guides/node-designer/require-kernel-checkbox.png)
+### Save the test setup with the node
 
-*Enabling kernel execution in the Node Designer metadata section*
+Tick **Save test setup with node** to persist the samples and settings into the file as `example_inputs` and `example_settings`. They travel with the node and reload the next time you open it, so the dry run is reproducible. Samples are capped (a small grid, not a dataset) and stored inside the `.py` file.
 
-2. A new **Execution** section appears below the metadata. Select a kernel from the dropdown.
+---
 
-![Kernel execution section in Node Designer](../../assets/images/guides/node-designer/kernel-execution-section.png)
+## Execution environment
 
-*The kernel execution section showing the kernel dropdown and output name configuration*
+Every node declares where its `process` runs. The Execution group offers two cards:
 
-3. Configure **Output Names** — when a kernel is selected, you can define multiple named outputs (e.g. `main`, `predictions`, `metrics`). Each output name maps to a separate output handle on the node.
+- **Local (Polars)** — the default. `process` runs in a `flowfile_worker` subprocess: a killable, isolated child that owns the dataset memory. Fast, no Docker. The worker does not pip-install anything, so a local node may use only packages already available to Flowfile.
+- **Isolated kernel** — `process` runs inside a Docker kernel. Use it when the node needs third-party libraries or stronger isolation. A **Dependencies (pip)** tag editor on this card records the packages the node needs — they show on the node's kernel badge and tell users which kernel to pick. Kernel nodes can declare multiple named outputs. Secrets are not available here.
 
-!!! tip "Create kernels first"
-    Kernels must be created and started in the [Kernel Manager](kernels.md) before they appear in the dropdown. If no kernels are available, the dropdown only shows "Local (default)".
+!!! warning "Dependencies are a requirement, not an install step"
+    Flowfile does not pip-install a node's dependencies at run time. The kernel you run the node on must already provide them — through its image flavour (the standard **ML** image ships scikit-learn, XGBoost, LightGBM, and statsmodels) or through packages added to the kernel itself in the [Kernel Manager](kernels.md#creating-a-kernel). Running a scikit-learn node on a Base kernel fails with a `ModuleNotFoundError`.
 
-### How It Works
+The picker shows live Docker status. When Docker is unavailable, the Isolated-kernel card explains why and offers **Open Kernel Manager** and **Retry** — never a silent, dead dropdown. Create and start kernels in the [Kernel Manager](kernels.md) first.
 
-When kernel execution is enabled:
+Local execution needs nothing beyond Flowfile itself; the isolated-kernel environment needs Docker. The designer itself is the same either way — only where `process` runs changes.
 
-- The Node Designer auto-generates a kernel script from your `process` method
-- Your `self.settings_schema` values are baked into the script as a lightweight proxy
-- Inputs are read via `flowfile_ctx.read_input()` instead of being passed as DataFrame arguments
-- Return values are published via `flowfile_ctx.publish_output()` for each named output
-- The full `flowfile_ctx` API is available — artifacts, display, logging, and more
+!!! note "Legacy nodes still load"
+    Older nodes that used a `requires_kernel` flag still load — it maps to the isolated-kernel environment automatically.
 
-Your process method code stays the same. The `self.settings_schema` pattern works identically in kernel mode — the generated script creates proxy classes that replicate the same access pattern.
+### How kernel execution works
 
-### Custom Node with Kernel — Using It in a Flow
-
-When you use a kernel-enabled custom node in a flow, the node settings panel shows a **Kernel** dropdown to select (or change) which kernel runs the node.
-
-![Custom node kernel selector in flow](../../assets/images/guides/node-designer/custom-node-kernel-selector.png)
-
-*A kernel-enabled custom node in a flow, showing the kernel selector in the node settings panel*
-
-### Example: ML Scoring Node
-
-Here's a process method that trains a model and publishes it as an artifact:
+For an isolated-kernel node, Flowfile builds a self-contained script from your node file: it defines your node class, bakes your settings values in as JSON, reads the inputs through `flowfile_ctx.read_inputs()`, calls your real `process` method, and publishes each declared output with `flowfile_ctx.publish_output()`. Your `process` code is unchanged, and the `self.settings_schema.<group>.<field>.value` access pattern works identically.
 
 ```python
-def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
     from sklearn.ensemble import RandomForestClassifier
 
-    df = inputs[0]
-    target_col: str = self.settings_schema.main_section.target_column.value
+    df = inputs[0].collect()   # collect once for the eager sklearn API
+    target = self.settings_schema.main_section.target_column.value
 
-    X = df.drop(target_col).to_numpy()
-    y = df[target_col].to_numpy()
-
+    X = df.drop(target).to_numpy()
+    y = df[target].to_numpy()
     model = RandomForestClassifier(n_estimators=100).fit(X, y)
-    flowfile_ctx.publish_artifact("trained_model", model)
-    flowfile_ctx.log_info(f"Model trained with accuracy: {model.score(X, y):.3f}")
+    flowfile_ctx.log_info(f"Trained with accuracy {model.score(X, y):.3f}")
 
-    predictions = model.predict(X)
-    return df.with_columns(pl.Series("prediction", predictions))
+    return df.with_columns(pl.Series("prediction", model.predict(X))).lazy()
 ```
 
-For more details on the `flowfile_ctx` API available inside kernels, see [Kernel Execution](kernels.md).
+For the full `flowfile_ctx` API (artifacts, display, logging, catalog access) available inside kernels, see [The flowfile_ctx API](kernel-api.md).
+
+### Kernel selector in a flow
+
+When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it. Pick one whose image provides the node's dependencies — the drawer shows the required packages next to the picker. The same applies in the designer's Test tab, which has its own Kernel selector.
 
 ---
 
-## Toolbar Actions
+## Icons
 
-| Button | Shortcut | Description |
-|--------|----------|-------------|
-| **Help** | — | Open documentation modal |
-| **Browse** | — | Load an existing node definition |
-| **New** | — | Create a blank node definition |
-| **Preview** | — | View the generated Python code |
-| **Save** | — | Save the node to your user-defined nodes directory |
+**Node Icon** in the Identity group lets you pick from the standard icon set or upload your own. The icon appears on the canvas and in the palette. Kernel-environment nodes carry a small corner badge on the canvas.
 
-## Programmatic Alternative
+---
 
-For more control or version-controlled node definitions, you can create nodes as Python files. See [Creating Custom Nodes](../../for-developers/creating-custom-nodes.md) for the code-based approach.
+## Markdown in descriptions
+
+The node **Description** (intro) renders as Markdown in the settings drawer and the palette hover tooltip, so you can use bold, links, and lists. Canvas labels stay plain single-line text.
+
+---
+
+## Browse, edit, duplicate
+
+**Browse** opens the custom-node library. Each node card offers:
+
+- **Edit** — load the node into the designer. If the file is within the visual subset, it opens in the Form and Code tabs; otherwise it opens in [code-only mode](#code-only-mode).
+- **Duplicate** — start a new node from a copy.
+- **Code** — view the file's source read-only.
+- **Delete** — remove the node (with a confirmation).
+- **Rescan** — re-read the directory to pick up files added outside the designer.
+
+A file that failed to load (a syntax or import error) stays listed with a warning marker rather than vanishing, so you can open and fix it.
+
+The first time you save a hand-written node from the designer, its formatting is canonicalized; the designer shows a diff preview before writing.
+
+---
+
+## Code-only mode
+
+A file that uses constructs outside the visual subset — builder objects, dynamic construction, non-literal component arguments — still loads, but in **code-only mode**: a single full-file editor with a banner listing the parser issues that kept it out of the visual editor. The **Test** tab still works. Click **Re-check** after editing to re-parse; if the file now fits the subset, the designer switches to the visual Form view.
+
+---
+
+## Mounting other directories
+
+The default custom-nodes directory is `~/.flowfile/user_defined_nodes/`, but you can register additional folders — for example a version-controlled repo of shared nodes. Register a directory in the Catalog's **Custom Nodes** tab (or via `POST /custom-node-mounts`); registrations persist in a `mounts.json` next to the default directory.
+
+Mounted directories are **read-only sources**: the designer edits and saves them, but a fresh save always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and the Custom Nodes tab like any other.
+
+---
+
+## The Catalog Custom Nodes tab
+
+The Catalog has a **Custom Nodes** tab that lists every custom node across the default directory and all mounts, with its source, category, and load state. From there you can **Rescan**, manage mount folders, and open a node straight into the designer (a deep link with `?openFile=<file.py>`).
+
+---
+
+## Programmatic alternative
+
+Everything the designer builds is also writable as a plain Python file — useful for version control or generating nodes programmatically. The two paths interoperate: a file written in the visual subset reopens visually. The SDK reference lives under For Developers: [Custom Nodes in Code](creating-custom-nodes.md).
 
 ---
 
 ## Related Documentation
 
-- [Kernel Execution](kernels.md) — Run code in isolated Docker containers
-- [Building Flows](building-flows.md) — Using nodes in workflows
-- [Transform Nodes](nodes/transform.md) — Built-in transformation nodes
-- [Creating Custom Nodes](../../for-developers/creating-custom-nodes.md) — Python-based node creation
+- [Custom Nodes in Code](creating-custom-nodes.md) — the Python SDK reference (For Developers).
+- [Custom Node Tutorial](custom-node-tutorial.md) — a guided end-to-end build (local execution).
+- [K-Means on a Kernel](kmeans-kernel-node.md) — build the same node visually and as code, running scikit-learn in a kernel.
+- [Kernel Execution](kernels.md) — creating and running Docker kernels.
+- [The flowfile_ctx API](kernel-api.md) — the API available inside kernel nodes.
+- [Building Flows](building-flows.md) — using nodes in workflows.

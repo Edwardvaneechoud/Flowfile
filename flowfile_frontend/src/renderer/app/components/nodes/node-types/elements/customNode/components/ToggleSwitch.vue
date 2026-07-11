@@ -3,7 +3,7 @@
     <label class="listbox-subtitle">{{ schema.label }}</label>
     <el-switch
       :model-value="modelValue"
-      size="large"
+      size="small"
       inline-prompt
       @update:model-value="$emit('update:modelValue', $event)"
     />

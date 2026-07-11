@@ -93,6 +93,7 @@ export interface SectionComponent {
   title?: string;
   description?: string;
   hidden?: boolean;
+  layout?: "vertical" | "horizontal";
   components: Record<string, UIComponent>;
 }
 
@@ -114,6 +115,13 @@ export type UIComponent =
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";
 
+// Drift info surfaced when saved settings contain keys the current schema no
+// longer defines (populate_values silently drops them otherwise).
+export interface SchemaDrift {
+  unknown_sections: string[];
+  unknown_components: string[];
+}
+
 export interface CustomNodeSchema {
   node_name: string;
   node_category: string;
@@ -121,6 +129,8 @@ export interface CustomNodeSchema {
   settings_schema: SettingsSchema;
   number_of_inputs: number;
   number_of_outputs: number;
+  environment?: "local" | "kernel";
+  dependencies?: string[];
   requires_kernel?: boolean;
   kernel_id?: string | null;
   output_names?: string[];
@@ -129,23 +139,70 @@ export interface CustomNodeSchema {
   intro?: string;
   node_type: NodeTypeLiteral;
   transform_type: TransformTypeLiteral;
+  drift?: SchemaDrift | null;
+}
+
+// Structured error thrown when the schema fetch fails with a known surface:
+//   - "missing" (404 with {node_item}): node type not installed on this machine
+//   - "broken"  (409 with {node_item}): registered but failed to load
+//   - "unknown": anything else (network, 500, node-not-in-flow)
+export type CustomNodeSchemaErrorKind = "missing" | "broken" | "unknown";
+
+export class CustomNodeSchemaError extends Error {
+  kind: CustomNodeSchemaErrorKind;
+  nodeItem?: string;
+  detail?: string;
+  constructor(
+    kind: CustomNodeSchemaErrorKind,
+    message: string,
+    nodeItem?: string,
+    detail?: string,
+  ) {
+    super(message);
+    this.name = "CustomNodeSchemaError";
+    this.kind = kind;
+    this.nodeItem = nodeItem;
+    this.detail = detail;
+  }
 }
 
 // --- API function to fetch the schema ---
 /**
  * Fetches the complete UI definition for a custom node from the backend.
+ * Throws {@link CustomNodeSchemaError} on the missing/broken node surfaces so
+ * the drawer can render the right card instead of a generic error string.
  */
 export async function getCustomNodeSchema(
   flowId: number,
   nodeId: number,
 ): Promise<CustomNodeSchema> {
-  const response = await axios.get<CustomNodeSchema>(
-    `/user_defined_components/custom-node-schema`,
-    {
-      params: { flow_id: flowId, node_id: nodeId },
-      headers: { accept: "application/json" },
-    },
-  );
-
-  return response.data;
+  try {
+    const response = await axios.get<CustomNodeSchema>(
+      `/user_defined_components/custom-node-schema`,
+      {
+        params: { flow_id: flowId, node_id: nodeId },
+        headers: { accept: "application/json" },
+      },
+    );
+    return response.data;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response) {
+      const status = err.response.status;
+      const detail = err.response.data?.detail;
+      const nodeItem = typeof detail === "object" ? detail?.node_item : undefined;
+      const errorText = typeof detail === "object" ? (detail?.error ?? detail?.message) : detail;
+      if (status === 404 && nodeItem) {
+        throw new CustomNodeSchemaError("missing", errorText ?? "Node not installed", nodeItem);
+      }
+      if (status === 409 && nodeItem) {
+        throw new CustomNodeSchemaError(
+          "broken",
+          errorText ?? "Node failed to load",
+          nodeItem,
+          errorText,
+        );
+      }
+    }
+    throw err;
+  }
 }

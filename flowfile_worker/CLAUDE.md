@@ -11,11 +11,12 @@ Standalone FastAPI compute service that offloads heavy Polars/data work from `fl
 ## Layout
 - `flowfile_worker/main.py` — FastAPI app (`shutdown_handler` lifespan) + `run()` entrypoint; lifespan calls `viz_session_registry.shutdown()`, terminates `mp_context.active_children()`, runs `storage.cleanup_directories()`; `/shutdown` endpoint + SIGTERM/SIGINT handlers + `start_parent_death_watcher`.
 - `flowfile_worker/__init__.py` — process-global state: `multiprocessing.set_start_method("spawn", force=True)`, `mp_context = get_context("spawn")`, `status_dict`, `process_dict`, locks, `CACHE_DIR`, `PROCESS_MEMORY_USAGE`.
-- `flowfile_worker/routes.py` — REST endpoints (`/submit_query/`, store_sample/write/create_table, catalog materialize/sql_query/delta/visualize, train/apply ML, add_fuzzy_join, status/fetch_results/cancel_task/clear_task).
+- `flowfile_worker/routes.py` — REST endpoints (`/submit_query/`, store_sample/write/create_table, catalog materialize/sql_query/delta/visualize, train/apply ML, add_fuzzy_join, execute_custom_node, status/fetch_results/cancel_task/clear_task).
 - `flowfile_worker/streaming.py` — `streaming_router` WebSocket `/ws/submit` (binary in/out, progress frames, disconnect hand-off to `handle_task`).
-- `flowfile_worker/spawner.py` — `start_*` helpers (`start_process`, `start_generic_process`, `start_fuzzy_process`, `start_train_model_process`, `start_apply_model_process`) that build shared mem + spawn `mp_context.Process`, plus `handle_task` monitor loop and the `process_manager` singleton.
+- `flowfile_worker/spawner.py` — `start_*` helpers (`start_process`, `start_generic_process`, `start_fuzzy_process`, `start_train_model_process`, `start_apply_model_process`, `start_custom_node_process`) that build shared mem + spawn `mp_context.Process`, plus `handle_task` monitor loop and the `process_manager` singleton.
 - `flowfile_worker/process_manager.py` — `ProcessManager`: lock-guarded `task_id -> Process` map with `cancel_process` (terminate + join).
 - `flowfile_worker/funcs.py` — the actual subprocess targets (store, store_sample, fuzzy_join_task, write_*, merge_delta, train/apply model, resolve_virtual_table, execute_sql_query, catalog metadata, `generic_task`). Imports polars at module top.
+- `flowfile_worker/custom_node_runner.py` — spawned-child target for custom nodes: installs SDK import aliases, loads the node from shipped source text, decrypts `$ffsec$` secrets locally (`WorkerSecretResolver`), runs `process(*LazyFrames)`, writes per-output Arrow IPC (dry runs return preview/logs/duration in the queue payload).
 - `flowfile_worker/models.py` — Pydantic request/response + `Status`, `OperationType` literal, `Base64Bytes` JSON-safe bytes type.
 - `flowfile_worker/configs.py` — host/port arg parsing, `FLOWFILE_CORE_URI`, `TEST_MODE`, logger.
 - `flowfile_worker/secrets.py` — independent Fernet/HKDF secret derivation (mirrors core).

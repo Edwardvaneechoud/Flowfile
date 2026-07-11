@@ -141,6 +141,11 @@ white→transparent.)
   api_response={ }+→ · database_writer=cylinder+↑ · catalog_writer=book+write
 - **ml (amber):** train_model=graduation cap · apply_model=model box→row · evaluate_model=gauge ·
   random_split=forking arrows
+- **default (slate):** `user-defined-icon` = puzzle piece. The group-agnostic fallback for
+  user-authored custom nodes, so it uses its own **slate** gradient (`#8B93A6`→`#586274`) —
+  never one of the six group hues, so it can't masquerade as a category. The persisted key
+  stays `user-defined-icon.png` (state.py/codegen contract); `utils.ts` maps that key to the
+  `.svg` artwork.
 
 ## Wiring: three independent consumers (none share files)
 

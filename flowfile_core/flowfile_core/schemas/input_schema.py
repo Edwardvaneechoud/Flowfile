@@ -832,9 +832,20 @@ class RawData(BaseModel):
             "order. len(data) must equal len(columns); each inner list has the same "
             "length (one entry per row). For two rows of {name, age}, emit "
             '[["Alice", "Bob"], [30, 25]] — NOT [["Alice", 30], ["Bob", 25]]. '
-            "Reading rows back is data[col_idx][row_idx]."
+            "Reading rows back is `data[col_idx][row_idx]`."
         ),
     )
+
+    @staticmethod
+    def _infer_data_type(column_values: list) -> str:
+        # standardize_col_dtype leaves int/float columns mixed on purpose, so promote
+        # them to Float64 — typing by the first value would truncate floats on cast.
+        types = {type(v) for v in column_values if v is not None}
+        if not types:
+            return str(pl.String())
+        if types == {int, float}:
+            return str(pl.Float64())
+        return str(pl.DataType.from_python(next(iter(types))))
 
     @classmethod
     def from_pylist(cls, pylist: list[dict]):
@@ -843,8 +854,10 @@ class RawData(BaseModel):
             return cls(columns=[], data=[])
         pylist = ensure_similarity_dicts(pylist)
         values = [standardize_col_dtype([vv for vv in c]) for c in zip(*(r.values() for r in pylist), strict=False)]
-        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
-        columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
+        columns = [
+            MinimalFieldInfo(name=name, data_type=cls._infer_data_type(column_values))
+            for name, column_values in zip(pylist[0].keys(), values, strict=True)
+        ]
         return cls(columns=columns, data=values)
 
     @classmethod
@@ -853,8 +866,10 @@ class RawData(BaseModel):
         if len(pydict) == 0:
             return cls(columns=[], data=[])
         values = [standardize_col_dtype(column_values) for column_values in pydict.values()]
-        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
-        columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pydict.keys()]
+        columns = [
+            MinimalFieldInfo(name=name, data_type=cls._infer_data_type(column_values))
+            for name, column_values in zip(pydict.keys(), values, strict=True)
+        ]
         return cls(columns=columns, data=values)
 
     def to_pylist(self) -> list[dict]:
@@ -1281,9 +1296,7 @@ class NodeFormula(NodeSingleInput):
 class NodeWindowFunctions(NodeSingleInput):
     """Settings for a node that adds rolling, cumulative, rank or tile columns."""
 
-    window_input: transform_schema.WindowFunctionsInput = Field(
-        default_factory=transform_schema.WindowFunctionsInput
-    )
+    window_input: transform_schema.WindowFunctionsInput = Field(default_factory=transform_schema.WindowFunctionsInput)
 
     def get_default_description(self) -> str:
         """Describes the configured window functions."""
@@ -1849,9 +1862,20 @@ class NodePythonScript(NodeMultiInput):
 class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 
-    settings: Any
+    settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     kernel_id: str | None = None
     output_names: list[str] = Field(default_factory=lambda: ["main"])
+    # sha256 of the node's .py file at add time; source edits invalidate the node hash/cache.
+    node_source_hash: str | None = None
+    settings_format_version: int = 1
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _coerce_legacy_settings(cls, v):
+        """Coerce legacy payloads (settings=None / non-dict) into the {section: {component: value}} envelope."""
+        if v is None or not isinstance(v, dict):
+            return {}
+        return {section: (values if isinstance(values, dict) else {"value": values}) for section, values in v.items()}
 
     @field_validator("output_names")
     @classmethod
