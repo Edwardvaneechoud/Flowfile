@@ -5,6 +5,7 @@ import { Promotion, DataLine } from "@element-plus/icons-vue";
 import { useNodeStore } from "../stores/column-store";
 import { useEditorStore } from "../stores/editor-store";
 import { useResultsStore } from "../stores/results-store";
+import { useTutorialStore } from "../stores/tutorial-store";
 import { VueFlowStore } from "@vue-flow/core";
 import type { RunInformation, FlowSettings } from "../types";
 import { FlowApi } from "../api";
@@ -215,6 +216,12 @@ export function useFlowExecution(
         editorStore.isRunning = false;
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+        if (pollingKeySuffix === "") {
+          useTutorialStore().notify({
+            type: "flow-run-completed",
+            success: !!response.data.success,
+          });
+        }
 
         editorStore.setShowFlowResult(true);
         editorStore.updateLogViewerVisibility(true);
@@ -285,6 +292,7 @@ export function useFlowExecution(
         params: { flow_id: getFlowId() },
         headers: { accept: "application/json" },
       });
+      useTutorialStore().notify({ type: "flow-run-started" });
       nodeStore.showLogViewer();
       startPolling(() => checkRunStatus());
     } catch (error: any) {
