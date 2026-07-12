@@ -1,5 +1,7 @@
 """Tests for custom-node execution in the worker (child target + endpoint)."""
 
+import datetime
+import decimal
 import json
 import os
 import subprocess
@@ -12,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_worker import main, models, mp_context
-from flowfile_worker.custom_node_runner import execute_custom_node_task
+from flowfile_worker.custom_node_runner import _json_default, execute_custom_node_task
 from flowfile_worker.secrets import encrypt_secret
 
 client = TestClient(main.app)
@@ -96,6 +98,22 @@ class SecretNode(CustomNodeBase):
     def process(self, *inputs):
         key = self.settings_schema.main.api_key.secret_value.get_secret_value()
         return inputs[0].with_columns(pl.lit(key).alias("key"))
+'''
+
+
+TEMPORAL_NODE_SOURCE = '''
+import polars as pl
+from shared.node_designer import CustomNodeBase
+
+
+class TemporalNode(CustomNodeBase):
+    node_name: str = "Temporal Node"
+
+    def process(self, *inputs):
+        return inputs[0].with_columns(
+            pl.col("raw").str.to_date("%Y-%m-%d").alias("as_date"),
+            pl.col("raw").str.to_datetime("%Y-%m-%d").alias("as_dt"),
+        )
 '''
 
 
@@ -294,6 +312,34 @@ def test_dry_run_returns_preview_and_logs(tmp_path):
     assert {c["name"] for c in preview["columns"]} == {"name", "p_name"}
     assert payload["duration_ms"] > 0
     assert any("Executing custom node" in line for line in payload["logs"])
+
+
+def test_dry_run_preview_serializes_temporal_columns(tmp_path):
+    # Regression: a node emitting Date/Datetime columns must still serialize its dry-run
+    # preview. df.rows() yields native datetime.date/datetime cells that json.dumps can't
+    # encode, so the runner must pass the _json_default fallback — before the fix this
+    # raised "Object of type date is not JSON serializable" and progress went to -1.
+    df = pl.DataFrame({"raw": ["2021-03-04", "2020-12-31"]})
+    progress, error, payload, _ = run_task(
+        tmp_path, TEMPORAL_NODE_SOURCE, inputs=[serialize_input(df)], dry_run=True,
+    )
+    assert progress == 100, error
+    preview = payload["preview"]["main"]
+    cols = [c["name"] for c in preview["columns"]]
+    assert {"as_date", "as_dt"} <= set(cols)
+    row0 = preview["rows"][0]
+    assert row0[cols.index("as_date")] == "2021-03-04"
+    assert row0[cols.index("as_dt")].startswith("2021-03-04T00:00:00")
+
+
+def test_json_default_encodes_temporal_and_binary():
+    # Locks each branch of the preview fallback encoder.
+    assert _json_default(datetime.date(2021, 3, 4)) == "2021-03-04"
+    assert _json_default(datetime.datetime(2021, 3, 4, 10, 30)) == "2021-03-04T10:30:00"
+    assert _json_default(datetime.time(10, 30)) == "10:30:00"
+    assert _json_default(datetime.timedelta(hours=2)) == 7200.0
+    assert _json_default(decimal.Decimal("1.50")) == "1.50"
+    assert _json_default(b"\x00\x01") == "0001"
 
 
 def test_dry_run_captures_user_logging_and_print(tmp_path):
