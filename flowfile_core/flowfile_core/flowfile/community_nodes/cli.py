@@ -16,13 +16,15 @@ Exit code is 1 when any validation error or dry-run failure occurs.
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 from flowfile_core.flowfile.community_nodes.dry_run_local import DryRunOutcome, run_bundle_dry_run
 from flowfile_core.flowfile.community_nodes.index_build import build_index
 from flowfile_core.flowfile.community_nodes.models import CommunityIndex, manifest_json_schema
-from flowfile_core.flowfile.community_nodes.validation import ValidationReport, validate_bundle
+from flowfile_core.flowfile.community_nodes.validation import ValidationReport, _valid_dependency_spec, validate_bundle
+from flowfile_core.flowfile.node_designer.parsing import extract_manifest
 
 
 def _load_index(path: str | None) -> CommunityIndex | None:
@@ -144,7 +146,26 @@ def _cmd_validate_all(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _install_node_deps(folder: Path) -> None:
+    """pip-install a kernel-env node's declared dependencies so its process() can import them.
+
+    Only validated specs are installed (plain name / name==version — no URLs/VCS/flags),
+    into the current interpreter so the dry-run child (same sys.executable) sees them.
+    """
+    try:
+        source = (folder / "node.py").read_text(encoding="utf-8")
+    except OSError:
+        return
+    deps = [d for d in extract_manifest(source).environment.dependencies if _valid_dependency_spec(d)]
+    if not deps:
+        return
+    print(f"Installing node dependencies: {', '.join(deps)}")
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *deps], check=True)
+
+
 def _cmd_dry_run(args: argparse.Namespace) -> int:
+    if args.install_deps:
+        _install_node_deps(Path(args.folder))
     outcome = run_bundle_dry_run(Path(args.folder), timeout_seconds=args.timeout, row_limit=args.row_limit)
     _print_dry_run(args.folder, outcome)
     if args.summary:
@@ -199,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     dry_run.add_argument("folder")
     dry_run.add_argument("--timeout", type=int, default=120)
     dry_run.add_argument("--row-limit", type=int, default=1000)
+    dry_run.add_argument(
+        "--install-deps",
+        action="store_true",
+        help="pip-install the node's declared dependencies first (kernel-env nodes)",
+    )
     dry_run.add_argument("--summary")
     dry_run.set_defaults(func=_cmd_dry_run)
 
