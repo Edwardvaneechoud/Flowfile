@@ -147,14 +147,14 @@ white→transparent.)
   stays `user-defined-icon.png` (state.py/codegen contract); `utils.ts` maps that key to the
   `.svg` artwork.
 
-## Wiring: three independent consumers (none share files)
+## Wiring: four independent consumers (none share files)
 
-Changing/adding an icon basename touches up to three places:
+Changing/adding an icon basename touches up to four places:
 
 1. **Desktop/web** (primary):
    - File: this directory (`flowfile_frontend/.../designer/assets/icons/<name>.svg`).
    - `flowfile_core/flowfile_core/configs/node_store/nodes.py` → the node's `image="<name>.svg"`.
-   - `flowfile_frontend/.../designer/utils.ts` → add `"<name>.svg"` to the `BUILTIN_ICONS` set
+   - `flowfile_frontend/.../designer/utils.ts` → add `"<name>.svg"` to the `SVG_NODE_ICONS` list
      (**exact-match**; a missing/mismatched entry silently falls through to the custom-icon
      backend URL → 404/broken image, with **no build error**).
 2. **WASM** (`flowfile_wasm/`, only for the ~21 nodes it ships): copy the SVG into
@@ -162,9 +162,23 @@ Changing/adding an icon basename touches up to three places:
    `src/components/Canvas.vue` (`nodeCategories` `icon:`), and
    `src/components/nodes/FlowNode.vue` (`iconMap`). Keep the `view.png` fallback.
 3. **Docs** (optional, `docs/assets/images/nodes/` + the `nodes/*.md` markdown) — can lag.
+4. **Community store** (only if the glyph should be pickable for published custom nodes):
+   the picker (`STANDARD_NODE_ICONS` in `utils.ts`, brand marks excluded) offers the **`.svg`**
+   names — a pick renders as SVG in-app like any node. The store requires **PNG**, but that's
+   backend-only: `publish.py` maps the picked glyph to its **PNG twin**, shipped **once** in
+   `flowfile_core/.../community_nodes/standard_icons/<name>.png`. No PNG is bundled in the renderer.
+   (`SVG_NODE_ICONS` from step 1 already feeds the picker; no extra `utils.ts` edit.)
 
-Already-`.svg` basenames are **content-only** swaps (drop the file, no nodes.py/BUILTIN/WASM
-edit). PNG→SVG basenames need the full tuple above.
+### PNG twins (community store)
+Each standard glyph the picker offers needs a `<name>.png` in the **backend** `standard_icons/` dir
+only (the store's publish/install pipeline forbids SVG). The `.svg` stays the source of truth and is
+what the app renders everywhere; the `.png` is purely the published artifact. Render it from the SVG
+with **Chromium** (the app's renderer — matches in-app anti-aliasing, and librsvg mis-renders any
+future `<style>` icons) at **256×256** transparent (ample for the 24–40px display; well under the
+store's 512 `ICON_DIM_MAX` and 256 KB `ICON_MAX` — ~12 KB each). Regenerate whenever the glyph changes.
+
+Already-`.svg` basenames are **content-only** swaps (drop the file + regenerate its backend `.png`
+twin; no nodes.py/utils.ts/WASM edit). PNG→SVG basenames need the full tuple above.
 
 ### Audit (run after any change — catches the silent-404 risk)
 For every `image="…"` in nodes.py, confirm the file exists in this dir AND is in

@@ -68,6 +68,80 @@ def get_catalog_storage_connection() -> str | None:
     return os.environ.get("FLOWFILE_CATALOG_STORAGE_CONNECTION") or None
 
 
+COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
+
+
+def get_community_index_url() -> str:
+    """Location of the community registry ``index.json``.
+
+    An ``https://`` URL in normal use; a local filesystem path switches the client
+    into fixture mode (index + artifacts read from disk — used by tests and for
+    trying the UI before the community repo exists). Read per call.
+    """
+    return (
+        os.environ.get("FLOWFILE_COMMUNITY_INDEX_URL")
+        or f"https://raw.githubusercontent.com/{COMMUNITY_DEFAULT_REPO}/main/index.json"
+    )
+
+
+def get_community_popularity_url() -> str:
+    """Sibling ``popularity.json``; derived from the index location unless overridden."""
+    override = os.environ.get("FLOWFILE_COMMUNITY_POPULARITY_URL")
+    if override:
+        return override
+    index_url = get_community_index_url()
+    base, _, _ = index_url.rpartition("/")
+    return f"{base}/popularity.json" if base else "popularity.json"
+
+
+def get_community_artifact_base() -> str:
+    """URL template for artifact downloads, with ``{commit}`` and ``{path}`` placeholders.
+
+    Defaults to jsDelivr pinned at the index's commit (immutable, edge-cached);
+    sha256 pins are verified after download regardless of the CDN.
+    """
+    return (
+        os.environ.get("FLOWFILE_COMMUNITY_ARTIFACT_BASE")
+        or f"https://cdn.jsdelivr.net/gh/{COMMUNITY_DEFAULT_REPO}@{{commit}}/{{path}}"
+    )
+
+
+def get_community_artifact_fallback() -> str:
+    """Fallback artifact template when the primary CDN fails (same commit-pinned bytes)."""
+    return (
+        os.environ.get("FLOWFILE_COMMUNITY_ARTIFACT_FALLBACK")
+        or f"https://raw.githubusercontent.com/{COMMUNITY_DEFAULT_REPO}/{{commit}}/{{path}}"
+    )
+
+
+def get_community_cache_ttl() -> int:
+    try:
+        return int(os.environ.get("FLOWFILE_COMMUNITY_CACHE_TTL", "3600"))
+    except ValueError:
+        return 3600
+
+
+# OAuth App client id for GitHub device-flow publishing ("Flowfile Community
+# Publishing", public by design; no secret exists). Empty ⇒ device flow disabled
+# (PAT paste + bundle download still work).
+COMMUNITY_GITHUB_CLIENT_ID_DEFAULT = "Ov23liiN1Z7z70Reg0zI"
+
+
+def get_community_github_client_id() -> str:
+    """Client id of the GitHub OAuth App used for device-flow publishing.
+
+    Empty ⇒ device flow disabled; the PAT-paste path and bundle download still work
+    (fixture mode never touches GitHub). Resolution: ``FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID``
+    env var (an explicitly empty value force-disables — tests rely on this), then the
+    local ``.env`` file, then ``COMMUNITY_GITHUB_CLIENT_ID_DEFAULT`` (baked for releases).
+    Read per call; the ``.env`` file is snapshotted at import by Starlette ``Config``.
+    """
+    env_value = os.environ.get("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID")
+    if env_value is not None:
+        return env_value
+    return config("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID", cast=str, default="") or COMMUNITY_GITHUB_CLIENT_ID_DEFAULT
+
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Backend Server")

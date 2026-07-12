@@ -7,6 +7,7 @@
       @browse="openBrowser"
       @new="handleNew"
       @view-code="handleViewCode"
+      @publish="handlePublish"
       @save="handleSave"
     />
 
@@ -49,6 +50,12 @@
       @duplicate="handleDuplicate"
       @delete="handleDelete"
     />
+
+    <PublishBundleModal
+      :show="showPublishModal"
+      :file-name="publishFileName"
+      @close="showPublishModal = false"
+    />
   </div>
 </template>
 
@@ -62,6 +69,7 @@ import MetadataPanel from "./nodeDesigner/designer/MetadataPanel.vue";
 import WorkspaceTabs from "./nodeDesigner/designer/WorkspaceTabs.vue";
 import CodePreviewModal from "./nodeDesigner/CodePreviewModal.vue";
 import NodeBrowserModal from "./nodeDesigner/NodeBrowserModal.vue";
+import PublishBundleModal from "./nodeDesigner/PublishBundleModal.vue";
 
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import { usePolarsAutocompletion } from "./nodeDesigner/composables";
@@ -80,6 +88,8 @@ const autocompletion = usePolarsAutocompletion(
 const saving = ref(false);
 const showPreviewModal = ref(false);
 const previewedCode = ref("");
+const showPublishModal = ref(false);
+const publishFileName = ref("");
 
 const route = useRoute();
 
@@ -143,13 +153,28 @@ async function handleViewCode() {
   }
 }
 
-async function handleSave() {
+async function handleSave(): Promise<boolean> {
   saving.value = true;
   try {
-    await saveNode();
+    return await saveNode();
   } finally {
     saving.value = false;
   }
+}
+
+// Publish reads on-disk state, so unsaved Publishing-panel edits (version/tags)
+// must be flushed first; abort if the save fails or is conflicted.
+async function handlePublish() {
+  if (!store.sourceFile && !store.designerState.node_name.trim()) {
+    ElMessage.warning("Name the node and save it first, then publish.");
+    return;
+  }
+  if (!store.sourceFile || store.isDirty) {
+    if (!(await handleSave())) return;
+  }
+  if (!store.sourceFile) return;
+  publishFileName.value = store.sourceFile;
+  showPublishModal.value = true;
 }
 
 async function handleEdit(fileName: string) {

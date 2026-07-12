@@ -1,0 +1,8 @@
+import httpx
+import polars as pl
+
+
+def process(self) -> pl.LazyFrame:
+    response = httpx.get(self.settings.url.value, timeout=30)
+    response.raise_for_status()
+    return pl.DataFrame(response.json()).lazy()

@@ -226,6 +226,7 @@ class TestNodeSourceHashStamp:
         )
         local_registry = CustomNodeRegistry(directory=nodes_dir)
         entry = local_registry.load_file(nodes_dir / "stamp_node.py")
+        local_registry.ensure_class(entry)
         assert entry.node_class is not None
         store_snapshot.add_to_custom_node_store(entry.node_class)
 

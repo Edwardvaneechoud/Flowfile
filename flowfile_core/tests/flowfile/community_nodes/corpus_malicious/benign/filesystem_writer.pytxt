@@ -1,0 +1,7 @@
+import polars as pl
+
+
+def process(self, df: pl.LazyFrame) -> pl.LazyFrame:
+    with open(self.settings.report_path.value, "w") as handle:
+        handle.write(df.collect().write_csv())
+    return df

@@ -99,6 +99,8 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 
 **Python Kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
 
+**Custom nodes and a community registry.** Build your own nodes in the visual Node Designer — a typed settings form, live preview, and a single-file `.py` output — then share them through the [community registry](https://github.com/edwardvaneechoud/flowfile-community-nodes). Publishing is a pull request opened straight from the app; installing is one click from Catalog → Community Nodes, with sha256-pinned downloads and a capability consent dialog.
+
 **Templates and clipboard import.** Get started with built-in flow templates, or paste tabular data from Excel / Google Sheets directly onto the canvas to create a pre-filled input node.
 
 **See it all together.** A single flow can filter, join, pivot, and aggregate, then branch into as many outputs as you need.

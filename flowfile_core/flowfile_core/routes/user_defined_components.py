@@ -12,8 +12,9 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.flowfile.community_nodes.receipts import community_icon_override
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
-from flowfile_core.flowfile.node_designer.parsing import parse_source
+from flowfile_core.flowfile.node_designer.parsing import extract_manifest, parse_source
 from flowfile_core.flowfile.node_designer.state import DesignerState, ParseResult
 from flowfile_core.flowfile.user_defined.dry_run import DryRunRequest, DryRunResponse, run_dry_run
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, LoadedNode, registry
@@ -32,6 +33,9 @@ class CustomNodeInfo(BaseModel):
     node_category: str = ""
     title: str = ""
     intro: str = ""
+    author: str = ""
+    version: str = ""
+    tags: list[str] = []
     node_icon: str = "user-defined-icon.png"
     node_key: str = ""
     environment: Literal["local", "kernel"] = "local"
@@ -77,74 +81,53 @@ def _parse_result_for_file(path: Path, content: str) -> ParseResult:
 
 
 def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
-    """Extract node metadata from a Python file by parsing its AST (no code execution)."""
+    """Best-effort exec-free metadata for a broken node file, mirroring the healthy-path shape."""
     info = CustomNodeInfo(file_name=file_path.name)
-
     try:
-        with open(file_path, encoding="utf-8") as f:
-            content = f.read()
+        content = file_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Failed to read node info from {file_path}: {e}")
+        return info
 
-        tree = ast.parse(content)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                for item in node.body:
-                    attr_name = None
-                    value = None
-
-                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                        attr_name = item.target.id
-                        if item.value and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
-                            value = item.value.value
-                    elif isinstance(item, ast.Assign):
-                        for target in item.targets:
-                            if isinstance(target, ast.Name):
-                                attr_name = target.id
-                                if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
-                                    value = item.value.value
-                                break
-
-                    if attr_name and value:
-                        if attr_name == "node_name":
-                            info.node_name = value
-                        elif attr_name == "node_category":
-                            info.node_category = value
-                        elif attr_name == "title":
-                            info.title = value
-                        elif attr_name == "intro":
-                            info.intro = value
-                        elif attr_name == "node_icon":
-                            info.node_icon = value
-
-                if info.node_name:
-                    break
-
-    except Exception as e:
-        logger.warning(f"Failed to parse node info from {file_path}: {e}")
-
+    manifest = extract_manifest(content)
+    if manifest.node_name:
+        info.node_name = manifest.node_name
+    info.node_category = manifest.node_category
+    info.title = manifest.title
+    info.intro = manifest.intro
+    info.author = manifest.author
+    info.version = manifest.version
+    info.tags = list(manifest.tags)
+    info.node_icon = manifest.node_icon
+    info.environment = manifest.environment.kind
     return info
 
 
 def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
-    if entry.node_class is None:
-        # Broken file: best-effort AST metadata so the browser still names it.
+    manifest = entry.manifest
+    if manifest is None:
+        # AST-broken file: best-effort metadata so the browser still names it.
         info = _extract_node_info_from_file(entry.file_path)
         info.node_key = entry.node_key
         info.source_hash = entry.source_hash
-        info.error = entry.error
+        info.error = entry.load_error
         return info
-    node = entry.node_class()
+    # Installed community icons live namespaced on disk while node_icon keeps the original name.
+    icon_override = community_icon_override(Path(entry.file_name).stem)
     return CustomNodeInfo(
         file_name=entry.file_name,
-        node_name=node.node_name,
-        node_category=node.node_category,
-        title=node.title or "",
-        intro=node.intro or "",
-        node_icon=node.node_icon,
+        node_name=manifest.node_name or "",
+        node_category=manifest.node_category,
+        title=manifest.title,
+        intro=manifest.intro,
+        author=manifest.author,
+        version=manifest.version,
+        tags=list(manifest.tags),
+        node_icon=icon_override or manifest.node_icon,
         node_key=entry.node_key,
-        environment=node.environment,
+        environment=manifest.environment.kind,
         source_hash=entry.source_hash,
-        error=None,
+        error=entry.load_error,
     )
 
 
@@ -159,10 +142,10 @@ def get_simple_custom_object(flow_id: int, node_id: int, current_user=Depends(ge
 
     if not user_defined_node:
         entry = registry.get(node.node_type)
-        if entry is not None and entry.error:
+        if entry is not None and entry.load_error:
             raise HTTPException(
                 status_code=409,
-                detail={"error": entry.error, "node_item": node.node_type},
+                detail={"error": entry.load_error, "node_item": node.node_type},
             )
         raise HTTPException(
             status_code=404,
@@ -194,6 +177,12 @@ def update_user_defined_node(input_data: dict[str, Any], node_type: str, current
     flow = flow_file_handler.get_flow(flow_id)
     user_defined_model = CUSTOM_NODE_STORE.get(node_type)
     if not user_defined_model:
+        entry = registry.get(node_type)
+        if entry is not None and entry.load_error:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": entry.load_error, "node_item": node_type},
+            )
         raise HTTPException(status_code=404, detail=f"Node type '{node_type}' not found")
     user_defined_node_settings = input_schema.UserDefinedNode.model_validate(input_data)
     initialized_model = user_defined_model.from_settings(user_defined_node_settings.settings)
@@ -240,11 +229,12 @@ def _render_save_source(request: SaveCustomNodeRequest) -> str:
 
 @router.post("/save-custom-node", summary="Save a custom node definition")
 def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(get_current_active_user)):
-    """Write a custom node .py file and hot-load it into the registry.
+    """Write a custom node .py file and hot-register it (AST-only — no exec at save).
 
     Designer mode regenerates canonical source from the DesignerState; code mode
-    writes the supplied source verbatim. A file that saves but fails to load is
-    still a success — ``load_error`` carries the broken state. When
+    writes the supplied source verbatim. A file that saves but fails AST validation
+    is still a success — ``load_error`` carries the broken state. Import-time
+    failures surface at first placement or via the Test tab (worker dry-run). When
     ``expected_hash`` is set and no longer matches the on-disk file, responds 409.
     """
     safe_name = _safe_file_name(request.file_name)
@@ -375,7 +365,25 @@ def delete_custom_node(file_name: str, current_user=Depends(get_current_active_u
         logger.error(f"Failed to delete custom node file: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}") from e
 
+    _drop_community_receipt_for(safe_name)
+
     return {"success": True, "file_name": safe_name, "message": f"Node '{safe_name}' deleted successfully"}
+
+
+def _drop_community_receipt_for(file_name: str) -> None:
+    """Deleting an installed community node through this legacy route must not orphan its receipt
+    or the icon/screenshots/README the install seeded."""
+    try:
+        from flowfile_core.flowfile.community_nodes.installer import remove_seeded_assets
+        from flowfile_core.flowfile.community_nodes.receipts import load_receipts, remove_receipt
+
+        for node_id, receipt in load_receipts().items():
+            if receipt.file_name == file_name:
+                remove_seeded_assets(receipt)
+                remove_receipt(node_id)
+                return
+    except Exception as e:
+        logger.warning(f"Could not reconcile community receipts after deleting {file_name}: {e}")
 
 
 @router.post("/rescan", summary="Rescan the custom nodes directory")

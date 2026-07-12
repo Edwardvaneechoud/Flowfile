@@ -1,6 +1,6 @@
 import polars as pl
 
-from flowfile.node_designer import CustomNodeBase, NodeSettings, NumericInput, SectionBuilder
+from flowfile.node_designer import CustomNodeBase, NodeSettings, NumericInput, Section, SectionBuilder
 
 builder = SectionBuilder(title="Advanced")
 builder.add_component("timeout", NumericInput(label="Timeout (s)", default=30))
@@ -8,7 +8,7 @@ advanced_section = builder.build()
 
 
 class BuilderSettings(NodeSettings):
-    advanced = advanced_section
+    advanced: Section = advanced_section
 
 
 class BuilderNode(CustomNodeBase):

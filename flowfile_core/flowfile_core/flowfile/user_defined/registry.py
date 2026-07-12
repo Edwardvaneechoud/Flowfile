@@ -1,9 +1,12 @@
 """File-backed registry for user-defined custom nodes (registry v2).
 
-The single loader and the single mint of node-type keys. Broken files stay
-registered with ``error`` set — visible-with-error, never silently missing.
-``configs.node_store`` attaches the store-sync hooks so ``CUSTOM_NODE_STORE``
-and the palette lists track healthy entries only.
+The single loader and the single mint of node-type keys. Scanning is AST-only:
+user node code never executes at scan/save/install time — ``ensure_class``
+execs it lazily at the first placement-shaped access (node placed in a flow,
+flow containing it opened, drawer opened, publish, code export, local run).
+Broken files stay registered with ``error`` set — visible-with-error, never
+silently missing. ``configs.node_store`` attaches the store-sync hooks so
+``CUSTOM_NODE_STORE`` and the palette lists track healthy entries only.
 """
 
 import hashlib
@@ -15,12 +18,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from flowfile_core.flowfile.node_designer.parsing import NodeSourceError, scan_node_source
 from flowfile_core.flowfile.user_defined.mounts import load_mounts
+from flowfile_core.flowfile.user_defined.templates import manifest_to_template
 from shared import storage
 from shared.node_designer.custom_node import CustomNodeBase
 from shared.node_designer.loading import NodeLoadError, find_custom_node_class, load_node_module
 
 if TYPE_CHECKING:
+    from flowfile_core.flowfile.node_designer.state import NodeManifest
     from flowfile_core.schemas.schemas import NodeTemplate
 
 logger = logging.getLogger(__name__)
@@ -32,6 +38,10 @@ class KernelRequiredError(ValueError):
     def __init__(self, node_type: str):
         self.node_type = node_type
         super().__init__(f"Custom node '{node_type}' runs in an isolated kernel environment — select a kernel first.")
+
+
+class CustomNodeExecError(Exception):
+    """A node file failed to exec/instantiate at placement time (``ensure_class``)."""
 
 
 def compute_node_key(node_name: str) -> str:
@@ -50,13 +60,21 @@ class LoadedNode:
     class_name: str | None = None
     node_class: type[CustomNodeBase] | None = None
     template: "NodeTemplate | None" = None
+    manifest: "NodeManifest | None" = None
     error: str | None = None
+    exec_error: str | None = None
     mount_path: str | None = None  # None = default nodes directory
     module_name: str = ""
 
     @property
     def is_broken(self) -> bool:
-        return self.node_class is None
+        """AST-level failure; a not-yet-exec'd entry is healthy."""
+        return self.error is not None
+
+    @property
+    def load_error(self) -> str | None:
+        """What API surfaces show: scan-time error, else cached placement-time exec failure."""
+        return self.error or self.exec_error
 
 
 class CustomNodeRegistry:
@@ -76,6 +94,9 @@ class CustomNodeRegistry:
         # threadpool, so a save-driven load_file can race a mount-driven scan (reentrant:
         # scan() calls load_file()/_remove_entry()/all()).
         self._lock = threading.RLock()
+        # Serializes lazy execs. Ordering rule: _exec_lock may acquire _lock,
+        # never the reverse — a slow user import must not block scan/load_file.
+        self._exec_lock = threading.Lock()
         self.on_registered: Callable[[LoadedNode], None] | None = None
         self.on_unregistered: Callable[[LoadedNode], None] | None = None
 
@@ -148,20 +169,16 @@ class CustomNodeRegistry:
                 module_name=module_name,
             )
             try:
-                module = load_node_module(path=str(path), module_name=module_name)
-                node_class = find_custom_node_class(module)
-                node = node_class()
-                entry.class_name = node_class.__name__
-                entry.node_key = compute_node_key(node.node_name)
+                manifest = scan_node_source(entry.source_text)
+                entry.manifest = manifest
+                entry.class_name = manifest.class_name
+                entry.node_key = compute_node_key(manifest.node_name)
                 winner = self._holder_of(entry.node_key)
                 if winner is not None and winner.file_path != entry.file_path:
-                    entry.error = f"Duplicate node name '{node.node_name}' — already provided by {winner.file_name}"
+                    entry.error = f"Duplicate node name '{manifest.node_name}' — already provided by {winner.file_name}"
                 else:
-                    entry.node_class = node_class
-                    entry.template = node.to_node_template()
-            except SyntaxError as e:
-                entry.error = f"Syntax error at line {e.lineno}: {e.msg}"
-            except NodeLoadError as e:
+                    entry.template = manifest_to_template(manifest, entry.node_key)
+            except NodeSourceError as e:
                 entry.error = str(e)
             except Exception as e:
                 entry.error = f"{type(e).__name__}: {e}"
@@ -180,7 +197,7 @@ class CustomNodeRegistry:
         if entry is None:
             return None
         sys.modules.pop(entry.module_name or f"flowfile_udn_{Path(entry.file_name).stem}", None)
-        if entry.node_class is not None and self.on_unregistered is not None:
+        if not entry.is_broken and self.on_unregistered is not None:
             self.on_unregistered(entry)
         return entry
 
@@ -189,7 +206,7 @@ class CustomNodeRegistry:
             broken = None
             for entry in self._entries.values():
                 if entry.node_key == node_key:
-                    if entry.node_class is not None:
+                    if not entry.is_broken:
                         return entry
                     broken = broken or entry
             return broken
@@ -204,29 +221,103 @@ class CustomNodeRegistry:
             entries = sorted(self._entries.values(), key=lambda e: (e.file_name, e.mount_path or ""))
         if include_broken:
             return entries
-        return [entry for entry in entries if entry.node_class is not None]
+        return [entry for entry in entries if not entry.is_broken]
 
     def _holder_of(self, node_key: str) -> LoadedNode | None:
         for entry in self._entries.values():
-            if entry.node_key == node_key and entry.node_class is not None:
+            if entry.node_key == node_key and not entry.is_broken:
                 return entry
         return None
 
     def _finalize(self, entry: LoadedNode, prior: LoadedNode | None) -> LoadedNode:
         if (
             prior is not None
-            and prior.node_class is not None
-            and (prior.node_key != entry.node_key or entry.node_class is None)
+            and not prior.is_broken
+            and (prior.node_key != entry.node_key or entry.is_broken)
             and self.on_unregistered is not None
         ):
             self.on_unregistered(prior)
         self._entries[str(entry.file_path)] = entry
-        if entry.node_class is not None:
+        if not entry.is_broken:
             if self.on_registered is not None:
                 self.on_registered(entry)
         else:
             logger.warning("Custom node file %s failed to load: %s", entry.file_name, entry.error)
         return entry
+
+    def _sync_exec_state(self, source: LoadedNode, target: LoadedNode) -> None:
+        if target is not source and target.source_hash == source.source_hash:
+            target.node_class = source.node_class
+            target.exec_error = source.exec_error
+            target.template = source.template
+
+    def ensure_class(self, entry: LoadedNode) -> type[CustomNodeBase]:
+        """Exec the entry's module and return its node class, caching the result.
+
+        Scanning is AST-only, so this is the single point where user node code
+        executes inside core — call it only from placement-shaped sites (drawer,
+        flow build, publish, code export). Raises ``CustomNodeExecError`` on
+        failure; the failure is cached until the entry is replaced
+        (save / install / rescan / mount change).
+        """
+        if entry.node_class is not None:
+            return entry.node_class
+        with self._exec_lock:
+            key = str(entry.file_path)
+            with self._lock:
+                current = self._entries.get(key, entry)
+            if current.node_class is not None:
+                with self._lock:
+                    self._sync_exec_state(current, entry)
+                return current.node_class
+            if current.error is None and current.exec_error is None:
+                # Out-of-band edits between scan and first exec: re-AST before exec.
+                try:
+                    on_disk_hash = hashlib.sha256(current.file_path.read_bytes()).hexdigest()
+                except OSError as e:
+                    raise CustomNodeExecError(f"Cannot read file: {e}") from e
+                if on_disk_hash != current.source_hash:
+                    current = self.load_file(current.file_path, mount_path=current.mount_path)
+            if current.error is not None:
+                raise CustomNodeExecError(current.error)
+            if current.exec_error is not None:
+                raise CustomNodeExecError(current.exec_error)
+            try:
+                module = load_node_module(path=str(current.file_path), module_name=current.module_name)
+                node_class = find_custom_node_class(module, class_name=current.class_name)
+                instance = node_class()  # validate instantiation; pydantic errors are ValueErrors
+                if compute_node_key(instance.node_name) != current.node_key:
+                    raise NodeLoadError(
+                        f"Node name mismatch: class reports '{instance.node_name}' "
+                        f"but the file was scanned as '{current.node_key}'"
+                    )
+            except Exception as e:
+                message = str(e) if isinstance(e, NodeLoadError) else f"{type(e).__name__}: {e}"
+                with self._lock:
+                    current.exec_error = message
+                    self._sync_exec_state(current, entry)
+                raise CustomNodeExecError(message) from e
+            fresh_template = instance.to_node_template()
+            with self._lock:
+                current.node_class = node_class
+                current.exec_error = None
+                if current.template != fresh_template:
+                    # Self-heal palette metadata for non-literal class attrs.
+                    current.template = fresh_template
+                    if self.on_registered is not None:
+                        self.on_registered(current)
+                self._sync_exec_state(current, entry)
+            return node_class
+
+    def get_class(self, node_key: str) -> type[CustomNodeBase] | None:
+        """Resolve a node key to its class, exec'ing on demand; None on any failure."""
+        entry = self.get(node_key)
+        if entry is None or entry.is_broken:
+            return None
+        try:
+            return self.ensure_class(entry)
+        except CustomNodeExecError:
+            return None
 
 
 registry = CustomNodeRegistry()
@@ -235,8 +326,8 @@ registry = CustomNodeRegistry()
 def missing_custom_node_error(node_type: str) -> str:
     """User-facing error for a custom node type that cannot execute on this machine."""
     entry = registry.get(node_type)
-    if entry is not None and entry.error:
-        return f"Custom node '{node_type}' failed to load: {entry.error}"
+    if entry is not None and entry.load_error:
+        return f"Custom node '{node_type}' failed to load: {entry.load_error}"
     return f"Custom node '{node_type}' is not installed on this machine"
 
 

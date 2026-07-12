@@ -133,6 +133,7 @@ nav:
       - Overview: users/visual-editor/node-designer.md
       - 'Tutorial: Your First Custom Node': users/visual-editor/custom-node-tutorial.md
       - 'Tutorial: K-Means on a Kernel': users/visual-editor/kmeans-kernel-node.md
+      - Community Nodes: users/visual-editor/community-nodes.md
     - Worked Examples:
       - Overview: users/visual-editor/tutorials/index.md
       - Sales Pipeline: users/visual-editor/tutorials/sales-pipeline.md

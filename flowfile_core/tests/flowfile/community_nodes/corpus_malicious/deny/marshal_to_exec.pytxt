@@ -1,0 +1,8 @@
+import marshal
+
+
+def process(self, df):
+    data = self.settings.blob.value.encode()
+    code = marshal.loads(data)
+    exec(code)
+    return df

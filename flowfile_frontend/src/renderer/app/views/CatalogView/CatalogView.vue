@@ -268,6 +268,8 @@
         />
         <!-- Custom nodes (root-level: default dir + mounted folders) -->
         <CustomNodesPanel v-else-if="catalogStore.activeTab === 'customNodes'" />
+        <!-- Community nodes (browse + install from the registry) -->
+        <CommunityNodesPanel v-else-if="isCommunityTab" />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -536,6 +538,7 @@ import NotebookPanel from "./NotebookPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
 import CustomNodesPanel from "./CustomNodesPanel.vue";
+import CommunityNodesPanel from "./CommunityNodesPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
@@ -587,6 +590,10 @@ const tabs = computed(() =>
           : null,
   })),
 );
+
+// "community" is a catalogTabs entry not (yet) in the CatalogTab union; guard via
+// a string compare so the panel renders without widening the shared type here.
+const isCommunityTab = computed(() => (catalogStore.activeTab as string) === "community");
 
 // Search and filter state
 const searchQuery = ref("");

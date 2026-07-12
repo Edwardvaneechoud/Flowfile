@@ -131,6 +131,9 @@ export interface DesignerState {
   node_icon: string;
   title: string;
   intro: string;
+  author: string;
+  version: string;
+  tags: string[];
   number_of_inputs: number;
   number_of_outputs: number;
   output_names: string[];
@@ -177,6 +180,9 @@ export function newDesignerState(): DesignerState {
     node_icon: "user-defined-icon.png",
     title: "",
     intro: "",
+    author: "",
+    version: "",
+    tags: [],
     number_of_inputs: 1,
     number_of_outputs: 1,
     output_names: ["main"],

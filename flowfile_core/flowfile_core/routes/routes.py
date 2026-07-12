@@ -580,7 +580,10 @@ def add_node(
         pre_snapshot = flow.get_flowfile_data() if flow.flow_settings.track_history else None
 
         logger.info("Adding node")
-        flow.add_node_promise(node_promise, track_history=False)
+        try:
+            flow.add_node_promise(node_promise, track_history=False)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
 
         is_subflow_port = node_type in ("flow_input", "flow_output")
         if check_if_has_default_setting(node_type) or is_subflow_port:
@@ -1272,7 +1275,21 @@ def get_list_of_saved_flows(path: str):
 @router.get("/node_list", response_model=list[schemas.NodeTemplate])
 def get_node_list() -> list[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
-    return nodes_list
+    from flowfile_core.flowfile.community_nodes.receipts import community_icon_overrides_by_node_key
+
+    # Installed community icons live namespaced on disk (<id>__icon.png) while the
+    # template keeps the node's original icon name; point the palette/canvas image at
+    # the on-disk file so it loads (mirrors _node_info_from_entry for the catalog list).
+    # model_copy, not in-place: the same NodeTemplate object is shared with node_dict.
+    overrides = community_icon_overrides_by_node_key()
+    if not overrides:
+        return nodes_list
+    return [
+        node.model_copy(update={"image": overrides[node.item]})
+        if node.custom_node and node.item in overrides
+        else node
+        for node in nodes_list
+    ]
 
 
 class _DynamicRenameColumn(BaseModel):

@@ -89,6 +89,11 @@
         </template>
       </div>
       <div class="modal-actions">
+        <button v-if="!viewingNodeCode" class="community-link" @click="browseCommunity">
+          <i class="fa-solid fa-store"></i>
+          Browse community nodes
+          <i class="fa-solid fa-arrow-right community-link-arrow"></i>
+        </button>
         <button v-if="viewingNodeCode" class="btn btn-secondary" @click="emit('back')">
           <i class="fa-solid fa-arrow-left"></i>
           Back
@@ -131,10 +136,13 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import { useRouter } from "vue-router";
 import { Codemirror } from "vue-codemirror";
 import type { Extension } from "@codemirror/state";
 import type { CustomNodeInfo } from "./types";
 import EmptyState from "../../components/common/EmptyState/EmptyState.vue";
+
+const router = useRouter();
 
 defineProps<{
   show: boolean;
@@ -163,6 +171,11 @@ function askDelete(fileName: string, name: string) {
 function confirmDelete() {
   if (pendingDelete.value) emit("delete", pendingDelete.value.fileName);
   pendingDelete.value = null;
+}
+
+function browseCommunity() {
+  emit("close");
+  router.push({ name: "catalog", query: { tab: "community" } });
 }
 </script>
 
@@ -279,5 +292,32 @@ function confirmDelete() {
   color: var(--color-danger-hover);
   font-size: var(--font-size-base);
   margin-top: 0.5rem;
+}
+
+.community-link {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.community-link:hover {
+  text-decoration: underline;
+}
+
+.community-link-arrow {
+  font-size: var(--font-size-xs);
+  transition: transform var(--transition-fast);
+}
+
+.community-link:hover .community-link-arrow {
+  transform: translateX(2px);
 }
 </style>

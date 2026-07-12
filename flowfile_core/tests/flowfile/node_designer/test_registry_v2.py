@@ -1,17 +1,20 @@
 """
 Tests for the file-backed custom node registry (registry v2):
 
-- scans the nodes directory (never the icons subdir)
+- scans the nodes directory (never the icons subdir) — AST-only, no exec
 - broken files stay registered visible-with-error, siblings unaffected
 - duplicate node names: the later file lands in an error state naming the winner
 - hot reload on save/delete keeps sys.modules and the store views in sync
+- ensure_class execs lazily, caches classes and failures
 """
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 
 from flowfile_core.flowfile.user_defined.registry import (
+    CustomNodeExecError,
     CustomNodeRegistry,
     compute_node_key,
     missing_custom_node_error,
@@ -68,11 +71,15 @@ def test_scan_loads_nodes_directory_not_icons(nodes_dir, local_registry):
     assert [e.file_name for e in entries] == ["good_node.py"]
     entry = local_registry.get("good_node")
     assert entry is not None
-    assert entry.node_class is not None
+    assert not entry.is_broken
     assert entry.error is None
+    assert entry.node_class is None  # scan is AST-only; exec happens at placement
     assert entry.class_name == "TestNode"
     assert len(entry.source_hash) == 64
     assert entry.template is not None and entry.template.item == "good_node"
+    node_class = local_registry.ensure_class(entry)
+    assert entry.node_class is node_class
+    assert node_class().node_name == "Good Node"
 
 
 def test_broken_file_visible_with_error_siblings_unaffected(nodes_dir, local_registry):
@@ -84,16 +91,16 @@ def test_broken_file_visible_with_error_siblings_unaffected(nodes_dir, local_reg
     assert len(entries) == 2
     broken = local_registry.get_by_file("broken_node.py")
     assert broken is not None
-    assert broken.node_class is None
+    assert broken.is_broken
     assert "Syntax error" in broken.error
-    assert local_registry.get("good_node").node_class is not None
+    assert not local_registry.get("good_node").is_broken
     assert [e.file_name for e in local_registry.all(include_broken=False)] == ["good_node.py"]
 
 
 def test_no_node_class_is_error_not_crash(nodes_dir, local_registry):
     (nodes_dir / "empty_module.py").write_text("x = 1\n")
     entry = local_registry.load_file(nodes_dir / "empty_module.py")
-    assert entry.node_class is None
+    assert entry.is_broken
     assert "No CustomNodeBase subclass" in entry.error
 
 
@@ -103,7 +110,7 @@ def test_two_classes_in_one_file_is_error(nodes_dir, local_registry):
     )
     (nodes_dir / "two_classes.py").write_text(code)
     entry = local_registry.load_file(nodes_dir / "two_classes.py")
-    assert entry.node_class is None
+    assert entry.is_broken
     assert "Multiple CustomNodeBase subclasses" in entry.error
 
 
@@ -115,8 +122,8 @@ def test_duplicate_node_name_later_file_errors_naming_winner(nodes_dir, local_re
 
     winner = local_registry.get_by_file("a_first.py")
     loser = local_registry.get_by_file("b_second.py")
-    assert winner.node_class is not None
-    assert loser.node_class is None
+    assert not winner.is_broken
+    assert loser.is_broken
     assert "Duplicate node name 'Same Name'" in loser.error
     assert "a_first.py" in loser.error
     assert local_registry.get("same_name").file_name == "a_first.py"
@@ -125,14 +132,14 @@ def test_duplicate_node_name_later_file_errors_naming_winner(nodes_dir, local_re
 def test_hot_reload_replaces_class_and_module(nodes_dir, local_registry):
     path = write_node_file(nodes_dir, "reload_node.py", "Reload Node")
     first = local_registry.load_file(path)
-    assert first.node_class().node_name == "Reload Node"
+    assert local_registry.ensure_class(first)().node_name == "Reload Node"
     first_module = sys.modules.get("flowfile_udn_reload_node")
     assert first_module is not None
 
     path.write_text(path.read_text().replace("Reload Node", "Reloaded Node"))
     second = local_registry.load_file(path)
 
-    assert second.node_class().node_name == "Reloaded Node"
+    assert local_registry.ensure_class(second)().node_name == "Reloaded Node"
     assert second.node_key == "reloaded_node"
     assert local_registry.get("reload_node") is None
     assert sys.modules.get("flowfile_udn_reload_node") is not first_module
@@ -145,15 +152,17 @@ def test_broken_rewrite_keeps_prior_key_with_error(nodes_dir, local_registry):
 
     entry = local_registry.load_file(path)
 
-    assert entry.node_class is None
+    assert entry.is_broken
     assert entry.node_key == "flaky_node"  # flows referencing the key still find the error
     assert "Syntax error" in local_registry.get("flaky_node").error
 
 
 def test_remove_file_unregisters(nodes_dir, local_registry):
     path = write_node_file(nodes_dir, "removable.py", "Removable Node")
-    local_registry.load_file(path)
+    entry = local_registry.load_file(path)
+    local_registry.ensure_class(entry)  # exec so the sys.modules cleanup below is meaningful
     assert local_registry.get("removable_node") is not None
+    assert "flowfile_udn_removable" in sys.modules
 
     removed = local_registry.remove_file("removable.py")
 
@@ -232,3 +241,128 @@ def test_hot_reload_updates_store_template(nodes_dir, singleton_on_tmp_dir):
     assert "new_name" in node_store.CUSTOM_NODE_STORE
     assert "old_name" not in node_store.node_dict
     assert node_store.node_dict["new_name"].item == "new_name"
+
+
+SENTINEL_TEMPLATE = '''
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+with open(r"{sentinel}", "a") as f:
+    f.write("exec\\n")
+
+
+class SentinelNode(CustomNodeBase):
+    node_name: str = "{node_name}"
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+
+IMPORT_BOMB_TEMPLATE = '''
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+raise RuntimeError("boom at import")
+
+
+class BombNode(CustomNodeBase):
+    node_name: str = "{node_name}"
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+
+
+def test_scan_never_execs_node_modules(nodes_dir, local_registry, tmp_path):
+    sentinel = tmp_path / "exec_log.txt"
+    (nodes_dir / "sentinel_node.py").write_text(
+        SENTINEL_TEMPLATE.format(sentinel=sentinel, node_name="Sentinel Node")
+    )
+
+    entries = local_registry.scan()
+
+    assert not sentinel.exists()
+    entry = entries[0]
+    assert not entry.is_broken
+    assert entry.template is not None and entry.template.item == "sentinel_node"
+    assert entry.class_name == "SentinelNode"
+
+
+def test_ensure_class_execs_exactly_once(nodes_dir, local_registry, tmp_path):
+    sentinel = tmp_path / "exec_log.txt"
+    path = nodes_dir / "sentinel_node.py"
+    path.write_text(SENTINEL_TEMPLATE.format(sentinel=sentinel, node_name="Sentinel Node"))
+    entry = local_registry.load_file(path)
+    assert not sentinel.exists()
+
+    first = local_registry.ensure_class(entry)
+    second = local_registry.ensure_class(local_registry.get("sentinel_node"))
+
+    assert first is second
+    assert sentinel.read_text().count("exec") == 1
+
+
+def test_ensure_class_thread_safe_single_exec(nodes_dir, local_registry, tmp_path):
+    sentinel = tmp_path / "exec_log.txt"
+    path = nodes_dir / "sentinel_node.py"
+    path.write_text(SENTINEL_TEMPLATE.format(sentinel=sentinel, node_name="Sentinel Node"))
+    local_registry.load_file(path)
+
+    results = []
+
+    def hit():
+        results.append(local_registry.ensure_class(local_registry.get("sentinel_node")))
+
+    threads = [threading.Thread(target=hit) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len({id(cls) for cls in results}) == 1
+    assert sentinel.read_text().count("exec") == 1
+
+
+def test_exec_failure_cached_until_reload(nodes_dir, local_registry):
+    path = nodes_dir / "bomb_node.py"
+    path.write_text(IMPORT_BOMB_TEMPLATE.format(node_name="Bomb Node"))
+    entry = local_registry.load_file(path)
+    assert not entry.is_broken  # AST-healthy: import failures surface at placement, not scan
+
+    with pytest.raises(CustomNodeExecError, match="boom at import"):
+        local_registry.ensure_class(entry)
+    assert entry.exec_error is not None
+    assert entry.load_error == entry.exec_error
+    with pytest.raises(CustomNodeExecError, match="boom at import"):
+        local_registry.ensure_class(entry)
+
+    # fixing the file + reloading (save/install/rescan) clears the cached failure
+    path.write_text(NODE_TEMPLATE.format(class_name="BombNode", node_name="Bomb Node"))
+    entry = local_registry.load_file(path)
+    assert entry.exec_error is None
+    assert local_registry.ensure_class(entry)().node_name == "Bomb Node"
+
+
+def test_stale_file_reloaded_before_exec(nodes_dir, local_registry):
+    path = write_node_file(nodes_dir, "stale_node.py", "Stale Node")
+    entry = local_registry.load_file(path)
+    path.write_text(NODE_TEMPLATE.format(class_name="TestNode", node_name="Fresh Node"))
+
+    node_class = local_registry.ensure_class(entry)
+
+    assert node_class().node_name == "Fresh Node"
+    fresh = local_registry.get("fresh_node")
+    assert fresh is not None and fresh.node_class is node_class
+    assert local_registry.get("stale_node") is None
+
+
+def test_store_get_returns_none_for_exec_broken(nodes_dir, singleton_on_tmp_dir):
+    node_store = singleton_on_tmp_dir
+    (nodes_dir / "bomb_node.py").write_text(IMPORT_BOMB_TEMPLATE.format(node_name="Bomb Node"))
+    singleton_registry.scan()
+
+    assert "bomb_node" in node_store.CUSTOM_NODE_STORE  # AST-healthy: browsable
+    assert node_store.CUSTOM_NODE_STORE.get("bomb_node") is None  # exec fails -> None
+    assert "boom at import" in singleton_registry.get("bomb_node").load_error
+    # visible-with-error: the palette template stays; placement surfaces the error
+    assert "bomb_node" in node_store.node_dict

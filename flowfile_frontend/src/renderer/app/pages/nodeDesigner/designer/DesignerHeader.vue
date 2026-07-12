@@ -24,6 +24,10 @@
         <i class="fa-solid fa-code"></i>
         View code
       </button>
+      <button class="btn btn-secondary" data-testid="designer-publish" @click="emit('publish')">
+        <i class="fa-solid fa-share-nodes"></i>
+        Publish
+      </button>
       <button
         class="btn btn-primary"
         data-testid="designer-save"
@@ -53,6 +57,7 @@ const emit = defineEmits<{
   (e: "browse"): void;
   (e: "new"): void;
   (e: "view-code"): void;
+  (e: "publish"): void;
   (e: "save"): void;
 }>();
 </script>

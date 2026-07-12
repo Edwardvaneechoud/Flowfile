@@ -26,8 +26,9 @@ router = APIRouter()
 
 
 def require_admin(current_user=Depends(get_current_active_user)):
-    """Registering a mount exec()s every .py in the directory inside core's process, and mounts
-    are install-wide (mounts.json, not per-user) — so mutating them is admin-only. Reads stay open."""
+    """Mounts land install-wide executable code (mounts.json, not per-user): scanning is AST-only,
+    but every mounted node execs in core once placed in a flow — so mutating them is admin-only.
+    Reads stay open."""
     if not getattr(current_user, "is_admin", False):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user
@@ -86,16 +87,16 @@ def _catalog_node_from_entry(entry: LoadedNode) -> CatalogCustomNode:
         node_key=entry.node_key,
         node_name=entry.file_path.stem.replace("_", " ").title(),
         file_name=entry.file_name,
-        error=entry.error,
+        error=entry.load_error,
     )
     if entry.mount_path is not None:
         row.source = entry.mount_path
         row.source_label = Path(entry.mount_path).name or entry.mount_path
-    if entry.node_class is not None:
-        node = entry.node_class()
-        row.node_name = node.node_name
-        row.node_category = node.node_category
-        row.environment = node.environment
+    if entry.manifest is not None:
+        if entry.manifest.node_name:
+            row.node_name = entry.manifest.node_name
+        row.node_category = entry.manifest.node_category
+        row.environment = entry.manifest.environment.kind
     return row
 
 

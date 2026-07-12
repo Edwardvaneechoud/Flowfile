@@ -36,6 +36,18 @@ def _warn_legacy_once(cls: type, message: str) -> None:
         logger.warning("%s (%s)", message, cls.__qualname__)
 
 
+def palette_group(node_category: str | None, node_group: str | None) -> tuple[str, str | None]:
+    """Palette placement: node_category becomes a real group (slug + label);
+    the default "Custom" category keeps node_group behavior. Shared by
+    ``CustomNodeBase.to_node_template`` and core's exec-free template builder."""
+    category = (node_category or "").strip()
+    if category and category.lower() != "custom":
+        slug = re.sub(r"[^a-z0-9]+", "_", category.lower()).strip("_")
+        if slug:
+            return slug, category
+    return node_group or "custom", None
+
+
 @dataclass
 class PopulateReport:
     """Outcome of applying stored settings values onto a settings schema."""
@@ -373,6 +385,11 @@ class NodeSettingsBuilder:
         return self._settings
 
 
+def node_key_for(node_name: str) -> str:
+    """Canonical node-type slug for a node name; flows persist it as node_type."""
+    return node_name.replace(" ", "_").lower()
+
+
 class CustomNodeBase(BaseModel):
     """
     The base class for creating a custom node in Flowfile.
@@ -413,6 +430,11 @@ class CustomNodeBase(BaseModel):
     title: str | None = "Custom Node"
     intro: str | None = "A custom node for data processing"
 
+    # Publishing metadata (optional; used when sharing via the community registry)
+    author: str | None = None
+    version: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
     # Behavior properties
     node_type: NodeTypeLiteral = "process"
     transform_type: TransformTypeLiteral = "wide"
@@ -424,7 +446,7 @@ class CustomNodeBase(BaseModel):
     @property
     def item(self):
         """A unique identifier for the node, derived from its name."""
-        return self.node_name.replace(" ", "_").lower()
+        return node_key_for(self.node_name)
 
     class Config:
         arbitrary_types_allowed = True
@@ -728,14 +750,7 @@ if not inputs:
         raise NotImplementedError
 
     def _palette_group(self) -> tuple[str, str | None]:
-        """Palette placement: node_category becomes a real group (slug + label);
-        the default "Custom" category keeps today's node_group behavior."""
-        category = (self.node_category or "").strip()
-        if category and category.lower() != "custom":
-            slug = re.sub(r"[^a-z0-9]+", "_", category.lower()).strip("_")
-            if slug:
-                return slug, category
-        return self.node_group or "custom", None
+        return palette_group(self.node_category, self.node_group)
 
     def to_node_template(self) -> "NodeTemplate":
         """

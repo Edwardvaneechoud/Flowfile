@@ -3,6 +3,9 @@
     <div class="panel-header">
       <h2>Custom Nodes</h2>
       <div class="header-actions">
+        <el-button size="small" type="primary" @click="openDesigner()">
+          <i class="fa-solid fa-plus" /> New node
+        </el-button>
         <el-button size="small" @click="openManageFolders">
           <i class="fa-solid fa-folder-tree" /> Manage folders
         </el-button>
@@ -134,18 +137,42 @@
           clearable
           @keyup.enter="addMount"
         />
+        <el-button size="small" @click="browseOpen = true">
+          <i class="fa-solid fa-folder-open" /> Browse…
+        </el-button>
         <el-button size="small" type="primary" :loading="adding" @click="addMount">
           <i class="fa-solid fa-plus" /> Mount
         </el-button>
       </div>
       <p class="dialog-note">
-        Enter an absolute path. In the desktop app, paste the folder path — a native picker is not
-        available here.
+        Pick a folder with <strong>Browse…</strong>, or paste an absolute path to a folder of
+        custom-node <code>.py</code> files.
       </p>
 
       <template #footer>
         <el-button @click="foldersOpen = false">Close</el-button>
       </template>
+    </el-dialog>
+
+    <!-- Directory picker (browses the machine running core; works in web and desktop) -->
+    <el-dialog
+      v-model="browseOpen"
+      title="Select a custom-node folder"
+      width="70%"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <p class="dialog-hint">
+        Open the folder you want scanned, then choose <strong>Select This Directory</strong>.
+      </p>
+      <FileBrowser
+        v-if="browseOpen"
+        mode="open"
+        context="flows"
+        :is-visible="browseOpen"
+        allow-directory-selection
+        @directory-selected="onPickDirectory"
+      />
     </el-dialog>
   </div>
 </template>
@@ -164,6 +191,7 @@ import {
   type MountInfo,
 } from "../../api/nodeDesigner";
 import { EmptyState } from "../../components/common";
+import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
 
 const router = useRouter();
 
@@ -172,6 +200,7 @@ const loading = ref(false);
 const rescanning = ref(false);
 
 const foldersOpen = ref(false);
+const browseOpen = ref(false);
 const mounts = ref<MountInfo[]>([]);
 const newMountPath = ref("");
 const adding = ref(false);
@@ -246,6 +275,14 @@ async function addMount() {
   }
 }
 
+// Picked from the directory browser → mount it straight away; the path stays in
+// the field so a rejected folder can be retried or edited.
+async function onPickDirectory(dirPath: string) {
+  browseOpen.value = false;
+  newMountPath.value = dirPath;
+  await addMount();
+}
+
 async function removeMount(path: string) {
   removingPath.value = path;
   mountError.value = null;
@@ -285,6 +322,9 @@ onMounted(loadNodes);
 .header-actions {
   display: flex;
   gap: 8px;
+}
+.header-actions .el-button i {
+  margin-right: 6px;
 }
 .panel-hint {
   font-size: 13px;

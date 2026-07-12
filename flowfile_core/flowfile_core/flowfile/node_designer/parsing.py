@@ -112,6 +112,9 @@ _RECOGNIZED_NODE_ATTRS = {
     "node_icon",
     "title",
     "intro",
+    "author",
+    "version",
+    "tags",
     "number_of_inputs",
     "number_of_outputs",
     "output_names",
@@ -124,7 +127,7 @@ _RECOGNIZED_NODE_ATTRS = {
     "kernel_id",
 }
 
-_STR_NODE_ATTRS = {"node_name", "node_category", "node_group", "node_icon", "title", "intro"}
+_STR_NODE_ATTRS = {"node_name", "node_category", "node_group", "node_icon", "title", "intro", "author", "version"}
 
 _DATAFRAME_HINTS = {"pl.DataFrame", "polars.DataFrame", "DataFrame"}
 
@@ -766,10 +769,10 @@ class _SourceParser:
             "module_extra": self._collect_module_extra(),
             "class_extra": class_extra,
         }
-        for attr in ("node_category", "node_group", "node_icon", "title", "intro"):
+        for attr in ("node_category", "node_group", "node_icon", "title", "intro", "author", "version"):
             if lifted.get(attr) is not None:
                 state_kwargs[attr] = lifted[attr]
-        for attr in ("number_of_inputs", "number_of_outputs", "output_names"):
+        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags"):
             if attr in lifted:
                 state_kwargs[attr] = lifted[attr]
         if "example_inputs" in lifted:
@@ -836,6 +839,11 @@ class _SourceParser:
         if name == "dependencies":
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 self.error(ParseIssueCode.NON_LITERAL_ATTR, "'dependencies' must be a list of strings", node)
+                return _INVALID
+            return value
+        if name == "tags":
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                self.error(ParseIssueCode.NON_LITERAL_ATTR, "'tags' must be a list of strings", node)
                 return _INVALID
             return value
         if name == "output_names":
@@ -1158,6 +1166,51 @@ def extract_example_inputs(source: str) -> list[dict[str, list]] | None:
     return None
 
 
+def extract_example_settings(source: str) -> dict | None:
+    """Best-effort exec-free lift of the node class's ``example_settings`` literal.
+
+    Mirrors ``extract_example_inputs`` for the settings companion. Returns the
+    section->values dict, or None when absent/non-literal/wrong shape.
+    """
+    try:
+        module = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    for stmt in module.body:
+        if not isinstance(stmt, ast.ClassDef):
+            continue
+        if not any((name := _dotted(base)) and name.split(".")[-1] == "CustomNodeBase" for base in stmt.bases):
+            continue
+        for item in stmt.body:
+            if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
+                target, value = item.targets[0].id, item.value
+            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.value is not None:
+                target, value = item.target.id, item.value
+            else:
+                continue
+            if target != "example_settings":
+                continue
+            try:
+                data = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return None
+            if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+                return None
+            return data
+        return None
+    return None
+
+
+def _node_classdefs(module: ast.Module) -> list[ast.ClassDef]:
+    """Module-level classes whose direct bases name CustomNodeBase."""
+    return [
+        stmt
+        for stmt in module.body
+        if isinstance(stmt, ast.ClassDef)
+        and any((base_name := _dotted(base)) and base_name.split(".")[-1] == "CustomNodeBase" for base in stmt.bases)
+    ]
+
+
 def extract_manifest(source: str) -> NodeManifest:
     """Best-effort exec-free listing metadata; never raises."""
     try:
@@ -1165,15 +1218,10 @@ def extract_manifest(source: str) -> NodeManifest:
     except (SyntaxError, ValueError):
         return NodeManifest()
     try:
-        node_cls = None
-        for stmt in module.body:
-            if isinstance(stmt, ast.ClassDef) and any(
-                (base_name := _dotted(base)) and base_name.split(".")[-1] == "CustomNodeBase" for base in stmt.bases
-            ):
-                node_cls = stmt
-                break
-        if node_cls is None:
+        classes = _node_classdefs(module)
+        if not classes:
             return NodeManifest()
+        node_cls = classes[0]
 
         attrs: dict[str, Any] = {}
         for stmt in node_cls.body:
@@ -1205,15 +1253,68 @@ def extract_manifest(source: str) -> NodeManifest:
         }
         if isinstance(attrs.get("node_name"), str):
             manifest_kwargs["node_name"] = attrs["node_name"]
-        for field in ("node_category", "node_icon", "title", "intro"):
+        for field in ("node_category", "node_icon", "title", "intro", "author", "version"):
             if isinstance(attrs.get(field), str):
                 manifest_kwargs[field] = attrs[field]
+        tags = attrs.get("tags")
+        if isinstance(tags, list) and all(isinstance(t, str) for t in tags):
+            manifest_kwargs["tags"] = tags
         for field in ("number_of_inputs", "number_of_outputs"):
             if type(attrs.get(field)) is int:
                 manifest_kwargs[field] = attrs[field]
         output_names = attrs.get("output_names")
         if isinstance(output_names, list) and output_names and all(isinstance(n, str) for n in output_names):
             manifest_kwargs["output_names"] = output_names
+        if isinstance(attrs.get("node_group"), str):
+            manifest_kwargs["node_group"] = attrs["node_group"]
+        if attrs.get("node_type") in ("input", "output", "process"):
+            manifest_kwargs["node_type"] = attrs["node_type"]
+        if attrs.get("transform_type") in ("narrow", "wide", "other"):
+            manifest_kwargs["transform_type"] = attrs["transform_type"]
         return NodeManifest(**manifest_kwargs)
     except Exception:
         return NodeManifest()
+
+
+class NodeSourceError(Exception):
+    """A node file failed AST-level validation at registry scan time."""
+
+
+def scan_node_source(source: str) -> NodeManifest:
+    """``extract_manifest`` with the registry's error ladder.
+
+    Raises ``NodeSourceError`` (message-compatible with the exec-time loader)
+    instead of degrading, so scan-time failures stay visible-with-error.
+    """
+    try:
+        module = ast.parse(source)
+    except SyntaxError as e:
+        raise NodeSourceError(f"Syntax error at line {e.lineno}: {e.msg}") from e
+    except ValueError as e:
+        raise NodeSourceError(str(e)) from e
+    classes = _node_classdefs(module)
+    if not classes:
+        raise NodeSourceError("No CustomNodeBase subclass found in module")
+    # Count transitive in-file subclasses too, matching the exec-time loader's
+    # "exactly one subclass defined in the module" rule.
+    all_classdefs = [stmt for stmt in module.body if isinstance(stmt, ast.ClassDef)]
+    node_names = {cls.name for cls in classes}
+    changed = True
+    while changed:
+        changed = False
+        for stmt in all_classdefs:
+            if stmt.name in node_names:
+                continue
+            if any((name := _dotted(base)) and name.split(".")[-1] in node_names for base in stmt.bases):
+                node_names.add(stmt.name)
+                classes.append(stmt)
+                changed = True
+    if len(classes) > 1:
+        names = ", ".join(sorted(cls.name for cls in classes))
+        raise NodeSourceError(
+            f"Multiple CustomNodeBase subclasses found ({names}); a node file must define exactly one"
+        )
+    manifest = extract_manifest(source)
+    if manifest.node_name is None:
+        raise NodeSourceError("node_name must be a string literal")
+    return manifest

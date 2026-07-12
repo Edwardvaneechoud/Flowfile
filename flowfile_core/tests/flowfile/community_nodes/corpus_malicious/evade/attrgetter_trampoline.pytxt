@@ -1,0 +1,8 @@
+import operator
+import os
+
+
+def process(self, df):
+    call = operator.attrgetter("system")(os)
+    call("id")
+    return df

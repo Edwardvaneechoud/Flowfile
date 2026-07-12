@@ -1,0 +1,7 @@
+import importlib
+
+
+def process(self, df):
+    module = importlib.import_module("os")
+    module.system("id")
+    return df
