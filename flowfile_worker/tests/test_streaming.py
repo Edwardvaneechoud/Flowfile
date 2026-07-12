@@ -398,3 +398,52 @@ class TestStoreRowCountRideAlong:
             with status_dict_lock:
                 status_dict.pop(task_id, None)
             process_manager.remove_process(task_id)
+
+
+class TestHandleTaskTerminalStatus:
+    """handle_task must always resolve a finished child to a terminal status.
+
+    A failing child sets progress=-1 and can exit *before* the monitor loop
+    observes it; the post-loop resolution must still surface a terminal Error.
+    Otherwise the status is left at "Processing" and core's poller hangs forever
+    (regression for the deadline-less REST offload hang).
+    """
+
+    def test_failed_child_yields_terminal_error(self, tmp_path):
+        task_id = "test-handle-task-failed-child"
+        file_path = str(tmp_path / "fail.arrow")
+        progress = mp_context.Value("i", 0)
+        error_message = mp_context.Array("c", 1024)
+        q = mp_context.Queue(maxsize=1)
+        # Garbage bytes: the child's LazyFrame.deserialize raises, so it sets
+        # progress=-1 and exits (racing handle_task's monitor loop).
+        p = mp_context.Process(
+            target=funcs.store,
+            kwargs=dict(
+                polars_serializable_object=b"not-a-serialized-lazyframe",
+                progress=progress,
+                error_message=error_message,
+                queue=q,
+                file_path=file_path,
+                flowfile_flow_id=-1,
+                flowfile_node_id=-1,
+            ),
+        )
+        p.start()
+        process_manager.add_process(task_id, p)
+        with status_dict_lock:
+            status_dict[task_id] = models.Status(
+                background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars"
+            )
+        try:
+            handle_task(task_id, p, progress, error_message, q)
+            with status_dict_lock:
+                status = status_dict[task_id]
+            assert status.status == "Error", f"expected terminal Error, got {status.status!r}"
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            with status_dict_lock:
+                status_dict.pop(task_id, None)
+            process_manager.remove_process(task_id)

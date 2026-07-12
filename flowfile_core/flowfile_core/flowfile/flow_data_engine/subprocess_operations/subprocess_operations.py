@@ -1,8 +1,10 @@
 # Standard library imports
 import io
 import json
+import os
 import threading
 from base64 import b64decode
+from time import monotonic
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -39,6 +41,9 @@ from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 # (connect, read) timeout for the short worker control calls so a dead/wedged
 # worker surfaces promptly instead of hanging a request thread indefinitely.
 _WORKER_TIMEOUT = (5, 30)
+
+# Generous so large offloads aren't killed; 0 disables. Env-tunable.
+_POLL_DEADLINE_SECONDS = float(os.getenv("FLOWFILE_WORKER_POLL_TIMEOUT", "3600"))
 
 
 def trigger_df_operation(
@@ -233,7 +238,9 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
 
 def trigger_rest_api_read(settings) -> Status:
     """Send a REST API read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json())
+    f = requests.post(
+        url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json(), timeout=_WORKER_TIMEOUT
+    )
     if not f.ok:
         raise Exception(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
     return Status(**f.json())
@@ -747,6 +754,7 @@ class BaseFetcher:
     def _fetch_cached_df(self):
         """Background thread that polls for results."""
         sleep_time = 0.5
+        start = monotonic()
 
         # Don't check _running here - subclasses already set it
         try:
@@ -776,6 +784,14 @@ class BaseFetcher:
 
                 except requests.RequestException as e:
                     self._handle_error(2, f"Request failed: {e}")
+                    return
+
+                if _POLL_DEADLINE_SECONDS and (monotonic() - start) > _POLL_DEADLINE_SECONDS:
+                    self._handle_error(
+                        2,
+                        f"Worker task exceeded the {_POLL_DEADLINE_SECONDS:.0f}s poll deadline "
+                        "while still reporting 'Processing'; giving up.",
+                    )
                     return
 
                 # Sleep without holding the lock

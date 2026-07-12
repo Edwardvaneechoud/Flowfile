@@ -1,4 +1,5 @@
 import gc
+import os
 import queue as _queue
 from base64 import b64encode
 from multiprocessing import Process
@@ -21,6 +22,11 @@ RESULT_QUEUE_TIMEOUT = 30.0
 _POLL_INITIAL_DELAY = 0.01
 _POLL_MAX_DELAY = 1.0
 _POLL_BACKOFF = 1.5
+
+# Wall-clock ceiling for a single task. A child that stays alive but never signals
+# completion (wedged in a native call, deadlocked) would otherwise spin the monitor
+# forever. Generous so real long jobs aren't killed; 0 disables. Env-tunable.
+_TASK_TIMEOUT = float(os.environ.get("FLOWFILE_WORKER_TASK_TIMEOUT", "3600"))
 
 
 def drain_result_queue(q: Queue, p: Process, timeout: float = RESULT_QUEUE_TIMEOUT):
@@ -74,6 +80,8 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             status_dict[task_id].status = "Processing"
 
         delay = _POLL_INITIAL_DELAY
+        deadline = (monotonic() + _TASK_TIMEOUT) if _TASK_TIMEOUT else None
+        timed_out = False
         while p.is_alive():
             with progress.get_lock():
                 current_progress = progress.value
@@ -95,6 +103,11 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             # exits, so p.is_alive() would spin here forever. Break on the completion
             # signal and let the drain below read the queue (which unblocks the child).
             if current_progress == 100:
+                break
+
+            if deadline is not None and monotonic() > deadline:
+                timed_out = True
+                p.terminate()
                 break
 
             sleep(delay)
@@ -127,8 +140,20 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
                             status.results = b64encode(result).decode("ascii")
                         else:
                             status.results = result
-                elif final_progress != -1:
-                    status_dict[task_id].status = "Unknown Error"
+                elif timed_out:
+                    status.status = "Error"
+                    status.error_message = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
+                elif final_progress == -1:
+                    # The child signalled an error but the monitor loop may not have observed
+                    # it (a child can die before we read progress == -1). Surface a terminal
+                    # Error so the core poller doesn't wait on "Processing" forever.
+                    status.status = "Error"
+                    if not status.error_message:
+                        with error_message.get_lock():
+                            decoded = error_message.value.decode(errors="replace").rstrip("\x00")
+                        status.error_message = decoded or "Task failed"
+                else:
+                    status.status = "Unknown Error"
 
     finally:
         if p.is_alive():
