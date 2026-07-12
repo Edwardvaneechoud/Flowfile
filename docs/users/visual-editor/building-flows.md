@@ -54,6 +54,10 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 | Show detailed progress | More granular per-node status during runs |
 | Show edge labels | Display each connection's name on the canvas |
 
+**Parallel workers** applies to Remote runs. The worker service runs independent steps at the same time, up to the number you set, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 — or on Local, which is always sequential — every step waits its turn.
+
+![The same flow — four Read data inputs, a Group by and a Formula transforming two of them, all merged by Union data — at two Parallel workers settings. With one worker the seven steps run one after another (numbered 1 to 7) and the total-time bar is long; with four workers the four reads run together as round 1, the two transforms as round 2, and Union data as round 3, so the flow finishes in three rounds instead of seven and the total-time bar is far shorter, the rest marked time saved.](../../assets/images/concepts/parallel-workers.svg)
+
 ### Edge labels and Python Script nodes
 
 Each connection's name comes from the source node's **node reference** (default `df_{node_id}`). With edge labels on, the canvas shows the exact name a [Python Script node](kernel-api.md#writing-output-data) uses to read that input:
