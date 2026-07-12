@@ -4,11 +4,12 @@
 
 Commands: ``validate``, ``validate-all``, ``dry-run``, ``build-index``, ``schema``.
 
-Importing ``flowfile_core`` runs Alembic migrations against the catalog DB. When
-running this CLI outside a configured install (community-repo CI, a fork runner),
-set these first so the import is side-effect free:
+This CLI is DB-free (validate/scan/dry-run/build-index need no catalog DB), but
+importing ``flowfile_core`` otherwise seeds and migrates one on import. When running
+outside a configured install (community-repo CI, a fork runner), set these first so
+the import creates and touches no database:
 
-    TESTING=True FLOWFILE_SKIP_STARTUP_MIGRATION=1
+    FLOWFILE_SKIP_INIT_DB=1 FLOWFILE_SKIP_STARTUP_MIGRATION=1
 
 Exit code is 1 when any validation error or dry-run failure occurs.
 """

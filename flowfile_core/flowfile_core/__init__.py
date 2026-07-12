@@ -12,7 +12,8 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 if "FLOWFILE_MODE" not in os.environ:
     os.environ["FLOWFILE_MODE"] = "electron"
 
-init_db()
+if os.environ.get("FLOWFILE_SKIP_INIT_DB", "").strip().lower() not in ("1", "true", "yes", "on"):
+    init_db()
 
 
 class ServerRun:

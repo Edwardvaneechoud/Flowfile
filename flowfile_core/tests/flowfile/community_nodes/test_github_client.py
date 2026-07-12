@@ -411,7 +411,7 @@ def test_sync_fork_swallows_conflict():
 # ---- logging hygiene ------------------------------------------------------
 
 
-def test_token_and_device_code_never_logged(monkeypatch, caplog):
+def test_token_and_device_code_never_logged(monkeypatch):
     _configured(monkeypatch)
     token = "ghp_SUPERSECRET_TOKEN_abcdef1234567890"
     device_code = "DEVICE_SECRET_CODE_abcdef9999"
@@ -433,8 +433,18 @@ def test_token_and_device_code_never_logged(monkeypatch, caplog):
             return httpx.Response(200, json={"access_token": token, "token_type": "bearer"})
         return httpx.Response(200, json={"login": "octo"})
 
-    core_logger.addHandler(caplog.handler)
-    caplog.set_level(logging.INFO)
+    # Capture directly off the module logger — PipelineHandler sets propagate=False, so
+    # caplog's root-attached handler sees nothing; a self-contained handler is order-proof.
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record.getMessage())
+
+    cap = _Capture()
+    prev_level = core_logger.level
+    core_logger.addHandler(cap)
+    core_logger.setLevel(logging.INFO)
     try:
         start = github_client.device_start(http=_mk(handler))
         assert start.device_code == device_code
@@ -442,8 +452,10 @@ def test_token_and_device_code_never_logged(monkeypatch, caplog):
         assert poll.access_token == token
         assert github_client.fetch_login(token, http=_mk(handler)) == "octo"
     finally:
-        core_logger.removeHandler(caplog.handler)
+        core_logger.removeHandler(cap)
+        core_logger.setLevel(prev_level)
 
-    assert "github" in caplog.text.lower()  # requests were logged
-    assert token not in caplog.text
-    assert device_code not in caplog.text
+    text = "\n".join(records)
+    assert "github" in text.lower()  # sanity: requests were logged at all
+    assert token not in text
+    assert device_code not in text
