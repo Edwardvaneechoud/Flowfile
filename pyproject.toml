@@ -133,9 +133,9 @@ asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 # Backstop so a wedged test can never hang the whole CI job (~50 min) with no output.
 # Generous: real tests finish in seconds, so this only trips on a genuine hang, dumping
-# a traceback. signal method interrupts just that test (POSIX; auto-falls back on Windows).
+# a traceback. Leave timeout_method unset so pytest-timeout auto-selects per platform:
+# signal on POSIX (interrupts just that test), thread on Windows (SIGALRM doesn't exist).
 timeout = 1800
-timeout_method = "signal"
 markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package",
