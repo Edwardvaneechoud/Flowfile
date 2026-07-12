@@ -11,6 +11,7 @@ import {
   uninstallNode,
   type CommunityNodeDetail,
   type CommunityNodeSummary,
+  type InstalledAlert,
   type InstallResponse,
   type InstallState,
 } from "../api/communityNodes";
@@ -42,6 +43,10 @@ export function describeError(e: unknown): string {
         }.`;
       case "BLOCKED":
         return "This node has been blocked by the registry and cannot be installed.";
+      case "YANKED":
+        return "This version has been withdrawn by the registry and cannot be installed.";
+      case "INCOMPATIBLE_VERSION":
+        return e.message || "This node requires a newer version of Flowfile.";
       case "PIN_MISMATCH":
         return "Downloaded content did not match its pinned checksum; install aborted.";
       case "SCAN_REJECTED":
@@ -60,6 +65,7 @@ export function describeError(e: unknown): string {
 export const useCommunityNodesStore = defineStore("communityNodes", () => {
   const nodes = ref<CommunityNodeSummary[]>([]);
   const categories = ref<string[]>([]);
+  const alerts = ref<InstalledAlert[]>([]);
   const repoStars = ref(0);
   const fetchedAt = ref("");
   const stale = ref(false);
@@ -131,6 +137,7 @@ export const useCommunityNodesStore = defineStore("communityNodes", () => {
       const res = await fetchIndex(refresh);
       nodes.value = res.nodes;
       categories.value = res.categories;
+      alerts.value = res.alerts ?? [];
       repoStars.value = res.repo_stars;
       fetchedAt.value = res.fetched_at;
       stale.value = res.stale;
@@ -191,6 +198,7 @@ export const useCommunityNodesStore = defineStore("communityNodes", () => {
   return {
     nodes,
     categories,
+    alerts,
     repoStars,
     fetchedAt,
     stale,

@@ -56,6 +56,22 @@ class {class_name}(CustomNodeBase):
         return inputs[0]
 '''
 
+SENTINEL_NODE = '''
+import polars as pl
+from shared.node_designer import CustomNodeBase
+
+with open(r"__SENTINEL__", "a") as f:
+    f.write("exec\\n")
+
+
+class {class_name}(CustomNodeBase):
+    node_name: str = "{node_name}"
+    node_category: str = "Community Test"
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+
 _FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 48
 
 
@@ -76,6 +92,8 @@ def build_fixture(
     with_readme: bool = False,
     commit: str = "commit0",
     min_version: str = "0.0.1",
+    yanked: list | None = None,
+    blocked: list | None = None,
 ) -> Path:
     """Write nodes/<id>/{node.py,manifest.json,icon.png} + index.json; return index path."""
     node_dir = root / "nodes" / node_id
@@ -124,6 +142,8 @@ def build_fixture(
                 "artifacts": artifacts,
             }
         ],
+        "yanked": yanked or [],
+        "blocked": blocked or [],
     }
     index_path = root / "index.json"
     index_path.write_text(json.dumps(index), encoding="utf-8")
@@ -191,11 +211,28 @@ def test_install_happy_path_writes_file_receipt_and_registers(isolated_storage, 
     assert receipts[node_id].source_commit == "commit0"
 
     entry = registry.get(node_id)
-    assert entry is not None and entry.node_class is not None
+    assert entry is not None and entry.error is None
+    assert entry.node_class is None  # install is AST-only; nothing execs until placement
 
     icon_file = receipts[node_id].icon_file
     assert icon_file == f"{node_id}__icon.png"
     assert (storage.user_defined_nodes_icons / icon_file).exists()
+
+
+def test_install_never_execs_node_module(isolated_storage, make_registry, tmp_path):
+    sentinel = tmp_path / "exec_log.txt"
+    source = SENTINEL_NODE.replace("__SENTINEL__", str(sentinel))
+    _index, node_id, node_name, _dir = make_registry(source_template=source)
+
+    outcome = _install(node_id, capabilities=["fs_write"])
+
+    assert outcome.load_error is None
+    assert not sentinel.exists()  # nothing runs until the node is placed in a flow
+
+    entry = registry.get(node_id)
+    node_class = registry.ensure_class(entry)  # placement-shaped access execs it
+    assert sentinel.read_text().count("exec") == 1
+    assert node_class().node_name == node_name
 
 
 def test_install_seeds_registry_screenshots(isolated_storage, make_registry):
@@ -383,6 +420,85 @@ def test_check_updates_on_version_bump(isolated_storage, make_registry):
     assert updates[0].node_id == node_id
     assert updates[0].installed_version == "1.0.0"
     assert updates[0].latest_version == "1.1.0"
+
+
+def test_yanked_version_refused_at_install(isolated_storage, make_registry):
+    from flowfile_core.flowfile.community_nodes.models import YankedEntry
+
+    _index, node_id, _name, _dir = make_registry()
+    # simulate a stale/poisoned index that still lists a yanked version
+    client = get_community_client()
+    index, _ = client.get_index()
+    index.yanked.append(YankedEntry(id=node_id, versions=["1.0.0"], reason="bad output"))
+
+    request = InstallRequest(node_id=node_id, version="1.0.0", acknowledged_risks=True, acknowledged_capabilities=[])
+    with pytest.raises(installer.YankedNodeError):
+        installer.install(request, index, client=client, user_id=1, user_email="t@example.com")
+    assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+
+
+def test_yank_with_no_versions_covers_all(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(
+        yanked=[{"id": "someone_else", "versions": []}],
+    )
+    client = get_community_client()
+    index, _ = client.get_index()
+    assert index.is_yanked("someone_else", "0.0.1")
+    assert index.is_yanked("someone_else", "9.9.9")
+    assert not index.is_yanked(node_id, "1.0.0")
+
+
+def test_incompatible_version_refused_at_install(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(min_version="99.0.0")
+
+    with pytest.raises(installer.IncompatibleVersionError):
+        _install(node_id)
+    assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+
+
+def test_incompatible_update_not_offered(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry()
+    _install(node_id)
+    receipt = load_receipts()[node_id]
+
+    client = get_community_client()
+    index, _ = client.get_index()
+    entry = index.entry(node_id)
+    newer_incompatible = entry.model_copy(update={"version": "2.0.0", "min_flowfile_version": "99.0.0"})
+
+    assert installer._has_update(newer_incompatible, receipt, app_version="1.0.0") is False
+    assert installer.install_state(newer_incompatible, receipt, False, app_version="1.0.0") == "installed"
+    newer_compatible = entry.model_copy(update={"version": "2.0.0"})
+    assert installer._has_update(newer_compatible, receipt, app_version="1.0.0") is True
+
+
+def test_installed_alerts_join_receipts_with_blocklist(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry()
+    _install(node_id)
+
+    client = get_community_client()
+    index, _ = client.get_index()
+    assert installer.installed_alerts(index) == []  # healthy install: no alert
+
+    from flowfile_core.flowfile.community_nodes.models import BlockedEntry, YankedEntry
+
+    index.blocked.append(BlockedEntry(id=node_id, reason="malicious", advisory_url="https://example.com/adv"))
+    alerts = installer.installed_alerts(index)
+    assert len(alerts) == 1
+    assert alerts[0].kind == "blocked"
+    assert alerts[0].node_id == node_id
+    assert alerts[0].reason == "malicious"
+    assert alerts[0].advisory_url == "https://example.com/adv"
+
+    # yank of a version we don't have installed → no alert; installed version → alert
+    index.blocked.clear()
+    index.yanked.append(YankedEntry(id=node_id, versions=["2.0.0"], reason="bad output"))
+    assert installer.installed_alerts(index) == []
+    index.yanked[0] = YankedEntry(id=node_id, versions=["1.0.0"], severity="deprecated", reason="bad output")
+    alerts = installer.installed_alerts(index)
+    assert len(alerts) == 1
+    assert alerts[0].kind == "yanked"
+    assert alerts[0].severity == "deprecated"
 
 
 def test_install_state_transitions(isolated_storage, make_registry):

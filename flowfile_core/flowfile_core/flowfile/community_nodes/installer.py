@@ -28,6 +28,7 @@ from flowfile_core.flowfile.community_nodes.models import (
     CommunityIndex,
     CommunityIndexEntry,
     ConsentRecord,
+    InstalledAlert,
     InstalledCommunityNode,
     InstallReceipt,
     InstallRequest,
@@ -61,6 +62,21 @@ class NodeNotFoundError(CommunityInstallError):
 
 class BlockedNodeError(CommunityInstallError):
     """The node is on the registry blocklist (route → 410)."""
+
+
+class YankedNodeError(CommunityInstallError):
+    """The requested node version is yanked in the registry (route → 410 YANKED)."""
+
+
+class IncompatibleVersionError(CommunityInstallError):
+    """The node requires a newer Flowfile than this install (route → 409 INCOMPATIBLE_VERSION)."""
+
+    def __init__(self, node_id: str, min_flowfile_version: str, app_version: str):
+        self.min_flowfile_version = min_flowfile_version
+        self.app_version = app_version
+        super().__init__(
+            f"'{node_id}' requires Flowfile >= {min_flowfile_version} (this install is {app_version or 'unknown'})"
+        )
 
 
 class ConsentRequiredError(CommunityInstallError):
@@ -148,13 +164,20 @@ def install(
         raise NodeNotFoundError(request.node_id)
     if request.node_id in index.blocked_ids():
         raise BlockedNodeError(request.node_id)
+    # Belt-and-suspenders: index_build already delists yanked versions, but a
+    # stale or fixture index must not reopen the door.
+    if index.is_yanked(request.node_id, entry.version):
+        raise YankedNodeError(request.node_id)
+    app_version = get_app_version()
+    if not is_version_compatible(entry.min_flowfile_version, app_version):
+        raise IncompatibleVersionError(entry.id, entry.min_flowfile_version, app_version)
     if not request.acknowledged_risks:
         raise ConsentRequiredError("Risk acknowledgement is required")
 
     node_key = entry.id
     holder = registry.get(node_key)
     receipts = load_receipts()
-    if holder is not None and holder.node_class is not None and node_key not in receipts:
+    if holder is not None and not holder.is_broken and node_key not in receipts:
         raise CollisionError(holder.file_name)
 
     commit = index.registry.commit
@@ -278,9 +301,9 @@ def _joined(receipt: InstallReceipt, current_hash: str) -> InstalledCommunityNod
     node_name = ""
     error = None
     if entry is not None:
-        error = entry.error
-        if entry.node_class is not None:
-            node_name = entry.node_class().node_name
+        error = entry.load_error
+        if entry.manifest is not None and entry.manifest.node_name:
+            node_name = entry.manifest.node_name
     return InstalledCommunityNode(
         receipt=receipt,
         node_name=node_name,
@@ -319,11 +342,38 @@ def get_installed(node_id: str) -> InstalledCommunityNode | None:
     return _joined(receipt, current_hash)
 
 
-def _has_update(entry: CommunityIndexEntry, receipt: InstallReceipt) -> bool:
-    """Newer semver, or the same version republished with different pinned bytes."""
+def _has_update(entry: CommunityIndexEntry, receipt: InstallReceipt, app_version: str | None = None) -> bool:
+    """Newer semver, or the same version republished with different pinned bytes.
+
+    An entry requiring a newer Flowfile than this install is not an applicable
+    update — install() would reject it, so don't offer the button."""
+    app_version = get_app_version() if app_version is None else app_version
+    if not is_version_compatible(entry.min_flowfile_version, app_version):
+        return False
     return semver_gt(entry.version, receipt.version) or (
         entry.version == receipt.version and entry.artifacts.node.sha256 != receipt.sha256
     )
+
+
+def installed_alerts(index: CommunityIndex) -> list[InstalledAlert]:
+    """Installed nodes the registry has since blocked or yanked (warning-only)."""
+    alerts: list[InstalledAlert] = []
+    blocked = {entry.id: entry for entry in index.blocked}
+    for receipt in list_receipts():
+        block = blocked.get(receipt.node_id)
+        if block is not None:
+            alerts.append(
+                InstalledAlert(
+                    node_id=receipt.node_id, kind="blocked", reason=block.reason, advisory_url=block.advisory_url
+                )
+            )
+            continue
+        yank = index.yanked_entry(receipt.node_id, receipt.version)
+        if yank is not None:
+            alerts.append(
+                InstalledAlert(node_id=receipt.node_id, kind="yanked", reason=yank.reason, severity=yank.severity)
+            )
+    return alerts
 
 
 def check_updates(index: CommunityIndex) -> list[UpdateInfo]:
@@ -357,7 +407,7 @@ def install_state(
         if not is_version_compatible(entry.min_flowfile_version, app_version):
             return "incompatible"
         return "not_installed"
-    if _has_update(entry, receipt):
+    if _has_update(entry, receipt, app_version):
         return "update_available"
     if modified_locally:
         return "modified_locally"

@@ -42,7 +42,7 @@ from flowfile_core.flowfile.node_designer.parsing import (
     extract_example_settings,
     extract_manifest,
 )
-from flowfile_core.flowfile.user_defined.registry import LoadedNode
+from flowfile_core.flowfile.user_defined.registry import CustomNodeExecError, LoadedNode, registry
 from shared import storage
 
 DEFAULT_NODE_ICON = "user-defined-icon.png"
@@ -53,8 +53,9 @@ MIN_DESCRIPTION_LEN = 10
 CHANGELOG_MAX = 1000  # mirrors CommunityManifest.changelog max_length
 
 # PNG twins of the standard node glyphs the designer's icon picker offers (kept in
-# lockstep with STANDARD_NODE_ICONS in the frontend's designer/utils.ts). A node
-# that picks one ships that glyph without the author uploading anything.
+# lockstep with STANDARD_NODE_ICONS in the frontend's designer/utils.ts). A picked
+# glyph keeps its .svg name and renders in-app as SVG; the store requires PNG, so we
+# map it here and ship the twin — no PNG is bundled in the frontend.
 STANDARD_ICONS_DIR = Path(__file__).parent / "standard_icons"
 
 
@@ -66,9 +67,11 @@ def _standard_icon_names() -> frozenset[str]:
 
 
 def _standard_icon_path(node_icon: str) -> Path | None:
-    """Path to a bundled standard glyph, or None. Membership in the bundled set
-    (all bare filenames) both selects and guards against path traversal."""
-    return STANDARD_ICONS_DIR / node_icon if node_icon in _standard_icon_names() else None
+    """Bundled PNG twin for a standard glyph, or None. Resolves by base name so a
+    picked ``.svg`` maps to its ``.png``; membership in the bundled set (bare
+    filenames) both selects and guards against path traversal."""
+    name = Path(node_icon).stem + ".png"
+    return STANDARD_ICONS_DIR / name if name in _standard_icon_names() else None
 
 # Codes the route/frontend render amber (advisory) instead of red (blocking).
 WARNING_CODES = frozenset({"ICON_DEFAULT", "ICON_MISSING", "NO_SCREENSHOTS", "README_STUB"})
@@ -108,18 +111,21 @@ def save_prep_readme(file_stem: str, text: str) -> None:
 
 
 def _resolve_png_icon(node_icon: str | None, node_id: str) -> bytes | None:
-    """Bytes of the node's custom PNG icon, or None for the default / non-PNG / missing.
+    """Bytes of the node's PNG icon, or None for the default / non-PNG / missing.
 
-    ``node_id`` (the node's file stem) resolves installed community nodes, whose
-    icon file is namespaced on disk while ``node_icon`` keeps the original name.
+    A standard glyph (picked in the designer, kept as its ``.svg`` name) resolves to
+    its bundled PNG twin; an uploaded custom PNG resolves from disk. ``node_id`` (the
+    node's file stem) resolves installed community nodes, whose icon file is
+    namespaced on disk while ``node_icon`` keeps the original name.
     """
-    if not node_icon or node_icon == DEFAULT_NODE_ICON or not node_icon.lower().endswith(".png"):
+    if not node_icon or node_icon == DEFAULT_NODE_ICON:
         return None
-    icon_name = community_icon_override(node_id) or node_icon
-    path = storage.user_defined_nodes_icons / icon_name
-    if not path.is_file():
-        path = _standard_icon_path(node_icon)
-        if path is None:
+    path = _standard_icon_path(node_icon)
+    if path is None:
+        if not node_icon.lower().endswith(".png"):
+            return None
+        path = storage.user_defined_nodes_icons / (community_icon_override(node_id) or node_icon)
+        if not path.is_file():
             return None
     data = path.read_bytes()
     if validation.png_dimensions(data) is None:
@@ -140,9 +146,15 @@ def completeness_check(
     issues: list[Issue] = []
     manifest = extract_manifest(entry.source_text)
 
-    if entry.node_class is None or entry.error:
-        detail = entry.error or "node is not fully set up"
-        issues.append(Issue(code="NODE_UNHEALTHY", message=f"Fix the node before publishing: {detail}"))
+    if entry.error:
+        issues.append(Issue(code="NODE_UNHEALTHY", message=f"Fix the node before publishing: {entry.error}"))
+    else:
+        # Publishing is an explicit author action — exec-validating the module
+        # here keeps the gate as strong as when scanning exec'd every file.
+        try:
+            registry.ensure_class(entry)
+        except CustomNodeExecError as e:
+            issues.append(Issue(code="NODE_UNHEALTHY", message=f"Fix the node before publishing: {e}"))
 
     node_name = (manifest.node_name or "").strip()
     if not node_name:
@@ -247,6 +259,9 @@ def _check_icon(node_icon: str | None, node_id: str, issues: list[Issue]) -> Non
     if icon == DEFAULT_NODE_ICON:
         issues.append(Issue(code="ICON_DEFAULT", message="Using the default icon — consider uploading a PNG icon"))
         return
+    standard = _standard_icon_path(icon)
+    if standard is not None:
+        return  # standard glyph → ships its bundled PNG twin, always valid
     if not icon.lower().endswith(".png"):
         issues.append(
             Issue(
@@ -257,12 +272,8 @@ def _check_icon(node_icon: str | None, node_id: str, issues: list[Issue]) -> Non
         return
     path = storage.user_defined_nodes_icons / (community_icon_override(node_id) or icon)
     if not path.is_file():
-        path = _standard_icon_path(icon)
-        if path is None:
-            issues.append(
-                Issue(code="ICON_MISSING", message=f"Icon file '{icon}' is missing — no icon will be shipped")
-            )
-            return
+        issues.append(Issue(code="ICON_MISSING", message=f"Icon file '{icon}' is missing — no icon will be shipped"))
+        return
     data = path.read_bytes()
     dims = None if validation._looks_like_svg(data) else validation.png_dimensions(data)
     if dims is None:

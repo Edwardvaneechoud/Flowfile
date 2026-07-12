@@ -73,6 +73,16 @@ export interface CommunityNodeDetail extends CommunityNodeSummary {
   screenshots: string[]; // media file names (not PinnedFile)
 }
 
+/** An installed node the registry has since blocked or yanked — delisted from
+ *  `nodes`, so this is the only signal to warn the user about it. */
+export interface InstalledAlert {
+  node_id: string;
+  kind: "blocked" | "yanked";
+  reason: string;
+  severity: string;
+  advisory_url: string;
+}
+
 export interface CommunityIndexResponse {
   fetched_at: string;
   source: string;
@@ -80,6 +90,7 @@ export interface CommunityIndexResponse {
   categories: string[];
   repo_stars: number;
   nodes: CommunityNodeSummary[];
+  alerts: InstalledAlert[];
 }
 
 export interface ConsentRecord {
@@ -139,6 +150,8 @@ export type CommunityErrorCode =
   | "CONSENT_CAPABILITIES"
   | "NODE_NAME_COLLISION"
   | "BLOCKED"
+  | "YANKED"
+  | "INCOMPATIBLE_VERSION"
   | "PIN_MISMATCH"
   | "COMMUNITY_UNAVAILABLE"
   | "SCAN_REJECTED"

@@ -331,16 +331,17 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
             if user_id is not None and hasattr(node_info.setting_input, "user_id"):
                 node_info.setting_input.user_id = user_id
             if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
-                if node_info.type not in CUSTOM_NODE_STORE:
-                    # A flow always opens; the node stays in error state with its
-                    # settings preserved verbatim instead of being dropped.
+                # .get() execs the node module lazily; missing or exec-broken nodes
+                # land in the error path so a flow always opens with settings
+                # preserved verbatim instead of being dropped.
+                user_defined_node_class = CUSTOM_NODE_STORE.get(node_info.type)
+                if user_defined_node_class is None:
                     new_flow.add_missing_user_defined_node(
                         user_defined_node_settings=node_info.setting_input,
                         node_type=node_info.type,
                         error=missing_custom_node_error(node_info.type),
                     )
                 else:
-                    user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
                     new_flow.add_user_defined_node(
                         custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
                         user_defined_node_settings=node_info.setting_input,

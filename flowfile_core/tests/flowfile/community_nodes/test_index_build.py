@@ -129,6 +129,31 @@ def test_blocklist_merge(tmp_path):
     assert [y.id for y in index.yanked] == ["other"]
 
 
+def test_yanked_current_version_delisted(tmp_path):
+    blocklist = {"yanked": [{"id": VALID_ID, "versions": ["1.0.0"], "severity": "security", "reason": "bad"}]}
+    repo = make_repo(tmp_path, blocklist=blocklist)
+    index = build_index(repo, previous=None, commit="c0", generated_at=GEN)
+    assert [n.id for n in index.nodes] == []  # current version yanked → delisted
+    assert [y.id for y in index.yanked] == [VALID_ID]
+
+    # publishing a newer version re-lists the node
+    bump_version(repo, VALID_ID, "1.0.1")
+    index = build_index(repo, previous=None, commit="c1", generated_at=GEN)
+    assert [n.id for n in index.nodes] == [VALID_ID]
+    assert index.nodes[0].version == "1.0.1"
+    assert [y.id for y in index.yanked] == [VALID_ID]  # yank record stays for installed-copy alerts
+
+
+def test_yank_without_versions_delists_all(tmp_path):
+    blocklist = {"yanked": [{"id": VALID_ID, "versions": []}]}
+    repo = make_repo(tmp_path, blocklist=blocklist)
+    index = build_index(repo, previous=None, commit="c0", generated_at=GEN)
+    assert [n.id for n in index.nodes] == []
+    bump_version(repo, VALID_ID, "2.0.0")
+    index = build_index(repo, previous=None, commit="c1", generated_at=GEN)
+    assert [n.id for n in index.nodes] == []  # empty versions list covers every version
+
+
 def test_empty_repo(tmp_path):
     repo = tmp_path / "empty"
     (repo / "nodes").mkdir(parents=True)

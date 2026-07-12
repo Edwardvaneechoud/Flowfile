@@ -126,7 +126,9 @@ def build_index(
 
     ``previous`` carries timestamps and registry metadata forward; ``commit`` is
     stamped into ``registry.commit`` (the pin URLs are composed from it client-side).
-    Blocked ids from ``registry/blocklist.json`` are excluded from ``nodes[]``.
+    Blocked ids from ``registry/blocklist.json`` are excluded from ``nodes[]``, and
+    so is a node whose current version is yanked — a yank delists that version
+    until a newer one is published.
     """
     repo_root = Path(repo_root)
     gen = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -148,6 +150,11 @@ def build_index(
                 continue
             manifest = CommunityManifest.model_validate_json((node_dir / "manifest.json").read_text(encoding="utf-8"))
             if manifest.id in blocked_ids:
+                continue
+            if any(
+                entry.id == manifest.id and (not entry.versions or manifest.version in entry.versions)
+                for entry in yanked_entries
+            ):
                 continue
             entries.append(_build_entry(repo_root, node_dir, gen, prev_entries.get(manifest.id)))
 

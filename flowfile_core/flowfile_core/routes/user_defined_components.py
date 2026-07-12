@@ -104,30 +104,30 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
 
 
 def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
-    if entry.node_class is None:
-        # Broken file: best-effort AST metadata so the browser still names it.
+    manifest = entry.manifest
+    if manifest is None:
+        # AST-broken file: best-effort metadata so the browser still names it.
         info = _extract_node_info_from_file(entry.file_path)
         info.node_key = entry.node_key
         info.source_hash = entry.source_hash
-        info.error = entry.error
+        info.error = entry.load_error
         return info
-    node = entry.node_class()
     # Installed community icons live namespaced on disk while node_icon keeps the original name.
     icon_override = community_icon_override(Path(entry.file_name).stem)
     return CustomNodeInfo(
         file_name=entry.file_name,
-        node_name=node.node_name,
-        node_category=node.node_category,
-        title=node.title or "",
-        intro=node.intro or "",
-        author=node.author or "",
-        version=node.version or "",
-        tags=list(node.tags),
-        node_icon=icon_override or node.node_icon,
+        node_name=manifest.node_name or "",
+        node_category=manifest.node_category,
+        title=manifest.title,
+        intro=manifest.intro,
+        author=manifest.author,
+        version=manifest.version,
+        tags=list(manifest.tags),
+        node_icon=icon_override or manifest.node_icon,
         node_key=entry.node_key,
-        environment=node.environment,
+        environment=manifest.environment.kind,
         source_hash=entry.source_hash,
-        error=None,
+        error=entry.load_error,
     )
 
 
@@ -142,10 +142,10 @@ def get_simple_custom_object(flow_id: int, node_id: int, current_user=Depends(ge
 
     if not user_defined_node:
         entry = registry.get(node.node_type)
-        if entry is not None and entry.error:
+        if entry is not None and entry.load_error:
             raise HTTPException(
                 status_code=409,
-                detail={"error": entry.error, "node_item": node.node_type},
+                detail={"error": entry.load_error, "node_item": node.node_type},
             )
         raise HTTPException(
             status_code=404,
@@ -177,6 +177,12 @@ def update_user_defined_node(input_data: dict[str, Any], node_type: str, current
     flow = flow_file_handler.get_flow(flow_id)
     user_defined_model = CUSTOM_NODE_STORE.get(node_type)
     if not user_defined_model:
+        entry = registry.get(node_type)
+        if entry is not None and entry.load_error:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": entry.load_error, "node_item": node_type},
+            )
         raise HTTPException(status_code=404, detail=f"Node type '{node_type}' not found")
     user_defined_node_settings = input_schema.UserDefinedNode.model_validate(input_data)
     initialized_model = user_defined_model.from_settings(user_defined_node_settings.settings)
@@ -223,11 +229,12 @@ def _render_save_source(request: SaveCustomNodeRequest) -> str:
 
 @router.post("/save-custom-node", summary="Save a custom node definition")
 def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(get_current_active_user)):
-    """Write a custom node .py file and hot-load it into the registry.
+    """Write a custom node .py file and hot-register it (AST-only — no exec at save).
 
     Designer mode regenerates canonical source from the DesignerState; code mode
-    writes the supplied source verbatim. A file that saves but fails to load is
-    still a success — ``load_error`` carries the broken state. When
+    writes the supplied source verbatim. A file that saves but fails AST validation
+    is still a success — ``load_error`` carries the broken state. Import-time
+    failures surface at first placement or via the Test tab (worker dry-run). When
     ``expected_hash`` is set and no longer matches the on-disk file, responds 409.
     """
     safe_name = _safe_file_name(request.file_name)

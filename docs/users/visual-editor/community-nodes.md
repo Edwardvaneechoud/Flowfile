@@ -61,7 +61,7 @@ You must tick the acknowledgement checkbox before **Install** enables.
 
 </details>
 
-On confirm, Flowfile downloads the pinned node file, icon, and screenshots, **verifies the sha256** of each, re-scans the downloaded code, and drops the node into your local palette. The icon and screenshots are kept locally too, so if you later publish an update of the node, the Publish modal starts from the published media instead of empty fields. The node appears in the palette right away — no restart. Nothing runs until you place the node in a flow.
+On confirm, Flowfile downloads the pinned node file, icon, and screenshots, **verifies the sha256** of each, re-scans the downloaded code, and drops the node into your local palette. The icon and screenshots are kept locally too, so if you later publish an update of the node, the Publish modal starts from the published media instead of empty fields. The node appears in the palette right away — no restart. Nothing runs until you place the node in a flow: installing only verifies, scans, and registers the file, and the node's code first executes when you actually use it.
 
 ### Node states
 
@@ -70,7 +70,9 @@ Once you've installed nodes, their cards reflect their state:
 - **Installed** — already in your palette.
 - **Update available** — the registry has a newer version than the one you installed.
 - **Modified locally** — you edited the installed file, so it no longer matches the pinned version. Flowfile leaves your edits alone.
-- **Incompatible** — the node needs a newer Flowfile than you're running.
+- **Incompatible** — the node needs a newer Flowfile than you're running. The backend refuses the install too, so this isn't just a greyed-out button.
+
+If the registry **blocks** a node (or withdraws the version you installed) after you installed it, a warning banner appears at the top of the Community Nodes tab with an uninstall shortcut. Delisting never reaches into your machine — the node stays installed and keeps running until you remove it yourself.
 
 ### Uninstall
 

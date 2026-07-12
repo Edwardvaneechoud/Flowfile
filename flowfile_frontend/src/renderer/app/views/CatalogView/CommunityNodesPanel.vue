@@ -16,6 +16,30 @@
       your machine — read what it can do before you install.
     </p>
 
+    <!-- Registry alerts for installed nodes: blocked/yanked nodes are delisted
+         from the browse grid, so this banner is the only place they surface. -->
+    <div v-for="alert in store.alerts" :key="alert.node_id" class="registry-alert">
+      <i class="fa-solid fa-triangle-exclamation" />
+      <span class="registry-alert__text">
+        <strong>{{ alert.node_id }}</strong>
+        {{
+          alert.kind === "blocked"
+            ? "was blocked by the registry after you installed it"
+            : "had its installed version withdrawn by the registry"
+        }}<template v-if="alert.reason">: {{ alert.reason }}</template
+        >. It stays on this machine and keeps running until you uninstall it.
+      </span>
+      <el-button
+        type="danger"
+        plain
+        size="small"
+        :disabled="store.isInstalling(alert.node_id)"
+        @click="uninstallAlerted(alert)"
+      >
+        Uninstall
+      </el-button>
+    </div>
+
     <!-- Filters -->
     <div class="filter-bar">
       <el-input
@@ -214,7 +238,11 @@ import {
   ElTooltip,
 } from "element-plus";
 import { EmptyState } from "../../components/common";
-import { mediaFileName, type CommunityNodeSummary } from "../../api/communityNodes";
+import {
+  mediaFileName,
+  type CommunityNodeSummary,
+  type InstalledAlert,
+} from "../../api/communityNodes";
 import { describeError, useCommunityNodesStore } from "../../stores/community-nodes-store";
 import { fetchMediaObjectUrl } from "../../composables/useCommunityMedia";
 import { getDefaultIconUrl } from "../../features/designer/utils";
@@ -298,6 +326,24 @@ async function onDetailUninstall(nodeId: string) {
   if (node) await confirmUninstall(node);
 }
 
+async function uninstallAlerted(alert: InstalledAlert) {
+  try {
+    await ElMessageBox.confirm(
+      `Remove "${alert.node_id}"? Its file is deleted from disk; flows that use it will show a missing-node error.`,
+      alert.kind === "blocked" ? "Uninstall blocked node" : "Uninstall withdrawn node",
+      { confirmButtonText: "Uninstall", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await store.uninstall(alert.node_id);
+    ElMessage.success(`Uninstalled ${alert.node_id}`);
+  } catch (e) {
+    ElMessage.error(describeError(e));
+  }
+}
+
 async function confirmUninstall(node: CommunityNodeSummary) {
   try {
     await ElMessageBox.confirm(
@@ -347,6 +393,24 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+.registry-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--el-color-danger-light-5);
+  background: var(--el-color-danger-light-9);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.registry-alert i {
+  color: var(--el-color-danger);
+}
+.registry-alert__text {
+  flex: 1;
+  color: var(--color-text-secondary);
 }
 .panel-hint {
   font-size: 13px;

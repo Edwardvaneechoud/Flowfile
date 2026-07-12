@@ -183,8 +183,8 @@ def test_scan_covers_default_and_mounts(default_dir, extra_dir, local_registry):
 
     home = local_registry.get("home_node")
     mounted = local_registry.get("mounted_node")
-    assert home is not None and home.node_class is not None
-    assert mounted is not None and mounted.node_class is not None
+    assert home is not None and not home.is_broken
+    assert mounted is not None and not mounted.is_broken
     assert home.mount_path is None
     assert mounted.mount_path == str(extra_dir)
 
@@ -216,9 +216,11 @@ def test_same_file_name_across_sources_no_module_collision(default_dir, extra_di
 
     home = local_registry.get("home_shared")
     mounted = local_registry.get("mounted_shared")
-    assert home is not None and home.node_class is not None
-    assert mounted is not None and mounted.node_class is not None
+    assert home is not None and not home.is_broken
+    assert mounted is not None and not mounted.is_broken
     assert home.module_name != mounted.module_name
+    local_registry.ensure_class(home)
+    local_registry.ensure_class(mounted)
     assert home.module_name in sys.modules
     assert mounted.module_name in sys.modules
 
@@ -234,7 +236,7 @@ def test_default_dir_wins_on_duplicate_name(default_dir, extra_dir, local_regist
     assert winner.mount_path is None  # default dir is scanned first, so it wins
     loser = local_registry.get_by_file(str(extra_dir / "away.py"))
     assert loser is not None
-    assert loser.node_class is None
+    assert loser.is_broken
     assert "Duplicate node name" in loser.error
 
 
@@ -259,7 +261,9 @@ def test_removing_mount_drops_its_nodes_on_rescan(default_dir, extra_dir, local_
     write_node_file(extra_dir, "mounted_node.py", "Mounted Node")
     add_mount(str(extra_dir), base_dir=default_dir)
     local_registry.scan()
-    mounted_module = local_registry.get("mounted_node").module_name
+    mounted_entry = local_registry.get("mounted_node")
+    local_registry.ensure_class(mounted_entry)  # exec so the sys.modules cleanup below is meaningful
+    mounted_module = mounted_entry.module_name
     assert mounted_module in sys.modules
 
     remove_mount(str(extra_dir), base_dir=default_dir)
@@ -279,7 +283,7 @@ def test_broken_mounted_file_visible_with_error(default_dir, extra_dir, local_re
     local_registry.scan()
 
     broken = next(e for e in local_registry.all() if e.file_name == "broken.py")
-    assert broken.node_class is None
+    assert broken.is_broken
     assert broken.mount_path == str(extra_dir)
     assert "Syntax error" in broken.error
 

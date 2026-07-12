@@ -1201,6 +1201,16 @@ def extract_example_settings(source: str) -> dict | None:
     return None
 
 
+def _node_classdefs(module: ast.Module) -> list[ast.ClassDef]:
+    """Module-level classes whose direct bases name CustomNodeBase."""
+    return [
+        stmt
+        for stmt in module.body
+        if isinstance(stmt, ast.ClassDef)
+        and any((base_name := _dotted(base)) and base_name.split(".")[-1] == "CustomNodeBase" for base in stmt.bases)
+    ]
+
+
 def extract_manifest(source: str) -> NodeManifest:
     """Best-effort exec-free listing metadata; never raises."""
     try:
@@ -1208,15 +1218,10 @@ def extract_manifest(source: str) -> NodeManifest:
     except (SyntaxError, ValueError):
         return NodeManifest()
     try:
-        node_cls = None
-        for stmt in module.body:
-            if isinstance(stmt, ast.ClassDef) and any(
-                (base_name := _dotted(base)) and base_name.split(".")[-1] == "CustomNodeBase" for base in stmt.bases
-            ):
-                node_cls = stmt
-                break
-        if node_cls is None:
+        classes = _node_classdefs(module)
+        if not classes:
             return NodeManifest()
+        node_cls = classes[0]
 
         attrs: dict[str, Any] = {}
         for stmt in node_cls.body:
@@ -1260,6 +1265,56 @@ def extract_manifest(source: str) -> NodeManifest:
         output_names = attrs.get("output_names")
         if isinstance(output_names, list) and output_names and all(isinstance(n, str) for n in output_names):
             manifest_kwargs["output_names"] = output_names
+        if isinstance(attrs.get("node_group"), str):
+            manifest_kwargs["node_group"] = attrs["node_group"]
+        if attrs.get("node_type") in ("input", "output", "process"):
+            manifest_kwargs["node_type"] = attrs["node_type"]
+        if attrs.get("transform_type") in ("narrow", "wide", "other"):
+            manifest_kwargs["transform_type"] = attrs["transform_type"]
         return NodeManifest(**manifest_kwargs)
     except Exception:
         return NodeManifest()
+
+
+class NodeSourceError(Exception):
+    """A node file failed AST-level validation at registry scan time."""
+
+
+def scan_node_source(source: str) -> NodeManifest:
+    """``extract_manifest`` with the registry's error ladder.
+
+    Raises ``NodeSourceError`` (message-compatible with the exec-time loader)
+    instead of degrading, so scan-time failures stay visible-with-error.
+    """
+    try:
+        module = ast.parse(source)
+    except SyntaxError as e:
+        raise NodeSourceError(f"Syntax error at line {e.lineno}: {e.msg}") from e
+    except ValueError as e:
+        raise NodeSourceError(str(e)) from e
+    classes = _node_classdefs(module)
+    if not classes:
+        raise NodeSourceError("No CustomNodeBase subclass found in module")
+    # Count transitive in-file subclasses too, matching the exec-time loader's
+    # "exactly one subclass defined in the module" rule.
+    all_classdefs = [stmt for stmt in module.body if isinstance(stmt, ast.ClassDef)]
+    node_names = {cls.name for cls in classes}
+    changed = True
+    while changed:
+        changed = False
+        for stmt in all_classdefs:
+            if stmt.name in node_names:
+                continue
+            if any((name := _dotted(base)) and name.split(".")[-1] in node_names for base in stmt.bases):
+                node_names.add(stmt.name)
+                classes.append(stmt)
+                changed = True
+    if len(classes) > 1:
+        names = ", ".join(sorted(cls.name for cls in classes))
+        raise NodeSourceError(
+            f"Multiple CustomNodeBase subclasses found ({names}); a node file must define exactly one"
+        )
+    manifest = extract_manifest(source)
+    if manifest.node_name is None:
+        raise NodeSourceError("node_name must be a string literal")
+    return manifest

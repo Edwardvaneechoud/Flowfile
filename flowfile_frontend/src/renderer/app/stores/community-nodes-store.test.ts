@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
-import type { CommunityNodeSummary } from "../api/communityNodes";
+import type { CommunityNodeSummary, InstalledAlert } from "../api/communityNodes";
 
 // Stub the network wrappers but keep the real CommunityApiError / toCommunityError.
 vi.mock("../api/communityNodes", async (importActual) => {
@@ -66,7 +66,7 @@ function makeNode(over: Partial<CommunityNodeSummary> = {}): CommunityNodeSummar
   };
 }
 
-function indexResponse(nodes: CommunityNodeSummary[]) {
+function indexResponse(nodes: CommunityNodeSummary[], alerts: InstalledAlert[] = []) {
   return {
     fetched_at: "2026-01-01T00:00:00Z",
     source: "fixture",
@@ -74,6 +74,7 @@ function indexResponse(nodes: CommunityNodeSummary[]) {
     categories: ["Transform", "Input"],
     repo_stars: 42,
     nodes,
+    alerts,
   };
 }
 
@@ -254,6 +255,20 @@ describe("community-nodes-store", () => {
       expect(store.error?.errorCode).toBe("COMMUNITY_UNAVAILABLE");
       expect(store.loading).toBe(false);
     });
+
+    it("stores installed-node alerts from the index response", async () => {
+      const store = useCommunityNodesStore();
+      const alert: InstalledAlert = {
+        node_id: "bad_node",
+        kind: "blocked",
+        reason: "malicious",
+        severity: "",
+        advisory_url: "https://example.com/adv",
+      };
+      fetchIndexMock.mockResolvedValue(indexResponse([], [alert]));
+      await store.loadIndex(false);
+      expect(store.alerts).toEqual([alert]);
+    });
   });
 
   describe("describeError", () => {
@@ -278,6 +293,15 @@ describe("community-nodes-store", () => {
       );
       expect(msg).toContain("network");
       expect(msg).toContain("fs_write");
+    });
+
+    it("maps YANKED and INCOMPATIBLE_VERSION", () => {
+      expect(describeError(new CommunityApiError(410, "YANKED", "x"))).toMatch(/withdrawn/i);
+      expect(
+        describeError(
+          new CommunityApiError(409, "INCOMPATIBLE_VERSION", "'n' requires Flowfile >= 9.9.9"),
+        ),
+      ).toContain("9.9.9");
     });
 
     it("falls back for non-registry errors", () => {

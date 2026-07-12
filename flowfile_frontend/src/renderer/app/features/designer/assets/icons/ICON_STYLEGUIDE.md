@@ -163,23 +163,22 @@ Changing/adding an icon basename touches up to four places:
    `src/components/nodes/FlowNode.vue` (`iconMap`). Keep the `view.png` fallback.
 3. **Docs** (optional, `docs/assets/images/nodes/` + the `nodes/*.md` markdown) — can lag.
 4. **Community store** (only if the glyph should be pickable for published custom nodes):
-   the store requires **PNG** icons, so the designer's icon picker (`STANDARD_NODE_ICONS`
-   in `utils.ts`, brand marks excluded) offers **PNG twins**, and `publish.py` resolves a
-   picked twin to bundled bytes. Ship the twin in **both** dirs:
-   `flowfile_frontend/.../designer/assets/icons/<name>.png` **and**
-   `flowfile_core/.../community_nodes/standard_icons/<name>.png`. The `utils.ts` derivation
-   auto-adds `<name>.png` to `BUILTIN_ICONS`, so no extra `utils.ts` edit is needed.
+   the picker (`STANDARD_NODE_ICONS` in `utils.ts`, brand marks excluded) offers the **`.svg`**
+   names — a pick renders as SVG in-app like any node. The store requires **PNG**, but that's
+   backend-only: `publish.py` maps the picked glyph to its **PNG twin**, shipped **once** in
+   `flowfile_core/.../community_nodes/standard_icons/<name>.png`. No PNG is bundled in the renderer.
+   (`SVG_NODE_ICONS` from step 1 already feeds the picker; no extra `utils.ts` edit.)
 
 ### PNG twins (community store)
-Every standard glyph carries a `<name>.png` alongside its `.svg` — the store's publish/install
-pipeline forbids SVG. The `.svg` stays the source of truth (and what the app renders); the `.png`
-is only the published artifact. Render the twin from the SVG with **Chromium** (the app's renderer —
-matches in-app anti-aliasing, and librsvg mis-renders any future `<style>` icons) at **256×256**
-transparent (ample for the 24–40px display; well under the store's 512 `ICON_DIM_MAX` and 256 KB
-`ICON_MAX` — ~12 KB each). Regenerate the `.png` whenever the glyph changes.
+Each standard glyph the picker offers needs a `<name>.png` in the **backend** `standard_icons/` dir
+only (the store's publish/install pipeline forbids SVG). The `.svg` stays the source of truth and is
+what the app renders everywhere; the `.png` is purely the published artifact. Render it from the SVG
+with **Chromium** (the app's renderer — matches in-app anti-aliasing, and librsvg mis-renders any
+future `<style>` icons) at **256×256** transparent (ample for the 24–40px display; well under the
+store's 512 `ICON_DIM_MAX` and 256 KB `ICON_MAX` — ~12 KB each). Regenerate whenever the glyph changes.
 
-Already-`.svg` basenames are **content-only** swaps (drop the file + regenerate its `.png` twin;
-no nodes.py/utils.ts/WASM edit). PNG→SVG basenames need the full tuple above.
+Already-`.svg` basenames are **content-only** swaps (drop the file + regenerate its backend `.png`
+twin; no nodes.py/utils.ts/WASM edit). PNG→SVG basenames need the full tuple above.
 
 ### Audit (run after any change — catches the silent-404 risk)
 For every `image="…"` in nodes.py, confirm the file exists in this dir AND is in

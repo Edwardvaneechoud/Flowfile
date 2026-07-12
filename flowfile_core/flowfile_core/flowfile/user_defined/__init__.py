@@ -1,4 +1,5 @@
 from flowfile_core.flowfile.user_defined.registry import (
+    CustomNodeExecError,
     CustomNodeRegistry,
     KernelRequiredError,
     LoadedNode,
@@ -7,6 +8,7 @@ from flowfile_core.flowfile.user_defined.registry import (
 )
 
 __all__ = [
+    "CustomNodeExecError",
     "CustomNodeRegistry",
     "KernelRequiredError",
     "LoadedNode",

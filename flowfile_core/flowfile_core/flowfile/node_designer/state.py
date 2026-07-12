@@ -169,6 +169,7 @@ class NodeManifest(BaseModel):
     class_name: str | None = None
     node_name: str | None = None
     node_category: str = "Custom"
+    node_group: str | None = "custom"
     node_icon: str = "user-defined-icon.png"
     title: str = ""
     intro: str = ""
@@ -179,3 +180,5 @@ class NodeManifest(BaseModel):
     number_of_outputs: int = 1
     output_names: list[str] = ["main"]
     environment: EnvironmentState = EnvironmentState()
+    node_type: Literal["input", "output", "process"] = "process"
+    transform_type: Literal["narrow", "wide", "other"] = "wide"

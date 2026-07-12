@@ -58,15 +58,13 @@ const NON_STANDARD_SVG = new Set(["google_analytics.svg", "kafka_source.svg"]);
 const DEFAULT_ICON = "user-defined-icon.png"; // persisted contract key (state.py / codegen)
 const DEFAULT_ICON_ASSET = "user-defined-icon.svg"; // bundled artwork for that key
 
-// Standard glyphs offered to custom-node authors ship as PNG twins: the community
-// store requires PNG icons, so a published node's node_icon must be a .png. Each
-// twin sits next to its .svg here (bundled for the renderer) and is also copied to
-// flowfile_core/.../community_nodes/standard_icons/ (the bytes publish.py ships).
+// Standard glyphs offered to custom-node authors. These render as SVG in-app like
+// every other node; the community store requires PNG, but that conversion is
+// backend-only — publish.py maps a picked glyph to its bundled PNG twin in
+// flowfile_core/.../community_nodes/standard_icons/. No PNG ships in this bundle.
 export const STANDARD_NODE_ICONS: string[] = SVG_NODE_ICONS.filter(
   (name) => !NON_STANDARD_SVG.has(name),
-)
-  .map((name) => name.replace(/\.svg$/, ".png"))
-  .sort();
+).sort();
 
 const BUILTIN_ICONS = new Set<string>([
   "airbyte.png",
@@ -74,7 +72,6 @@ const BUILTIN_ICONS = new Set<string>([
   "view.png",
   DEFAULT_ICON,
   ...SVG_NODE_ICONS,
-  ...STANDARD_NODE_ICONS,
 ]);
 
 /**

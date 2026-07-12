@@ -1375,8 +1375,10 @@ class FlowGraph:
                     node_info.setting_input.user_id = prior_user_ids.get(node_id, fallback_uid)
 
                 if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
-                    if node_info.type in CUSTOM_NODE_STORE:
-                        user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
+                    # .get() execs the node module lazily; on any failure the node
+                    # lands in the missing/error path so the flow still opens.
+                    user_defined_node_class = CUSTOM_NODE_STORE.get(node_info.type)
+                    if user_defined_node_class is not None:
                         self.add_user_defined_node(
                             custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
                             user_defined_node_settings=node_info.setting_input,
@@ -1708,7 +1710,7 @@ class FlowGraph:
                 node_needs_settings: bool
                 custom_node = CUSTOM_NODE_STORE.get(node_promise.node_type)
                 if custom_node is None:
-                    raise Exception(f"Custom node type '{node_promise.node_type}' not found in registry.")
+                    raise ValueError(missing_custom_node_error(node_promise.node_type))
                 settings_schema = custom_node.model_fields["settings_schema"].default
                 node_needs_settings = settings_schema is not None and not settings_schema.is_empty()
                 if not node_needs_settings:

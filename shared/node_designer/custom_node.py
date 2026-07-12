@@ -36,6 +36,18 @@ def _warn_legacy_once(cls: type, message: str) -> None:
         logger.warning("%s (%s)", message, cls.__qualname__)
 
 
+def palette_group(node_category: str | None, node_group: str | None) -> tuple[str, str | None]:
+    """Palette placement: node_category becomes a real group (slug + label);
+    the default "Custom" category keeps node_group behavior. Shared by
+    ``CustomNodeBase.to_node_template`` and core's exec-free template builder."""
+    category = (node_category or "").strip()
+    if category and category.lower() != "custom":
+        slug = re.sub(r"[^a-z0-9]+", "_", category.lower()).strip("_")
+        if slug:
+            return slug, category
+    return node_group or "custom", None
+
+
 @dataclass
 class PopulateReport:
     """Outcome of applying stored settings values onto a settings schema."""
@@ -738,14 +750,7 @@ if not inputs:
         raise NotImplementedError
 
     def _palette_group(self) -> tuple[str, str | None]:
-        """Palette placement: node_category becomes a real group (slug + label);
-        the default "Custom" category keeps today's node_group behavior."""
-        category = (self.node_category or "").strip()
-        if category and category.lower() != "custom":
-            slug = re.sub(r"[^a-z0-9]+", "_", category.lower()).strip("_")
-            if slug:
-                return slug, category
-        return self.node_group or "custom", None
+        return palette_group(self.node_category, self.node_group)
 
     def to_node_template(self) -> "NodeTemplate":
         """

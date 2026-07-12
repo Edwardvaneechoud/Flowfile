@@ -580,7 +580,10 @@ def add_node(
         pre_snapshot = flow.get_flowfile_data() if flow.flow_settings.track_history else None
 
         logger.info("Adding node")
-        flow.add_node_promise(node_promise, track_history=False)
+        try:
+            flow.add_node_promise(node_promise, track_history=False)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
 
         is_subflow_port = node_type in ("flow_input", "flow_output")
         if check_if_has_default_setting(node_type) or is_subflow_port:

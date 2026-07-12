@@ -38,9 +38,11 @@ from flowfile_core.flowfile.community_nodes.installer import (
     CollisionError,
     ConsentCapabilityError,
     ConsentRequiredError,
+    IncompatibleVersionError,
     NodeNotFoundError,
     ReceiptRequiredError,
     ScanRejectedError,
+    YankedNodeError,
 )
 from flowfile_core.flowfile.community_nodes.models import (
     CommunityIndex,
@@ -127,6 +129,9 @@ def get_index(refresh: bool = False, current_user=Depends(get_current_active_use
         "categories": index.categories,
         "repo_stars": popularity.repo_stars if popularity else 0,
         "nodes": nodes,
+        # Installed nodes the registry has since blocked/yanked — delisted from
+        # nodes[], so this is the frontend's only signal to warn about them.
+        "alerts": [alert.model_dump() for alert in installer.installed_alerts(index)],
     }
 
 
@@ -206,6 +211,19 @@ def install_node(request: InstallRequest, current_user=Depends(require_admin)) -
         raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "node_id": request.node_id}) from e
     except BlockedNodeError as e:
         raise HTTPException(status_code=410, detail={"error_code": "BLOCKED", "node_id": request.node_id}) from e
+    except YankedNodeError as e:
+        raise HTTPException(status_code=410, detail={"error_code": "YANKED", "node_id": request.node_id}) from e
+    except IncompatibleVersionError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "INCOMPATIBLE_VERSION",
+                "node_id": request.node_id,
+                "min_flowfile_version": e.min_flowfile_version,
+                "app_version": e.app_version,
+                "message": str(e),
+            },
+        ) from e
     except ConsentRequiredError as e:
         raise HTTPException(status_code=400, detail={"error_code": "CONSENT_REQUIRED", "message": str(e)}) from e
     except CollisionError as e:

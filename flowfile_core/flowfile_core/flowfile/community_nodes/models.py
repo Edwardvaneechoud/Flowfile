@@ -222,6 +222,27 @@ class CommunityIndex(BaseModel):
     def blocked_ids(self) -> set[str]:
         return {entry.id for entry in self.blocked}
 
+    def yanked_entry(self, node_id: str, version: str) -> YankedEntry | None:
+        """A yank with no versions listed covers every version of the node."""
+        for entry in self.yanked:
+            if entry.id == node_id and (not entry.versions or version in entry.versions):
+                return entry
+        return None
+
+    def is_yanked(self, node_id: str, version: str) -> bool:
+        return self.yanked_entry(node_id, version) is not None
+
+
+class InstalledAlert(BaseModel):
+    """An installed node the registry has since blocked or yanked (warning-only —
+    delisted nodes vanish from ``nodes[]``, so this is the only channel for them)."""
+
+    node_id: str
+    kind: Literal["blocked", "yanked"]
+    reason: str = ""
+    severity: str = ""
+    advisory_url: str = ""
+
 
 class NodePopularity(BaseModel):
     thumbs_up: int = 0

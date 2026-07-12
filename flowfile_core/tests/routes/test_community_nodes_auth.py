@@ -7,6 +7,7 @@ receipt lifecycle over the real app.
 """
 import hashlib
 import json
+import os
 import uuid
 from pathlib import Path
 
@@ -190,6 +191,76 @@ def test_uninstall_unknown_node_404(fixture_registry):
     response = authed_client.delete("/community_nodes/uninstall/never_installed_xyz")
     assert response.status_code == 404
     assert response.json()["detail"]["error_code"] == "NOT_INSTALLED"
+
+
+def _rewrite_index(mutate) -> None:
+    """Load the fixture index.json, apply ``mutate(index_dict)``, write it back
+    (fixture mode re-reads from disk on every request)."""
+    index_path = Path(os.environ["FLOWFILE_COMMUNITY_INDEX_URL"])
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+    mutate(data)
+    index_path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_install_yanked_version_410(fixture_registry):
+    node_id = fixture_registry
+    _rewrite_index(lambda d: d.update(yanked=[{"id": node_id, "versions": ["1.0.0"], "reason": "bad output"}]))
+
+    response = authed_client.post(
+        "/community_nodes/install",
+        json={"node_id": node_id, "version": "1.0.0", "acknowledged_risks": True},
+    )
+    assert response.status_code == 410, response.text
+    assert response.json()["detail"]["error_code"] == "YANKED"
+    assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+
+
+def test_install_incompatible_version_409(fixture_registry):
+    node_id = fixture_registry
+    _rewrite_index(lambda d: d["nodes"][0].update(min_flowfile_version="99.0.0"))
+
+    response = authed_client.post(
+        "/community_nodes/install",
+        json={"node_id": node_id, "version": "1.0.0", "acknowledged_risks": True},
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "INCOMPATIBLE_VERSION"
+    assert detail["min_flowfile_version"] == "99.0.0"
+    assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+
+
+def test_index_alerts_for_installed_then_blocked_node(fixture_registry):
+    node_id = fixture_registry
+    install = authed_client.post(
+        "/community_nodes/install",
+        json={"node_id": node_id, "version": "1.0.0", "acknowledged_risks": True},
+    )
+    assert install.status_code == 200, install.text
+
+    response = authed_client.get("/community_nodes/index")
+    assert response.status_code == 200
+    assert response.json()["alerts"] == []
+
+    # the registry blocks the node after install: delisted from nodes[], surfaced in alerts
+    def block(d):
+        d["blocked"] = [{"id": node_id, "reason": "malicious", "advisory_url": "https://example.com/adv"}]
+        d["nodes"] = []
+
+    _rewrite_index(block)
+    response = authed_client.get("/community_nodes/index")
+    assert response.status_code == 200
+    body = response.json()
+    assert all(n["id"] != node_id for n in body["nodes"])
+    assert body["alerts"] == [
+        {
+            "node_id": node_id,
+            "kind": "blocked",
+            "reason": "malicious",
+            "severity": "",
+            "advisory_url": "https://example.com/adv",
+        }
+    ]
 
 
 def test_media_serves_pinned_icon(fixture_registry):

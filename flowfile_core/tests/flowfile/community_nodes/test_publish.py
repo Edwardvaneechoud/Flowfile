@@ -116,10 +116,10 @@ def test_installed_node_icon_resolves_via_receipt(isolated_storage):
 
 
 def test_standard_builtin_icon_resolves(isolated_storage):
-    # A standard glyph from the designer's icon picker ships with the package
-    # (no upload, no receipt), so the publish path resolves it to bundled bytes.
+    # A standard glyph keeps its .svg name in-app; publish maps it to the bundled
+    # PNG twin that ships with the package (no upload, no receipt, no frontend PNG).
     assert "group_by.png" in publish._standard_icon_names()
-    entry = _write_node(node_icon="group_by.png")
+    entry = _write_node(node_icon="group_by.svg")
 
     issues = publish.completeness_check(entry, license="MIT", repository="")
     assert "ICON_MISSING" not in _warnings(issues)
