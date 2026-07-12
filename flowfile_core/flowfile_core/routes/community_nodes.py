@@ -103,7 +103,7 @@ def _get_index_or_503(client: CommunityClient, refresh: bool = False) -> tuple[C
 def get_index(refresh: bool = False, current_user=Depends(get_current_active_user)) -> dict[str, Any]:
     client = get_community_client()
     index, meta = _get_index_or_503(client, refresh=refresh)
-    popularity = client.get_popularity()
+    popularity = client.get_popularity(refresh=refresh)
     # list_installed prunes receipts for vanished files, so it is the one source
     # of both the receipt and the modified_locally flag for this response.
     installed = {node.receipt.node_id: node for node in installer.list_installed()}
@@ -114,7 +114,7 @@ def get_index(refresh: bool = False, current_user=Depends(get_current_active_use
         pop = popularity.nodes.get(entry.id) if popularity else None
         node = entry.model_dump()
         node["popularity"] = (
-            {"thumbs_up": pop.thumbs_up, "discussion_url": pop.discussion_url} if pop is not None else None
+            {"upvotes": pop.upvotes, "discussion_url": pop.discussion_url} if pop is not None else None
         )
         local = installed.get(entry.id)
         node["install_state"] = installer.install_state(
@@ -162,7 +162,7 @@ def get_node_detail(node_id: str, current_user=Depends(get_current_active_user))
     detail["icon_file"] = Path(entry.artifacts.icon.path).name if entry.artifacts.icon else None
     detail["screenshots"] = [Path(shot.path).name for shot in entry.artifacts.screenshots]
     detail["popularity"] = (
-        {"thumbs_up": pop.thumbs_up, "discussion_url": pop.discussion_url} if pop is not None else None
+        {"upvotes": pop.upvotes, "discussion_url": pop.discussion_url} if pop is not None else None
     )
     detail["install_state"] = installer.install_state(
         entry, local.receipt if local else None, local.modified_locally if local else False, get_app_version()

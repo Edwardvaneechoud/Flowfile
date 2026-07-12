@@ -127,12 +127,12 @@ describe("community-nodes-store", () => {
         makeNode({
           id: "low",
           node_name: "Beta",
-          popularity: { thumbs_up: 3, discussion_url: "" },
+          popularity: { upvotes: 3, discussion_url: "" },
         }),
         makeNode({
           id: "hi",
           node_name: "Alpha",
-          popularity: { thumbs_up: 9, discussion_url: "" },
+          popularity: { upvotes: 9, discussion_url: "" },
         }),
       ];
       store.filters.sort = "popularity";
@@ -182,7 +182,7 @@ describe("community-nodes-store", () => {
       const store = useCommunityNodesStore();
       store.nodes = [
         makeNode({ id: "a", popularity: null }),
-        makeNode({ id: "b", popularity: { thumbs_up: 1, discussion_url: "" } }),
+        makeNode({ id: "b", popularity: { upvotes: 1, discussion_url: "" } }),
       ];
       expect(store.hasPopularity).toBe(true);
     });

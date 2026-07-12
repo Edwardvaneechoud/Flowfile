@@ -137,8 +137,16 @@
             <span>v{{ node.version }}</span>
             <template v-if="node.popularity">
               <span class="dot">·</span>
-              <span class="node-card__thumbs"
-                ><i class="fa-solid fa-thumbs-up" /> {{ node.popularity.thumbs_up }}</span
+              <button
+                v-if="node.popularity.discussion_url"
+                class="node-card__upvotes node-card__upvotes--link"
+                title="Upvote on GitHub"
+                @click.stop="openDiscussion(node)"
+              >
+                <i class="fa-solid fa-arrow-up" /> {{ node.popularity.upvotes }}
+              </button>
+              <span v-else class="node-card__upvotes" title="upvotes"
+                ><i class="fa-solid fa-arrow-up" /> {{ node.popularity.upvotes }}</span
               >
             </template>
           </div>
@@ -248,6 +256,7 @@ import { fetchMediaObjectUrl } from "../../composables/useCommunityMedia";
 import { getDefaultIconUrl } from "../../features/designer/utils";
 import CommunityConsentDialog from "./CommunityConsentDialog.vue";
 import CommunityNodeDetailModal from "./CommunityNodeDetailModal.vue";
+import { desktop } from "../../../lib/desktop";
 
 const store = useCommunityNodesStore();
 const defaultIcon = getDefaultIconUrl();
@@ -292,6 +301,11 @@ async function refresh() {
 function openDetail(nodeId: string) {
   detailNodeId.value = nodeId;
   detailOpen.value = true;
+}
+
+function openDiscussion(node: CommunityNodeSummary) {
+  const url = node.popularity?.discussion_url;
+  if (url) void desktop.openExternal(url);
 }
 
 function openConsent(node: CommunityNodeSummary) {
@@ -563,8 +577,19 @@ onMounted(async () => {
 .dot {
   opacity: 0.5;
 }
-.node-card__thumbs i {
+.node-card__upvotes i {
   color: var(--color-accent);
+}
+.node-card__upvotes--link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.node-card__upvotes--link:hover {
+  text-decoration: underline;
 }
 .chip {
   display: inline-flex;

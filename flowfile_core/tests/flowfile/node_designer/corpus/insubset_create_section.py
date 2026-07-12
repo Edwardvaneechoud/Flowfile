@@ -1,6 +1,6 @@
 import polars as pl
 
-from flowfile.node_designer import CustomNodeBase, NumericInput, create_node_settings, create_section
+from flowfile.node_designer import CustomNodeBase, NodeSettings, NumericInput, create_node_settings, create_section
 
 main_section = create_section(
     title="Main",
@@ -10,7 +10,7 @@ main_section = create_section(
 
 class ScalerNode(CustomNodeBase):
     node_name: str = "Scaler"
-    settings_schema = create_node_settings(main=main_section)
+    settings_schema: NodeSettings = create_node_settings(main=main_section)
 
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
         factor = self.settings_schema.main.factor.value

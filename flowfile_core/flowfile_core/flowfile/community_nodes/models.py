@@ -245,7 +245,7 @@ class InstalledAlert(BaseModel):
 
 
 class NodePopularity(BaseModel):
-    thumbs_up: int = 0
+    upvotes: int = 0
     comments: int = 0
     discussion_number: int | None = None
     discussion_url: str = ""

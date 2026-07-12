@@ -38,10 +38,22 @@
               </template>
               <template v-if="detail.popularity">
                 <span class="dot">·</span>
-                <span class="thumbs"
-                  ><i class="fa-solid fa-thumbs-up"></i> {{ detail.popularity.thumbs_up }}</span
+                <button
+                  v-if="detail.popularity.discussion_url"
+                  class="link-btn upvotes"
+                  title="Upvote on GitHub"
+                  @click="openDiscussion"
+                >
+                  <i class="fa-solid fa-arrow-up"></i> {{ detail.popularity.upvotes }}
+                </button>
+                <span v-else class="upvotes" title="upvotes"
+                  ><i class="fa-solid fa-arrow-up"></i> {{ detail.popularity.upvotes }}</span
                 >
               </template>
+              <span class="dot">·</span>
+              <button class="link-btn" title="View source on GitHub" @click="openSource">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> View source
+              </button>
             </div>
             <div v-if="detail.tags.length" class="detail-tags">
               <span v-for="tag in detail.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
@@ -110,10 +122,12 @@
 import { computed, ref, watch } from "vue";
 import { ElDialog, ElImage } from "element-plus";
 import type { CommunityNodeDetail } from "../../api/communityNodes";
+import { communityNodeSourceUrl } from "../../api/communityNodes";
 import { useCommunityNodesStore, describeError } from "../../stores/community-nodes-store";
 import { useCommunityMediaUrl, loadScreenshotUrls } from "../../composables/useCommunityMedia";
 import { renderSafeMarkdown } from "../../lib/markdown";
 import { EmptyState } from "../../components/common";
+import { desktop } from "../../../lib/desktop";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -148,6 +162,15 @@ const canInstall = computed(
     detail.value?.install_state === "not_installed" ||
     detail.value?.install_state === "update_available",
 );
+
+function openSource() {
+  if (detail.value) void desktop.openExternal(communityNodeSourceUrl(detail.value.id));
+}
+
+function openDiscussion() {
+  const url = detail.value?.popularity?.discussion_url;
+  if (url) void desktop.openExternal(url);
+}
 
 async function load(nodeId: string) {
   loading.value = true;
@@ -217,8 +240,22 @@ watch(
 .dot {
   opacity: 0.5;
 }
-.thumbs i {
+.upvotes i {
   color: var(--color-accent);
+}
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+.link-btn:hover {
+  text-decoration: underline;
 }
 .detail-tags {
   display: flex;

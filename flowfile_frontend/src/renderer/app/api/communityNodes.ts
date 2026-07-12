@@ -6,6 +6,14 @@ import axios from "axios";
 
 const BASE = "/community_nodes";
 
+// Public registry repo; a node's source lives at /tree/main/nodes/<id>. Shared so
+// the consent dialog and detail modal link to the same place.
+export const COMMUNITY_REPO_URL = "https://github.com/edwardvaneechoud/flowfile-community-nodes";
+
+export function communityNodeSourceUrl(nodeId: string): string {
+  return `${COMMUNITY_REPO_URL}/tree/main/nodes/${nodeId}`;
+}
+
 export type InstallState =
   | "not_installed"
   | "installed"
@@ -34,7 +42,7 @@ export interface CommunityArtifacts {
 }
 
 export interface CommunityPopularity {
-  thumbs_up: number;
+  upvotes: number;
   discussion_url: string;
 }
 

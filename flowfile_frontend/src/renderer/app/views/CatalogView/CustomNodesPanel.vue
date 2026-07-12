@@ -3,6 +3,9 @@
     <div class="panel-header">
       <h2>Custom Nodes</h2>
       <div class="header-actions">
+        <el-button size="small" type="primary" @click="openDesigner()">
+          <i class="fa-solid fa-plus" /> New node
+        </el-button>
         <el-button size="small" @click="openManageFolders">
           <i class="fa-solid fa-folder-tree" /> Manage folders
         </el-button>

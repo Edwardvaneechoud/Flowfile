@@ -76,7 +76,7 @@
 import { computed, ref } from "vue";
 import { ElCheckbox, ElDialog } from "element-plus";
 import type { CommunityNodeSummary } from "../../api/communityNodes";
-import { mediaFileName } from "../../api/communityNodes";
+import { mediaFileName, communityNodeSourceUrl } from "../../api/communityNodes";
 import { useCommunityMediaUrl } from "../../composables/useCommunityMedia";
 import { desktop } from "../../../lib/desktop";
 import {
@@ -108,10 +108,8 @@ const iconUrl = useCommunityMediaUrl(
   () => (props.node?.artifacts.icon ? mediaFileName(props.node.artifacts.icon.path) : null),
 );
 
-const SOURCE_BASE = "https://github.com/edwardvaneechoud/flowfile-community-nodes/tree/main/nodes";
-
 function openSource() {
-  if (props.node) void desktop.openExternal(`${SOURCE_BASE}/${props.node.id}`);
+  if (props.node) void desktop.openExternal(communityNodeSourceUrl(props.node.id));
 }
 
 function confirm() {

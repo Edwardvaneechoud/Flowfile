@@ -232,14 +232,16 @@ class CommunityClient:
 
     # ---- popularity -----------------------------------------------------
 
-    def get_popularity(self) -> PopularityData | None:
+    def get_popularity(self, refresh: bool = False) -> PopularityData | None:
         """Absent or failed popularity never raises — the UI simply hides ratings."""
         url = get_community_popularity_url()
         if _is_fixture(url):
             return self._read_popularity_file(Path(url))
         if not url.startswith("https://"):
             return None
-        if self._mem_popularity_url == url and (time.monotonic() - self._mem_popularity_at) < get_community_cache_ttl():
+        cached_url_matches = self._mem_popularity_url == url
+        within_ttl = (time.monotonic() - self._mem_popularity_at) < get_community_cache_ttl()
+        if not refresh and cached_url_matches and within_ttl:
             return self._mem_popularity
         popularity = self._fetch_popularity(url)
         self._mem_popularity = popularity

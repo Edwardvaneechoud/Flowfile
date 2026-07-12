@@ -113,8 +113,8 @@ export const useCommunityNodesStore = defineStore("communityNodes", () => {
     } else {
       // popularity desc, null popularity last, name as the tiebreaker.
       sorted.sort((a, b) => {
-        const ta = a.popularity?.thumbs_up ?? -1;
-        const tb = b.popularity?.thumbs_up ?? -1;
+        const ta = a.popularity?.upvotes ?? -1;
+        const tb = b.popularity?.upvotes ?? -1;
         if (ta !== tb) return tb - ta;
         return a.node_name.localeCompare(b.node_name);
       });
