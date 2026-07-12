@@ -1,8 +1,10 @@
 # Standard library imports
 import io
 import json
+import os
 import threading
 from base64 import b64decode
+from time import monotonic
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -36,6 +38,13 @@ from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
 from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
+# (connect, read) timeout for the short worker control calls so a dead/wedged
+# worker surfaces promptly instead of hanging a request thread indefinitely.
+_WORKER_TIMEOUT = (5, 30)
+
+# Generous so large offloads aren't killed; 0 disables. Env-tunable.
+_POLL_DEADLINE_SECONDS = float(os.getenv("FLOWFILE_WORKER_POLL_TIMEOUT", "3600"))
+
 
 def trigger_df_operation(
     flow_id: int,
@@ -55,7 +64,7 @@ def trigger_df_operation(
     }
     if kwargs:
         headers["X-Kwargs"] = json.dumps(kwargs)
-    v = requests.post(url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers)
+    v = requests.post(url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT)
     if not v.ok:
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -73,7 +82,7 @@ def trigger_sample_operation(
         "X-Flow-Id": str(flow_id),
         "X-Node-Id": str(node_id),
     }
-    v = requests.post(url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers)
+    v = requests.post(url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT)
     if not v.ok:
         raise Exception(f"trigger_sample_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -229,7 +238,9 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
 
 def trigger_rest_api_read(settings) -> Status:
     """Send a REST API read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json())
+    f = requests.post(
+        url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json(), timeout=_WORKER_TIMEOUT
+    )
     if not f.ok:
         raise Exception(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
     return Status(**f.json())
@@ -579,7 +590,7 @@ def trigger_vacuum_catalog_table(
 
 
 def get_results(file_ref: str) -> Status | None:
-    f = requests.get(f"{WORKER_URL}/status/{file_ref}")
+    f = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
     if f.status_code == 200:
         return Status(**f.json())
     else:
@@ -591,7 +602,7 @@ def results_exists(file_ref: str):
         return False
 
     try:
-        f = requests.get(f"{WORKER_URL}/status/{file_ref}")
+        f = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
         if f.status_code == 200:
             if f.json()["status"] == "Completed":
                 return True
@@ -618,7 +629,7 @@ def clear_task_from_worker(file_ref: str) -> bool:
         return False
 
     try:
-        f = requests.delete(f"{WORKER_URL}/clear_task/{file_ref}")
+        f = requests.delete(f"{WORKER_URL}/clear_task/{file_ref}", timeout=_WORKER_TIMEOUT)
         if f.status_code == 200:
             return True
         return False
@@ -643,7 +654,7 @@ def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
 
 
 def get_status(file_ref: str) -> Status:
-    status_response = requests.get(f"{WORKER_URL}/status/{file_ref}")
+    status_response = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
     if status_response.status_code == 200:
         return Status(**status_response.json())
     else:
@@ -664,7 +675,7 @@ def cancel_task(file_ref: str) -> bool:
         Exception: If there's an error communicating with the worker service
     """
     try:
-        response = requests.post(f"{WORKER_URL}/cancel_task/{file_ref}")
+        response = requests.post(f"{WORKER_URL}/cancel_task/{file_ref}", timeout=_WORKER_TIMEOUT)
         if response.ok:
             return True
         return False
@@ -676,6 +687,8 @@ class BaseFetcher:
     """
     Thread-safe fetcher for polling worker status and retrieving results.
     """
+
+    status: Status | None = None
 
     def __init__(self, file_ref: str = None):
         self.file_ref = file_ref if file_ref else str(uuid4())
@@ -741,6 +754,7 @@ class BaseFetcher:
     def _fetch_cached_df(self):
         """Background thread that polls for results."""
         sleep_time = 0.5
+        start = monotonic()
 
         # Don't check _running here - subclasses already set it
         try:
@@ -772,6 +786,14 @@ class BaseFetcher:
                     self._handle_error(2, f"Request failed: {e}")
                     return
 
+                if _POLL_DEADLINE_SECONDS and (monotonic() - start) > _POLL_DEADLINE_SECONDS:
+                    self._handle_error(
+                        2,
+                        f"Worker task exceeded the {_POLL_DEADLINE_SECONDS:.0f}s poll deadline "
+                        "while still reporting 'Processing'; giving up.",
+                    )
+                    return
+
                 # Sleep without holding the lock
                 if not self._stop_event.wait(timeout=sleep_time):
                     continue
@@ -788,6 +810,7 @@ class BaseFetcher:
     def _handle_completion(self, status):
         """Handle successful completion. Must be called from fetch thread."""
         with self._condition:
+            self.status = status
             try:
                 if status.result_type == "polars":
                     self._result = get_df_result(status.results)
@@ -978,8 +1001,6 @@ class BaseFetcher:
 
 
 class ExternalDfFetcher(BaseFetcher):
-    status: Status | None = None
-
     def __init__(
         self,
         flow_id: int,
@@ -1023,8 +1044,6 @@ class ExternalDfFetcher(BaseFetcher):
 
 
 class ExternalSampler(BaseFetcher):
-    status: Status | None = None
-
     def __init__(
         self,
         lf: pl.LazyFrame | pl.DataFrame,

@@ -51,6 +51,7 @@ import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore, FLOW_ID_STORAGE_KEY } from "../../stores/flow-store";
 import { useDrawerStore } from "../../stores/drawer-store";
+import { useTutorialStore } from "../../stores/tutorial-store";
 import {
   getFlowData,
   deleteConnection,
@@ -579,6 +580,11 @@ async function onConnect(params: Connection & { label?: string }) {
   }
 
   addEdges([params]);
+  const sourceId = parseInt(params.source, 10);
+  const targetId = parseInt(params.target, 10);
+  if (Number.isFinite(sourceId) && Number.isFinite(targetId)) {
+    useTutorialStore().notify({ type: "edge-connected", sourceId, targetId });
+  }
   if (response?.history) {
     flowStore.updateHistoryState(response.history);
   }
@@ -594,6 +600,7 @@ const openNodeSettings = async (nodeId: number) => {
     // of a double-click.)
     itemStore.bringToFront("rightDrawer");
     drawerStore.setActiveTab("rightDrawer", "settings");
+    useTutorialStore().notify({ type: "node-settings-opened", nodeId });
     return;
   }
   if (nodeStore.nodeId === nodeId) {
@@ -607,6 +614,7 @@ const openNodeSettings = async (nodeId: number) => {
   await nextTick(); // settings tab mounts before fronting
   itemStore.bringToFront("rightDrawer");
   drawerStore.setActiveTab("rightDrawer", "settings");
+  useTutorialStore().notify({ type: "node-settings-opened", nodeId });
 };
 
 // Open + front the bottom Data preview for a node. The dock's Data tab reacts to
@@ -650,6 +658,7 @@ const handleNodeChange = async (nodeChangesEvent: any) => {
       if (isGroupNodeId(nodeChange.id)) continue;
       const nodeChangeId = Number(nodeChange.id);
       lastResponse = await deleteNode(flowStore.flowId, nodeChangeId);
+      useTutorialStore().notify({ type: "node-removed", nodeId: nodeChangeId });
     }
   }
   if (lastResponse?.history) {

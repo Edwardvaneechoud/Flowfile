@@ -7,7 +7,7 @@ from queue import Empty
 
 import polars as pl
 from deltalake.exceptions import DeltaError
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
@@ -919,37 +919,6 @@ def get_status(task_id: str) -> models.Status:
         logger.error(f"Invalid result for task: {task_id}")
         raise HTTPException(status_code=404, detail="Task not found")
     return status
-
-
-@router.get("/fetch_results/{task_id}")
-async def fetch_results(task_id: str):
-    """Fetch results for a completed task.
-
-    Args:
-        task_id: Unique identifier of the task
-
-    Returns:
-        dict: Task ID and serialized result data
-
-    Raises:
-        HTTPException: If result not found or error occurred
-    """
-    logger.debug(f"Fetching results for task: {task_id}")
-    status = status_dict.get(task_id)
-    if not status:
-        logger.warning(f"Result not found: {task_id}")
-        raise HTTPException(status_code=404, detail="Result not found")
-    if status.status == "Processing":
-        return Response(status_code=202, content="Result not ready yet")
-    if status.status == "Error":
-        logger.error(f"Task error: {status.error_message}")
-        raise HTTPException(status_code=404, detail=f"An error occurred during processing: {status.error_message}")
-    try:
-        lf = pl.scan_parquet(status.file_ref)
-        return {"task_id": task_id, "result": lf.serialize()}
-    except Exception as e:
-        logger.error(f"Error reading results: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error reading results") from e
 
 
 @router.get("/memory_usage/{task_id}")

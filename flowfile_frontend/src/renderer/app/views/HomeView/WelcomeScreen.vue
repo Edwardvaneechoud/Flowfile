@@ -6,6 +6,22 @@
         <h1 class="welcome-title">Flowfile</h1>
       </header>
 
+      <section v-if="showTutorialBanner" aria-label="Tutorial">
+        <div class="tutorial-banner">
+          <span class="banner-icon"><span class="material-icons">school</span></span>
+          <div class="banner-text">
+            <span class="banner-title">New to Flowfile?</span>
+            <span class="banner-sub">
+              Build your first flow in about 3 minutes — guided, step by step.
+            </span>
+          </div>
+          <button class="banner-cta" @click="emit('start-tutorial')">Start tutorial</button>
+          <button class="banner-dismiss" aria-label="Dismiss" @click="dismissTutorialBanner">
+            <span class="material-icons">close</span>
+          </button>
+        </div>
+      </section>
+
       <section aria-label="Start building">
         <h2 class="welcome-section-title welcome-section-title--tight">Start building</h2>
         <p class="welcome-section-sub">Design data transformations and visually</p>
@@ -241,12 +257,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 import { desktop, isDesktop } from "../../../lib/desktop";
 import type { RecentFlow } from "../../composables/useRecentFlows";
 import type { FlowSettings } from "../../types";
+import { useTutorialStore } from "../../stores/tutorial-store";
+import { gettingStartedTutorial } from "../../components/tutorial/tutorials";
 import AboutDialog from "./AboutDialog.vue";
 
 defineProps<{ recentFlows: RecentFlow[]; openFlows: FlowSettings[] }>();
@@ -266,7 +284,21 @@ const router = useRouter();
 const aboutVisible = ref(false);
 const version = ref("");
 
+const BANNER_DISMISSED_KEY = "flowfile-tutorial-banner-dismissed";
+const tutorialStore = useTutorialStore();
+const bannerDismissed = ref(true);
+
+const showTutorialBanner = computed(
+  () => !bannerDismissed.value && !tutorialStore.isTutorialCompleted(gettingStartedTutorial.id),
+);
+
+const dismissTutorialBanner = () => {
+  bannerDismissed.value = true;
+  localStorage.setItem(BANNER_DISMISSED_KEY, "true");
+};
+
 onMounted(async () => {
+  bannerDismissed.value = localStorage.getItem(BANNER_DISMISSED_KEY) === "true";
   try {
     version.value = (isDesktop ? await desktop.getAppVersion() : "") || __APP_VERSION__;
   } catch {
@@ -335,6 +367,81 @@ function relativeTime(timestamp: number): string {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-8);
+}
+
+/* First-run tutorial banner */
+.tutorial-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-accent-subtle, rgba(59, 130, 246, 0.08));
+  border: 1px solid var(--color-accent);
+  border-radius: var(--border-radius-lg, 10px);
+}
+
+.banner-icon .material-icons {
+  font-size: 26px;
+  color: var(--color-accent);
+}
+
+.banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.banner-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary);
+}
+
+.banner-sub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.banner-cta {
+  padding: var(--spacing-2) var(--spacing-4);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--border-radius-md, 8px);
+  color: #fff;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.banner-cta:hover {
+  background: var(--color-accent-hover, #2563eb);
+}
+
+.banner-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.banner-dismiss:hover {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+.banner-dismiss .material-icons {
+  font-size: 18px;
 }
 
 /* Hero */
