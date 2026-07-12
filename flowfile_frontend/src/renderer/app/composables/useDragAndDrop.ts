@@ -25,6 +25,7 @@ import { FlowApi, NodeApi } from "../api";
 import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
 import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
+import { useTutorialStore } from "../stores/tutorial-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
 import { buildOutputHandles, deriveHandles } from "../utils/nodeHandles";
@@ -621,6 +622,7 @@ export default function useDragAndDrop() {
         position.y,
       );
       addNodes(newNode);
+      useTutorialStore().notify({ type: "node-added", nodeItem: nodeData.item, nodeId });
 
       // `multi` nodes render a single input handle that accepts many sources,
       // so for splice purposes they behave like a 1-input node regardless of
@@ -712,6 +714,10 @@ export default function useDragAndDrop() {
           targetHandle,
         },
       ]);
+
+      const tutorialStore = useTutorialStore();
+      tutorialStore.notify({ type: "edge-connected", sourceId, targetId: newNodeId });
+      tutorialStore.notify({ type: "edge-connected", sourceId: newNodeId, targetId });
 
       return lastResponse;
     } catch (error) {
@@ -928,6 +934,7 @@ export default function useDragAndDrop() {
         },
       };
       addNodes(newNode);
+      useTutorialStore().notify({ type: "node-added", nodeItem: "manual_input", nodeId });
 
       await NodeApi.updateSettingsDirectly("manual_input", {
         flow_id: flowId,

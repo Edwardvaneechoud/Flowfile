@@ -16,9 +16,22 @@ import {
 } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
+import {
+  catalogRefChainCompletions,
+  createRefVariableCompletions,
+  FLOWFILE_CTX_GLOBAL_ENTRIES,
+  flowfileApiCompletions,
+} from "@/utils/flowfileCtxCompletions";
 import { makeProcessBodyLinter } from "./processBodyLint";
 import type { ComponentState, SectionState } from "../designerState";
 import { toSnakeCase } from "../mappers";
+
+// The shared flowfile_ctx sources are synchronous; CompletionSource's return
+// type merely permits a Promise. Alias them so the gated wrapper below stays
+// typed as a plain synchronous source.
+type SyncCompletionSource = (context: CompletionContext) => CompletionResult | null;
+const ffApiSource = flowfileApiCompletions as SyncCompletionSource;
+const ffCatalogChainSource = catalogRefChainCompletions as SyncCompletionSource;
 
 // LazyFrame methods for autocompletion
 const lazyFrameMethods = [
@@ -782,6 +795,17 @@ function inferFromRhs(
     if (/^inputs\s*\[\s*\d+\s*\]\s*$/.test(s)) return "LazyFrame";
     return /\.collect\s*\(/.test(s) ? "DataFrame" : "LazyFrame";
   }
+  // flowfile_ctx kernel reads (kernel-environment nodes): frame readers return
+  // LazyFrames (DataFrame once .collect()ed); read_inputs() yields a dict.
+  const ctxRead = s.match(/^(?:flowfile_ctx|flowfile)\.(\w+)\s*\(/);
+  if (ctxRead) {
+    const fn = ctxRead[1];
+    if (fn === "read_input" || fn === "read_first" || fn === "read_catalog_table") {
+      return /\.collect\s*\(/.test(s) ? "DataFrame" : "LazyFrame";
+    }
+    if (fn === "read_inputs") return "dict";
+    return null;
+  }
   const settings = s.match(/^self\.settings_schema\.(\w+)\.(\w+)\.(value|secret_value)\b/);
   if (settings) {
     if (settings[3] === "secret_value") return "SecretStr";
@@ -957,6 +981,7 @@ export function makeSettingsFieldSnippetSource(
 export function usePolarsAutocompletion(
   getSections: () => SectionState[],
   isCodeOnly: () => boolean = () => false,
+  isKernel: () => boolean = () => false,
 ) {
   function findSecretStrVariables(doc: string): string[] {
     const variables: string[] = [];
@@ -1140,6 +1165,33 @@ export function usePolarsAutocompletion(
 
   const localVariableSource = makeLocalVariableSource(getSections);
   const settingsFieldSnippetSource = makeSettingsFieldSnippetSource(getSections);
+  const refVariableSource = createRefVariableCompletions(() => []) as SyncCompletionSource;
+
+  // `flowfile_ctx` is injected only into kernel-executed process() bodies — the
+  // local/worker path (custom_node_runner.py) never binds it — so gate every
+  // suggestion on the kernel environment. Offering it for a local node would
+  // autocomplete an API that NameErrors at run time. Delegates to the same shared
+  // catalog the Python Script editor uses (@/utils/flowfileCtxCompletions).
+  function flowfileCtxSource(context: CompletionContext): CompletionResult | null {
+    if (!isKernel()) return null;
+    const api = ffApiSource(context); // after `flowfile_ctx.` / `flowfile.`
+    if (api) return api;
+    const chain = ffCatalogChainSource(context); // after `.get_catalog(...)` etc.
+    if (chain) return chain;
+    const refVar = refVariableSource(context); // locals bound to a catalog/schema/table ref
+    if (refVar) return refVar;
+    // Bare-word: suggest `flowfile_ctx` (and the deprecated `flowfile`) as the
+    // user starts an identifier — but not for member access or def-param lists.
+    if (precededByDot(context) || insideDefParams(context)) return null;
+    const word = context.matchBefore(/[A-Za-z_]\w*/);
+    if (!word && !context.explicit) return null;
+    if (!context.explicit && word && word.text.length < 2) return null;
+    return {
+      from: word ? word.from : context.pos,
+      options: FLOWFILE_CTX_GLOBAL_ENTRIES,
+      validFor: /^\w*$/,
+    };
+  }
 
   const tabKeymap = keymap.of([
     {
@@ -1167,6 +1219,7 @@ export function usePolarsAutocompletion(
     indentUnit.of(INDENT),
     autocompletion({
       override: [
+        flowfileCtxSource,
         selfParamSource,
         schemaCompletions,
         localVariableSource,
@@ -1195,5 +1248,6 @@ export function usePolarsAutocompletion(
     extensions,
     readOnlyExtensions,
     schemaCompletions,
+    flowfileCtxSource,
   };
 }

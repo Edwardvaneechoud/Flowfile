@@ -357,6 +357,75 @@ describe("logging completions", () => {
   });
 });
 
+describe("flowfile_ctx completions (kernel-gated)", () => {
+  const kernel = usePolarsAutocompletion(
+    () => [],
+    () => false,
+    () => true,
+  ).flowfileCtxSource;
+  const local = usePolarsAutocompletion(
+    () => [],
+    () => false,
+    () => false,
+  ).flowfileCtxSource;
+
+  it("suggests the API after `flowfile_ctx.` on a kernel node", () => {
+    const result = kernel(ctxFor("flowfile_ctx."));
+    expect(result).not.toBeNull();
+    const labels = result!.options.map((o) => o.label);
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "read_input",
+        "publish_output",
+        "read_catalog_table",
+        "read_artifact",
+      ]),
+    );
+  });
+
+  it("also fires for the legacy `flowfile.` alias", () => {
+    const result = kernel(ctxFor("flowfile."));
+    expect(result!.options.map((o) => o.label)).toContain("read_input");
+  });
+
+  it("suggests `flowfile_ctx` as a bare-word global", () => {
+    const result = kernel(ctxFor("flowfile_ct", 11));
+    expect(result!.options.map((o) => o.label)).toContain("flowfile_ctx");
+  });
+
+  it("offers catalog-ref methods after a get_catalog(...) chain", () => {
+    const result = kernel(ctxFor('flowfile_ctx.get_catalog("main").'));
+    expect(result!.options.map((o) => o.label)).toEqual(
+      expect.arrayContaining(["get_schema", "list_tables"]),
+    );
+  });
+
+  it("returns nothing on a local (worker) node — flowfile_ctx is kernel-only", () => {
+    expect(local(ctxFor("flowfile_ctx."))).toBeNull();
+    expect(local(ctxFor("flowfile_ct", 11))).toBeNull();
+  });
+
+  it("does not fire on member access of an unrelated identifier", () => {
+    expect(kernel(ctxFor("lf."))).toBeNull();
+  });
+
+  it("infers `x = flowfile_ctx.read_input()` as a LazyFrame", () => {
+    const types = inferLocalTypes("x = flowfile_ctx.read_input()", []);
+    expect(types.get("x")).toBe("LazyFrame");
+    expect(memberCompletionsFor("x", types)!.map((o) => o.label)).toContain("filter");
+  });
+
+  it("infers a collected ctx read as a DataFrame", () => {
+    expect(inferLocalTypes('d = flowfile_ctx.read_catalog_table("t").collect()', []).get("d")).toBe(
+      "DataFrame",
+    );
+  });
+
+  it("infers `flowfile_ctx.read_inputs()` as a dict", () => {
+    expect(inferLocalTypes("m = flowfile_ctx.read_inputs()", []).get("m")).toBe("dict");
+  });
+});
+
 describe("computeNewlineIndent", () => {
   it("copies the current line's indentation", () => {
     expect(computeNewlineIndent("    lf = inputs[0]", 18)).toBe("    ");

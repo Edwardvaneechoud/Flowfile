@@ -20,7 +20,13 @@ onMounted(() => {
 const showButton = computed(() => {
   const isDesignerPage = route.name === "designer";
   const hasNoFlow = !nodeStore.flow_id || nodeStore.flow_id <= 0;
-  return isDesignerPage && hasNoFlow && !tutorialStore.isActive && !isDismissed.value;
+  return (
+    isDesignerPage &&
+    hasNoFlow &&
+    !tutorialStore.isActive &&
+    !isDismissed.value &&
+    !tutorialStore.isTutorialCompleted(gettingStartedTutorial.id)
+  );
 });
 
 function startTutorial() {

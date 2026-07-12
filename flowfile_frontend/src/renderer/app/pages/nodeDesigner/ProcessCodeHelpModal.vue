@@ -81,6 +81,32 @@ api_key = secret.get_secret_value()</code></pre>
         </div>
 
         <div class="help-section">
+          <h4>Kernel Runtime API (<code>flowfile_ctx</code>)</h4>
+          <p>
+            When the node's execution environment is <b>Isolated kernel</b>, a
+            <code>flowfile_ctx</code> global is available inside <code>process()</code> for reading
+            inputs, catalog tables, and artifacts. Type <code>flowfile_ctx.</code> in the editor to
+            autocomplete the full API.
+          </p>
+          <pre class="help-code"><code># Read an input as a LazyFrame (same data as inputs[0])
+lf = flowfile_ctx.read_input()
+
+# Read a catalog table for a lookup / join
+dims = flowfile_ctx.read_catalog_table("dim_customer")
+
+# Reuse an object published by an earlier node
+model = flowfile_ctx.read_artifact("trained_model")
+
+return lf.join(dims, on="customer_id", how="left")</code></pre>
+          <p class="help-note">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <code>flowfile_ctx</code> only exists on <b>Isolated kernel</b> nodes. On
+            <b>Local</b> (worker) nodes it is not defined — use the <code>inputs</code> arguments
+            instead.
+          </p>
+        </div>
+
+        <div class="help-section">
           <h4>Common Patterns</h4>
           <div class="pattern-grid">
             <div class="pattern-item">
