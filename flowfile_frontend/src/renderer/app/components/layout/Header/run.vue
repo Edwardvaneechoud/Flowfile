@@ -13,10 +13,8 @@
 <script setup lang="ts">
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowExecution } from "../../../composables/useFlowExecution";
-import { useTutorialStore } from "../../../stores/tutorial-store";
 
 const nodeStore = useNodeStore();
-const tutorialStore = useTutorialStore();
 
 const props = defineProps({
   flowId: { type: Number, required: true },
@@ -37,26 +35,11 @@ const props = defineProps({
 // Pass a getter so the composable always reads the *current* prop value.
 // Without this, Save As re-keys nodeStore.flow_id but the run button keeps
 // firing /flow/run/ and getFlowSettings against the old (template) id.
-const {
-  runFlow: executeFlow,
-  cancelFlow,
-  showNotification,
-  startPolling,
-  stopPolling,
-  checkRunStatus,
-} = useFlowExecution(() => props.flowId, props.pollingConfig, {
-  persistPolling: props.persistPolling,
-  pollingKey: `run_button_${props.flowId}`,
-});
-
-const runFlow = () => {
-  executeFlow();
-  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "run-flow") {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 500);
-  }
-};
+const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
+  useFlowExecution(() => props.flowId, props.pollingConfig, {
+    persistPolling: props.persistPolling,
+    pollingKey: `run_button_${props.flowId}`,
+  });
 
 defineEmits(["logs-start", "logs-stop"]);
 

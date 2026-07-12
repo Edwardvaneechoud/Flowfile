@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-import boto3
-
 
 def normalize_delta_path(resource_path: str) -> str:
     """Normalize az:// paths to abfss:// for delta-rs compatibility.
@@ -42,6 +40,8 @@ def create_storage_options_from_boto_credentials(
     dict[str, Any]
         A storage options dictionary for Polars with explicit credentials.
     """
+    import boto3
+
     session = boto3.Session(profile_name=profile_name, region_name=region_name)
     credentials = session.get_credentials()
     frozen_creds = credentials.get_frozen_credentials()

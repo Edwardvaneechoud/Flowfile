@@ -32,6 +32,7 @@
     <button
       class="trigger-btn"
       :class="{ 'is-open': isOpen }"
+      data-tutorial="layout-trigger-btn"
       title="Layout Controls"
       @mousedown="handleMouseDown"
       @click="handleClick"

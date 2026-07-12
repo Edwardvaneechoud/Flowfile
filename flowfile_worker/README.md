@@ -25,8 +25,7 @@ Flowfile Worker is a FastAPI-based service that handles the execution and cachin
 - `POST /add_fuzzy_join` - Perform fuzzy join operations between datasets
 
 ### Task Management
-- `GET /status/{task_id}` - Get task execution status
-- `GET /fetch_results/{task_id}` - Retrieve processed results
+- `GET /status/{task_id}` - Get task execution status (the response carries the serialized result once the task completes)
 - `GET /memory_usage/{task_id}` - Monitor memory usage
 - `POST /cancel_task/{task_id}` - Cancel running task
 - `POST /shutdown` - Gracefully shutdown the worker
@@ -55,11 +54,9 @@ task = requests.post("http://localhost:63579/submit_query/", json={
     "operation_type": "store"
 })
 
-# Get task status
+# Poll task status; the response carries the result once the task completes
 status = requests.get(f"http://localhost:63579/status/{task.json()['background_task_id']}")
-
-# Fetch results when complete
-results = requests.get(f"http://localhost:63579/fetch_results/{task.json()['background_task_id']}")
+result = status.json()["results"]
 ```
 
 ## ⚙️ Configuration

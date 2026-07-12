@@ -1,7 +1,5 @@
 import logging
 
-import requests
-
 from flowfile_worker.configs import FLOWFILE_CORE_URI
 from flowfile_worker.models import RawLogInput
 
@@ -28,8 +26,13 @@ class FlowfileLogHandler(logging.Handler):
                 extra={},
             )
             if self.flowfile_flow_id != -1 and self.flowfile_node_id != -1:
+                import requests
+
                 response = requests.post(
-                    LOGGING_URL, json=raw_log_input.__dict__, headers={"Content-Type": "application/json"}
+                    LOGGING_URL,
+                    json=raw_log_input.__dict__,
+                    headers={"Content-Type": "application/json"},
+                    timeout=(2, 5),
                 )
                 if response.status_code != 200:
                     raise Exception(f"Failed to send log: {response.text}")

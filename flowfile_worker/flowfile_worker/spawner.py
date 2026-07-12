@@ -1,4 +1,5 @@
 import gc
+import os
 import queue as _queue
 from base64 import b64encode
 from multiprocessing import Process
@@ -15,6 +16,17 @@ flowfile_node_id_type = int | str
 # Bound the result drain so a wedged child can't hang the monitor forever, while
 # still allowing a large payload's feeder thread time to flush to the pipe.
 RESULT_QUEUE_TIMEOUT = 30.0
+
+# Poll the child with exponential backoff: snappy at first, but capped so idle
+# long-running jobs don't busy-wait. The 1.0s steady-state cap is deliberate.
+_POLL_INITIAL_DELAY = 0.01
+_POLL_MAX_DELAY = 1.0
+_POLL_BACKOFF = 1.5
+
+# Wall-clock ceiling for a single task. A child that stays alive but never signals
+# completion (wedged in a native call, deadlocked) would otherwise spin the monitor
+# forever. Generous so real long jobs aren't killed; 0 disables. Env-tunable.
+_TASK_TIMEOUT = float(os.environ.get("FLOWFILE_WORKER_TASK_TIMEOUT", "3600"))
 
 
 def drain_result_queue(q: Queue, p: Process, timeout: float = RESULT_QUEUE_TIMEOUT):
@@ -40,6 +52,13 @@ def drain_result_queue(q: Queue, p: Process, timeout: float = RESULT_QUEUE_TIMEO
                 return None
 
 
+def unpack_result(result):
+    """store/generic_task put (payload, row_count); every other op puts a bare payload."""
+    if isinstance(result, tuple) and len(result) == 2:
+        return result
+    return result, None
+
+
 def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_message: mp_context.Array, q: Queue):
     """
     Monitors and manages a running process task, updating its status and handling completion/errors.
@@ -60,8 +79,10 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         with status_dict_lock:
             status_dict[task_id].status = "Processing"
 
+        delay = _POLL_INITIAL_DELAY
+        deadline = (monotonic() + _TASK_TIMEOUT) if _TASK_TIMEOUT else None
+        timed_out = False
         while p.is_alive():
-            sleep(1)
             with progress.get_lock():
                 current_progress = progress.value
             with status_dict_lock:
@@ -84,6 +105,14 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             if current_progress == 100:
                 break
 
+            if deadline is not None and monotonic() > deadline:
+                timed_out = True
+                p.terminate()
+                break
+
+            sleep(delay)
+            delay = min(delay * _POLL_BACKOFF, _POLL_MAX_DELAY)
+
         with status_dict_lock:
             cancelled = status_dict[task_id].status == "Cancelled"
         with progress.get_lock():
@@ -92,8 +121,9 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         # Drain the queue BEFORE joining (see drain_result_queue). Only the success path
         # (progress == 100) puts a result; errors travel via the shared Array.
         result = None
+        number_of_records = None
         if not cancelled and final_progress == 100:
-            result = drain_result_queue(q, p)
+            result, number_of_records = unpack_result(drain_result_queue(q, p))
 
         p.join()
 
@@ -102,14 +132,28 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             if status.status != "Cancelled":
                 if final_progress == 100:
                     status.status = "Completed"
+                    if number_of_records is not None:
+                        status.number_of_records = number_of_records
                     if result is not None:
                         # b64-encode bytes for JSON-safe storage in status_dict (REST responses)
                         if isinstance(result, bytes):
                             status.results = b64encode(result).decode("ascii")
                         else:
                             status.results = result
-                elif final_progress != -1:
-                    status_dict[task_id].status = "Unknown Error"
+                elif timed_out:
+                    status.status = "Error"
+                    status.error_message = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
+                elif final_progress == -1:
+                    # The child signalled an error but the monitor loop may not have observed
+                    # it (a child can die before we read progress == -1). Surface a terminal
+                    # Error so the core poller doesn't wait on "Processing" forever.
+                    status.status = "Error"
+                    if not status.error_message:
+                        with error_message.get_lock():
+                            decoded = error_message.value.decode(errors="replace").rstrip("\x00")
+                        status.error_message = decoded or "Task failed"
+                else:
+                    status.status = "Unknown Error"
 
     finally:
         if p.is_alive():
@@ -117,7 +161,7 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         p.join()
         process_manager.remove_process(task_id)
         del p, progress, error_message
-        gc.collect()
+        gc.collect(0)
 
 
 def start_process(

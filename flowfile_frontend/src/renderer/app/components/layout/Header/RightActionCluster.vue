@@ -8,14 +8,12 @@ import { View, Minus } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useItemStore } from "../../common/DraggableItem/stateStore";
-import { useTutorialStore } from "../../../stores/tutorial-store";
 import AiAssistantTrigger from "../../../features/ai/AiAssistantTrigger.vue";
 import RunButton from "./run.vue";
 import PopOver from "../../../features/designer/editor/PopOver.vue";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
-const tutorialStore = useTutorialStore();
 const draggableItemStore = useItemStore();
 
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
@@ -26,11 +24,6 @@ const emit = defineEmits(["open-settings"]);
 
 const toggleCodeGenerator = (): void => {
   nodeStore.toggleCodeGenerator();
-  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "generate-code") {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 300);
-  }
 };
 
 const openSettings = (): void => {

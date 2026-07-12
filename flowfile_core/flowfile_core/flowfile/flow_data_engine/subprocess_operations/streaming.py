@@ -68,6 +68,7 @@ def _handle_complete_message(data: dict, task_id: str) -> Status:
         result_type=data.get("result_type", "polars"),
         progress=100,
         results=data.get("results", None),
+        number_of_records=data.get("number_of_records"),
     )
 
 

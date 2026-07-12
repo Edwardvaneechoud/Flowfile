@@ -30,7 +30,7 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 2. Drag from a node's output handle to the next node's input to connect them.
 3. Click a node to configure it in the right sidebar — alongside each node's own settings there is a shared **General Settings** tab with the node's description, its reference name (used for edge labels, see below), and a toggle to cache its result between runs.
 
-![Node settings panel for a Formula node](../../assets/images/ui/node_settings_formula.png)
+![Node settings panel for a Formula node](../../assets/images/ui/node_settings_formula.gif)
 
 ## Run
 
@@ -53,6 +53,10 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 | Parallel workers | 1–32, default 4 — remote execution only |
 | Show detailed progress | More granular per-node status during runs |
 | Show edge labels | Display each connection's name on the canvas |
+
+**Parallel workers** applies to Remote runs. The worker service runs independent steps at the same time, up to the number you set, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 — or on Local, which is always sequential — every step waits its turn.
+
+![The same flow — four Read data inputs, a Group by and a Formula transforming two of them, all merged by Union data — at two Parallel workers settings. With one worker the seven steps run one after another (numbered 1 to 7) and the total-time bar is long; with four workers the four reads run together as round 1, the two transforms as round 2, and Union data as round 3, so the flow finishes in three rounds instead of seven and the total-time bar is far shorter, the rest marked time saved.](../../assets/images/concepts/parallel-workers.svg)
 
 ### Edge labels and Python Script nodes
 

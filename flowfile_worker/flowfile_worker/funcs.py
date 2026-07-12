@@ -5,10 +5,13 @@ from collections.abc import Callable
 from logging import Logger
 from multiprocessing import Array, Queue, Value
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
-from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+
+if TYPE_CHECKING:
+    from deltalake import DeltaTable
 
 from flowfile_worker import models, mp_context
 from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
@@ -226,13 +229,18 @@ def process_and_cache(
     error_message: Array,
     file_path: str,
     flowfile_logger: Logger,
-) -> bytes:
+) -> int | None:
+    """Collect the plan once, cache it as IPC, and return its height (None on error).
+
+    Does NOT flip progress to 100: the caller signals completion only after
+    putting the result on the queue (#564 put-before-100 discipline).
+    """
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object)
-        collect_lazy_frame(lf).write_ipc(file_path)
+        df = collect_lazy_frame(lf)
+        df.write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
-        with progress.get_lock():
-            progress.value = 100
+        return df.height
     except Exception as e:
         error_msg = str(e).encode()[:1024]
         flowfile_logger.error(f"Error during process and cache operation: {str(e)}")
@@ -240,7 +248,7 @@ def process_and_cache(
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
-        return error_msg
+        return None
 
 
 def store_sample(
@@ -283,12 +291,16 @@ def store(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting store operation")
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
-    process_and_cache(polars_serializable_object_io, progress, error_message, file_path, flowfile_logger)
+    n_records = process_and_cache(polars_serializable_object_io, progress, error_message, file_path, flowfile_logger)
+    if n_records is None:
+        # An internal error already set progress=-1; the file may be missing.
+        return
+    flowfile_logger.info(f"Number of records processed: {n_records}")
     lf = pl.scan_ipc(file_path)
-    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
-    flowfile_logger.info(f"Number of records processed: {number_of_records}")
-    # Put raw bytes in queue - encoding happens at the transport boundary
-    queue.put(lf.serialize())
+    # Ride-along row count on element 1; element 0 stays byte-identical to the plan bytes.
+    queue.put((lf.serialize(), n_records))
+    with progress.get_lock():
+        progress.value = 100
 
 
 def calculate_schema_logic(
@@ -964,6 +976,8 @@ def get_delta_history(
     *table_name* is the bare directory name inside the catalog tables directory,
     or a key under *base_uri* in object storage when set.
     """
+    from deltalake import DeltaTable
+
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, storage_options=storage_options)
     history = dt.history(limit)
@@ -981,7 +995,7 @@ def get_delta_history(
     return models.DeltaHistoryResponse(current_version=current_version, history=entries)
 
 
-def _delta_preview_payload(dt: DeltaTable, n_rows: int) -> tuple[list[str], list[str], list[list], int]:
+def _delta_preview_payload(dt: "DeltaTable", n_rows: int) -> tuple[list[str], list[str], list[list], int]:
     """Bounded head read of an open Delta table -> (columns, dtypes, rows, total_rows)."""
     dataset = dt.to_pyarrow_dataset()
     pa_table = dataset.head(n_rows)
@@ -1011,6 +1025,8 @@ def read_delta_version_preview(
     *table_name* is the bare directory name inside the catalog tables directory,
     or a key under *base_uri* in object storage when set.
     """
+    from deltalake import DeltaTable
+
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, version=version, storage_options=storage_options)
     columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
@@ -1030,6 +1046,8 @@ def read_delta_preview(
     *table_name* is the bare directory name inside the catalog tables directory,
     or a key under *base_uri* in object storage when set.
     """
+    from deltalake import DeltaTable
+
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, storage_options=storage_options)
     columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
@@ -1049,19 +1067,21 @@ def generic_task(
 ):
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting generic task")
+    number_of_records: int | None = None
     try:
         result = func(*args, **kwargs)
         if result is None:
             # Function already wrote to file_path (e.g. Kafka spill_path)
             flowfile_logger.info("Function returned None — file already written")
         elif isinstance(result, pl.LazyFrame):
-            collect_lazy_frame(result).write_ipc(file_path)
+            df = collect_lazy_frame(result)
+            df.write_ipc(file_path)
+            number_of_records = df.height
         elif isinstance(result, pl.DataFrame):
             result.write_ipc(file_path)
+            number_of_records = result.height
         else:
             raise Exception("Returned object is not a DataFrame, LazyFrame, or None")
-        with progress.get_lock():
-            progress.value = 100
         flowfile_logger.info("Task completed successfully")
     except Exception as e:
         flowfile_logger.error(f"Error during task execution: {str(e)}")
@@ -1073,10 +1093,14 @@ def generic_task(
         return
 
     lf = pl.scan_ipc(file_path)
-    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+    if number_of_records is None:
+        # func wrote the file itself (no in-memory frame); count it from disk.
+        number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
-    # Put raw bytes in queue - encoding happens at the transport boundary
-    queue.put(lf.serialize())
+    # Ride-along row count on element 1; element 0 stays byte-identical to the plan bytes.
+    queue.put((lf.serialize(), number_of_records))
+    with progress.get_lock():
+        progress.value = 100
 
 
 # ==================== Virtual flow-table resolution =========================
