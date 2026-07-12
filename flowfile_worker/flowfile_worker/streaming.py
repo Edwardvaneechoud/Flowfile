@@ -21,13 +21,14 @@ from base64 import b64encode
 from dataclasses import dataclass
 from multiprocessing import Process
 from multiprocessing.queues import Queue
+from time import monotonic
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
-from flowfile_worker.spawner import drain_result_queue, process_manager, unpack_result
+from flowfile_worker.spawner import _TASK_TIMEOUT, drain_result_queue, process_manager, unpack_result
 
 streaming_router = APIRouter()
 
@@ -155,6 +156,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
     last_progress = -1
 
     delay = _MONITOR_INITIAL_DELAY
+    deadline = (monotonic() + _TASK_TIMEOUT) if _TASK_TIMEOUT else None
     while p.is_alive():
         with progress.get_lock():
             current = progress.value
@@ -177,6 +179,13 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
         # signal; the caller drains the queue (which unblocks the child) before joining.
         if current == 100:
             return False
+
+        if deadline is not None and monotonic() > deadline:
+            p.terminate()
+            msg = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
+            _set_error_status(task_id, msg)
+            await websocket.send_json({"type": "error", "error_message": msg})
+            return True
 
         await asyncio.sleep(delay)
         delay = min(delay * _MONITOR_BACKOFF, _MONITOR_MAX_DELAY)

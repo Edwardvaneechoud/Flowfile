@@ -7,7 +7,9 @@ results as raw binary frames (no base64 encoding).
 
 import io
 import json
+import time
 from base64 import b64decode
+from unittest.mock import AsyncMock
 
 import polars as pl
 import pytest
@@ -15,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_worker import funcs, main, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.spawner import drain_result_queue, handle_task, process_manager
+from flowfile_worker.streaming import _monitor_progress
 
 client = TestClient(main.app)
 
@@ -447,3 +450,71 @@ class TestHandleTaskTerminalStatus:
             with status_dict_lock:
                 status_dict.pop(task_id, None)
             process_manager.remove_process(task_id)
+
+    def test_wedged_child_times_out_to_error(self, monkeypatch):
+        # A child that stays alive but never signals completion must be terminated
+        # at the wall-clock deadline and reported as a terminal Error.
+        monkeypatch.setattr("flowfile_worker.spawner._TASK_TIMEOUT", 0.5)
+        task_id = "test-handle-task-timeout"
+        progress = mp_context.Value("i", 0)  # never advances
+        error_message = mp_context.Array("c", 1024)
+        q = mp_context.Queue(maxsize=1)
+        p = mp_context.Process(target=time.sleep, args=(30,))  # wedged child
+        p.start()
+        process_manager.add_process(task_id, p)
+        with status_dict_lock:
+            status_dict[task_id] = models.Status(
+                background_task_id=task_id, status="Starting", file_ref="x", result_type="polars"
+            )
+        try:
+            handle_task(task_id, p, progress, error_message, q)
+            with status_dict_lock:
+                status = status_dict[task_id]
+            assert status.status == "Error", f"expected Error, got {status.status!r}"
+            assert "time limit" in (status.error_message or "")
+            assert not p.is_alive(), "wedged child should have been terminated"
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            with status_dict_lock:
+                status_dict.pop(task_id, None)
+            process_manager.remove_process(task_id)
+
+
+class TestWsMonitorTimeout:
+    """_monitor_progress (WS path) must terminate a wedged child at the deadline
+    and report a terminal Error, mirroring handle_task."""
+
+    @pytest.mark.asyncio
+    async def test_wedged_child_times_out_to_error(self, monkeypatch):
+        monkeypatch.setattr("flowfile_worker.streaming._TASK_TIMEOUT", 0.5)
+        task_id = "test-ws-monitor-timeout"
+        progress = mp_context.Value("i", 0)  # never advances
+        error_message = mp_context.Array("c", 1024)
+        p = mp_context.Process(target=time.sleep, args=(30,))  # wedged child
+        p.start()
+        websocket = AsyncMock()
+        with status_dict_lock:
+            status_dict[task_id] = models.Status(
+                background_task_id=task_id, status="Processing", file_ref="x", result_type="polars"
+            )
+        try:
+            had_error = await _monitor_progress(websocket, p, progress, error_message, task_id)
+            p.join(timeout=5)
+            assert had_error is True
+            with status_dict_lock:
+                assert status_dict[task_id].status == "Error"
+            err_frames = [
+                c.args[0]
+                for c in websocket.send_json.call_args_list
+                if c.args and c.args[0].get("type") == "error"
+            ]
+            assert err_frames and "time limit" in err_frames[-1]["error_message"]
+            assert not p.is_alive(), "wedged child should have been terminated"
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            with status_dict_lock:
+                status_dict.pop(task_id, None)
