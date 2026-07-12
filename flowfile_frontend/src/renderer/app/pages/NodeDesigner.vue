@@ -74,6 +74,7 @@ const browser = useNodeBrowser();
 const autocompletion = usePolarsAutocompletion(
   () => store.sections,
   () => store.codeOnly,
+  () => store.environment.kind === "kernel",
 );
 
 const saving = ref(false);

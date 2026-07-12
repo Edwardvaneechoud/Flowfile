@@ -141,6 +141,7 @@ import { getFlowSettings } from "../../../components/nodes/nodeLogic";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import CatalogFlowPicker from "./CatalogFlowPicker.vue";
+import { useTutorialStore } from "../../../stores/tutorial-store";
 import type { FlowRegistration } from "../../../types";
 
 const props = defineProps({
@@ -158,6 +159,12 @@ const emit = defineEmits(["save-complete", "save-cancelled", "update:visible"]);
 
 const isVisible = ref(props.visible);
 const initialPath = ref("");
+
+const tutorialStore = useTutorialStore();
+watch(isVisible, (open, was) => {
+  if (open === was) return;
+  tutorialStore.notify({ type: open ? "save-dialog-opened" : "save-dialog-closed" });
+});
 
 // Persist the last-used source (file vs catalog) so the dialog reopens on
 // whichever source was used last. Intentionally shares the Open dialog's key
