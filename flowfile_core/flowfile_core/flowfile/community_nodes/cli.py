@@ -114,7 +114,6 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_validate_all(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root)
-    index = _load_index(str(repo_root / "index.json"))
     blocklist = _load_blocklist(str(repo_root / "registry" / "blocklist.json"))
     categories = _load_categories(str(repo_root / "registry" / "categories.json"))
     nodes_dir = repo_root / "nodes"
@@ -125,8 +124,10 @@ def _cmd_validate_all(args: argparse.Namespace) -> int:
         sorted((p for p in nodes_dir.iterdir() if p.is_dir()), key=lambda p: p.name) if nodes_dir.is_dir() else []
     )
     for node_dir in node_dirs:
+        # Re-validating the already-merged tree: pass no index so the PR-time version-bump
+        # and new-node-authorization rules don't fire against each node's own published entry.
         report = validate_bundle(
-            node_dir, index=index, blocklist=blocklist, categories=categories, pr_author=args.pr_author
+            node_dir, index=None, blocklist=blocklist, categories=categories, pr_author=args.pr_author
         )
         _print_report(node_dir.name, report)
         sections.append(_report_markdown(node_dir.name, report))
