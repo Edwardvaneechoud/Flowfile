@@ -97,3 +97,18 @@ def community_icon_override(node_id: str) -> str | None:
     ):
         return receipt.icon_file
     return None
+
+
+def community_icon_overrides_by_node_key() -> dict[str, str]:
+    """Map of ``node_key`` → namespaced icon file for installs whose icon is on disk.
+
+    Keyed by ``node_key`` (== a palette ``NodeTemplate.item``) so the palette/canvas
+    template can be reconciled to the on-disk file. ``community_icon_override`` is keyed
+    by ``node_id`` (the file stem), which can differ from ``node_key``; a single receipts
+    read here avoids one lookup per node."""
+    icons_dir = storage.user_defined_nodes_icons
+    return {
+        receipt.node_key: receipt.icon_file
+        for receipt in load_receipts().values()
+        if receipt.icon_file and (icons_dir / receipt.icon_file).is_file()
+    }

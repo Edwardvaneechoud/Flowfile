@@ -72,6 +72,24 @@ class {class_name}(CustomNodeBase):
         return inputs[0]
 '''
 
+ICON_NODE = '''
+import polars as pl
+from shared.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
+
+
+class {class_name}(CustomNodeBase):
+    node_name: str = "{node_name}"
+    node_category: str = "Community Test"
+    node_icon: str = "kmeans.PNG"
+
+    settings_schema: NodeSettings = NodeSettings(
+        main=Section(title="Main", value=TextInput(label="Value", default="x")),
+    )
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+
 _FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 48
 
 
@@ -519,3 +537,49 @@ def test_install_state_transitions(isolated_storage, make_registry):
 
     newer_entry = entry.model_copy(update={"version": "2.0.0"})
     assert installer.install_state(newer_entry, receipt, False, app_version="99.0.0") == "update_available"
+
+
+def test_node_list_serves_namespaced_community_icon(isolated_storage, make_registry):
+    # The reported bug: an installed node's icon file lands namespaced (<id>__icon.png)
+    # while the node keeps its raw node_icon ("kmeans.PNG"); the palette/canvas got the
+    # raw name and 404'd. /node_list must reconcile the two so the icon actually loads.
+    from flowfile_core.configs.node_store import node_dict
+    from flowfile_core.routes.routes import get_node_list
+
+    _index, node_id, _name, _dir = make_registry(source_template=ICON_NODE)
+    outcome = _install(node_id)
+    node_key = outcome.entry.node_key
+
+    icon_file = f"{node_id}__icon.png"
+    assert (storage.user_defined_nodes_icons / icon_file).is_file()
+    assert node_dict[node_key].image == "kmeans.PNG"  # template keeps the raw name
+
+    tpl = next(t for t in get_node_list() if t.item == node_key)
+    assert tpl.image == icon_file
+    # model_copy, not in-place: the shared node_dict/nodes_list template stays raw.
+    assert node_dict[node_key].image == "kmeans.PNG"
+
+
+def test_node_list_override_falls_back_when_icon_missing(isolated_storage, make_registry):
+    # A receipt whose icon file has vanished must not point the palette at a 404 target.
+    from flowfile_core.routes.routes import get_node_list
+
+    _index, node_id, _name, _dir = make_registry(source_template=ICON_NODE)
+    outcome = _install(node_id)
+    node_key = outcome.entry.node_key
+
+    (storage.user_defined_nodes_icons / f"{node_id}__icon.png").unlink()
+    tpl = next(t for t in get_node_list() if t.item == node_key)
+    assert tpl.image == "kmeans.PNG"
+
+
+def test_node_list_drops_override_after_uninstall(isolated_storage, make_registry):
+    from flowfile_core.routes.routes import get_node_list
+
+    _index, node_id, _name, _dir = make_registry(source_template=ICON_NODE)
+    outcome = _install(node_id)
+    node_key = outcome.entry.node_key
+    assert any(t.item == node_key for t in get_node_list())
+
+    installer.uninstall(node_id)
+    assert not any(t.item == node_key for t in get_node_list())
