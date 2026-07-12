@@ -80,6 +80,50 @@ export function semverGt(a: string, b: string): boolean {
   return false;
 }
 
+export const README_TEMPLATE = `## What it does
+
+Describe what this node does and when to reach for it.
+
+## Inputs
+
+Describe the expected input table(s) and columns.
+
+## Settings
+
+Describe each setting and how it changes the output.
+`;
+
+// Insert-template action: fills an empty README, appends the sections otherwise.
+export function withReadmeTemplate(current: string): string {
+  const trimmed = current.trim();
+  return trimmed ? `${trimmed}\n\n${README_TEMPLATE}` : README_TEMPLATE;
+}
+
+export interface OpenPrSummary {
+  number: number;
+  version: string;
+}
+
+// Copy for the "you already have an open PR" note in the GitHub card; null = no note.
+export function openPrNotice(
+  prs: OpenPrSummary[],
+  currentVersion: string,
+): { text: string; matchesCurrent: boolean } | null {
+  if (!prs.length) return null;
+  const match = prs.find((p) => p.version === currentVersion);
+  if (match) {
+    return {
+      text: `Pull request #${match.number} for v${match.version} is already open — publishing updates it in place.`,
+      matchesCurrent: true,
+    };
+  }
+  const other = prs[0];
+  return {
+    text: `You have an open pull request for v${other.version} (#${other.number}). Publishing v${currentVersion} opens a separate one — close the old PR once it's superseded.`,
+    matchesCurrent: false,
+  };
+}
+
 export type BumpLevel = "patch" | "minor" | "major";
 
 export function bumpSemver(version: string, level: BumpLevel): string | null {

@@ -260,6 +260,9 @@ class InstallReceipt(BaseModel):
     version: str
     sha256: str
     icon_file: str | None = None
+    # Registry screenshots/README seeded into the publish-prep dir at install; uninstall removes exactly these.
+    screenshot_files: list[str] = []
+    readme_file: str | None = None
     installed_at: str = ""
     installed_by: str = ""
     consent: ConsentRecord = ConsentRecord()

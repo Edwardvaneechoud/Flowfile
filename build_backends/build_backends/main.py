@@ -167,6 +167,19 @@ def get_demo_flows_datas():
         return [(demo_dir, _os.path.join("flowfile_core", "catalog", "demo_flows"))]
     return []
 
+# Ship the bundled standard node-icon PNGs. publish.py resolves them at
+# Path(__file__).parent / "standard_icons"; PyInstaller stores .py as bytecode
+# only, so without this the community publish path ships no icon for standard picks.
+def get_standard_icons_datas():
+    \"\"\"Collect standard node-icon PNGs for PyInstaller bundling.\"\"\"
+    import os as _os
+    icons_dir = _os.path.join(
+        "flowfile_core", "flowfile_core", "flowfile", "community_nodes", "standard_icons"
+    )
+    if _os.path.isdir(icons_dir):
+        return [(icons_dir, _os.path.join("flowfile_core", "flowfile", "community_nodes", "standard_icons"))]
+    return []
+
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
@@ -174,6 +187,7 @@ connectorx_datas = get_connectorx_metadata()
 alembic_datas = get_alembic_datas()
 code_generator_datas = get_code_generator_datas()
 demo_flows_datas = get_demo_flows_datas()
+standard_icons_datas = get_standard_icons_datas()
 
 # Polars plugins that have subpackages or compiled extensions. The plain
 # `hiddenimports=['polars_ds']` directive only adds the top-level — it does
@@ -240,7 +254,7 @@ with open('connectorx_hook.py', 'w') as f:
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=plugin_binaries + ai_binaries,
-    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + code_generator_datas + demo_flows_datas + plugin_datas + litellm_datas + ai_datas,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + code_generator_datas + demo_flows_datas + standard_icons_datas + plugin_datas + litellm_datas + ai_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',

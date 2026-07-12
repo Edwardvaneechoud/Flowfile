@@ -72,6 +72,8 @@ def build_fixture(
     version: str = "1.0.0",
     source_template: str = BENIGN_NODE,
     with_icon: bool = True,
+    with_screenshots: int = 0,
+    with_readme: bool = False,
     commit: str = "commit0",
     min_version: str = "0.0.1",
 ) -> Path:
@@ -92,6 +94,19 @@ def build_fixture(
     if with_icon:
         (node_dir / "icon.png").write_bytes(_FAKE_PNG)
         artifacts["icon"] = _pin(f"nodes/{node_id}/icon.png", _FAKE_PNG)
+    if with_screenshots:
+        shots_dir = node_dir / "screenshots"
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        shots = []
+        for i in range(1, with_screenshots + 1):
+            data = _FAKE_PNG + bytes([i])
+            (shots_dir / f"{i}.png").write_bytes(data)
+            shots.append(_pin(f"nodes/{node_id}/screenshots/{i}.png", data))
+        artifacts["screenshots"] = shots
+    if with_readme:
+        readme_data = b"# Fixture readme\n"
+        (node_dir / "README.md").write_bytes(readme_data)
+        artifacts["readme"] = _pin(f"nodes/{node_id}/README.md", readme_data)
 
     index = {
         "schema_version": 1,
@@ -181,6 +196,83 @@ def test_install_happy_path_writes_file_receipt_and_registers(isolated_storage, 
     icon_file = receipts[node_id].icon_file
     assert icon_file == f"{node_id}__icon.png"
     assert (storage.user_defined_nodes_icons / icon_file).exists()
+
+
+def test_install_seeds_registry_screenshots(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(with_screenshots=2)
+
+    _install(node_id)
+
+    shots_dir = storage.user_defined_nodes_screenshots / node_id
+    assert sorted(p.name for p in shots_dir.iterdir()) == ["1.png", "2.png"]
+    assert load_receipts()[node_id].screenshot_files == ["1.png", "2.png"]
+
+
+def test_uninstall_removes_only_seeded_screenshots(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(with_screenshots=1)
+    _install(node_id)
+
+    shots_dir = storage.user_defined_nodes_screenshots / node_id
+    (shots_dir / "mine.png").write_bytes(_FAKE_PNG)  # user upload in the same prep dir
+
+    installer.uninstall(node_id)
+
+    assert not (shots_dir / "1.png").exists()
+    assert (shots_dir / "mine.png").exists()
+
+
+def test_uninstall_removes_empty_screenshot_dir(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(with_screenshots=1)
+    _install(node_id)
+
+    installer.uninstall(node_id)
+
+    assert not (storage.user_defined_nodes_screenshots / node_id).exists()
+
+
+def test_reinstall_cleans_previous_seeds(isolated_storage, make_registry):
+    # v1 seeds two screenshots + a README; v2 ships one screenshot and no README —
+    # the update must not leave v1's extras behind (they would republish later).
+    _index, node_id, node_name, _dir = make_registry(with_screenshots=2, with_readme=True)
+    _install(node_id)
+    prep = storage.user_defined_nodes_screenshots / node_id
+    assert (prep / "2.png").exists() and (prep / "README.md").exists()
+
+    make_registry(
+        node_id=node_id,
+        node_name=node_name,
+        class_name="CommunityNodeV2",
+        with_screenshots=1,
+        with_readme=False,
+        version="1.1.0",
+    )
+    _install(node_id)
+
+    assert (prep / "1.png").exists()
+    assert not (prep / "2.png").exists()
+    assert not (prep / "README.md").exists()
+    receipt = load_receipts()[node_id]
+    assert receipt.screenshot_files == ["1.png"]
+    assert receipt.readme_file is None
+
+
+def test_install_seeds_readme(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(with_readme=True)
+
+    _install(node_id)
+
+    prep = storage.user_defined_nodes_screenshots / node_id / "README.md"
+    assert prep.read_bytes() == b"# Fixture readme\n"
+    assert load_receipts()[node_id].readme_file == "README.md"
+
+
+def test_uninstall_removes_seeded_readme(isolated_storage, make_registry):
+    _index, node_id, _name, _dir = make_registry(with_readme=True, with_screenshots=1)
+    _install(node_id)
+
+    installer.uninstall(node_id)
+
+    assert not (storage.user_defined_nodes_screenshots / node_id).exists()
 
 
 def test_pin_mismatch_writes_nothing(isolated_storage, make_registry):

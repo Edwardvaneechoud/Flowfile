@@ -9,10 +9,13 @@ import {
   FORK_RETRY_MAX,
   GITHUB_ERROR_MESSAGES,
   nextPollDelayMs,
+  openPrNotice,
   PR_SUCCESS_MESSAGES,
   prSuccessMessage,
+  README_TEMPLATE,
   semverGt,
   SLOW_DOWN_BUMP_SEC,
+  withReadmeTemplate,
 } from "./publishGithub";
 
 // Every typed error_code the publish-pr / github routes can surface.
@@ -151,6 +154,58 @@ describe("semverGt", () => {
   it("returns false for non-semver input", () => {
     expect(semverGt("1.0", "0.9.0")).toBe(false);
     expect(semverGt("abc", "1.0.0")).toBe(false);
+  });
+});
+
+describe("withReadmeTemplate", () => {
+  it("template carries the standard sections", () => {
+    for (const heading of ["## What it does", "## Inputs", "## Settings"]) {
+      expect(README_TEMPLATE).toContain(heading);
+    }
+  });
+
+  it("fills an empty README with the template", () => {
+    expect(withReadmeTemplate("")).toBe(README_TEMPLATE);
+    expect(withReadmeTemplate("   \n")).toBe(README_TEMPLATE);
+  });
+
+  it("appends the template after existing content", () => {
+    const result = withReadmeTemplate("# My node\n");
+    expect(result.startsWith("# My node")).toBe(true);
+    expect(result).toContain("## What it does");
+  });
+});
+
+describe("openPrNotice", () => {
+  it("returns null with no open PRs", () => {
+    expect(openPrNotice([], "1.0.0")).toBeNull();
+  });
+
+  it("flags an open PR for the current version as updatable in place", () => {
+    const notice = openPrNotice([{ number: 6, version: "1.0.0" }], "1.0.0");
+    expect(notice?.matchesCurrent).toBe(true);
+    expect(notice?.text).toContain("#6");
+    expect(notice?.text.toLowerCase()).toContain("updates it in place");
+  });
+
+  it("warns about a stale open PR for another version", () => {
+    const notice = openPrNotice([{ number: 6, version: "1.0.0" }], "1.1.0");
+    expect(notice?.matchesCurrent).toBe(false);
+    expect(notice?.text).toContain("v1.0.0");
+    expect(notice?.text).toContain("v1.1.0");
+    expect(notice?.text.toLowerCase()).toContain("close the old");
+  });
+
+  it("prefers the current-version PR when several are open", () => {
+    const notice = openPrNotice(
+      [
+        { number: 4, version: "0.9.0" },
+        { number: 6, version: "1.0.0" },
+      ],
+      "1.0.0",
+    );
+    expect(notice?.matchesCurrent).toBe(true);
+    expect(notice?.text).toContain("#6");
   });
 });
 

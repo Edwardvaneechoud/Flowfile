@@ -83,3 +83,17 @@ def remove_receipt(node_id: str) -> InstallReceipt | None:
     if removed is not None:
         save_receipts(receipts)
     return removed
+
+
+def community_icon_override(node_id: str) -> str | None:
+    """Installed nodes keep their original ``node_icon`` attribute while the icon file
+    lands namespaced as ``<node_id>__<name>``. For receipt-tracked installs the receipt's
+    copy is authoritative — a coincidentally same-named local file must not shadow it."""
+    receipt = get_receipt(node_id)
+    if (
+        receipt is not None
+        and receipt.icon_file
+        and (storage.user_defined_nodes_icons / receipt.icon_file).is_file()
+    ):
+        return receipt.icon_file
+    return None

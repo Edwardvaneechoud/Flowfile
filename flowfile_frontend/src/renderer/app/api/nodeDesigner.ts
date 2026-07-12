@@ -292,6 +292,17 @@ export async function publishBundle(body: PublishBundleBody): Promise<Blob> {
   }
 }
 
+export async function fetchPublishReadme(fileStem: string): Promise<string> {
+  const response = await axios.get<{ readme: string }>(
+    `${COMMUNITY_BASE}/readme/${encodeURIComponent(fileStem)}`,
+  );
+  return response.data.readme;
+}
+
+export async function savePublishReadme(fileStem: string, readme: string): Promise<void> {
+  await axios.put(`${COMMUNITY_BASE}/readme/${encodeURIComponent(fileStem)}`, { readme });
+}
+
 export async function listPublishScreenshots(fileStem: string): Promise<PublishScreenshot[]> {
   const response = await axios.get<PublishScreenshot[]>(
     `${COMMUNITY_BASE}/screenshots/${encodeURIComponent(fileStem)}`,
@@ -374,6 +385,14 @@ export interface PublishPrBody {
   category?: string;
   readme?: string;
   changelog?: string;
+}
+
+export interface OpenPublishPr {
+  number: number;
+  url: string;
+  branch: string;
+  version: string;
+  title: string;
 }
 
 export interface PublishPrResponse {
@@ -461,6 +480,18 @@ export async function publishPr(body: PublishPrBody): Promise<PublishPrResponse>
     if (axiosErr.response?.status === 422) {
       throw new PublishIncompleteError(await issuesFromErrorBody(axiosErr.response.data));
     }
+    throw asGithubError(err);
+  }
+}
+
+export async function fetchOpenPublishPrs(fileName: string): Promise<OpenPublishPr[]> {
+  try {
+    const response = await axios.get<{ open_prs: OpenPublishPr[] }>(
+      `${COMMUNITY_BASE}/publish-pr/open`,
+      { params: { file_name: fileName } },
+    );
+    return response.data.open_prs;
+  } catch (err) {
     throw asGithubError(err);
   }
 }

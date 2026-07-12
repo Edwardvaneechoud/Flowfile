@@ -19,7 +19,11 @@ from pathlib import Path
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import get_community_index_url
-from flowfile_core.flowfile.community_nodes.client import CommunityClient
+from flowfile_core.flowfile.community_nodes.client import (
+    CommunityClient,
+    CommunityUnavailableError,
+    PinMismatchError,
+)
 from flowfile_core.flowfile.community_nodes.models import (
     CommunityIndex,
     CommunityIndexEntry,
@@ -109,6 +113,28 @@ def _community_icon_name(node_id: str, original_path: str) -> str | None:
     return f"{node_id}__{name}"
 
 
+def remove_seeded_assets(receipt: InstallReceipt) -> None:
+    """Delete the icon/screenshots/README a receipt seeded; user files in the prep dir survive."""
+    # Community icons are namespaced "<node_id>__…" at install, so only those are removed.
+    if receipt.icon_file and receipt.icon_file.startswith(f"{receipt.node_id}__"):
+        try:
+            (storage.user_defined_nodes_icons / receipt.icon_file).unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("Could not delete community node icon %s: %s", receipt.icon_file, e)
+    seeded = list(receipt.screenshot_files) + ([receipt.readme_file] if receipt.readme_file else [])
+    if seeded:
+        prep_dir = storage.user_defined_nodes_screenshots / receipt.node_id
+        for name in seeded:
+            try:
+                (prep_dir / Path(name).name).unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("Could not delete community prep file %s: %s", name, e)
+        try:
+            prep_dir.rmdir()
+        except OSError:
+            pass
+
+
 def install(
     request: InstallRequest,
     index: CommunityIndex,
@@ -151,6 +177,28 @@ def install(
             icon_bytes = client.download_pinned(entry.artifacts.icon, commit)
             icon_file = candidate
 
+    # Screenshots/README are cosmetic (publish-prep for later updates): never fail an install over them.
+    screenshots: list[tuple[str, bytes]] = []
+    for shot in entry.artifacts.screenshots:
+        name = Path(shot.path).name
+        try:
+            screenshots.append((name, client.download_pinned(shot, commit)))
+        except (CommunityUnavailableError, PinMismatchError) as e:
+            logger.warning("Skipping screenshot %s for %s: %s", name, entry.id, e)
+
+    readme_bytes: bytes | None = None
+    if entry.artifacts.readme is not None:
+        try:
+            readme_bytes = client.download_pinned(entry.artifacts.readme, commit)
+        except (CommunityUnavailableError, PinMismatchError) as e:
+            logger.warning("Skipping README for %s: %s", entry.id, e)
+
+    # Updates re-run install(): drop the previous version's seeds first so artifacts
+    # removed upstream (a dropped screenshot/README, a renamed icon) don't linger.
+    previous = receipts.get(entry.id)
+    if previous is not None:
+        remove_seeded_assets(previous)
+
     nodes_dir = storage.user_defined_nodes_directory
     nodes_dir.mkdir(parents=True, exist_ok=True)
     file_name = f"{entry.id}.py"
@@ -162,6 +210,14 @@ def install(
         icons_dir.mkdir(parents=True, exist_ok=True)
         (icons_dir / icon_file).write_bytes(icon_bytes)
 
+    if screenshots or readme_bytes is not None:
+        prep_dir = storage.user_defined_nodes_screenshots / entry.id
+        prep_dir.mkdir(parents=True, exist_ok=True)
+        for name, data in screenshots:
+            (prep_dir / name).write_bytes(data)
+        if readme_bytes is not None:
+            (prep_dir / "README.md").write_bytes(readme_bytes)
+
     loaded = registry.load_file(file_path)
 
     receipt = InstallReceipt(
@@ -171,6 +227,8 @@ def install(
         version=entry.version,
         sha256=hashlib.sha256(node_bytes).hexdigest(),
         icon_file=icon_file,
+        screenshot_files=[name for name, _ in screenshots],
+        readme_file="README.md" if readme_bytes is not None else None,
         installed_at=_now_iso(),
         installed_by=user_email or str(user_id),
         consent=ConsentRecord(
@@ -201,12 +259,7 @@ def uninstall(node_id: str) -> InstallReceipt:
             file_path.unlink()
         except OSError as e:
             logger.warning("Could not delete community node file %s: %s", file_path, e)
-    # Community icons are namespaced "<node_id>__…" at install, so only those are removed.
-    if receipt.icon_file and receipt.icon_file.startswith(f"{node_id}__"):
-        try:
-            (storage.user_defined_nodes_icons / receipt.icon_file).unlink(missing_ok=True)
-        except OSError as e:
-            logger.warning("Could not delete community node icon %s: %s", receipt.icon_file, e)
+    remove_seeded_assets(receipt)
     remove_receipt(node_id)
     logger.info("Uninstalled community node %s", node_id)
     return receipt

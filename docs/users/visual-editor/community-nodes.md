@@ -61,7 +61,7 @@ You must tick the acknowledgement checkbox before **Install** enables.
 
 </details>
 
-On confirm, Flowfile downloads the pinned node file and icon, **verifies the sha256**, re-scans the downloaded bytes, and drops the node into your local palette. The node appears in the palette right away — no restart. Nothing runs until you place the node in a flow.
+On confirm, Flowfile downloads the pinned node file, icon, and screenshots, **verifies the sha256** of each, re-scans the downloaded code, and drops the node into your local palette. The icon and screenshots are kept locally too, so if you later publish an update of the node, the Publish modal starts from the published media instead of empty fields. The node appears in the palette right away — no restart. Nothing runs until you place the node in a flow.
 
 ### Node states
 
@@ -107,7 +107,7 @@ Below the checklist, a **version banner** tells you what this publish will do: *
 Fill in the **License** (a permissive SPDX license — MIT, Apache-2.0, BSD, MPL-2.0, Unlicense, or CC0), a **Category**, and an optional **Description** override and **Repository** link. Two more optional fields shape your node's registry presence:
 
 - **Changelog** — one or two lines on what changed in this version. Users who have your node installed see it next to the update prompt, so it's worth filling in on every release.
-- **README** — Markdown for your node's community page (what it does, inputs, settings). Leave it empty and a TODO-stub README ships for you to edit on GitHub later.
+- **README** — Markdown for your node's community page. **Insert template** drops in the standard sections (What it does / Inputs / Settings) to fill out. The README is stored with the node on this machine — reopening the modal brings it back, and for an installed community node the field prefills from its published README, so an update never silently replaces a real README with the stub. Leave it empty and a TODO-stub README ships for you to edit on GitHub later.
 
 ### Add screenshots
 
@@ -153,6 +153,8 @@ The modal links you straight to the PR and shows what's coming:
 ### Revising an open pull request
 
 Your PR isn't frozen once it's open. Fix something in the designer — a review comment, a failed check — and publish again with the **same version**: Flowfile pushes your latest files to the open PR and refreshes its title and description. The success panel's **Update pull request** button takes you straight back to publish again, and the primary button reads **Update pull request** for the rest of the session.
+
+You don't have to remember an open PR either: once GitHub is connected, the modal checks for your open registry PRs for this node and says so — *"Pull request #6 for v1.0.0 is already open — publishing updates it in place"*, or a warning when the open PR is for an older version than the one you're about to publish.
 
 ### Releasing a new version
 

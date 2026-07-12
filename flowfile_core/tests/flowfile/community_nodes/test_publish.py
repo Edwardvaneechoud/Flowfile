@@ -8,6 +8,7 @@ loaded through the real registry, exactly as the designer save path leaves them.
 ``isolated_storage`` fixture live in ``conftest`` so the community-github route
 suite reuses the same designed-node setup.
 """
+import hashlib
 import io
 import json
 import zipfile
@@ -16,7 +17,8 @@ import pytest
 from fastapi import HTTPException
 
 from flowfile_core.flowfile.community_nodes import publish, validation
-from flowfile_core.flowfile.community_nodes.models import CommunityManifest
+from flowfile_core.flowfile.community_nodes.models import CommunityManifest, InstallReceipt
+from flowfile_core.flowfile.community_nodes.receipts import put_receipt
 from flowfile_core.routes import community_nodes as route_mod
 
 from .conftest import _add_icon, _add_screenshot, _valid_png, _write_node
@@ -80,6 +82,82 @@ def test_valid_png_icon_passes(isolated_storage):
     issues = publish.completeness_check(entry, license="MIT", repository="")
     assert _errors(issues) == []
     assert "ICON_DEFAULT" not in _warnings(issues)
+
+
+def test_installed_node_icon_resolves_via_receipt(isolated_storage):
+    # Installed community nodes keep node_icon="kmeans.PNG" while the file lands
+    # namespaced as "<node_id>__kmeans.PNG"; the receipt maps between the two.
+    entry = _write_node(node_icon="kmeans.PNG")
+    _add_icon("mood_emoji__kmeans.PNG", _valid_png(48, 48))
+    put_receipt(
+        InstallReceipt(
+            node_id="mood_emoji",
+            node_key="mood_emoji",
+            file_name="mood_emoji.py",
+            version="1.0.0",
+            sha256="0" * 64,
+            icon_file="mood_emoji__kmeans.PNG",
+        )
+    )
+
+    issues = publish.completeness_check(entry, license="MIT", repository="")
+    assert "ICON_MISSING" not in _warnings(issues)
+    assert "ICON_NOT_PNG" not in _errors(issues)
+
+    pf = publish.build_publish_files(
+        entry,
+        license="MIT",
+        repository="",
+        description="A mood emoji node for tables",
+        category="Fun",
+        screenshots=[],
+    )
+    assert "nodes/mood_emoji/icon.png" in [name for name, _ in pf.files]
+
+
+def test_standard_builtin_icon_resolves(isolated_storage):
+    # A standard glyph from the designer's icon picker ships with the package
+    # (no upload, no receipt), so the publish path resolves it to bundled bytes.
+    assert "group_by.png" in publish._standard_icon_names()
+    entry = _write_node(node_icon="group_by.png")
+
+    issues = publish.completeness_check(entry, license="MIT", repository="")
+    assert "ICON_MISSING" not in _warnings(issues)
+    assert "ICON_NOT_PNG" not in _errors(issues)
+    assert "ICON_DEFAULT" not in _warnings(issues)
+
+    pf = publish.build_publish_files(
+        entry,
+        license="MIT",
+        repository="",
+        description="A mood emoji node for tables",
+        category="Fun",
+        screenshots=[],
+    )
+    files = dict(pf.files)
+    assert "nodes/mood_emoji/icon.png" in files
+    manifest = json.loads(files["nodes/mood_emoji/manifest.json"])
+    assert manifest["icon"] == "icon.png"
+
+
+def test_receipt_icon_wins_over_same_named_local_file(isolated_storage):
+    # A coincidentally same-named local icon must not shadow the receipt's copy:
+    # the 600px impostor would trip the dimension cap if it were picked up.
+    entry = _write_node(node_icon="kmeans.PNG")
+    _add_icon("kmeans.PNG", _valid_png(600, 600))
+    _add_icon("mood_emoji__kmeans.PNG", _valid_png(48, 48))
+    put_receipt(
+        InstallReceipt(
+            node_id="mood_emoji",
+            node_key="mood_emoji",
+            file_name="mood_emoji.py",
+            version="1.0.0",
+            sha256="0" * 64,
+            icon_file="mood_emoji__kmeans.PNG",
+        )
+    )
+    issues = publish.completeness_check(entry, license="MIT", repository="")
+    assert "ICON_NOT_PNG" not in _errors(issues)
 
 
 def test_screenshot_present_clears_warning(isolated_storage):
@@ -515,6 +593,139 @@ def test_route_check_only_reports_readme_too_large(isolated_storage):
     )
     assert payload["ok"] is False
     assert any(i["code"] == "README_TOO_LARGE" and i["severity"] == "error" for i in payload["issues"])
+
+
+def test_prep_readme_roundtrip(isolated_storage):
+    publish.save_prep_readme("mood_emoji", "# Hi")
+    assert publish.load_prep_readme("mood_emoji") == "# Hi\n"
+    publish.save_prep_readme("mood_emoji", "   ")  # clearing leaves an empty tombstone
+    assert publish.load_prep_readme("mood_emoji") == ""
+    assert publish.readme_prep_path("mood_emoji").exists()
+
+
+def test_route_publish_bundle_persists_readme(isolated_storage):
+    _write_node(author="octocat")
+    route_mod.publish_bundle(
+        route_mod.PublishBundleRequest(file_name="mood_emoji.py", license="MIT", readme="# Mine"),
+        current_user=None,
+    )
+    assert publish.load_prep_readme("mood_emoji") == "# Mine\n"
+
+
+def test_readme_routes_roundtrip(isolated_storage):
+    _write_node()
+    assert route_mod.get_publish_readme("mood_emoji", current_user=None)["readme"] == ""
+    route_mod.put_publish_readme(
+        "mood_emoji", route_mod.PublishReadmeBody(readme="# Stored"), current_user=None
+    )
+    assert route_mod.get_publish_readme("mood_emoji", current_user=None)["readme"] == "# Stored\n"
+
+
+def test_put_readme_oversized_422(isolated_storage):
+    with pytest.raises(HTTPException) as exc:
+        route_mod.put_publish_readme(
+            "mood_emoji",
+            route_mod.PublishReadmeBody(readme="x" * (validation.README_MAX + 1)),
+            current_user=None,
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error_code"] == "README_TOO_LARGE"
+
+
+def _receipt(node_id: str = "mood_emoji", **kwargs) -> InstallReceipt:
+    return InstallReceipt(
+        node_id=node_id,
+        node_key=node_id,
+        file_name=f"{node_id}.py",
+        version="1.0.0",
+        sha256="0" * 64,
+        **kwargs,
+    )
+
+
+def test_get_readme_falls_back_to_registry(isolated_storage, monkeypatch):
+    _write_node()
+    put_receipt(_receipt())  # fallback is receipt-gated: only community installs get it
+    readme_bytes = b"# Published readme\n"
+    root = isolated_storage / "registry"
+    node_dir = root / "nodes" / "mood_emoji"
+    node_dir.mkdir(parents=True)
+    (node_dir / "README.md").write_bytes(readme_bytes)
+    index = {
+        "schema_version": 1,
+        "registry": {"repo": "test/community", "commit": "commit0"},
+        "categories": [],
+        "nodes": [
+            {
+                "id": "mood_emoji",
+                "node_name": "Mood Emoji",
+                "version": "1.0.0",
+                "author": {"github": "octocat"},
+                "min_flowfile_version": "0.0.1",
+                "artifacts": {
+                    "node": {"path": "nodes/mood_emoji/node.py", "sha256": "0" * 64, "size": 1},
+                    "manifest": {"path": "nodes/mood_emoji/manifest.json", "sha256": "0" * 64, "size": 1},
+                    "readme": {
+                        "path": "nodes/mood_emoji/README.md",
+                        "sha256": hashlib.sha256(readme_bytes).hexdigest(),
+                        "size": len(readme_bytes),
+                    },
+                },
+            }
+        ],
+    }
+    index_path = root / "index.json"
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(index_path))
+
+    result = route_mod.get_publish_readme("mood_emoji", current_user=None)
+    assert result["readme"] == "# Published readme\n"
+    # Write-through: persisted locally so the next read skips the registry.
+    assert publish.load_prep_readme("mood_emoji") == "# Published readme\n"
+
+    # A deliberate clear (empty tombstone) must not resurrect via the fallback.
+    route_mod.put_publish_readme("mood_emoji", route_mod.PublishReadmeBody(readme=""), current_user=None)
+    assert route_mod.get_publish_readme("mood_emoji", current_user=None)["readme"] == ""
+
+
+def test_get_readme_no_fallback_without_receipt(isolated_storage, monkeypatch):
+    # A hand-authored node whose stem collides with a registry id must never
+    # receive another author's README.
+    _write_node()
+    readme_bytes = b"# Someone else's readme\n"
+    root = isolated_storage / "registry"
+    node_dir = root / "nodes" / "mood_emoji"
+    node_dir.mkdir(parents=True)
+    (node_dir / "README.md").write_bytes(readme_bytes)
+    index = {
+        "schema_version": 1,
+        "registry": {"repo": "test/community", "commit": "commit0"},
+        "categories": [],
+        "nodes": [
+            {
+                "id": "mood_emoji",
+                "node_name": "Mood Emoji",
+                "version": "1.0.0",
+                "author": {"github": "someone-else"},
+                "min_flowfile_version": "0.0.1",
+                "artifacts": {
+                    "node": {"path": "nodes/mood_emoji/node.py", "sha256": "0" * 64, "size": 1},
+                    "manifest": {"path": "nodes/mood_emoji/manifest.json", "sha256": "0" * 64, "size": 1},
+                    "readme": {
+                        "path": "nodes/mood_emoji/README.md",
+                        "sha256": hashlib.sha256(readme_bytes).hexdigest(),
+                        "size": len(readme_bytes),
+                    },
+                },
+            }
+        ],
+    }
+    index_path = root / "index.json"
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(index_path))
+
+    assert route_mod.get_publish_readme("mood_emoji", current_user=None)["readme"] == ""
+    assert not publish.readme_prep_path("mood_emoji").exists()
 
 
 def test_route_complete_returns_zip(isolated_storage):

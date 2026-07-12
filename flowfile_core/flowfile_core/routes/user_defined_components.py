@@ -12,6 +12,7 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.flowfile.community_nodes.receipts import community_icon_override
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
 from flowfile_core.flowfile.node_designer.parsing import extract_manifest, parse_source
 from flowfile_core.flowfile.node_designer.state import DesignerState, ParseResult
@@ -111,6 +112,8 @@ def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
         info.error = entry.error
         return info
     node = entry.node_class()
+    # Installed community icons live namespaced on disk while node_icon keeps the original name.
+    icon_override = community_icon_override(Path(entry.file_name).stem)
     return CustomNodeInfo(
         file_name=entry.file_name,
         node_name=node.node_name,
@@ -120,7 +123,7 @@ def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
         author=node.author or "",
         version=node.version or "",
         tags=list(node.tags),
-        node_icon=node.node_icon,
+        node_icon=icon_override or node.node_icon,
         node_key=entry.node_key,
         environment=node.environment,
         source_hash=entry.source_hash,
@@ -361,12 +364,15 @@ def delete_custom_node(file_name: str, current_user=Depends(get_current_active_u
 
 
 def _drop_community_receipt_for(file_name: str) -> None:
-    """Deleting an installed community node through this legacy route must not orphan its receipt."""
+    """Deleting an installed community node through this legacy route must not orphan its receipt
+    or the icon/screenshots/README the install seeded."""
     try:
+        from flowfile_core.flowfile.community_nodes.installer import remove_seeded_assets
         from flowfile_core.flowfile.community_nodes.receipts import load_receipts, remove_receipt
 
         for node_id, receipt in load_receipts().items():
             if receipt.file_name == file_name:
+                remove_seeded_assets(receipt)
                 remove_receipt(node_id)
                 return
     except Exception as e:

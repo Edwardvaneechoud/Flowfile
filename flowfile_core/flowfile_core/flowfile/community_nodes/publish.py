@@ -18,6 +18,7 @@ route classifies via ``WARNING_CODES``.
 import io
 import zipfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from flowfile_core.flowfile.community_nodes import validation
@@ -33,6 +34,7 @@ from flowfile_core.flowfile.community_nodes.models import (
     parse_semver,
     slugify_node_name,
 )
+from flowfile_core.flowfile.community_nodes.receipts import community_icon_override
 from flowfile_core.flowfile.community_nodes.security_scan import scan_source
 from flowfile_core.flowfile.community_nodes.validation import Issue
 from flowfile_core.flowfile.node_designer.parsing import (
@@ -50,6 +52,24 @@ FALLBACK_MIN_VERSION = "0.1.0"
 MIN_DESCRIPTION_LEN = 10
 CHANGELOG_MAX = 1000  # mirrors CommunityManifest.changelog max_length
 
+# PNG twins of the standard node glyphs the designer's icon picker offers (kept in
+# lockstep with STANDARD_NODE_ICONS in the frontend's designer/utils.ts). A node
+# that picks one ships that glyph without the author uploading anything.
+STANDARD_ICONS_DIR = Path(__file__).parent / "standard_icons"
+
+
+@lru_cache(maxsize=1)
+def _standard_icon_names() -> frozenset[str]:
+    if not STANDARD_ICONS_DIR.is_dir():
+        return frozenset()
+    return frozenset(p.name for p in STANDARD_ICONS_DIR.iterdir() if p.suffix.lower() == ".png")
+
+
+def _standard_icon_path(node_icon: str) -> Path | None:
+    """Path to a bundled standard glyph, or None. Membership in the bundled set
+    (all bare filenames) both selects and guards against path traversal."""
+    return STANDARD_ICONS_DIR / node_icon if node_icon in _standard_icon_names() else None
+
 # Codes the route/frontend render amber (advisory) instead of red (blocking).
 WARNING_CODES = frozenset({"ICON_DEFAULT", "ICON_MISSING", "NO_SCREENSHOTS", "README_STUB"})
 
@@ -65,13 +85,42 @@ def png_screenshots(entry: LoadedNode) -> list[Path]:
     return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".png")
 
 
-def _resolve_png_icon(node_icon: str | None) -> bytes | None:
-    """Bytes of the node's custom PNG icon, or None for the default / non-PNG / missing."""
+def readme_prep_path(file_stem: str) -> Path:
+    """The README sidecar shares the per-node publish-prep dir with the screenshots."""
+    return storage.user_defined_nodes_screenshots / file_stem / "README.md"
+
+
+def load_prep_readme(file_stem: str) -> str:
+    try:
+        return readme_prep_path(file_stem).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def save_prep_readme(file_stem: str, text: str) -> None:
+    path = readme_prep_path(file_stem)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not text.strip():
+        # Empty tombstone, not unlink: a deliberate clear must not resurrect via the registry fallback.
+        path.write_text("", encoding="utf-8")
+        return
+    path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+
+
+def _resolve_png_icon(node_icon: str | None, node_id: str) -> bytes | None:
+    """Bytes of the node's custom PNG icon, or None for the default / non-PNG / missing.
+
+    ``node_id`` (the node's file stem) resolves installed community nodes, whose
+    icon file is namespaced on disk while ``node_icon`` keeps the original name.
+    """
     if not node_icon or node_icon == DEFAULT_NODE_ICON or not node_icon.lower().endswith(".png"):
         return None
-    path = storage.user_defined_nodes_icons / node_icon
+    icon_name = community_icon_override(node_id) or node_icon
+    path = storage.user_defined_nodes_icons / icon_name
     if not path.is_file():
-        return None
+        path = _standard_icon_path(node_icon)
+        if path is None:
+            return None
     data = path.read_bytes()
     if validation.png_dimensions(data) is None:
         return None
@@ -171,7 +220,7 @@ def completeness_check(
             )
         )
 
-    _check_icon(manifest.node_icon, issues)
+    _check_icon(manifest.node_icon, entry.file_path.stem, issues)
 
     # Community CI hard-requires persisted examples (it dry-runs them), so blocking
     # here spares authors a guaranteed red PR check.
@@ -193,7 +242,7 @@ def completeness_check(
     return issues
 
 
-def _check_icon(node_icon: str | None, issues: list[Issue]) -> None:
+def _check_icon(node_icon: str | None, node_id: str, issues: list[Issue]) -> None:
     icon = node_icon or DEFAULT_NODE_ICON
     if icon == DEFAULT_NODE_ICON:
         issues.append(Issue(code="ICON_DEFAULT", message="Using the default icon — consider uploading a PNG icon"))
@@ -206,10 +255,14 @@ def _check_icon(node_icon: str | None, issues: list[Issue]) -> None:
             )
         )
         return
-    path = storage.user_defined_nodes_icons / icon
+    path = storage.user_defined_nodes_icons / (community_icon_override(node_id) or icon)
     if not path.is_file():
-        issues.append(Issue(code="ICON_MISSING", message=f"Icon file '{icon}' is missing — no icon will be shipped"))
-        return
+        path = _standard_icon_path(icon)
+        if path is None:
+            issues.append(
+                Issue(code="ICON_MISSING", message=f"Icon file '{icon}' is missing — no icon will be shipped")
+            )
+            return
     data = path.read_bytes()
     dims = None if validation._looks_like_svg(data) else validation.png_dimensions(data)
     if dims is None:
@@ -302,7 +355,7 @@ def build_publish_files(
     if len(resolved_description) < MIN_DESCRIPTION_LEN:
         resolved_description = intro[:300] if len(intro) >= MIN_DESCRIPTION_LEN else "A Flowfile community node."
 
-    icon_bytes = _resolve_png_icon(meta.node_icon)
+    icon_bytes = _resolve_png_icon(meta.node_icon, entry.file_path.stem)
 
     shot_files: list[tuple[str, bytes]] = []
     for path in screenshots:

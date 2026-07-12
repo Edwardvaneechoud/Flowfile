@@ -20,7 +20,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_user_secret
 from flowfile_core.database.connection import get_db
-from flowfile_core.flowfile.community_nodes import github_client, installer, publish
+from flowfile_core.flowfile.community_nodes import github_client, installer, publish, validation
 from flowfile_core.flowfile.community_nodes.client import (
     CommunityClient,
     CommunityUnavailableError,
@@ -48,6 +48,7 @@ from flowfile_core.flowfile.community_nodes.models import (
     get_app_version,
     semver_gt,
 )
+from flowfile_core.flowfile.community_nodes.receipts import get_receipt
 from flowfile_core.flowfile.node_designer.parsing import extract_manifest
 from flowfile_core.flowfile.user_defined.registry import registry
 from flowfile_core.routes.community_github import GITHUB_PUBLISH_TOKEN_KEY
@@ -284,7 +285,10 @@ async def upload_screenshot(
     stem_dir = storage.user_defined_nodes_screenshots / safe_stem
     stem_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = [p for p in stem_dir.iterdir() if p.is_file()]
+    # The prep dir also holds the README sidecar; only screenshots count toward the cap.
+    existing = [
+        p for p in stem_dir.iterdir() if p.is_file() and p.suffix.lower() in ALLOWED_SCREENSHOT_EXTENSIONS
+    ]
     if not (stem_dir / safe_name).exists() and len(existing) >= MAX_SCREENSHOTS_PER_STEM:
         raise HTTPException(status_code=400, detail=f"At most {MAX_SCREENSHOTS_PER_STEM} screenshots per node")
 
@@ -341,6 +345,46 @@ def delete_screenshot(file_stem: str, file_name: str, current_user=Depends(get_c
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete screenshot: {e}") from e
     return {"success": True, "file_name": safe_name}
+
+
+class PublishReadmeBody(BaseModel):
+    readme: str = ""
+
+
+@router.get("/readme/{file_stem}", summary="Stored publish README for a designed node")
+def get_publish_readme(file_stem: str, current_user=Depends(get_current_active_user)) -> dict[str, str]:
+    """The README sidecar. Falls back once to the published registry README for
+    receipt-tracked installs only (a hand-authored node whose stem happens to match a
+    registry id must never receive another author's README), then persists it; an
+    empty tombstone sidecar (deliberate clear) suppresses the fallback."""
+    stem = _safe_stem(file_stem)
+    text = publish.load_prep_readme(stem)
+    if not text and not publish.readme_prep_path(stem).exists() and get_receipt(stem) is not None:
+        client = get_community_client()
+        try:
+            index, _ = client.get_index()
+            entry = index.entry(stem)
+            if entry is not None and entry.artifacts.readme is not None:
+                text = client.download_pinned(entry.artifacts.readme, index.registry.commit).decode(
+                    "utf-8", errors="replace"
+                )
+                publish.save_prep_readme(stem, text)
+        except (CommunityUnavailableError, PinMismatchError):
+            text = ""
+    return {"readme": text}
+
+
+@router.put("/readme/{file_stem}", summary="Store the publish README for a designed node")
+def put_publish_readme(
+    file_stem: str, body: PublishReadmeBody, current_user=Depends(get_current_active_user)
+) -> dict[str, bool]:
+    if len(body.readme.encode("utf-8")) > validation.README_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "README_TOO_LARGE", "message": f"README exceeds {validation.README_MAX} bytes"},
+        )
+    publish.save_prep_readme(_safe_stem(file_stem), body.readme)
+    return {"ok": True}
 
 
 class PublishBundleRequest(BaseModel):
@@ -402,6 +446,7 @@ def publish_bundle(request: PublishBundleRequest, current_user=Depends(get_curre
             detail={"error_code": "INCOMPLETE", "issues": [_issue_payload(issue) for issue in issues]},
         )
 
+    publish.save_prep_readme(Path(entry.file_name).stem, request.readme)
     screenshots = publish.png_screenshots(entry)
     data = publish.build_bundle(
         entry,
@@ -453,6 +498,31 @@ def _resolve_pr_description(description: str, intro: str | None) -> str:
 def _pr_api_http(e: GithubApiError) -> HTTPException:
     code = "GITHUB_RATE_LIMITED" if e.reason == "rate_limited" else "GITHUB_API_ERROR"
     return HTTPException(status_code=502, detail={"error_code": code, "message": str(e)})
+
+
+@router.get("/publish-pr/open", summary="The connected account's open registry PRs for a designed node")
+def open_publish_prs(
+    file_name: str,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    entry = registry.get_by_file(file_name)
+    if entry is None:
+        raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "file_name": file_name})
+    token = get_user_secret(db, GITHUB_PUBLISH_TOKEN_KEY, current_user.id)
+    if not token:
+        raise HTTPException(
+            status_code=412,
+            detail={"error_code": "GITHUB_NOT_CONNECTED", "message": "Connect a GitHub account first."},
+        )
+    node_id = publish.node_id_for(entry)
+    try:
+        open_prs = github_client.GithubPublisher(token).open_prs_for_node(node_id)
+    except GithubAuthError as e:
+        raise HTTPException(status_code=412, detail={"error_code": "GITHUB_TOKEN_INVALID", "message": str(e)}) from e
+    except GithubApiError as e:
+        raise _pr_api_http(e) from e
+    return {"node_id": node_id, "open_prs": open_prs}
 
 
 @router.post("/publish-pr", summary="Publish a community node via a GitHub pull request")
@@ -522,6 +592,7 @@ def publish_pr(
                     },
                 )
 
+    publish.save_prep_readme(Path(entry.file_name).stem, request.readme)
     screenshots = publish.png_screenshots(entry)
     pf = publish.build_publish_files(
         entry,

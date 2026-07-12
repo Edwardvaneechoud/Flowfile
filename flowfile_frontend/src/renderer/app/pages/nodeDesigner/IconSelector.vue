@@ -128,7 +128,7 @@ const selectedIconLabel = computed(() => {
 });
 
 function standardIconLabel(name: string): string {
-  return name.replace(/\.svg$/, "").replace(/_/g, " ");
+  return name.replace(/\.(svg|png)$/, "").replace(/_/g, " ");
 }
 
 async function loadIcons() {

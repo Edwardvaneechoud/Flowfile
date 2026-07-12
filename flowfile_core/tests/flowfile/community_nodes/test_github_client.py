@@ -368,6 +368,88 @@ def test_update_pr_error_raises_api_error():
         pub.update_pr(7, "t", "b")
 
 
+def test_open_prs_for_node_filters_by_branch_prefix_and_owner():
+    def handler(request):
+        p = request.url.path
+        if request.method == "GET" and p == "/user":
+            return httpx.Response(200, json={"login": "octo"})
+        if request.method == "GET" and p == f"/repos/{UP}/pulls":
+            assert request.url.params.get("state") == "open"
+            return httpx.Response(
+                200,
+                json=[
+                    {  # match: right owner, right node, version parsed from the ref
+                        "number": 6,
+                        "html_url": "https://github.com/x/pull/6",
+                        "title": "Add String Cleaner v1.0.0",
+                        "head": {"label": "octo:node/string_cleaner-v1.0.0", "ref": "node/string_cleaner-v1.0.0"},
+                    },
+                    {  # other node id
+                        "number": 7,
+                        "html_url": "https://github.com/x/pull/7",
+                        "title": "Add Mood Emoji v1.0.0",
+                        "head": {"label": "octo:node/mood_emoji-v1.0.0", "ref": "node/mood_emoji-v1.0.0"},
+                    },
+                    {  # same node, someone else's PR
+                        "number": 8,
+                        "html_url": "https://github.com/x/pull/8",
+                        "title": "Add String Cleaner v2.0.0",
+                        "head": {"label": "other:node/string_cleaner-v2.0.0", "ref": "node/string_cleaner-v2.0.0"},
+                    },
+                    {  # prefix must not match a longer node id
+                        "number": 9,
+                        "html_url": "https://github.com/x/pull/9",
+                        "title": "Add String Cleaner Pro v1.0.0",
+                        "head": {
+                            "label": "octo:node/string_cleaner_pro-v1.0.0",
+                            "ref": "node/string_cleaner_pro-v1.0.0",
+                        },
+                    },
+                ],
+            )
+        raise AssertionError(f"unexpected {request.method} {p}")
+
+    pub = github_client.GithubPublisher("tok", http=_mk(handler))
+    found = pub.open_prs_for_node("string_cleaner")
+    assert [pr["number"] for pr in found] == [6]
+    assert found[0]["version"] == "1.0.0"
+    assert found[0]["branch"] == "node/string_cleaner-v1.0.0"
+    assert found[0]["url"] == "https://github.com/x/pull/6"
+
+
+def test_open_prs_for_node_paginates_past_first_page():
+    def handler(request):
+        p = request.url.path
+        if request.method == "GET" and p == "/user":
+            return httpx.Response(200, json={"login": "octo"})
+        if request.method == "GET" and p == f"/repos/{UP}/pulls":
+            page = int(request.url.params.get("page", "1"))
+            if page == 1:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {"number": i, "html_url": f"u{i}", "title": "", "head": {"label": f"other:b{i}", "ref": f"b{i}"}}
+                        for i in range(100)
+                    ],
+                )
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 200,
+                        "html_url": "https://github.com/x/pull/200",
+                        "title": "Add X v1.0.0",
+                        "head": {"label": "octo:node/x-v1.0.0", "ref": "node/x-v1.0.0"},
+                    }
+                ],
+            )
+        raise AssertionError(f"unexpected {request.method} {p}")
+
+    pub = github_client.GithubPublisher("tok", http=_mk(handler))
+    found = pub.open_prs_for_node("x")
+    assert [pr["number"] for pr in found] == [200]
+
+
 # ---- full publisher composition ------------------------------------------
 
 

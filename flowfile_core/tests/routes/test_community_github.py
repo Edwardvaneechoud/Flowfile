@@ -49,6 +49,7 @@ UNAUTHENTICATED_REQUESTS = [
     ("POST", "/community_nodes/github/pat", {"json": {"token": "ghp_x"}}),
     ("DELETE", "/community_nodes/github/token", {}),
     ("POST", "/community_nodes/publish-pr", {"json": {"file_name": "x.py", "license": "MIT"}}),
+    ("GET", "/community_nodes/publish-pr/open", {"params": {"file_name": "x.py"}}),
 ]
 
 
@@ -373,6 +374,48 @@ def test_publish_pr_commits_readme_and_changelog(isolated_storage, monkeypatch):
     assert files["nodes/mood_emoji/README.md"] == b"# Hello\n"
     manifest = json.loads(files["nodes/mood_emoji/manifest.json"])
     assert manifest["changelog"] == "1.0.0 - first release."
+
+
+def test_open_publish_prs_not_connected_412(isolated_storage):
+    _write_node()
+    resp = authed_client.get("/community_nodes/publish-pr/open", params={"file_name": "mood_emoji.py"})
+    assert resp.status_code == 412, resp.text
+    assert resp.json()["detail"]["error_code"] == "GITHUB_NOT_CONNECTED"
+
+
+def test_open_publish_prs_unknown_file_404(isolated_storage, monkeypatch):
+    _connect_github(monkeypatch)
+    resp = authed_client.get("/community_nodes/publish-pr/open", params={"file_name": "nope.py"})
+    assert resp.status_code == 404, resp.text
+
+
+def test_open_publish_prs_returns_matches(isolated_storage, monkeypatch):
+    _write_node()
+    _connect_github(monkeypatch)
+
+    class _ListingPublisher:
+        def __init__(self, token, **kw):
+            pass
+
+        def open_prs_for_node(self, node_id):
+            assert node_id == "mood_emoji"
+            return [
+                {
+                    "number": 6,
+                    "url": "https://github.com/x/pull/6",
+                    "branch": "node/mood_emoji-v1.0.0",
+                    "version": "1.0.0",
+                    "title": "Add Mood Emoji v1.0.0",
+                }
+            ]
+
+    monkeypatch.setattr(github_client, "GithubPublisher", _ListingPublisher)
+    resp = authed_client.get("/community_nodes/publish-pr/open", params={"file_name": "mood_emoji.py"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["node_id"] == "mood_emoji"
+    assert body["open_prs"][0]["number"] == 6
+    assert body["open_prs"][0]["version"] == "1.0.0"
 
 
 def test_publish_pr_oversized_readme_422(isolated_storage, monkeypatch):

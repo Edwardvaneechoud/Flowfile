@@ -360,6 +360,42 @@ class GithubPublisher:
         """Refresh an open PR's title/body; the branch force-push already updated its diff."""
         self._request("PATCH", f"/repos/{self._upstream}/pulls/{number}", json={"title": title, "body": body})
 
+    def open_prs_for_node(self, node_id: str) -> list[dict]:
+        """The connected account's open registry PRs for any version of ``node_id``.
+
+        GitHub's ``head=`` filter is exact-match only, so this lists open pulls and
+        filters by the deterministic ``node/<id>-v`` branch prefix via ``head.label``
+        (robust even when the fork repo was deleted).
+        """
+        branch_prefix = f"node/{node_id}-v"
+        label_prefix = f"{self.login()}:{branch_prefix}"
+        pulls: list[dict] = []
+        for page in range(1, 11):  # bounded: 1000 open PRs is far beyond a healthy registry
+            batch = self._request(
+                "GET",
+                f"/repos/{self._upstream}/pulls",
+                params={"state": "open", "per_page": 100, "page": page},
+            ).json()
+            pulls.extend(batch)
+            if len(batch) < 100:
+                break
+        found: list[dict] = []
+        for pr in pulls:
+            head = pr.get("head") or {}
+            if not (head.get("label") or "").startswith(label_prefix):
+                continue
+            ref = head.get("ref") or ""
+            found.append(
+                {
+                    "number": pr["number"],
+                    "url": pr["html_url"],
+                    "branch": ref,
+                    "version": ref[len(branch_prefix):] if ref.startswith(branch_prefix) else "",
+                    "title": pr.get("title") or "",
+                }
+            )
+        return found
+
     def _pulls_for_head(self, head: str) -> PrResult | None:
         pulls = self._request(
             "GET",

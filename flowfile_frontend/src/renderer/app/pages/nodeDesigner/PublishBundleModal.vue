@@ -104,7 +104,12 @@
           />
         </div>
         <div class="form-field form-field--wide">
-          <label>README <span class="optional">(optional)</span></label>
+          <label class="readme-label">
+            <span>README <span class="optional">(optional — stored with the node)</span></span>
+            <button class="link-btn" type="button" @click="insertReadmeTemplate">
+              Insert template
+            </button>
+          </label>
           <el-input
             v-model="readme"
             type="textarea"
@@ -185,6 +190,11 @@
 
         <!-- Connected: confirm + create PR -->
         <div v-else-if="connected" class="github-connected">
+          <div v-if="openPrInfo" class="open-pr-note">
+            <i class="fa-solid fa-code-pull-request"></i>
+            <span>{{ openPrInfo.text }}</span>
+            <button class="link-btn" @click="openExistingPr">View PR</button>
+          </div>
           <el-checkbox v-model="confirmed" class="confirm-check">
             My node does what its description says — no hidden network calls or data collection.
           </el-checkbox>
@@ -322,15 +332,19 @@ import {
   PublishPrBlockedError,
   type PublishPrResponse,
   type PublishScreenshot,
+  type OpenPublishPr,
   checkPublishCompleteness,
   deletePublishScreenshot,
   disconnectGithub,
+  fetchOpenPublishPrs,
+  fetchPublishReadme,
   fetchPublishScreenshotUrl,
   getGithubStatus,
   listPublishScreenshots,
   pollGithubDevice,
   publishBundle,
   publishPr,
+  savePublishReadme,
   saveGithubPat,
   startGithubDevice,
   uploadPublishScreenshot,
@@ -344,8 +358,10 @@ import {
   canCreatePr,
   describeGithubError,
   nextPollDelayMs,
+  openPrNotice,
   prSuccessMessage,
   semverGt,
+  withReadmeTemplate,
 } from "./publishGithub";
 
 const props = defineProps<{
@@ -603,6 +619,21 @@ const publishStatusText = ref("");
 const prResult = ref<PublishPrResponse | null>(null);
 // A PR was opened/refreshed this session: the primary button reads "Update pull request".
 const prEverOpened = ref(false);
+const openPrs = ref<OpenPublishPr[]>([]);
+
+const openPrInfo = computed(() => openPrNotice(openPrs.value, currentVersion.value));
+const relevantOpenPr = computed(
+  () => openPrs.value.find((p) => p.version === currentVersion.value) ?? openPrs.value[0] ?? null,
+);
+
+function openExistingPr() {
+  if (relevantOpenPr.value?.url) desktop.openExternal(relevantOpenPr.value.url);
+}
+
+// An open PR for the current version means publishing updates it, not creates one.
+watch([openPrs, currentVersion], () => {
+  if (openPrs.value.some((p) => p.version === currentVersion.value)) prEverOpened.value = true;
+});
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let forkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -662,6 +693,65 @@ async function loadGithubStatus() {
     githubStatus.value = { configured: false, connected: false, login: "" };
   } finally {
     githubLoading.value = false;
+  }
+  if (connected.value) refreshOpenPrs();
+  else openPrs.value = [];
+}
+
+function insertReadmeTemplate() {
+  readme.value = withReadmeTemplate(readme.value);
+}
+
+// The README sidecar persists per node on the backend; the field only seeds when empty.
+async function loadReadme() {
+  if (!props.fileName || readme.value.trim()) return;
+  const stem = fileStem.value;
+  try {
+    const stored = await fetchPublishReadme(stem);
+    if (stored && stem === fileStem.value && !readme.value.trim()) readme.value = stored;
+  } catch {
+    /* sidecar is best-effort */
+  }
+}
+
+// The modal is permanently mounted: switching nodes must not leak per-node state
+// (a pending autosave would otherwise write node A's README into node B's sidecar).
+watch(
+  () => props.fileName,
+  () => {
+    if (readmeSaveTimer) {
+      clearTimeout(readmeSaveTimer);
+      readmeSaveTimer = null;
+    }
+    readme.value = "";
+    changelog.value = "";
+    currentVersion.value = "";
+    publishedVersion.value = null;
+    openPrs.value = [];
+    issues.value = [];
+  },
+);
+
+let readmeSaveTimer: ReturnType<typeof setTimeout> | null = null;
+watch(readme, () => {
+  if (!props.show) return;
+  if (readmeSaveTimer) clearTimeout(readmeSaveTimer);
+  readmeSaveTimer = setTimeout(() => {
+    readmeSaveTimer = null;
+    savePublishReadme(fileStem.value, readme.value).catch(() => undefined);
+  }, 800);
+});
+
+// Passive indicator: failures never surface, they just hide the note. Guarded against
+// responses landing after the modal closed or switched to another node.
+async function refreshOpenPrs() {
+  if (!props.fileName) return;
+  const stem = fileStem.value;
+  try {
+    const prs = await fetchOpenPublishPrs(props.fileName);
+    if (props.show && stem === fileStem.value) openPrs.value = prs;
+  } catch {
+    if (stem === fileStem.value) openPrs.value = [];
   }
 }
 
@@ -795,6 +885,7 @@ async function runPublish(forkAttempt: number) {
     publishStatusText.value = "";
     prResult.value = res;
     prEverOpened.value = true;
+    refreshOpenPrs();
   } catch (e) {
     publishing.value = false;
     publishStatusText.value = "";
@@ -826,6 +917,7 @@ function resetGithubTransient() {
   connecting.value = false;
   prResult.value = null;
   prEverOpened.value = false;
+  openPrs.value = [];
   confirmed.value = false;
 }
 
@@ -833,12 +925,18 @@ watch(
   () => props.show,
   (open) => {
     if (!open) {
+      if (readmeSaveTimer) {
+        clearTimeout(readmeSaveTimer);
+        readmeSaveTimer = null;
+        savePublishReadme(fileStem.value, readme.value).catch(() => undefined);
+      }
       stopGithubTimers();
       resetGithubTransient();
       return;
     }
     if (!description.value.trim()) description.value = store.nodeMetadata.intro ?? "";
     runCheck();
+    loadReadme();
     loadScreenshots();
     loadGithubStatus();
   },
@@ -850,6 +948,7 @@ watch([license, category, description, repository, readme, changelog], () => {
 
 onBeforeUnmount(() => {
   if (checkTimer) clearTimeout(checkTimer);
+  if (readmeSaveTimer) clearTimeout(readmeSaveTimer);
   stopGithubTimers();
   revokeUrls();
 });
@@ -1205,6 +1304,27 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
+}
+
+.open-pr-note {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.open-pr-note i {
+  color: var(--color-accent);
+}
+
+.readme-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .pr-success-head {
