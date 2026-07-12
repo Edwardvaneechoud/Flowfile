@@ -323,6 +323,9 @@ onMounted(loadNodes);
   display: flex;
   gap: 8px;
 }
+.header-actions .el-button i {
+  margin-right: 6px;
+}
 .panel-hint {
   font-size: 13px;
   color: var(--color-text-secondary);

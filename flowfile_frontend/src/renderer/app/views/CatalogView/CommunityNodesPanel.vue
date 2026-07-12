@@ -403,6 +403,9 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
 }
+.header-actions .el-button i {
+  margin-right: 6px;
+}
 .stale-badge {
   display: inline-flex;
   align-items: center;

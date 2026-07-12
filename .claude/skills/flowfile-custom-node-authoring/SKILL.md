@@ -132,7 +132,7 @@ Groups: `nd.Types.Numeric`, `.String`, `.AnyDate`, `.Boolean`, `.Binary`, `.Comp
 
 Access: `self.settings_schema.<section_attr>.<component_attr>.value`. Gotchas:
 
-- `NumericInput` / `SliderInput` `.value` is always a **`float`** — cast with `int(...)` when you need an int.
+- `NumericInput` / `SliderInput` `.value` is a number but is **not coerced** — it arrives as whatever was supplied (an `int` or a `float`, e.g. `example_settings` with `"n_clusters": 3` yields `int`). Cast with `int(...)`/`float(...)` when you need a specific type.
 - `ColumnSelector(multiple=True).value` → `list[str]`; `multiple=False` → a single column-name `str`.
 - `SecretSelector` → read `.secret_value` (a `SecretStr`; call `.get_secret_value()`), **not** `.value` (which is the secret *name*). **Local-only** — secrets are not available inside kernels yet (§3.3).
 - `ColumnActionInput.value` → a `ColumnActionValue` (`.rows` of `ColumnActionRow`, `.group_by_columns`, `.order_by_column`).
@@ -175,7 +175,7 @@ A kernel node's source **never runs directly**. Core AST-generates a self-contai
 
 1. `environment: str = "kernel"`.
 2. `dependencies: list[str] = ["xgboost"]` (only strictly needed if not relying on the ML image).
-3. `import xgboost as xgb` at module top (a non-SDK import, lifted verbatim into the kernel script).
+3. Import heavy libs (`xgboost`, `sklearn`, …) **inside `process()`**, never at module top. Core `exec`s the whole module at placement (`registry.ensure_class`) to build the palette template, and core does **not** have the kernel-only libs installed — a module-top `import xgboost` raises `ModuleNotFoundError` and the node fails to load. Only `polars` + the `nd` import belong at module top. In-process third-party imports are still lifted verbatim into the kernel script (this is what the real kmeans node does — §5(b)).
 4. All config in `settings_schema` (JSON-serializable), read via `.value`.
 5. `.collect()` inputs inside `process` — sklearn/xgboost need eager numpy/pandas.
 6. Self-contained train+predict → keep the model local. Train node → predict node → `flowfile_ctx.publish_artifact` / `read_artifact`.
@@ -190,7 +190,7 @@ The scanner (`community_nodes/security_scan.py`) is a conservative pre-filter; t
 
 - `eval`/`exec`/`compile`; `__import__`/`importlib.import_module`/`importlib.util`.
 - `getattr`/`globals()`/`vars()`/`__builtins__` resolving a dangerous builtin, or `getattr` with a **non-constant** name.
-- `ctypes`/`cffi`/`_ctypes`; `os.system`/`os.popen*`/`os.exec*`/`os.spawn*`/`posix.*`.
+- `ctypes`/`cffi`/`_ctypes`; `os.system`/`os.popen*`/`os.exec*`/`os.spawn*` (and `posix.system`/`posix.popen*`).
 - `subprocess` with `shell=True` **or** non-literal args; `pty`/`os.forkpty`; importing **both** `socket` and `subprocess`.
 - `sys._getframe`/`inspect.stack`/`inspect.currentframe`; importing `pip`/`ensurepip`.
 - Opaque high-entropy string blobs (>4096 chars, or ≥1024 chars of near-base64); bulk `os.environ` enumeration.
@@ -199,7 +199,7 @@ The scanner (`community_nodes/security_scan.py`) is a conservative pre-filter; t
 
 `network` (socket/requests/httpx/urllib/boto3/…), `subprocess` (literal args), `fs_write`, `fs_read`, `env_read` (`os.getenv`/`sys.argv`), `dynamic_code` (`setattr`/`delattr` with non-constant name), `serialization` (`pickle.load`/`yaml.load` w/o SafeLoader), `secrets` (`SecretSelector`/`.secret_value`). Only trigger these when the node genuinely needs them.
 
-**ML libraries do not flag** — `xgboost`, `sklearn`/`scikit-learn`, `numpy`, `pandas`, `polars` match no trigger set. (Caveat: loading a model with `pickle.load`/`joblib`→pickle flags `serialization`; prefer `flowfile_ctx.read_artifact` for models.)
+**ML libraries do not flag** — `xgboost`, `sklearn`/`scikit-learn`, `numpy`, `pandas`, `polars` match no trigger set. (Caveat: `pickle.load`/`yaml.load` without `SafeLoader` flag `serialization`; `joblib.load` is **not** detected by the scanner but still deserializes untrusted data — prefer `flowfile_ctx.read_artifact` for models.)
 
 ### 4.3 Bundle validation to install/publish (`community_nodes/validation.py:385-445`)
 
@@ -311,7 +311,7 @@ class KmeansClustering(nd.CustomNodeBase):
 
         cfg = self.settings_schema.clustering
         feature_cols: list[str] = cfg.feature_columns.value
-        k = int(cfg.n_clusters.value)                 # NumericInput is always a float
+        k = int(cfg.n_clusters.value)                 # .value is not coerced — cast to the type you need
         label_col = cfg.cluster_column.value
 
         df = inputs[0].collect()                      # sklearn needs eager data
@@ -332,7 +332,6 @@ Trains an `XGBRegressor`/`XGBClassifier` on labeled rows and appends a predictio
 ```python
 import polars as pl
 from flowfile import node_designer as nd
-import xgboost as xgb          # non-SDK import — lifted verbatim into the kernel script
 
 
 class XGBoostPredictSettings(nd.NodeSettings):
@@ -377,6 +376,8 @@ class XGBoostPredict(nd.CustomNodeBase):
     settings_schema: XGBoostPredictSettings = XGBoostPredictSettings()
 
     def process(self, *inputs: pl.LazyFrame) -> pl.DataFrame:
+        import xgboost as xgb                          # heavy libs import INSIDE process (core execs the module at placement)
+
         cfg = self.settings_schema.model
         feature_cols: list[str] = cfg.feature_columns.value
         target_col: str = cfg.target_column.value
