@@ -349,8 +349,12 @@ class PublishBundleRequest(BaseModel):
     repository: str = ""
     description: str = ""
     category: str = "Utilities"
-    # check_only returns the completeness report as JSON instead of a zip, so the
-    # designer modal can render the checklist (incl. warnings) without downloading.
+    # Markdown for the node's registry README; empty ships the generated TODO stub.
+    readme: str = ""
+    changelog: str = ""
+    # check_only returns the completeness report as JSON (plus node_id/version/
+    # published_version context) instead of a zip, so the designer modal can render
+    # the checklist and version banner without downloading.
     check_only: bool = False
 
 
@@ -366,12 +370,31 @@ def publish_bundle(request: PublishBundleRequest, current_user=Depends(get_curre
         raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "file_name": request.file_name})
 
     issues = publish.completeness_check(
-        entry, license=request.license, repository=request.repository, description=request.description
+        entry,
+        license=request.license,
+        repository=request.repository,
+        description=request.description,
+        readme=request.readme,
+        changelog=request.changelog,
     )
     errors = [issue for issue in issues if issue.code not in publish.WARNING_CODES]
 
     if request.check_only:
-        return {"ok": not errors, "issues": [_issue_payload(issue) for issue in issues]}
+        node_id = publish.node_id_for(entry)
+        published_version = None
+        try:
+            index, _ = get_community_client().get_index()
+            published = index.entry(node_id)
+            published_version = published.version if published is not None else None
+        except CommunityUnavailableError:
+            pass
+        return {
+            "ok": not errors,
+            "issues": [_issue_payload(issue) for issue in issues],
+            "node_id": node_id,
+            "version": extract_manifest(entry.source_text or "").version or "0.0.0",
+            "published_version": published_version,
+        }
 
     if errors:
         raise HTTPException(
@@ -387,6 +410,8 @@ def publish_bundle(request: PublishBundleRequest, current_user=Depends(get_curre
         description=request.description,
         category=request.category,
         screenshots=screenshots,
+        readme=request.readme,
+        changelog=request.changelog,
     )
     file_name = f"{publish.node_id_for(entry)}-bundle.zip"
     return Response(
@@ -402,10 +427,12 @@ class PublishPrRequest(BaseModel):
     repository: str = ""
     description: str = ""
     category: str = "Utilities"
+    readme: str = ""
+    changelog: str = ""
 
 
 class PublishPrResponse(BaseModel):
-    status: str  # created | already_open | fork_creating
+    status: str  # created | updated | fork_creating
     pr_url: str = ""
     pr_number: int | None = None
     branch: str = ""
@@ -439,7 +466,12 @@ def publish_pr(
         raise HTTPException(status_code=404, detail={"error_code": "NODE_NOT_FOUND", "file_name": request.file_name})
 
     issues = publish.completeness_check(
-        entry, license=request.license, repository=request.repository, description=request.description
+        entry,
+        license=request.license,
+        repository=request.repository,
+        description=request.description,
+        readme=request.readme,
+        changelog=request.changelog,
     )
     errors = [issue for issue in issues if issue.code not in publish.WARNING_CODES]
     if errors:
@@ -499,10 +531,14 @@ def publish_pr(
         category=request.category,
         screenshots=screenshots,
         author_github=login,
+        readme=request.readme,
+        changelog=request.changelog,
     )
 
     publisher = github_client.GithubPublisher(token)
     branch = publish.pr_branch_name(pf.node_id, pf.version)
+    title = publish.pr_title(pf.node_id, pf.node_name, pf.version, is_update)
+    body_text = publish.build_pr_body(pf.node_id, pf.version, is_update, resolved_description)
     try:
         fork = publisher.ensure_fork()
         default_branch, base = publisher.base_sha(fork)
@@ -511,11 +547,12 @@ def publish_pr(
         publisher.ensure_branch(fork, branch, base)
         message = f"{'Update' if is_update else 'Add'} {pf.node_id} v{pf.version}"
         publisher.commit_files(fork, branch, base, pf.files, message)
-        pr = publisher.open_or_get_pr(
-            branch,
-            publish.pr_title(pf.node_id, pf.node_name, pf.version, is_update),
-            publish.build_pr_body(pf.node_id, pf.version, is_update, resolved_description),
-        )
+        pr = publisher.open_or_get_pr(branch, title, body_text)
+        if not pr.created:
+            try:
+                publisher.update_pr(pr.number, title, body_text)
+            except GithubApiError:  # branch already force-updated; title/body refresh is cosmetic
+                logger.info("PR #%s title/body refresh failed", pr.number)
     except ForkPendingError:
         return PublishPrResponse(
             status="fork_creating", node_id=pf.node_id, version=pf.version, branch=branch, is_update=is_update
@@ -528,7 +565,7 @@ def publish_pr(
         raise _pr_api_http(e) from e
 
     return PublishPrResponse(
-        status="created" if pr.created else "already_open",
+        status="created" if pr.created else "updated",
         pr_url=pr.url,
         pr_number=pr.number,
         branch=branch,

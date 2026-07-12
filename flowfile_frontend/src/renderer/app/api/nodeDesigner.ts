@@ -229,11 +229,16 @@ export interface PublishBundleBody {
   repository?: string;
   description?: string;
   category?: string;
+  readme?: string;
+  changelog?: string;
 }
 
 export interface PublishCompletenessResponse {
   ok: boolean;
   issues: PublishIssue[];
+  node_id?: string;
+  version?: string;
+  published_version?: string | null;
 }
 
 export interface PublishScreenshot {
@@ -367,10 +372,13 @@ export interface PublishPrBody {
   repository?: string;
   description?: string;
   category?: string;
+  readme?: string;
+  changelog?: string;
 }
 
 export interface PublishPrResponse {
-  status: "created" | "already_open" | "fork_creating";
+  // "already_open" kept for old-core skew; current cores report "updated".
+  status: "created" | "updated" | "already_open" | "fork_creating";
   pr_url: string;
   pr_number: number | null;
   branch: string;

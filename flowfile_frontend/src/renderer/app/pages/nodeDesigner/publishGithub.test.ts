@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bumpSemver,
   canCreatePr,
   DEVICE_POLL_MIN_INTERVAL_SEC,
   describeGithubError,
@@ -8,6 +9,9 @@ import {
   FORK_RETRY_MAX,
   GITHUB_ERROR_MESSAGES,
   nextPollDelayMs,
+  PR_SUCCESS_MESSAGES,
+  prSuccessMessage,
+  semverGt,
   SLOW_DOWN_BUMP_SEC,
 } from "./publishGithub";
 
@@ -115,5 +119,50 @@ describe("fork-retry budget", () => {
     expect(FORK_RETRY_MAX).toBeGreaterThan(1);
     // The bounded retry window must comfortably exceed a typical fork spin-up.
     expect(FORK_RETRY_DELAY_MS * FORK_RETRY_MAX).toBeGreaterThanOrEqual(30000);
+  });
+});
+
+describe("prSuccessMessage", () => {
+  it("maps each status to distinct copy", () => {
+    const statuses = ["created", "updated", "already_open"];
+    const messages = statuses.map((s) => prSuccessMessage(s));
+    expect(new Set(messages).size).toBe(statuses.length);
+    for (const msg of messages) expect(msg.length).toBeGreaterThan(0);
+  });
+
+  it("says updated when the open PR was refreshed", () => {
+    expect(prSuccessMessage("updated").toLowerCase()).toContain("updated");
+  });
+
+  it("falls back to the created copy for unknown statuses", () => {
+    expect(prSuccessMessage("mystery")).toBe(PR_SUCCESS_MESSAGES.created);
+  });
+});
+
+describe("semverGt", () => {
+  it("compares numerically per segment", () => {
+    expect(semverGt("1.1.0", "1.0.9")).toBe(true);
+    expect(semverGt("2.0.0", "1.9.9")).toBe(true);
+    expect(semverGt("1.0.10", "1.0.9")).toBe(true);
+    expect(semverGt("1.0.0", "1.0.0")).toBe(false);
+    expect(semverGt("1.0.0", "1.0.1")).toBe(false);
+  });
+
+  it("returns false for non-semver input", () => {
+    expect(semverGt("1.0", "0.9.0")).toBe(false);
+    expect(semverGt("abc", "1.0.0")).toBe(false);
+  });
+});
+
+describe("bumpSemver", () => {
+  it("bumps each level and resets the lower segments", () => {
+    expect(bumpSemver("1.2.3", "patch")).toBe("1.2.4");
+    expect(bumpSemver("1.2.3", "minor")).toBe("1.3.0");
+    expect(bumpSemver("1.2.3", "major")).toBe("2.0.0");
+  });
+
+  it("returns null for non-semver input", () => {
+    expect(bumpSemver("1.2", "patch")).toBeNull();
+    expect(bumpSemver("", "major")).toBeNull();
   });
 });

@@ -88,6 +88,29 @@ def test_screenshot_present_clears_warning(isolated_storage):
     assert "NO_SCREENSHOTS" not in _warnings(publish.completeness_check(entry, license="MIT", repository=""))
 
 
+def test_readme_too_large_is_error(isolated_storage):
+    entry = _write_node()
+    at_cap = publish.completeness_check(entry, license="MIT", repository="", readme="x" * validation.README_MAX)
+    assert "README_TOO_LARGE" not in _errors(at_cap)
+    over = publish.completeness_check(entry, license="MIT", repository="", readme="x" * (validation.README_MAX + 1))
+    assert "README_TOO_LARGE" in _errors(over)
+
+
+def test_empty_readme_warns_stub(isolated_storage):
+    entry = _write_node()
+    assert "README_STUB" in _warnings(publish.completeness_check(entry, license="MIT", repository=""))
+    with_readme = publish.completeness_check(entry, license="MIT", repository="", readme="# My node docs")
+    assert "README_STUB" not in _warnings(with_readme)
+
+
+def test_changelog_too_long_is_error(isolated_storage):
+    entry = _write_node()
+    over = publish.completeness_check(entry, license="MIT", repository="", changelog="y" * (publish.CHANGELOG_MAX + 1))
+    assert "CHANGELOG_TOO_LONG" in _errors(over)
+    at_cap = publish.completeness_check(entry, license="MIT", repository="", changelog="y" * publish.CHANGELOG_MAX)
+    assert "CHANGELOG_TOO_LONG" not in _errors(at_cap)
+
+
 # ---------------------------------------------------------------- publish file set
 
 
@@ -204,6 +227,51 @@ def test_publish_files_screenshot_cap_honored(isolated_storage):
     ]
 
 
+def test_publish_files_readme_verbatim(isolated_storage):
+    entry = _write_node()
+    pf = publish.build_publish_files(
+        entry,
+        license="MIT",
+        repository="",
+        description="A mood emoji node for tables",
+        category="Fun",
+        screenshots=[],
+        readme="# My node\n\nDoes emoji things.",
+    )
+    readme = _by_name(pf)["nodes/mood_emoji/README.md"]
+    assert readme == b"# My node\n\nDoes emoji things.\n"
+    assert b"## What it does" not in readme  # no stub headings
+
+
+def test_publish_files_whitespace_readme_falls_back_to_stub(isolated_storage):
+    entry = _write_node()
+    pf = publish.build_publish_files(
+        entry,
+        license="MIT",
+        repository="",
+        description="A mood emoji node for tables",
+        category="Fun",
+        screenshots=[],
+        readme="   \n\t",
+    )
+    assert b"## What it does" in _by_name(pf)["nodes/mood_emoji/README.md"]
+
+
+def test_publish_files_changelog_in_manifest(isolated_storage):
+    entry = _write_node()
+    pf = publish.build_publish_files(
+        entry,
+        license="MIT",
+        repository="",
+        description="A mood emoji node for tables",
+        category="Fun",
+        screenshots=[],
+        changelog="1.0.0 - initial release.",
+    )
+    manifest = CommunityManifest.model_validate_json(_by_name(pf)["nodes/mood_emoji/manifest.json"])
+    assert manifest.changelog == "1.0.0 - initial release."
+
+
 # ---------------------------------------------------------------- bundle content
 
 
@@ -282,6 +350,21 @@ def test_bundle_default_icon_omits_icon(isolated_storage):
         assert "nodes/mood_emoji/icon.png" not in zf.namelist()
         manifest = json.loads(zf.read("nodes/mood_emoji/manifest.json"))
         assert "icon" not in manifest  # exclude_none drops the absent icon
+
+
+def test_bundle_readme_verbatim(isolated_storage):
+    entry = _write_node()
+    data = publish.build_bundle(
+        entry,
+        license="MIT",
+        repository="",
+        description="A mood emoji node for tables",
+        category="Fun",
+        screenshots=[],
+        readme="# Custom readme",
+    )
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert zf.read("nodes/mood_emoji/README.md") == b"# Custom readme\n"
 
 
 def test_bundle_non_login_author_uses_placeholder(isolated_storage):
@@ -375,6 +458,63 @@ def test_route_check_only_reports_without_zip(isolated_storage):
         current_user=None,
     )
     assert complete["ok"] is True
+
+
+def test_route_check_only_includes_version_context(isolated_storage):
+    _write_node(author="octocat", version="1.1.0")
+    payload = route_mod.publish_bundle(
+        route_mod.PublishBundleRequest(file_name="mood_emoji.py", license="MIT", check_only=True),
+        current_user=None,
+    )
+    # isolated_storage points the index at a missing fixture file -> unavailable.
+    assert payload["node_id"] == "mood_emoji"
+    assert payload["version"] == "1.1.0"
+    assert payload["published_version"] is None
+
+
+def test_route_check_only_reports_published_version(isolated_storage, monkeypatch):
+    _write_node(author="octocat", version="1.1.0")
+    index = {
+        "schema_version": 1,
+        "registry": {"repo": "test/community", "commit": "commit0"},
+        "categories": [],
+        "nodes": [
+            {
+                "id": "mood_emoji",
+                "node_name": "Mood Emoji",
+                "version": "1.0.0",
+                "author": {"github": "octocat"},
+                "min_flowfile_version": "0.0.1",
+                "artifacts": {
+                    "node": {"path": "nodes/mood_emoji/node.py", "sha256": "0" * 64, "size": 1},
+                    "manifest": {"path": "nodes/mood_emoji/manifest.json", "sha256": "0" * 64, "size": 1},
+                },
+            }
+        ],
+    }
+    index_path = isolated_storage / "index.json"
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(index_path))
+    payload = route_mod.publish_bundle(
+        route_mod.PublishBundleRequest(file_name="mood_emoji.py", license="MIT", check_only=True),
+        current_user=None,
+    )
+    assert payload["published_version"] == "1.0.0"
+
+
+def test_route_check_only_reports_readme_too_large(isolated_storage):
+    _write_node(author="octocat")
+    payload = route_mod.publish_bundle(
+        route_mod.PublishBundleRequest(
+            file_name="mood_emoji.py",
+            license="MIT",
+            check_only=True,
+            readme="x" * (validation.README_MAX + 1),
+        ),
+        current_user=None,
+    )
+    assert payload["ok"] is False
+    assert any(i["code"] == "README_TOO_LARGE" and i["severity"] == "error" for i in payload["issues"])
 
 
 def test_route_complete_returns_zip(isolated_storage):

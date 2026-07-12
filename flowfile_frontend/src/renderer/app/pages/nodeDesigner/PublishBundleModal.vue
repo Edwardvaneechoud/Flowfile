@@ -30,6 +30,33 @@
         </ul>
       </section>
 
+      <!-- 1b. Version context: new node vs update, with one-click bumps -->
+      <div
+        v-if="versionBanner"
+        class="version-banner"
+        :class="{ 'version-banner--warn': versionNotBumped }"
+      >
+        <div class="version-banner-text">
+          <i :class="versionNotBumped ? 'fa-solid fa-triangle-exclamation' : 'fa-solid fa-tag'"></i>
+          <span>{{ versionBanner }}</span>
+        </div>
+        <div v-if="publishedVersion !== null" class="version-bump-actions">
+          <span class="bump-label">Bump:</span>
+          <button
+            v-for="level in BUMP_LEVELS"
+            :key="level"
+            class="btn btn-secondary btn-sm"
+            :disabled="bumping"
+            @click="applyBump(level)"
+          >
+            {{ level }}
+          </button>
+        </div>
+        <p v-if="changelogNudge" class="changelog-nudge">
+          Tip: add a changelog line below — users see it when they update.
+        </p>
+      </div>
+
       <!-- 2. Distribution metadata -->
       <div class="form-grid">
         <div class="form-field">
@@ -62,6 +89,28 @@
         <div class="form-field form-field--wide">
           <label>Repository <span class="optional">(optional)</span></label>
           <el-input v-model="repository" placeholder="https://github.com/you/your-node" />
+        </div>
+        <div class="form-field form-field--wide">
+          <label>
+            Changelog <span class="optional">(optional — shown to users updating your node)</span>
+          </label>
+          <el-input
+            v-model="changelog"
+            type="textarea"
+            :rows="2"
+            maxlength="1000"
+            show-word-limit
+            placeholder="What changed in this version, e.g. 1.1.0 - faster matching, new theme option"
+          />
+        </div>
+        <div class="form-field form-field--wide">
+          <label>README <span class="optional">(optional)</span></label>
+          <el-input
+            v-model="readme"
+            type="textarea"
+            :rows="6"
+            placeholder="Markdown shown on your node's community page. Leave empty and a TODO stub ships for you to edit on GitHub."
+          />
         </div>
       </div>
 
@@ -100,20 +149,22 @@
 
         <el-skeleton v-if="githubLoading" :rows="2" animated />
 
-        <!-- Success: PR opened / already open -->
+        <!-- Success: PR opened / refreshed -->
         <div v-else-if="prResult" class="pr-success">
           <div class="pr-success-head">
             <i class="fa-solid fa-circle-check"></i>
-            <span>{{
-              prResult.status === "already_open"
-                ? "A pull request for this version is already open."
-                : "Pull request created!"
-            }}</span>
+            <span>{{ prSuccessMessage(prResult.status) }}</span>
           </div>
-          <button class="btn btn-primary btn-sm" @click="openPr">
-            <i class="fa-solid fa-arrow-up-right-from-square"></i>
-            View pull request{{ prResult.pr_number ? ` #${prResult.pr_number}` : "" }}
-          </button>
+          <div class="pr-success-actions">
+            <button class="btn btn-primary btn-sm" @click="openPr">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i>
+              View pull request{{ prResult.pr_number ? ` #${prResult.pr_number}` : "" }}
+            </button>
+            <button class="btn btn-secondary btn-sm" @click="returnToPublish">
+              <i class="fa-solid fa-rotate"></i>
+              Update pull request
+            </button>
+          </div>
           <div class="whats-next">
             <span class="whats-next-title">What happens next</span>
             <ul>
@@ -123,7 +174,11 @@
                 expected, not stuck.
               </li>
               <li>A maintainer reviews your node.</li>
-              <li>Once merged, it appears in the community catalog within ~10 minutes.</li>
+              <li>
+                Changed something meanwhile? Publish again with the same version — your open PR is
+                updated in place.
+              </li>
+              <li>Once merged, it appears in the community catalog on the next index refresh.</li>
             </ul>
           </div>
         </div>
@@ -136,7 +191,13 @@
           <div class="connected-actions">
             <button class="btn btn-primary" :disabled="!canPublish" @click="createPr">
               <i class="fa-solid fa-code-pull-request"></i>
-              {{ publishing ? "Publishing…" : "Create pull request" }}
+              {{
+                publishing
+                  ? "Publishing…"
+                  : prEverOpened
+                    ? "Update pull request"
+                    : "Create pull request"
+              }}
             </button>
             <button class="link-btn" :disabled="publishing" @click="disconnect">Disconnect</button>
           </div>
@@ -274,12 +335,17 @@ import {
   startGithubDevice,
   uploadPublishScreenshot,
 } from "../../api/nodeDesigner";
+import { saveNode } from "./loadSave";
 import {
+  type BumpLevel,
   FORK_RETRY_DELAY_MS,
   FORK_RETRY_MAX,
+  bumpSemver,
   canCreatePr,
   describeGithubError,
   nextPollDelayMs,
+  prSuccessMessage,
+  semverGt,
 } from "./publishGithub";
 
 const props = defineProps<{
@@ -318,11 +384,17 @@ const REQUIREMENTS: { key: string; label: string; codes: string[] }[] = [
   { key: "name", label: "Usable node name", codes: ["NODE_NAME_INVALID"] },
   { key: "author", label: "Author set", codes: ["AUTHOR_MISSING"] },
   { key: "version", label: "Semver version", codes: ["VERSION_INVALID"] },
-  { key: "description", label: "Description (10+ characters)", codes: ["DESCRIPTION_MISSING"] },
+  {
+    key: "description",
+    label: "Description (10+ characters)",
+    codes: ["DESCRIPTION_MISSING", "DESCRIPTION_TOO_SHORT"],
+  },
   { key: "examples", label: "Test setup", codes: ["EXAMPLES_MISSING"] },
   { key: "license", label: "License selected", codes: ["LICENSE_INVALID"] },
   { key: "icon", label: "PNG icon", codes: ["ICON_NOT_PNG", "ICON_DEFAULT", "ICON_MISSING"] },
   { key: "screenshots", label: "Screenshot added", codes: ["NO_SCREENSHOTS"] },
+  { key: "readme", label: "README", codes: ["README_TOO_LARGE", "README_STUB"] },
+  { key: "changelog", label: "Changelog", codes: ["CHANGELOG_TOO_LONG"] },
 ];
 
 const store = useNodeDesignerStore();
@@ -331,10 +403,17 @@ const license = ref("MIT");
 const category = ref("Utilities");
 const description = ref("");
 const repository = ref("");
+const readme = ref("");
+const changelog = ref("");
 
 const issues = ref<PublishIssue[]>([]);
 const checking = ref(false);
 const downloading = ref(false);
+
+const BUMP_LEVELS: BumpLevel[] = ["patch", "minor", "major"];
+const currentVersion = ref("");
+const publishedVersion = ref<string | null>(null);
+const bumping = ref(false);
 
 const screenshots = ref<PublishScreenshot[]>([]);
 const screenshotUrls = ref<Record<string, string>>({});
@@ -357,6 +436,39 @@ function iconFor(status: CheckStatus): string {
   return "fa-solid fa-circle-check";
 }
 
+const versionNotBumped = computed(
+  () => publishedVersion.value !== null && !semverGt(currentVersion.value, publishedVersion.value),
+);
+
+const versionBanner = computed(() => {
+  if (!currentVersion.value) return "";
+  if (publishedVersion.value === null) return `New node — will publish v${currentVersion.value}`;
+  if (versionNotBumped.value) {
+    return `v${currentVersion.value} is not newer than the published v${publishedVersion.value} — bump the version to release an update`;
+  }
+  return `Update — published v${publishedVersion.value} → publishing v${currentVersion.value}`;
+});
+
+const changelogNudge = computed(
+  () => publishedVersion.value !== null && !versionNotBumped.value && !changelog.value.trim(),
+);
+
+// The backend reads the version from the saved file, so a bump must persist first.
+async function applyBump(level: BumpLevel) {
+  const next = bumpSemver(store.nodeMetadata.version || currentVersion.value, level);
+  if (!next) {
+    ElMessage.warning("Set a semver version (e.g. 1.0.0) in the Publishing panel first.");
+    return;
+  }
+  bumping.value = true;
+  try {
+    store.nodeMetadata.version = next;
+    if (await saveNode()) await runCheck();
+  } finally {
+    bumping.value = false;
+  }
+}
+
 function bundleBody() {
   return {
     file_name: props.fileName,
@@ -364,6 +476,8 @@ function bundleBody() {
     repository: repository.value,
     description: description.value,
     category: category.value,
+    readme: readme.value,
+    changelog: changelog.value,
   };
 }
 
@@ -379,6 +493,8 @@ async function runCheck() {
   try {
     const report = await checkPublishCompleteness(bundleBody());
     issues.value = report.issues;
+    currentVersion.value = report.version ?? "";
+    publishedVersion.value = report.published_version ?? null;
   } catch (e: unknown) {
     const err = e as { response?: { data?: { detail?: string } }; message?: string };
     ElMessage.error(
@@ -485,6 +601,8 @@ const confirmed = ref(false);
 const publishing = ref(false);
 const publishStatusText = ref("");
 const prResult = ref<PublishPrResponse | null>(null);
+// A PR was opened/refreshed this session: the primary button reads "Update pull request".
+const prEverOpened = ref(false);
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let forkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -676,6 +794,7 @@ async function runPublish(forkAttempt: number) {
     publishing.value = false;
     publishStatusText.value = "";
     prResult.value = res;
+    prEverOpened.value = true;
   } catch (e) {
     publishing.value = false;
     publishStatusText.value = "";
@@ -692,6 +811,12 @@ function openPr() {
   if (prResult.value?.pr_url) desktop.openExternal(prResult.value.pr_url);
 }
 
+// Back to the connected block to publish again; the attestation checkbox stays ticked.
+function returnToPublish() {
+  prResult.value = null;
+  githubError.value = "";
+}
+
 function resetGithubTransient() {
   device.value = null;
   deviceError.value = "";
@@ -700,6 +825,7 @@ function resetGithubTransient() {
   publishing.value = false;
   connecting.value = false;
   prResult.value = null;
+  prEverOpened.value = false;
   confirmed.value = false;
 }
 
@@ -718,7 +844,7 @@ watch(
   },
 );
 
-watch([license, category, description, repository], () => {
+watch([license, category, description, repository, readme, changelog], () => {
   if (props.show) scheduleCheck();
 });
 
@@ -807,6 +933,49 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--spacing-3);
+}
+
+.version-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.version-banner--warn {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.version-banner-text {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex: 1;
+  min-width: 240px;
+}
+
+.version-bump-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.bump-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.changelog-nudge {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
 .form-field {
@@ -1029,6 +1198,12 @@ onBeforeUnmount(() => {
 .pr-success {
   display: flex;
   flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.pr-success-actions {
+  display: flex;
+  align-items: center;
   gap: var(--spacing-2);
 }
 

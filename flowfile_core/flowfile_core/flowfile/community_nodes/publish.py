@@ -5,8 +5,9 @@ helpers so the local, pre-download check equals the community-repo CI check wher
 they overlap. ``build_publish_files`` assembles the ``nodes/<id>/`` file set both
 publish paths share: the verbatim on-disk ``node.py``, a ``manifest.json`` rendered
 from the real ``CommunityManifest`` model (so it can never drift from the
-validator), the PNG icon (only when the node ships one), screenshots, and a README
-stub. ``build_bundle`` wraps that set plus a ``HOW_TO_PUBLISH.md`` (zip-only, never
+validator), the PNG icon (only when the node ships one), screenshots, and the
+author's README (or a TODO stub when none was written in the Publish form).
+``build_bundle`` wraps that set plus a ``HOW_TO_PUBLISH.md`` (zip-only, never
 part of the file set so it can't trip the community CI's scope check) into a
 downloadable zip; the in-app PR path commits ``build_publish_files`` directly.
 
@@ -47,9 +48,10 @@ DEFAULT_CATEGORY = "Utilities"
 GITHUB_PLACEHOLDER = "your-github-username"
 FALLBACK_MIN_VERSION = "0.1.0"
 MIN_DESCRIPTION_LEN = 10
+CHANGELOG_MAX = 1000  # mirrors CommunityManifest.changelog max_length
 
 # Codes the route/frontend render amber (advisory) instead of red (blocking).
-WARNING_CODES = frozenset({"ICON_DEFAULT", "ICON_MISSING", "NO_SCREENSHOTS"})
+WARNING_CODES = frozenset({"ICON_DEFAULT", "ICON_MISSING", "NO_SCREENSHOTS", "README_STUB"})
 
 
 def _screenshots_dir(entry: LoadedNode) -> Path:
@@ -77,7 +79,13 @@ def _resolve_png_icon(node_icon: str | None) -> bytes | None:
 
 
 def completeness_check(
-    entry: LoadedNode, *, license: str | None, repository: str, description: str = ""
+    entry: LoadedNode,
+    *,
+    license: str | None,
+    repository: str,
+    description: str = "",
+    readme: str = "",
+    changelog: str = "",
 ) -> list[Issue]:
     """Publish preconditions for a designed node. Errors block export, warnings don't."""
     issues: list[Issue] = []
@@ -136,6 +144,32 @@ def completeness_check(
 
     if not license or license not in ALLOWED_LICENSES:
         issues.append(Issue(code="LICENSE_INVALID", message=f"Choose a license: {', '.join(ALLOWED_LICENSES)}"))
+
+    # A too-long changelog would otherwise fail CommunityManifest's max_length
+    # inside build_publish_files (an opaque 500 instead of a checklist row).
+    if len(changelog.strip()) > CHANGELOG_MAX:
+        issues.append(
+            Issue(
+                code="CHANGELOG_TOO_LONG",
+                message=f"The changelog must be at most {CHANGELOG_MAX} characters",
+            )
+        )
+
+    readme_size = len(readme.encode("utf-8"))
+    if readme_size > validation.README_MAX:
+        issues.append(
+            Issue(
+                code="README_TOO_LARGE",
+                message=f"README is {readme_size} bytes (max {validation.README_MAX}) — shorten it",
+            )
+        )
+    elif not readme.strip():
+        issues.append(
+            Issue(
+                code="README_STUB",
+                message="No README written — a TODO stub ships instead; consider writing one here",
+            )
+        )
 
     _check_icon(manifest.node_icon, issues)
 
@@ -243,6 +277,8 @@ def build_publish_files(
     category: str,
     screenshots: list[Path],
     author_github: str | None = None,
+    readme: str = "",
+    changelog: str = "",
 ) -> PublishFiles:
     """Assemble the ``nodes/<id>/`` file set for a publishable node.
 
@@ -294,14 +330,18 @@ def build_publish_files(
         icon="icon.png" if icon_bytes is not None else None,
         screenshots=[f"screenshots/{name}" for name, _ in shot_files],
         repository=repository or "",
+        changelog=changelog.strip(),
     )
     manifest_json = manifest.model_dump_json(indent=2, exclude_none=True) + "\n"
+
+    readme_text = readme.strip()
+    readme_content = readme_text + "\n" if readme_text else _readme_stub(node_name, resolved_description)
 
     base = f"nodes/{node_id}"
     files: list[tuple[str, bytes]] = [
         (f"{base}/node.py", source_bytes),
         (f"{base}/manifest.json", manifest_json.encode("utf-8")),
-        (f"{base}/README.md", _readme_stub(node_name, resolved_description).encode("utf-8")),
+        (f"{base}/README.md", readme_content.encode("utf-8")),
     ]
     if icon_bytes is not None:
         files.append((f"{base}/icon.png", icon_bytes))
@@ -320,6 +360,8 @@ def build_bundle(
     description: str,
     category: str,
     screenshots: list[Path],
+    readme: str = "",
+    changelog: str = "",
 ) -> bytes:
     """Assemble a ready-to-PR ``nodes/<id>/`` folder as an in-memory zip (bundle-download path)."""
     pf = build_publish_files(
@@ -329,6 +371,8 @@ def build_bundle(
         description=description,
         category=category,
         screenshots=screenshots,
+        readme=readme,
+        changelog=changelog,
     )
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:

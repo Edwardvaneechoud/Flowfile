@@ -269,3 +269,127 @@ def test_publish_pr_happy_path(isolated_storage, monkeypatch):
     manifest_bytes = next(data for path, data in commit["files"] if path.endswith("manifest.json"))
     manifest = json.loads(manifest_bytes)
     assert manifest["author"]["github"] == "octocat"
+
+
+class _OpenPrPublisher:
+    """Fake publisher whose branch/PR already exist: open_or_get_pr returns created=False."""
+
+    instances: list = []
+
+    def __init__(self, token, **kw):
+        self.commit_calls: list[dict] = []
+        self.update_calls: list[tuple] = []
+        type(self).instances.append(self)
+
+    def ensure_fork(self):
+        return "octocat/flowfile-community-nodes"
+
+    def base_sha(self, fork):
+        return "main", "basesha"
+
+    def sync_fork(self, fork, branch):
+        pass
+
+    def ensure_branch(self, fork, branch, base_sha):
+        return True
+
+    def commit_files(self, fork, branch, base_sha, files, message):
+        self.commit_calls.append({"branch": branch, "files": files, "message": message})
+        return "commitsha"
+
+    def open_or_get_pr(self, branch, title, body):
+        return PrResult(
+            url="https://github.com/edwardvaneechoud/flowfile-community-nodes/pull/7",
+            number=7,
+            created=False,
+        )
+
+    def update_pr(self, number, title, body):
+        self.update_calls.append((number, title, body))
+
+
+def test_publish_pr_refreshes_existing_open_pr(isolated_storage, monkeypatch):
+    _write_node(version="1.0.0", author="octocat")
+    _connect_github(monkeypatch, login="octocat")
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(_write_index(isolated_storage, [])))
+    _OpenPrPublisher.instances = []
+    monkeypatch.setattr(github_client, "GithubPublisher", _OpenPrPublisher)
+
+    resp = authed_client.post(
+        "/community_nodes/publish-pr",
+        json={"file_name": "mood_emoji.py", "license": "MIT", "description": "Adds a mood emoji to every row."},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "updated"
+
+    pub = _OpenPrPublisher.instances[0]
+    assert pub.commit_calls, "branch must be force-refreshed before the PR lookup"
+    assert len(pub.update_calls) == 1
+    number, title, body = pub.update_calls[0]
+    assert number == 7
+    assert "v1.0.0" in title
+    assert "nodes/mood_emoji/" in body
+
+
+def test_publish_pr_update_pr_failure_still_updated(isolated_storage, monkeypatch):
+    _write_node(version="1.0.0", author="octocat")
+    _connect_github(monkeypatch, login="octocat")
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(_write_index(isolated_storage, [])))
+
+    class _PatchFailsPublisher(_OpenPrPublisher):
+        def update_pr(self, number, title, body):
+            raise github_client.GithubApiError("api", "PATCH failed", status=500)
+
+    _PatchFailsPublisher.instances = []
+    monkeypatch.setattr(github_client, "GithubPublisher", _PatchFailsPublisher)
+
+    resp = authed_client.post(
+        "/community_nodes/publish-pr",
+        json={"file_name": "mood_emoji.py", "license": "MIT", "description": "Adds a mood emoji to every row."},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "updated"  # force-push landed; title/body refresh is cosmetic
+
+
+def test_publish_pr_commits_readme_and_changelog(isolated_storage, monkeypatch):
+    _write_node(version="1.0.0", author="octocat")
+    _connect_github(monkeypatch, login="octocat")
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(_write_index(isolated_storage, [])))
+    _OpenPrPublisher.instances = []
+    monkeypatch.setattr(github_client, "GithubPublisher", _OpenPrPublisher)
+
+    resp = authed_client.post(
+        "/community_nodes/publish-pr",
+        json={
+            "file_name": "mood_emoji.py",
+            "license": "MIT",
+            "description": "Adds a mood emoji to every row.",
+            "readme": "# Hello",
+            "changelog": "1.0.0 - first release.",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    files = dict(_OpenPrPublisher.instances[0].commit_calls[0]["files"])
+    assert files["nodes/mood_emoji/README.md"] == b"# Hello\n"
+    manifest = json.loads(files["nodes/mood_emoji/manifest.json"])
+    assert manifest["changelog"] == "1.0.0 - first release."
+
+
+def test_publish_pr_oversized_readme_422(isolated_storage, monkeypatch):
+    from flowfile_core.flowfile.community_nodes import validation
+
+    _write_node(version="1.0.0", author="octocat")
+    _connect_github(monkeypatch, login="octocat")
+
+    resp = authed_client.post(
+        "/community_nodes/publish-pr",
+        json={
+            "file_name": "mood_emoji.py",
+            "license": "MIT",
+            "readme": "x" * (validation.README_MAX + 1),
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error_code"] == "INCOMPLETE"
+    assert any(i["code"] == "README_TOO_LARGE" for i in detail["issues"])

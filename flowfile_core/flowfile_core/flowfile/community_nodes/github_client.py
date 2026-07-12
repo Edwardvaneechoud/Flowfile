@@ -356,6 +356,10 @@ class GithubPublisher:
         pr = resp.json()
         return PrResult(url=pr["html_url"], number=pr["number"], created=True)
 
+    def update_pr(self, number: int, title: str, body: str) -> None:
+        """Refresh an open PR's title/body; the branch force-push already updated its diff."""
+        self._request("PATCH", f"/repos/{self._upstream}/pulls/{number}", json={"title": title, "body": body})
+
     def _pulls_for_head(self, head: str) -> PrResult | None:
         pulls = self._request(
             "GET",

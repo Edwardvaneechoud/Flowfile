@@ -344,6 +344,30 @@ def test_open_or_get_pr_422_race_regets():
     assert result.number == 9
 
 
+def test_update_pr_patches_title_and_body():
+    seen = {}
+
+    def handler(request):
+        p = request.url.path
+        if request.method == "PATCH" and p == f"/repos/{UP}/pulls/7":
+            seen.update(json.loads(request.content))
+            return httpx.Response(200, json={"number": 7})
+        raise AssertionError(f"unexpected {request.method} {p}")
+
+    pub = github_client.GithubPublisher("tok", http=_mk(handler))
+    pub.update_pr(7, "New title", "New body")
+    assert seen == {"title": "New title", "body": "New body"}
+
+
+def test_update_pr_error_raises_api_error():
+    def handler(request):
+        return httpx.Response(500, json={"message": "boom"})
+
+    pub = github_client.GithubPublisher("tok", http=_mk(handler))
+    with pytest.raises(github_client.GithubApiError):
+        pub.update_pr(7, "t", "b")
+
+
 # ---- full publisher composition ------------------------------------------
 
 

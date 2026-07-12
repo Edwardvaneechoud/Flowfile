@@ -84,11 +84,14 @@ def _valid_png(width: int = 32, height: int = 32) -> bytes:
 
 
 @pytest.fixture
-def isolated_storage(tmp_path):
+def isolated_storage(tmp_path, monkeypatch):
     original_base = storage._base_dir
     storage._base_dir = tmp_path / "storage"
     storage.user_defined_nodes_icons.mkdir(parents=True, exist_ok=True)
     storage.user_defined_nodes_screenshots.mkdir(parents=True, exist_ok=True)
+    # Fixture-mode path that doesn't exist: index lookups fail fast offline instead
+    # of hitting the live registry (tests that need an index setenv their own).
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_INDEX_URL", str(tmp_path / "no_index.json"))
     registry.scan()
     yield tmp_path
     storage._base_dir = original_base

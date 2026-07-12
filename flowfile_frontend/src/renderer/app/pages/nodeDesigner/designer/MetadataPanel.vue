@@ -196,16 +196,43 @@
             <el-select
               id="node-tags"
               v-model="nodeMetadata.tags"
+              class="tags-select"
               data-testid="node-tags-select"
               multiple
               filterable
               allow-create
               default-first-option
-              placeholder="Add search keywords"
+              :multiple-limit="8"
+              placeholder="Pick or type search keywords"
             >
-              <el-option v-for="tag in nodeMetadata.tags" :key="tag" :label="tag" :value="tag" />
+              <!-- keep already-selected tags valid options so their labels render -->
+              <el-option
+                v-for="tag in nodeMetadata.tags"
+                :key="`sel-${tag}`"
+                :label="tag"
+                :value="tag"
+              />
+              <el-option-group v-if="localTagSuggestions.length > 0" label="Your tags">
+                <el-option
+                  v-for="tag in localTagSuggestions"
+                  :key="`local-${tag}`"
+                  :label="tag"
+                  :value="tag"
+                />
+              </el-option-group>
+              <el-option-group v-if="communityTagSuggestions.length > 0" label="Community">
+                <el-option
+                  v-for="tag in communityTagSuggestions"
+                  :key="`comm-${tag}`"
+                  :label="tag"
+                  :value="tag"
+                />
+              </el-option-group>
             </el-select>
-            <p class="field-hint">Used when sharing the node via the community registry.</p>
+            <p class="field-hint">
+              Reuse an existing tag or type a new one — up to 8. Used when sharing the node via the
+              community registry.
+            </p>
           </div>
         </div>
       </CollapsibleSection>
@@ -217,11 +244,13 @@
 import { computed, onMounted, ref } from "vue";
 import axios from "axios";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
+import { useCommunityNodesStore } from "@/stores/community-nodes-store";
 import IconSelector from "../IconSelector.vue";
 import ExecutionEnvironmentPicker from "./ExecutionEnvironmentPicker.vue";
 import CollapsibleSection from "../../../components/common/CollapsibleSection/CollapsibleSection.vue";
 
 const store = useNodeDesignerStore();
+const communityStore = useCommunityNodesStore();
 const nodeMetadata = store.nodeMetadata;
 
 // Built-in palette groups a custom node may join (slug-matched backend-side),
@@ -237,27 +266,57 @@ const STANDARD_CATEGORIES = [
 ];
 
 const customCategories = ref<string[]>([]);
+// Tags already used by the user's local custom nodes (suggestion source).
+const localTags = ref<string[]>([]);
+
+const selectedTagsLower = computed(() => new Set(nodeMetadata.tags.map((t) => t.toLowerCase())));
+
+// "Your tags": local tags not already selected on this node.
+const localTagSuggestions = computed(() =>
+  localTags.value.filter((t) => !selectedTagsLower.value.has(t.toLowerCase())),
+);
+
+// "Community": registry tags not already selected and not already in "Your tags".
+const communityTagSuggestions = computed(() => {
+  const localLower = new Set(localTags.value.map((t) => t.toLowerCase()));
+  return communityStore.allTags.filter((t) => {
+    const lower = t.toLowerCase();
+    return !selectedTagsLower.value.has(lower) && !localLower.has(lower);
+  });
+});
 
 // Output names editor shows for multi-output nodes or the isolated kernel env.
 const showOutputNames = computed(
   () => nodeMetadata.number_of_outputs > 1 || store.environment.kind === "kernel",
 );
 
-async function fetchExistingCategories() {
+// One request feeds both the category and tag suggestion lists.
+async function fetchLocalNodeMeta() {
   try {
     const response = await axios.get("/user_defined_components/list-custom-nodes");
-    const seen = new Set(STANDARD_CATEGORIES.map((c) => c.toLowerCase()));
-    const found: string[] = [];
+    const catSeen = new Set(STANDARD_CATEGORIES.map((c) => c.toLowerCase()));
+    const foundCats: string[] = [];
+    const tagSeen = new Set<string>();
+    const foundTags: string[] = [];
     for (const node of response.data || []) {
       const category = (node.node_category || "").trim();
-      if (category && !seen.has(category.toLowerCase())) {
-        seen.add(category.toLowerCase());
-        found.push(category);
+      if (category && !catSeen.has(category.toLowerCase())) {
+        catSeen.add(category.toLowerCase());
+        foundCats.push(category);
+      }
+      for (const raw of node.tags || []) {
+        const tag = (raw || "").trim();
+        if (tag && !tagSeen.has(tag.toLowerCase())) {
+          tagSeen.add(tag.toLowerCase());
+          foundTags.push(tag);
+        }
       }
     }
-    customCategories.value = found.sort((a, b) => a.localeCompare(b));
+    customCategories.value = foundCats.sort((a, b) => a.localeCompare(b));
+    localTags.value = foundTags.sort((a, b) => a.localeCompare(b));
   } catch {
     customCategories.value = [];
+    localTags.value = [];
   }
 }
 
@@ -279,7 +338,14 @@ function updateOutputName(index: number, value: string) {
 }
 
 onMounted(() => {
-  fetchExistingCategories();
+  fetchLocalNodeMeta();
+  // Community tags feed the "Community" suggestions. Load once per session
+  // (cached, non-fatal — offline just falls back to local + typed tags).
+  if (!communityStore.loaded) {
+    communityStore.loadIndex(false).catch(() => {
+      /* offline / registry unavailable: local + typed tags still work */
+    });
+  }
 });
 </script>
 

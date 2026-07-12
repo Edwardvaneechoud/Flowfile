@@ -81,42 +81,45 @@
 
     <!-- Card grid -->
     <div v-else class="nodes-grid">
-      <div
+      <article
         v-for="node in store.filteredNodes"
         :key="node.id"
         class="node-card"
         :data-testid="`community-card-${node.id}`"
         @click="openDetail(node.id)"
       >
-        <div v-if="shotUrls[node.id]" class="card-shot">
-          <img :src="shotUrls[node.id]" alt="" />
-        </div>
-        <div class="node-card-header">
-          <img :src="iconUrls[node.id] || defaultIcon" alt="" class="node-icon" />
-          <span class="node-name">{{ node.node_name }}</span>
+        <div class="node-card__cover">
+          <img v-if="shotUrls[node.id]" :src="shotUrls[node.id]" alt="" class="node-card__shot" />
+          <div v-else class="node-card__cover-empty">
+            <img :src="iconUrls[node.id] || defaultIcon" alt="" class="node-card__cover-glyph" />
+          </div>
           <span
             v-if="node.environment === 'kernel'"
-            class="chip chip-kernel"
+            class="chip node-card__kernel"
             title="Runs in an isolated Docker kernel"
             >Kernel</span
           >
         </div>
-        <div class="node-card-body">
-          <span v-if="node.category" class="node-category">{{ node.category }}</span>
-          <p class="node-description">{{ node.description || "No description" }}</p>
-          <div class="node-footer-line">
+        <div class="node-card__body">
+          <div class="node-card__title">
+            <img :src="iconUrls[node.id] || defaultIcon" alt="" class="node-card__icon" />
+            <span class="node-card__name">{{ node.node_name }}</span>
+          </div>
+          <span v-if="node.category" class="node-card__category">{{ node.category }}</span>
+          <p class="node-card__desc">{{ node.description || "No description" }}</p>
+          <div class="node-card__meta">
             <span v-if="node.author.github">@{{ node.author.github }}</span>
-            <span class="dot">·</span>
+            <span v-if="node.author.github" class="dot">·</span>
             <span>v{{ node.version }}</span>
             <template v-if="node.popularity">
               <span class="dot">·</span>
-              <span class="thumbs"
+              <span class="node-card__thumbs"
                 ><i class="fa-solid fa-thumbs-up" /> {{ node.popularity.thumbs_up }}</span
               >
             </template>
           </div>
         </div>
-        <div class="node-card-actions" @click.stop>
+        <div class="node-card__actions" @click.stop>
           <!-- not installed -->
           <button
             v-if="node.install_state === 'not_installed'"
@@ -179,7 +182,7 @@
             </span>
           </el-tooltip>
         </div>
-      </div>
+      </article>
     </div>
 
     <CommunityConsentDialog
@@ -352,71 +355,152 @@ onMounted(async () => {
 }
 .filter-bar {
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-4);
   flex-wrap: wrap;
+  align-items: center;
 }
 .search-input {
-  width: 260px;
+  flex: 1 1 240px;
+  max-width: 320px;
 }
-.category-select {
-  width: 180px;
-}
+.category-select,
 .sort-select {
+  flex: 0 0 auto;
   width: 170px;
 }
+
+/* ── Card grid ─────────────────────────────────────────────────────────── */
 .nodes-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 320px));
+  justify-content: start;
+  gap: var(--spacing-4);
 }
 .node-card {
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-lg);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
   cursor: pointer;
   transition:
     border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 .node-card:hover {
   border-color: var(--color-accent);
   box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
 }
-.card-shot {
-  height: 120px;
+
+/* Cover: screenshot when present, else a soft icon poster so every card keeps
+   the same silhouette and the grid lines up. */
+.node-card__cover {
+  position: relative;
+  height: 116px;
   background: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-primary);
+  border-bottom: 1px solid var(--color-border-light);
 }
-.card-shot img {
+.node-card__shot {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.node-card-header {
+.node-card__cover-empty {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  background: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-primary);
+  justify-content: center;
+  background: linear-gradient(
+    135deg,
+    var(--color-accent-subtle) 0%,
+    var(--color-background-secondary) 100%
+  );
 }
-.node-icon {
-  width: 22px;
-  height: 22px;
+.node-card__cover-glyph {
+  width: 40px;
+  height: 40px;
   object-fit: contain;
+  opacity: 0.4;
 }
-.node-name {
+.node-card__kernel {
+  position: absolute;
+  top: var(--spacing-2);
+  right: var(--spacing-2);
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+/* Body fills the remaining height so the meta line pins to the bottom and
+   aligns across cards regardless of description length. */
+.node-card__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: var(--spacing-3) var(--spacing-4);
+}
+.node-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-width: 0;
+}
+.node-card__icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.node-card__name {
   font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-base);
-  flex: 1;
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.node-card__category {
+  align-self: flex-start;
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px var(--spacing-2);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-radius: var(--border-radius-full);
+}
+.node-card__desc {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.node-card__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+  margin-top: auto;
+  padding-top: var(--spacing-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+.dot {
+  opacity: 0.5;
+}
+.node-card__thumbs i {
+  color: var(--color-accent);
 }
 .chip {
   display: inline-flex;
@@ -425,57 +509,12 @@ onMounted(async () => {
   padding: 1px 8px;
   border-radius: var(--border-radius-full);
 }
-.chip-kernel {
-  background: var(--color-warning-light);
-  color: var(--color-warning);
-}
-.node-card-body {
-  padding: 0.75rem 1rem;
-  flex: 1;
-}
-.node-category {
-  display: inline-block;
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-medium);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 0.125rem 0.5rem;
-  background: var(--color-accent-subtle);
-  color: var(--color-accent);
-  border-radius: var(--border-radius-full);
-  margin-bottom: 0.5rem;
-}
-.node-description {
-  margin: 0 0 0.5rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.node-footer-line {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+.node-card__actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  flex-wrap: wrap;
-}
-.dot {
-  opacity: 0.5;
-}
-.thumbs i {
-  color: var(--color-accent);
-}
-.node-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-top: 1px solid var(--color-border-primary);
-  background: var(--color-background-secondary);
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border-top: 1px solid var(--color-border-light);
 }
 .btn-disabled {
   opacity: 0.55;

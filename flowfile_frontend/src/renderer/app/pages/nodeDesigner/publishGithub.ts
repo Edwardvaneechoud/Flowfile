@@ -51,3 +51,42 @@ export function canCreatePr(state: CanCreatePrState): boolean {
     state.connected && state.confirmed && !state.hasErrors && !state.checking && !state.publishing
   );
 }
+
+export const PR_SUCCESS_MESSAGES: Record<string, string> = {
+  created: "Pull request created!",
+  updated: "Pull request updated with your latest files.",
+  // Old-core skew: pre-"updated" backends still report already_open.
+  already_open: "A pull request for this version is already open.",
+};
+
+export function prSuccessMessage(status: string): string {
+  return PR_SUCCESS_MESSAGES[status] ?? PR_SUCCESS_MESSAGES.created;
+}
+
+// Strict semver only (the Publishing panel enforces X.Y.Z); non-semver input → null.
+function parseSemver(version: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version.trim());
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+export function semverGt(a: string, b: string): boolean {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return false;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] > pb[i];
+  }
+  return false;
+}
+
+export type BumpLevel = "patch" | "minor" | "major";
+
+export function bumpSemver(version: string, level: BumpLevel): string | null {
+  const parsed = parseSemver(version);
+  if (!parsed) return null;
+  const [major, minor, patch] = parsed;
+  if (level === "major") return `${major + 1}.0.0`;
+  if (level === "minor") return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+}

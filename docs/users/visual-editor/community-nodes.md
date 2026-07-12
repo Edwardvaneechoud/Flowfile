@@ -41,6 +41,7 @@ Clicking **Install** opens a consent dialog before anything is downloaded. It sh
     | **Reads files** | Reads from the filesystem. |
     | **Runs programs** | Launches a subprocess with fixed arguments. |
     | **Reads environment** | Reads specific environment variables, which may hold configuration or secrets. |
+    | **Dynamic code** | Builds and runs code at runtime, which the scanner cannot fully inspect. |
     | **Uses secrets** | Requests a stored secret that is passed to the node when it runs. |
     | **Loads serialized data** | Deserializes data (for example `pickle`). |
 
@@ -99,9 +100,14 @@ You don't have to save the node by hand first: **Publish flushes your latest edi
 Click **Publish** in the designer toolbar. The modal opens on a **readiness checklist** — a live list of what's ready and what's still missing:
 
 - Red rows block publishing: node health, a usable name, author, semver version, a 10-character description, a selected license, and **Test setup** — the row that turns red until you've saved sample data, with a message pointing you back to the Test tab.
-- Amber rows are advisory and don't block: using the default icon, or shipping no screenshot.
+- Amber rows are advisory and don't block: using the default icon, shipping no screenshot, or leaving the README empty (a TODO stub ships instead).
 
-Fill in the **License** (a permissive SPDX license — MIT, Apache-2.0, BSD, MPL-2.0, Unlicense, or CC0), a **Category**, and an optional **Description** override and **Repository** link.
+Below the checklist, a **version banner** tells you what this publish will do: *New node — will publish v1.0.0*, or *Update — published v1.0.0 → publishing v1.1.0*. If your version isn't newer than the published one, the banner warns you before GitHub ever gets involved, and **bump buttons** (patch / minor / major) raise the version in one click.
+
+Fill in the **License** (a permissive SPDX license — MIT, Apache-2.0, BSD, MPL-2.0, Unlicense, or CC0), a **Category**, and an optional **Description** override and **Repository** link. Two more optional fields shape your node's registry presence:
+
+- **Changelog** — one or two lines on what changed in this version. Users who have your node installed see it next to the update prompt, so it's worth filling in on every release.
+- **README** — Markdown for your node's community page (what it does, inputs, settings). Leave it empty and a TODO-stub README ships for you to edit on GitHub later.
 
 ### Add screenshots
 
@@ -129,7 +135,7 @@ Prefer a token? Expand **Use a personal access token instead** and paste a class
 
 ### Create the pull request
 
-Once connected, tick the confirmation checkbox — that your node does what its description says, with no hidden network calls or data collection — and click **Create pull request**. Flowfile forks the registry (the first fork takes a few seconds; the modal shows "Creating your fork…"), commits your `nodes/<id>/` folder, and opens the PR against `main` with you as the author. If a PR for this version is already open, Flowfile links to it instead of opening a duplicate.
+Once connected, tick the confirmation checkbox — that your node does what its description says, with no hidden network calls or data collection — and click **Create pull request**. Flowfile forks the registry (the first fork takes a few seconds; the modal shows "Creating your fork…"), commits your `nodes/<id>/` folder, and opens the PR against `main` with you as the author. If a PR for this version is already open, Flowfile **updates it in place** — fresh files, refreshed title and description — and links you to it.
 
 Your node's `<id>` is the slug of its name (`Mood Emoji` → `mood_emoji`) and is **permanent** — installed flows store it, so it can't change after publish.
 
@@ -140,15 +146,27 @@ The modal links you straight to the PR and shows what's coming:
 - **Automated checks** validate your node and dry-run its test setup.
 - **First time contributing?** GitHub holds the checks until a maintainer approves the run — that's expected, not stuck.
 - **A maintainer reviews** your node and merges.
-- Once merged, your node is **live in the app within about ten minutes**.
+- Once merged, the registry index rebuilds within minutes. Apps pick it up on their next
+  index refresh — immediately when someone hits **Refresh** in the browse tab, and within
+  about an hour otherwise.
 
-### Updating your node
+### Revising an open pull request
 
-To ship a new version, **bump the Version** in the Publishing section (semver must strictly increase), then Publish and **Create pull request** again — Flowfile opens a fresh PR for the new version. Re-publish the same version and it points you at the existing open PR instead of duplicating it. Only the node's `author.github` (or a listed maintainer) may publish updates.
+Your PR isn't frozen once it's open. Fix something in the designer — a review comment, a failed check — and publish again with the **same version**: Flowfile pushes your latest files to the open PR and refreshes its title and description. The success panel's **Update pull request** button takes you straight back to publish again, and the primary button reads **Update pull request** for the rest of the session.
+
+### Releasing a new version
+
+Shipping an update is the same loop as the first publish, with one extra step — the version bump:
+
+1. **Bump the version** — use the banner's patch / minor / major buttons, or edit the Version field in the Publishing section. Semver must **strictly increase**; CI rejects a version that doesn't, and the banner warns you up front.
+2. **Write a changelog line** — users see it when they're offered the update.
+3. **Publish → Create pull request.** Flowfile opens a fresh PR for the new version (each version gets its own branch). If you still have an unmerged PR open for the old version, close it on GitHub once it's superseded — Flowfile doesn't touch it.
+4. **CI re-checks everything** — the same validation, scan, and dry-run as a new node, plus the version rule. Only the node's `author.github` (or a listed maintainer) may publish updates.
+5. **A maintainer merges**, the index rebuilds, and installed users see **Update available** on your node's card with your changelog. If the new version needs more capabilities than the old one, they re-consent before the update applies.
 
 ### No GitHub account? { #no-github-account }
 
-You can still publish without connecting GitHub. In the Publish modal, click **Download bundle** for a zip shaped exactly like a registry folder — `nodes/<id>/` with your `node.py`, a pre-filled `manifest.json`, the icon, screenshots, a README stub, and a `HOW_TO_PUBLISH.md`. Share that zip with a maintainer — post it in the main Flowfile repo's [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions) — and they open the PR for you, crediting you as the node's author.
+You can still publish without connecting GitHub. In the Publish modal, click **Download bundle** for a zip shaped exactly like a registry folder — `nodes/<id>/` with your `node.py`, a pre-filled `manifest.json`, the icon, screenshots, your README (or a TODO stub if you left the field empty), and a `HOW_TO_PUBLISH.md`. Share that zip with a maintainer — post it in the main Flowfile repo's [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions) — and they open the PR for you, crediting you as the node's author.
 
 ---
 
