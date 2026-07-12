@@ -4,8 +4,6 @@ import multiprocessing
 import os
 import platform
 
-from connectorx import __version__
-
 logging.basicConfig(format="%(asctime)s: %(message)s")
 logger = logging.getLogger("FlowfileWorker")
 logger.setLevel(logging.INFO)
@@ -80,7 +78,9 @@ if _is_main_process():
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
 
-    logger.info(f"ConnectorX version: {__version__}")
+    from connectorx import __version__ as _connectorx_version
+
+    logger.info(f"ConnectorX version: {_connectorx_version}")
     logger.info(f"Worker configured at {SERVICE_HOST}:{SERVICE_PORT}")
     logger.info(f"Core service configured at {get_core_url(CORE_HOST, CORE_PORT)}")
 else:

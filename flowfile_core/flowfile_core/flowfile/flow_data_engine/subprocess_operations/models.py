@@ -120,3 +120,4 @@ class Status(BaseModel):
     error_message: str | None = None
     results: Any
     result_type: Literal["polars", "other"] = "polars"
+    number_of_records: int | None = None

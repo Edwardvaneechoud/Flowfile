@@ -299,7 +299,7 @@ class ChattyNode(CustomNodeBase):
 def test_run_ships_user_logging_to_flow_log(tmp_path, monkeypatch):
     # In a real run, the node's own logging.info(...) should ship to core's /raw_logs
     # with the `Node Id: N - ` prefix, alongside the framework lines. Debug stays local.
-    import flowfile_worker.flow_logger as fl
+    import requests
 
     posts = []
 
@@ -307,11 +307,12 @@ def test_run_ships_user_logging_to_flow_log(tmp_path, monkeypatch):
         status_code = 200
         text = ""
 
-    def _fake_post(url, json=None, headers=None):
+    def _fake_post(url, json=None, headers=None, timeout=None):
         posts.append(json)
         return _Resp()
 
-    monkeypatch.setattr(fl.requests, "post", _fake_post)
+    # flow_logger imports requests lazily inside emit(), so patch the module itself
+    monkeypatch.setattr(requests, "post", _fake_post)
 
     source = '''
 from shared.node_designer import CustomNodeBase

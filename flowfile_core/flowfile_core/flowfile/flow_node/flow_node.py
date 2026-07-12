@@ -1366,14 +1366,11 @@ class FlowNode:
 
             try:
                 lf = external_df_fetcher.get_result()
+                # Row count rides along on the store result — no extra worker round-trip.
+                status = external_df_fetcher.status
                 self.results.resulting_data = FlowDataEngine(
                     lf,
-                    number_of_records=ExternalDfFetcher(
-                        lf=lf,
-                        operation_type="calculate_number_of_records",
-                        flow_id=node_logger.flow_id,
-                        node_id=self.node_id,
-                    ).result,
+                    number_of_records=status.number_of_records if status is not None else None,
                 )
 
                 if not performance_mode:

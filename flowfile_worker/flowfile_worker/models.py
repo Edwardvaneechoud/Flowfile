@@ -195,6 +195,7 @@ class Status(BaseModel):
     error_message: str | None = None
     results: Any | None = None
     result_type: ResultType | None = "polars"
+    number_of_records: int | None = None
 
     def __hash__(self):
         return hash(self.file_ref)
