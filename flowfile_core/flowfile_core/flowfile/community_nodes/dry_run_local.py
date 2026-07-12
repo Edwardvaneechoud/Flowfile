@@ -40,6 +40,29 @@ import polars as pl
 from shared.node_designer.loading import find_custom_node_class, install_import_aliases, load_node_module
 
 
+class _FlowfileCtx:
+    # Stand-in for the kernel runtime's `flowfile_ctx` global so kernel-env nodes that
+    # log / call the context can execute in the local dry-run (no Docker kernel here).
+    @staticmethod
+    def _log(level, *args):
+        print("[node:%s]" % level, *args, file=sys.stderr)
+
+    def log_info(self, *a, **k):
+        self._log("info", *a)
+
+    def log_warning(self, *a, **k):
+        self._log("warning", *a)
+
+    def log_error(self, *a, **k):
+        self._log("error", *a)
+
+    def log_debug(self, *a, **k):
+        self._log("debug", *a)
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+
 def _normalize(result, output_names):
     if isinstance(result, dict):
         unknown = sorted(set(result) - set(output_names))
@@ -68,6 +91,7 @@ def _run(folder, config):
         source = f.read()
     module = load_node_module(source=source)
     module.__dict__.setdefault("logging", logging)
+    module.__dict__["flowfile_ctx"] = _FlowfileCtx()
     node = find_custom_node_class(module, config["class_name"])()
     settings = config.get("example_settings") or {}
     if settings and node.settings_schema:
