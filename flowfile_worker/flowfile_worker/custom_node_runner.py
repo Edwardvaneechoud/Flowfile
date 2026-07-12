@@ -8,6 +8,8 @@ blast-radius boundary; core only ever sees file paths and row counts.
 """
 
 import contextlib
+import datetime
+import decimal
 import io
 import json
 import logging
@@ -102,6 +104,21 @@ def _output_path(file_path: str, name: str, primary_name: str) -> str:
     if name == primary_name:
         return file_path
     return file_path.removesuffix(".arrow") + f"__{name}.arrow"
+
+
+def _json_default(obj):
+    # Preview rows carry native polars values (Date/Datetime/Time/Duration/Decimal/binary,
+    # or those nested in struct/list) that json can't encode — stringify them so a
+    # date-producing custom node still previews in the Test panel.
+    if isinstance(obj, datetime.datetime | datetime.date | datetime.time):
+        return obj.isoformat()
+    if isinstance(obj, datetime.timedelta):
+        return obj.total_seconds()
+    if isinstance(obj, decimal.Decimal):
+        return str(obj)
+    if isinstance(obj, bytes | bytearray):
+        return obj.hex()
+    return str(obj)
 
 
 def _preview_payload(df: pl.DataFrame, row_limit: int) -> dict:
@@ -201,7 +218,7 @@ def execute_custom_node_task(
             payload["preview"] = preview
             payload["logs"] = buffer_handler.records if buffer_handler else []
             payload["duration_ms"] = (time.perf_counter() - started) * 1000
-        queue.put(json.dumps(payload))
+        queue.put(json.dumps(payload, default=_json_default))
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
