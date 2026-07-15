@@ -1195,11 +1195,11 @@ class TestJoinDoesNotClobberSharedUpstream:
         verify_code_executes(code)
 
 
-class TestSemiAntiJoinDropsHiddenKeys:
-    """Semi/anti joins must drop left join-key columns marked keep=False, mirroring the runtime."""
+class TestSemiAntiJoinPassesLeftThrough:
+    """Semi/anti joins pass all left columns through unchanged, ignoring left_select keep/rename."""
 
     @pytest.mark.parametrize("how", ["semi", "anti"])
-    def test_left_join_key_keep_false_is_dropped(self, how):
+    def test_left_columns_pass_through_unchanged(self, how):
         flow = create_basic_flow()
         flow.add_manual_input(input_schema.NodeManualInput(
             flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
@@ -1232,7 +1232,7 @@ class TestSemiAntiJoinDropsHiddenKeys:
         verify_code_executes(code)
         result = get_result_from_generated_code(code)
         cols = result.collect().columns if hasattr(result, "collect") else result.columns
-        assert "id" not in cols  # the keep=False join key is dropped post-join
+        assert "id" in cols  # left passes through unchanged; keep=False on a join key is ignored
         assert "name" in cols
         assert_flow_result_matches_generated(flow, output_node_id=3, code=code)
 

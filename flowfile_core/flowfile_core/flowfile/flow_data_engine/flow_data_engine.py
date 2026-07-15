@@ -42,9 +42,9 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
+    get_join_map_problems,
     get_undo_rename_mapping_join,
     rename_df_table_for_join,
-    verify_join_map_integrity,
     verify_join_select_integrity,
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
@@ -2027,8 +2027,21 @@ class FlowDataEngine:
             if jk.right_col not in {c.old_name for c in join_manager.right_select.renames}:
                 join_manager.right_select.append(transform_schemas.SelectInput(jk.right_col, keep=False))
         verify_join_select_integrity(join_manager.input, left_columns=self.columns, right_columns=other.columns)
-        if not verify_join_map_integrity(join_manager.input, left_columns=self.schema, right_columns=other.schema):
-            raise Exception("Join is not valid by the data fields")
+        join_map_problems = get_join_map_problems(
+            join_manager.input, left_columns=self.schema, right_columns=other.schema
+        )
+        if join_map_problems:
+            raise Exception("Join is not valid: " + "; ".join(join_map_problems))
+
+        if join_manager.how in ("semi", "anti"):
+            # Semi/anti joins push the full left input downstream unchanged (all columns,
+            # original order, no rename or drop); the right frame only supplies the join
+            # keys for matching. Stale entries in left_select are therefore irrelevant here.
+            left_on = [jm.left_col for jm in join_manager.join_mapping]
+            right_on = [jm.right_col for jm in join_manager.join_mapping]
+            right = other.data_frame.select(list(dict.fromkeys(right_on)))
+            joined_df = self.data_frame.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
+            return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=0, streamable=False)
 
         if auto_generate_selection:
             join_manager.auto_rename()
