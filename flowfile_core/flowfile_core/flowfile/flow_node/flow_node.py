@@ -1,5 +1,6 @@
 import threading
 from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from time import sleep
 from typing import Any, Literal, Optional
 
@@ -971,12 +972,36 @@ class FlowNode:
             pairs.append((keyed.get(handle), source_handles.get(handle, DEFAULT_OUTPUT_HANDLE)))
         return pairs
 
+    @contextmanager
+    def _execution_lock_held(self, poll: float = 0.25) -> Generator[None, None, None]:
+        """Hold this node's own ``_execution_lock`` while staying cancellable.
+
+        A plain ``with self._execution_lock`` blocks uninterruptibly, so a cancel
+        request issued while another thread is slowly materializing this node
+        (single-flight contention) would never be observed. Poll the acquire and
+        re-check the cancel flag so ``flow.cancel()`` can break a hung/slow collect.
+        ``RLock.acquire(timeout=...)`` still returns immediately for the owning
+        thread, so same-thread reentrancy (recursion through
+        ``_resolve_input_result_for_handle``) is preserved.
+        """
+        while not self._execution_lock.acquire(timeout=poll):
+            if self._execution_state.is_canceled:
+                raise Exception("Node execution canceled")
+        try:
+            yield
+        finally:
+            self._execution_lock.release()
+
     def get_resulting_data(self) -> FlowDataEngine | None:
         """Executes the node's function to produce the actual output data.
 
         Handles both regular functions and external data sources.
-        Thread-safe: uses _execution_lock to prevent concurrent execution
-        and concurrent access to the underlying LazyFrame by sibling nodes.
+        Thread-safe and single-flight: the node's own ``_execution_lock`` ensures
+        the function runs at most once and the result is memoized, so N downstream
+        consumers materialize it once. A node acquires only its OWN lock; upstream
+        inputs are read through each upstream's own ``get_resulting_data()``, so
+        lock acquisition always follows the DAG (a node -> its parents) and cannot
+        form a cross-node cycle.
 
         Returns:
             A FlowDataEngine instance containing the result, or None on error.
@@ -985,7 +1010,7 @@ class FlowNode:
             Exception: Propagates exceptions from the node's function execution.
         """
         if self.is_setup:
-            with self._execution_lock:
+            with self._execution_lock_held():
                 if self.results.resulting_data is None and self.results.errors is None:
                     self.print("getting resulting data")
                     try:
@@ -998,33 +1023,32 @@ class FlowNode:
                             fl.collect_external()
                             self.node_settings.streamable = False
                         else:
-                            try:
-                                self.print("Collecting input data from all inputs")
-                                input_data = []
-                                input_locks = []
-                                try:
-                                    for i, (v, src_handle) in enumerate(self._slot_input_pairs()):
-                                        if v is None:
-                                            input_data.append(None)
-                                            continue
-                                        self.print(f"Getting resulting data from input {i} (node {v.node_id})")
-                                        # Lock the input node to prevent sibling nodes from
-                                        # concurrently accessing the same upstream LazyFrame.
-                                        v._execution_lock.acquire()
-                                        input_locks.append(v._execution_lock)
-                                        input_result = self._resolve_input_result_for_handle(v, src_handle)
-                                        _df_type = type(input_result.data_frame) if input_result else "None"
-                                        self.print(
-                                            f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}"
-                                        )
-                                        input_data.append(input_result)
-                                    self.print(f"All {len(input_data)} inputs collected, calling node function")
-                                    fl = self._function(*input_data)
-                                finally:
-                                    for lock in input_locks:
-                                        lock.release()
-                            except Exception as e:
-                                raise e
+                            self.print("Collecting input data from all inputs")
+                            input_data = []
+                            for i, (v, src_handle) in enumerate(self._slot_input_pairs()):
+                                if v is None:
+                                    input_data.append(None)
+                                    continue
+                                if self._execution_state.is_canceled:
+                                    raise Exception("Node execution canceled")
+                                self.print(f"Getting resulting data from input {i} (node {v.node_id})")
+                                # Read the upstream via its own get_resulting_data(), which
+                                # single-flights materialization under the upstream's own
+                                # _execution_lock (memoized into results.resulting_data). We do
+                                # NOT acquire the upstream's lock here: a node holds only its own
+                                # lock, so lock acquisition always follows the DAG (a node -> its
+                                # parents) and can never form a cross-node cycle. Taking upstream
+                                # locks in per-input slot order used to deadlock a parallel stage
+                                # when two sibling nodes consumed the same two upstreams in
+                                # opposite left/right order (AB-BA). Safe to run concurrently
+                                # because node functions build a NEW FlowDataEngine from their
+                                # inputs and never mutate a shared input in place.
+                                input_result = self._resolve_input_result_for_handle(v, src_handle)
+                                _df_type = type(input_result.data_frame) if input_result else "None"
+                                self.print(f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}")
+                                input_data.append(input_result)
+                            self.print(f"All {len(input_data)} inputs collected, calling node function")
+                            fl = self._function(*input_data)
                         if isinstance(fl, NamedOutputs):
                             self._named_outputs = fl.by_handle()
                             self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
