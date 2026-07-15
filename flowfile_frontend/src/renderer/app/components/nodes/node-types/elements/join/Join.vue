@@ -67,10 +67,10 @@
                 </div>
                 <unavailable-field
                   v-if="
-                    !(
-                      containsVal(result?.main_input?.columns ?? [], selector.left_col) &&
-                      containsVal(result?.right_input?.columns ?? [], selector.right_col)
-                    )
+                    (selector.left_col &&
+                      !containsVal(result?.main_input?.columns ?? [], selector.left_col)) ||
+                    (selector.right_col &&
+                      !containsVal(result?.right_input?.columns ?? [], selector.right_col))
                   "
                   tooltip-text="Join key is no longer valid — the column was removed upstream"
                 />
