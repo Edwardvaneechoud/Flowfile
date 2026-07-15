@@ -11,7 +11,10 @@ Falls back to REST automatically if the worker doesn't support WebSocket.
 
 import io
 import json
+import os
 from base64 import b64encode
+from collections.abc import Callable
+from time import monotonic
 from typing import Any
 
 import polars as pl
@@ -19,6 +22,29 @@ from websockets.sync.client import connect
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
+
+# How often the receive loop wakes up to check for cancellation/inactivity.
+_WS_RECV_POLL_SECONDS = 2.0
+
+# Abort the receive when the worker has sent NOTHING for this long. The worker
+# heartbeats a progress frame at least every ~10s while a task is alive, so
+# prolonged silence means the worker parent is wedged or gone (protocol-level
+# pings don't catch an app-level wedge). 0 disables. Mirrors the REST path's
+# FLOWFILE_WORKER_POLL_TIMEOUT.
+_WS_INACTIVITY_TIMEOUT = float(os.getenv("FLOWFILE_WORKER_WS_TIMEOUT", "300"))
+
+
+class WorkerStreamInterrupted(Exception):
+    """Receive phase interrupted after the task was already submitted.
+
+    Callers must NOT fall back to REST on this: the task reached the worker,
+    and re-submitting would duplicate work against a worker that is wedged
+    or a run that was cancelled.
+    """
+
+
+class WorkerStreamStalled(WorkerStreamInterrupted):
+    """The worker went silent past the inactivity timeout (presumed wedged)."""
 
 
 def _get_ws_url() -> str:
@@ -72,12 +98,21 @@ def _handle_complete_message(data: dict, task_id: str) -> Status:
     )
 
 
-def _receive_raw_result(ws, task_id: str) -> tuple[Any, Status | None]:
+def _receive_raw_result(
+    ws,
+    task_id: str,
+    should_abort: Callable[[], bool] | None = None,
+) -> tuple[Any, Status | None]:
     """Receive messages from the worker until a raw result or error arrives.
 
     Returns the result **without** deserializing it so the caller can both
     populate ``Status.results`` (b64-encoded bytes for polars) and
     deserialize into the in-memory object.
+
+    The recv is bounded: each poll tick checks ``should_abort`` (cancellation)
+    and total silence against ``_WS_INACTIVITY_TIMEOUT``, so a wedged worker
+    surfaces as :class:`WorkerStreamStalled` instead of hanging core forever.
+    Any received message (including progress heartbeats) resets the clock.
 
     Returns:
         (raw_result, status) where raw_result is ``bytes`` for polars
@@ -85,9 +120,22 @@ def _receive_raw_result(ws, task_id: str) -> tuple[Any, Status | None]:
     """
     raw_result = None
     status = None
+    last_message_at = monotonic()
 
     while True:
-        msg = ws.recv()
+        try:
+            msg = ws.recv(timeout=_WS_RECV_POLL_SECONDS)
+        except TimeoutError:
+            if should_abort is not None and should_abort():
+                raise WorkerStreamInterrupted(f"Canceled while waiting for worker result (task {task_id})") from None
+            silence = monotonic() - last_message_at
+            if _WS_INACTIVITY_TIMEOUT and silence > _WS_INACTIVITY_TIMEOUT:
+                raise WorkerStreamStalled(
+                    f"No data from worker for {silence:.0f}s (task {task_id}); worker presumed "
+                    f"unresponsive. Tune or disable via FLOWFILE_WORKER_WS_TIMEOUT."
+                ) from None
+            continue
+        last_message_at = monotonic()
 
         if isinstance(msg, bytes):
             raw_result = msg
@@ -162,7 +210,11 @@ def streaming_start(
     return ws
 
 
-def streaming_receive(ws, task_id: str) -> tuple[Any, Status]:
+def streaming_receive(
+    ws,
+    task_id: str,
+    should_abort: Callable[[], bool] | None = None,
+) -> tuple[Any, Status]:
     """Block until the worker sends back a result, then close the connection.
 
     The returned ``Status`` object is fully populated (including
@@ -173,7 +225,7 @@ def streaming_receive(ws, task_id: str) -> tuple[Any, Status]:
         Tuple of (result, Status)
     """
     try:
-        raw_result, status = _receive_raw_result(ws, task_id)
+        raw_result, status = _receive_raw_result(ws, task_id, should_abort=should_abort)
     finally:
         ws.close()
 
