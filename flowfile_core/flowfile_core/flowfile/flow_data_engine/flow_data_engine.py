@@ -123,22 +123,6 @@ def _handle_duplication_join_keys(
     return left_df, right_df, reverse_actions
 
 
-def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.JoinInput) -> None:
-    """Modifies JoinInput for semi/anti joins to not keep right-side columns.
-
-    For 'semi' and 'anti' joins, Polars only returns columns from the left
-    DataFrame. This function enforces that behavior by modifying the `join_input`
-    in-place, setting the `keep` flag to `False` for all columns in the
-    right-side selection.
-
-    Args:
-        join_input: The JoinInput settings object to modify.
-    """
-    if join_input.how in ("semi", "anti"):
-        for jk in join_input.right_select.renames:
-            jk.keep = False
-
-
 def get_select_columns(full_select_input: list[transform_schemas.SelectInput]) -> list[str]:
     """Extracts a list of column names to be selected from a SelectInput list.
 
@@ -2020,7 +2004,6 @@ class FlowDataEngine:
         join_manager = transform_schemas.JoinInputManager(join_input)
         _ensure_all_columns_have_select(left_cols=self.columns, right_cols=other.columns, manager=join_manager)
         join_manager.set_join_keys()
-        ensure_right_unselect_for_semi_and_anti_joins(join_manager.input)
         for jk in join_manager.join_mapping:
             if jk.left_col not in {c.old_name for c in join_manager.left_select.renames}:
                 join_manager.left_select.append(transform_schemas.SelectInput(jk.left_col, keep=False))

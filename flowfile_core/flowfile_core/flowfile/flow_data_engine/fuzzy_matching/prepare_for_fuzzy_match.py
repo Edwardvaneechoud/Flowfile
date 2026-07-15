@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flowfile_core.flowfile.flow_data_engine.join import verify_join_map_integrity, verify_join_select_integrity
+from flowfile_core.flowfile.flow_data_engine.join import get_join_map_problems, verify_join_select_integrity
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager, JoinInputs, SelectInput
 
 if TYPE_CHECKING:
@@ -68,10 +68,11 @@ def prepare_for_fuzzy_match(
     verify_join_select_integrity(
         fuzzy_match_input_manager.fuzzy_input, left_columns=left.columns, right_columns=right.columns
     )
-    if not verify_join_map_integrity(
+    join_map_problems = get_join_map_problems(
         fuzzy_match_input_manager.fuzzy_input, left_columns=left.schema, right_columns=right.schema
-    ):
-        raise Exception("Join is not valid by the data fields")
+    )
+    if join_map_problems:
+        raise Exception("Join is not valid: " + "; ".join(join_map_problems))
 
     fuzzy_match_input_manager.auto_rename()
 
