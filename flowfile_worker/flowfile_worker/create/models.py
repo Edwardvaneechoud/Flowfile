@@ -31,6 +31,7 @@ class InputCsvTable(InputTableBase):
     row_delimiter: str = "\n"
     quote_char: str = '"'
     infer_schema_length: int = 10_000
+    infer_schema: bool = True
     truncate_ragged_lines: bool = False
     ignore_errors: bool = False
 

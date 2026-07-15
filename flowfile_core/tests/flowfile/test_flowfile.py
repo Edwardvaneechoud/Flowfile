@@ -352,6 +352,86 @@ def test_read_new_file_formats(file_type, ext, execution_location):
         assert graph.get_node(1).get_resulting_data().count() == 3
 
 
+def _write_late_type_conflict_csv(path: str, n_rows: int = 2500, conflict_at: int = 1500) -> None:
+    """CSV whose `val` column parses as integer for the first `conflict_at` rows and then hits a
+    non-numeric token — a type conflict only visible past the default 1000-row inference window."""
+    with open(path, "w") as fh:
+        fh.write("id,val\n")
+        for i in range(n_rows):
+            token = "not_a_number" if i == conflict_at else str(i)
+            fh.write(f"{i},{token}\n")
+
+
+def test_csv_infer_schema_escalation():
+    """A late-row type conflict that fails at infer_schema_length=1000 auto-escalates
+    (1000 -> 10000) so the read succeeds, widening the column to String. The configured
+    value is left untouched (escalation is transient)."""
+    import polars as pl
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "late_conflict.csv")
+        _write_late_type_conflict_csv(path)
+
+        graph = create_graph(execution_location='remote')
+        add_node_promise_on_type(graph, 'read', 1, 1)
+        received_table = input_schema.ReceivedTable(
+            file_type='csv', name='late_conflict.csv', path=path,
+            table_settings=input_schema.InputCsvTable(infer_schema_length=1000),
+        )
+        node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
+        graph.add_read(node_read)
+
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+
+        node = graph.get_node(1)
+        df = node.get_resulting_data().collect()
+        assert len(df) == 2500
+        assert df.schema['val'] == pl.String, 'Escalation should widen the column instead of failing'
+        assert node.setting_input.received_file.table_settings.infer_schema_length == 1000, \
+            'Escalation must be transient — the saved setting stays as configured'
+
+
+def test_csv_no_type_inference():
+    """infer_schema=False reads every column as text, regardless of content."""
+    import polars as pl
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "typed.csv")
+        with open(path, "w") as fh:
+            fh.write("id,amount\n")
+            for i in range(50):
+                fh.write(f"{i},{i * 10}\n")
+
+        graph = create_graph(execution_location='local')
+        add_node_promise_on_type(graph, 'read', 1, 1)
+        received_table = input_schema.ReceivedTable(
+            file_type='csv', name='typed.csv', path=path,
+            table_settings=input_schema.InputCsvTable(infer_schema=False),
+        )
+        node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
+        graph.add_read(node_read)
+
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+
+        schema = graph.get_node(1).get_resulting_data().collect().schema
+        assert schema['id'] == pl.String
+        assert schema['amount'] == pl.String
+
+
+def test_infer_schema_error_detection_and_ladder():
+    """The store-level escalation building blocks: only widen on a genuine type-parse error,
+    and climb configured -> 10000 -> 100000."""
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+    assert FlowNode._is_type_inference_error("could not parse `null` as dtype `datetime[μs]`")
+    assert FlowNode._is_type_inference_error("SchemaError: something")
+    assert not FlowNode._is_type_inference_error("No such file or directory")
+    assert not FlowNode._is_type_inference_error(None)
+    assert FlowNode._next_infer_rung(1000) == 10000
+    assert FlowNode._next_infer_rung(10000) == 100000
+    assert FlowNode._next_infer_rung(50000) == 100000
+    assert FlowNode._next_infer_rung(100000) is None
+
+
 # Remote-only: Performance vs Development timing differential is only meaningful
 # when work is offloaded to the worker. In local mode both paths run in-process.
 def test_running_performance_mode():
