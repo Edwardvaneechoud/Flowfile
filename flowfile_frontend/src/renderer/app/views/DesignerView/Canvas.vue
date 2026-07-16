@@ -1226,6 +1226,12 @@ onMounted(async () => {
   watch(
     () => flowStore.flowId,
     async (id) => {
+      // Switching flows: clear selection + overlays so a drawer/preview from the
+      // previous flow can't leak (node ids collide across flows).
+      editorStore.hideAllPanels();
+      nodeStore.nodeId = -1;
+      nodeStore.nodeData = null;
+      nodeStore.nodeDataFlowId = -1;
       if (id && id > 0) {
         try {
           await loadFlow();
