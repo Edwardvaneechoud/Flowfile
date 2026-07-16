@@ -518,3 +518,41 @@ class TestWsMonitorTimeout:
                 p.join()
             with status_dict_lock:
                 status_dict.pop(task_id, None)
+
+
+class TestWsHeartbeat:
+    """_monitor_progress must re-send progress periodically even when the value
+    is unchanged: core treats these frames as liveness heartbeats and aborts
+    the receive after prolonged silence (FLOWFILE_WORKER_WS_TIMEOUT)."""
+
+    @pytest.mark.asyncio
+    async def test_unchanged_progress_still_heartbeats(self, monkeypatch):
+        monkeypatch.setattr("flowfile_worker.streaming._HEARTBEAT_INTERVAL", 0.05)
+        # Let the monitor exit via the task deadline after several heartbeats.
+        monkeypatch.setattr("flowfile_worker.streaming._TASK_TIMEOUT", 0.5)
+        task_id = "test-ws-heartbeat"
+        progress = mp_context.Value("i", 0)  # never advances
+        error_message = mp_context.Array("c", 1024)
+        p = mp_context.Process(target=time.sleep, args=(30,))
+        p.start()
+        websocket = AsyncMock()
+        with status_dict_lock:
+            status_dict[task_id] = models.Status(
+                background_task_id=task_id, status="Processing", file_ref="x", result_type="polars"
+            )
+        try:
+            await _monitor_progress(websocket, p, progress, error_message, task_id)
+            progress_frames = [
+                c.args[0]
+                for c in websocket.send_json.call_args_list
+                if c.args and c.args[0].get("type") == "progress"
+            ]
+            # Initial send plus repeated heartbeats despite the value never changing.
+            assert len(progress_frames) >= 3, f"expected heartbeats, got {len(progress_frames)} progress frame(s)"
+            assert all(f["progress"] == 0 for f in progress_frames)
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            with status_dict_lock:
+                status_dict.pop(task_id, None)

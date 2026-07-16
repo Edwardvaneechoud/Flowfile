@@ -40,6 +40,11 @@ _MONITOR_INITIAL_DELAY = 0.005
 _MONITOR_MAX_DELAY = 0.3
 _MONITOR_BACKOFF = 1.5
 
+# Re-send the progress frame at least this often even when the value hasn't
+# changed. Core uses these as liveness heartbeats: its receive loop treats
+# prolonged silence as a wedged worker (FLOWFILE_WORKER_WS_TIMEOUT).
+_HEARTBEAT_INTERVAL = 10.0
+
 
 def _get_result_type(operation: str) -> str:
     return "polars" if operation in _POLARS_RESULT_OPERATIONS else "other"
@@ -154,6 +159,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
     Returns True if an error was detected and sent to the client.
     """
     last_progress = -1
+    last_sent = monotonic()
 
     delay = _MONITOR_INITIAL_DELAY
     deadline = (monotonic() + _TASK_TIMEOUT) if _TASK_TIMEOUT else None
@@ -161,12 +167,13 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
         with progress.get_lock():
             current = progress.value
 
-        if current != last_progress:
+        if current != last_progress or monotonic() - last_sent >= _HEARTBEAT_INTERVAL:
             try:
                 await websocket.send_json({"type": "progress", "progress": current})
             except Exception:
                 return False
             last_progress = current
+            last_sent = monotonic()
 
         if current == -1:
             msg = _read_error_message(error_message)
