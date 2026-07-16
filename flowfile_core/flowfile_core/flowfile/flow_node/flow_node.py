@@ -1367,10 +1367,18 @@ class FlowNode:
         return min((rung for rung in cls._INFER_SCHEMA_RUNGS if rung > current), default=None)
 
     def _eligible_infer_length(self) -> int | None:
-        """Configured infer length if this is a CSV/JSON read with inference on, else None (ineligible)."""
+        """Configured infer length if this is a CSV read with inference on, else None (ineligible).
+
+        Scoped to file_type == "csv": _escalated_read_frame rebuilds via
+        FlowDataEngine.create_from_path, which has no "json" handler (json reads route
+        through the worker), so an InputJsonTable (a subclass of InputCsvTable) must not
+        be treated as eligible.
+        """
         if self.node_type != "read":
             return None
         received_file = getattr(self.setting_input, "received_file", None)
+        if getattr(received_file, "file_type", None) != "csv":
+            return None
         table_settings = getattr(received_file, "table_settings", None)
         if not isinstance(table_settings, input_schema.InputCsvTable):
             return None

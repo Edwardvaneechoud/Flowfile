@@ -432,6 +432,29 @@ def test_infer_schema_error_detection_and_ladder():
     assert FlowNode._next_infer_rung(100000) is None
 
 
+def test_json_read_node_is_not_infer_escalation_eligible():
+    """create_from_path has no 'json' handler, so a json read (InputJsonTable subclasses
+    InputCsvTable) must be ineligible for escalation — otherwise _escalated_read_frame would
+    raise 'Cannot create from json' instead of surfacing the ladder-exhausted guidance."""
+    graph = create_graph(execution_location='remote')
+    add_node_promise_on_type(graph, 'read', 1, 1)
+    received_table = input_schema.ReceivedTable(
+        file_type='json', name='x.json', path='x.json',
+        table_settings=input_schema.InputJsonTable(infer_schema_length=1000),
+    )
+    graph.add_read(input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table))
+    assert graph.get_node(1)._eligible_infer_length() is None
+
+    graph2 = create_graph(execution_location='remote')
+    add_node_promise_on_type(graph2, 'read', 1, 1)
+    csv_table = input_schema.ReceivedTable(
+        file_type='csv', name='x.csv', path='x.csv',
+        table_settings=input_schema.InputCsvTable(infer_schema_length=1000),
+    )
+    graph2.add_read(input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=csv_table))
+    assert graph2.get_node(1)._eligible_infer_length() == 1000
+
+
 # Remote-only: Performance vs Development timing differential is only meaningful
 # when work is offloaded to the worker. In local mode both paths run in-process.
 def test_running_performance_mode():
