@@ -28,6 +28,60 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import ProjectExportManifest
 
 
+@pytest.fixture(autouse=True)
+def _restore_custom_node_registry():
+    """Snapshot/restore the global node registries so file-backed custom nodes
+    registered in a test never leak into sibling tests."""
+    from flowfile_core.configs import node_store as node_store_mod
+
+    saved_store = dict(node_store_mod.CUSTOM_NODE_STORE)
+    saved_dict = dict(node_store_mod.node_dict)
+    saved_list = list(node_store_mod.nodes_list)
+    try:
+        yield
+    finally:
+        node_store_mod.CUSTOM_NODE_STORE.clear()
+        node_store_mod.CUSTOM_NODE_STORE.update(saved_store)
+        node_store_mod.node_dict.clear()
+        node_store_mod.node_dict.update(saved_dict)
+        node_store_mod.nodes_list[:] = saved_list
+
+
+def _write_node_module(tmp_path: Path, stem: str, source: str):
+    """Write a custom-node module to a temp file and import it (file-backed so the
+    exporter can read the class source via ``inspect.getfile``)."""
+    import importlib
+    import sys
+
+    (tmp_path / f"{stem}.py").write_text(source)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        return importlib.import_module(stem)
+    finally:
+        sys.path.remove(str(tmp_path))
+
+
+# A custom node whose process() logs via the kernel-injected flowfile_ctx global.
+# The exported code must bind flowfile_ctx (ship the shim + insert the import) or
+# this raises NameError when run standalone.
+_CTX_NODE_SOURCE = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class CtxLogger(nd.CustomNodeBase):
+    node_name: str = "Ctx Logger"
+    node_category: str = "Transform"
+    number_of_inputs: int = 1
+    number_of_outputs: int = 1
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        flowfile_ctx.log_info("ctx node ran")
+        return inputs[0].with_columns(pl.lit(1).alias("k"))
+'''
+
+
 def create_flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
     return schemas.FlowSettings(
         flow_id=flow_id,
