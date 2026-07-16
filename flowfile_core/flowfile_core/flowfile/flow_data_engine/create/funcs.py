@@ -8,6 +8,13 @@ from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
 from shared.path_utils import is_url
 
+INFER_SCHEMA_RUNGS = (10_000, 100_000)
+
+
+def _infer_schema_ladder(configured: int) -> list[int]:
+    """Inference lengths to try in order: the configured value first, then any higher ladder rungs."""
+    return [configured] + [rung for rung in INFER_SCHEMA_RUNGS if rung > configured]
+
 
 def create_from_json(received_table: input_schema.ReceivedTable):
     f = received_table.abs_file_path
@@ -17,43 +24,59 @@ def create_from_json(received_table: input_schema.ReceivedTable):
         raise ValueError("Received table settings are not of type InputJsonTable")
     table_settings: input_schema.InputJsonTable = received_table.table_settings
 
+    fallback_infer = {"infer_schema_length": 0} if not table_settings.infer_schema else {}
+
     if table_settings.encoding.upper() == "UTF8" or table_settings.encoding.upper() == "UTF-8":
-        try:
-            data = pl.scan_csv(
+        if not table_settings.infer_schema:
+            return pl.scan_csv(
                 f,
                 low_memory=low_mem,
-                try_parse_dates=True,
                 separator=table_settings.delimiter,
                 has_header=table_settings.has_headers,
                 skip_rows=table_settings.starting_from_line,
                 encoding="utf8",
-                infer_schema_length=table_settings.infer_schema_length,
+                infer_schema_length=0,
             )
-            data.head(1).collect()
-            return data
-        except Exception:
+        for infer_len in _infer_schema_ladder(table_settings.infer_schema_length):
             try:
                 data = pl.scan_csv(
                     f,
                     low_memory=low_mem,
-                    separator=table_settings.delimiter,
-                    has_header=table_settings.has_headers,
-                    skip_rows=table_settings.starting_from_line,
-                    encoding="utf8-lossy",
-                    ignore_errors=True,
-                )
-                return data
-            except Exception:
-                data = pl.scan_csv(
-                    f,
-                    low_memory=low_mem,
+                    try_parse_dates=True,
                     separator=table_settings.delimiter,
                     has_header=table_settings.has_headers,
                     skip_rows=table_settings.starting_from_line,
                     encoding="utf8",
-                    ignore_errors=True,
+                    infer_schema_length=infer_len,
                 )
+                data.head(1).collect()
                 return data
+            except Exception:
+                continue
+        try:
+            data = pl.scan_csv(
+                f,
+                low_memory=low_mem,
+                separator=table_settings.delimiter,
+                has_header=table_settings.has_headers,
+                skip_rows=table_settings.starting_from_line,
+                encoding="utf8-lossy",
+                ignore_errors=True,
+                **fallback_infer,
+            )
+            return data
+        except Exception:
+            data = pl.scan_csv(
+                f,
+                low_memory=low_mem,
+                separator=table_settings.delimiter,
+                has_header=table_settings.has_headers,
+                skip_rows=table_settings.starting_from_line,
+                encoding="utf8",
+                ignore_errors=True,
+                **fallback_infer,
+            )
+            return data
     else:
         data = pl.read_csv(
             f,
@@ -63,6 +86,7 @@ def create_from_json(received_table: input_schema.ReceivedTable):
             skip_rows=table_settings.starting_from_line,
             encoding=table_settings.encoding,
             ignore_errors=True,
+            **fallback_infer,
         )
         return data
 
@@ -85,44 +109,63 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
     f = received_table.abs_file_path
     low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
 
+    fallback_infer = {"infer_schema_length": 0} if not table_settings.infer_schema else {}
+
     if table_settings.encoding.upper() in ("UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"):
         encoding: CsvEncoding = standardize_utf8_encoding(table_settings.encoding)
-        try:
-            data = pl.scan_csv(
+        if not table_settings.infer_schema:
+            # No type inference: every column stays text (Utf8).
+            return pl.scan_csv(
                 f,
                 low_memory=low_mem,
-                try_parse_dates=True,
                 separator=table_settings.delimiter,
                 has_header=table_settings.has_headers,
                 skip_rows=table_settings.starting_from_line,
                 encoding=encoding,
-                infer_schema_length=table_settings.infer_schema_length,
+                infer_schema_length=0,
             )
-            data.head(1).collect()
-            return data
-        except Exception:
+        # The head(1) probe reads the first CSV batch, so a type conflict inside it fails here;
+        # widen the inference window before resorting to the lossy ignore_errors fallback.
+        for infer_len in _infer_schema_ladder(table_settings.infer_schema_length):
             try:
                 data = pl.scan_csv(
                     f,
                     low_memory=low_mem,
-                    separator=table_settings.delimiter,
-                    has_header=table_settings.has_headers,
-                    skip_rows=table_settings.starting_from_line,
-                    encoding="utf8-lossy",
-                    ignore_errors=True,
-                )
-                return data
-            except Exception:
-                data = pl.scan_csv(
-                    f,
-                    low_memory=False,
+                    try_parse_dates=True,
                     separator=table_settings.delimiter,
                     has_header=table_settings.has_headers,
                     skip_rows=table_settings.starting_from_line,
                     encoding=encoding,
-                    ignore_errors=True,
+                    infer_schema_length=infer_len,
                 )
+                data.head(1).collect()
                 return data
+            except Exception:
+                continue
+        try:
+            data = pl.scan_csv(
+                f,
+                low_memory=low_mem,
+                separator=table_settings.delimiter,
+                has_header=table_settings.has_headers,
+                skip_rows=table_settings.starting_from_line,
+                encoding="utf8-lossy",
+                ignore_errors=True,
+                **fallback_infer,
+            )
+            return data
+        except Exception:
+            data = pl.scan_csv(
+                f,
+                low_memory=False,
+                separator=table_settings.delimiter,
+                has_header=table_settings.has_headers,
+                skip_rows=table_settings.starting_from_line,
+                encoding=encoding,
+                ignore_errors=True,
+                **fallback_infer,
+            )
+            return data
     else:
         data = pl.read_csv_batched(
             f,
@@ -133,6 +176,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
             encoding=table_settings.encoding,
             ignore_errors=True,
             batch_size=2,
+            **fallback_infer,
         ).next_batches(1)
         return data[0].lazy()
 

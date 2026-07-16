@@ -289,6 +289,7 @@ export interface InputCsvTable {
   row_delimiter?: string
   quote_char?: string
   infer_schema_length?: number
+  infer_schema?: boolean
   truncate_ragged_lines?: boolean
   ignore_errors?: boolean
 }

@@ -82,6 +82,12 @@
       </el-select>
     </div>
 
+    <!-- Row for Infer Data Types -->
+    <div class="row">
+      <label for="infer-schema">Infer data types:</label>
+      <el-checkbox v-model="localCsvTable.infer_schema" size="large" @change="updateParent" />
+    </div>
+
     <!-- Row for Schema Infer Length -->
     <div class="row">
       <label for="infer-schema-length">Schema Infer Length:</label>
@@ -90,6 +96,7 @@
         :step="1000"
         :max="100000"
         :min="0"
+        :disabled="!localCsvTable.infer_schema"
         show-stops
         size="small"
         @change="updateParent"

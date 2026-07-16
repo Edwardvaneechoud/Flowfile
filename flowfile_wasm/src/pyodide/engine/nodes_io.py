@@ -17,7 +17,10 @@ def execute_read_csv(node_id: int, file_content: str, settings: dict) -> dict:
         has_header = table_settings.get("has_headers", True)
         separator = table_settings.get("delimiter", ",")
         skip_rows = table_settings.get("starting_from_line", 0)
-        infer_schema_length = table_settings.get("infer_schema_length") or 10_000
+        # infer_schema=False -> read every column as text; honor an explicit 0 (not `or`, which coerces it away)
+        infer_schema = table_settings.get("infer_schema", True)
+        raw_infer_length = table_settings.get("infer_schema_length")
+        infer_schema_length = 0 if not infer_schema else (raw_infer_length if raw_infer_length is not None else 10_000)
 
         # try_parse_dates mirrors flowfile_core so date columns land as Date, not
         # str — formula format_date / .dt.* need a temporal dtype. Fall back to a
