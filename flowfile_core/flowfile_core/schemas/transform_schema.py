@@ -1218,7 +1218,11 @@ class SelectInputsManager:
 
     def get_select_cols(self, include_join_key: bool = True) -> list[str]:
         """Gets a list of original column names to select from the source DataFrame."""
-        return [v.old_name for v in self.select_inputs.renames if v.keep or (v.join_key and include_join_key)]
+        return [
+            v.old_name
+            for v in self.select_inputs.renames
+            if v.is_available and (v.keep or (v.join_key and include_join_key))
+        ]
 
     def has_drop_cols(self) -> bool:
         """Checks if any column is marked to be dropped from the selection."""

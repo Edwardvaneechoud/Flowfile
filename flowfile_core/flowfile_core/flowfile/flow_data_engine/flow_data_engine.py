@@ -42,9 +42,9 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
+    get_join_map_problems,
     get_undo_rename_mapping_join,
     rename_df_table_for_join,
-    verify_join_map_integrity,
     verify_join_select_integrity,
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
@@ -121,22 +121,6 @@ def _handle_duplication_join_keys(
     else:
         reverse_actions = {}
     return left_df, right_df, reverse_actions
-
-
-def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.JoinInput) -> None:
-    """Modifies JoinInput for semi/anti joins to not keep right-side columns.
-
-    For 'semi' and 'anti' joins, Polars only returns columns from the left
-    DataFrame. This function enforces that behavior by modifying the `join_input`
-    in-place, setting the `keep` flag to `False` for all columns in the
-    right-side selection.
-
-    Args:
-        join_input: The JoinInput settings object to modify.
-    """
-    if join_input.how in ("semi", "anti"):
-        for jk in join_input.right_select.renames:
-            jk.keep = False
 
 
 def get_select_columns(full_select_input: list[transform_schemas.SelectInput]) -> list[str]:
@@ -2020,15 +2004,27 @@ class FlowDataEngine:
         join_manager = transform_schemas.JoinInputManager(join_input)
         _ensure_all_columns_have_select(left_cols=self.columns, right_cols=other.columns, manager=join_manager)
         join_manager.set_join_keys()
-        ensure_right_unselect_for_semi_and_anti_joins(join_manager.input)
         for jk in join_manager.join_mapping:
             if jk.left_col not in {c.old_name for c in join_manager.left_select.renames}:
                 join_manager.left_select.append(transform_schemas.SelectInput(jk.left_col, keep=False))
             if jk.right_col not in {c.old_name for c in join_manager.right_select.renames}:
                 join_manager.right_select.append(transform_schemas.SelectInput(jk.right_col, keep=False))
         verify_join_select_integrity(join_manager.input, left_columns=self.columns, right_columns=other.columns)
-        if not verify_join_map_integrity(join_manager.input, left_columns=self.schema, right_columns=other.schema):
-            raise Exception("Join is not valid by the data fields")
+        join_map_problems = get_join_map_problems(
+            join_manager.input, left_columns=self.schema, right_columns=other.schema
+        )
+        if join_map_problems:
+            raise Exception("Join is not valid: " + "; ".join(join_map_problems))
+
+        if join_manager.how in ("semi", "anti"):
+            # Semi/anti joins push the full left input downstream unchanged (all columns,
+            # original order, no rename or drop); the right frame only supplies the join
+            # keys for matching. Stale entries in left_select are therefore irrelevant here.
+            left_on = [jm.left_col for jm in join_manager.join_mapping]
+            right_on = [jm.right_col for jm in join_manager.join_mapping]
+            right = other.data_frame.select(list(dict.fromkeys(right_on)))
+            joined_df = self.data_frame.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
+            return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=0, streamable=False)
 
         if auto_generate_selection:
             join_manager.auto_rename()
