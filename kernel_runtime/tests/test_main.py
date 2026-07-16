@@ -1,6 +1,7 @@
 """Tests for kernel_runtime.main (FastAPI endpoints)."""
 
 import os
+import signal
 import threading
 import time
 from pathlib import Path
@@ -1185,8 +1186,8 @@ class TestExecutionCancellation:
         os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("CI") == "true",
         reason="Signal-based thread interrupt is unreliable in CI runners.",
     )
-    def test_signal_handler_interrupts_exec_thread(self):
-        """_raise_in_exec_thread injects KeyboardInterrupt into the tracked thread."""
+    def test_request_interrupt_hits_running_cell(self):
+        """_request_interrupt raises KeyboardInterrupt in the registered cell's thread."""
         import kernel_runtime.main as main_module
 
         caught: list[bool] = [False]
@@ -1195,35 +1196,46 @@ class TestExecutionCancellation:
         def _target():
             ready.set()
             try:
-                time.sleep(30)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    pass  # bytecode loop so the async KeyboardInterrupt fires promptly
             except KeyboardInterrupt:
                 caught[0] = True
 
+        # Register the handler ourselves (the lifespan normally does): sending SIGUSR1
+        # with the default disposition would kill the test process.
+        prev = signal.getsignal(signal.SIGUSR1)
+        signal.signal(signal.SIGUSR1, main_module._cancel_signal_handler)
         t = threading.Thread(target=_target, daemon=True)
         t.start()
         ready.wait()
 
         with main_module._exec_lock:
-            main_module._exec_thread_id = t.ident
+            main_module._exec_generation += 1
+            gen = main_module._exec_generation
+            main_module._running_execs[gen] = t.ident
         try:
-            assert main_module._raise_in_exec_thread() is True
+            assert main_module._request_interrupt() is True
             t.join(timeout=5)
             assert caught[0], "KeyboardInterrupt was not raised in the target thread"
         finally:
             with main_module._exec_lock:
-                main_module._exec_thread_id = None
+                main_module._running_execs.pop(gen, None)
+                main_module._interrupt_generation = None
+            signal.signal(signal.SIGUSR1, prev)
 
-    def test_signal_handler_ignores_when_not_executing(self):
-        """Outside of exec(), the handler is a no-op (no crash, no exception)."""
+    def test_request_interrupt_noop_when_not_executing(self):
+        """With no running cell the interrupt request is a no-op (no crash)."""
         import kernel_runtime.main as main_module
 
         with main_module._exec_lock:
-            main_module._exec_thread_id = None
-        assert main_module._raise_in_exec_thread() is False
+            main_module._running_execs.clear()
+            main_module._interrupt_generation = None
+        assert main_module._request_interrupt() is False
         main_module._cancel_signal_handler(None, None)  # should not raise
 
-    def test_exec_thread_id_cleared_after_success(self, client: TestClient):
-        """_exec_thread_id must be None after a successful execution."""
+    def test_running_execs_cleared_after_success(self, client: TestClient):
+        """No execution stays registered after a successful cell."""
         import kernel_runtime.main as main_module
 
         resp = client.post(
@@ -1231,10 +1243,10 @@ class TestExecutionCancellation:
             json={"node_id": 200, "code": "x = 1", "flow_id": 1, "input_paths": {}, "output_dir": ""},
         )
         assert resp.json()["success"] is True
-        assert main_module._exec_thread_id is None
+        assert main_module._running_execs == {}
 
-    def test_exec_thread_id_cleared_after_error(self, client: TestClient):
-        """_exec_thread_id must be None even when user code raises."""
+    def test_running_execs_cleared_after_error(self, client: TestClient):
+        """No execution stays registered even when user code raises."""
         import kernel_runtime.main as main_module
 
         resp = client.post(
@@ -1242,7 +1254,68 @@ class TestExecutionCancellation:
             json={"node_id": 201, "code": "1/0", "flow_id": 1, "input_paths": {}, "output_dir": ""},
         )
         assert resp.json()["success"] is False
-        assert main_module._exec_thread_id is None
+        assert main_module._running_execs == {}
+
+    def test_stale_interrupt_does_not_target_later_cell(self, client: TestClient):
+        """An interrupt bound to an earlier (still-registered) cell must never land on a new cell."""
+        import kernel_runtime.main as main_module
+
+        # A real, harmless "cell A" thread (pthread_kill needs a valid tid); interrupting it is safe.
+        stop = threading.Event()
+        a_ready = threading.Event()
+
+        def _cell_a():
+            a_ready.set()
+            try:
+                while not stop.wait(0.02):
+                    pass
+            except KeyboardInterrupt:
+                pass
+
+        prev = signal.getsignal(signal.SIGUSR1)
+        signal.signal(signal.SIGUSR1, main_module._cancel_signal_handler)
+        a = threading.Thread(target=_cell_a, daemon=True)
+        a.start()
+        a_ready.wait()
+        with main_module._exec_lock:
+            main_module._exec_generation += 1
+            gen_a = main_module._exec_generation
+            main_module._running_execs[gen_a] = a.ident
+        try:
+            assert main_module._request_interrupt() is True  # binds _interrupt_generation to A
+            # A fresh cell B must run cleanly: the stale interrupt is bound to A, never B.
+            resp = client.post(
+                "/execute",
+                json={"node_id": 100, "code": "x = 1 + 1", "flow_id": 999, "input_paths": {}, "output_dir": ""},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["success"] is True
+        finally:
+            stop.set()
+            with main_module._exec_lock:
+                main_module._running_execs.pop(gen_a, None)
+                main_module._interrupt_generation = None
+            signal.signal(signal.SIGUSR1, prev)
+            a.join(timeout=5)
+
+    def test_signal_handler_does_not_resend_sigusr1(self, monkeypatch):
+        """The SIGUSR1 handler re-asserts the interrupt but never re-sends a signal (no storm)."""
+        import kernel_runtime.main as main_module
+
+        sent: list = []
+        monkeypatch.setattr(main_module.signal, "pthread_kill", lambda *a, **k: sent.append(a))
+        with main_module._exec_lock:
+            main_module._exec_generation += 1
+            gen = main_module._exec_generation
+            main_module._running_execs[gen] = 123456789
+            main_module._interrupt_generation = gen
+        try:
+            main_module._cancel_signal_handler(None, None)
+            assert sent == [], "signal handler must not re-send SIGUSR1"
+        finally:
+            with main_module._exec_lock:
+                main_module._running_execs.pop(gen, None)
+                main_module._interrupt_generation = None
 
     def test_interrupt_endpoint_no_execution(self, client: TestClient):
         """POST /interrupt returns 'no_execution_running' when idle."""
