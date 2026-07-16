@@ -445,8 +445,9 @@ class VirtualTableService:
         if flowframe is None or flowframe.data_frame is None:
             raise ValueError(f"No data produced for table '{table.name}'")
 
-        flowframe.lazy = True
-        return flowframe.data_frame
+        # Do not mutate the shared memoized engine; .lazy() is an identity on
+        # LazyFrames and a cheap wrap on eager frames.
+        return flowframe.data_frame.lazy()
 
     # ---- Discovery ------------------------------------------------------- #
 
