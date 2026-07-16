@@ -1306,6 +1306,141 @@ def test_join_schema_auto_pass_through_after_upstream_rename(execution_location)
     )
 
 
+def _build_join_flow(graph, left_data, right_data, join_input: transform_schema.JoinInput):
+    """manual_input(left) -> select(identity) -> join <- manual_input(right)."""
+    add_manual_input(graph, data=left_data, node_id=1)
+    add_manual_input(graph, data=right_data, node_id=2)
+
+    identity = [transform_schema.SelectInput(old_name=c, new_name=c, keep=True) for c in left_data[0]]
+    add_node_promise_on_type(graph, 'select', 3)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    graph.add_select(input_schema.NodeSelect(flow_id=1, node_id=3, select_input=identity, keep_missing=False))
+
+    add_node_promise_on_type(graph, 'join', 4)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(3, 4)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 4)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+
+    graph.add_join(input_schema.NodeJoin(
+        flow_id=1, node_id=4, join_input=join_input, auto_generate_selection=True, depending_on_ids=[3, 2],
+    ))
+
+
+def _reselect(graph, select_input):
+    """Re-configure the upstream select node (node 3) to change the join's incoming schema."""
+    graph.reset()
+    graph.add_select(input_schema.NodeSelect(
+        flow_id=1, node_id=3, select_input=select_input, keep_missing=False,
+    ))
+
+
+def test_join_drops_removed_non_key_column(execution_location):
+    """A kept non-join-key column removed upstream is dropped gracefully at run time
+    (no ColumnNotFoundError), matching the Select node's behaviour."""
+    graph = create_graph(execution_location=execution_location)
+    _build_join_flow(
+        graph,
+        left_data=[{'id': 1, 'name': 'alice'}, {'id': 2, 'name': 'bob'}],
+        right_data=[{'id': 1, 'city': 'NY'}, {'id': 2, 'city': 'LA'}],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col='id', right_col='id')],
+            left_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=True, join_key=True),
+                transform_schema.SelectInput(old_name='name', new_name='name', keep=True),
+            ],
+            right_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=False, join_key=True),
+                transform_schema.SelectInput(old_name='city', new_name='city', keep=True),
+            ],
+            how='inner',
+        ),
+    )
+
+    handle_run_info(graph.run_graph())
+    assert set(graph.get_node(4).get_resulting_data().columns) == {'id', 'name', 'city'}
+
+    # Drop `name` upstream; the join still references it in left_select but it no longer exists.
+    _reselect(graph, [transform_schema.SelectInput(old_name='id', new_name='id', keep=True)])
+    handle_run_info(graph.run_graph())  # must NOT raise (previously a ColumnNotFoundError)
+    assert set(graph.get_node(4).get_resulting_data().columns) == {'id', 'city'}
+
+
+def test_semi_join_passes_left_through_ignoring_left_select(execution_location):
+    """Semi joins push the full left input downstream unchanged: left_select renames/drops are
+    ignored, and a column removed upstream no longer errors."""
+    graph = create_graph(execution_location=execution_location)
+    _build_join_flow(
+        graph,
+        left_data=[{'id': 1, 'name': 'alice', 'extra': 9}, {'id': 2, 'name': 'bob', 'extra': 8}],
+        right_data=[{'id': 1}],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col='id', right_col='id')],
+            # A rename and a drop that must both be IGNORED for semi joins.
+            left_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=True, join_key=True),
+                transform_schema.SelectInput(old_name='name', new_name='renamed_name', keep=True),
+                transform_schema.SelectInput(old_name='extra', new_name='extra', keep=False),
+            ],
+            right_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=False, join_key=True),
+            ],
+            how='semi',
+        ),
+    )
+
+    join_node = graph.get_node(4)
+    predicted = [c.name for c in join_node.get_predicted_schema(force=True)]
+    assert set(predicted) == {'id', 'name', 'extra'}  # unchanged left names — rename/drop ignored
+
+    handle_run_info(graph.run_graph())
+    assert set(join_node.get_resulting_data().columns) == {'id', 'name', 'extra'}
+
+    # Remove `extra` upstream: semi still runs, output = the current left columns, unchanged.
+    _reselect(graph, [
+        transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+        transform_schema.SelectInput(old_name='name', new_name='name', keep=True),
+    ])
+    handle_run_info(graph.run_graph())
+    assert set(graph.get_node(4).get_resulting_data().columns) == {'id', 'name'}
+
+
+def test_join_missing_key_raises_named_error(execution_location):
+    """Removing a join-key column upstream fails the run with an error that names the column."""
+    graph = create_graph(execution_location=execution_location)
+    _build_join_flow(
+        graph,
+        left_data=[{'id': 1, 'name': 'alice'}, {'id': 2, 'name': 'bob'}],
+        right_data=[{'id': 1, 'city': 'NY'}],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col='id', right_col='id')],
+            left_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=True, join_key=True),
+                transform_schema.SelectInput(old_name='name', new_name='name', keep=True),
+            ],
+            right_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=False, join_key=True),
+                transform_schema.SelectInput(old_name='city', new_name='city', keep=True),
+            ],
+            how='inner',
+        ),
+    )
+
+    # Rename the left join key away so `id` no longer exists on the left input.
+    _reselect(graph, [
+        transform_schema.SelectInput(old_name='id', new_name='id2', keep=True),
+        transform_schema.SelectInput(old_name='name', new_name='name', keep=True),
+    ])
+
+    run_info = graph.run_graph()
+    assert not run_info.success
+    join_steps = [s for s in run_info.node_step_result if s.node_id == 4 and not s.success]
+    assert join_steps, 'Expected the join node to fail'
+    join_error = join_steps[0].error or ''
+    assert 'id' in join_error and 'not valid' in join_error.lower(), join_error
+
+
 def test_add_join(execution_location):
     graph = create_graph(execution_location=execution_location)
     # graph.flow_settings.execution_mode = 'Performance'

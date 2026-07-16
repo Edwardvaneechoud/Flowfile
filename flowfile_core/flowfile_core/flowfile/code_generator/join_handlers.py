@@ -33,11 +33,12 @@ class JoinHandlersMixin(ConverterMixinBase):
     def _handle_semi_anti_join(
         self, settings: input_schema.NodeJoin, var_name: str, left_df: str, right_df: str
     ) -> None:
-        """Handle semi and anti joins which only return rows from the left DataFrame.
+        """Handle semi and anti joins, which return the left rows unchanged.
 
-        Semi joins return rows from left DataFrame that have matches in right.
-        Anti joins return rows from left DataFrame that have no matches in right.
-        These joins are simpler as they don't require column management from right DataFrame.
+        Semi joins return rows from the left DataFrame that have a match in the right;
+        anti joins return the left rows with no match. The full left input passes
+        through unchanged (all columns, no rename or drop); the right frame only
+        supplies the join keys for matching. Mirrors FlowDataEngine.join.
 
         Args:
             settings: NodeJoin settings containing join configuration
@@ -48,44 +49,16 @@ class JoinHandlersMixin(ConverterMixinBase):
         Returns:
             None: Modifies internal state by adding generated code
         """
-        join_input_manager = transform_schema.JoinInputManager(settings.join_input)
-        join_input_manager.auto_rename()
-        left_on, right_on = self._get_join_keys(join_input_manager)
-
-        # Semi/anti joins only return left columns, so apply the left-side
-        # select/drop/rename (the right side is suppressed) to mirror FlowDataEngine.join.
-        left_renames = {
-            column.old_name: column.new_name
-            for column in join_input_manager.left_select.renames
-            if column.old_name != column.new_name and (column.keep or column.join_key)
-        }
-        left_drop_columns = [
-            column.old_name
-            for column in join_input_manager.left_select.renames
-            if not column.keep and not column.join_key
-        ]
-        # Write transforms to a node-local temp so a fanned-out upstream frame isn't rebound.
-        left_tmp = f"_join_{settings.node_id}_left"
-        if left_renames:
-            self._add_code(f"{left_tmp} = {left_df}.rename({left_renames})")
-            left_df = left_tmp
-        if left_drop_columns:
-            self._add_code(f"{left_tmp} = {left_df}.drop({left_drop_columns})")
-            left_df = left_tmp
-
-        # Mirror FlowDataEngine.join: drop the left join-key columns the user marked not-keep.
-        after_join_drop_cols = [k.new_name for k in join_input_manager.left_select.join_key_selects if not k.keep]
-        has_post = bool(after_join_drop_cols)
-        self._add_code(f"{var_name} = {'(' if has_post else ''}{left_df}.join(")
-        self._add_code(f"        {right_df},")
+        left_on = [jm.left_col for jm in settings.join_input.join_mapping]
+        right_on = [jm.right_col for jm in settings.join_input.join_mapping]
+        right_keys = list(dict.fromkeys(right_on))
+        right_sel = f"{right_df}.select([{', '.join(self._py_str(k) for k in right_keys)}])"
+        self._add_code(f"{var_name} = {left_df}.join(")
+        self._add_code(f"        {right_sel},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
         self._add_code(f'        how="{settings.join_input.how}"')
         self._add_code("    )")
-        if after_join_drop_cols:
-            self._add_code(f".drop([{', '.join(self._py_str(c) for c in after_join_drop_cols)}])")
-        if has_post:
-            self._add_code(")")
 
     def _handle_standard_join(
         self, settings: input_schema.NodeJoin, var_name: str, left_df: str, right_df: str

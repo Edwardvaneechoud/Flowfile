@@ -382,7 +382,9 @@ def test_join_anti():
     result_df.assert_equal(expected_df)
 
 
-def test_join_anti_not_selecting_join_key():
+def test_join_anti_passthrough_ignores_left_select():
+    # Semi/anti joins push the full left input through unchanged; left_select
+    # keep/rename flags are ignored, so 'name' (marked keep=False) is still returned.
     join_input = transform_schema.JoinInput(
         join_mapping=[transform_schema.JoinMap('name')],
         left_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False), transform_schema.SelectInput(old_name='other')]),
@@ -395,8 +397,8 @@ def test_join_anti_not_selecting_join_key():
     right_df = FlowDataEngine([{"name": "edward", "other": 1}])
     result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                              auto_generate_selection=True)
-    expected_df = FlowDataEngine([{"other": 1},
-                                  {"other": 1}])
+    expected_df = FlowDataEngine([{"name": "eduward", "other": 1},
+                                  {"name": "courtney", "other": 1}])
     result_df.assert_equal(expected_df)
 
 

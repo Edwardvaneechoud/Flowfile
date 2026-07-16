@@ -6419,8 +6419,9 @@ def test_catalog_sql_reader_flowframe_emits_valid_call():
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 @pytest.mark.parametrize("how", ["semi", "anti"])
-def test_semi_anti_join_applies_left_select(join_input_large_dataset, how, export_func):
-    """Semi/anti joins must honor the left-side rename + drop, matching the runtime."""
+def test_semi_anti_join_passes_left_through_unchanged(join_input_large_dataset, how, export_func):
+    """Semi/anti joins pass all left columns through unchanged (left rename/drop ignored), and
+    the generated code matches the runtime."""
     flow = create_basic_flow()
     left_data, right_data = join_input_large_dataset
     flow.add_manual_input(left_data)
@@ -6452,6 +6453,10 @@ def test_semi_anti_join_applies_left_select(join_input_large_dataset, how, expor
 
     code = export_func(flow)
     verify_if_execute(code)
+    # Left passes through unchanged: the left_select rename (Name -> left_name) and drop
+    # (Address keep=False) are ignored for semi/anti joins.
+    runtime_cols = set(flow.get_node(3).get_resulting_data().columns)
+    assert runtime_cols == {"ID", "Name", "Address", "Zipcode"}
     result = normalize_result(get_result_from_generated_code(code))
     expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
     assert_frame_equal(result, expected, check_column_order=False, check_row_order=False)

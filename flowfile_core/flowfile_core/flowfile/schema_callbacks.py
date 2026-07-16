@@ -165,16 +165,21 @@ def calculate_join_schema(
     - if `auto_generate_selection` is True, overlapping names are renamed with
       a `_right` suffix via `auto_rename`.
     """
+    if j_input.input.how in ("semi", "anti"):
+        # Semi/anti joins pass the full left input through unchanged and drop the
+        # right side (mirrors FlowDataEngine.join), so the output schema is exactly
+        # the left schema.
+        return [
+            FlowfileColumn.from_input(col.column_name, col.data_type, example_values=col.example_values)
+            for col in left_schema
+        ]
+
     _ensure_all_columns_have_select(
         left_cols=[col.column_name for col in left_schema],
         right_cols=[col.column_name for col in right_schema],
         manager=j_input,
     )
     j_input.set_join_keys()
-
-    if j_input.input.how in ("semi", "anti"):
-        for jk in j_input.input.right_select.renames:
-            jk.keep = False
 
     left_old_names = {c.old_name for c in j_input.input.left_select.renames}
     right_old_names = {c.old_name for c in j_input.input.right_select.renames}
