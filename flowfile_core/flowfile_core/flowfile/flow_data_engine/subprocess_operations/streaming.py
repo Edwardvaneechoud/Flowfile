@@ -18,6 +18,7 @@ from time import monotonic
 from typing import Any
 
 import polars as pl
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from flowfile_core.configs.settings import WORKER_URL
@@ -135,6 +136,15 @@ def _receive_raw_result(
                     f"unresponsive. Tune or disable via FLOWFILE_WORKER_WS_TIMEOUT."
                 ) from None
             continue
+        except ConnectionClosed:
+            # cancel() sets the stop event and then closes the socket, which
+            # aborts a blocked recv with ConnectionClosed (never TimeoutError).
+            # Only map to an interrupt when a cancel is actually in flight — a
+            # worker-initiated close with no cancel must keep its original
+            # exception so callers preserve the degrade-gracefully semantics.
+            if should_abort is not None and should_abort():
+                raise WorkerStreamInterrupted(f"Canceled while waiting for worker result (task {task_id})") from None
+            raise
         last_message_at = monotonic()
 
         if isinstance(msg, bytes):

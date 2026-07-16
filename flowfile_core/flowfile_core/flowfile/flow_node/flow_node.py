@@ -986,6 +986,10 @@ class FlowNode:
         """
         while not self._execution_lock.acquire(timeout=poll):
             if self._execution_state.is_canceled:
+                # Deliberately record nothing on results here: we do not hold
+                # the lock, and writing results.errors would race the current
+                # holder (the success path never clears errors). The executor's
+                # state.is_canceled reclassification records the clean cancel.
                 raise Exception("Node execution canceled")
         try:
             yield
@@ -1040,10 +1044,17 @@ class FlowNode:
                                 # parents) and can never form a cross-node cycle. Taking upstream
                                 # locks in per-input slot order used to deadlock a parallel stage
                                 # when two sibling nodes consumed the same two upstreams in
-                                # opposite left/right order (AB-BA). Safe to run concurrently
-                                # because node functions build a NEW FlowDataEngine from their
-                                # inputs and never mutate a shared input in place.
+                                # opposite left/right order (AB-BA).
                                 input_result = self._resolve_input_result_for_handle(v, src_handle)
+                                if input_result is not None:
+                                    # De-alias: hand the node function a private view. Some node
+                                    # functions mutate their input (df.lazy = True in the writers,
+                                    # cross_join/fuzzy prep) or return it unchanged (output,
+                                    # filter passthrough, ...), and this node's own post-processing
+                                    # (set_streamable, output_field_config) mutates whatever the
+                                    # function returned — the copy keeps all of that off the
+                                    # engine shared with sibling consumers in the same stage.
+                                    input_result = input_result.shallow_copy()
                                 _df_type = type(input_result.data_frame) if input_result else "None"
                                 self.print(f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}")
                                 input_data.append(input_result)
@@ -1403,7 +1414,9 @@ class FlowNode:
 
             except Exception as e:
                 node_logger.error("Error with external process")
-                if external_df_fetcher.error_code == -1:
+                # Never degrade-gracefully on a canceled node: the raise below
+                # feeds the executor's clean-cancel reclassification instead.
+                if external_df_fetcher.error_code == -1 and not self._execution_state.is_canceled:
                     try:
                         self.results.resulting_data = self.get_resulting_data()
                         self.results.warnings = (

@@ -8,10 +8,13 @@ failures must NOT trigger the fetchers' REST fallback (which would
 re-submit the task to a worker that is presumed wedged).
 """
 
+import threading
 import time
 
 import polars as pl
 import pytest
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     streaming as stream_mod,
@@ -26,12 +29,17 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming imp
 )
 
 
+def _closed_ok() -> ConnectionClosedOK:
+    return ConnectionClosedOK(Close(1000, ""), Close(1000, ""), True)
+
+
 class _FakeWs:
     """Duck-typed stand-in for a websockets.sync client connection.
 
     The script is a list of items played back by ``recv``:
     - ``"timeout"``: sleep ``gap`` seconds, then raise ``TimeoutError``
       (simulating a quiet poll tick);
+    - an Exception instance: raised as-is;
     - anything else: returned as the received message.
     An exhausted script keeps raising ``TimeoutError`` (permanent silence).
     """
@@ -49,6 +57,8 @@ class _FakeWs:
         if item == "timeout":
             time.sleep(self._gap)
             raise TimeoutError
+        if isinstance(item, Exception):
+            raise item
         return item
 
     def close(self):
@@ -171,3 +181,58 @@ def test_receive_thread_marks_stall_as_worker_unresponsive(monkeypatch):
     with pytest.raises(Exception, match="unresponsive"):
         fetcher.get_result()
     assert fetcher.error_code == -2
+
+
+def test_connection_closed_during_cancel_raises_interrupted():
+    """cancel() closes the ws; with cancel intent flagged the resulting
+    ConnectionClosed must classify as an interrupt, not a worker death."""
+    ws = _FakeWs(script=[_closed_ok()])
+
+    with pytest.raises(WorkerStreamInterrupted, match="Canceled"):
+        _receive_raw_result(ws, "task-cancel-close", should_abort=lambda: True)
+
+
+def test_connection_closed_without_cancel_propagates():
+    """A worker-initiated close with no cancel in flight must keep its raw
+    exception so callers preserve the -1 degrade-gracefully semantics."""
+    with pytest.raises(ConnectionClosedOK):
+        _receive_raw_result(_FakeWs(script=[_closed_ok()]), "task-worker-close")
+
+    with pytest.raises(ConnectionClosedOK):
+        _receive_raw_result(_FakeWs(script=[_closed_ok()]), "task-worker-close-2", should_abort=lambda: False)
+
+
+class _CancellableFakeWs:
+    """Blocks in quiet poll ticks until close() flips it to ConnectionClosed —
+    mimics a real socket being closed by cancel() from another thread."""
+
+    def __init__(self):
+        self.closed = threading.Event()
+
+    def recv(self, timeout=None):
+        if self.closed.is_set():
+            raise _closed_ok()
+        time.sleep(0.01)
+        raise TimeoutError
+
+    def close(self):
+        self.closed.set()
+
+
+def test_cancel_mid_stream_classified_as_interrupted_not_worker_death(monkeypatch):
+    """Fetcher-level race through the REAL receive chain: cancel() must yield
+    error_code -2 (interrupted) rather than -1 (worker child died), which
+    downstream would mislabel as a memory kill and degrade gracefully."""
+    fake_ws = _CancellableFakeWs()
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: fake_ws)
+    monkeypatch.setattr(subprocess_ops, "cancel_task", lambda *a, **k: None)
+
+    fetcher = subprocess_ops.ExternalDfFetcher(
+        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-cancel-race", wait_on_completion=False
+    )
+    time.sleep(0.05)
+    fetcher.cancel()
+
+    assert fetcher.error_code == -2, "user cancel must classify as interrupted (-2), not worker death (-1)"
+    with pytest.raises(Exception, match="Canceled"):
+        fetcher.get_result()

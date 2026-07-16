@@ -2763,6 +2763,29 @@ class FlowDataEngine:
         """Sets whether DataFrame operations should be streamable."""
         self._streamable = streamable
 
+    def shallow_copy(self) -> FlowDataEngine:
+        """Cheap de-aliasing wrapper around the same (immutable) Polars frame.
+
+        Shares the frame and the cached schema, but owns its own mutable flags
+        (_lazy, _streamable, number_of_records, _schema), so a consumer handed
+        this copy can never mutate an engine shared with sibling consumers.
+        Collect-free: forwarding number_of_records and the cached schema skips
+        both pl.len() and collect_schema() in __init__ (the schema fallback only
+        fires when _schema is unset, and is metadata-only). Deliberately does
+        not carry external_source: memoized results are materialized before
+        they are shared, so the plain frame is the whole result.
+        """
+        return FlowDataEngine(
+            self.data_frame,
+            name=self.name,
+            optimize_memory=self._optimize_memory,
+            schema=self._schema,
+            number_of_records=self.number_of_records,
+            streamable=self._streamable,
+            number_of_records_callback=self._number_of_records_callback,
+            data_callback=self._data_callback,
+        )
+
     def _calculate_schema(self) -> list[dict]:
         """Calculates schema statistics."""
         if self.external_source is not None:

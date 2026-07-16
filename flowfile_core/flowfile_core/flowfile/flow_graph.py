@@ -2210,8 +2210,9 @@ class FlowGraph:
 
         def schema_callback():
             input_data = node.singular_main_input.get_resulting_data()
-            input_data.lazy = True
-            input_lf = input_data.data_frame
+            # Runs on a background thread: never mutate the shared memoized
+            # engine (input_data.lazy = ...); build a local lazy frame instead.
+            input_lf = input_data.data_frame.lazy()
             return pre_calculate_pivot_schema(input_data.schema, pivot_settings.pivot_input, input_lf=input_lf)
 
         node.schema_callback = schema_callback
@@ -5306,7 +5307,7 @@ class FlowGraph:
             # a spurious reset (and lose example_data_generator / has_completed_last_run).
             node._hash = saved_hash
         try:
-            node_result.error = str(node.results.errors)
+            node_result.error = "" if node.results.errors is None else str(node.results.errors)
             if self.flow_settings.is_canceled:
                 node_result.success = None
                 node_result.is_running = False

@@ -862,6 +862,11 @@ class BaseFetcher:
         """
         logger.warning("Cancelling the operation")
 
+        # Mark cancel intent BEFORE tearing down the socket: the receive path
+        # classifies the resulting ConnectionClosed as a user cancel only if
+        # the stop event is already set when the close reaches it.
+        self._stop_event.set()
+
         # Close WebSocket if streaming (causes recv thread to exit)
         with self._lock:
             ws = self._ws
@@ -876,8 +881,6 @@ class BaseFetcher:
             cancel_task(self.file_ref)
         except Exception as e:
             logger.error(f"Failed to cancel task on worker: {str(e)}")
-
-        self._stop_event.set()
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
@@ -1012,9 +1015,13 @@ class BaseFetcher:
             logger.exception("Error in WebSocket receive thread")
             with self._condition:
                 # -1 means "worker child died" and lets the node degrade
-                # gracefully; a stalled/canceled stream means the worker itself
-                # is unresponsive, so use -2 to make the node fail fast instead.
-                self._error_code = -2 if isinstance(e, WorkerStreamInterrupted) else -1
+                # gracefully; -2 means stalled-or-canceled and makes the node
+                # fail fast (the executor's state.is_canceled check then
+                # disambiguates a user cancel from a genuine stall). The
+                # _stop_event disjunct catches cancel-time teardown exceptions
+                # that surface as types other than WorkerStreamInterrupted.
+                interrupted = isinstance(e, WorkerStreamInterrupted) or self._stop_event.is_set()
+                self._error_code = -2 if interrupted else -1
                 self._error_description = str(e)
                 self._running = False
                 self._ws = None
