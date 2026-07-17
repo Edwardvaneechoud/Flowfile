@@ -19,6 +19,7 @@ from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.flowfile.code_generator import project_shim
 from flowfile_core.flowfile.code_generator.project_exporter import (
     FlowGraphToProjectConverter,
+    _insert_flowfile_ctx_import,
     export_flow_to_project,
     project_to_zip_bytes,
 )
@@ -26,6 +27,60 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import ProjectExportManifest
+
+
+@pytest.fixture(autouse=True)
+def _restore_custom_node_registry():
+    """Snapshot/restore the global node registries so file-backed custom nodes
+    registered in a test never leak into sibling tests."""
+    from flowfile_core.configs import node_store as node_store_mod
+
+    saved_store = dict(node_store_mod.CUSTOM_NODE_STORE)
+    saved_dict = dict(node_store_mod.node_dict)
+    saved_list = list(node_store_mod.nodes_list)
+    try:
+        yield
+    finally:
+        node_store_mod.CUSTOM_NODE_STORE.clear()
+        node_store_mod.CUSTOM_NODE_STORE.update(saved_store)
+        node_store_mod.node_dict.clear()
+        node_store_mod.node_dict.update(saved_dict)
+        node_store_mod.nodes_list[:] = saved_list
+
+
+def _write_node_module(tmp_path: Path, stem: str, source: str):
+    """Write a custom-node module to a temp file and import it (file-backed so the
+    exporter can read the class source via ``inspect.getfile``)."""
+    import importlib
+    import sys
+
+    (tmp_path / f"{stem}.py").write_text(source)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        return importlib.import_module(stem)
+    finally:
+        sys.path.remove(str(tmp_path))
+
+
+# A custom node whose process() logs via the kernel-injected flowfile_ctx global.
+# The exported code must bind flowfile_ctx (ship the shim + insert the import) or
+# this raises NameError when run standalone.
+_CTX_NODE_SOURCE = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class CtxLogger(nd.CustomNodeBase):
+    node_name: str = "Ctx Logger"
+    node_category: str = "Transform"
+    number_of_inputs: int = 1
+    number_of_outputs: int = 1
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        flowfile_ctx.log_info("ctx node ran")
+        return inputs[0].with_columns(pl.lit(1).alias("k"))
+'''
 
 
 def create_flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -1019,3 +1074,134 @@ class TestRunFlowProjectExport:
         # head(1) + head(2) of the 3-row parent frame -> 3 rows with metadata columns
         assert "param_limit" in result.stdout
         assert "run_index" in result.stdout
+
+
+# ==================== flowfile_ctx binding in exported custom-node code ====================
+
+
+def _build_ctx_node_subflow(tmp_path: Path, node_cls) -> dict:
+    """flow_input 'customers' -> ctx custom node -> flow_output 'result'.
+
+    The custom node lives ONLY inside this subflow, so the parent project ships
+    flowfile_ctx.py only if _needs_flowfile_ctx propagates up from the child.
+    """
+    flow = create_basic_flow(flow_id=33, name="ctx_subflow")
+    flow.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            input_name="customers",
+            raw_data_format=input_schema.RawData.from_pylist([{"name": "a"}, {"name": "b"}]),
+        )
+    )
+    node_settings = input_schema.UserDefinedNode(flow_id=flow.flow_id, node_id=2, settings={}, is_user_defined=True)
+    flow.add_user_defined_node(
+        custom_node=node_cls.from_settings({}),
+        user_defined_node_settings=node_settings,
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=flow.flow_id, node_id=3, output_name="result", depending_on_id=2)
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    path = tmp_path / "ctx_subflow.yaml"
+    flow.save_flow(str(path))
+    return {"path": path, "registration_id": _register_flow_file(path, "ctx_subflow")}
+
+
+def _ctx_custom_module(manifest: ProjectExportManifest) -> str:
+    """The shipped custom_nodes/<mod>.py content (exactly one in these tests)."""
+    path = next(
+        p
+        for p in file_paths(manifest)
+        if p.startswith("custom_nodes/") and p.endswith(".py") and not p.endswith("__init__.py")
+    )
+    return get_file(manifest, path)
+
+
+def test_flow_input_sample_expression_uses_public_api(tmp_path):
+    """Bug 1: the flow_input sample expression must not import flowfile_core."""
+    sub = _build_head_subflow(tmp_path)
+    flow = create_basic_flow(flow_id=51, name="sample_public_api_parent")
+    add_sample_input(flow, node_id=1)
+    flow.add_run_flow(_run_flow_settings(flow, sub["registration_id"]))
+    _keyed_connect(flow, 1, 9, "input-1")
+
+    manifest = export_flow_to_project(flow)
+    module = get_file(manifest, "subflows/head_subflow.py")
+    assert "flowfile_core" not in module
+    assert "ff.from_raw_data(" in module
+    assert "RawData(" not in module
+    ast.parse(module)
+
+
+def test_custom_node_flowfile_ctx_executes_end_to_end(tmp_path):
+    """Bug 2: an exported project with a flowfile_ctx-using custom node runs standalone."""
+    mod = _write_node_module(tmp_path, "ctx_e2e_node", _CTX_NODE_SOURCE)
+    try:
+        add_to_custom_node_store(mod.CtxLogger)
+        flow = create_basic_flow(name="ctx_e2e")
+        add_sample_input(flow, node_id=1)
+        node_settings = input_schema.UserDefinedNode(flow_id=1, node_id=2, settings={}, is_user_defined=True)
+        flow.add_user_defined_node(
+            custom_node=mod.CtxLogger.from_settings({}),
+            user_defined_node_settings=node_settings,
+        )
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        manifest = export_flow_to_project(flow)
+    finally:
+        sys.modules.pop("ctx_e2e_node", None)
+
+    assert "flowfile_ctx.py" in file_paths(manifest)
+    assert "import flowfile_ctx" in _ctx_custom_module(manifest)
+
+    project_dir = write_project(manifest, tmp_path)
+    result = subprocess.run(
+        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ctx node ran" in result.stdout
+
+
+def test_insert_flowfile_ctx_import_handles_decorated_first_statement():
+    """A decorated first top-level class/def has lineno at the keyword, not the
+    decorator; the import must go ABOVE the decorator or the module is a SyntaxError."""
+    # Decorated class as the first statement.
+    out = _insert_flowfile_ctx_import(
+        "@nd.register\nclass N(nd.CustomNodeBase):\n    def process(self, m):\n        return m\n"
+    )
+    ast.parse(out)  # would raise if spliced between @nd.register and `class`
+    lines = out.splitlines()
+    assert lines.index("import flowfile_ctx") < next(i for i, line in enumerate(lines) if line.startswith("@"))
+
+    # Stacked decorators after a docstring + __future__ import: stay after __future__,
+    # still above the first decorator.
+    out2 = _insert_flowfile_ctx_import(
+        '"""doc"""\nfrom __future__ import annotations\n\n@deco_a\n@deco_b\nclass N:\n    pass\n'
+    )
+    ast.parse(out2)
+    l2 = out2.splitlines()
+    assert l2.index("from __future__ import annotations") < l2.index("import flowfile_ctx")
+    assert l2.index("import flowfile_ctx") < next(i for i, line in enumerate(l2) if line.startswith("@"))
+
+
+def test_subflow_custom_node_ships_flowfile_ctx_shim(tmp_path):
+    """Bug 2 regression guard: _needs_flowfile_ctx must propagate up from a subflow so
+    a custom node living ONLY inside the subflow still ships flowfile_ctx.py."""
+    mod = _write_node_module(tmp_path, "ctx_subflow_node", _CTX_NODE_SOURCE)
+    try:
+        add_to_custom_node_store(mod.CtxLogger)
+        sub = _build_ctx_node_subflow(tmp_path, mod.CtxLogger)
+        flow = create_basic_flow(flow_id=52, name="ctx_subflow_parent")
+        add_sample_input(flow, node_id=1)
+        flow.add_run_flow(
+            _run_flow_settings(flow, sub["registration_id"], output_slots=["result"], parameter_specs=[])
+        )
+        _keyed_connect(flow, 1, 9, "input-1")
+        manifest = export_flow_to_project(flow)
+    finally:
+        sys.modules.pop("ctx_subflow_node", None)
+
+    assert "flowfile_ctx.py" in file_paths(manifest)
+    assert "import flowfile_ctx" in _ctx_custom_module(manifest)
+    ast.parse(get_file(manifest, "subflows/ctx_subflow.py"))
