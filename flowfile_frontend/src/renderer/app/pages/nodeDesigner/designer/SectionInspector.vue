@@ -32,6 +32,7 @@
               class="ins-input ins-mono"
               title="Attribute used in self.settings_schema.<name>"
               placeholder="section_name"
+              @focus="captureName"
               @input="updateName(($event.target as HTMLInputElement).value)"
               @change="commitName"
             />
@@ -148,12 +149,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { SectionLayout, SectionState } from "../designerState";
 import EmptyState from "../../../components/common/EmptyState/EmptyState.vue";
 
 const store = useNodeDesignerStore();
+
+// Captured before an edit so commitName can retarget visible_when refs to the new name.
+const nameBeforeEdit = ref("");
 
 const section = computed<SectionState | null>(() => {
   const idx = store.selectedSectionIndex;
@@ -185,9 +189,17 @@ function updateName(value: string) {
   store.sections[store.selectedSectionIndex].name = value;
 }
 
+function captureName() {
+  nameBeforeEdit.value = section.value?.name ?? "";
+}
+
 function commitName() {
   if (store.selectedSectionIndex === null) return;
   store.sanitizeSectionName(store.selectedSectionIndex);
+  store.retargetVisibleWhenForSection(
+    nameBeforeEdit.value,
+    store.sections[store.selectedSectionIndex].name,
+  );
 }
 
 function updateDescription(value: string) {
