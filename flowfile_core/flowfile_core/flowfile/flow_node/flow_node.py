@@ -1350,6 +1350,51 @@ class FlowNode:
                 if not self.node_settings.streamable:
                     step.node_settings.streamable = self.node_settings.streamable
 
+    _INFER_SCHEMA_RUNGS = (10_000, 100_000)
+
+    @staticmethod
+    def _is_type_inference_error(error_description: str | None) -> bool:
+        """True when a worker error looks like a CSV schema/type-inference failure worth widening for."""
+        if not error_description:
+            return False
+        lowered = error_description.lower()
+        signatures = ("could not parse", "as dtype", "conversion from", "schemaerror", "computeerror", "infer_schema")
+        return any(sig in lowered for sig in signatures)
+
+    @classmethod
+    def _next_infer_rung(cls, current: int) -> int | None:
+        """Next inference length above ``current`` on the escalation ladder, or None if exhausted."""
+        return min((rung for rung in cls._INFER_SCHEMA_RUNGS if rung > current), default=None)
+
+    def _eligible_infer_length(self) -> int | None:
+        """Configured infer length if this is a CSV read with inference on, else None (ineligible).
+
+        Scoped to file_type == "csv": _escalated_read_frame rebuilds via
+        FlowDataEngine.create_from_path, which has no "json" handler (json reads route
+        through the worker), so an InputJsonTable (a subclass of InputCsvTable) must not
+        be treated as eligible.
+        """
+        if self.node_type != "read":
+            return None
+        received_file = getattr(self.setting_input, "received_file", None)
+        if getattr(received_file, "file_type", None) != "csv":
+            return None
+        table_settings = getattr(received_file, "table_settings", None)
+        if not isinstance(table_settings, input_schema.InputCsvTable):
+            return None
+        if not getattr(table_settings, "infer_schema", True):
+            return None
+        return table_settings.infer_schema_length
+
+    def _escalated_read_frame(self, rung: int) -> FlowDataEngine | None:
+        """Rebuild the read frame at a higher infer_schema_length on a copy (saved setting untouched)."""
+        if self._eligible_infer_length() is None:
+            return None
+        escalated_file = self.setting_input.received_file.model_copy(deep=True)
+        escalated_file.table_settings.infer_schema_length = rung
+        escalated_file.set_absolute_filepath()
+        return FlowDataEngine.create_from_path(escalated_file)
+
     def _do_execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
         """Executes the node's logic remotely or handles cached results.
 
@@ -1390,52 +1435,85 @@ class FlowNode:
             raise e
 
         if not performance_mode:
-            external_df_fetcher = ExternalDfFetcher(
-                lf=self.get_resulting_data().data_frame,
-                file_ref=self.hash,
-                wait_on_completion=False,
-                flow_id=node_logger.flow_id,
-                node_id=self.node_id,
-            )
-            self._fetch_cached_df = external_df_fetcher
+            # Transient CSV schema-inference escalation: on a type-parse failure a read node
+            # re-stores at a higher infer_schema_length (configured -> 10k -> 100k) without ever
+            # mutating the saved setting. Ineligible nodes keep current_infer=None and never escalate.
+            store_frame = self.get_resulting_data().data_frame
+            current_infer = self._eligible_infer_length()
+            file_ref = self.hash
 
-            try:
-                lf = external_df_fetcher.get_result()
-                # Row count rides along on the store result — no extra worker round-trip.
-                status = external_df_fetcher.status
-                self.results.resulting_data = FlowDataEngine(
-                    lf,
-                    number_of_records=status.number_of_records if status is not None else None,
+            while True:
+                external_df_fetcher = ExternalDfFetcher(
+                    lf=store_frame,
+                    file_ref=file_ref,
+                    wait_on_completion=False,
+                    flow_id=node_logger.flow_id,
+                    node_id=self.node_id,
                 )
+                self._fetch_cached_df = external_df_fetcher
 
-                if not performance_mode:
+                try:
+                    lf = external_df_fetcher.get_result()
+                    # Row count rides along on the store result — no extra worker round-trip.
+                    status = external_df_fetcher.status
+                    self.results.resulting_data = FlowDataEngine(
+                        lf,
+                        number_of_records=status.number_of_records if status is not None else None,
+                    )
                     self.store_example_data_generator(external_df_fetcher)
                     self.node_stats.has_run_with_current_setup = True
+                    break
 
-            except Exception as e:
-                node_logger.error("Error with external process")
-                # Never degrade-gracefully on a canceled node: the raise below
-                # feeds the executor's clean-cancel reclassification instead.
-                if external_df_fetcher.error_code == -1 and not self._execution_state.is_canceled:
-                    try:
-                        self.results.resulting_data = self.get_resulting_data()
-                        self.results.warnings = (
-                            "Error with external process (unknown error), "
-                            "likely the process was killed by the server because of memory constraints, "
-                            "continue with the process. "
-                            "We cannot display example data..."
+                except Exception as e:
+                    node_logger.error("Error with external process")
+                    if current_infer is not None and self._is_type_inference_error(
+                        external_df_fetcher.error_description
+                    ):
+                        next_rung = self._next_infer_rung(current_infer)
+                        escalated = self._escalated_read_frame(next_rung) if next_rung is not None else None
+                        if escalated is not None:
+                            node_logger.warning(
+                                "CSV type inference failed; retrying read with "
+                                f"infer_schema_length={next_rung}."
+                            )
+                            store_frame = escalated.data_frame
+                            current_infer = next_rung
+                            file_ref = f"{self.hash}_infer{next_rung}"
+                            self._fetch_cached_df = None
+                            continue
+                        # Ladder exhausted on a type conflict: surface the real cause with guidance.
+                        guidance = (
+                            f"{external_df_fetcher.error_description}\n\n"
+                            "Automatic schema-inference escalation reached its maximum "
+                            f"({self._INFER_SCHEMA_RUNGS[-1]} rows) but the file still has a type conflict. "
+                            "Increase 'Schema Infer Length' further, turn off 'Infer data types' to read "
+                            "every column as text, or enable 'Ignore Errors' to null the unparseable values."
                         )
-                    except Exception as e:
+                        self.results.errors = guidance
+                        raise Exception(guidance) from e
+                    # Never degrade-gracefully on a canceled node: the raise below
+                    # feeds the executor's clean-cancel reclassification instead.
+                    if external_df_fetcher.error_code == -1 and not self._execution_state.is_canceled:
+                        try:
+                            self.results.resulting_data = self.get_resulting_data()
+                            self.results.warnings = (
+                                "Error with external process (unknown error), "
+                                "likely the process was killed by the server because of memory constraints, "
+                                "continue with the process. "
+                                "We cannot display example data..."
+                            )
+                        except Exception as e:
+                            self.results.errors = str(e)
+                            raise e
+                    elif external_df_fetcher.error_description is None:
                         self.results.errors = str(e)
                         raise e
-                elif external_df_fetcher.error_description is None:
-                    self.results.errors = str(e)
-                    raise e
-                else:
-                    self.results.errors = external_df_fetcher.error_description
-                    raise Exception(external_df_fetcher.error_description) from e
-            finally:
-                self._fetch_cached_df = None
+                    else:
+                        self.results.errors = external_df_fetcher.error_description
+                        raise Exception(external_df_fetcher.error_description) from e
+                    break
+                finally:
+                    self._fetch_cached_df = None
 
     # Backward-compatible aliases for renamed methods
     def execute_full_local(self, performance_mode: bool = False) -> None:
