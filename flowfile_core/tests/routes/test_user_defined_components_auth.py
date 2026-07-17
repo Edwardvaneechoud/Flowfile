@@ -143,6 +143,26 @@ class TestAuthedHappyPath:
         assert response.status_code == 400
         assert not (storage.user_defined_nodes_directory / f"{node_file}.py").exists()
 
+    def test_builtin_key_collision_rejected(self, node_file):
+        # "Train Model" -> key "train_model", a built-in node type: reject, never write.
+        colliding = VALID_NODE_CODE.format(node_name="Train Model")
+        resp = authed_client.post(
+            "/user_defined_components/save-custom-node", json={"file_name": node_file, "code": colliding}
+        )
+        assert resp.status_code == 409, resp.text
+        detail = resp.json()["detail"]
+        assert detail["error_code"] == "BUILTIN_NODE_KEY_COLLISION"
+        assert detail["node_key"] == "train_model"
+        assert not (storage.user_defined_nodes_directory / f"{node_file}.py").exists()
+
+        # A non-colliding name on the same file still saves fine.
+        ok = VALID_NODE_CODE.format(node_name=f"Node {node_file[-8:]}")
+        resp2 = authed_client.post(
+            "/user_defined_components/save-custom-node", json={"file_name": node_file, "code": ok}
+        )
+        assert resp2.status_code == 200, resp2.text
+        assert resp2.json()["success"] is True
+
     def test_get_missing_node_404(self):
         response = authed_client.get("/user_defined_components/get-custom-node/never_saved_node_xyz")
         assert response.status_code == 404

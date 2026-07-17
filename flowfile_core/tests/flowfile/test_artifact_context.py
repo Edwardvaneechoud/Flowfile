@@ -4,7 +4,12 @@ from datetime import datetime
 
 import pytest
 
-from flowfile_core.flowfile.artifacts import ArtifactContext, ArtifactRef, NodeArtifactState
+from flowfile_core.flowfile.artifacts import (
+    ArtifactContext,
+    ArtifactRef,
+    NodeArtifactState,
+    merge_declared_artifacts,
+)
 
 
 # ArtifactRef
@@ -530,3 +535,110 @@ class TestArtifactContextChainIsolation:
 
         avail = ctx.compute_available(node_id=5, kernel_id="k", upstream_node_ids=[2, 3])
         assert set(avail.keys()) == {"b", "c"}
+
+
+# ArtifactContext — Allowlist map derivation (lineage sent to the kernel)
+
+
+class TestArtifactAllowlistMap:
+    """The {name: source_node_id} map core ships to the kernel is derived from
+    the same ``compute_available`` result used for availability."""
+
+    def test_allowlist_map_from_available(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(2, "k1", ["scaler"])
+        available = ctx.compute_available(node_id=3, kernel_id="k1", upstream_node_ids=[1, 2])
+        allowlist = {name: ref.source_node_id for name, ref in available.items()}
+        assert allowlist == {"model": 1, "scaler": 2}
+
+    def test_allowlist_map_empty_when_nothing_upstream(self):
+        ctx = ArtifactContext()
+        available = ctx.compute_available(node_id=1, kernel_id="k1", upstream_node_ids=[])
+        assert {name: ref.source_node_id for name, ref in available.items()} == {}
+
+
+# ArtifactContext — Rich publish metadata round-trip
+
+
+class TestArtifactRichMetadataRoundTrip:
+    def test_record_published_rich_dicts_surface_in_summaries(self):
+        """type_name/module from rich publish dicts flow into get_node_summaries."""
+        ctx = ArtifactContext()
+        ctx.record_published(
+            1,
+            "k1",
+            [{"name": "model", "type_name": "RandomForestClassifier", "module": "sklearn.ensemble"}],
+        )
+        summaries = ctx.get_node_summaries()
+        published = summaries["1"]["published"]
+        assert published == [
+            {"name": "model", "type_name": "RandomForestClassifier", "module": "sklearn.ensemble"}
+        ]
+
+
+# merge_declared_artifacts
+
+
+class TestMergeDeclaredArtifacts:
+    def test_observed_only(self):
+        observed = {"model": ArtifactRef(name="model", source_node_id=1, kernel_id="k1", type_name="dict")}
+        result = merge_declared_artifacts(observed, [], "k1")
+        assert len(result) == 1
+        assert result[0]["name"] == "model"
+        assert result[0]["status"] == "published"
+        assert result[0]["type_name"] == "dict"
+
+    def test_declared_only_entry_shape(self):
+        result = merge_declared_artifacts({}, [(2, "encoder", "sklearn.preprocessing.LabelEncoder")], "k1")
+        assert result == [
+            {
+                "name": "encoder",
+                "source_node_id": 2,
+                "kernel_id": "k1",
+                "type_name": "LabelEncoder",
+                "module": "sklearn.preprocessing",
+                "size_bytes": 0,
+                "created_at": None,
+                "status": "declared",
+            }
+        ]
+
+    def test_observed_wins_on_conflict(self):
+        observed = {"model": ArtifactRef(name="model", source_node_id=1, kernel_id="k1", type_name="RealType")}
+        declared = [(1, "model", "declared.Type")]
+        result = merge_declared_artifacts(observed, declared, "k1")
+        assert len(result) == 1
+        assert result[0]["status"] == "published"
+        assert result[0]["type_name"] == "RealType"
+
+    def test_type_rpartition_split(self):
+        result = merge_declared_artifacts({}, [(3, "a", "a.b.c.MyType")], "k1")
+        assert result[0]["module"] == "a.b.c"
+        assert result[0]["type_name"] == "MyType"
+
+    def test_no_dot_type(self):
+        result = merge_declared_artifacts({}, [(3, "a", "MyType")], "k1")
+        assert result[0]["module"] == ""
+        assert result[0]["type_name"] == "MyType"
+
+    def test_none_type(self):
+        result = merge_declared_artifacts({}, [(3, "a", None)], "k1")
+        assert result[0]["module"] == ""
+        assert result[0]["type_name"] == ""
+
+    def test_declared_duplicate_first_wins(self):
+        declared = [(1, "shared", "first.A"), (2, "shared", "second.B")]
+        result = merge_declared_artifacts({}, declared, "k1")
+        assert len(result) == 1
+        assert result[0]["source_node_id"] == 1
+        assert result[0]["type_name"] == "A"
+
+    def test_statuses_and_ordering(self):
+        observed = {"published_art": ArtifactRef(name="published_art", source_node_id=1, kernel_id="k1")}
+        declared = [(2, "declared_art", "mod.T"), (1, "published_art", "mod.Ignored")]
+        result = merge_declared_artifacts(observed, declared, "k1")
+        by_name = {r["name"]: r for r in result}
+        assert by_name["published_art"]["status"] == "published"
+        assert by_name["declared_art"]["status"] == "declared"
+        assert len(result) == 2

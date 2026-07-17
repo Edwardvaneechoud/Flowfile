@@ -1,6 +1,7 @@
 """Re-export shim — implementation moved to shared/node_designer/custom_node.py."""
 
 from shared.node_designer.custom_node import (
+    Artifact,
     CustomNodeBase,
     NodeSettings,
     NodeSettingsBuilder,
@@ -13,6 +14,7 @@ from shared.node_designer.custom_node import (
 )
 
 __all__ = [
+    "Artifact",
     "CustomNodeBase",
     "NodeSettings",
     "NodeSettingsBuilder",

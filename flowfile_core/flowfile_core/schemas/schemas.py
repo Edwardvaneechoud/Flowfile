@@ -11,6 +11,7 @@ from pydantic import (
 )
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.flowfile.node_designer.state import ArtifactDecl
 from flowfile_core.flowfile.param_types import FlowParameter  # noqa: F401 - re-exported; historical home
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import input_schema
@@ -104,12 +105,18 @@ def get_settings_class_for_node_type(node_type: str, setting_data: dict | None =
     referencing a custom node that is missing from the store still resolve to
     ``UserDefinedNode`` instead of failing as an unknown type.
     """
+    # A user-defined node whose key collides with a built-in type must still
+    # resolve to UserDefinedNode. Built-in schemas drop ``is_user_defined`` on
+    # serialization, so a truthy marker means a genuine custom node — it wins
+    # over the built-in type->schema mapping.
+    if isinstance(setting_data, dict) and setting_data.get("is_user_defined"):
+        return input_schema.UserDefinedNode
     model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
     if model_class is not None:
         return model_class
     if node_type in _get_custom_node_store():
         return input_schema.UserDefinedNode
-    if isinstance(setting_data, dict) and (setting_data.get("is_user_defined") or "settings" in setting_data):
+    if isinstance(setting_data, dict) and "settings" in setting_data:
         return input_schema.UserDefinedNode
     return None
 
@@ -623,6 +630,7 @@ class NodeTemplate(BaseModel):
     custom_node: bool | None = False
     execution_environment: str | None = None
     dependencies: list[str] | None = None
+    publishes: list[ArtifactDecl] | None = None
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
     # Per-instance input handles (run_flow): connections are keyed by target

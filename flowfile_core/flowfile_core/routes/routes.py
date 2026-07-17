@@ -42,6 +42,7 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.artifacts import merge_declared_artifacts
 from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
@@ -86,6 +87,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
+from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
     changed_target_fields,
@@ -1049,9 +1051,7 @@ def create_flow(
                 status_code=409,
                 detail=f"Flow path {flow_path} is already registered in another namespace",
             )
-    flow_id = flow_file_handler.add_flow(
-        name=name, flow_path=flow_path, user_id=user_id, persist=register_in_catalog
-    )
+    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id, persist=register_in_catalog)
     flow = flow_file_handler.get_flow(flow_id)
     if register_in_catalog and flow and flow.flow_settings:
         try:
@@ -1285,9 +1285,7 @@ def get_node_list() -> list[schemas.NodeTemplate]:
     if not overrides:
         return nodes_list
     return [
-        node.model_copy(update={"image": overrides[node.item]})
-        if node.custom_node and node.item in overrides
-        else node
+        node.model_copy(update={"image": overrides[node.item]}) if node.custom_node and node.item in overrides else node
         for node in nodes_list
     ]
 
@@ -1930,11 +1928,28 @@ def get_node_upstream_ids(flow_id: int, node_id: int):
     return {"upstream_node_ids": flow._get_upstream_node_ids(node_id)}
 
 
+def _resolve_node_kernel_id(node) -> str | None:
+    """Resolve a node's kernel binding via the setting/python_script/manifest ladder."""
+    kid = getattr(node.setting_input, "kernel_id", None)
+    if kid:
+        return kid
+    kid = getattr(getattr(node.setting_input, "python_script_input", None), "kernel_id", None)
+    if kid:
+        return kid
+    entry = user_defined_registry.get(node.node_type)
+    if entry is not None and entry.manifest is not None:
+        return entry.manifest.environment.default_kernel_id
+    return None
+
+
 @router.get("/flow/node_available_artifacts", tags=["editor"])
 def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | None = None):
     """Return available artifact metadata for a node.
 
-    Used by the frontend to populate artifact selector UI components.
+    Merges run-observed artifacts (published in a prior run) with artifacts
+    upstream kernel nodes *declare* they publish (from their manifests), so the
+    frontend's artifact pickers work before the flow has ever run. Observed
+    wins on name conflict.
     """
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
@@ -1942,17 +1957,34 @@ def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | No
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, "Could not find the node")
-    resolved_kernel_id = kernel_id or getattr(node.setting_input, "kernel_id", None)
+    resolved_kernel_id = kernel_id or _resolve_node_kernel_id(node)
     if not resolved_kernel_id:
         return {"artifacts": []}
 
     upstream_ids = flow._get_upstream_node_ids(node_id)
-    available = flow.artifact_context.compute_available(
+    observed = flow.artifact_context.compute_available(
         node_id=node_id,
         kernel_id=resolved_kernel_id,
         upstream_node_ids=upstream_ids,
     )
-    return {"artifacts": [ref.to_dict() for ref in available.values()]}
+
+    declared: list[tuple[int, str, str | None]] = []
+    for uid in upstream_ids:
+        up = flow.get_node(uid)
+        if up is None:
+            continue
+        entry = user_defined_registry.get(up.node_type)
+        if entry is None or entry.manifest is None:
+            continue
+        manifest = entry.manifest
+        if manifest.environment.kind != "kernel" or not manifest.publishes:
+            continue
+        if _resolve_node_kernel_id(up) != resolved_kernel_id:
+            continue
+        for decl in manifest.publishes:
+            declared.append((uid, decl.name, decl.type))
+
+    return {"artifacts": merge_declared_artifacts(observed, declared, resolved_kernel_id)}
 
 
 @router.get("/analysis_data/graphic_walker_input", tags=["analysis"], response_model=input_schema.NodeExploreData)

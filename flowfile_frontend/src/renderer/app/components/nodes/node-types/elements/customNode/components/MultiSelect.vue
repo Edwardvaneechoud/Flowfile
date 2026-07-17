@@ -22,7 +22,8 @@
 
 <script setup lang="ts">
 import { computed, PropType } from "vue";
-import type { MultiSelectComponent } from "../interface";
+import type { ArtifactOption, GlobalArtifactOption, MultiSelectComponent } from "../interface";
+import { buildArtifactOptions } from "./artifactFilter";
 
 const props = defineProps({
   schema: {
@@ -38,22 +39,33 @@ const props = defineProps({
     default: () => [],
   },
   availableArtifacts: {
-    type: Array as PropType<string[]>,
+    type: Array as PropType<ArtifactOption[]>,
+    default: () => [],
+  },
+  globalArtifacts: {
+    type: Array as PropType<GlobalArtifactOption[]>,
     default: () => [],
   },
 });
 
 defineEmits(["update:modelValue"]);
 
+// Value is always the bare artifact name; scope decides source and label.
 const options = computed(() => {
-  if (Array.isArray(props.schema.options)) {
-    return props.schema.options;
+  const opts = props.schema.options;
+  if (Array.isArray(opts)) {
+    return opts;
   }
-  if (props.schema.options?.__type__ === "IncomingColumns") {
+  if (opts?.__type__ === "IncomingColumns") {
     return props.incomingColumns;
   }
-  if (props.schema.options?.__type__ === "AvailableArtifacts") {
-    return props.availableArtifacts;
+  if (opts?.__type__ === "AvailableArtifacts") {
+    return buildArtifactOptions(
+      opts.scope,
+      props.availableArtifacts,
+      props.globalArtifacts,
+      opts.type_filter,
+    );
   }
   return [];
 });

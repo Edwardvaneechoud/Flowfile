@@ -62,6 +62,17 @@ class TestListAll:
         listing = store.list_all()
         assert set(listing.keys()) == {"a", "b"}
 
+    def test_list_all_flow_scoped_exposes_publish_diff_fields(self, store: ArtifactStore):
+        """The publish diff in main._run_user_code reads type_name/module/size_bytes/node_id
+        off list_all(flow_id=...) — pin that those fields are present."""
+        store.publish("model", {"a": 1}, node_id=7, flow_id=99)
+        meta = store.list_all(flow_id=99)["model"]
+        assert meta["type_name"] == "dict"
+        assert meta["module"] == "builtins"
+        assert meta["node_id"] == 7
+        assert isinstance(meta["size_bytes"], int)
+        assert meta["size_bytes"] > 0
+
 
 class TestClear:
     def test_clear_empties_store(self, store: ArtifactStore):

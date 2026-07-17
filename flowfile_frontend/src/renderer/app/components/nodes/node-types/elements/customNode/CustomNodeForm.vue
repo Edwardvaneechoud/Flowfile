@@ -58,6 +58,7 @@
           :schema="component"
           :incoming-columns="incomingColumns"
           :available-artifacts="artifactOptions"
+          :global-artifacts="globalArtifacts"
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
@@ -67,6 +68,7 @@
           :schema="component"
           :incoming-columns="incomingColumns"
           :available-artifacts="artifactOptions"
+          :global-artifacts="globalArtifacts"
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
@@ -118,7 +120,7 @@
 <script setup lang="ts">
 // Shared renderer for custom-node settings forms: used by the settings drawer
 // (CustomNode.vue) and, in editMode with chrome slots, by the Node Designer.
-import type { SettingsSchema } from "./interface";
+import type { ArtifactOption, GlobalArtifactOption, SettingsSchema } from "./interface";
 import { isSectionVisible } from "./visibility";
 import type { FileColumn } from "../../../baseNode/nodeInterfaces";
 import MultiSelect from "./components/MultiSelect.vue";
@@ -142,7 +144,8 @@ const props = withDefaults(
     formData: CustomNodeFormData;
     incomingColumns?: string[];
     columnTypes?: FileColumn[];
-    artifactOptions?: string[];
+    artifactOptions?: ArtifactOption[];
+    globalArtifacts?: GlobalArtifactOption[];
     editMode?: boolean;
     selectedSectionKey?: string | null;
   }>(),
@@ -150,6 +153,7 @@ const props = withDefaults(
     incomingColumns: () => [],
     columnTypes: () => [],
     artifactOptions: () => [],
+    globalArtifacts: () => [],
     editMode: false,
     selectedSectionKey: null,
   },

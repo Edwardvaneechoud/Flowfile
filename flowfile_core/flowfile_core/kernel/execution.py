@@ -142,6 +142,7 @@ def build_execute_request(
     flow_id: int,
     manager: KernelManager,
     source_registration_id: int | None,
+    available_artifacts: dict[str, int] | None = None,
 ) -> ExecuteRequest:
     """Assemble the kernel ExecuteRequest with log callback URL and auth token."""
     if manager._kernel_volume:
@@ -166,6 +167,7 @@ def build_execute_request(
         source_registration_id=source_registration_id,
         log_callback_url=log_callback_url,
         internal_token=internal_token,
+        available_artifacts=available_artifacts,
     )
 
 
