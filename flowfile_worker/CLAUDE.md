@@ -43,7 +43,7 @@ Standalone FastAPI compute service that offloads heavy Polars/data work from `fl
 ## Testing
 - `poetry run pytest flowfile_worker/tests` (coverage source `flowfile_worker/flowfile_worker`).
 - `tests/conftest.py` forces `TEST_MODE=1` and provides a session-scoped Postgres fixture via `test_utils.postgres` (testcontainers; skipped if port 5433 busy or Docker absent).
-- Markers are defined at root in `/pyproject.toml` `[tool.pytest.ini_options]`. Worker tests use `@pytest.mark.worker`; `@pytest.mark.slow` is also applied to viz tests (`test_catalog_visualize.py`) but is not declared in the markers list.
+- Markers are defined at root in `/pyproject.toml` `[tool.pytest.ini_options]`. Worker tests use `@pytest.mark.worker`; `@pytest.mark.slow` marks heavy viz tests (`test_catalog_visualize.py`).
 - Tests live in `tests/` with `tests/external_sources/` for connector tests (SQL/cloud/GA/REST).
 
 ## Gotchas

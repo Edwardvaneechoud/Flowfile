@@ -161,54 +161,104 @@ def test_eviction_kills_os_process(tmp_path):
         reg.shutdown()
 
 
-@pytest.mark.slow
-def test_two_session_keys_run_in_parallel(tmp_path):
-    _setup_storage(tmp_path)
-    big_df = pl.DataFrame(
-        {
-            "category": ["a", "b", "c", "d"] * 250_000,
-            "value": list(range(1_000_000)),
-        }
-    )
-    big_dir = storage.catalog_tables_directory / "viz_par"
-    big_dir.mkdir(parents=True, exist_ok=True)
-    big_df.write_delta(str(big_dir))
+def test_two_session_keys_run_in_parallel():
+    """Requests for two distinct session keys must be in flight simultaneously.
+
+    Replaces a wall-clock speedup comparison that was flaky on CPU-starved CI
+    runners: polars saturates all cores on a single workload, so two parallel
+    workloads legitimately show no speedup even when dispatch is fully
+    concurrent.  Overlap is asserted directly instead — fake children block
+    each response on a barrier that only releases once BOTH sessions hold an
+    in-flight request, and the fake spawn does the same for the spawn path.
+    Any registry-level serialisation across session keys (a lock held across
+    spawn or the request/response round-trip) breaks a barrier and fails the
+    assert.  No timing thresholds involved.
+    """
+    import queue as _q
+
     reg = VizSessionRegistry()
-    # Each call uses a fresh session_key so spawn + first-collect cost lands
-    # in the timing — polars caches subsequent agg calls down to microseconds,
-    # which would make a warmed comparison degenerate.
-    payload = _RAW_PAYLOAD
-    max_rows = 1_000_000
+    spawn_barrier = threading.Barrier(2)
+    request_barrier = threading.Barrier(2)
+    barrier_timeout = 15.0
+
+    def _overlapped(barrier: threading.Barrier) -> bool:
+        try:
+            barrier.wait(timeout=barrier_timeout)
+            return True
+        except threading.BrokenBarrierError:
+            return False
+
+    class _FakeProcess:
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout=None) -> None:
+            pass
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    spawn_overlap: dict[str, bool] = {}
+
+    def _fake_spawn(source: models.VizWorkerSource) -> viz_sessions_module.SessionHandle:
+        spawn_overlap[source.session_key] = _overlapped(spawn_barrier)
+        request_q: _q.Queue = _q.Queue()
+        response_q: _q.Queue = _q.Queue()
+
+        def _child() -> None:
+            while True:
+                msg = request_q.get()
+                if msg.get("op") == "shutdown":
+                    return
+                response_q.put(
+                    {
+                        "request_id": msg["request_id"],
+                        "ok": True,
+                        "result": {"overlapped": _overlapped(request_barrier)},
+                    }
+                )
+
+        threading.Thread(target=_child, daemon=True, name=f"fake-viz-{source.session_key}").start()
+        return viz_sessions_module.SessionHandle(
+            key=source.session_key,
+            process=_FakeProcess(),
+            request_q=request_q,
+            response_q=response_q,
+        )
+
+    reg._spawn_child = _fake_spawn
+    s1 = _physical_source("unit:par:s1", "viz_par")
+    s2 = _physical_source("unit:par:s2", "viz_par")
+    results: dict[str, dict] = {}
+    errors: list[BaseException] = []
+
+    def _run(src: models.VizWorkerSource) -> None:
+        try:
+            res, _ = reg.execute(src, "execute", _RAW_PAYLOAD, 100)
+            results[src.session_key] = res
+        except BaseException as exc:
+            errors.append(exc)
+
     try:
-        s1 = _physical_source("unit:par:s1", "viz_par")
-        t0 = time.perf_counter()
-        reg.execute(s1, "execute", payload, max_rows)
-        t1 = time.perf_counter() - t0
-        s2 = _physical_source("unit:par:s2", "viz_par")
-        t0 = time.perf_counter()
-        reg.execute(s2, "execute", payload, max_rows)
-        t2 = time.perf_counter() - t0
-
-        if t1 + t2 < 0.1:
-            pytest.skip(f"workload too fast to measure overlap: t1+t2={t1 + t2:.4f}s")
-
-        p1 = _physical_source("unit:par:p1", "viz_par")
-        p2 = _physical_source("unit:par:p2", "viz_par")
-
-        def _run(src):
-            reg.execute(src, "execute", payload, max_rows)
-
-        threads = [threading.Thread(target=_run, args=(s,)) for s in (p1, p2)]
-        t_start = time.perf_counter()
+        threads = [threading.Thread(target=_run, args=(s,)) for s in (s1, s2)]
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
-        t_par = time.perf_counter() - t_start
-        # 0.85 (was 0.7): GitHub-hosted runners only have 4 vCPUs and Polars
-        # is multithreaded, so two parallel workloads compete for cores.
-        # Catastrophic serialisation still gives ratio ~1.0 and trips this.
-        assert t_par < 0.85 * (t1 + t2), f"t_par={t_par:.3f}s t1+t2={t1 + t2:.3f}s"
+            t.join(timeout=4 * barrier_timeout)
+        assert not any(t.is_alive() for t in threads), "execute() deadlocked across session keys"
+        assert not errors, f"execute failed: {errors[0]!r}"
+        for src in (s1, s2):
+            assert spawn_overlap[src.session_key], (
+                f"{src.session_key}: spawn was not concurrent with the other session — "
+                "a registry lock is being held across _spawn_child"
+            )
+            assert results[src.session_key]["overlapped"], (
+                f"{src.session_key}: request was not in flight concurrently with the "
+                "other session — distinct session keys are being serialised"
+            )
     finally:
         reg.shutdown()
 
