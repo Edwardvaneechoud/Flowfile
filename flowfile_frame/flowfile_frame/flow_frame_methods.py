@@ -193,6 +193,7 @@ def read_csv(
                 starting_from_line=skip_rows,
                 quote_char=quote_char if quote_char is not None else '"',
                 infer_schema_length=actual_infer_schema_length if actual_infer_schema_length is not None else 10000,
+                infer_schema=infer_schema,
                 truncate_ragged_lines=truncate_ragged_lines,
                 ignore_errors=ignore_errors,
                 row_delimiter=eol_char,

@@ -136,34 +136,41 @@ def _peek_namespace(flow_id: int) -> dict:
 
 
 # Execution cancellation.
-# When user code runs via asyncio.to_thread(), we track its thread ident so
-# that /interrupt (or SIGUSR1) can inject a KeyboardInterrupt into it.
-_exec_thread_id: int | None = None
-_exec_lock = threading.Lock()
+# More than one cell can be in flight at once: a cell blocked in an
+# uninterruptible C call (e.g. time.sleep, which retries across EINTR per PEP 475)
+# keeps running after it is abandoned while the next cell starts. We track every
+# running execution by a monotonic generation and bind an interrupt to the exact
+# generation it targeted, so a stale interrupt can never land on a later cell.
+# RLock: the SIGUSR1 handler runs on the main thread and may re-enter a lock a
+# caller on that thread already holds.
+_exec_lock = threading.RLock()
+_exec_generation = 0
+_running_execs: dict[int, int] = {}  # generation -> thread ident
+_interrupt_generation: int | None = None  # generation the last interrupt targeted
 
 
-def _raise_in_exec_thread() -> bool:
-    """Inject ``KeyboardInterrupt`` into the executing thread (if any).
-
-    Uses ``PyThreadState_SetAsyncExc`` to set a pending async exception.
-    Also sends ``SIGUSR1`` to the thread to interrupt blocking C calls
-    (e.g. ``time.sleep``) so the exception is checked sooner.
-
-    Returns ``True`` if an exec thread was found and interrupted.
-    """
-    with _exec_lock:
-        tid = _exec_thread_id
-    if tid is None:
-        return False
-
+def _raise_in_thread(tid: int) -> None:
+    """Set a pending ``KeyboardInterrupt`` in thread *tid* (no signal sent)."""
     ctypes.pythonapi.PyThreadState_SetAsyncExc(
         ctypes.c_ulong(tid),
         ctypes.py_object(KeyboardInterrupt),
     )
-    # Send SIGUSR1 to the thread to kick it out of any blocking syscall.
-    # The signal itself is harmless (handler below ignores it when not
-    # targeting the main thread), but the EINTR it causes lets the
-    # thread re-enter the bytecode eval loop where the async exception fires.
+
+
+def _request_interrupt() -> bool:
+    """Interrupt the most recently started running cell, if any.
+
+    Injects ``KeyboardInterrupt`` and sends a single ``SIGUSR1`` to nudge the
+    thread out of a blocking syscall. The interrupt is bound to that cell's
+    generation, so a later cell can never receive it. One-shot: never re-arms.
+    """
+    global _interrupt_generation
+    with _exec_lock:
+        if not _running_execs:
+            return False
+        _interrupt_generation = max(_running_execs)
+        tid = _running_execs[_interrupt_generation]
+    _raise_in_thread(tid)
     try:
         signal.pthread_kill(tid, signal.SIGUSR1)
     except (OSError, ValueError):
@@ -172,11 +179,19 @@ def _raise_in_exec_thread() -> bool:
 
 
 def _cancel_signal_handler(signum, frame):
-    """Handle SIGUSR1: interrupt the exec thread if one is running."""
-    if _raise_in_exec_thread():
-        logger.warning("SIGUSR1 received – interrupting execution thread")
-    else:
-        logger.debug("SIGUSR1 received outside execution, ignoring")
+    """Handle SIGUSR1: re-assert the pending interrupt on the cell it was bound to.
+
+    Only the generation an interrupt was bound to (via ``_request_interrupt``) is
+    targeted, and only while that cell is still running. A stale, coalesced, or
+    external signal whose target has already finished is ignored rather than
+    misdirected onto a later cell. Never re-sends SIGUSR1, so no signal storm.
+    """
+    with _exec_lock:
+        gen = _interrupt_generation
+        if gen is None or gen not in _running_execs:
+            return  # stale/external: bound target gone — don't misdirect onto a later cell
+        tid = _running_execs[gen]
+    _raise_in_thread(tid)
 
 
 # Persistence setup (driven by environment variables)
@@ -397,17 +412,50 @@ class CleanupRequest(BaseModel):
 
 
 def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
-    """Run user code synchronously (called via ``asyncio.to_thread``).
+    """Register this execution and guard its whole body.
 
-    Executing in a worker thread keeps the event loop free so that the
-    ``/interrupt`` endpoint can be served while user code is running.
+    Each cell gets a fresh generation so /interrupt targets exactly this cell and
+    never a later one; any escaping ``BaseException`` (e.g. a late async
+    ``KeyboardInterrupt``) becomes a clean 200 response instead of an unhandled 500.
+    Runs via ``asyncio.to_thread`` so the event loop stays free.
     """
-    global _exec_thread_id
+    global _exec_generation, _interrupt_generation
 
     start = time.perf_counter()
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
 
+    with _exec_lock:
+        _exec_generation += 1
+        my_gen = _exec_generation
+        _running_execs[my_gen] = threading.get_ident()
+    try:
+        return _run_user_code(request, start, stdout_buf, stderr_buf)
+    except BaseException as exc:  # noqa: BLE001 - never surface a stray interrupt as a 500
+        elapsed = (time.perf_counter() - start) * 1000
+        return ExecuteResponse(
+            success=False,
+            stdout=stdout_buf.getvalue(),
+            stderr=stderr_buf.getvalue(),
+            error="Execution cancelled by user"
+            if isinstance(exc, KeyboardInterrupt)
+            else f"{type(exc).__name__}: {exc}",
+            execution_time_ms=elapsed,
+        )
+    finally:
+        with _exec_lock:
+            _running_execs.pop(my_gen, None)
+            if _interrupt_generation == my_gen:
+                _interrupt_generation = None
+
+
+def _run_user_code(
+    request: ExecuteRequest,
+    start: float,
+    stdout_buf: io.StringIO,
+    stderr_buf: io.StringIO,
+) -> ExecuteResponse:
+    """Execute one cell's user code. Wrapped by ``_execute_sync``."""
     output_dir = request.output_dir
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -464,14 +512,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
             if request.interactive:
                 user_code = _maybe_wrap_last_expression(user_code)
 
-            # Execute user code — track the thread so /interrupt can target it
-            with _exec_lock:
-                _exec_thread_id = threading.get_ident()
-            try:
-                exec(user_code, exec_globals)  # noqa: S102
-            finally:
-                with _exec_lock:
-                    _exec_thread_id = None
+            exec(user_code, exec_globals)  # noqa: S102
 
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
@@ -497,8 +538,6 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
             execution_time_ms=elapsed,
         )
     except KeyboardInterrupt:
-        with _exec_lock:
-            _exec_thread_id = None
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
@@ -522,8 +561,6 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
             execution_time_ms=elapsed,
         )
     finally:
-        with _exec_lock:
-            _exec_thread_id = None
         flowfile_client._clear_context()
 
 
@@ -535,7 +572,7 @@ async def execute(request: ExecuteRequest):
 @app.post("/interrupt")
 async def interrupt():
     """Interrupt running user code by injecting ``KeyboardInterrupt``."""
-    if _raise_in_exec_thread():
+    if _request_interrupt():
         return {"status": "interrupted"}
     return {"status": "no_execution_running"}
 

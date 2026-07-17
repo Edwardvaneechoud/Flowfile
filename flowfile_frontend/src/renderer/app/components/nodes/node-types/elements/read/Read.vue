@@ -217,7 +217,8 @@ function createDefaultCsvSettings(): InputCsvTable {
     encoding: "utf-8",
     row_delimiter: "\n",
     quote_char: '"',
-    infer_schema_length: 1000,
+    infer_schema_length: 10000,
+    infer_schema: true,
     truncate_ragged_lines: false,
     ignore_errors: false,
   };
@@ -256,41 +257,41 @@ const handleFileChange = (fileInfo: FileInfo) => {
     }
 
     let fileType: ReadFileType;
-    let tableSettings: ReadTableSettings;
 
     switch (ext) {
       case "xlsx":
         fileType = "excel";
-        tableSettings = createDefaultExcelSettings();
         break;
       case "csv":
       case "txt":
         fileType = "csv";
-        tableSettings = createDefaultCsvSettings();
         break;
       case "parquet":
         fileType = "parquet";
-        tableSettings = createDefaultParquetSettings();
         break;
       case "ipc":
       case "arrow":
       case "feather":
         fileType = "ipc";
-        tableSettings = { file_type: "ipc" };
         break;
       case "ndjson":
       case "jsonl":
         fileType = "ndjson";
-        tableSettings = { file_type: "ndjson" };
         break;
       case "avro":
         fileType = "avro";
-        tableSettings = { file_type: "avro" };
         break;
       default:
         console.warn("Unsupported file type:", ext);
         return;
     }
+
+    // Preserve the user's table_settings when re-selecting a file of the same type;
+    // only rebuild defaults when the type actually changes (mirrors handleManualPathChange).
+    const tableSettings =
+      receivedTable.value && receivedTable.value.file_type === fileType
+        ? receivedTable.value.table_settings
+        : createDefaultSettings(fileType);
 
     receivedTable.value = {
       name: fileInfo.name,
