@@ -179,18 +179,17 @@ def _request_interrupt() -> bool:
 
 
 def _cancel_signal_handler(signum, frame):
-    """Handle SIGUSR1: re-assert the pending interrupt on its target cell.
+    """Handle SIGUSR1: re-assert the pending interrupt on the cell it was bound to.
 
-    Never re-sends SIGUSR1, so it cannot start a self-perpetuating signal storm.
+    Only the generation an interrupt was bound to (via ``_request_interrupt``) is
+    targeted, and only while that cell is still running. A stale, coalesced, or
+    external signal whose target has already finished is ignored rather than
+    misdirected onto a later cell. Never re-sends SIGUSR1, so no signal storm.
     """
-    global _interrupt_generation
     with _exec_lock:
         gen = _interrupt_generation
         if gen is None or gen not in _running_execs:
-            if not _running_execs:
-                return
-            gen = max(_running_execs)
-            _interrupt_generation = gen
+            return  # stale/external: bound target gone — don't misdirect onto a later cell
         tid = _running_execs[gen]
     _raise_in_thread(tid)
 
@@ -420,7 +419,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
     ``KeyboardInterrupt``) becomes a clean 200 response instead of an unhandled 500.
     Runs via ``asyncio.to_thread`` so the event loop stays free.
     """
-    global _exec_generation
+    global _exec_generation, _interrupt_generation
 
     start = time.perf_counter()
     stdout_buf = io.StringIO()
@@ -446,6 +445,8 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
     finally:
         with _exec_lock:
             _running_execs.pop(my_gen, None)
+            if _interrupt_generation == my_gen:
+                _interrupt_generation = None
 
 
 def _run_user_code(

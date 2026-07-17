@@ -1317,6 +1317,40 @@ class TestExecutionCancellation:
                 main_module._running_execs.pop(gen, None)
                 main_module._interrupt_generation = None
 
+    def test_stale_interrupt_after_target_finished_spares_later_cell(self, monkeypatch):
+        """A SIGUSR1 handler firing after its bound cell finished must not hit a later cell."""
+        import kernel_runtime.main as main_module
+
+        injected: list = []
+        monkeypatch.setattr(main_module, "_raise_in_thread", lambda tid: injected.append(tid))
+        with main_module._exec_lock:
+            main_module._exec_generation += 1
+            gen_a = main_module._exec_generation  # bound interrupt target, already finished
+            main_module._interrupt_generation = gen_a
+            main_module._exec_generation += 1
+            gen_b = main_module._exec_generation  # a different cell running now
+            main_module._running_execs[gen_b] = 999999
+        try:
+            main_module._cancel_signal_handler(None, None)
+            assert injected == [], "handler injected into a later cell after its target finished"
+        finally:
+            with main_module._exec_lock:
+                main_module._running_execs.pop(gen_b, None)
+                main_module._interrupt_generation = None
+
+    def test_completing_bound_cell_clears_interrupt_generation(self, client: TestClient):
+        """When the interrupt's bound cell finishes, _interrupt_generation is reset to None."""
+        import kernel_runtime.main as main_module
+
+        with main_module._exec_lock:
+            main_module._interrupt_generation = main_module._exec_generation + 1  # the next cell's generation
+        resp = client.post(
+            "/execute",
+            json={"node_id": 1, "code": "x = 1", "flow_id": 1, "input_paths": {}, "output_dir": ""},
+        )
+        assert resp.json()["success"] is True
+        assert main_module._interrupt_generation is None
+
     def test_interrupt_endpoint_no_execution(self, client: TestClient):
         """POST /interrupt returns 'no_execution_running' when idle."""
         resp = client.post("/interrupt")
