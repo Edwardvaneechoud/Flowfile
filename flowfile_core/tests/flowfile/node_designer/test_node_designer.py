@@ -5,7 +5,13 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from flowfile_core.flowfile.node_designer import ColumnSelector, CustomNodeBase, NodeSettings, Section
+from flowfile_core.flowfile.node_designer import (
+    ColumnSelector,
+    CustomNodeBase,
+    NodeSettings,
+    Section,
+    VisibleWhen,
+)
 from flowfile_core.flowfile.node_designer.custom_node import (
     to_frontend_schema,
 )
@@ -260,6 +266,29 @@ def test_to_frontend_schema_horizontal_layout():
     )
     schema = to_frontend_schema(settings)
     assert schema["config"]["layout"] == "horizontal"
+
+
+def test_to_frontend_schema_visible_when():
+    """VisibleWhen serializes to the {field, equals} wire dict; sections without it omit the key."""
+    settings = NodeSettings(
+        opts=Section(title="Opts", show_advanced=ToggleSwitch(label="Show advanced")),
+        advanced=Section(
+            title="Advanced",
+            visible_when=VisibleWhen(field="opts.show_advanced"),
+            note=TextInput(label="Note"),
+        ),
+    )
+    schema = to_frontend_schema(settings)
+    assert schema["advanced"]["visible_when"] == {"field": "opts.show_advanced", "equals": True}
+    assert "visible_when" not in schema["opts"]
+
+
+def test_section_visible_when_accepts_dict_and_coerces():
+    """A plain dict is coerced to VisibleWhen at the Section boundary (lenient authoring)."""
+    section = Section(title="Advanced", visible_when={"field": "opts.flag", "equals": False})
+    assert isinstance(section.visible_when, VisibleWhen)
+    assert section.visible_when.field == "opts.flag"
+    assert section.visible_when.equals is False
 
 
 def test_to_frontend_schema_incoming_columns(sample_node_settings: NodeSettings):

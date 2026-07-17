@@ -31,7 +31,9 @@
               type="text"
               class="ins-input"
               placeholder="field_name"
+              @focus="captureName"
               @input="updateName(($event.target as HTMLInputElement).value)"
+              @change="commitName"
             />
           </div>
           <div class="field-row">
@@ -390,10 +392,28 @@ function update(field: string, value: unknown) {
   (comp.value as unknown as Record<string, unknown>)[field] = value;
 }
 
+const nameBeforeEdit = ref("");
+
+function captureName() {
+  nameBeforeEdit.value = comp.value?.name ?? "";
+}
+
 function updateName(value: string) {
   if (!comp.value) return;
   comp.value.name = toSnakeCase(value);
   store.syncPreviewValues();
+}
+
+// On blur, retarget any visible_when rule that pointed at this control's old name
+// (no-op unless a section actually gates on it — only toggles are ever referenced).
+function commitName() {
+  const sectionIndex = store.selectedSectionIndex;
+  if (!comp.value || sectionIndex === null) return;
+  store.retargetVisibleWhenForComponent(
+    store.sections[sectionIndex].name,
+    nameBeforeEdit.value,
+    comp.value.name,
+  );
 }
 
 const optionsCsv = computed(() => {

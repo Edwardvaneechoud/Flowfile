@@ -15,6 +15,7 @@ from shared.node_designer.ui_components import (
     IncomingColumns,
     SecretSelector,
     Section,
+    VisibleWhen,
 )
 
 if TYPE_CHECKING:
@@ -88,7 +89,9 @@ def _convert_value(value: Any) -> Any:
     Helper function to convert any value to a frontend-ready format.
     """
     if isinstance(value, Section):
-        section_data = value.model_dump(include={"title", "description", "hidden", "layout"}, exclude_none=True)
+        section_data = value.model_dump(
+            include={"title", "description", "hidden", "visible_when", "layout"}, exclude_none=True
+        )
         section_data["component_type"] = "Section"
         section_data["components"] = {key: _convert_value(comp) for key, comp in value.get_components().items()}
         return section_data
@@ -341,8 +344,11 @@ class SectionBuilder:
         description: str | None = None,
         hidden: bool = False,
         layout: Literal["vertical", "horizontal"] = "vertical",
+        visible_when: VisibleWhen | dict | None = None,
     ):
-        self._section = Section(title=title, description=description, hidden=hidden, layout=layout)
+        self._section = Section(
+            title=title, description=description, hidden=hidden, layout=layout, visible_when=visible_when
+        )
 
     def add_component(self, name: str, component: FlowfileInComponent) -> "SectionBuilder":
         """Add a component to the section."""

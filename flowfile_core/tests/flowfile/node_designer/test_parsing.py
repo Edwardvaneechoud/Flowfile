@@ -356,6 +356,51 @@ def test_section_invalid_layout_is_code_only():
     assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
 
 
+def test_section_visible_when_lifts_and_round_trips():
+    result = parse("insubset_section_visible_when.py")
+    assert result.mode == "designer"
+    assert codes(result) == set()
+    sections = {s.name: s for s in result.designer_state.sections}
+    assert sections["main"].visible_when is None
+    assert sections["advanced"].visible_when.field == "main.show_advanced"
+    assert sections["advanced"].visible_when.equals is True
+    assert sections["inverted"].visible_when.field == "main.show_advanced"
+    assert sections["inverted"].visible_when.equals is False
+
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+
+    generated = generate_source(result.designer_state)
+    assert "visible_when=nd.VisibleWhen(" in generated
+    assert 'field="main.show_advanced"' in generated
+    # equals=True (advanced) is the default and omitted; only equals=False (inverted) is emitted.
+    assert generated.count("equals=") == 1
+    assert "equals=False" in generated
+    reparsed = parse_source(generated)
+    assert reparsed.designer_state == result.designer_state
+
+
+def test_section_visible_when_dict_form_lifts_and_normalizes():
+    """A hand-written dict is accepted and normalized to the canonical nd.VisibleWhen(...) on save."""
+    result = parse_source(_layout_source('visible_when={"field": "main.flag"},'))
+    assert result.mode == "designer"
+    assert error_codes(result) == set()
+    section = result.designer_state.sections[0]
+    assert section.visible_when.field == "main.flag"
+    assert section.visible_when.equals is True
+
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+
+    generated = generate_source(result.designer_state)
+    assert "visible_when=nd.VisibleWhen(" in generated
+    assert 'field="main.flag"' in generated
+
+
+def test_section_visible_when_non_dict_is_code_only():
+    result = parse_source(_layout_source('visible_when="main.flag",'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
 def test_multi_input_node_without_settings():
     result = parse("insubset_multi_input.py")
     assert result.mode == "designer"

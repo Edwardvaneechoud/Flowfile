@@ -60,6 +60,7 @@
       "title": "Advanced",
       "description": null,
       "hidden": false,
+      "visible_when": { "field": "main_config.include_totals", "equals": true },
       "layout": "vertical",
       "components": [
         {

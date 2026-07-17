@@ -1,7 +1,7 @@
 <template>
   <div
     v-for="(section, sectionKey) in schema"
-    v-show="!section.hidden"
+    v-show="editMode || (!section.hidden && isSectionVisible(section, formData))"
     :key="sectionKey"
     class="listbox-wrapper"
     :class="{ 'section-selected': editMode && sectionKey.toString() === selectedSectionKey }"
@@ -119,6 +119,7 @@
 // Shared renderer for custom-node settings forms: used by the settings drawer
 // (CustomNode.vue) and, in editMode with chrome slots, by the Node Designer.
 import type { SettingsSchema } from "./interface";
+import { isSectionVisible } from "./visibility";
 import type { FileColumn } from "../../../baseNode/nodeInterfaces";
 import MultiSelect from "./components/MultiSelect.vue";
 import ToggleSwitch from "./components/ToggleSwitch.vue";

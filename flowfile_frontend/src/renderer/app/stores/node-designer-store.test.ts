@@ -142,6 +142,47 @@ describe("state transitions", () => {
     expect(store.frontendSchema.settings.layout).toBe("horizontal");
   });
 
+  it("sets and clears a section visible_when rule and reflects it in the schema", () => {
+    const store = useNodeDesignerStore();
+    expect(store.sections[0].visible_when).toBeUndefined();
+    store.setSectionVisibleWhen(0, { field: "opts.show_advanced", equals: true });
+    expect(store.sections[0].visible_when).toEqual({ field: "opts.show_advanced", equals: true });
+    expect(store.frontendSchema.settings.visible_when).toEqual({
+      field: "opts.show_advanced",
+      equals: true,
+    });
+    store.setSectionVisibleWhen(0, null);
+    expect(store.sections[0].visible_when).toBeNull();
+    expect(store.frontendSchema.settings.visible_when).toBeUndefined();
+  });
+
+  it("retargets visible_when references when a section is renamed", () => {
+    const store = useNodeDesignerStore();
+    store.addComponent(0, "ToggleSwitch");
+    store.addSection();
+    store.setSectionVisibleWhen(1, { field: "settings.toggle_switch_1", equals: true });
+    store.retargetVisibleWhenForSection("settings", "main");
+    expect(store.sections[1].visible_when?.field).toBe("main.toggle_switch_1");
+  });
+
+  it("retargets visible_when references when a toggle is renamed", () => {
+    const store = useNodeDesignerStore();
+    store.addComponent(0, "ToggleSwitch");
+    store.addSection();
+    store.setSectionVisibleWhen(1, { field: "settings.toggle_switch_1", equals: false });
+    store.retargetVisibleWhenForComponent("settings", "toggle_switch_1", "flag");
+    expect(store.sections[1].visible_when).toEqual({ field: "settings.flag", equals: false });
+  });
+
+  it("leaves unrelated visible_when references untouched on rename", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.setSectionVisibleWhen(1, { field: "other.toggle", equals: true });
+    store.retargetVisibleWhenForSection("settings", "main");
+    store.retargetVisibleWhenForComponent("settings", "x", "y");
+    expect(store.sections[1].visible_when?.field).toBe("other.toggle");
+  });
+
   it("resetState restores the defaults", () => {
     const store = useNodeDesignerStore();
     store.nodeMetadata.node_name = "Something";
@@ -267,7 +308,14 @@ describe("draft restore", () => {
     const state = newDesignerState();
     state.node_name = name;
     state.sections = [
-      { name: "opts", title: "Options", description: null, hidden: false, layout: "vertical", components: [] },
+      {
+        name: "opts",
+        title: "Options",
+        description: null,
+        hidden: false,
+        layout: "vertical",
+        components: [],
+      },
     ];
     state.process_code = "return inputs[0]";
     localStorageMock.setItem(NEW_DRAFT_KEY, v2Draft(state));

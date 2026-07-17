@@ -99,11 +99,18 @@ export type ComponentState =
 
 export type SectionLayout = "vertical" | "horizontal";
 
+/** Show the section only while the referenced toggle field equals `equals`. */
+export interface VisibleWhenState {
+  field: string; // dotted "<section>.<toggle>" reference
+  equals?: boolean; // defaults to true
+}
+
 export interface SectionState {
   name: string;
   title?: string | null;
   description?: string | null;
   hidden: boolean;
+  visible_when?: VisibleWhenState | null;
   layout: SectionLayout;
   components: ComponentState[]; // ordered
 }
