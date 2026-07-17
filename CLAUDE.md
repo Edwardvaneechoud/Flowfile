@@ -196,6 +196,7 @@ poetry run pytest -m kernel
 | `docker_integration` | Full Docker-based E2E tests (Docker required, slow) |
 | `kafka` | Integration tests requiring a Kafka/Redpanda broker (Docker) |
 | `lsp` | Notebook LSP (Jedi) code-intelligence tests |
+| `slow` | Heavy-workload / long-runtime tests (deselect with `-m 'not slow'`) |
 
 **Coverage source:** `flowfile_core/flowfile_core` + `flowfile_worker/flowfile_worker` only (frame/scheduler excluded).
 
