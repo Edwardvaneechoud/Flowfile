@@ -29,6 +29,44 @@ const purgeLegacyKeys = () => {
   }
 };
 
+// One-time heal of geometry corrupted by an older build that persisted panel
+// sizes measured against a collapsed container (route-transition / unlaid-out
+// canvas). Such a panel is pinned at the code's floor constants — width 150
+// (clampStateToViewport) and height 100 (the "scale"-axis floor) — a size the
+// UI cannot otherwise produce (interactive resize floors at >100px, clamp floors
+// width at >=150). Drop only current-version keys matching that exact
+// fingerprint so the panel recomputes its initial size on next mount; every
+// other saved layout (positions, groups, non-corrupted sizes) is left intact.
+const CORRUPT_MAX_WIDTH = 150;
+const CORRUPT_MAX_HEIGHT = 100;
+const purgeCorruptedGeometry = () => {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith("overlayPositionAndSize") || !key.includes(`.v${STORAGE_VERSION}_`)) {
+        continue;
+      }
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const state = JSON.parse(raw);
+        if (
+          typeof state?.width === "number" &&
+          typeof state?.height === "number" &&
+          state.width <= CORRUPT_MAX_WIDTH &&
+          state.height <= CORRUPT_MAX_HEIGHT
+        ) {
+          localStorage.removeItem(key);
+        }
+      } catch {
+        // Corrupted JSON — drop it so a clean state is written next save.
+        localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // localStorage can throw in private mode / quota exhaustion — ignore.
+  }
+};
+
 // Looks up the canvas <main> element so fullscreen panels fill the canvas
 // region (not the viewport, which would overlap the page header).
 const getCanvasBounds = (): { width: number; height: number } => {
@@ -79,8 +117,10 @@ export interface ItemInitialState {
 }
 
 export const useItemStore = defineStore("itemStore", () => {
-  // Run-once cleanup of pre-v2 localStorage keys on first store instantiation.
+  // Run-once cleanup of pre-v2 localStorage keys on first store instantiation,
+  // then heal any panels a prior build collapsed to the floor constants.
   purgeLegacyKeys();
+  purgeCorruptedGeometry();
 
   const items = ref<Record<string, ItemLayout>>({});
   const initialItemStates = ref<Record<string, ItemInitialState>>({});

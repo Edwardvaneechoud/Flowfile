@@ -140,6 +140,77 @@ test.describe("Canvas Overlay Behaviour", () => {
     expect(cssPosition).toBe("absolute");
   });
 
+  test("floating panel does not persist a collapsed size when the canvas transiently shrinks", async ({
+    page,
+    request,
+  }) => {
+    // Regression guard for the panel-collapse bug: geometry recompute
+    // (applyStickyPosition / clampStateToViewport) used to run against a
+    // transiently-tiny container — as happens during a route unmount/remount or
+    // any brief canvas shrink — and PERSIST the collapse to the floor constants
+    // (width 150 / height 100), so panels stayed shrunken after the canvas grew
+    // back. A viewport shrink is the deterministic form of that transient: it
+    // drives <main> below the usable threshold, then restores it. With the fix
+    // the recompute bails on the unusable container and the panel keeps its
+    // size; without it, dataActions' fixed-width axis collapses and never
+    // recovers.
+    const flowName = `Overlay_Transient_Shrink_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+
+      // dataActions is the always-rendered left palette; its width is fixed
+      // (initialWidth 230), so a collapse to the ~150 floor cannot recover once
+      // the canvas grows back — a clean, stable signal.
+      await page.waitForSelector("#dataActions", { timeout: 10000 });
+
+      // Read the stored geometry off the inline style (itemState.width/height) —
+      // that is what the user saw collapse, not the CSS-capped offsetWidth.
+      const readWidth = () =>
+        page.evaluate(() => {
+          const el = document.getElementById("dataActions");
+          return el ? parseFloat(el.style.width) : NaN;
+        });
+
+      // Settle at the real (non-collapsed) width before shrinking.
+      await expect.poll(readWidth, { timeout: 10000 }).toBeGreaterThanOrEqual(200);
+      const before = await readWidth();
+
+      // Collapse the canvas well below the usable threshold, let the resize
+      // handlers run + debounced persist flush, then restore it.
+      await page.setViewportSize({ width: 150, height: 120 });
+      await page.waitForTimeout(600);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.waitForTimeout(600);
+
+      const after = await readWidth();
+      // Width must survive the transient (fixed axis never recovers if collapsed).
+      expect(after).toBeGreaterThanOrEqual(before - 20);
+
+      // And the persisted geometry must not carry the collapse fingerprint.
+      const persisted = await page.evaluate(() => {
+        const raw = localStorage.getItem("overlayPositionAndSize.v3_dataActions");
+        return raw ? JSON.parse(raw) : null;
+      });
+      expect(persisted).not.toBeNull();
+      expect(persisted.width > 150 || persisted.height > 100).toBe(true);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
+
   test("python script expanded editor dialog teleports to body and covers the viewport", async ({
     page,
     request,

@@ -141,7 +141,6 @@ import {
   onBeforeUnmount,
   defineExpose,
   defineProps,
-  getCurrentInstance,
   nextTick,
   watch,
 } from "vue";
@@ -275,7 +274,6 @@ const startHeight = ref(0);
 const startLeft = ref(0);
 const startTop = ref(0);
 const isMinimized = ref(false);
-const instance = getCurrentInstance();
 const activeLine = ref<HTMLElement | null>(null);
 let resizeTimeout: ReturnType<typeof setTimeout>;
 
@@ -633,17 +631,28 @@ const stopMove = () => {
 
 // Returns the element panels are actually positioned against (the overlay's
 // offsetParent — the canvas <main>). Sticky/move math is relative to this
-// element's INSIDE, so `(left=0, top=0)` is its top-left corner. Falls back
-// to the Vue parent root only if the overlay isn't mounted yet.
+// element's INSIDE, so `(left=0, top=0)` is its top-left corner. Returns a
+// degenerate {0,0} when the overlay is unmounted or its offsetParent is null
+// (detached / display:none / mid-route-transition) so callers bail instead of
+// measuring an unreliable container — never fall back to instance.parent, which
+// self-references the overlay itself once nested in a TabbedDrawer wrapper.
 const getStickyContainer = (): { width: number; height: number } => {
   const overlayEl = document.getElementById(props.id);
   const offsetParent = overlayEl?.offsetParent as HTMLElement | null;
-  const ref = offsetParent ?? (instance?.parent?.vnode.el as HTMLElement | null);
-  if (ref) {
-    return { width: ref.clientWidth, height: ref.clientHeight };
+  if (offsetParent) {
+    return { width: offsetParent.clientWidth, height: offsetParent.clientHeight };
   }
-  return { width: window.innerWidth, height: window.innerHeight };
+  return { width: 0, height: 0 };
 };
+
+// Below this the container is treated as unreliable (mid-transition / unlaid-out)
+// and geometry recompute+persist is skipped — the panel keeps its last-good size.
+// A real canvas is always far larger; `.overlay { max-width/height:100% }` caps
+// the panel visually if a saved size ever exceeds the container.
+const MIN_CONTAINER_W = 200;
+const MIN_CONTAINER_H = 150;
+const isContainerUsable = (c: { width: number; height: number }): boolean =>
+  c.width >= MIN_CONTAINER_W && c.height >= MIN_CONTAINER_H;
 
 const moveToRight = () => {
   const c = getStickyContainer();
@@ -691,9 +700,10 @@ const moveToTop = () => {
 
 const applyStickyPosition = () => {
   const c = getStickyContainer();
-  // Bail before any mutation if the container isn't laid out yet — clamping
-  // against a 0-sized box would collapse the panel.
-  if (c.width <= 0 || c.height <= 0) return;
+  // Bail before any mutation if the container measurement is unreliable (unlaid-out
+  // / mid-route-transition / detached) — recomputing against it collapses the panel
+  // and, worse, persists the collapse to localStorage.
+  if (!isContainerUsable(c)) return;
 
   // Resizing while fullscreen should keep the panel filling the canvas, not run
   // the shrink/reposition math below.
@@ -863,11 +873,13 @@ const parentResizeObserver = new ResizeObserver(() => {
 
 const observeParentResize = () => {
   // Observe the exact element bounds are read from (the overlay's offsetParent,
-  // i.e. the canvas <main>), falling back to the Vue parent root.
+  // i.e. the canvas <main>). Never fall back to instance.parent — for a
+  // TabbedDrawer-nested overlay that IS this overlay, so it would feed the
+  // overlay's own size back into applyStickyPosition. If offsetParent isn't
+  // resolved yet, skip; the post-layout nextTick / window-resize drives the
+  // first reflow.
   const overlayEl = document.getElementById(props.id);
-  const parentElement =
-    (overlayEl?.offsetParent as HTMLElement | null) ??
-    (instance?.parent?.vnode.el as HTMLElement | null);
+  const parentElement = overlayEl?.offsetParent as HTMLElement | null;
   if (parentElement) {
     parentResizeObserver.observe(parentElement);
   }
@@ -924,9 +936,10 @@ let layoutResetHandler: (() => void) | null = null;
 
 const clampStateToViewport = (state: ItemLayout) => {
   const c = getStickyContainer();
-  // Bail before first layout — clamping against a 0-sized box would collapse the
-  // panel; the post-mount applyStickyPosition (nextTick) re-clamps once laid out.
-  if (c.width <= 0 || c.height <= 0) return;
+  // Bail before first layout / during a route transition — clamping against an
+  // unreliable container would collapse the panel toward the 150/100 floors and
+  // persist it; the post-mount applyStickyPosition (nextTick) re-clamps once laid out.
+  if (!isContainerUsable(c)) return;
   const minVisible = 100;
   state.width = Math.max(150, Math.min(state.width, c.width));
   state.height = Math.max(100, Math.min(state.height, Math.max(150, c.height)));
@@ -1023,6 +1036,10 @@ onBeforeUnmount(() => {
     window.removeEventListener("layout-reset", layoutResetHandler);
     layoutResetHandler = null;
   }
+  // Cancel pending debounced reflows — a leaked applyStickyPosition firing ~1ms
+  // after unmount would measure a detached container and persist a collapse.
+  clearTimeout(resizeTimeout);
+  if (resizeDelay.value) clearTimeout(resizeDelay.value);
   window.removeEventListener("resize", handleWindowResize);
   parentResizeObserver.disconnect();
   document.removeEventListener("mouseup", stopResize);
