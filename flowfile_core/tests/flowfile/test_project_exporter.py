@@ -19,6 +19,7 @@ from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.flowfile.code_generator import project_shim
 from flowfile_core.flowfile.code_generator.project_exporter import (
     FlowGraphToProjectConverter,
+    _insert_flowfile_ctx_import,
     export_flow_to_project,
     project_to_zip_bytes,
 )
@@ -1160,6 +1161,28 @@ def test_custom_node_flowfile_ctx_executes_end_to_end(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "ctx node ran" in result.stdout
+
+
+def test_insert_flowfile_ctx_import_handles_decorated_first_statement():
+    """A decorated first top-level class/def has lineno at the keyword, not the
+    decorator; the import must go ABOVE the decorator or the module is a SyntaxError."""
+    # Decorated class as the first statement.
+    out = _insert_flowfile_ctx_import(
+        "@nd.register\nclass N(nd.CustomNodeBase):\n    def process(self, m):\n        return m\n"
+    )
+    ast.parse(out)  # would raise if spliced between @nd.register and `class`
+    lines = out.splitlines()
+    assert lines.index("import flowfile_ctx") < next(i for i, line in enumerate(lines) if line.startswith("@"))
+
+    # Stacked decorators after a docstring + __future__ import: stay after __future__,
+    # still above the first decorator.
+    out2 = _insert_flowfile_ctx_import(
+        '"""doc"""\nfrom __future__ import annotations\n\n@deco_a\n@deco_b\nclass N:\n    pass\n'
+    )
+    ast.parse(out2)
+    l2 = out2.splitlines()
+    assert l2.index("from __future__ import annotations") < l2.index("import flowfile_ctx")
+    assert l2.index("import flowfile_ctx") < next(i for i, line in enumerate(l2) if line.startswith("@"))
 
 
 def test_subflow_custom_node_ships_flowfile_ctx_shim(tmp_path):

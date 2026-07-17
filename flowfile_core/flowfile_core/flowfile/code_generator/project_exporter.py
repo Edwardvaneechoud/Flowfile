@@ -158,7 +158,8 @@ def _insert_flowfile_ctx_import(source: str) -> str:
         if is_docstring or is_future:
             insert_line = stmt.end_lineno + 1
             continue
-        insert_line = stmt.lineno
+        decorators = getattr(stmt, "decorator_list", None)
+        insert_line = decorators[0].lineno if decorators else stmt.lineno
         break
     lines = source.split("\n")
     lines.insert(max(0, insert_line - 1), "import flowfile_ctx")
