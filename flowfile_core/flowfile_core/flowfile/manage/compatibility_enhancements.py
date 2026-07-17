@@ -129,6 +129,7 @@ def _build_input_table_settings(received_file: Any, file_type: str) -> dict:
             "row_delimiter": getattr(received_file, "row_delimiter", "\n"),
             "quote_char": getattr(received_file, "quote_char", '"'),
             "infer_schema_length": getattr(received_file, "infer_schema_length", 10_000),
+            "infer_schema": getattr(received_file, "infer_schema", True),
             "truncate_ragged_lines": getattr(received_file, "truncate_ragged_lines", False),
             "ignore_errors": getattr(received_file, "ignore_errors", False),
         }
@@ -145,6 +146,7 @@ def _build_input_table_settings(received_file: Any, file_type: str) -> dict:
             "row_delimiter": getattr(received_file, "row_delimiter", "\n"),
             "quote_char": getattr(received_file, "quote_char", '"'),
             "infer_schema_length": getattr(received_file, "infer_schema_length", 10_000),
+            "infer_schema": getattr(received_file, "infer_schema", True),
             "truncate_ragged_lines": getattr(received_file, "truncate_ragged_lines", False),
             "ignore_errors": getattr(received_file, "ignore_errors", False),
         }
