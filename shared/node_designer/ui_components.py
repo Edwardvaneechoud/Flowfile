@@ -251,6 +251,22 @@ class MultiSelect(FlowfileInComponent):
             self.value = self.default if self.default else []
 
 
+class VisibleWhen(BaseModel):
+    """
+    Conditional-visibility rule for a `Section`.
+
+    `field` is a dotted ``"<section>.<toggle>"`` reference to a `ToggleSwitch`;
+    the owning section is shown only while that toggle's value equals `equals`.
+
+    Example:
+        VisibleWhen(field="main.show_advanced")            # show when the toggle is on
+        VisibleWhen(field="main.show_advanced", equals=False)  # show when it is off
+    """
+
+    field: str
+    equals: bool = True
+
+
 class Section(BaseModel):
     """
     A container for grouping related UI components in the node settings panel.
@@ -265,11 +281,19 @@ class Section(BaseModel):
             description="Configure the primary behavior of the node.",
             my_text_input=TextInput(label="Enter a value")
         )
+
+    Set `visible_when` to reveal the section only while a boolean toggle is set:
+        advanced = Section(
+            title="Advanced",
+            visible_when=VisibleWhen(field="main.enable_advanced"),  # equals defaults to True
+            timeout=NumericInput(label="Timeout (s)"),
+        )
     """
 
     title: str | None = None
     description: str | None = None
     hidden: bool = False
+    visible_when: VisibleWhen | None = None
     layout: Literal["vertical", "horizontal"] = "vertical"
 
     class Config:
@@ -309,7 +333,7 @@ class Section(BaseModel):
                 components[key] = value
 
         for field_name in self.model_fields:
-            if field_name not in {"title", "description", "hidden", "layout"}:
+            if field_name not in {"title", "description", "hidden", "visible_when", "layout"}:
                 value = getattr(self, field_name, None)
                 if isinstance(value, FlowfileInComponent):
                     components[field_name] = value

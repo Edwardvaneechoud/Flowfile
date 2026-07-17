@@ -440,8 +440,11 @@ class _SourceParser:
                 raise _LiteralError(node, f"'{node.id}' must be used with an attribute, e.g. Types.String")
             raise _LiteralError(node, f"name '{node.id}' is not a designer literal")
         if isinstance(node, ast.Call):
-            if self.resolve_symbol(node.func) == "ActionOption":
+            func_symbol = self.resolve_symbol(node.func)
+            if func_symbol == "ActionOption":
                 return self._eval_action_option(node)
+            if func_symbol == "VisibleWhen":
+                return self._eval_visible_when(node)
             raise _LiteralError(node, f"call '{ast.unparse(node.func)}(...)' is not a designer literal")
         raise _LiteralError(node, f"'{ast.unparse(node)}' is not a designer literal")
 
@@ -460,6 +463,22 @@ class _SourceParser:
             raise _LiteralError(call, "ActionOption value and label must be strings")
         return SelectOption(value=values["value"], label=values["label"])
 
+    def _eval_visible_when(self, call: ast.Call) -> dict:
+        # Returns the {field, equals} dict; _lift_section validates + coerces to VisibleWhenState.
+        values: dict[str, Any] = {}
+        positional = ["field", "equals"]
+        if len(call.args) > 2:
+            raise _LiteralError(call, "VisibleWhen takes (field, equals)")
+        for i, arg in enumerate(call.args):
+            values[positional[i]] = self.eval_literal(arg)
+        for kw in call.keywords:
+            if kw.arg not in ("field", "equals"):
+                raise _LiteralError(call, "VisibleWhen takes (field, equals)")
+            values[kw.arg] = self.eval_literal(kw.value)
+        if not isinstance(values.get("field"), str):
+            raise _LiteralError(call, "VisibleWhen field must be a string")
+        return values
+
     # -- component lifting -----------------------------------------------------
 
     def _lift_section(self, name: str, call: ast.Call) -> SectionState | None:
@@ -473,6 +492,7 @@ class _SourceParser:
         title: str | None = None
         description: str | None = None
         hidden = False
+        visible_when: dict | None = None
         layout = "vertical"
         components = []
         ok = True
@@ -485,7 +505,7 @@ class _SourceParser:
                 )
                 ok = False
                 continue
-            if kw.arg in ("title", "description", "hidden", "layout"):
+            if kw.arg in ("title", "description", "hidden", "visible_when", "layout"):
                 try:
                     value = self.eval_literal(kw.value)
                 except _LiteralError as e:
@@ -500,6 +520,17 @@ class _SourceParser:
                     hidden = bool(value)
                 elif kw.arg == "title":
                     title = value
+                elif kw.arg == "visible_when":
+                    if not (isinstance(value, dict) and isinstance(value.get("field"), str)):
+                        self.error(
+                            ParseIssueCode.NON_LITERAL_COMPONENT_KWARG,
+                            f"'{name}.visible_when' must be nd.VisibleWhen(field='section.toggle') "
+                            "or a dict like {'field': 'section.toggle'}",
+                            kw.value,
+                        )
+                        ok = False
+                        continue
+                    visible_when = value
                 elif kw.arg == "layout":
                     if value not in ("vertical", "horizontal"):
                         self.error(
@@ -522,7 +553,13 @@ class _SourceParser:
             return None
         try:
             return SectionState(
-                name=name, title=title, description=description, hidden=hidden, layout=layout, components=components
+                name=name,
+                title=title,
+                description=description,
+                hidden=hidden,
+                visible_when=visible_when,
+                layout=layout,
+                components=components,
             )
         except ValidationError as e:
             self.error(ParseIssueCode.NON_LITERAL_COMPONENT_KWARG, f"Section '{name}' is invalid: {e}", call)

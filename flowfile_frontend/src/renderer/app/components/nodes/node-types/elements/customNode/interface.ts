@@ -88,11 +88,17 @@ export interface ColumnActionInputComponent extends BaseComponent {
 
 // --- Section Component Type ---
 
+export interface VisibleWhen {
+  field: string; // dotted "<section>.<toggle>" reference
+  equals?: boolean; // defaults to true
+}
+
 export interface SectionComponent {
   component_type: "Section";
   title?: string;
   description?: string;
   hidden?: boolean;
+  visible_when?: VisibleWhen;
   layout?: "vertical" | "horizontal";
   components: Record<string, UIComponent>;
 }

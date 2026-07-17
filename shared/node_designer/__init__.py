@@ -35,6 +35,7 @@ from shared.node_designer.ui_components import (
     SliderInput,
     TextInput,
     ToggleSwitch,
+    VisibleWhen,
 )
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "CustomNodeBase",
     # UI Components & Layout
     "Section",
+    "VisibleWhen",
     "TextInput",
     "NumericInput",
     "SliderInput",

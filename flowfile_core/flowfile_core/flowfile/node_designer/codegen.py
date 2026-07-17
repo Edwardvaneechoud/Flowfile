@@ -28,6 +28,7 @@ from flowfile_core.flowfile.node_designer.state import (
     SliderInputState,
     TextInputState,
     ToggleSwitchState,
+    VisibleWhenState,
 )
 
 
@@ -285,17 +286,32 @@ class _Renderer:
         if section.layout != "vertical":
             kwargs.append(("layout", _py_literal(section.layout)))
 
-        if not kwargs and not section.components:
+        inner = indent + _INDENT
+        visible_when_lines = self._visible_when_lines(section.visible_when, inner)
+
+        if not kwargs and not visible_when_lines and not section.components:
             # ruff collapses an empty call to one line — emit it that way directly.
             return [f"{indent}{section.name}: nd.Section = nd.Section()"]
 
-        inner = indent + _INDENT
         lines = [f"{indent}{section.name}: nd.Section = nd.Section("]
         for key, value in kwargs:
             lines.append(f"{inner}{key}={value},")
+        lines.extend(visible_when_lines)
         for comp in section.components:
             lines.extend(self._render_component(comp, inner))
         lines.append(f"{indent})")
+        return lines
+
+    def _visible_when_lines(self, spec: VisibleWhenState | None, inner: str) -> list[str]:
+        # Emitted after the scalar section kwargs as an nd.VisibleWhen(...) call;
+        # `equals` is omitted when True (the default) to keep the fixed point stable.
+        if spec is None:
+            return []
+        body = inner + _INDENT
+        lines = [f"{inner}visible_when=nd.VisibleWhen(", f"{body}field={_py_literal(spec.field)},"]
+        if spec.equals is not True:
+            lines.append(f"{body}equals={_py_literal(spec.equals)},")
+        lines.append(f"{inner}),")
         return lines
 
     # -- top-level rendering -------------------------------------------------

@@ -181,6 +181,7 @@ export function designerStateToFrontendSchema(state: DesignerState): SettingsSch
       title: section.title ?? undefined,
       description: section.description ?? undefined,
       hidden: section.hidden || undefined,
+      visible_when: section.visible_when ?? undefined,
       layout: section.layout ?? "vertical",
       components,
     };

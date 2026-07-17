@@ -29,6 +29,7 @@ from flowfile_core.flowfile.node_designer.state import (
     SliderInputState,
     TextInputState,
     ToggleSwitchState,
+    VisibleWhenState,
 )
 
 # Leaf DataType values that normalize to themselves (see enumeration in the SDK).
@@ -185,12 +186,22 @@ def _component(rng: random.Random, taken: set[str]):
     )
 
 
+def _visible_when(rng: random.Random) -> VisibleWhenState | None:
+    if rng.random() < 0.5:
+        return None
+    return VisibleWhenState(
+        field=f"{rng.choice(_WORDS)}.{rng.choice(_WORDS)}",
+        equals=rng.random() < 0.5,
+    )
+
+
 def _section(rng: random.Random, taken: set[str]) -> SectionState:
     return SectionState(
         name=_ident(rng, taken, "s"),
         title=_maybe(rng, _text(rng)),
         description=_maybe(rng, _text(rng)),
         hidden=rng.random() < 0.3,
+        visible_when=_visible_when(rng),
         layout=rng.choice(["vertical", "horizontal"]),
         components=[_component(rng, taken) for _ in range(rng.randint(0, 4))],
     )

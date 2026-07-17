@@ -29,6 +29,14 @@ describe("designerStateToFrontendSchema", () => {
     expect(schema.advanced.layout).toBe("vertical");
   });
 
+  it("carries visible_when through, and omits it on sections without a rule", () => {
+    expect(schema.advanced.visible_when).toEqual({
+      field: "main_config.include_totals",
+      equals: true,
+    });
+    expect(schema.main_config.visible_when).toBeUndefined();
+  });
+
   it("keys components by name and carries component_type", () => {
     const comps = schema.main_config.components;
     expect(Object.keys(comps)).toEqual(["report_title", "include_totals", "mode", "group_cols"]);

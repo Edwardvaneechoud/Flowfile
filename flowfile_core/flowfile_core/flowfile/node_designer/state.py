@@ -105,11 +105,17 @@ ComponentState = Annotated[
 ]
 
 
+class VisibleWhenState(BaseModel):
+    field: str  # dotted "<section>.<toggle>" reference
+    equals: bool = True
+
+
 class SectionState(BaseModel):
     name: PyIdentifier
     title: str | None = None
     description: str | None = None
     hidden: bool = False
+    visible_when: VisibleWhenState | None = None
     layout: Literal["vertical", "horizontal"] = "vertical"
     components: list[ComponentState] = []  # ordered
 

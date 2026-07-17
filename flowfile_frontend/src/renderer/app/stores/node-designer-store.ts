@@ -16,6 +16,7 @@ import type {
   ParseIssue,
   SectionLayout,
   SectionState,
+  VisibleWhenState,
 } from "../pages/nodeDesigner/designerState";
 import { newDesignerState } from "../pages/nodeDesigner/designerState";
 import {
@@ -628,6 +629,10 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     sections.value[index].layout = layout;
   }
 
+  function setSectionVisibleWhen(index: number, visibleWhen: VisibleWhenState | null) {
+    sections.value[index].visible_when = visibleWhen;
+  }
+
   function selectComponent(sectionIndex: number, compIndex: number) {
     selectedSectionIndex.value = sectionIndex;
     selectedComponentIndex.value = compIndex;
@@ -718,6 +723,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     updateSectionTitle,
     updateSectionDescription,
     setSectionLayout,
+    setSectionVisibleWhen,
     selectComponent,
     removeComponent,
     addComponentToSection,

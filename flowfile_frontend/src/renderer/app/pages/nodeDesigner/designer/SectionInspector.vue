@@ -79,6 +79,63 @@
             </span>
           </div>
         </div>
+
+        <div class="field-group">
+          <div class="field-group-title">Visibility</div>
+          <label class="vis-check">
+            <input
+              type="checkbox"
+              :checked="!!section.visible_when"
+              :disabled="!section.visible_when && toggleOptions.length === 0"
+              @change="toggleVisibility(($event.target as HTMLInputElement).checked)"
+            />
+            Only show this group when a toggle is set
+          </label>
+          <span v-if="!section.visible_when && toggleOptions.length === 0" class="field-hint">
+            Add a ToggleSwitch control to another group to gate this one.
+          </span>
+          <template v-if="section.visible_when">
+            <div class="field-row">
+              <label>Controlling toggle</label>
+              <select
+                class="ins-input"
+                :value="section.visible_when.field"
+                @change="setVisibleField(($event.target as HTMLSelectElement).value)"
+              >
+                <option
+                  v-if="!toggleOptions.includes(section.visible_when.field)"
+                  :value="section.visible_when.field"
+                >
+                  {{ section.visible_when.field || "— select a toggle —" }}
+                </option>
+                <option v-for="opt in toggleOptions" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Show this group when the toggle is</label>
+              <div class="layout-switch" role="group" aria-label="Toggle state">
+                <button
+                  type="button"
+                  class="layout-btn"
+                  :class="{ active: section.visible_when.equals !== false }"
+                  @click="setVisibleEquals(true)"
+                >
+                  <i class="fa-solid fa-toggle-on"></i>
+                  On
+                </button>
+                <button
+                  type="button"
+                  class="layout-btn"
+                  :class="{ active: section.visible_when.equals === false }"
+                  @click="setVisibleEquals(false)"
+                >
+                  <i class="fa-solid fa-toggle-off"></i>
+                  Off
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <EmptyState
@@ -104,6 +161,20 @@ const section = computed<SectionState | null>(() => {
   return store.sections[idx] ?? null;
 });
 
+// Eligible controlling toggles: ToggleSwitch controls in OTHER sections (a section
+// can't gate on a toggle it would itself hide). Rendered as "<section>.<toggle>".
+const toggleOptions = computed<string[]>(() => {
+  const current = section.value?.name;
+  const out: string[] = [];
+  for (const sec of store.sections) {
+    if (sec.name === current) continue;
+    for (const comp of sec.components) {
+      if (comp.component_type === "ToggleSwitch") out.push(`${sec.name}.${comp.name}`);
+    }
+  }
+  return out;
+});
+
 function updateTitle(value: string) {
   if (store.selectedSectionIndex === null) return;
   store.updateSectionTitle(store.selectedSectionIndex, value);
@@ -127,6 +198,26 @@ function updateDescription(value: string) {
 function setLayout(layout: SectionLayout) {
   if (store.selectedSectionIndex === null) return;
   store.setSectionLayout(store.selectedSectionIndex, layout);
+}
+
+function toggleVisibility(enabled: boolean) {
+  if (store.selectedSectionIndex === null) return;
+  store.setSectionVisibleWhen(
+    store.selectedSectionIndex,
+    enabled ? { field: toggleOptions.value[0] ?? "", equals: true } : null,
+  );
+}
+
+function setVisibleField(field: string) {
+  const vw = section.value?.visible_when;
+  if (store.selectedSectionIndex === null || !vw) return;
+  store.setSectionVisibleWhen(store.selectedSectionIndex, { ...vw, field });
+}
+
+function setVisibleEquals(equals: boolean) {
+  const vw = section.value?.visible_when;
+  if (store.selectedSectionIndex === null || !vw) return;
+  store.setSectionVisibleWhen(store.selectedSectionIndex, { ...vw, equals });
 }
 </script>
 
@@ -267,5 +358,18 @@ function setLayout(layout: SectionLayout) {
 .field-hint {
   font-size: 0.75rem;
   color: var(--color-text-secondary, #6b7280);
+}
+
+.vis-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+}
+
+.vis-check input {
+  cursor: pointer;
 }
 </style>

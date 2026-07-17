@@ -34,6 +34,7 @@ from shared.node_designer import (
     TextInput,
     ToggleSwitch,
     Types,
+    VisibleWhen,
     create_node_settings,
     create_section,
     to_frontend_schema,
@@ -44,6 +45,7 @@ __all__ = [
     "CustomNodeBase",
     # UI Components & Layout
     "Section",
+    "VisibleWhen",
     "TextInput",
     "NumericInput",
     "SliderInput",

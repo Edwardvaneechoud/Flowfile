@@ -142,6 +142,20 @@ describe("state transitions", () => {
     expect(store.frontendSchema.settings.layout).toBe("horizontal");
   });
 
+  it("sets and clears a section visible_when rule and reflects it in the schema", () => {
+    const store = useNodeDesignerStore();
+    expect(store.sections[0].visible_when).toBeUndefined();
+    store.setSectionVisibleWhen(0, { field: "opts.show_advanced", equals: true });
+    expect(store.sections[0].visible_when).toEqual({ field: "opts.show_advanced", equals: true });
+    expect(store.frontendSchema.settings.visible_when).toEqual({
+      field: "opts.show_advanced",
+      equals: true,
+    });
+    store.setSectionVisibleWhen(0, null);
+    expect(store.sections[0].visible_when).toBeNull();
+    expect(store.frontendSchema.settings.visible_when).toBeUndefined();
+  });
+
   it("resetState restores the defaults", () => {
     const store = useNodeDesignerStore();
     store.nodeMetadata.node_name = "Something";
@@ -267,7 +281,14 @@ describe("draft restore", () => {
     const state = newDesignerState();
     state.node_name = name;
     state.sections = [
-      { name: "opts", title: "Options", description: null, hidden: false, layout: "vertical", components: [] },
+      {
+        name: "opts",
+        title: "Options",
+        description: null,
+        hidden: false,
+        layout: "vertical",
+        components: [],
+      },
     ];
     state.process_code = "return inputs[0]";
     localStorageMock.setItem(NEW_DRAFT_KEY, v2Draft(state));
