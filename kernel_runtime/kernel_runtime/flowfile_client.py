@@ -83,6 +83,7 @@ def _set_context(
     log_callback_url: str = "",
     internal_token: str | None = None,
     interactive: bool = False,
+    available_artifacts: dict[str, int] | None = None,
 ) -> None:
     _context.set(
         {
@@ -95,6 +96,9 @@ def _set_context(
             "log_callback_url": log_callback_url,
             "internal_token": internal_token,
             "interactive": interactive,
+            "available_artifacts": available_artifacts,
+            # Warn-once tracking per /execute; _set_context runs once per request.
+            "_lineage_warned": set(),
         }
     )
     if log_callback_url:
@@ -193,12 +197,35 @@ def publish_artifact(name: str, obj: Any) -> None:
     node_id: int = _get_context_value("node_id")
     flow_id: int = _get_context_value("flow_id")
     store.publish(name, obj, node_id, flow_id=flow_id)
+    # A node reading back what it just published is always in-lineage; add it to
+    # the allowlist so read_artifact doesn't warn about the node's own artifact.
+    allow: dict[str, int] | None = _get_context_value("available_artifacts")
+    if allow is not None:
+        allow[name] = node_id
 
 
 def read_artifact(name: str) -> Any:
     store: ArtifactStore = _get_context_value("artifact_store")
     flow_id: int = _get_context_value("flow_id")
-    return store.get(name, flow_id=flow_id)
+    obj = store.get(name, flow_id=flow_id)  # missing artifact raises KeyError, as before
+
+    allow: dict[str, int] | None = _get_context_value("available_artifacts")
+    if allow is not None and name not in allow:
+        warned: set[str] = _get_context_value("_lineage_warned")
+        if name not in warned:
+            warned.add(name)
+            node_id: int = _get_context_value("node_id")
+            publisher_id = store.list_all(flow_id=flow_id).get(name, {}).get("node_id", -1)
+            publisher = f"node {publisher_id}" if publisher_id is not None and publisher_id >= 0 else "another node"
+            log(
+                f"Artifact '{name}' was published by {publisher}, which is not an upstream "
+                f"input of node {node_id}. Reading artifacts from outside a node's input "
+                f"lineage is deprecated and will raise an error in a future Flowfile version. "
+                f"Connect the publishing node upstream, or publish the artifact globally and "
+                f"use get_global().",
+                "WARNING",
+            )
+    return obj
 
 
 def delete_artifact(name: str) -> None:
@@ -635,10 +662,13 @@ def log(message: str, level: Literal["INFO", "WARNING", "ERROR"] = "INFO") -> No
         "log_type": level,
     }
     try:
-        client.post(callback_url, json=payload)
+        resp = client.post(callback_url, json=payload)
+        if resp.status_code >= 400:
+            print(f"[{level}] {message}")  # noqa: T201
     except Exception:
-        # Best-effort — don't let logging failures break user code.
-        pass
+        # Delivery is best-effort; surface via captured stdout instead so
+        # the message is never silently lost.
+        print(f"[{level}] {message}")  # noqa: T201
 
 
 def log_info(message: str) -> None:

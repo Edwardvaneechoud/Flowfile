@@ -20,6 +20,7 @@ import type {
 } from "./designerState";
 import { newDesignerState, newEnvironmentState } from "./designerState";
 import type {
+  AvailableArtifactsMarker,
   ColumnActionInputComponent,
   ColumnSelectorComponent,
   MultiSelectComponent,
@@ -71,7 +72,14 @@ type SelectOptions = SingleSelectComponent["options"];
 
 function optionsFromSelect(comp: SelectState): SelectOptions {
   if (comp.options_source === "incoming_columns") return { __type__: "IncomingColumns" };
-  if (comp.options_source === "available_artifacts") return { __type__: "AvailableArtifacts" };
+  if (comp.options_source === "available_artifacts") {
+    // Omit-when-default: byte-identical to the backend serializer (wire contract).
+    const marker: AvailableArtifactsMarker = { __type__: "AvailableArtifacts" };
+    if (comp.artifact_scope && comp.artifact_scope !== "upstream") marker.scope = comp.artifact_scope;
+    const filters = [...new Set(comp.artifact_type_filter ?? [])].sort();
+    if (filters.length) marker.type_filter = filters;
+    return marker;
+  }
   return comp.options.map((o) => o.value);
 }
 
@@ -225,6 +233,8 @@ export function defaultComponentState(type: ComponentType, name: string): Compon
         label,
         options_source: "static",
         options: [],
+        artifact_scope: "upstream",
+        artifact_type_filter: [],
         default: null,
       };
     case "MultiSelect":
@@ -234,6 +244,8 @@ export function defaultComponentState(type: ComponentType, name: string): Compon
         label,
         options_source: "static",
         options: [],
+        artifact_scope: "upstream",
+        artifact_type_filter: [],
         default: [],
       };
     case "ColumnSelector":
@@ -340,6 +352,8 @@ function legacyComponentToState(comp: DesignerComponent): ComponentState {
         label,
         options_source: (comp.options_source as SelectState["options_source"]) ?? "static",
         options: parseCsvOptions(comp.options_string),
+        artifact_scope: "upstream",
+        artifact_type_filter: [],
         default: type === "MultiSelect" ? [] : null,
       } as SelectState;
     case "ColumnSelector":

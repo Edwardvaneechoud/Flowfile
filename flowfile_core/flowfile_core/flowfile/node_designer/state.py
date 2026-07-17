@@ -8,7 +8,7 @@ flowfile_frontend/src/renderer/app/pages/nodeDesigner/designerState.ts).
 import keyword
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 DESIGNER_STATE_VERSION = 1
 
@@ -67,6 +67,21 @@ class SelectState(_ComponentBase):
     options_source: Literal["static", "incoming_columns", "available_artifacts"] = "static"
     options: list[SelectOption] = []  # only when static
     default: Any | None = None  # list for MultiSelect
+    artifact_scope: Literal["upstream", "global", "all"] = "upstream"  # only when available_artifacts
+    artifact_type_filter: list[str] = []  # only when available_artifacts
+
+    @model_validator(mode="after")
+    def _clear_artifact_fields_off_source(self) -> "SelectState":
+        # Codegen only emits these for the available_artifacts source; reset them
+        # otherwise so parse can't lose them and the fixed point stays exact.
+        # On-source, canonicalize the filter (sorted-unique) so a frontend-authored
+        # state converges to the same byte-identical fixed point the parser produces.
+        if self.options_source != "available_artifacts":
+            self.artifact_scope = "upstream"
+            self.artifact_type_filter = []
+        else:
+            self.artifact_type_filter = sorted(set(self.artifact_type_filter))
+        return self
 
 
 class ColumnSelectorState(_ComponentBase):
@@ -130,6 +145,11 @@ class ExampleInput(BaseModel):
     data: dict[str, list[Any]]  # column -> JSON-scalar values
 
 
+class ArtifactDecl(BaseModel):
+    name: str
+    type: str | None = None
+
+
 class DesignerState(BaseModel):
     schema_version: Literal[1] = 1
     class_name: PyIdentifier
@@ -154,6 +174,7 @@ class DesignerState(BaseModel):
     extra_imports: list[str] = []  # verbatim statements, order preserved
     module_extra: list[str] = []  # verbatim module-level blocks, order preserved
     class_extra: list[str] = []  # verbatim class members, order preserved
+    publishes: list[ArtifactDecl] = []  # artifacts the node declares it publishes
 
 
 class ParseIssue(BaseModel):
@@ -188,3 +209,4 @@ class NodeManifest(BaseModel):
     environment: EnvironmentState = EnvironmentState()
     node_type: Literal["input", "output", "process"] = "process"
     transform_type: Literal["narrow", "wide", "other"] = "wide"
+    publishes: list[ArtifactDecl] = []

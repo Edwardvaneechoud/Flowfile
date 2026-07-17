@@ -48,6 +48,32 @@ NODE_TYPE = "roundtrip_fixed_column"
 SETTINGS = {"main_section": {"standard_input": "hello", "column_name": "custom_col"}}
 
 
+class CollidingTrainModel(CustomNodeBase):
+    """Custom node whose computed key collides with the built-in ``train_model`` type."""
+
+    node_name: str = "Train Model"
+    node_category: str = "Testing"
+    title: str = "Train Model"
+    intro: str = "Custom node whose key collides with a built-in type."
+
+    settings_schema: NodeSettings = NodeSettings(
+        main_section=Section(
+            title="Configuration",
+            standard_input=TextInput(label="Fixed Value"),
+            column_name=TextInput(label="New Column Name"),
+        ),
+    )
+
+    def process(self, *inputs):
+        input_df = inputs[0]
+        fixed_value = self.settings_schema.main_section.standard_input.value
+        new_col_name = self.settings_schema.main_section.column_name.value
+        return input_df.with_columns(pl.lit(fixed_value).alias(new_col_name))
+
+
+COLLIDING_TYPE = "train_model"
+
+
 @pytest.fixture
 def temp_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -123,6 +149,51 @@ def test_yaml_carries_user_defined_marker(temp_dir, store_snapshot):
     custom_node = next(n for n in data["nodes"] if n["id"] == 2)
     assert custom_node["setting_input"]["is_user_defined"] is True
     assert custom_node["setting_input"]["settings"] == SETTINGS
+
+
+class TestBuiltinKeyCollision:
+    """A user-defined node whose key collides with a built-in type must still load."""
+
+    def test_parse_resolves_user_defined_over_builtin_collision(self):
+        # is_user_defined marker wins over the built-in type->schema mapping.
+        raw = {"is_user_defined": True, "settings": SETTINGS, "output_names": ["main"]}
+        assert schemas.get_settings_class_for_node_type("train_model", raw) is input_schema.UserDefinedNode
+        # a genuine built-in train_model (no marker) still resolves to its own schema.
+        assert schemas.get_settings_class_for_node_type("train_model", {"train_input": {}}) is (
+            input_schema.NodeTrainModel
+        )
+
+    def test_colliding_node_opens_with_settings_preserved(self, temp_dir, store_snapshot):
+        store_snapshot.add_to_custom_node_store(CollidingTrainModel)
+        flow = create_graph(6100)
+        flow.add_node_promise(input_schema.NodePromise(flow_id=6100, node_id=1, node_type="manual_input"))
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=6100, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}, {"a": 2}])
+            )
+        )
+        flow.add_node_promise(input_schema.NodePromise(flow_id=6100, node_id=2, node_type=COLLIDING_TYPE))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        node_settings = input_schema.UserDefinedNode(
+            flow_id=6100, node_id=2, settings=SETTINGS, is_user_defined=True
+        )
+        flow.add_user_defined_node(
+            custom_node=CollidingTrainModel.from_settings(node_settings.settings),
+            user_defined_node_settings=node_settings,
+        )
+
+        yaml_path = temp_dir / "collision.yaml"
+        flow.save_flow(str(yaml_path))
+
+        # Before the parse fix this raised AttributeError (NodeTrainModel has no .settings).
+        loaded = open_flow(yaml_path)
+        node = loaded.get_node(2)
+        assert node is not None
+        assert node.node_type == COLLIDING_TYPE
+        assert node.setting_input.is_user_defined is True
+        # settings survive verbatim: the node resolved to UserDefinedNode, not NodeTrainModel
+        assert node.setting_input.settings == SETTINGS
+        assert isinstance(node.setting_input, input_schema.UserDefinedNode)
 
 
 class TestMissingNodeGracefulDegradation:

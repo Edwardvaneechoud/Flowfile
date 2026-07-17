@@ -471,6 +471,21 @@ def _read_kernel_output_previews(
     return outputs, None
 
 
+def _build_dry_run_execute_request(**kwargs):
+    """Build the kernel ExecuteRequest for a dry run with log streaming disabled.
+
+    Production runs stream ``flowfile_ctx.log()`` to core's ``/raw_logs`` flow
+    logger, but the Test tab only surfaces captured stdout/stderr. Blanking the
+    callback URL makes ``log()`` fall back to ``print()`` so its output lands in
+    stdout the tab already renders.
+    """
+    from flowfile_core.kernel.execution import build_execute_request
+
+    request = build_execute_request(**kwargs)
+    request.log_callback_url = ""
+    return request
+
+
 def _run_dry_run_on_kernel(
     request: DryRunRequest, source: str, output_names: list[str], samples: list[RawData]
 ) -> DryRunResponse:
@@ -483,7 +498,7 @@ def _run_dry_run_on_kernel(
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
     from flowfile_core.flowfile.user_defined.kernel_codegen import KernelCodegenError, generate_kernel_script
     from flowfile_core.kernel import get_kernel_manager
-    from flowfile_core.kernel.execution import build_execute_request, clear_stale_parquets, write_inputs_to_parquet
+    from flowfile_core.kernel.execution import clear_stale_parquets, write_inputs_to_parquet
 
     if request.designer_state is not None:
         class_name = request.designer_state.class_name
@@ -523,7 +538,7 @@ def _run_dry_run_on_kernel(
     started = time.monotonic()
     try:
         input_paths = write_inputs_to_parquet(frames, manager, input_dir, _DRY_RUN_FLOW_ID, node_id)
-        execute_request = build_execute_request(
+        execute_request = _build_dry_run_execute_request(
             node_id=node_id,
             code=code,
             input_paths=input_paths,

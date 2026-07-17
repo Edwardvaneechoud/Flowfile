@@ -366,6 +366,9 @@ class ExecuteRequest(BaseModel):
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
     internal_token: str | None = None  # Core→kernel auth token for artifact API calls
+    # artifact name -> source_node_id. None means no lineage context (no enforcement);
+    # {} means lineage is known but nothing is in this node's input lineage.
+    available_artifacts: dict[str, int] | None = None
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -381,10 +384,19 @@ class DisplayOutput(BaseModel):
     title: str = ""
 
 
+class PublishedArtifact(BaseModel):
+    """Metadata for an in-memory artifact published during a run."""
+
+    name: str
+    type_name: str = ""
+    module: str = ""
+    size_bytes: int = 0
+
+
 class ExecuteResponse(BaseModel):
     success: bool
     output_paths: list[str] = []
-    artifacts_published: list[str] = []
+    artifacts_published: list[PublishedArtifact] = []
     artifacts_deleted: list[str] = []
     display_outputs: list[DisplayOutput] = []
     stdout: str = ""
@@ -477,6 +489,7 @@ def _run_user_code(
             log_callback_url=request.log_callback_url,
             internal_token=request.internal_token,
             interactive=request.interactive,
+            available_artifacts=request.available_artifacts,
         )
 
         flowfile_client._reset_displays()
@@ -522,9 +535,18 @@ def _run_user_code(
         if output_dir and Path(output_dir).exists():
             output_paths = [str(p) for p in sorted(Path(output_dir).glob("*.parquet"))]
 
-        artifacts_after = set(artifact_store.list_all(flow_id=request.flow_id).keys())
-        new_artifacts = sorted(artifacts_after - artifacts_before)
-        deleted_artifacts = sorted(artifacts_before - artifacts_after)
+        artifacts_meta = artifact_store.list_all(flow_id=request.flow_id)
+        new_names = sorted(set(artifacts_meta) - artifacts_before)
+        new_artifacts = [
+            PublishedArtifact(
+                name=name,
+                type_name=artifacts_meta[name].get("type_name", ""),
+                module=artifacts_meta[name].get("module", ""),
+                size_bytes=artifacts_meta[name].get("size_bytes", 0),
+            )
+            for name in new_names
+        ]
+        deleted_artifacts = sorted(artifacts_before - set(artifacts_meta))
 
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(

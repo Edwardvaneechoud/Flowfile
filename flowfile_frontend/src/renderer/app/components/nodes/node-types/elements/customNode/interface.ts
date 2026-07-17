@@ -17,9 +17,32 @@ export interface TextInputComponent extends BaseComponent {
   placeholder?: string;
 }
 
+// Marker for artifact-populated selects; scope/type_filter omitted at defaults.
+export interface AvailableArtifactsMarker {
+  __type__: "AvailableArtifacts";
+  scope?: "upstream" | "global" | "all";
+  type_filter?: string[];
+}
+
+// One upstream (lineage) artifact option surfaced by /flow/node_available_artifacts.
+export interface ArtifactOption {
+  name: string;
+  type_name?: string;
+  module?: string;
+  status?: "published" | "declared";
+}
+
+// One global (catalog) artifact option surfaced by /artifacts/.
+export interface GlobalArtifactOption {
+  name: string;
+  python_type?: string | null;
+  namespace_id?: number | null;
+  version: number;
+}
+
 export interface MultiSelectComponent extends BaseComponent {
   component_type: "MultiSelect";
-  options: { __type__: "IncomingColumns" } | { __type__: "AvailableArtifacts" } | string[];
+  options: { __type__: "IncomingColumns" } | AvailableArtifactsMarker | string[];
 }
 
 export interface ToggleSwitchComponent extends BaseComponent {
@@ -42,7 +65,7 @@ export interface SliderInputComponent extends BaseComponent {
 
 export interface SingleSelectComponent extends BaseComponent {
   component_type: "SingleSelect";
-  options: { __type__: "IncomingColumns" } | { __type__: "AvailableArtifacts" } | string[];
+  options: { __type__: "IncomingColumns" } | AvailableArtifactsMarker | string[];
 }
 
 export interface ColumnSelectorComponent extends BaseComponent {

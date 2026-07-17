@@ -12,6 +12,7 @@
   "number_of_outputs": 1,
   "output_names": ["main"],
   "environment": { "kind": "local", "dependencies": [], "default_kernel_id": null },
+  "publishes": [],
   "sections": [
     {
       "name": "main_config",
@@ -69,7 +70,19 @@
           "label": "Extra columns",
           "options_source": "incoming_columns",
           "options": [],
+          "artifact_scope": "upstream",
+          "artifact_type_filter": [],
           "default": []
+        },
+        {
+          "component_type": "SingleSelect",
+          "name": "saved_model",
+          "label": "Saved model",
+          "options_source": "available_artifacts",
+          "options": [],
+          "artifact_scope": "global",
+          "artifact_type_filter": ["xgboost.*", "lightgbm.Booster", "xgboost.*"],
+          "default": null
         }
       ]
     }

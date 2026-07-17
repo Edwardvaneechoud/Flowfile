@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class KernelState(str, Enum):
@@ -128,6 +128,9 @@ class ExecuteRequest(BaseModel):
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
     internal_token: str | None = None  # Core→kernel auth token for artifact API calls
+    # Artifact name → source node id lineage allowlist. None ⇒ no lineage context
+    # (no enforcement); {} ⇒ lineage known, nothing available.
+    available_artifacts: dict[str, int] | None = None
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -152,16 +155,34 @@ class DisplayOutput(BaseModel):
     title: str = ""
 
 
+class PublishedArtifact(BaseModel):
+    """Metadata for an artifact a kernel node published during a run."""
+
+    name: str
+    type_name: str = ""
+    module: str = ""
+    size_bytes: int = 0
+
+
 class ExecuteResult(BaseModel):
     success: bool
     output_paths: list[str] = Field(default_factory=list)
-    artifacts_published: list[str] = Field(default_factory=list)
+    artifacts_published: list[PublishedArtifact] = Field(default_factory=list)
     artifacts_deleted: list[str] = Field(default_factory=list)
     display_outputs: list[DisplayOutput] = Field(default_factory=list)
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+
+    @field_validator("artifacts_published", mode="before")
+    @classmethod
+    def _normalize_published(cls, value):
+        # Stale 0.4.0 kernel images emit plain name strings; map them to the rich
+        # shape so they degrade to names-only instead of a validation error.
+        if not isinstance(value, list):
+            return value
+        return [{"name": item} if isinstance(item, str) else item for item in value]
 
 
 # Artifact Persistence & Recovery models

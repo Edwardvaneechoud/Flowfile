@@ -129,7 +129,7 @@ class TestKernelRuntime:
             )
         )
         assert result.success
-        assert "my_dict" in result.artifacts_published
+        assert "my_dict" in [a.name for a in result.artifacts_published]
 
     def test_read_and_write_parquet(self, kernel_manager: tuple[KernelManager, str]):
         """Kernel can read input parquet and write output parquet."""

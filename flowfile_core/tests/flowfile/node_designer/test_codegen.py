@@ -14,6 +14,7 @@ import pytest
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
 from flowfile_core.flowfile.node_designer.parsing import parse_source
 from flowfile_core.flowfile.node_designer.state import (
+    ArtifactDecl,
     ColumnSelectorState,
     DesignerState,
     EnvironmentState,
@@ -182,6 +183,121 @@ def test_incoming_columns_marker_emitted():
     src = generate_source(_minimal_state(sections=[section]))
     assert "options=nd.IncomingColumns" in src
     assert parse_source(src).designer_state.sections[0].components[0].options_source == "incoming_columns"
+
+
+def test_available_artifacts_default_emits_bare_marker():
+    section = SectionState(
+        name="main",
+        components=[SelectState(name="a", component_type="SingleSelect", options_source="available_artifacts")],
+    )
+    src = generate_source(_minimal_state(sections=[section]))
+    assert "options=nd.AvailableArtifacts," in src
+    assert "nd.AvailableArtifacts(" not in src
+    assert parse_source(src).designer_state.sections[0].components[0] == section.components[0]
+
+
+def test_available_artifacts_parametrized_emits_exploded_call():
+    section = SectionState(
+        name="main",
+        components=[
+            SelectState(
+                name="a",
+                component_type="SingleSelect",
+                options_source="available_artifacts",
+                artifact_scope="global",
+                artifact_type_filter=["sklearn.*"],
+            )
+        ],
+    )
+    src = generate_source(_minimal_state(sections=[section]))
+    assert "options=nd.AvailableArtifacts(" in src
+    assert 'scope="global",' in src
+    assert '"sklearn.*",' in src
+    # scope=="upstream" is the default and must be omitted
+    section2 = SectionState(
+        name="main",
+        components=[
+            SelectState(
+                name="a",
+                component_type="MultiSelect",
+                options_source="available_artifacts",
+                artifact_type_filter=["a.*", "b.*"],
+            )
+        ],
+    )
+    src2 = generate_source(_minimal_state(sections=[section2]))
+    assert "scope=" not in src2
+    assert parse_source(src2).designer_state.sections[0].components[0] == section2.components[0]
+
+
+def test_available_artifacts_scope_all_emits_call_form():
+    section = SectionState(
+        name="main",
+        components=[
+            SelectState(
+                name="a",
+                component_type="SingleSelect",
+                options_source="available_artifacts",
+                artifact_scope="all",
+            )
+        ],
+    )
+    src = generate_source(_minimal_state(sections=[section]))
+    assert "options=nd.AvailableArtifacts(" in src
+    assert 'scope="all",' in src
+    assert parse_source(src).designer_state.sections[0].components[0] == section.components[0]
+
+
+def test_artifact_type_filter_canonicalized_at_model_boundary():
+    # A frontend-authored state (comma-split, unsorted, duplicated) must
+    # canonicalize to sorted-unique at the pydantic boundary.
+    comp = SelectState(
+        name="a",
+        component_type="SingleSelect",
+        options_source="available_artifacts",
+        artifact_type_filter=["xgboost.*", "lightgbm.Booster", "xgboost.*"],
+    )
+    assert comp.artifact_type_filter == ["lightgbm.Booster", "xgboost.*"]
+
+
+def test_frontend_unsorted_type_filter_is_byte_identical_fixed_point():
+    # generate -> parse -> generate must be byte-stable even when the incoming
+    # state carried a raw (unsorted/duplicated) filter.
+    section = SectionState(
+        name="main",
+        components=[
+            SelectState(
+                name="a",
+                component_type="SingleSelect",
+                options_source="available_artifacts",
+                artifact_type_filter=["xgboost.*", "lightgbm.Booster", "xgboost.*"],
+            )
+        ],
+    )
+    state = _minimal_state(sections=[section])
+    src = generate_source(state)
+    reparsed = parse_source(src)
+    assert reparsed.mode == "designer", [i.message for i in reparsed.issues]
+    assert generate_source(reparsed.designer_state) == src
+
+
+def test_publishes_emitted_after_example_settings_and_round_trips():
+    state = _minimal_state(
+        example_settings={"main": {"k": 1}},
+        publishes=[ArtifactDecl(name="model"), ArtifactDecl(name="scaler", type="sklearn.X")],
+    )
+    src = generate_source(state)
+    assert "publishes: list[nd.Artifact] = [" in src
+    assert 'nd.Artifact("model"),' in src
+    assert 'nd.Artifact("scaler", type="sklearn.X"),' in src
+    assert src.index("example_settings") < src.index("publishes")
+    reparsed = parse_source(src).designer_state
+    assert reparsed.publishes == state.publishes
+
+
+def test_publishes_empty_emits_nothing():
+    src = generate_source(_minimal_state())
+    assert "publishes" not in src
 
 
 def test_section_layout_horizontal_emitted_and_round_trips():

@@ -115,7 +115,7 @@ export interface DisplayOutput {
 export interface ExecuteResult {
   success: boolean;
   output_paths: string[];
-  artifacts_published: string[];
+  artifacts_published: { name: string; type_name?: string; module?: string; size_bytes?: number }[];
   artifacts_deleted: string[];
   display_outputs: DisplayOutput[];
   stdout: string;

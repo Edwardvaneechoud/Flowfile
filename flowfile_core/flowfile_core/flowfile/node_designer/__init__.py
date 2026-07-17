@@ -10,6 +10,7 @@ spellings expose the same public surface — keep it in lockstep.
 
 from shared.node_designer import (
     ActionOption,
+    Artifact,
     AvailableArtifacts,
     AvailableSecrets,
     ColumnActionInput,
@@ -43,6 +44,7 @@ from shared.node_designer import (
 __all__ = [
     # Core Node Class
     "CustomNodeBase",
+    "Artifact",
     # UI Components & Layout
     "Section",
     "VisibleWhen",

@@ -394,6 +394,32 @@ def test_kernel_output_read_rejects_path_traversal(tmp_path):
     assert by_name[traversal].row_count == 0
 
 
+def test_dry_run_kernel_request_disables_log_callback():
+    """Dry runs blank the log callback so flowfile_ctx.log() prints to stdout the
+    Test tab renders, instead of streaming to core's /raw_logs flow logger."""
+    from flowfile_core.kernel.execution import build_execute_request
+
+    class _FakeManager:
+        _kernel_volume = None
+
+        def to_kernel_path(self, path):
+            return path
+
+    kwargs = dict(
+        node_id=7,
+        code="x = 1",
+        input_paths={"main": []},
+        output_dir="/tmp/out",
+        flow_id=dr._DRY_RUN_FLOW_ID,
+        manager=_FakeManager(),
+        source_registration_id=None,
+    )
+    # Baseline: a production request DOES point log() at core's /raw_logs.
+    assert build_execute_request(**kwargs).log_callback_url != ""
+    # Dry-run request blanks it.
+    assert dr._build_dry_run_execute_request(**kwargs).log_callback_url == ""
+
+
 @pytest.mark.kernel
 def test_dry_run_executes_on_kernel(monkeypatch):
     """A kernel-env dry-run runs process() inside the Docker kernel (Docker required).
