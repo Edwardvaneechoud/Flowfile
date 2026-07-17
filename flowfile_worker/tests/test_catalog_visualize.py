@@ -162,18 +162,7 @@ def test_eviction_kills_os_process(tmp_path):
 
 
 def test_two_session_keys_run_in_parallel():
-    """Requests for two distinct session keys must be in flight simultaneously.
-
-    Replaces a wall-clock speedup comparison that was flaky on CPU-starved CI
-    runners: polars saturates all cores on a single workload, so two parallel
-    workloads legitimately show no speedup even when dispatch is fully
-    concurrent.  Overlap is asserted directly instead — fake children block
-    each response on a barrier that only releases once BOTH sessions hold an
-    in-flight request, and the fake spawn does the same for the spawn path.
-    Any registry-level serialisation across session keys (a lock held across
-    spawn or the request/response round-trip) breaks a barrier and fails the
-    assert.  No timing thresholds involved.
-    """
+    """Distinct session keys must overlap in flight: barrier rendezvous, not flaky wall-clock speedup."""
     import queue as _q
 
     reg = VizSessionRegistry()
