@@ -162,7 +162,7 @@ open_graph_in_editor(result.flow_graph)
 <summary><b>Docker</b> — full stack via Docker Compose</summary>
 
 ```bash
-git clone https://github.com/edwardvaneechoud/Flowfile.git
+git clone https://github.com/Edwardvaneechoud/Flowfile.git
 cd Flowfile
 docker compose up -d
 ```
@@ -175,7 +175,7 @@ Access at http://localhost:8080.
 <summary><b>From source</b> — for contributors (Python 3.10+, Node.js 20+)</summary>
 
 ```bash
-git clone https://github.com/edwardvaneechoud/Flowfile.git
+git clone https://github.com/Edwardvaneechoud/Flowfile.git
 cd Flowfile
 poetry install
 
