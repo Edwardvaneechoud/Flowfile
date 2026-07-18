@@ -6,7 +6,6 @@ from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
-from flowfile_core.flowfile.user_defined.registry import missing_custom_node_error
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 from shared.storage_config import storage
@@ -334,18 +333,7 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
                 # .get() execs the node module lazily; missing or exec-broken nodes
                 # land in the error path so a flow always opens with settings
                 # preserved verbatim instead of being dropped.
-                user_defined_node_class = CUSTOM_NODE_STORE.get(node_info.type)
-                if user_defined_node_class is None:
-                    new_flow.add_missing_user_defined_node(
-                        user_defined_node_settings=node_info.setting_input,
-                        node_type=node_info.type,
-                        error=missing_custom_node_error(node_info.type),
-                    )
-                else:
-                    new_flow.add_user_defined_node(
-                        custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
-                        user_defined_node_settings=node_info.setting_input,
-                    )
+                new_flow._place_user_defined_node(node_info.type, node_info.setting_input)
             else:
                 getattr(new_flow, "add_" + node_info.type)(node_info.setting_input)
 

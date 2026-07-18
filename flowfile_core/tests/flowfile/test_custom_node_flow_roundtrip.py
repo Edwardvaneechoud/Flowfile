@@ -300,3 +300,53 @@ class TestSchemaDrift:
         assert result.success
         expected = FlowDataEngine({"a": [1, 2], "kept_col": ["kept", "kept"]})
         expected.assert_equal(loaded.get_node(2).get_resulting_data())
+
+
+class TestCopyCustomNode:
+    """Copying a custom node must place it via the user-defined path, not the built-in
+    ``add_<type>`` dispatch (which raised AttributeError for custom node types)."""
+
+    def test_copy_configured_custom_node_runs(self, store_snapshot):
+        store_snapshot.add_to_custom_node_store(RoundtripFixedColumn)
+        flow = build_flow_with_custom_node(6200)
+        source = flow.get_node(2)
+
+        copied_promise = input_schema.NodePromise(flow_id=6200, node_id=3, node_type=NODE_TYPE)
+        flow.copy_node(
+            new_node_settings=copied_promise,
+            existing_setting_input=source.setting_input,
+            node_type=source.node_type,
+        )
+
+        copied = flow.get_node(3)
+        assert copied is not None, "copied custom node must be placed, not dropped"
+        assert copied.node_type == NODE_TYPE
+        assert isinstance(copied.setting_input, input_schema.UserDefinedNode)
+        assert copied.setting_input.is_user_defined is True
+        assert copied.setting_input.settings == SETTINGS
+
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
+        result = flow.run_graph()
+        assert result.success, result
+        expected = FlowDataEngine({"a": [1, 2], "custom_col": ["hello", "hello"]})
+        expected.assert_equal(flow.get_node(3).get_resulting_data())
+
+    def test_copy_missing_custom_node_degrades(self, store_snapshot):
+        store_snapshot.add_to_custom_node_store(RoundtripFixedColumn)
+        flow = build_flow_with_custom_node(6201)
+        source = flow.get_node(2)
+        # simulate the node type being uninstalled after the source was placed
+        store_snapshot.remove_from_custom_node_store(NODE_TYPE)
+
+        copied_promise = input_schema.NodePromise(flow_id=6201, node_id=3, node_type=NODE_TYPE)
+        flow.copy_node(
+            new_node_settings=copied_promise,
+            existing_setting_input=source.setting_input,
+            node_type=source.node_type,
+        )
+
+        copied = flow.get_node(3)
+        assert copied is not None, "missing custom node must never be dropped on copy"
+        assert copied.node_type == NODE_TYPE
+        assert "not installed" in copied.results.errors
+        assert copied.setting_input.settings == SETTINGS
