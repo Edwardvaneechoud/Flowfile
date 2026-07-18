@@ -2067,6 +2067,7 @@ class FlowGraph:
         code: str,
         output_names: list[str],
         flow_data_engine: tuple[FlowDataEngine, ...],
+        declared_publishes: list[str] | None = None,
     ) -> FlowDataEngine | None:
         """Execute code on a kernel container and return the primary output.
 
@@ -2080,7 +2081,7 @@ class FlowGraph:
 
         self.artifact_context.clear_nodes({node_id})
 
-        self.artifact_context.compute_available(
+        available = self.artifact_context.compute_available(
             node_id=node_id,
             kernel_id=kernel_id,
             upstream_node_ids=self._get_upstream_node_ids(node_id),
@@ -2108,6 +2109,7 @@ class FlowGraph:
             flow_id=flow_id,
             manager=manager,
             source_registration_id=self._flow_settings.source_registration_id,
+            available_artifacts={name: ref.source_node_id for name, ref in available.items()},
         )
 
         cancel_event = threading.Event()
@@ -2129,7 +2131,7 @@ class FlowGraph:
             self.artifact_context.record_published(
                 node_id=node_id,
                 kernel_id=kernel_id,
-                artifacts=[{"name": n} for n in result.artifacts_published],
+                artifacts=[a.model_dump() for a in result.artifacts_published],
             )
         if result.artifacts_deleted:
             self.artifact_context.record_deleted(
@@ -2137,6 +2139,12 @@ class FlowGraph:
                 kernel_id=kernel_id,
                 artifact_names=result.artifacts_deleted,
             )
+
+        if declared_publishes:
+            observed_names = {a.name for a in result.artifacts_published}
+            for name in declared_publishes:
+                if name not in observed_names:
+                    node_logger.warning(f"Declared artifact '{name}' (in publishes) was not published in this run.")
 
         primary_result = read_kernel_outputs(output_dir=output_dir, output_names=output_names, result=result, node=node)
 
@@ -2176,6 +2184,10 @@ class FlowGraph:
         else:
             code = custom_node.generate_kernel_code()
 
+        declared_publishes: list[str] | None = None
+        if registry_entry is not None and registry_entry.manifest is not None:
+            declared_publishes = [d.name for d in registry_entry.manifest.publishes]
+
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             return self._execute_on_kernel(
                 node_id=user_defined_node_settings.node_id,
@@ -2183,6 +2195,7 @@ class FlowGraph:
                 code=code,
                 output_names=output_names,
                 flow_data_engine=flow_data_engine,
+                declared_publishes=declared_publishes,
             )
 
         return _func

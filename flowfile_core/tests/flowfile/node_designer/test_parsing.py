@@ -192,7 +192,7 @@ def test_docs_example_designer_state():
     assert greeting.default == "casual"
 
     expected_process = textwrap.dedent(
-        '''\
+        """\
         def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
             df = inputs[0]
             name_col = self.settings_schema.main_config.name_column.value
@@ -200,7 +200,7 @@ def test_docs_example_designer_state():
             word = "Hello" if style == "formal" else "Hey"
             return df.with_columns(
                 pl.concat_str([pl.lit(f"{word}, "), pl.col(name_col)]).alias("greeting")
-            )'''
+            )"""
     )
     assert state.process_code == expected_process
 
@@ -352,6 +352,51 @@ def test_section_layout_defaults_to_vertical_and_emits_no_kwarg():
 
 def test_section_invalid_layout_is_code_only():
     result = parse_source(_layout_source('layout="sideways",'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
+def test_section_visible_when_lifts_and_round_trips():
+    result = parse("insubset_section_visible_when.py")
+    assert result.mode == "designer"
+    assert codes(result) == set()
+    sections = {s.name: s for s in result.designer_state.sections}
+    assert sections["main"].visible_when is None
+    assert sections["advanced"].visible_when.field == "main.show_advanced"
+    assert sections["advanced"].visible_when.equals is True
+    assert sections["inverted"].visible_when.field == "main.show_advanced"
+    assert sections["inverted"].visible_when.equals is False
+
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+
+    generated = generate_source(result.designer_state)
+    assert "visible_when=nd.VisibleWhen(" in generated
+    assert 'field="main.show_advanced"' in generated
+    # equals=True (advanced) is the default and omitted; only equals=False (inverted) is emitted.
+    assert generated.count("equals=") == 1
+    assert "equals=False" in generated
+    reparsed = parse_source(generated)
+    assert reparsed.designer_state == result.designer_state
+
+
+def test_section_visible_when_dict_form_lifts_and_normalizes():
+    """A hand-written dict is accepted and normalized to the canonical nd.VisibleWhen(...) on save."""
+    result = parse_source(_layout_source('visible_when={"field": "main.flag"},'))
+    assert result.mode == "designer"
+    assert error_codes(result) == set()
+    section = result.designer_state.sections[0]
+    assert section.visible_when.field == "main.flag"
+    assert section.visible_when.equals is True
+
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+
+    generated = generate_source(result.designer_state)
+    assert "visible_when=nd.VisibleWhen(" in generated
+    assert 'field="main.flag"' in generated
+
+
+def test_section_visible_when_non_dict_is_code_only():
+    result = parse_source(_layout_source('visible_when="main.flag",'))
     assert result.mode == "code_only"
     assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
 
@@ -666,3 +711,204 @@ def test_extract_manifest_environment_normalization():
     manifest = extract_manifest(load("codeonly_dynamic_kwargs.py"))
     assert manifest.class_name == "DynamicNode"
     assert manifest.node_name == "Dynamic Node"
+
+
+# -- AvailableArtifacts marker call parsing ------------------------------------
+
+
+def _select_source(options_expr: str) -> str:
+    return textwrap.dedent(
+        f"""
+        import polars as pl
+
+        from flowfile import node_designer as nd
+
+
+        class ArtifactSettings(nd.NodeSettings):
+            main: nd.Section = nd.Section(
+                title="Main",
+                artifact=nd.SingleSelect(label="Artifact", options={options_expr}),
+            )
+
+
+        class ArtifactNode(nd.CustomNodeBase):
+            node_name: str = "Artifact Node"
+            settings_schema: ArtifactSettings = ArtifactSettings()
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                return inputs[0]
+        """
+    )
+
+
+def _artifact_select(options_expr: str) -> SelectState:
+    result = parse_source(_select_source(options_expr))
+    assert result.mode == "designer", [i.message for i in result.issues]
+    (component,) = result.designer_state.sections[0].components
+    assert isinstance(component, SelectState)
+    return component
+
+
+def test_available_artifacts_bare_marker():
+    comp = _artifact_select("nd.AvailableArtifacts")
+    assert comp.options_source == "available_artifacts"
+    assert comp.artifact_scope == "upstream"
+    assert comp.artifact_type_filter == []
+
+
+def test_available_artifacts_kwarg_form():
+    comp = _artifact_select('nd.AvailableArtifacts(scope="global", type=["a.*", "b.*"])')
+    assert comp.options_source == "available_artifacts"
+    assert comp.artifact_scope == "global"
+    assert comp.artifact_type_filter == ["a.*", "b.*"]
+
+
+def test_available_artifacts_scope_all():
+    comp = _artifact_select('nd.AvailableArtifacts(scope="all")')
+    assert comp.options_source == "available_artifacts"
+    assert comp.artifact_scope == "all"
+    assert comp.artifact_type_filter == []
+
+
+def test_available_artifacts_positional_scope():
+    comp = _artifact_select('nd.AvailableArtifacts("global")')
+    assert comp.artifact_scope == "global"
+    assert comp.artifact_type_filter == []
+
+
+def test_available_artifacts_type_as_string():
+    comp = _artifact_select('nd.AvailableArtifacts(type="sklearn.*")')
+    assert comp.artifact_scope == "upstream"
+    assert comp.artifact_type_filter == ["sklearn.*"]
+
+
+def test_available_artifacts_type_list_normalizes_sorted_unique():
+    comp = _artifact_select('nd.AvailableArtifacts(type=["b.*", "a.*", "a.*"])')
+    assert comp.artifact_type_filter == ["a.*", "b.*"]
+
+
+def test_available_artifacts_bad_scope_is_code_only():
+    result = parse_source(_select_source('nd.AvailableArtifacts(scope="sideways")'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
+def test_available_artifacts_bad_scope_everywhere_is_code_only():
+    result = parse_source(_select_source('nd.AvailableArtifacts(scope="everywhere")'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
+def test_incoming_columns_call_is_still_rejected():
+    """IncomingColumns/AvailableSecrets stay bare-only — calling them is not a designer literal."""
+    result = parse_source(_select_source("nd.IncomingColumns()"))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
+def _select_default_source(default_expr: str) -> str:
+    return textwrap.dedent(
+        f"""
+        import polars as pl
+
+        from flowfile import node_designer as nd
+
+
+        class ArtifactSettings(nd.NodeSettings):
+            main: nd.Section = nd.Section(
+                title="Main",
+                artifact=nd.SingleSelect(label="Artifact", options=["a"], default={default_expr}),
+            )
+
+
+        class ArtifactNode(nd.CustomNodeBase):
+            node_name: str = "Artifact Node"
+            settings_schema: ArtifactSettings = ArtifactSettings()
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                return inputs[0]
+        """
+    )
+
+
+def test_artifact_marker_bare_in_default_degrades_not_500():
+    """A marker in default= (only valid for options) degrades to code_only, never raises."""
+    result = parse_source(_select_default_source("nd.AvailableArtifacts"))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
+def test_artifact_marker_call_in_default_degrades_not_500():
+    result = parse_source(_select_default_source('nd.AvailableArtifacts(scope="global")'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_COMPONENT_KWARG.value in error_codes(result)
+
+
+# -- publishes lifting ---------------------------------------------------------
+
+
+def _publishes_source(publishes_expr: str) -> str:
+    return textwrap.dedent(
+        f"""
+        import polars as pl
+
+        from flowfile import node_designer as nd
+
+
+        class PublisherNode(nd.CustomNodeBase):
+            node_name: str = "Publisher"
+            publishes: list[nd.Artifact] = {publishes_expr}
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                return inputs[0]
+        """
+    )
+
+
+def test_publishes_artifact_calls_lift():
+    result = parse_source(_publishes_source('[nd.Artifact("model"), nd.Artifact("scaler", type="sklearn.X")]'))
+    assert result.mode == "designer"
+    assert error_codes(result) == set()
+    assert [(p.name, p.type) for p in result.designer_state.publishes] == [
+        ("model", None),
+        ("scaler", "sklearn.X"),
+    ]
+
+
+def test_publishes_plain_strings_canonicalize():
+    result = parse_source(_publishes_source('["model", "scaler"]'))
+    assert result.mode == "designer"
+    assert [(p.name, p.type) for p in result.designer_state.publishes] == [("model", None), ("scaler", None)]
+
+
+def test_publishes_mixed_entries_lift():
+    result = parse_source(_publishes_source('["model", nd.Artifact("scaler", type="T")]'))
+    assert result.mode == "designer"
+    assert [(p.name, p.type) for p in result.designer_state.publishes] == [("model", None), ("scaler", "T")]
+
+
+def test_publishes_empty_is_default():
+    result = parse_source(_publishes_source("[]"))
+    assert result.mode == "designer"
+    assert result.designer_state.publishes == []
+
+
+def test_publishes_non_literal_element_is_code_only():
+    result = parse_source(_publishes_source("[SOME_NAME]"))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_ATTR.value in error_codes(result)
+
+
+def test_publishes_non_list_is_code_only():
+    result = parse_source(_publishes_source('"model"'))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_ATTR.value in error_codes(result)
+
+
+def test_extract_manifest_publishes_best_effort():
+    manifest = extract_manifest(_publishes_source('[nd.Artifact("model"), "scaler", nd.Artifact("x", type="T")]'))
+    assert [(p.name, p.type) for p in manifest.publishes] == [("model", None), ("scaler", None), ("x", "T")]
+
+    # malformed entries are skipped, never fatal
+    manifest = extract_manifest(_publishes_source("[SOME_NAME, nd.Artifact(123)]"))
+    assert manifest.publishes == []

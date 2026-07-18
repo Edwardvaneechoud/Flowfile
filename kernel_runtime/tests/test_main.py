@@ -331,7 +331,7 @@ class TestArtifactEndpoints:
         )
         data = resp.json()
         assert data["success"] is True
-        assert "my_dict" in data["artifacts_published"]
+        assert "my_dict" in [a["name"] for a in data["artifacts_published"]]
 
     def test_list_artifacts(self, client: TestClient):
         client.post(
@@ -457,7 +457,7 @@ class TestArtifactEndpoints:
             },
         )
         assert resp1.json()["success"] is True
-        assert "model" in resp1.json()["artifacts_published"]
+        assert "model" in [a["name"] for a in resp1.json()["artifacts_published"]]
 
         resp2 = client.post(
             "/execute",
@@ -470,7 +470,7 @@ class TestArtifactEndpoints:
             },
         )
         assert resp2.json()["success"] is True
-        assert "model" in resp2.json()["artifacts_published"]
+        assert "model" in [a["name"] for a in resp2.json()["artifacts_published"]]
 
         resp3 = client.post(
             "/execute",
@@ -1450,3 +1450,166 @@ class TestDisplayOutputStore:
 
         resp = client.get("/display_outputs", params={"flow_id": 4, "node_id": 50})
         assert resp.json() == []
+
+
+class TestArtifactLineage:
+    """Lineage enforcement: reading an artifact outside a node's input lineage
+    warns (deprecation) but still returns the value; in-lineage / no-lineage-context
+    reads stay silent. The warning falls back to stdout when no log_callback_url."""
+
+    def _publish_model(self, client: TestClient, node_id: int, flow_id: int):
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": node_id,
+                "code": 'flowfile_ctx.publish_artifact("model", {"weight": 5})',
+                "flow_id": flow_id,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp.json()["success"] is True
+
+    def test_out_of_lineage_read_warns_but_returns_value(self, client: TestClient):
+        self._publish_model(client, node_id=300, flow_id=500)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 301,
+                "code": 'm = flowfile_ctx.read_artifact("model")\nprint("derived:", m["weight"] * 2)',
+                "flow_id": 500,
+                "input_paths": {},
+                "output_dir": "",
+                "available_artifacts": {},
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "not an upstream input" in data["stdout"]
+        assert "node 300" in data["stdout"]
+        # The read actually returned the object (derived value proves it).
+        assert "derived: 10" in data["stdout"]
+
+    def test_log_falls_back_to_stdout_when_callback_unreachable(self, client: TestClient):
+        self._publish_model(client, node_id=300, flow_id=507)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 301,
+                "code": 'flowfile_ctx.read_artifact("model")',
+                "flow_id": 507,
+                "input_paths": {},
+                "output_dir": "",
+                "available_artifacts": {},
+                "log_callback_url": "http://127.0.0.1:1/raw_logs",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        # POST to the dead callback fails -> the warning must surface via stdout.
+        assert "not an upstream input" in data["stdout"]
+
+    def test_in_lineage_read_is_silent(self, client: TestClient):
+        self._publish_model(client, node_id=300, flow_id=501)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 301,
+                "code": 'm = flowfile_ctx.read_artifact("model")\nprint("derived:", m["weight"] * 2)',
+                "flow_id": 501,
+                "input_paths": {},
+                "output_dir": "",
+                "available_artifacts": {"model": 300},
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "not an upstream input" not in data["stdout"]
+        assert "derived: 10" in data["stdout"]
+
+    def test_no_lineage_context_is_silent(self, client: TestClient):
+        """available_artifacts omitted (None) => legacy/interactive path, no enforcement."""
+        self._publish_model(client, node_id=300, flow_id=502)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 301,
+                "code": 'm = flowfile_ctx.read_artifact("model")\nprint("derived:", m["weight"] * 2)',
+                "flow_id": 502,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "not an upstream input" not in data["stdout"]
+        assert "derived: 10" in data["stdout"]
+
+    def test_published_artifact_rich_metadata(self, client: TestClient):
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 310,
+                "code": 'flowfile_ctx.publish_artifact("cfg", {"a": 1})',
+                "flow_id": 503,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        entries = {a["name"]: a for a in data["artifacts_published"]}
+        assert "cfg" in entries
+        entry = entries["cfg"]
+        assert entry["type_name"] == "dict"
+        assert entry["module"] == "builtins"
+        assert entry["size_bytes"] > 0
+
+    def test_out_of_lineage_read_warns_once(self, client: TestClient):
+        self._publish_model(client, node_id=300, flow_id=504)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 301,
+                "code": (
+                    'flowfile_ctx.read_artifact("model")\n'
+                    'flowfile_ctx.read_artifact("model")\n'
+                    'print("done")'
+                ),
+                "flow_id": 504,
+                "input_paths": {},
+                "output_dir": "",
+                "available_artifacts": {},
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "done" in data["stdout"]
+        assert data["stdout"].count("not an upstream input") == 1
+
+    def test_same_node_publish_then_read_is_silent(self, client: TestClient):
+        """A node reading back its own just-published artifact must not warn."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 320,
+                "code": (
+                    'flowfile_ctx.publish_artifact("m", {"weight": 7})\n'
+                    'back = flowfile_ctx.read_artifact("m")\n'
+                    'print("read back:", back["weight"])'
+                ),
+                "flow_id": 505,
+                "input_paths": {},
+                "output_dir": "",
+                "available_artifacts": {},
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "read back: 7" in data["stdout"]
+        assert "not an upstream input" not in data["stdout"]

@@ -16,20 +16,25 @@ import pytest
 from flowfile_core.flowfile.node_designer.codegen import generate_source
 from flowfile_core.flowfile.node_designer.parsing import parse_source
 from flowfile_core.flowfile.node_designer.state import (
+    ArtifactDecl,
     ColumnActionInputState,
     ColumnSelectorState,
     DesignerState,
     EnvironmentState,
     ExampleInput,
     NumericInputState,
-    SectionState,
     SecretSelectorState,
+    SectionState,
     SelectOption,
     SelectState,
     SliderInputState,
     TextInputState,
     ToggleSwitchState,
+    VisibleWhenState,
 )
+
+# Artifact type-filter patterns that are already sorted-unique-safe (round-trip exactly).
+_ARTIFACT_TYPE_PATTERNS = ["sklearn.*", "xgboost.*", "lightgbm.Booster", "numpy.ndarray", "pkg.Model"]
 
 # Leaf DataType values that normalize to themselves (see enumeration in the SDK).
 _LEAF_TYPES = [
@@ -152,6 +157,20 @@ def _component(rng: random.Random, taken: set[str]):
             return SelectState(
                 name=name, label=label, component_type=kind, options_source="static", options=opts, default=default
             )
+        if source == "available_artifacts":
+            scope = rng.choice(["upstream", "upstream", "global", "all"])
+            type_filter = (
+                sorted(set(rng.sample(_ARTIFACT_TYPE_PATTERNS, rng.randint(1, 3)))) if rng.random() < 0.5 else []
+            )
+            return SelectState(
+                name=name,
+                label=label,
+                component_type=kind,
+                options_source=source,
+                options=[],
+                artifact_scope=scope,
+                artifact_type_filter=type_filter,
+            )
         return SelectState(name=name, label=label, component_type=kind, options_source=source, options=[])
     if kind == "ColumnSelector":
         return ColumnSelectorState(
@@ -185,12 +204,22 @@ def _component(rng: random.Random, taken: set[str]):
     )
 
 
+def _visible_when(rng: random.Random) -> VisibleWhenState | None:
+    if rng.random() < 0.5:
+        return None
+    return VisibleWhenState(
+        field=f"{rng.choice(_WORDS)}.{rng.choice(_WORDS)}",
+        equals=rng.random() < 0.5,
+    )
+
+
 def _section(rng: random.Random, taken: set[str]) -> SectionState:
     return SectionState(
         name=_ident(rng, taken, "s"),
         title=_maybe(rng, _text(rng)),
         description=_maybe(rng, _text(rng)),
         hidden=rng.random() < 0.3,
+        visible_when=_visible_when(rng),
         layout=rng.choice(["vertical", "horizontal"]),
         components=[_component(rng, taken) for _ in range(rng.randint(0, 4))],
     )
@@ -234,6 +263,17 @@ def _random_state(seed: int) -> DesignerState:
     if rng.random() < 0.3:
         example_settings = {f"sec_{rng.randint(0, 9)}": {f"comp_{rng.randint(0, 9)}": rng.randint(0, 100)}}
 
+    publishes: list[ArtifactDecl] = []
+    if rng.random() < 0.4:
+        seen: set[str] = set()
+        for _ in range(rng.randint(1, 3)):
+            pname = f"artifact_{rng.randint(0, 99)}"
+            if pname in seen:
+                continue
+            seen.add(pname)
+            ptype = rng.choice([None, None, f"pkg.Type{rng.randint(0, 9)}"])
+            publishes.append(ArtifactDecl(name=pname, type=ptype))
+
     class_name = f"Node{rng.choice(_WORDS).title()}{rng.randint(0, 9999)}"
     sections = [_section(rng, taken) for _ in range(rng.randint(0, 3))]
     # With no settings class emitted, the parser falls back to <class_name>Settings;
@@ -263,6 +303,7 @@ def _random_state(seed: int) -> DesignerState:
         process_code="def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n    return inputs[0]",
         example_inputs=_example_inputs(rng),
         example_settings=example_settings,
+        publishes=publishes,
     )
 
 

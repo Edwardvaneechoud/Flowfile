@@ -5,7 +5,14 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from flowfile_core.flowfile.node_designer import ColumnSelector, CustomNodeBase, NodeSettings, Section
+from flowfile_core.flowfile.node_designer import (
+    Artifact,
+    ColumnSelector,
+    CustomNodeBase,
+    NodeSettings,
+    Section,
+    VisibleWhen,
+)
 from flowfile_core.flowfile.node_designer.custom_node import (
     to_frontend_schema,
 )
@@ -19,7 +26,7 @@ from flowfile_core.flowfile.node_designer.ui_components import (
     TextInput,
     ToggleSwitch,
 )
-from flowfile_core.types import DataType, Types
+from flowfile_core.types import Types
 
 
 @pytest.fixture
@@ -255,11 +262,32 @@ def test_to_frontend_schema_structure(sample_node_settings: NodeSettings):
 
 def test_to_frontend_schema_horizontal_layout():
     """A section built with layout='horizontal' carries that into the frontend schema."""
-    settings = NodeSettings(
-        config=Section(title="Row", layout="horizontal", note=TextInput(label="Note"))
-    )
+    settings = NodeSettings(config=Section(title="Row", layout="horizontal", note=TextInput(label="Note")))
     schema = to_frontend_schema(settings)
     assert schema["config"]["layout"] == "horizontal"
+
+
+def test_to_frontend_schema_visible_when():
+    """VisibleWhen serializes to the {field, equals} wire dict; sections without it omit the key."""
+    settings = NodeSettings(
+        opts=Section(title="Opts", show_advanced=ToggleSwitch(label="Show advanced")),
+        advanced=Section(
+            title="Advanced",
+            visible_when=VisibleWhen(field="opts.show_advanced"),
+            note=TextInput(label="Note"),
+        ),
+    )
+    schema = to_frontend_schema(settings)
+    assert schema["advanced"]["visible_when"] == {"field": "opts.show_advanced", "equals": True}
+    assert "visible_when" not in schema["opts"]
+
+
+def test_section_visible_when_accepts_dict_and_coerces():
+    """A plain dict is coerced to VisibleWhen at the Section boundary (lenient authoring)."""
+    section = Section(title="Advanced", visible_when={"field": "opts.flag", "equals": False})
+    assert isinstance(section.visible_when, VisibleWhen)
+    assert section.visible_when.field == "opts.flag"
+    assert section.visible_when.equals is False
 
 
 def test_to_frontend_schema_incoming_columns(sample_node_settings: NodeSettings):
@@ -287,6 +315,157 @@ def test_to_frontend_schema_available_artifacts():
 
     assert single_schema["options"] == {"__type__": "AvailableArtifacts"}
     assert multi_schema["options"] == {"__type__": "AvailableArtifacts"}
+
+
+def test_available_artifacts_default_instance_matches_bare_class():
+    """A default AvailableArtifacts() instance serializes byte-identically to the bare class."""
+
+    class BareSettings(NodeSettings):
+        config: Section = Section(sel=SingleSelect(label="A", options=AvailableArtifacts))
+
+    class InstanceSettings(NodeSettings):
+        config: Section = Section(sel=SingleSelect(label="A", options=AvailableArtifacts()))
+
+    bare = to_frontend_schema(BareSettings())["config"]["components"]["sel"]["options"]
+    instance = to_frontend_schema(InstanceSettings())["config"]["components"]["sel"]["options"]
+    assert bare == instance == {"__type__": "AvailableArtifacts"}
+
+
+def test_available_artifacts_scope_and_type_filter_serialized():
+    """scope=='global' and a type filter ride along on the wire marker."""
+
+    class ScopedSettings(NodeSettings):
+        config: Section = Section(
+            sel=SingleSelect(label="A", options=AvailableArtifacts(scope="global", type="xgboost.*"))
+        )
+
+    options = to_frontend_schema(ScopedSettings())["config"]["components"]["sel"]["options"]
+    assert options == {"__type__": "AvailableArtifacts", "scope": "global", "type_filter": ["xgboost.*"]}
+
+
+def test_available_artifacts_scope_all_serialized():
+    """scope=='all' (upstream ∪ global) rides along on the wire marker."""
+
+    class AllScopeSettings(NodeSettings):
+        config: Section = Section(sel=SingleSelect(label="A", options=AvailableArtifacts(scope="all")))
+
+    options = to_frontend_schema(AllScopeSettings())["config"]["components"]["sel"]["options"]
+    assert options == {"__type__": "AvailableArtifacts", "scope": "all"}
+
+
+def test_available_artifacts_type_list_normalizes_sorted_unique():
+    """A list type filter is de-duplicated and sorted (scope default omitted)."""
+    marker = AvailableArtifacts(type=["b.*", "a.*", "a.*"])
+    assert marker.type_filter == ["a.*", "b.*"]
+
+    class ListSettings(NodeSettings):
+        config: Section = Section(sel=MultiSelect(label="A", options=marker))
+
+    options = to_frontend_schema(ListSettings())["config"]["components"]["sel"]["options"]
+    assert options == {"__type__": "AvailableArtifacts", "type_filter": ["a.*", "b.*"]}
+
+
+def test_available_artifacts_rejects_bad_scope():
+    with pytest.raises(ValueError):
+        AvailableArtifacts(scope="sideways")
+    with pytest.raises(ValueError):
+        AvailableArtifacts(scope="everything")
+
+
+def test_custom_node_publishes_validates_and_templates():
+    """CustomNodeBase carries publishes; to_node_template surfaces them (None when empty)."""
+
+    class PublishingNode(CustomNodeBase):
+        node_name: str = "Publisher"
+        publishes: list[Artifact] = [Artifact("model"), Artifact("scaler", type="sklearn.X")]
+
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            return inputs[0]
+
+    node = PublishingNode()
+    assert [(a.name, a.type) for a in node.publishes] == [("model", None), ("scaler", "sklearn.X")]
+    template = node.to_node_template()
+    assert [p.model_dump() for p in template.publishes] == [
+        {"name": "model", "type": None},
+        {"name": "scaler", "type": "sklearn.X"},
+    ]
+
+    class NoPublishNode(CustomNodeBase):
+        node_name: str = "No Publish"
+
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            return inputs[0]
+
+    assert NoPublishNode().to_node_template().publishes is None
+
+
+def test_custom_node_publishes_coerces_dicts():
+    """Dicts passed to the publishes field coerce to the Artifact dataclass (pydantic v2)."""
+
+    class DictNode(CustomNodeBase):
+        node_name: str = "Dict Publisher"
+
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            return inputs[0]
+
+    node = DictNode(publishes=[{"name": "m"}, {"name": "s", "type": "t"}])
+    assert all(isinstance(a, Artifact) for a in node.publishes)
+    assert [(a.name, a.type) for a in node.publishes] == [("m", None), ("s", "t")]
+
+
+def test_custom_node_publishes_string_form_default_templates():
+    """A `publishes` class-attribute default may hold plain strings (pydantic v2
+    doesn't coerce defaults); to_node_template must not crash on them."""
+
+    class StrPublishingNode(CustomNodeBase):
+        node_name: str = "Str Publisher"
+        publishes: list[Artifact] = ["model", Artifact("m2", type="x.Y")]
+
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            return inputs[0]
+
+    node = StrPublishingNode()
+    # the string default is not coerced by pydantic v2 -> stays a plain str
+    assert node.publishes[0] == "model"
+    template = node.to_node_template()
+    assert [p.model_dump() for p in template.publishes] == [
+        {"name": "model", "type": None},
+        {"name": "m2", "type": "x.Y"},
+    ]
+
+
+def test_string_form_publishes_ast_template_matches_exec_template():
+    """AST (exec-free) and exec templates must agree for string-form publishes.
+
+    Codegen always canonicalizes string publishes to nd.Artifact(...), so this
+    case can't live in the parity corpus; assert parity directly instead.
+    """
+    from flowfile_core.flowfile.node_designer.parsing import scan_node_source
+    from flowfile_core.flowfile.user_defined.registry import compute_node_key
+    from flowfile_core.flowfile.user_defined.templates import manifest_to_template
+    from shared.node_designer.loading import find_custom_node_class, load_node_module
+
+    source = (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n\n\n"
+        "class StrPublisher(nd.CustomNodeBase):\n"
+        '    node_name: str = "Str Publisher"\n'
+        '    publishes: list[nd.Artifact] = ["model", nd.Artifact("m2", type="x.Y")]\n\n'
+        "    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n"
+        "        return inputs[0]\n"
+    )
+    manifest = scan_node_source(source)
+    ast_template = manifest_to_template(manifest, compute_node_key(manifest.node_name))
+
+    module = load_node_module(source=source, module_name="parity_str_publisher")
+    node_class = find_custom_node_class(module, class_name=manifest.class_name)
+    exec_template = node_class().to_node_template()
+
+    assert ast_template.model_dump() == exec_template.model_dump()
+    assert [p.model_dump() for p in exec_template.publishes] == [
+        {"name": "model", "type": None},
+        {"name": "m2", "type": "x.Y"},
+    ]
 
 
 # --- Tests for CustomNodeBase ---
@@ -325,6 +504,7 @@ def test_generate_kernel_code_is_valid_python():
             if not inputs:
                 return pl.DataFrame()
             return inputs[0]
+
     node = KernelNode()
     code = node.generate_kernel_code()
     ast.parse(code)

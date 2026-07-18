@@ -1,5 +1,6 @@
 import ast
 import inspect
+import re
 import textwrap
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
@@ -68,9 +69,14 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         """Carry a custom node's own import into the generated script.
 
         The node-designer import (any spelling) is skipped here because it is
-        re-added in a canonical form by the caller.
+        re-added in a canonical form by the caller. A ``flowfile_ctx`` import is
+        also skipped: the flat script ships no sibling module, so the inline shim
+        (project export ships flowfile_ctx.py) binds the name instead.
         """
         if any(marker in statement for marker in _SDK_IMPORT_MARKERS):
+            return
+        if re.match(r"\s*(import\s+flowfile_ctx\b|from\s+flowfile_ctx\b)", statement):
+            self._needs_flowfile_ctx = True
             return
         self.imports.add(statement.strip())
 
@@ -157,6 +163,8 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
             self.imports.add("from flowfile import node_designer as nd")
             if self._body_uses_bare_sdk_symbols(self.custom_node_classes[class_name]):
                 self.imports.add(f"from flowfile.node_designer import ({_CANONICAL_SDK_SYMBOLS})")
+            if re.search(r"\bflowfile_ctx\b", self.custom_node_classes[class_name]):
+                self._needs_flowfile_ctx = True
         # The inlined node body references pl. (and the Polars converter's return
         # normalization uses isinstance(..., pl.DataFrame)), so polars is needed
         # in both converters.

@@ -449,3 +449,44 @@ class ArtifactContext:
         if node_id not in self._node_states:
             self._node_states[node_id] = NodeArtifactState()
         return self._node_states[node_id]
+
+
+def merge_declared_artifacts(
+    observed: dict[str, ArtifactRef],
+    declared: list[tuple[int, str, str | None]],
+    kernel_id: str,
+) -> list[dict[str, Any]]:
+    """Merge run-observed artifact refs with manifest-declared publishes.
+
+    ``declared`` entries are ``(source_node_id, name, type)`` tuples where
+    ``type`` is a dotted qualname (``"sklearn.ensemble.RandomForest"``), a bare
+    name, or ``None``.  Observed refs win on name conflict; declared entries
+    only fill in names that were never published this run (``status`` field
+    distinguishes ``"published"`` from ``"declared"``).  Declared-vs-declared
+    duplicate names: first entry wins.  Pure — writes no ArtifactContext state.
+    """
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set(observed)
+    for ref in observed.values():
+        result.append({**ref.to_dict(), "status": "published"})
+    for source_node_id, name, type_ in declared:
+        if name in seen:
+            continue
+        seen.add(name)
+        if type_:
+            module, _, type_name = type_.rpartition(".")
+        else:
+            module, type_name = "", ""
+        result.append(
+            {
+                "name": name,
+                "source_node_id": source_node_id,
+                "kernel_id": kernel_id,
+                "type_name": type_name,
+                "module": module,
+                "size_bytes": 0,
+                "created_at": None,
+                "status": "declared",
+            }
+        )
+    return result

@@ -7,6 +7,7 @@ user-facing spelling is ``from flowfile import node_designer as nd``.
 """
 
 from shared.node_designer.custom_node import (
+    Artifact,
     CustomNodeBase,
     NodeSettings,
     NodeSettingsBuilder,
@@ -35,13 +36,16 @@ from shared.node_designer.ui_components import (
     SliderInput,
     TextInput,
     ToggleSwitch,
+    VisibleWhen,
 )
 
 __all__ = [
     # Core Node Class
     "CustomNodeBase",
+    "Artifact",
     # UI Components & Layout
     "Section",
+    "VisibleWhen",
     "TextInput",
     "NumericInput",
     "SliderInput",

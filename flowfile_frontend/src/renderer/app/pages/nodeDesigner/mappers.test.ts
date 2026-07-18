@@ -9,7 +9,7 @@ import {
   toPascalCase,
   toSnakeCase,
 } from "./mappers";
-import type { DesignerState } from "./designerState";
+import type { DesignerState, SelectState } from "./designerState";
 import fixture from "./__fixtures__/designer_state_roundtrip.json";
 
 const state = fixture as unknown as DesignerState;
@@ -27,6 +27,14 @@ describe("designerStateToFrontendSchema", () => {
   it("carries the section layout through to the runtime schema", () => {
     expect(schema.main_config.layout).toBe("horizontal");
     expect(schema.advanced.layout).toBe("vertical");
+  });
+
+  it("carries visible_when through, and omits it on sections without a rule", () => {
+    expect(schema.advanced.visible_when).toEqual({
+      field: "main_config.include_totals",
+      equals: true,
+    });
+    expect(schema.main_config.visible_when).toBeUndefined();
   });
 
   it("keys components by name and carries component_type", () => {
@@ -51,6 +59,63 @@ describe("designerStateToFrontendSchema", () => {
   it("renders IncomingColumns options as the __type__ marker", () => {
     const multi = schema.advanced.components.extra_cols;
     expect((multi as { options: unknown }).options).toEqual({ __type__: "IncomingColumns" });
+  });
+
+  it("emits the AvailableArtifacts marker with global scope and sorted-unique type_filter", () => {
+    const select = schema.advanced.components.saved_model;
+    expect((select as { options: unknown }).options).toEqual({
+      __type__: "AvailableArtifacts",
+      scope: "global",
+      type_filter: ["lightgbm.Booster", "xgboost.*"],
+    });
+  });
+
+  it("emits a bare AvailableArtifacts marker when scope/type_filter are at defaults", () => {
+    const select = defaultComponentState("SingleSelect", "art") as SelectState;
+    select.options_source = "available_artifacts";
+    const s = {
+      ...state,
+      sections: [
+        {
+          name: "s",
+          title: null,
+          description: null,
+          hidden: false,
+          visible_when: null,
+          layout: "vertical",
+          components: [select],
+        },
+      ],
+    } as unknown as DesignerState;
+    const bare = designerStateToFrontendSchema(s);
+    expect((bare.s.components.art as { options: unknown }).options).toEqual({
+      __type__: "AvailableArtifacts",
+    });
+  });
+
+  it("emits the AvailableArtifacts marker with scope 'all'", () => {
+    const select = defaultComponentState("SingleSelect", "art") as SelectState;
+    select.options_source = "available_artifacts";
+    select.artifact_scope = "all";
+    const s = {
+      ...state,
+      sections: [
+        {
+          name: "s",
+          title: null,
+          description: null,
+          hidden: false,
+          visible_when: null,
+          layout: "vertical",
+          components: [select],
+        },
+      ],
+    } as unknown as DesignerState;
+    const out = designerStateToFrontendSchema(s);
+    expect((out.s.components.art as { options: unknown }).options).toEqual({
+      __type__: "AvailableArtifacts",
+      scope: "all",
+    });
   });
 
   it("renders ColumnSelector required/multiple/data_types", () => {

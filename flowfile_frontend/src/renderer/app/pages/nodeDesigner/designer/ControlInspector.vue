@@ -31,7 +31,9 @@
               type="text"
               class="ins-input"
               placeholder="field_name"
+              @focus="captureName"
               @input="updateName(($event.target as HTMLInputElement).value)"
+              @change="commitName"
             />
           </div>
           <div class="field-row">
@@ -173,8 +175,19 @@
             >
               <option value="static">Static Options</option>
               <option value="incoming_columns">Incoming Columns</option>
-              <option value="available_artifacts">Available Artifacts</option>
+              <option
+                v-if="isKernel || comp.options_source === 'available_artifacts'"
+                value="available_artifacts"
+              >
+                Available Artifacts
+              </option>
             </select>
+            <span
+              v-if="!isKernel && comp.options_source === 'available_artifacts'"
+              class="field-hint"
+            >
+              Artifact selectors only work for kernel nodes.
+            </span>
           </div>
           <div v-if="comp.options_source === 'static'" class="field-row">
             <label>Options (comma-separated)</label>
@@ -186,6 +199,30 @@
               @input="updateOptions(($event.target as HTMLInputElement).value)"
             />
           </div>
+          <template v-if="comp.options_source === 'available_artifacts'">
+            <div class="field-row">
+              <label>Scope</label>
+              <select
+                :value="comp.artifact_scope"
+                class="ins-input"
+                @change="update('artifact_scope', ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="upstream">Upstream (lineage)</option>
+                <option value="global">Global (catalog)</option>
+                <option value="all">All (upstream + global)</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Type Filter (comma-separated)</label>
+              <input
+                :value="artifactTypeFilterCsv"
+                type="text"
+                class="ins-input"
+                placeholder="e.g. xgboost.*, *.Booster"
+                @input="updateArtifactTypeFilter(($event.target as HTMLInputElement).value)"
+              />
+            </div>
+          </template>
         </div>
 
         <!-- ColumnSelector -->
@@ -375,6 +412,8 @@ const store = useNodeDesignerStore();
 
 const comp = computed<ComponentState | null>(() => store.selectedComponent);
 
+const isKernel = computed(() => store.environment.kind === "kernel");
+
 const showHelp = ref(false);
 
 const typeIcon = computed(() => getComponentIcon(comp.value?.component_type ?? ""));
@@ -390,10 +429,28 @@ function update(field: string, value: unknown) {
   (comp.value as unknown as Record<string, unknown>)[field] = value;
 }
 
+const nameBeforeEdit = ref("");
+
+function captureName() {
+  nameBeforeEdit.value = comp.value?.name ?? "";
+}
+
 function updateName(value: string) {
   if (!comp.value) return;
   comp.value.name = toSnakeCase(value);
   store.syncPreviewValues();
+}
+
+// On blur, retarget any visible_when rule that pointed at this control's old name
+// (no-op unless a section actually gates on it — only toggles are ever referenced).
+function commitName() {
+  const sectionIndex = store.selectedSectionIndex;
+  if (!comp.value || sectionIndex === null) return;
+  store.retargetVisibleWhenForComponent(
+    store.sections[sectionIndex].name,
+    nameBeforeEdit.value,
+    comp.value.name,
+  );
 }
 
 const optionsCsv = computed(() => {
@@ -411,6 +468,22 @@ function updateOptions(raw: string) {
     .filter(Boolean)
     .map((v) => ({ value: v, label: v }));
   update("options", opts);
+}
+
+const artifactTypeFilterCsv = computed(() => {
+  const c = comp.value;
+  if (c && (c.component_type === "SingleSelect" || c.component_type === "MultiSelect")) {
+    return (c.artifact_type_filter ?? []).join(", ");
+  }
+  return "";
+});
+
+function updateArtifactTypeFilter(raw: string) {
+  const filters = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  update("artifact_type_filter", filters);
 }
 
 const actionsCsv = computed(() => {

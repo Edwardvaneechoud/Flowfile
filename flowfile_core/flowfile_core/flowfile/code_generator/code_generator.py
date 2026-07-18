@@ -133,6 +133,39 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
 _RESERVED_NAMES: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins))
 
 
+_FLAT_CTX_SHIM = '''# Minimal flowfile_ctx shim for standalone execution (logging/display only).
+# Export the flow as a project (code_to_project) for the full flowfile_ctx API.
+class _FlowfileCtx:
+    def log(self, message, level="INFO"):
+        print(f"[{level}] {message}")
+
+    def log_info(self, message):
+        self.log(message, "INFO")
+
+    def log_warning(self, message):
+        self.log(message, "WARNING")
+
+    def log_error(self, message):
+        self.log(message, "ERROR")
+
+    def display(self, obj, title=""):
+        if title:
+            print(f"=== {title} ===")
+        print(obj)
+
+    def explore(self, obj, title="", max_rows=10_000):
+        self.display(obj, title)
+
+    def __getattr__(self, name):
+        raise NotImplementedError(
+            f"flowfile_ctx.{name}() is not available in a single-file export; "
+            "export the flow as a project (code_to_project) for the full flowfile_ctx API."
+        )
+
+
+flowfile_ctx = _FlowfileCtx()'''
+
+
 class FlowGraphCodeConverter(
     JoinHandlersMixin,
     TransformHandlersMixin,
@@ -164,6 +197,9 @@ class FlowGraphCodeConverter(
         self.last_node_var: str | None = None
         self.unsupported_nodes: list[tuple[int, str, str]] = []
         self.custom_node_classes: dict[str, str] = {}
+        # True once a custom node's source references flowfile_ctx: the flat export
+        # then emits an inline shim; the project export ships flowfile_ctx.py.
+        self._needs_flowfile_ctx = False
         # (node, effective_var, start, end) per emitting node; (start, end) slices code_lines.
         self._node_spans: list[tuple[FlowNode, str, int, int]] = []
         # node_id -> upstream node_id for nodes that emit nothing (passthroughs).
@@ -884,6 +920,14 @@ class FlowGraphCodeConverter(
         lines.append("")
         lines.append("")
 
+        # Only the flat export inlines custom-node classes; the project export
+        # writes them to modules and ships flowfile_ctx.py instead, so this
+        # inline shim never lands in a project's pipeline.py.
+        if self.custom_node_classes and self._needs_flowfile_ctx:
+            lines.extend(_FLAT_CTX_SHIM.split("\n"))
+            lines.append("")
+            lines.append("")
+
         if self.custom_node_classes:
             lines.append("# Custom Node Class Definitions")
             lines.append("# These classes are user-defined nodes that were included in the flow")
@@ -1123,9 +1167,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
     def _handle_manual_input(
         self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        self.imports.add("from flowfile_core.schemas.input_schema import RawData")
+        # ff.from_raw_data coerces the columnar dict into RawData via pydantic, so
+        # the exported script needs no flowfile_core import (public API only).
         raw_data = settings.raw_data_format
-        self._add_code(f"{var_name} = ff.from_raw_data(RawData(**{raw_data.model_dump()}))")
+        self._add_code(f"{var_name} = ff.from_raw_data({raw_data.model_dump()})")
         self._add_code("")
 
     def _handle_cloud_storage_reader(

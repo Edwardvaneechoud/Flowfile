@@ -60,6 +60,9 @@ export interface SelectState extends ComponentBase {
   component_type: "SingleSelect" | "MultiSelect";
   options_source: OptionsSource;
   options: SelectOption[];
+  // available_artifacts only: lineage vs catalog source + dotted-type globs.
+  artifact_scope: "upstream" | "global" | "all";
+  artifact_type_filter: string[];
   // list for MultiSelect, scalar for SingleSelect
   default?: unknown;
 }
@@ -99,11 +102,18 @@ export type ComponentState =
 
 export type SectionLayout = "vertical" | "horizontal";
 
+/** Show the section only while the referenced toggle field equals `equals`. */
+export interface VisibleWhenState {
+  field: string; // dotted "<section>.<toggle>" reference
+  equals?: boolean; // defaults to true
+}
+
 export interface SectionState {
   name: string;
   title?: string | null;
   description?: string | null;
   hidden: boolean;
+  visible_when?: VisibleWhenState | null;
   layout: SectionLayout;
   components: ComponentState[]; // ordered
 }
@@ -119,6 +129,12 @@ export interface EnvironmentState {
 /** Column-oriented sample data for one input port. */
 export interface ExampleInput {
   data: Record<string, unknown[]>;
+}
+
+/** A declared published artifact (name + optional dotted type hint). */
+export interface PublishState {
+  name: string;
+  type: string | null;
 }
 
 export interface DesignerState {
@@ -138,6 +154,7 @@ export interface DesignerState {
   number_of_outputs: number;
   output_names: string[];
   environment: EnvironmentState;
+  publishes: PublishState[];
   sections: SectionState[];
   process_code: string; // full `def process(...)` source, dedented, verbatim
   example_inputs: ExampleInput[] | null;
@@ -187,6 +204,7 @@ export function newDesignerState(): DesignerState {
     number_of_outputs: 1,
     output_names: ["main"],
     environment: newEnvironmentState(),
+    publishes: [],
     sections: [
       {
         name: "settings",

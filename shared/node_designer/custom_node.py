@@ -15,6 +15,7 @@ from shared.node_designer.ui_components import (
     IncomingColumns,
     SecretSelector,
     Section,
+    VisibleWhen,
 )
 
 if TYPE_CHECKING:
@@ -27,6 +28,14 @@ TransformTypeLiteral = Literal["narrow", "wide", "other"]
 logger = logging.getLogger(__name__)
 
 _legacy_kernel_warned: set[str] = set()
+
+
+@dataclass(frozen=True)
+class Artifact:
+    """A named artifact a node declares it publishes (optionally typed)."""
+
+    name: str
+    type: str | None = None
 
 
 def _warn_legacy_once(cls: type, message: str) -> None:
@@ -83,12 +92,24 @@ def to_frontend_schema(model_instance: BaseModel) -> dict:
     return result
 
 
+def _available_artifacts_marker(marker: AvailableArtifacts) -> dict:
+    """Serialize an AvailableArtifacts instance to its wire marker (omit-when-default)."""
+    data: dict[str, Any] = {"__type__": "AvailableArtifacts"}
+    if marker.scope != "upstream":
+        data["scope"] = marker.scope
+    if marker.type_filter:
+        data["type_filter"] = sorted(set(marker.type_filter))
+    return data
+
+
 def _convert_value(value: Any) -> Any:
     """
     Helper function to convert any value to a frontend-ready format.
     """
     if isinstance(value, Section):
-        section_data = value.model_dump(include={"title", "description", "hidden", "layout"}, exclude_none=True)
+        section_data = value.model_dump(
+            include={"title", "description", "hidden", "visible_when", "layout"}, exclude_none=True
+        )
         section_data["component_type"] = "Section"
         section_data["components"] = {key: _convert_value(comp) for key, comp in value.get_components().items()}
         return section_data
@@ -96,15 +117,15 @@ def _convert_value(value: Any) -> Any:
     elif isinstance(value, FlowfileInComponent):
         component_dict = value.model_dump(exclude_none=True)
         if "options" in component_dict:
-            if component_dict["options"] is IncomingColumns or (
-                isinstance(component_dict["options"], type) and issubclass(component_dict["options"], IncomingColumns)
-            ):
+            options = component_dict["options"]
+            if options is IncomingColumns or (isinstance(options, type) and issubclass(options, IncomingColumns)):
                 component_dict["options"] = {"__type__": "IncomingColumns"}
-            if component_dict["options"] is AvailableArtifacts or (
-                isinstance(component_dict["options"], type)
-                and issubclass(component_dict["options"], AvailableArtifacts)
+            elif options is AvailableArtifacts or (
+                isinstance(options, type) and issubclass(options, AvailableArtifacts)
             ):
                 component_dict["options"] = {"__type__": "AvailableArtifacts"}
+            elif isinstance(options, AvailableArtifacts):
+                component_dict["options"] = _available_artifacts_marker(options)
         return component_dict
     elif isinstance(value, BaseModel):
         return to_frontend_schema(value)
@@ -341,8 +362,11 @@ class SectionBuilder:
         description: str | None = None,
         hidden: bool = False,
         layout: Literal["vertical", "horizontal"] = "vertical",
+        visible_when: VisibleWhen | dict | None = None,
     ):
-        self._section = Section(title=title, description=description, hidden=hidden, layout=layout)
+        self._section = Section(
+            title=title, description=description, hidden=hidden, layout=layout, visible_when=visible_when
+        )
 
     def add_component(self, name: str, component: FlowfileInComponent) -> "SectionBuilder":
         """Add a component to the section."""
@@ -434,6 +458,9 @@ class CustomNodeBase(BaseModel):
     author: str | None = None
     version: str | None = None
     tags: list[str] = Field(default_factory=list)
+
+    # Artifacts this node declares it publishes (optional; drives lineage-aware pickers)
+    publishes: list[Artifact] = Field(default_factory=list)
 
     # Behavior properties
     node_type: NodeTypeLiteral = "process"
@@ -776,4 +803,11 @@ if not inputs:
             custom_node=True,
             execution_environment=self.environment,
             dependencies=self.dependencies or None,
+            # pydantic v2 doesn't coerce class-attribute defaults, so a
+            # `publishes = ["model"]` default holds plain strings at exec time.
+            publishes=[
+                {"name": a, "type": None} if isinstance(a, str) else {"name": a.name, "type": a.type}
+                for a in self.publishes
+            ]
+            or None,
         )

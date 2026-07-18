@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from flowfile_core.flowfile.node_designer.state import (
+    ArtifactDecl,
     ColumnActionInputState,
     ColumnSelectorState,
     DesignerState,
@@ -123,6 +124,7 @@ _RECOGNIZED_NODE_ATTRS = {
     "settings_schema",
     "example_inputs",
     "example_settings",
+    "publishes",
     "requires_kernel",
     "kernel_id",
 }
@@ -135,8 +137,10 @@ _SCALARS = (str, int, float, bool, type(None))
 
 
 class _Marker:
-    def __init__(self, name: str):
+    def __init__(self, name: str, scope: str = "upstream", type_filter: list[str] | None = None):
         self.name = name
+        self.scope = scope
+        self.type_filter = type_filter
 
 
 class _LiteralError(Exception):
@@ -440,8 +444,13 @@ class _SourceParser:
                 raise _LiteralError(node, f"'{node.id}' must be used with an attribute, e.g. Types.String")
             raise _LiteralError(node, f"name '{node.id}' is not a designer literal")
         if isinstance(node, ast.Call):
-            if self.resolve_symbol(node.func) == "ActionOption":
+            func_symbol = self.resolve_symbol(node.func)
+            if func_symbol == "ActionOption":
                 return self._eval_action_option(node)
+            if func_symbol == "VisibleWhen":
+                return self._eval_visible_when(node)
+            if func_symbol == "AvailableArtifacts":
+                return self._eval_available_artifacts(node)
             raise _LiteralError(node, f"call '{ast.unparse(node.func)}(...)' is not a designer literal")
         raise _LiteralError(node, f"'{ast.unparse(node)}' is not a designer literal")
 
@@ -460,6 +469,53 @@ class _SourceParser:
             raise _LiteralError(call, "ActionOption value and label must be strings")
         return SelectOption(value=values["value"], label=values["label"])
 
+    def _eval_visible_when(self, call: ast.Call) -> dict:
+        # Returns the {field, equals} dict; _lift_section validates + coerces to VisibleWhenState.
+        values: dict[str, Any] = {}
+        positional = ["field", "equals"]
+        if len(call.args) > 2:
+            raise _LiteralError(call, "VisibleWhen takes (field, equals)")
+        for i, arg in enumerate(call.args):
+            values[positional[i]] = self.eval_literal(arg)
+        for kw in call.keywords:
+            if kw.arg not in ("field", "equals"):
+                raise _LiteralError(call, "VisibleWhen takes (field, equals)")
+            values[kw.arg] = self.eval_literal(kw.value)
+        if not isinstance(values.get("field"), str):
+            raise _LiteralError(call, "VisibleWhen field must be a string")
+        return values
+
+    def _eval_available_artifacts(self, call: ast.Call) -> _Marker:
+        values: dict[str, Any] = {}
+        positional = ["scope", "type"]
+        if len(call.args) > 2:
+            raise _LiteralError(call, "AvailableArtifacts takes (scope, type)")
+        for i, arg in enumerate(call.args):
+            values[positional[i]] = self.eval_literal(arg)
+        for kw in call.keywords:
+            if kw.arg not in ("scope", "type"):
+                raise _LiteralError(call, "AvailableArtifacts only accepts scope and type")
+            values[kw.arg] = self.eval_literal(kw.value)
+        scope = values.get("scope", "upstream")
+        if scope not in ("upstream", "global", "all"):
+            raise _LiteralError(call, "AvailableArtifacts scope must be 'upstream', 'global' or 'all'")
+        type_filter = self._normalize_artifact_type_filter(values.get("type"), call)
+        return _Marker("AvailableArtifacts", scope=scope, type_filter=type_filter)
+
+    def _normalize_artifact_type_filter(self, value: Any, node: ast.expr) -> list[str] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            items = [value]
+        elif isinstance(value, tuple | list):
+            items = list(value)
+        else:
+            raise _LiteralError(node, "AvailableArtifacts type must be a string or list of strings")
+        if not all(isinstance(v, str) for v in items):
+            raise _LiteralError(node, "AvailableArtifacts type must be strings")
+        result = sorted(set(items))
+        return result or None
+
     # -- component lifting -----------------------------------------------------
 
     def _lift_section(self, name: str, call: ast.Call) -> SectionState | None:
@@ -473,6 +529,7 @@ class _SourceParser:
         title: str | None = None
         description: str | None = None
         hidden = False
+        visible_when: dict | None = None
         layout = "vertical"
         components = []
         ok = True
@@ -485,7 +542,7 @@ class _SourceParser:
                 )
                 ok = False
                 continue
-            if kw.arg in ("title", "description", "hidden", "layout"):
+            if kw.arg in ("title", "description", "hidden", "visible_when", "layout"):
                 try:
                     value = self.eval_literal(kw.value)
                 except _LiteralError as e:
@@ -500,6 +557,17 @@ class _SourceParser:
                     hidden = bool(value)
                 elif kw.arg == "title":
                     title = value
+                elif kw.arg == "visible_when":
+                    if not (isinstance(value, dict) and isinstance(value.get("field"), str)):
+                        self.error(
+                            ParseIssueCode.NON_LITERAL_COMPONENT_KWARG,
+                            f"'{name}.visible_when' must be nd.VisibleWhen(field='section.toggle') "
+                            "or a dict like {'field': 'section.toggle'}",
+                            kw.value,
+                        )
+                        ok = False
+                        continue
+                    visible_when = value
                 elif kw.arg == "layout":
                     if value not in ("vertical", "horizontal"):
                         self.error(
@@ -522,7 +590,13 @@ class _SourceParser:
             return None
         try:
             return SectionState(
-                name=name, title=title, description=description, hidden=hidden, layout=layout, components=components
+                name=name,
+                title=title,
+                description=description,
+                hidden=hidden,
+                visible_when=visible_when,
+                layout=layout,
+                components=components,
             )
         except ValidationError as e:
             self.error(ParseIssueCode.NON_LITERAL_COMPONENT_KWARG, f"Section '{name}' is invalid: {e}", call)
@@ -633,13 +707,22 @@ class _SourceParser:
                 **common, default=bool(kwargs.get("default", False)), description=kwargs.get("description")
             )
         if symbol in ("SingleSelect", "MultiSelect"):
-            options_source, options = self._normalize_options(kwargs.get("options"), expr)
+            default = kwargs.get("default")
+            if isinstance(default, _Marker) or (
+                isinstance(default, list | tuple) and any(isinstance(v, _Marker) for v in default)
+            ):
+                raise _LiteralError(expr, "IncomingColumns/AvailableArtifacts markers are only valid for options")
+            options_source, options, artifact_scope, artifact_type_filter = self._normalize_options(
+                kwargs.get("options"), expr
+            )
             return SelectState(
                 **common,
                 component_type=symbol,
                 options_source=options_source,
                 options=options,
-                default=self._jsonify(kwargs.get("default")),
+                default=self._jsonify(default),
+                artifact_scope=artifact_scope,
+                artifact_type_filter=artifact_type_filter,
             )
         if symbol == "ColumnSelector":
             return ColumnSelectorState(
@@ -671,16 +754,16 @@ class _SourceParser:
             **state,
         )
 
-    def _normalize_options(self, value: Any, expr: ast.expr) -> tuple[str, list[SelectOption]]:
+    def _normalize_options(self, value: Any, expr: ast.expr) -> tuple[str, list[SelectOption], str, list[str]]:
         if value is None:
-            return "static", []
+            return "static", [], "upstream", []
         if isinstance(value, _Marker):
             if value.name == "IncomingColumns":
-                return "incoming_columns", []
+                return "incoming_columns", [], "upstream", []
             if value.name == "AvailableArtifacts":
-                return "available_artifacts", []
+                return "available_artifacts", [], value.scope, list(value.type_filter or [])
             raise _LiteralError(expr, f"'{value.name}' is not valid for options")
-        return "static", self._normalize_select_items(value, expr, kind="options")
+        return "static", self._normalize_select_items(value, expr, kind="options"), "upstream", []
 
     def _normalize_select_items(self, value: Any, expr: ast.expr, *, kind: str) -> list[SelectOption]:
         if isinstance(value, tuple):
@@ -779,6 +862,8 @@ class _SourceParser:
             state_kwargs["example_inputs"] = lifted["example_inputs"]
         if "example_settings" in lifted:
             state_kwargs["example_settings"] = lifted["example_settings"]
+        if lifted.get("publishes"):
+            state_kwargs["publishes"] = lifted["publishes"]
 
         try:
             return DesignerState(**state_kwargs)
@@ -795,6 +880,9 @@ class _SourceParser:
                 continue
             if name == "example_inputs":
                 lifted[name] = self._lift_example_inputs(value)
+                continue
+            if name == "publishes":
+                lifted[name] = self._lift_publishes(value)
                 continue
             try:
                 evaluated = self.eval_literal(value)
@@ -903,6 +991,76 @@ class _SourceParser:
                 data[column] = values
             examples.append(ExampleInput(data=data))
         return examples
+
+    def _lift_publishes(self, node: ast.expr) -> Any:
+        if isinstance(node, ast.List | ast.Tuple):
+            elts = list(node.elts)
+        else:
+            self.error(
+                ParseIssueCode.NON_LITERAL_ATTR,
+                "'publishes' must be a list of nd.Artifact(...) calls or strings",
+                node,
+            )
+            return _INVALID
+        decls: list[ArtifactDecl] = []
+        for elt in elts:
+            decl = self._lift_publish_entry(elt)
+            if decl is None:
+                return _INVALID
+            decls.append(decl)
+        return decls
+
+    def _resolves_to_artifact(self, func: ast.expr) -> bool:
+        if self.resolve_symbol(func) == "Artifact":
+            return True
+        dotted = _dotted(func)
+        return dotted is not None and dotted.split(".")[-1] == "Artifact"
+
+    def _lift_publish_entry(self, node: ast.expr) -> ArtifactDecl | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return ArtifactDecl(name=node.value)
+        if isinstance(node, ast.Call) and self._resolves_to_artifact(node.func):
+            return self._lift_artifact_call(node)
+        self.error(
+            ParseIssueCode.NON_LITERAL_ATTR,
+            "'publishes' entries must be nd.Artifact(...) calls or string literals",
+            node,
+        )
+        return None
+
+    def _lift_artifact_call(self, call: ast.Call) -> ArtifactDecl | None:
+        name: str | None = None
+        type_value: str | None = None
+        if len(call.args) > 1:
+            self.error(ParseIssueCode.NON_LITERAL_ATTR, "Artifact takes (name, type=...)", call)
+            return None
+        if call.args:
+            arg0 = call.args[0]
+            if not (isinstance(arg0, ast.Constant) and isinstance(arg0.value, str)):
+                self.error(ParseIssueCode.NON_LITERAL_ATTR, "Artifact name must be a string literal", call)
+                return None
+            name = arg0.value
+        for kw in call.keywords:
+            if kw.arg == "name":
+                if not (isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)):
+                    self.error(ParseIssueCode.NON_LITERAL_ATTR, "Artifact name must be a string literal", call)
+                    return None
+                name = kw.value.value
+            elif kw.arg == "type":
+                if isinstance(kw.value, ast.Constant) and kw.value.value is None:
+                    type_value = None
+                elif isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    type_value = kw.value.value
+                else:
+                    self.error(ParseIssueCode.NON_LITERAL_ATTR, "Artifact type must be a string literal", call)
+                    return None
+            else:
+                self.error(ParseIssueCode.NON_LITERAL_ATTR, f"Artifact got unexpected argument '{kw.arg}'", call)
+                return None
+        if name is None:
+            self.error(ParseIssueCode.NON_LITERAL_ATTR, "Artifact requires a name", call)
+            return None
+        return ArtifactDecl(name=name, type=type_value)
 
     def _is_plain_json(self, value: Any) -> bool:
         if isinstance(value, _SCALARS):
@@ -1211,6 +1369,34 @@ def _node_classdefs(module: ast.Module) -> list[ast.ClassDef]:
     ]
 
 
+def _best_effort_publishes(value: ast.expr) -> list[ArtifactDecl]:
+    """Lift a ``publishes`` list literal to ArtifactDecls, skipping anything malformed."""
+    decls: list[ArtifactDecl] = []
+    if not isinstance(value, ast.List | ast.Tuple):
+        return decls
+    for elt in value.elts:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            decls.append(ArtifactDecl(name=elt.value))
+            continue
+        if not isinstance(elt, ast.Call):
+            continue
+        dotted = _dotted(elt.func)
+        if dotted is None or dotted.split(".")[-1] != "Artifact":
+            continue
+        name: str | None = None
+        type_value: str | None = None
+        if elt.args and isinstance(elt.args[0], ast.Constant) and isinstance(elt.args[0].value, str):
+            name = elt.args[0].value
+        for kw in elt.keywords:
+            if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                name = kw.value.value
+            elif kw.arg == "type" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                type_value = kw.value.value
+        if name is not None:
+            decls.append(ArtifactDecl(name=name, type=type_value))
+    return decls
+
+
 def extract_manifest(source: str) -> NodeManifest:
     """Best-effort exec-free listing metadata; never raises."""
     try:
@@ -1224,12 +1410,16 @@ def extract_manifest(source: str) -> NodeManifest:
         node_cls = classes[0]
 
         attrs: dict[str, Any] = {}
+        publishes: list[ArtifactDecl] = []
         for stmt in node_cls.body:
             if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
                 target, value = stmt.targets[0].id, stmt.value
             elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
                 target, value = stmt.target.id, stmt.value
             else:
+                continue
+            if target == "publishes":
+                publishes = _best_effort_publishes(value)
                 continue
             try:
                 attrs[target] = ast.literal_eval(value)
@@ -1271,6 +1461,8 @@ def extract_manifest(source: str) -> NodeManifest:
             manifest_kwargs["node_type"] = attrs["node_type"]
         if attrs.get("transform_type") in ("narrow", "wide", "other"):
             manifest_kwargs["transform_type"] = attrs["transform_type"]
+        if publishes:
+            manifest_kwargs["publishes"] = publishes
         return NodeManifest(**manifest_kwargs)
     except Exception:
         return NodeManifest()

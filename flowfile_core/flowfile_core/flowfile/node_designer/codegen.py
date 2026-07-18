@@ -28,6 +28,7 @@ from flowfile_core.flowfile.node_designer.state import (
     SliderInputState,
     TextInputState,
     ToggleSwitchState,
+    VisibleWhenState,
 )
 
 
@@ -36,6 +37,15 @@ class CodegenError(ValueError):
 
 
 _INDENT = "    "
+
+
+class _CallValue:
+    """A kwarg value that renders as its own exploded call (e.g. options=nd.AvailableArtifacts(...))."""
+
+    def __init__(self, callee: str, kwargs: list):
+        self.callee = callee
+        self.kwargs = kwargs
+
 
 # Component kwargs in canonical emit order. Only kwargs that differ from the
 # component's designer default are emitted; ``label`` always leads when present.
@@ -123,6 +133,13 @@ def _options_literal(options: list[SelectOption]) -> list[str]:
     return parts
 
 
+def _artifact_literal(decl) -> str:
+    """Render an ArtifactDecl as ``nd.Artifact("name")`` / ``nd.Artifact("name", type="...")``."""
+    if decl.type is None:
+        return f"nd.Artifact({_py_literal(decl.name)})"
+    return f"nd.Artifact({_py_literal(decl.name)}, type={_py_literal(decl.type)})"
+
+
 def _data_types_kwarg(spec) -> list[str] | None:
     """Emit ``data_types`` only when narrowed; ``"ALL"`` is the default.
 
@@ -196,7 +213,9 @@ class _Renderer:
 
     def _select_kwargs(self, comp: SelectState) -> list[tuple[str, object]]:
         kwargs: list[tuple[str, object]] = []
-        if comp.options_source in _MARKER_FOR_OPTIONS_SOURCE:
+        if comp.options_source == "available_artifacts":
+            kwargs.append(("options", self._available_artifacts_value(comp)))
+        elif comp.options_source in _MARKER_FOR_OPTIONS_SOURCE:
             kwargs.append(("options", f"nd.{_MARKER_FOR_OPTIONS_SOURCE[comp.options_source]}"))
         else:
             kwargs.append(("options", _options_literal(comp.options)))
@@ -211,6 +230,18 @@ class _Renderer:
                 )
             )
         return kwargs
+
+    def _available_artifacts_value(self, comp: SelectState) -> object:
+        # Bare marker when both params are default; an exploded call otherwise
+        # (single-line would get rewrapped by ruff and break the fixed point).
+        if comp.artifact_scope == "upstream" and not comp.artifact_type_filter:
+            return "nd.AvailableArtifacts"
+        inner: list[tuple[str, object]] = []
+        if comp.artifact_scope != "upstream":
+            inner.append(("scope", _py_literal(comp.artifact_scope)))
+        if comp.artifact_type_filter:
+            inner.append(("type", [_py_literal(t) for t in comp.artifact_type_filter]))
+        return _CallValue("nd.AvailableArtifacts", inner)
 
     def _column_action_kwargs(self, comp: ColumnActionInputState) -> list[tuple[str, str]]:
         kwargs: list[tuple[str, str]] = []
@@ -249,7 +280,12 @@ class _Renderer:
         return lines
 
     def _render_kwarg(self, key: str, value, indent: str) -> list[str]:
-        """A single ``key=value,`` line, or a multiline list for list-valued kwargs."""
+        """A single ``key=value,`` line, or a multiline block for list-/call-valued kwargs."""
+        if isinstance(value, _CallValue):
+            call_lines = self._render_call(value.callee, value.kwargs, indent)
+            lines = [f"{indent}{key}={call_lines[0]}", *call_lines[1:]]
+            lines[-1] = f"{lines[-1]},"
+            return lines
         if isinstance(value, list):
             if not value:
                 return [f"{indent}{key}=[],"]
@@ -285,17 +321,32 @@ class _Renderer:
         if section.layout != "vertical":
             kwargs.append(("layout", _py_literal(section.layout)))
 
-        if not kwargs and not section.components:
+        inner = indent + _INDENT
+        visible_when_lines = self._visible_when_lines(section.visible_when, inner)
+
+        if not kwargs and not visible_when_lines and not section.components:
             # ruff collapses an empty call to one line — emit it that way directly.
             return [f"{indent}{section.name}: nd.Section = nd.Section()"]
 
-        inner = indent + _INDENT
         lines = [f"{indent}{section.name}: nd.Section = nd.Section("]
         for key, value in kwargs:
             lines.append(f"{inner}{key}={value},")
+        lines.extend(visible_when_lines)
         for comp in section.components:
             lines.extend(self._render_component(comp, inner))
         lines.append(f"{indent})")
+        return lines
+
+    def _visible_when_lines(self, spec: VisibleWhenState | None, inner: str) -> list[str]:
+        # Emitted after the scalar section kwargs as an nd.VisibleWhen(...) call;
+        # `equals` is omitted when True (the default) to keep the fixed point stable.
+        if spec is None:
+            return []
+        body = inner + _INDENT
+        lines = [f"{inner}visible_when=nd.VisibleWhen(", f"{body}field={_py_literal(spec.field)},"]
+        if spec.equals is not True:
+            lines.append(f"{body}equals={_py_literal(spec.equals)},")
+        lines.append(f"{inner}),")
         return lines
 
     # -- top-level rendering -------------------------------------------------
@@ -356,6 +407,20 @@ class _Renderer:
             value_lines = _render_data_literal(value, _INDENT)
             lines.append(f"{_INDENT}{name}: {annotation} = {value_lines[0]}")
             lines.extend(value_lines[1:])
+        lines.extend(self._render_publishes())
+        return lines
+
+    def _render_publishes(self) -> list[str]:
+        # Emitted after example_settings; a dedicated emitter because these are
+        # nd.Artifact(...) calls, not JSON handled by _render_data_literal.
+        publishes = self.state.publishes
+        if not publishes:
+            return []
+        inner = _INDENT + _INDENT
+        lines = [f"{_INDENT}publishes: list[nd.Artifact] = ["]
+        for decl in publishes:
+            lines.append(f"{inner}{_artifact_literal(decl)},")
+        lines.append(f"{_INDENT}]")
         return lines
 
     def _render_node_class(self) -> list[str]:

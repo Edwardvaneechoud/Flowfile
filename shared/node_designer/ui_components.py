@@ -96,16 +96,36 @@ class IncomingColumns:
     pass
 
 
+def _normalize_artifact_type_filter(type_spec: str | list[str] | None) -> list[str] | None:
+    """sorted-unique string list, or None when unset/empty (matches the AST parser)."""
+    if type_spec is None:
+        return None
+    items = [type_spec] if isinstance(type_spec, str) else list(type_spec)
+    result = sorted(set(items))
+    return result or None
+
+
 class AvailableArtifacts:
     """
-    A marker class used in `SingleSelect` and `MultiSelect` components.
+    A marker used in `SingleSelect` and `MultiSelect` components.
 
-    When `options` is set to this class, the component will be dynamically
-    populated with available artifact names from upstream nodes. This is
-    useful for selecting models or other shared artifacts by name.
+    When `options` is set to this class (or an instance of it), the component
+    is dynamically populated with available artifact names. `scope` chooses
+    between upstream-only (default), global, and all (upstream ∪ global)
+    artifacts; `type` optionally filters by fully-qualified type name pattern(s).
+
+    Usage:
+        options=AvailableArtifacts                        # bare marker, upstream
+        options=AvailableArtifacts(scope="global")        # global artifacts
+        options=AvailableArtifacts(scope="all")           # upstream + global
+        options=AvailableArtifacts(type=["sklearn.*"])    # filtered by type
     """
 
-    pass
+    def __init__(self, scope: Literal["upstream", "global", "all"] = "upstream", type: str | list[str] | None = None):
+        if scope not in ("upstream", "global", "all"):
+            raise ValueError(f"AvailableArtifacts scope must be 'upstream', 'global' or 'all', got {scope!r}")
+        self.scope = scope
+        self.type_filter = _normalize_artifact_type_filter(type)
 
 
 class ColumnSelector(FlowfileInComponent):
@@ -222,9 +242,12 @@ class SingleSelect(FlowfileInComponent):
     """
 
     component_type: Literal["SingleSelect"] = "SingleSelect"
-    options: list[str | tuple[str, Any]] | type[IncomingColumns] | type[AvailableArtifacts]
+    options: list[str | tuple[str, Any]] | type[IncomingColumns] | type[AvailableArtifacts] | AvailableArtifacts
     default: Any | None = None
     input_type: InputType = "text"
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -241,14 +264,33 @@ class MultiSelect(FlowfileInComponent):
     """
 
     component_type: Literal["MultiSelect"] = "MultiSelect"
-    options: list[str | tuple[str, Any]] | type[IncomingColumns] | type[AvailableArtifacts]
+    options: list[str | tuple[str, Any]] | type[IncomingColumns] | type[AvailableArtifacts] | AvailableArtifacts
     default: list[Any] = Field(default_factory=list)
     input_type: InputType = "array"
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def __init__(self, **data):
         super().__init__(**data)
         if self.value is None:
             self.value = self.default if self.default else []
+
+
+class VisibleWhen(BaseModel):
+    """
+    Conditional-visibility rule for a `Section`.
+
+    `field` is a dotted ``"<section>.<toggle>"`` reference to a `ToggleSwitch`;
+    the owning section is shown only while that toggle's value equals `equals`.
+
+    Example:
+        VisibleWhen(field="main.show_advanced")            # show when the toggle is on
+        VisibleWhen(field="main.show_advanced", equals=False)  # show when it is off
+    """
+
+    field: str
+    equals: bool = True
 
 
 class Section(BaseModel):
@@ -265,11 +307,19 @@ class Section(BaseModel):
             description="Configure the primary behavior of the node.",
             my_text_input=TextInput(label="Enter a value")
         )
+
+    Set `visible_when` to reveal the section only while a boolean toggle is set:
+        advanced = Section(
+            title="Advanced",
+            visible_when=VisibleWhen(field="main.enable_advanced"),  # equals defaults to True
+            timeout=NumericInput(label="Timeout (s)"),
+        )
     """
 
     title: str | None = None
     description: str | None = None
     hidden: bool = False
+    visible_when: VisibleWhen | None = None
     layout: Literal["vertical", "horizontal"] = "vertical"
 
     class Config:
@@ -309,7 +359,7 @@ class Section(BaseModel):
                 components[key] = value
 
         for field_name in self.model_fields:
-            if field_name not in {"title", "description", "hidden", "layout"}:
+            if field_name not in {"title", "description", "hidden", "visible_when", "layout"}:
                 value = getattr(self, field_name, None)
                 if isinstance(value, FlowfileInComponent):
                     components[field_name] = value

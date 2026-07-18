@@ -93,15 +93,17 @@
         :incoming-columns="availableColumns"
         :column-types="columnTypes"
         :artifact-options="artifactOptions"
+        :global-artifacts="globalArtifacts"
       />
     </generic-node-settings>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import axios from "axios";
 import { CustomNodeSchema, SectionComponent } from "./interface";
+import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeUserDefined } from "../../../baseNode/nodeInput";
@@ -130,7 +132,8 @@ const availableColumns = ref<string[]>([]);
 const currentNodeId = ref<number | null>(null);
 const nodeUserDefined = ref<NodeUserDefined | null>(null);
 const columnTypes = ref<FileColumn[]>([]);
-const artifactOptions = ref<string[]>([]);
+const artifactOptions = ref<ArtifactOption[]>([]);
+const globalArtifacts = ref<GlobalArtifactOption[]>([]);
 
 // Kernel state
 const availableKernels = ref<KernelInfo[]>([]);
@@ -171,11 +174,56 @@ async function fetchAvailableArtifacts(nodeId: number, kernelId: string | null) 
       params: { flow_id: nodeStore.flow_id, node_id: nodeId, kernel_id: kernelId },
     });
     const artifacts = response.data?.artifacts ?? [];
-    artifactOptions.value = artifacts.map((artifact: any) => artifact.name);
+    artifactOptions.value = artifacts.map((a: any) => ({
+      name: a.name,
+      type_name: a.type_name,
+      module: a.module,
+      status: a.status,
+    }));
   } catch {
     artifactOptions.value = [];
   }
 }
+
+// Trailing slash: /artifacts/ is the router root; a missing slash 307-drops the body in Docker.
+async function fetchGlobalArtifacts() {
+  try {
+    const response = await axios.get("/artifacts/", { params: { limit: 500 } });
+    const raw = response.data;
+    const items: any[] = Array.isArray(raw) ? raw : (raw?.artifacts ?? raw?.items ?? []);
+    globalArtifacts.value = items.map((a) => ({
+      name: a.name,
+      python_type: a.python_type ?? null,
+      namespace_id: a.namespace_id ?? null,
+      version: a.version,
+    }));
+  } catch {
+    globalArtifacts.value = [];
+  }
+}
+
+// True when any select in the schema opts into the global (catalog) artifact source.
+function schemaWantsGlobalArtifacts(schemaData: CustomNodeSchema): boolean {
+  for (const sectionKey in schemaData.settings_schema) {
+    const section = schemaData.settings_schema[sectionKey];
+    for (const componentKey in section.components) {
+      const options = (section.components[componentKey] as any).options;
+      if (
+        options?.__type__ === "AvailableArtifacts" &&
+        (options.scope === "global" || options.scope === "all")
+      )
+        return true;
+    }
+  }
+  return false;
+}
+
+// Re-fetch upstream artifacts when the picked kernel changes; skip the initial
+// load's own assignment (fetched explicitly there).
+watch(selectedKernelId, (kernelId) => {
+  if (loading.value || currentNodeId.value === null) return;
+  void fetchAvailableArtifacts(currentNodeId.value, kernelId);
+});
 
 // --- Lifecycle Methods (exposed to parent) ---
 
@@ -216,6 +264,9 @@ const loadNodeData = async (nodeId: number) => {
     }
 
     await fetchAvailableArtifacts(nodeId, selectedKernelId.value ?? schemaData.kernel_id ?? null);
+    if (schemaWantsGlobalArtifacts(schemaData)) {
+      await fetchGlobalArtifacts();
+    }
 
     initializeFormData(schemaData, inputNodeData?.setting_input);
   } catch (err: any) {

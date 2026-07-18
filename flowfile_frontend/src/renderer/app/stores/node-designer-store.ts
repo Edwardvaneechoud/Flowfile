@@ -16,6 +16,7 @@ import type {
   ParseIssue,
   SectionLayout,
   SectionState,
+  VisibleWhenState,
 } from "../pages/nodeDesigner/designerState";
 import { newDesignerState } from "../pages/nodeDesigner/designerState";
 import {
@@ -628,6 +629,32 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     sections.value[index].layout = layout;
   }
 
+  function setSectionVisibleWhen(index: number, visibleWhen: VisibleWhenState | null) {
+    sections.value[index].visible_when = visibleWhen;
+  }
+
+  function retargetVisibleWhenForSection(oldName: string, newName: string) {
+    if (!oldName || oldName === newName) return;
+    const prefix = `${oldName}.`;
+    for (const s of sections.value) {
+      const vw = s.visible_when;
+      if (vw && vw.field.startsWith(prefix)) {
+        s.visible_when = { ...vw, field: `${newName}.${vw.field.slice(prefix.length)}` };
+      }
+    }
+  }
+
+  function retargetVisibleWhenForComponent(sectionName: string, oldName: string, newName: string) {
+    if (!oldName || oldName === newName) return;
+    const oldField = `${sectionName}.${oldName}`;
+    const newField = `${sectionName}.${newName}`;
+    for (const s of sections.value) {
+      if (s.visible_when?.field === oldField) {
+        s.visible_when = { ...s.visible_when, field: newField };
+      }
+    }
+  }
+
   function selectComponent(sectionIndex: number, compIndex: number) {
     selectedSectionIndex.value = sectionIndex;
     selectedComponentIndex.value = compIndex;
@@ -718,6 +745,9 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     updateSectionTitle,
     updateSectionDescription,
     setSectionLayout,
+    setSectionVisibleWhen,
+    retargetVisibleWhenForSection,
+    retargetVisibleWhenForComponent,
     selectComponent,
     removeComponent,
     addComponentToSection,

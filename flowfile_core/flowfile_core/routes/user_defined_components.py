@@ -17,8 +17,14 @@ from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_
 from flowfile_core.flowfile.node_designer.parsing import extract_manifest, parse_source
 from flowfile_core.flowfile.node_designer.state import DesignerState, ParseResult
 from flowfile_core.flowfile.user_defined.dry_run import DryRunRequest, DryRunResponse, run_dry_run
-from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, LoadedNode, registry
+from flowfile_core.flowfile.user_defined.registry import (
+    KernelRequiredError,
+    LoadedNode,
+    compute_node_key,
+    registry,
+)
 from flowfile_core.schemas import input_schema
+from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared import storage
 
@@ -227,6 +233,32 @@ def _render_save_source(request: SaveCustomNodeRequest) -> str:
     return request.code
 
 
+def _reject_builtin_key_collision(source: str) -> None:
+    """Refuse a new save whose node key collides with a built-in node type.
+
+    Built-in types own the same keys in the type->schema mapping; a custom node
+    sharing one breaks flow deserialization. Only new saves/renames are guarded
+    here — existing colliding installs still load (parse-time resolution handles
+    them). Exec-free: the name comes from the AST manifest.
+    """
+    node_name = extract_manifest(source).node_name
+    if not node_name:
+        return
+    node_key = compute_node_key(node_name)
+    if node_key in NODE_TYPE_TO_SETTINGS_CLASS:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "BUILTIN_NODE_KEY_COLLISION",
+                "error": (
+                    f"'{node_name}' resolves to node key '{node_key}', which is a built-in "
+                    "Flowfile node type. Rename the node so its key doesn't collide."
+                ),
+                "node_key": node_key,
+            },
+        )
+
+
 @router.post("/save-custom-node", summary="Save a custom node definition")
 def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(get_current_active_user)):
     """Write a custom node .py file and hot-register it (AST-only — no exec at save).
@@ -239,6 +271,7 @@ def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(get_cu
     """
     safe_name = _safe_file_name(request.file_name)
     source = _render_save_source(request)
+    _reject_builtin_key_collision(source)
 
     nodes_dir = storage.user_defined_nodes_directory
     file_path = nodes_dir / safe_name

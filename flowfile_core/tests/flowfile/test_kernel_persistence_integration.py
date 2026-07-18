@@ -88,7 +88,7 @@ class TestArtifactPersistenceBasics:
             node_id=100,
         )
         assert result.success
-        assert "persist_test" in result.artifacts_published
+        assert "persist_test" in [a.name for a in result.artifacts_published]
 
         persistence = _get_json(kernel.port, "/persistence")
         assert persistence["enabled"] is True

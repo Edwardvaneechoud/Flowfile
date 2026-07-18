@@ -12,6 +12,7 @@ single script, emits a runnable project tree:
 - ``custom_nodes/<module>.py`` — verbatim source per user-defined node
 """
 
+import ast
 import importlib.metadata
 import inspect
 import io
@@ -129,6 +130,55 @@ def _read_shim_source() -> str:
         from flowfile_core.flowfile.code_generator import project_shim
 
         return inspect.getsource(project_shim)
+
+
+def _insert_flowfile_ctx_import(source: str) -> str:
+    """Insert ``import flowfile_ctx`` into a verbatim custom-node module.
+
+    Placed after a leading module docstring and any ``from __future__`` imports
+    (which must stay first) and before the first other statement, so the node's
+    ``flowfile_ctx.*`` calls resolve against the shipped shim. No-op if the module
+    already imports flowfile_ctx.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return _insert_flowfile_ctx_import_fallback(source)
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Import) and any(alias.name == "flowfile_ctx" for alias in stmt.names):
+            return source
+        if isinstance(stmt, ast.ImportFrom) and stmt.module == "flowfile_ctx":
+            return source
+    insert_line = 1
+    for stmt in tree.body:
+        is_docstring = (
+            isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
+        )
+        is_future = isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+        if is_docstring or is_future:
+            insert_line = stmt.end_lineno + 1
+            continue
+        decorators = getattr(stmt, "decorator_list", None)
+        insert_line = decorators[0].lineno if decorators else stmt.lineno
+        break
+    lines = source.split("\n")
+    lines.insert(max(0, insert_line - 1), "import flowfile_ctx")
+    return "\n".join(lines)
+
+
+def _insert_flowfile_ctx_import_fallback(source: str) -> str:
+    """Line-scan fallback for unparseable source: keep leading ``from __future__``
+    lines first, then insert the import."""
+    lines = source.split("\n")
+    idx = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("from __future__"):
+            idx = i + 1
+        elif stripped and not stripped.startswith("#"):
+            break
+    lines.insert(idx, "import flowfile_ctx")
+    return "\n".join(lines)
 
 
 class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
@@ -558,6 +608,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             self._subflow_ancestry.discard(path_key)
 
         self.has_notebooks = self.has_notebooks or child.has_notebooks
+        self._needs_flowfile_ctx = self._needs_flowfile_ctx or child._needs_flowfile_ctx
         module_stem = self._unique_subflow_module_name(resolved.name)
         self.module_files[f"subflows/{module_stem}.py"] = (
             module_code if module_code.endswith("\n") else module_code + "\n"
@@ -602,6 +653,11 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
                     )
                     return False
             module_name = self._unique_custom_module_name(class_name)
+            if re.search(r"\bflowfile_ctx\b", source):
+                # Node code uses the kernel-injected flowfile_ctx global; bind it to
+                # the shipped shim so the exported module runs standalone.
+                self._needs_flowfile_ctx = True
+                source = _insert_flowfile_ctx_import(source)
             self.module_files[f"custom_nodes/{module_name}.py"] = source if source.endswith("\n") else source + "\n"
             self._custom_node_modules[class_key] = module_name
         self.imports.add(f"from custom_nodes.{module_name} import {class_name}")
@@ -630,8 +686,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         project_name = _sanitize_identifier(self.flow_graph.__name__, "flowfile_project")
 
         files: dict[str, str] = {"pipeline.py": pipeline_code if pipeline_code.endswith("\n") else pipeline_code + "\n"}
-        if self.has_notebooks:
+        if self.has_notebooks or self._needs_flowfile_ctx:
             files["flowfile_ctx.py"] = _read_shim_source()
+        if self.has_notebooks:
             files["notebooks/__init__.py"] = ""
         if any(path.startswith("custom_nodes/") for path in self.module_files):
             files["custom_nodes/__init__.py"] = ""
@@ -719,6 +776,11 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             ]
         if any(path.startswith("custom_nodes/") for path in self.module_files):
             lines += ["- `custom_nodes/` — user-defined node classes, source preserved verbatim."]
+            if self._needs_flowfile_ctx and not self.has_notebooks:
+                lines += [
+                    "- `flowfile_ctx.py` — local stand-in for the kernel `flowfile_ctx` API so "
+                    "custom-node code (e.g. `flowfile_ctx.log_info(...)`) runs without a Flowfile server."
+                ]
         if any(path.startswith("subflows/") for path in self.module_files):
             lines += [
                 "- `subflows/` — referenced flows exported as callable modules: "
@@ -773,7 +835,7 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
         self._flow_output_names: dict[int, str] = {}
         self._input_args: dict[str, str] = {}
         used = {p.name for p in codegen_parameters(flow_graph.flow_settings.parameters)}
-        used |= {"ff", "pl", "RawData"}
+        used |= {"ff", "pl"}
         for node in sorted(flow_graph.nodes, key=lambda n: n.node_id):
             if node.node_type != "flow_input" or not isinstance(node.setting_input, input_schema.NodeFlowInput):
                 continue
@@ -809,8 +871,8 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
 
     def _sample_expression(self, settings: input_schema.NodeFlowInput) -> str:
         if settings.raw_data_format is not None and settings.raw_data_format.columns:
-            self.imports.add("from flowfile_core.schemas.input_schema import RawData")
-            return f"ff.from_raw_data(RawData(**{settings.raw_data_format.model_dump()}))"
+            # Public API only: from_raw_data coerces the dict into RawData via pydantic.
+            return f"ff.from_raw_data({settings.raw_data_format.model_dump()})"
         return "ff.LazyFrame()"
 
     def _handle_flow_output(

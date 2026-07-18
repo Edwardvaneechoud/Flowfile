@@ -8,6 +8,7 @@ import pytest
 
 from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.flowfile.code_generator.code_generator import (
+    FlowGraphToFlowFrameConverter,
     export_flow_to_flowframe,
     export_flow_to_polars,
 )
@@ -603,6 +604,114 @@ class MathNode(CustomNodeBase):
         sys.modules.pop("math_custom_node_mod", None)
 
     assert "import math" in code
+
+
+class TestManualInputPublicApiOnly:
+    """Bug 1: manual-input codegen uses only the public flowfile API (no flowfile_core)."""
+
+    def test_no_flowfile_core_import_and_explicit_types_preserved(self):
+        graph = create_graph()
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
+        )
+        graph.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=graph.flow_id,
+                node_id=1,
+                raw_data_format=input_schema.RawData(
+                    columns=[
+                        input_schema.MinimalFieldInfo(name="amount", data_type="Float64"),
+                        input_schema.MinimalFieldInfo(name="label", data_type="String"),
+                    ],
+                    data=[[1, 2, 3], ["a", "b", "c"]],
+                ),
+            )
+        )
+
+        code = export_flow_to_flowframe(graph)
+        assert "flowfile_core" not in code
+        assert "ff.from_raw_data({" in code
+        assert "RawData(" not in code
+
+        ns: dict = {}
+        exec(compile(code, "<gen>", "exec"), ns)
+        result = ns["run_etl_pipeline"]()
+        df = result.collect() if hasattr(result, "collect") else result
+        # Explicit Float64 preserved (ff.from_dict would re-infer Int64 for [1, 2, 3]).
+        assert df.schema["amount"] == pl.Float64
+        assert df["amount"].to_list() == [1.0, 2.0, 3.0]
+        assert df["label"].to_list() == ["a", "b", "c"]
+
+
+_CTX_NODE_SOURCE = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class CtxLogger(nd.CustomNodeBase):
+    node_name: str = "Ctx Logger"
+    node_category: str = "Transform"
+    number_of_inputs: int = 1
+    number_of_outputs: int = 1
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        flowfile_ctx.log_info("ctx node ran")
+        return inputs[0].with_columns(pl.lit(1).alias("k"))
+'''
+
+
+class TestFlowfileCtxInlineShim:
+    """Bug 2: the flat export binds flowfile_ctx via a self-contained inline shim
+    (a single-file script ships no sibling flowfile_ctx.py)."""
+
+    def test_flat_export_binds_flowfile_ctx_and_runs(self, tmp_path):
+        import contextlib
+        import io
+        import sys
+
+        mod = _write_node_module(tmp_path, "ctx_logger_flat_mod", _CTX_NODE_SOURCE)
+        try:
+            add_to_custom_node_store(mod.CtxLogger)
+            graph = create_graph()
+            add_manual_input(graph, [{"x": 1}], node_id=1)
+            add_custom_node_to_graph(graph, mod.CtxLogger, node_id=2, settings={})
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+            code = export_flow_to_flowframe(graph)
+        finally:
+            sys.modules.pop("ctx_logger_flat_mod", None)
+
+        assert "class _FlowfileCtx" in code
+        assert "flowfile_ctx = _FlowfileCtx()" in code
+        assert "import flowfile_ctx" not in code
+
+        buf = io.StringIO()
+        ns: dict = {}
+        with contextlib.redirect_stdout(buf):
+            exec(compile(code, "<gen>", "exec"), ns)
+            result = ns["run_etl_pipeline"]()
+            if hasattr(result, "collect"):
+                result.collect()
+        assert "ctx node ran" in buf.getvalue()
+
+    def test_flat_export_omits_shim_when_ctx_unused(self, AddColumnNode):
+        add_to_custom_node_store(AddColumnNode)
+        graph = create_graph()
+        add_manual_input(graph, [{"Column 1": "test"}], node_id=1)
+        settings = {"config": {"column_name": "new_col", "fixed_value": "hello"}}
+        add_custom_node_to_graph(graph, AddColumnNode, node_id=2, settings=settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_flowframe(graph)
+        assert "_FlowfileCtx" not in code
+
+    def test_register_node_import_suppresses_flowfile_ctx(self):
+        """A node's own `import flowfile_ctx` is dropped (the inline shim binds it)."""
+        conv = FlowGraphToFlowFrameConverter(create_graph())
+        conv._register_node_import("import flowfile_ctx")
+        conv._register_node_import("from flowfile_ctx import log_info")
+        assert not any("flowfile_ctx" in imp for imp in conv.imports)
+        assert conv._needs_flowfile_ctx is True
 
 
 if __name__ == "__main__":
