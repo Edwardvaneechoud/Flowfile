@@ -433,6 +433,28 @@ async def get_display_outputs(
         return []
 
 
+@router.get("/{kernel_id}/artifact_preview")
+async def get_artifact_preview(
+    kernel_id: str,
+    flow_id: int,
+    name: str,
+    current_user=Depends(get_current_active_user),
+):
+    """Proxy a session-only artifact preview blob from the kernel; core retains nothing."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    if kernel.state.value not in ("idle", "executing"):
+        return None
+    try:
+        return await manager.get_artifact_preview(kernel_id, flow_id, name)
+    except Exception:
+        return None
+
+
 # Artifact Persistence & Recovery endpoints
 
 

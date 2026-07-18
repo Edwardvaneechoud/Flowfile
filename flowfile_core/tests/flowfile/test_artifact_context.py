@@ -10,6 +10,7 @@ from flowfile_core.flowfile.artifacts import (
     NodeArtifactState,
     merge_declared_artifacts,
 )
+from flowfile_core.kernel.models import ExecuteResult, PublishedArtifact
 
 
 # ArtifactRef
@@ -573,8 +574,88 @@ class TestArtifactRichMetadataRoundTrip:
         summaries = ctx.get_node_summaries()
         published = summaries["1"]["published"]
         assert published == [
-            {"name": "model", "type_name": "RandomForestClassifier", "module": "sklearn.ensemble"}
+            {
+                "name": "model",
+                "type_name": "RandomForestClassifier",
+                "module": "sklearn.ensemble",
+                "has_preview": False,
+                "preview_mime": "",
+            }
         ]
+
+
+# ArtifactContext — Preview metadata round-trip
+
+
+class TestArtifactPreviewMetadata:
+    def test_record_published_carries_preview_fields(self):
+        ctx = ArtifactContext()
+        refs = ctx.record_published(
+            1,
+            "k1",
+            [{"name": "chart", "has_preview": True, "preview_mime": "image/png"}],
+        )
+        assert refs[0].has_preview is True
+        assert refs[0].preview_mime == "image/png"
+
+    def test_to_dict_includes_preview_fields(self):
+        ref = ArtifactRef(name="chart", source_node_id=1, has_preview=True, preview_mime="image/png")
+        d = ref.to_dict()
+        assert d["has_preview"] is True
+        assert d["preview_mime"] == "image/png"
+
+    def test_node_summaries_surface_preview_fields(self):
+        ctx = ArtifactContext()
+        ctx.record_published(
+            1,
+            "k1",
+            [{"name": "chart", "has_preview": True, "preview_mime": "image/png"}],
+        )
+        published = ctx.get_node_summaries()["1"]["published"]
+        assert published == [
+            {
+                "name": "chart",
+                "type_name": "",
+                "module": "",
+                "has_preview": True,
+                "preview_mime": "image/png",
+            }
+        ]
+
+    def test_legacy_dict_without_keys_defaults(self):
+        """Old kernel payloads omit the preview keys → defaults False/''."""
+        ctx = ArtifactContext()
+        refs = ctx.record_published(1, "k1", [{"name": "model"}])
+        assert refs[0].has_preview is False
+        assert refs[0].preview_mime == ""
+
+    def test_none_preview_mime_normalizes_to_empty(self):
+        """model_dump yields None for an unset preview_mime; it must become ''."""
+        ctx = ArtifactContext()
+        refs = ctx.record_published(1, "k1", [{"name": "model", "has_preview": False, "preview_mime": None}])
+        assert refs[0].preview_mime == ""
+
+
+# PublishedArtifact / ExecuteResult (kernel wire model) forward/backward compat
+
+
+class TestPublishedArtifactCompat:
+    def test_new_fields_default_on_legacy_payload(self):
+        """A payload from an old kernel image lacks the preview keys → defaults."""
+        art = PublishedArtifact(name="model", type_name="RandomForest", size_bytes=10)
+        assert art.has_preview is False
+        assert art.preview_mime is None
+
+    def test_new_fields_parse_when_present(self):
+        art = PublishedArtifact(name="chart", has_preview=True, preview_mime="image/png")
+        assert art.has_preview is True
+        assert art.preview_mime == "image/png"
+
+    def test_normalize_published_maps_plain_strings(self):
+        """Stale 0.4.0 kernels emit bare name strings; they degrade to names-only."""
+        result = ExecuteResult(success=True, artifacts_published=["model", "scaler"])
+        assert [a.name for a in result.artifacts_published] == ["model", "scaler"]
+        assert result.artifacts_published[0].has_preview is False
 
 
 # merge_declared_artifacts

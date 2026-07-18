@@ -1377,18 +1377,7 @@ class FlowGraph:
                 if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
                     # .get() execs the node module lazily; on any failure the node
                     # lands in the missing/error path so the flow still opens.
-                    user_defined_node_class = CUSTOM_NODE_STORE.get(node_info.type)
-                    if user_defined_node_class is not None:
-                        self.add_user_defined_node(
-                            custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
-                            user_defined_node_settings=node_info.setting_input,
-                        )
-                    else:
-                        self.add_missing_user_defined_node(
-                            user_defined_node_settings=node_info.setting_input,
-                            node_type=node_info.type,
-                            error=missing_custom_node_error(node_info.type),
-                        )
+                    self._place_user_defined_node(node_info.type, node_info.setting_input)
                 else:
                     add_method = getattr(self, "add_" + node_info.type, None)
                     if add_method:
@@ -1981,6 +1970,24 @@ class FlowGraph:
         )
         node = self.get_node(user_defined_node_settings.node_id)
         node.results.errors = error
+
+    def _place_user_defined_node(
+        self, node_type: str, user_defined_node_settings: input_schema.UserDefinedNode
+    ) -> None:
+        """Place a custom node from the store, degrading to a missing-node placeholder when
+        its type isn't installed. Shared by copy and both flow-restore paths."""
+        user_defined_node_class = CUSTOM_NODE_STORE.get(node_type)
+        if user_defined_node_class is not None:
+            self.add_user_defined_node(
+                custom_node=user_defined_node_class.from_settings(user_defined_node_settings.settings),
+                user_defined_node_settings=user_defined_node_settings,
+            )
+        else:
+            self.add_missing_user_defined_node(
+                user_defined_node_settings=user_defined_node_settings,
+                node_type=node_type,
+                error=missing_custom_node_error(node_type),
+            )
 
     def _make_local_user_defined_func(
         self,
@@ -5894,6 +5901,10 @@ class FlowGraph:
             existing_setting_input: The settings object from the node being copied.
             node_type: The type of the node being copied.
         """
+        # A custom node whose type isn't installed needs a placeholder template before
+        # the promise can be placed (mirrors the flow-restore path).
+        if getattr(existing_setting_input, "is_user_defined", False) and node_type not in CUSTOM_NODE_STORE:
+            register_missing_node_template(node_type)
         self.add_node_promise(new_node_settings)
 
         if isinstance(existing_setting_input, input_schema.NodePromise):
@@ -5910,7 +5921,10 @@ class FlowGraph:
                 combined_settings.input_name, node_type, combined_settings.node_id
             )
         try:
-            getattr(self, f"add_{node_type}")(combined_settings)
+            if getattr(existing_setting_input, "is_user_defined", False):
+                self._place_user_defined_node(node_type, combined_settings)
+            else:
+                getattr(self, f"add_{node_type}")(combined_settings)
         except Exception:
             # A failed copy must not leave the pre-added promise dangling in the graph.
             if self.get_node(new_node_settings.node_id) is not None:

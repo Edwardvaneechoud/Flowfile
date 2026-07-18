@@ -255,6 +255,8 @@ export interface ArtifactPublished {
   name: string;
   type_name: string;
   module: string;
+  has_preview?: boolean;
+  preview_mime?: string | null;
 }
 
 export interface ArtifactConsumed {

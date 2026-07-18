@@ -27,6 +27,8 @@ class ArtifactRef:
     type_name: str = ""
     module: str = ""
     size_bytes: int = 0
+    has_preview: bool = False
+    preview_mime: str = ""
     created_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +39,8 @@ class ArtifactRef:
             "type_name": self.type_name,
             "module": self.module,
             "size_bytes": self.size_bytes,
+            "has_preview": self.has_preview,
+            "preview_mime": self.preview_mime,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -107,6 +111,8 @@ class ArtifactContext:
                 type_name=item.get("type_name", ""),
                 module=item.get("module", ""),
                 size_bytes=item.get("size_bytes", 0),
+                has_preview=item.get("has_preview", False),
+                preview_mime=item.get("preview_mime") or "",
                 created_at=datetime.now(timezone.utc),
             )
             refs.append(ref)
@@ -412,6 +418,8 @@ class ArtifactContext:
                         "name": r.name,
                         "type_name": r.type_name,
                         "module": r.module,
+                        "has_preview": r.has_preview,
+                        "preview_mime": r.preview_mime,
                     }
                     for r in state.published
                 ],

@@ -162,6 +162,8 @@ class PublishedArtifact(BaseModel):
     type_name: str = ""
     module: str = ""
     size_bytes: int = 0
+    has_preview: bool = False
+    preview_mime: str | None = None
 
 
 class ExecuteResult(BaseModel):
