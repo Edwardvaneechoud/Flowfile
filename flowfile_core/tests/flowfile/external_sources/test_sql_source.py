@@ -673,6 +673,60 @@ class TestSQLQueryValidation:
         assert sql_source.query_mode == "table"
         assert "SELECT * FROM users" in sql_source.query
 
+    def test_read_table_functions_rejected(self):
+        """Table functions read server files via pl.SQLContext — reject them (P0)."""
+        dangerous_queries = [
+            "SELECT * FROM read_csv('/etc/hosts')",
+            "SELECT * FROM read_parquet('/etc/passwd')",
+            "SELECT * FROM read_ipc('/tmp/x.arrow')",
+            "SELECT * FROM read_json('/tmp/x.json')",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError, match="table functions"):
+                validate_sql_query(query)
+
+    def test_read_table_function_urls_rejected(self):
+        """Table functions can issue outbound requests (SSRF) — URL args rejected too."""
+        dangerous_queries = [
+            "SELECT * FROM read_parquet('https://evil.example/x.parquet')",
+            "SELECT * FROM read_csv('http://169.254.169.254/latest/meta-data/')",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError, match="table functions"):
+                validate_sql_query(query)
+
+    def test_table_function_hidden_in_join_cte_subquery_rejected(self):
+        """A table function anywhere in the plan (not just at the top FROM) is rejected."""
+        dangerous_queries = [
+            "SELECT a.* FROM input_1 a JOIN read_csv('/etc/hosts') b ON a.id = b.id",
+            "WITH c AS (SELECT * FROM read_csv('/etc/hosts')) SELECT * FROM c",
+            "SELECT * FROM (SELECT * FROM read_parquet('/etc/passwd')) AS x",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError, match="table functions"):
+                validate_sql_query(query)
+
+    def test_table_function_case_and_comment_obfuscation_rejected(self):
+        """Case and comment tricks don't smuggle a table function past the gate."""
+        dangerous_queries = [
+            "SELECT * FROM READ_CSV('/etc/hosts')",
+            "SELECT * FROM read_csv ('/etc/hosts')",
+            "SELECT * FROM read_csv/* c */('/etc/hosts')",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError, match="table functions"):
+                validate_sql_query(query)
+
+    def test_scalar_and_aggregate_functions_still_allowed(self):
+        """Scalar/aggregate functions are not table sources and must keep passing."""
+        safe_queries = [
+            "SELECT COUNT(*) FROM input_1",
+            "SELECT UPPER(name), ABS(x) FROM input_1 WHERE id > 0",
+            "SELECT * FROM input_1 ORDER BY LENGTH(name)",
+        ]
+        for query in safe_queries:
+            validate_sql_query(query)  # Should not raise
+
 
 # SQL Identifier Validation Tests (no Docker required)
 

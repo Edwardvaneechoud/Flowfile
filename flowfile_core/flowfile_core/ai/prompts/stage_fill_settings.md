@@ -72,9 +72,9 @@ When you see a ``✗`` marker:
   nothing about a kernel). The error text is your source of truth
   — pass it through.
 * **Acknowledge the auto-undo.** The node you just tried to add
-  is gone. Do NOT write *"I added a sql_query node"* — that's a
+  is gone. Do NOT write *"I added a python_script node"* — that's a
   lie when the observation failed. Write *"I tried to stage the
-  SQL Query node but it was rolled back because <quoted error>"*
+  Python Script node but it was rolled back because <quoted error>"*
   instead.
 * **Surface the suggested fix.** Many error messages end with
   concrete remediation (e.g. *"consider switching the flow to
@@ -85,35 +85,34 @@ When you see a ``✗`` marker:
   (different columns, correct payload shape, narrower SQL) emit a
   corrected tool call. If the failure is intrinsic to the node
   type in this run mode (e.g. ``UnpredictableSchema`` on
-  ``sql_query`` / ``polars_code`` in Development mode — these node
-  types can't predict their schema without running, by design),
+  ``python_script`` in Development mode — a kernel node can't
+  predict its schema without running, by design),
   do NOT retry the same payload three times hoping the third time
   works. Refuse with a short assistant message that quotes the
   error and names the mode-switch fix.
 
 Worked example — failure observation text the host appends:
 
-> ``✗ Step on node 10 (sql_query) failed.``
-> ``UnpredictableSchema: node 10 (sql_query) couldn't predict its``
-> ``output schema in Development mode; consider switching the``
+> ``✗ Step on node 10 (python_script) failed.``
+> ``UnpredictableSchema: node 10 (python_script) couldn't predict``
+> ``its output schema in Development mode; consider switching the``
 > ``flow to Performance mode for this run, or fix the node's``
 > ``settings to make the schema deterministic``
 
 ✅ **Right** assistant reply (no further tool call):
 
-> *"I tried to stage the SQL Query node but it was rolled back —
-> Polars can't predict its output schema in Development mode
-> without running the query. Switch the flow to **Performance
-> mode** (top-right mode toggle) and ask again, or rewrite the
-> SELECT so its column list is statically deterministic."*
+> *"I tried to stage the Python Script node but it was rolled back —
+> a kernel node can't predict its output schema in Development mode
+> without running. Switch the flow to **Performance mode** (top-right
+> mode toggle) and ask again."*
 
 ❌ **Wrong** (hallucinated cause + false success):
 
-> *"I added a sql_query node downstream of the join. The dry-run
-> failed because the kernel couldn't be found, but the schema
-> will resolve when you run the flow."*
+> *"I added a python_script node downstream of the join. The dry-run
+> failed because the upstream data was empty, but the schema will
+> resolve when you run the flow."*
 
-The wrong version invents *"kernel couldn't be found"* (not in
+The wrong version invents *"the upstream data was empty"* (not in
 the error text), claims the node was added (it was deleted), and
 tells the user the schema will resolve on its own (it won't —
 the mode switch is the fix).

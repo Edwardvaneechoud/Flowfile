@@ -94,6 +94,28 @@ def test_invalid_sql(delta_tables):
         execute_sql_query("THIS IS NOT SQL", delta_tables)
 
 
+def test_non_select_rejected_server_side():
+    """The worker re-validates: it must not trust the core caller (validation
+    runs before any table is touched, hence the empty tables mapping)."""
+    from shared.sql_validation import UnsafeSQLError
+
+    with pytest.raises(UnsafeSQLError):
+        execute_sql_query("DROP TABLE customers", {})
+
+
+def test_table_function_rejected_server_side():
+    """read_csv/read_parquet table functions (file read + SSRF) are refused at
+    the worker, closing the core→worker trust gap."""
+    from shared.sql_validation import UnsafeSQLError
+
+    for query in [
+        "SELECT * FROM read_csv('/etc/hosts')",
+        "SELECT * FROM read_parquet('https://evil.example/x.parquet')",
+    ]:
+        with pytest.raises(UnsafeSQLError, match="table functions"):
+            execute_sql_query(query, {})
+
+
 def test_used_tables_only_referenced(delta_tables):
     """Test that used_tables only includes tables actually referenced in the query."""
     result = execute_sql_query("SELECT * FROM customers", delta_tables)

@@ -2491,10 +2491,22 @@ class FlowGraph:
             input_node_ids=node_sql_query.depending_on_ids,
         )
 
+        node = self.get_node(node_id=node_sql_query.node_id)
+
+        def schema_callback() -> list[FlowfileColumn]:
+            # Resolve the output schema by running the query plan lazily over
+            # 0-row upstream frames (input_1..N); no data is collected.
+            inputs = [
+                v.get_predicted_resulting_data(src_handle) if v is not None else FlowDataEngine()
+                for v, src_handle in node._slot_input_pairs()
+            ]
+            return execute_sql_query(*inputs, sql_code=node_sql_query.sql_query_input.sql_code).schema
+
+        node.schema_callback = schema_callback
+
         try:
             validate_sql_query(node_sql_query.sql_query_input.sql_code)
         except Exception as e:
-            node = self.get_node(node_id=node_sql_query.node_id)
             node.results.errors = str(e)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)

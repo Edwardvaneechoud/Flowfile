@@ -22,7 +22,7 @@ resolver for predictable upstreams (``static`` / ``source`` /
 by calling :meth:`FlowNode.get_predicted_schema(force=True)`, which
 fires the registered ``schema_callback`` (or the
 ``_predicted_data_getter`` fallback). Dynamic node types
-(``polars_code`` / ``python_script`` / ``sql_query`` / ``pivot`` /
+(``polars_code`` / ``python_script`` / ``pivot`` /
 etc.) stay ``schema_status="unknown"`` from this surface — kernel
 dry-run is reserved for the executor path. Callers that need the
 cache-only behaviour pass ``resolve_schemas=False``
@@ -619,31 +619,24 @@ def _build_sql_query_caveat_block() -> str:
     """Conditional sql_query-specific guidance. Renders ONLY at stage
     ``fill_settings`` when ``picked_node_type == "sql_query"`` (gated
     by the caller in ``_build_single_node_block``). Other node types
-    (including ``polars_code``, which has its own predictor path that
-    works fine) don't see this block. Pick_type / agent_complex
-    full-catalog rounds also don't render it — keeping the caveat
-    scoped to the one prompt where the LLM is about to stage a
-    sql_query, exactly when the guidance is actionable.
+    don't see this block. Pick_type / agent_complex full-catalog
+    rounds also don't render it — keeping the caveat scoped to the one
+    prompt where the LLM is about to stage a sql_query, exactly when
+    the guidance is actionable.
 
-    Two pieces:
+    **Table-name convention.** Upstream inputs are registered
+    positionally as ``input_1``, ``input_2``, ... by
+    :func:`flowfile_core.flowfile.flow_data_engine.flow_data_engine.execute_sql_query`
+    (``ctx.register(f"input_{i + 1}", ...)``). The chat LLM
+    previously hallucinated ``join_<node_id>``-shaped table names
+    from the prior worked example; the agent inherited the
+    hallucination and produced ``FROM join_5`` SQL that hit
+    ``relation 'join_5' was not found`` at runtime.
 
-    * **Table-name convention.** Upstream inputs are registered
-      positionally as ``input_1``, ``input_2``, ... by
-      :func:`flowfile_core.flowfile.flow_data_engine.flow_data_engine.execute_sql_query`
-      (``ctx.register(f"input_{i + 1}", ...)``). The chat LLM
-      previously hallucinated ``join_<node_id>``-shaped table names
-      from the prior worked example; the agent inherited the
-      hallucination and produced ``FROM join_5`` SQL that hit
-      ``relation 'join_5' was not found`` at runtime.
-    * **Development-mode auto-undo.** ``add_sql_query`` does not
-      register a ``schema_callback`` (see ``flow_graph.py``
-      ``add_sql_query``), so ``_observe_development``'s
-      ``get_predicted_schema(force=True)`` returns ``None`` and the
-      host fails the observation with ``UnpredictableSchema``,
-      auto-undoing the just-added node. Without this pre-warning the
-      LLM hits the failure, hallucinates a cause, claims false
-      success (*"I added a sql_query node"* — but the node was
-      deleted), or burns its retry budget on identical re-attempts.
+    (``add_sql_query`` now registers a ``schema_callback`` that
+    resolves the output schema by running the query plan over 0-row
+    inputs, so the node predicts like any other and no longer needs a
+    Development-mode refusal caveat.)
     """
     return (
         "## sql_query-specific guidance\n"
@@ -657,34 +650,7 @@ def _build_sql_query_caveat_block() -> str:
         "node's id, type, or display name (e.g. ``FROM join_5`` is "
         "wrong — it will fail at runtime with ``relation 'join_5' "
         "was not found``). This is true regardless of what the chat "
-        "trail above may have suggested.\n"
-        "\n"
-        "**Development-mode caveat.** Polars' embedded SQL engine "
-        "cannot introspect a SELECT's column list without running "
-        "it, and the sql_query node currently has no "
-        "``schema_callback`` to work around that, so "
-        "``get_predicted_schema`` returns ``None`` for this node "
-        "type. On ``surface=agent_live`` runs in **Development "
-        "mode**, the host's post-apply observation will fail with "
-        "``UnpredictableSchema`` and **auto-undo your just-added "
-        "node** — the canvas reverts to the prior state and you only "
-        "see the failure on the next round's tool reply.\n"
-        "\n"
-        "Before staging this node, check the user message for the "
-        "flow's execution mode (the host surfaces it). If the flow "
-        "is in Development mode, **do not stage** — instead, write a "
-        "short assistant message refusing the operation and ask the "
-        "user to switch the top-right mode toggle to **Performance** "
-        "(the schema is predictable once the query actually runs). "
-        "If the flow is already in Performance mode, proceed "
-        "normally and use ``input_1`` / ``input_2`` / ... as the "
-        "table names.\n"
-        "\n"
-        "If you've already attempted the add and the previous tool "
-        "reply contains ``UnpredictableSchema``: do **not** retry "
-        "the same payload — the failure mode is intrinsic to the "
-        "run mode, not the settings. Quote the error verbatim and "
-        "surface the Performance-mode fix."
+        "trail above may have suggested."
     )
 
 

@@ -1831,13 +1831,12 @@ def test_verify_completion_stage_prompt_renders() -> None:
 
 
 # Honest runtime-failure reporting — direct response to the 2026-05-09
-# dogfood where the agent hit ``UnpredictableSchema`` on sql_query,
-# hallucinated *"the kernel couldn't be found"* (not in the error text),
-# and falsely told the user *"I added a sql_query node"* after the host had
-# already auto-undone it. The fix has two pieces: (1) generic guidance in
-# stage_fill_settings.md teaching the LLM to read the ``✗`` observation
-# block honestly, and (2) a conditional Development-mode caveat for
-# sql_query / polars_code that pre-warns the LLM before the failure.
+# dogfood where the agent hit ``UnpredictableSchema`` on a dynamic node,
+# hallucinated a cause not in the error text, and falsely told the user it
+# had added the node after the host had already auto-undone it. The worked
+# example uses ``python_script`` (a genuinely kernel-dependent node that
+# can't predict its schema in Development mode); sql_query now predicts via
+# its schema_callback, so it no longer triggers this path.
 
 
 def test_fill_settings_prompt_includes_runtime_feedback_section() -> None:
@@ -1862,7 +1861,7 @@ def test_fill_settings_prompt_includes_runtime_feedback_section() -> None:
     )
     # The negative example is explicitly there so the LLM sees the exact
     # hallucination pattern it must avoid (transcript 2026-05-09).
-    assert "kernel couldn't be found" in text_lower, (
+    assert "upstream data was empty" in text_lower, (
         "missing the negative example — the worked-example contrast is "
         "what trains the LLM not to fabricate plausible causes"
     )
@@ -1871,11 +1870,12 @@ def test_fill_settings_prompt_includes_runtime_feedback_section() -> None:
 def test_fill_settings_renders_sql_query_caveat_when_picked() -> None:
     """The sql_query caveat block is gated like the formula function
     reference: it renders ONLY at fill_settings + when the picked
-    node type is sql_query. Carries two pieces the LLM needs at the
-    moment of staging — (a) upstream table-name convention
-    (``input_1``/``input_2``/..., NEVER node-id-based) so the agent
-    doesn't write ``FROM join_5`` and hit ``relation '...' was not
-    found``, and (b) the Development-mode auto-undo warning.
+    node type is sql_query. It carries the upstream table-name
+    convention (``input_1``/``input_2``/..., NEVER node-id-based) so
+    the agent doesn't write ``FROM join_5`` and hit ``relation '...'
+    was not found``. (The old Development-mode auto-undo warning was
+    dropped: sql_query now predicts its schema via a schema_callback,
+    so it no longer auto-undoes.)
     """
     text = assemble_system_prompt(
         "agent_live", stage="fill_settings", picked_node_type="sql_query"
@@ -1899,15 +1899,6 @@ def test_fill_settings_renders_sql_query_caveat_when_picked() -> None:
         "explicitly (otherwise the LLM repeats the chat-mode "
         "hallucination)"
     )
-
-    # Development-mode auto-undo guidance.
-    assert "UnpredictableSchema" in text
-    assert "Performance" in text, (
-        "missing the Performance-mode remediation — without it the "
-        "LLM can't tell the user what to do"
-    )
-    text_lower = text.lower()
-    assert "auto-undo" in text_lower or "auto undo" in text_lower
 
 
 def test_pick_type_does_NOT_render_sql_query_caveat() -> None:

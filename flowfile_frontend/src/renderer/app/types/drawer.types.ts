@@ -1,5 +1,5 @@
 import type { Component } from "vue";
-import type { AxisBehaviour } from "../components/common/DraggableItem/stateStore";
+import type { AxisBehaviour } from "../components/common/DraggableItem/layoutGeometry";
 import type { useEditorStore } from "../stores/editor-store";
 import type { useNodeStore } from "../stores/column-store";
 import type { useFlowStore } from "../stores/flow-store";
@@ -12,12 +12,6 @@ export interface DrawerCtx {
   node: ReturnType<typeof useNodeStore>;
   flow: ReturnType<typeof useFlowStore>;
   drawer: ReturnType<typeof useDrawerStore>;
-}
-
-// The minimal {id,label} shape DraggableItem renders in its header strip.
-export interface DrawerTab {
-  id: string;
-  label: string;
 }
 
 export interface DrawerTabDef {
@@ -35,10 +29,9 @@ export interface DrawerTabDef {
 export interface DrawerDef {
   id: string; // DraggableItem id + localStorage + bringToFront key
   side: "right" | "bottom";
+  // Default sizes/offsets beyond the width come from Canvas overrides (height
+  // tiling, palette-adjacent left), so only the width is registry data.
   initialWidth?: number;
-  initialHeight?: number;
-  initialLeft?: number;
-  initialTop?: number;
   widthBehaviour?: AxisBehaviour;
   heightBehaviour?: AxisBehaviour;
   allowFullScreen?: boolean;

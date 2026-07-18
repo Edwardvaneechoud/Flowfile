@@ -14,10 +14,9 @@ export const drawers: DrawerDef[] = [
     id: "rightDrawer",
     side: "right",
     initialWidth: 600,
-    // Small top gap so the drawer starts near the top (not the generic 100px
-    // free-panel default); Canvas derives its default height from this.
-    initialTop: 8,
     // Fixed width; height tracks the canvas (keeps its gap) instead of filling.
+    // Flush to the canvas top; Canvas derives its default height so the bottom
+    // edge meets the bottom dock.
     heightBehaviour: "scale",
     allowFullScreen: true,
     // Opens for settings / results / code; Code is then always a tab (its own
@@ -64,7 +63,6 @@ export const drawers: DrawerDef[] = [
     id: "aiDrawer",
     side: "right",
     initialWidth: 600,
-    initialTop: 8,
     heightBehaviour: "scale",
     allowFullScreen: true,
     onMinimize: ({ editor }) => editor.closeAiDrawer(),
@@ -80,8 +78,9 @@ export const drawers: DrawerDef[] = [
   {
     id: "bottomDock",
     side: "bottom",
-    initialLeft: 180,
-    // Width tracks the canvas (keeps its gap); height stays fixed px.
+    // Width tracks the canvas (keeps its gap); height stays fixed px. The
+    // left default comes from Canvas (the live width of the docked palette),
+    // so the dock starts right next to Data actions.
     widthBehaviour: "scale",
     allowFullScreen: true,
     // Opens for a data preview or logs; Data is a permanent home tab (placeholder).
