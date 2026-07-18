@@ -83,7 +83,7 @@ def test_mirror_predicts_manual_input_from_settings() -> None:
 
 
 def test_mirror_returns_none_for_dynamic_nodes() -> None:
-    """Dynamic nodes (polars_code/python_script/sql_query) cannot be predicted
+    """Dynamic nodes (polars_code/python_script) cannot be predicted
     via the mirror — they need the kernel dry-run path instead."""
     settings = input_schema.NodePolarsCode(
         flow_id=999,
@@ -93,6 +93,44 @@ def test_mirror_returns_none_for_dynamic_nodes() -> None:
     )
     predicted = predict_schema_via_mirror("polars_code", settings, {1: []})
     assert predicted is None
+
+
+def test_mirror_predicts_sql_query() -> None:
+    """sql_query has a schema_callback (runs the query plan over 0-row inputs),
+    so the mirror predicts its output schema for 1- and 2-input queries."""
+    up1 = {
+        1: [
+            FlowfileColumn.from_input("id", "Int64"),
+            FlowfileColumn.from_input("city", "String"),
+        ]
+    }
+    single = input_schema.NodeSqlQuery(
+        flow_id=999,
+        node_id=50,
+        depending_on_ids=[1],
+        sql_query_input=transform_schema.SqlQueryInput(
+            sql_code="SELECT city, COUNT(*) AS n FROM input_1 GROUP BY city"
+        ),
+    )
+    predicted = predict_schema_via_mirror("sql_query", single, up1)
+    assert predicted is not None
+    assert [c.column_name for c in predicted] == ["city", "n"]
+
+    up2 = {
+        1: [FlowfileColumn.from_input("id", "Int64"), FlowfileColumn.from_input("name", "String")],
+        2: [FlowfileColumn.from_input("customer_id", "Int64"), FlowfileColumn.from_input("amount", "Int64")],
+    }
+    joined = input_schema.NodeSqlQuery(
+        flow_id=999,
+        node_id=51,
+        depending_on_ids=[1, 2],
+        sql_query_input=transform_schema.SqlQueryInput(
+            sql_code="SELECT a.name, b.amount FROM input_1 a JOIN input_2 b ON a.id = b.customer_id"
+        ),
+    )
+    predicted_join = predict_schema_via_mirror("sql_query", joined, up2, right_input_node_id=2)
+    assert predicted_join is not None
+    assert [c.column_name for c in predicted_join] == ["name", "amount"]
 
 
 def test_mirror_isolation_does_not_mutate_real_graph() -> None:

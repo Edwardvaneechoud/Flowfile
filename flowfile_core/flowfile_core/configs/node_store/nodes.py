@@ -448,7 +448,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="SQL Query",
             drawer_intro="Write SQL queries against connected data sources",
             laziness="lazy",
-            tags=[NodeTag.SQL, NodeTag.QUERY, NodeTag.DUCKDB],
+            tags=[NodeTag.SQL, NodeTag.QUERY],
         ),
         NodeTemplate(
             name="Python Script",

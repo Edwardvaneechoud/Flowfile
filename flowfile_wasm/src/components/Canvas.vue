@@ -602,7 +602,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'record_id', name: 'Record ID', icon: 'record_id.svg', inputs: 1, outputs: 1, keywords: ['row number', 'index', 'id', 'sequence'] },
       { type: 'head', name: 'Take Sample', icon: 'sample.svg', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
       { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'], docsAnchor: 'window-functions' },
-      { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where', 'duckdb'], docsAnchor: 'sql-query' },
+      { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where'], docsAnchor: 'sql-query' },
       { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'], docsAnchor: 'python-script' }
     ]
   },

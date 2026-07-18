@@ -55,7 +55,10 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "graph_solver": "dynamic",
     "python_script": "dynamic",
     "polars_code": "dynamic",
-    "sql_query": "dynamic",
+    # sql_query has a schema_callback (add_sql_query) that resolves the output
+    # schema by running the query plan lazily over 0-row inputs, so the mirror
+    # can predict it (fails safe to None for >2 inputs it cannot wire).
+    "sql_query": "static",
     "join": "static",
     "cross_join": "static",
     "fuzzy_match": "static",
