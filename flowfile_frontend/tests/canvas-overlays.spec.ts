@@ -9,7 +9,10 @@ import { test, expect, APIRequestContext } from "@playwright/test";
  *  - Double-click on a panel's resize bar toggles fullscreen.
  *  - Double-click on the empty canvas pane hides all right-side and bottom
  *    panels (left palette stays visible).
- *  - localStorage uses the v3 storage key prefix.
+ *  - localStorage stores v4 intent records (user gestures only); legacy v3
+ *    geometry records are migrated or healed at panel registration.
+ *  - Docked panels resize via their splitter edges and only undock through a
+ *    deliberate pop-out drag; releasing near an edge snaps back into the dock.
  *
  * Prerequisites (web mode):
  *   1. Backend: `poetry run flowfile_core` (port 63578)
@@ -33,20 +36,49 @@ async function authPost(request: APIRequestContext, url: string, token: string) 
   return request.post(url, { headers: { Authorization: `Bearer ${token}` } });
 }
 
-// Inject auth into localStorage before navigating so the SPA boots authed.
-async function navigateWithAuth(page: any, token: string, targetUrl: string) {
+// Inject auth (and optional seeded localStorage entries, e.g. legacy panel
+// geometry) before navigating so the SPA boots against them.
+async function navigateWithAuth(
+  page: any,
+  token: string,
+  targetUrl: string,
+  seed: Record<string, string> = {},
+) {
   await page.goto(targetUrl);
   await page.waitForLoadState("networkidle");
   const expirationTime = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
-    ({ token, expiration }: { token: string; expiration: number }) => {
+    ({
+      token,
+      expiration,
+      seed,
+    }: {
+      token: string;
+      expiration: number;
+      seed: Record<string, string>;
+    }) => {
       localStorage.setItem("auth_token", token);
       localStorage.setItem("auth_token_expiration", expiration.toString());
+      for (const [key, value] of Object.entries(seed)) {
+        localStorage.setItem(key, value);
+      }
     },
-    { token, expiration: expirationTime },
+    { token, expiration: expirationTime, seed },
   );
   await page.reload();
   await page.waitForLoadState("networkidle");
+}
+
+// Drag from the center of a locator by (dx, dy) with real mouse events.
+async function dragBy(page: any, locator: any, dx: number, dy: number) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("dragBy: element has no bounding box");
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y + dy, { steps: 12 });
+  await page.mouse.up();
 }
 
 test.describe("Canvas Overlay Behaviour", () => {
@@ -101,16 +133,18 @@ test.describe("Canvas Overlay Behaviour", () => {
     }
   });
 
-  test("storage uses v3 key prefix and purges legacy keys", async ({ page }) => {
+  test("storage uses v4 key prefix and purges legacy keys", async ({ page }) => {
     await navigateWithAuth(page, authToken, BASE_URL);
     await page.waitForSelector("main", { timeout: 10000 });
 
-    // The store purges older-version keys at init. Every panel-position key the
-    // app writes must carry the current `.v3_` infix — no legacy underscore keys
-    // and no stale `.v2_` keys remain.
+    // The store purges pre-v3 keys (and all group keys) at init; v3 records
+    // are only kept for the one-time migration at panel registration. Any
+    // panel-position key must therefore carry the `.v4_` or `.v3_` infix.
     const staleKeys = await page.evaluate(() => {
       return Object.keys(localStorage).filter(
-        (k) => k.startsWith("overlayPositionAndSize") && !k.includes(".v3_"),
+        (k) =>
+          (k.startsWith("overlayPositionAndSize") && !k.includes(".v4_") && !k.includes(".v3_")) ||
+          k.startsWith("overlayGroups"),
       );
     });
     expect(staleKeys).toEqual([]);
@@ -140,20 +174,15 @@ test.describe("Canvas Overlay Behaviour", () => {
     expect(cssPosition).toBe("absolute");
   });
 
-  test("floating panel does not persist a collapsed size when the canvas transiently shrinks", async ({
+  test("container changes never write storage and panels recover from a transient shrink", async ({
     page,
     request,
   }) => {
-    // Regression guard for the panel-collapse bug: geometry recompute
-    // (applyStickyPosition / clampStateToViewport) used to run against a
-    // transiently-tiny container — as happens during a route unmount/remount or
-    // any brief canvas shrink — and PERSIST the collapse to the floor constants
-    // (width 150 / height 100), so panels stayed shrunken after the canvas grew
-    // back. A viewport shrink is the deterministic form of that transient: it
-    // drives <main> below the usable threshold, then restores it. With the fix
-    // the recompute bails on the unusable container and the panel keeps its
-    // size; without it, dataActions' fixed-width axis collapses and never
-    // recovers.
+    // The structural invariant of the intent/derived split: persisted state
+    // only changes on user gestures. A transient container collapse (route
+    // remount, window-state restore, viewport shrink) may briefly clamp the
+    // RENDERED rect but must leave localStorage untouched, and the panel must
+    // return to its exact geometry once the container recovers.
     const flowName = `Overlay_Transient_Shrink_${Date.now()}`;
     const createResponse = await authPost(
       request,
@@ -171,41 +200,294 @@ test.describe("Canvas Overlay Behaviour", () => {
       await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
       await flowTab.first().click();
 
-      // dataActions is the always-rendered left palette; its width is fixed
-      // (initialWidth 230), so a collapse to the ~150 floor cannot recover once
-      // the canvas grows back — a clean, stable signal.
+      // dataActions is the always-rendered left palette (fixed width 230).
       await page.waitForSelector("#dataActions", { timeout: 10000 });
 
-      // Read the stored geometry off the inline style (itemState.width/height) —
-      // that is what the user saw collapse, not the CSS-capped offsetWidth.
       const readWidth = () =>
         page.evaluate(() => {
           const el = document.getElementById("dataActions");
           return el ? parseFloat(el.style.width) : NaN;
         });
+      const readStored = () =>
+        page.evaluate(() =>
+          Object.keys(localStorage)
+            .filter((k) => k.startsWith("overlayPositionAndSize"))
+            .sort()
+            .map((k) => `${k}=${localStorage.getItem(k)}`)
+            .join("|"),
+        );
 
-      // Settle at the real (non-collapsed) width before shrinking.
       await expect.poll(readWidth, { timeout: 10000 }).toBeGreaterThanOrEqual(200);
-      const before = await readWidth();
+      const widthBefore = await readWidth();
+      const storedBefore = await readStored();
 
-      // Collapse the canvas well below the usable threshold, let the resize
-      // handlers run + debounced persist flush, then restore it.
+      // Collapse the canvas well below the usable threshold, then restore it.
       await page.setViewportSize({ width: 150, height: 120 });
       await page.waitForTimeout(600);
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.waitForTimeout(600);
 
-      const after = await readWidth();
-      // Width must survive the transient (fixed axis never recovers if collapsed).
-      expect(after).toBeGreaterThanOrEqual(before - 20);
+      // Exact recovery — derived geometry, nothing accumulated.
+      expect(await readWidth()).toBe(widthBefore);
+      // Byte-identical storage — container changes are not gestures.
+      expect(await readStored()).toBe(storedBefore);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
 
-      // And the persisted geometry must not carry the collapse fingerprint.
-      const persisted = await page.evaluate(() => {
-        const raw = localStorage.getItem("overlayPositionAndSize.v3_dataActions");
+  test("a corrupted legacy v3 record heals to defaults at panel registration", async ({
+    page,
+    request,
+  }) => {
+    // Users who hit the historical collapse bug have records like
+    // {width:150,height:100,top:0,left:464} in localStorage. Migration must
+    // reject the fingerprint, drop the v3 key, and render the panel at its
+    // default geometry.
+    const flowName = `Overlay_Self_Heal_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`, {
+        "overlayPositionAndSize.v3_dataActions": JSON.stringify({
+          width: 150,
+          height: 100,
+          left: 464,
+          top: 0,
+          stickynessPosition: "free",
+          fullWidth: false,
+          fullHeight: false,
+          zIndex: 105,
+          fullScreen: false,
+          clicked: false,
+        }),
+      });
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+      await page.waitForSelector("#dataActions", { timeout: 10000 });
+
+      // Healed: default docked-left geometry, not the seeded 150x100 float.
+      const readRect = () =>
+        page.evaluate(() => {
+          const el = document.getElementById("dataActions");
+          return el ? { left: parseFloat(el.style.left), width: parseFloat(el.style.width) } : null;
+        });
+      await expect
+        .poll(async () => (await readRect())?.width ?? NaN, { timeout: 10000 })
+        .toBeGreaterThanOrEqual(200);
+      expect((await readRect())?.left).toBe(0);
+
+      const keys = await page.evaluate(() => ({
+        v3: localStorage.getItem("overlayPositionAndSize.v3_dataActions"),
+        v4: localStorage.getItem("overlayPositionAndSize.v4_dataActions"),
+      }));
+      expect(keys.v3).toBeNull();
+      // Rejected records fall back to defaults without writing a v4 record.
+      expect(keys.v4).toBeNull();
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
+
+  test("splitter resize persists intent and survives a reload", async ({ page, request }) => {
+    const flowName = `Overlay_Resize_Persist_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+      await page.waitForSelector("#dataActions", { timeout: 10000 });
+
+      const readWidth = () =>
+        page.evaluate(() => {
+          const el = document.getElementById("dataActions");
+          return el ? parseFloat(el.style.width) : NaN;
+        });
+      await expect.poll(readWidth, { timeout: 10000 }).toBeGreaterThanOrEqual(200);
+      const widthBefore = await readWidth();
+
+      // Drag the palette's right splitter 60px outward.
+      await dragBy(page, page.locator("#dataActions .draggable-line.right-vertical"), 60, 0);
+
+      await expect.poll(readWidth).toBeGreaterThanOrEqual(widthBefore + 50);
+      const widthAfter = await readWidth();
+
+      const intent = await page.evaluate(() => {
+        const raw = localStorage.getItem("overlayPositionAndSize.v4_dataActions");
         return raw ? JSON.parse(raw) : null;
       });
-      expect(persisted).not.toBeNull();
-      expect(persisted.width > 150 || persisted.height > 100).toBe(true);
+      expect(intent).not.toBeNull();
+      expect(intent.dock).toBe("left");
+      expect(Math.abs(intent.h.size - widthAfter)).toBeLessThanOrEqual(2);
+
+      // The committed intent must survive a full reload.
+      await page.reload();
+      await page.waitForLoadState("networkidle");
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTabAfter = page.getByText(flowName, { exact: true });
+      await flowTabAfter.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTabAfter.first().click();
+      await page.waitForSelector("#dataActions", { timeout: 10000 });
+      await expect.poll(readWidth, { timeout: 10000 }).toBe(widthAfter);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
+
+  test("docked panels pop out only deliberately and snap back into the dock", async ({
+    page,
+    request,
+  }) => {
+    const flowName = `Overlay_Dock_Policy_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+      await page.waitForSelector("#dataActions", { timeout: 10000 });
+
+      const readState = () =>
+        page.evaluate(() => {
+          const el = document.getElementById("dataActions");
+          const raw = localStorage.getItem("overlayPositionAndSize.v4_dataActions");
+          return {
+            left: el ? parseFloat(el.style.left) : NaN,
+            dock: raw ? JSON.parse(raw).dock : null,
+          };
+        });
+      const title = page.locator("#dataActions .dragitem-tab--static");
+
+      // A sub-threshold header drag (20px < 48px pop-out) must be a no-op:
+      // the panel stays docked and nothing is persisted.
+      await dragBy(page, title, 20, 20);
+      let state = await readState();
+      expect(state.left).toBe(0);
+      expect(state.dock).toBeNull();
+
+      // A deliberate pull past the threshold pops the panel out to free mode.
+      await dragBy(page, title, 300, 150);
+      await expect.poll(async () => (await readState()).dock).toBe("free");
+      state = await readState();
+      expect(state.left).toBeGreaterThan(40);
+
+      // Releasing with the panel edge inside the snap zone re-docks it.
+      const currentLeft = state.left;
+      await dragBy(page, title, -(currentLeft - 10), 0);
+      await expect.poll(async () => (await readState()).dock).toBe("left");
+      expect((await readState()).left).toBe(0);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
+
+  test("fullscreen round-trips without disturbing panel geometry", async ({ page, request }) => {
+    const flowName = `Overlay_Fullscreen_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      const addNodeResponse = await authPost(
+        request,
+        `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=1&node_type=python_script&pos_x=600&pos_y=300`,
+        authToken,
+      );
+      expect(addNodeResponse.ok()).toBe(true);
+
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+
+      const node = page.locator('.vue-flow__node[data-id="1"]');
+      await node.waitFor({ state: "visible", timeout: 10000 });
+      await node.dblclick();
+      await page.waitForSelector("#rightDrawer", { timeout: 10000 });
+
+      const readRect = () =>
+        page.evaluate(() => {
+          const el = document.getElementById("rightDrawer");
+          return el
+            ? {
+                left: parseFloat(el.style.left),
+                top: parseFloat(el.style.top),
+                width: parseFloat(el.style.width),
+                height: parseFloat(el.style.height),
+              }
+            : null;
+        });
+      await expect
+        .poll(async () => (await readRect())?.width ?? NaN, { timeout: 10000 })
+        .toBeGreaterThanOrEqual(300);
+      const rectBefore = await readRect();
+
+      const mainSize = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        return main ? { width: main.clientWidth, height: main.clientHeight } : null;
+      });
+
+      // Header dblclick toggles fullscreen: the drawer fills the canvas <main>.
+      const header = page.locator("#rightDrawer .header");
+      await header.dblclick();
+      await expect
+        .poll(async () => (await readRect())?.width ?? NaN, { timeout: 5000 })
+        .toBe(mainSize!.width);
+      expect((await readRect())?.height).toBe(mainSize!.height);
+
+      // And back out — the exact pre-fullscreen rect returns (intent untouched).
+      await header.dblclick();
+      await expect
+        .poll(async () => (await readRect())?.width ?? NaN, { timeout: 5000 })
+        .toBe(rectBefore!.width);
+      expect(await readRect()).toEqual(rectBefore);
+
+      // Resize-bar dblclick must round-trip too: its zero-move clicks commit
+      // nothing, so exiting restores the same rect instead of a canvas-wide one.
+      const bar = page.locator("#rightDrawer .draggable-line.left-vertical");
+      await bar.dblclick();
+      await expect
+        .poll(async () => (await readRect())?.width ?? NaN, { timeout: 5000 })
+        .toBe(mainSize!.width);
+      await bar.dblclick();
+      await expect
+        .poll(async () => (await readRect())?.width ?? NaN, { timeout: 5000 })
+        .toBe(rectBefore!.width);
+      expect(await readRect()).toEqual(rectBefore);
     } finally {
       await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
     }

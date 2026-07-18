@@ -95,10 +95,10 @@ interface FlowNodeData {
 }
 
 const itemStore = useItemStore();
-// Tracks the live height of the canvas <main> element. Driven by ResizeObserver
-// in onMounted so derived heights (table preview, node settings) stay in sync
-// with the actual canvas region instead of a stale window.innerHeight snapshot.
-const availableHeight = ref(window.innerHeight - 50);
+// Live height of the canvas <main> element, from the store's shared container
+// measurement (registered in onMounted). Falls back to the window while the
+// container is unmeasured (first frame).
+const availableHeight = computed(() => itemStore.containerBounds.height || window.innerHeight - 50);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
@@ -256,16 +256,26 @@ const {
 } = useDragAndDrop();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
 // Default drawer sizing. The bottom dock takes ~25% of the canvas height; the
-// right-side drawers fill from their top gap (def.initialTop) down to just above
-// the dock, so the two tile the right column without overlap. DraggableItem
-// reads these once on mount (and on Reset Layout); the user resizes from there.
+// right-side drawers span from the canvas top down to the dock, so the two
+// tile the right column without overlap. These are reactive DEFAULTS — they
+// apply until the user commits an explicit size (then intent wins).
 const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
 const drawerHeightOverride = (d: DrawerDef): number | undefined => {
   if (d.id === "bottomDock") return tablePreviewHeight.value;
   if (d.side === "right")
-    return Math.max(200, availableHeight.value - tablePreviewHeight.value - (d.initialTop ?? 0));
+    return Math.max(200, availableHeight.value - tablePreviewHeight.value);
   return undefined;
 };
+const DATA_ACTIONS_WIDTH = 230;
+// The bottom dock starts right next to the docked palette, tracking its live
+// width (only while the user hasn't chosen an explicit dock offset).
+const dataActionsWidth = computed(() => {
+  const intent = itemStore.items["dataActions"];
+  if (!intent || intent.dock !== "left") return 0;
+  return intent.h.size ?? DATA_ACTIONS_WIDTH;
+});
+const drawerLeftOverride = (d: DrawerDef): number | undefined =>
+  d.id === "bottomDock" ? dataActionsWidth.value : undefined;
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
@@ -1190,19 +1200,14 @@ const handleMoveEnd = () => {
   saveViewportToSession();
 };
 
-let mainResizeObserver: ResizeObserver | null = null;
+let unregisterContainer: (() => void) | null = null;
 let unlistenViewZoom: (() => void) | null = null;
 
 onMounted(async () => {
   if (mainContainerRef.value) {
-    availableHeight.value = mainContainerRef.value.clientHeight;
-    mainResizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) {
-        availableHeight.value = entry.contentRect.height;
-      }
-    });
-    mainResizeObserver.observe(mainContainerRef.value);
+    // Single shared container measurement for every overlay panel (and the
+    // derived drawer heights above).
+    unregisterContainer = itemStore.registerContainer(mainContainerRef.value);
   }
   window.addEventListener("keydown", handleKeyDown);
   document.addEventListener("copy", handleCopyEvent);
@@ -1317,8 +1322,8 @@ onUnmounted(() => {
   document.removeEventListener("paste", handlePasteEvent);
   unlistenViewZoom?.();
   unlistenViewZoom = null;
-  mainResizeObserver?.disconnect();
-  mainResizeObserver = null;
+  unregisterContainer?.();
+  unregisterContainer = null;
   cancelEdgeLeave();
 });
 
@@ -1387,7 +1392,7 @@ defineExpose({
       <draggable-item
         id="dataActions"
         :show-left="true"
-        :initial-width="230"
+        :initial-width="DATA_ACTIONS_WIDTH"
         initial-position="left"
         height-behaviour="scale"
         title="Data actions"
@@ -1400,6 +1405,7 @@ defineExpose({
         :key="d.id"
         :def="d"
         :height-override="drawerHeightOverride(d)"
+        :left-override="drawerLeftOverride(d)"
       />
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />

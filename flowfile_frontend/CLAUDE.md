@@ -32,6 +32,7 @@ Pure client. Talks to `flowfile_core` over HTTP; never to `flowfile_worker` dire
 - No JSX/TSX: React (`react`/`react-dom` v19, pinned via `overrides`) is only a dynamic `import("react")` inside the `@kanaries/graphic-walker` Vue wrappers. `vite.config.mjs` deliberately omits `@vitejs/plugin-react`; `tsconfig.json` excludes `*.tsx`/`*.jsx`.
 - AG Grid is the **modular** `@ag-grid-community/*` v31 (`ModuleRegistry.registerModules`; not the monolithic `ag-grid-community`).
 - OAuth: the GA connection opens the **system browser** (`desktop.openExternal`) because Google blocks embedded webviews; the generic `open_oauth` command opens a modal Tauri webview window (`oauth.rs`) for providers that allow it.
+- Canvas overlay panels (`components/common/DraggableItem/`) persist **user intent only** (dock side + per-axis size/offset/gap, localStorage `overlayPositionAndSize.v4_*`), written solely at gesture end via `stateStore.commitIntent`; the on-screen rect is derived per frame by the pure `layoutGeometry.computeLayout(intent, config, containerBounds, minimized)` against the single shared container measurement `Canvas.vue` registers. **Never persist derived geometry** — that split is the fix for the historical drawer-collapse corruption (150×100 panels). Docked panels resize via splitter edges, pop out only past a 48px deliberate drag, and snap back into a dock when released within 40px of an edge.
 
 ## Running / entry points
 From this dir (`npm install` first):
