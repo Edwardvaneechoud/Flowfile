@@ -63,11 +63,23 @@ _NODE_CONTRACTS: dict[str, str] = {
         "- Keep it self-contained; the standard library and polars are available."
     ),
     "sql_query": (
-        "Target: a Flowfile **SQL query** node (DuckDB SQL dialect).\n"
+        "Target: a Flowfile **SQL query** node. The engine is Polars' embedded "
+        "SQL engine (`pl.SQLContext`), NOT DuckDB — it implements a subset of SQL.\n"
         "- Connected inputs are tables named `input_1`, `input_2`, ... in "
         "connection order.\n"
         "- Return a single `SELECT` statement producing the desired output.\n"
-        "- Use the real column names from the schema above; do not invent columns."
+        "- Use the real column names from the schema above; do not invent columns.\n"
+        "- Supported: SELECT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT, JOINs, "
+        "set ops (UNION / UNION ALL / INTERSECT / EXCEPT), CTEs (WITH), "
+        "IN-subqueries, QUALIFY, and basic window functions (unframed "
+        "`OVER (PARTITION BY ... ORDER BY ...)`).\n"
+        "- NOT supported by Polars SQL — use a `polars_code` node instead for: "
+        "`DATE_TRUNC`, explicit window frames (`ROWS`/`RANGE BETWEEN`), `NTILE`, "
+        "`LAG`/`LEAD` with a default argument, recursive CTEs, scalar or correlated "
+        "subqueries, `EXISTS`, `GROUPING SETS`/`ROLLUP`/`CUBE`, aggregate `FILTER`, "
+        "`STRING_AGG`, and `PIVOT`/`UNPIVOT`.\n"
+        "- Table functions (`read_csv`, `read_parquet`, ...) are rejected; read only "
+        "from the connected `input_N` tables."
     ),
 }
 

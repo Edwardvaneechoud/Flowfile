@@ -51,6 +51,7 @@ aiofiles = "^24.1.0"
 python-jose = "^3.4.0"
 bcrypt = "^4.3.0"
 connectorx = "^0.4.2"
+sqlglot = ">=25.0.0,<28.0.0"
 polars_simed = ">=0.4.0"
 polars-gw = "0.1.3"
 
