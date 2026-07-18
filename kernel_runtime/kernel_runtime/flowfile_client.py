@@ -72,6 +72,18 @@ _log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVa
 # Display outputs collector (reset at start of each execution)
 _displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar("flowfile_displays", default=None)
 
+# Artifact previews collected during execution (name -> {mime_type, data, title}).
+# Lives only in-process; only tiny flags ride inside ExecuteResponse.
+_artifact_previews: contextvars.ContextVar[dict[str, dict[str, str]] | None] = contextvars.ContextVar(
+    "flowfile_artifact_previews", default=None
+)
+
+# Names deleted via delete_artifact() during this execution. Per-execution so
+# deletion attribution is node-scoped rather than a racy store-wide diff.
+_deleted_artifacts: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "flowfile_deleted_artifacts", default=None
+)
+
 
 def _set_context(
     node_id: int,
@@ -117,6 +129,8 @@ def _clear_context() -> None:
         _log_client.set(None)
     _context.set({})
     _displays.set([])
+    _artifact_previews.set({})
+    _deleted_artifacts.set([])
 
 
 def _get_context_value(key: str) -> Any:
@@ -192,7 +206,14 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
         os.fsync(f.fileno())
 
 
-def publish_artifact(name: str, obj: Any) -> None:
+def publish_artifact(name: str, obj: Any, preview: bool = False) -> None:
+    """Publish an in-memory artifact for downstream nodes in the same flow.
+
+    When *preview* is true and *obj* is a matplotlib/plotly/PIL figure or an
+    HTML string, a viewable preview is rendered and kept only in the kernel
+    process; only a tiny flag rides in the execute response and Core fetches
+    the blob on demand.
+    """
     store: ArtifactStore = _get_context_value("artifact_store")
     node_id: int = _get_context_value("node_id")
     flow_id: int = _get_context_value("flow_id")
@@ -202,6 +223,20 @@ def publish_artifact(name: str, obj: Any) -> None:
     allow: dict[str, int] | None = _get_context_value("available_artifacts")
     if allow is not None:
         allow[name] = node_id
+    if not preview:
+        return
+    try:
+        payload = _render_display_payload(obj)
+        if payload is None and _is_html_string(obj):
+            payload = {"mime_type": "text/html", "data": obj}
+        if payload is not None and payload["mime_type"] in ("image/png", "text/html"):
+            previews = _artifact_previews.get({})
+            previews[name] = {**payload, "title": name}
+            _artifact_previews.set(previews)
+        else:
+            log(f"publish_artifact: no viewable preview for '{name}' (unsupported type)", "WARNING")
+    except Exception as exc:  # noqa: BLE001 - preview rendering is best-effort
+        log(f"publish_artifact: failed to render preview for '{name}': {exc}", "WARNING")
 
 
 def read_artifact(name: str) -> Any:
@@ -232,6 +267,9 @@ def delete_artifact(name: str) -> None:
     store: ArtifactStore = _get_context_value("artifact_store")
     flow_id: int = _get_context_value("flow_id")
     store.delete(name, flow_id=flow_id)
+    deleted = _deleted_artifacts.get([]) or []
+    deleted.append(name)
+    _deleted_artifacts.set(deleted)
 
 
 def list_artifacts() -> list[ArtifactInfo]:
@@ -870,6 +908,48 @@ def _get_displays() -> list[dict[str, str]]:
     return _displays.get([])
 
 
+def _reset_artifact_previews() -> None:
+    """Clear collected artifact previews. Called at start of each execution."""
+    _artifact_previews.set({})
+
+
+def _get_artifact_previews() -> dict[str, dict[str, str]]:
+    """Return the current mapping of artifact name -> preview payload."""
+    return _artifact_previews.get({})
+
+
+def _reset_deleted_artifacts() -> None:
+    """Clear the per-execution deleted-artifact tracker. Called at start of each execution."""
+    _deleted_artifacts.set([])
+
+
+def _get_deleted_artifacts() -> list[str]:
+    """Return names deleted via delete_artifact() during this execution."""
+    return _deleted_artifacts.get([]) or []
+
+
+def _render_display_payload(obj: Any) -> dict[str, str] | None:
+    """Render *obj* to a ``{mime_type, data}`` payload, or None if unsupported.
+
+    Handles matplotlib figures (PNG base64), plotly figures (text/html), and
+    PIL images (PNG base64). Polars frames, HTML strings, and plain text are
+    left to ``display`` so its fallbacks stay in one place.
+    """
+    if _is_matplotlib_figure(obj):
+        buf = io.BytesIO()
+        obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        buf.seek(0)
+        return {"mime_type": "image/png", "data": base64.b64encode(buf.read()).decode("ascii")}
+    if _is_plotly_figure(obj):
+        return {"mime_type": "text/html", "data": obj.to_html(include_plotlyjs="cdn", full_html=False)}
+    if _is_pil_image(obj):
+        buf = io.BytesIO()
+        obj.save(buf, format="PNG")
+        buf.seek(0)
+        return {"mime_type": "image/png", "data": base64.b64encode(buf.read()).decode("ascii")}
+    return None
+
+
 def display(obj: Any, title: str = "", max_rows: int = _GW_TABLE_MAX_ROWS) -> None:
     """Display a rich object in the output panel.
 
@@ -890,39 +970,9 @@ def display(obj: Any, title: str = "", max_rows: int = _GW_TABLE_MAX_ROWS) -> No
     """
     displays = _displays.get([])
 
-    if _is_matplotlib_figure(obj):
-        buf = io.BytesIO()
-        obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-        buf.seek(0)
-        data = base64.b64encode(buf.read()).decode("ascii")
-        displays.append(
-            {
-                "mime_type": "image/png",
-                "data": data,
-                "title": title,
-            }
-        )
-    elif _is_plotly_figure(obj):
-        html = obj.to_html(include_plotlyjs="cdn", full_html=False)
-        displays.append(
-            {
-                "mime_type": "text/html",
-                "data": html,
-                "title": title,
-            }
-        )
-    elif _is_pil_image(obj):
-        buf = io.BytesIO()
-        obj.save(buf, format="PNG")
-        buf.seek(0)
-        data = base64.b64encode(buf.read()).decode("ascii")
-        displays.append(
-            {
-                "mime_type": "image/png",
-                "data": data,
-                "title": title,
-            }
-        )
+    payload = _render_display_payload(obj)
+    if payload is not None:
+        displays.append({**payload, "title": title})
     elif _is_polars_frame(obj):
         try:
             displays.append(

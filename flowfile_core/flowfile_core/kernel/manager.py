@@ -1860,6 +1860,18 @@ class KernelManager:
             response.raise_for_status()
             return response.json()
 
+    async def get_artifact_preview(self, kernel_id: str, flow_id: int, name: str) -> dict | None:
+        """Retrieve a rendered preview blob for a published artifact (session-only, kernel-held)."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            await self._ensure_running(kernel_id)
+
+        url = f"{self._kernel_url(kernel)}/artifact_preview"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url, params={"flow_id": flow_id, "name": name})
+            response.raise_for_status()
+            return response.json()
+
     # Artifact Persistence & Recovery
 
     async def recover_artifacts(self, kernel_id: str) -> RecoveryStatus:

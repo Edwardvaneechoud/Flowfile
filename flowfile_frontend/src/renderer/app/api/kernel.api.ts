@@ -185,6 +185,22 @@ export class KernelApi {
     }
   }
 
+  static async getArtifactPreview(
+    kernelId: string,
+    flowId: number,
+    name: string,
+  ): Promise<DisplayOutput | null> {
+    try {
+      const response = await axios.get<DisplayOutput | null>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/artifact_preview`,
+        { params: { flow_id: flowId, name } },
+      );
+      return response.data ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   static async getMemoryStats(kernelId: string): Promise<KernelMemoryInfo | null> {
     try {
       const response = await axios.get<KernelMemoryInfo>(

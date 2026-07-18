@@ -97,6 +97,28 @@ def _purge_display_outputs(flow_id: int) -> None:
         del _display_output_store[key]
 
 
+# Rendered artifact previews (base64 PNG / HTML) from the most recent run,
+# fetched on demand by Core. Kept only in-kernel; only two tiny flags ride in
+# ExecuteResponse. Bounded (LRU) so blobs can't accumulate.
+_artifact_preview_store: OrderedDict[tuple[int, str], dict] = OrderedDict()
+_MAX_ARTIFACT_PREVIEWS = int(os.environ.get("MAX_ARTIFACT_PREVIEWS", "100"))
+
+
+def _store_artifact_preview(flow_id: int, name: str, payload: dict) -> None:
+    """Store an artifact preview, evicting the oldest entries past the cap."""
+    key = (flow_id, name)
+    _artifact_preview_store.pop(key, None)
+    _artifact_preview_store[key] = payload
+    while len(_artifact_preview_store) > _MAX_ARTIFACT_PREVIEWS:
+        _artifact_preview_store.popitem(last=False)
+
+
+def _purge_artifact_previews(flow_id: int) -> None:
+    """Drop all stored artifact previews belonging to a flow."""
+    for key in [k for k in _artifact_preview_store if k[0] == flow_id]:
+        del _artifact_preview_store[key]
+
+
 def _evict_oldest_namespace() -> None:
     """Evict the least recently used namespace if at capacity."""
     if len(_namespace_store) < _MAX_NAMESPACES:
@@ -391,6 +413,8 @@ class PublishedArtifact(BaseModel):
     type_name: str = ""
     module: str = ""
     size_bytes: int = 0
+    has_preview: bool = False
+    preview_mime: str | None = None
 
 
 class ExecuteResponse(BaseModel):
@@ -474,9 +498,9 @@ def _run_user_code(
 
     # Clear any artifacts this node previously published so re-execution
     # doesn't fail with "already exists".
-    artifact_store.clear_by_node_ids({request.node_id}, flow_id=request.flow_id)
-
-    artifacts_before = set(artifact_store.list_all(flow_id=request.flow_id).keys())
+    removed = artifact_store.clear_by_node_ids({request.node_id}, flow_id=request.flow_id)
+    for _name in removed:
+        _artifact_preview_store.pop((request.flow_id, _name), None)
 
     try:
         flowfile_client._set_context(
@@ -493,6 +517,8 @@ def _run_user_code(
         )
 
         flowfile_client._reset_displays()
+        flowfile_client._reset_artifact_previews()
+        flowfile_client._reset_deleted_artifacts()
 
         exec_globals = _get_namespace(request.flow_id)
 
@@ -535,18 +561,27 @@ def _run_user_code(
         if output_dir and Path(output_dir).exists():
             output_paths = [str(p) for p in sorted(Path(output_dir).glob("*.parquet"))]
 
-        artifacts_meta = artifact_store.list_all(flow_id=request.flow_id)
-        new_names = sorted(set(artifacts_meta) - artifacts_before)
+        # Attribute artifacts by the owning node_id (stamped in store metadata),
+        # never by a store-wide name diff — the store is shared across nodes on
+        # the same kernel and concurrent flow execution would otherwise misattribute.
+        owned = artifact_store.list_by_node_id(request.node_id, flow_id=request.flow_id)
+        previews = flowfile_client._get_artifact_previews()
+        for name, payload in previews.items():
+            if name in owned:
+                _store_artifact_preview(request.flow_id, name, payload)
         new_artifacts = [
             PublishedArtifact(
                 name=name,
-                type_name=artifacts_meta[name].get("type_name", ""),
-                module=artifacts_meta[name].get("module", ""),
-                size_bytes=artifacts_meta[name].get("size_bytes", 0),
+                type_name=meta.get("type_name", ""),
+                module=meta.get("module", ""),
+                size_bytes=meta.get("size_bytes", 0),
+                has_preview=name in previews,
+                preview_mime=previews[name]["mime_type"] if name in previews else None,
             )
-            for name in new_names
+            for name, meta in sorted(owned.items())
         ]
-        deleted_artifacts = sorted(artifacts_before - set(artifacts_meta))
+        deleted_names = flowfile_client._get_deleted_artifacts()
+        deleted_artifacts = sorted(set(deleted_names) - set(owned))
 
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
@@ -662,10 +697,12 @@ async def clear_artifacts(flow_id: int | None = Query(default=None)):
     artifact_store.clear(flow_id=flow_id)
     if flow_id is not None:
         _clear_namespace(flow_id)
+        _purge_artifact_previews(flow_id)
     else:
         _namespace_store.clear()
         _namespace_access.clear()
         _display_output_store.clear()
+        _artifact_preview_store.clear()
     return {"status": "cleared"}
 
 
@@ -684,6 +721,13 @@ async def get_display_outputs(flow_id: int = Query(...), node_id: int = Query(..
     return [DisplayOutput(**d) for d in stored]
 
 
+@app.get("/artifact_preview", response_model=DisplayOutput | None)
+async def get_artifact_preview(flow_id: int = Query(...), name: str = Query(...)):
+    """Retrieve a stored artifact preview (base64 PNG / HTML), if any."""
+    stored = _artifact_preview_store.get((flow_id, name))
+    return DisplayOutput(**stored) if stored else None
+
+
 @app.post("/clear_node_artifacts")
 async def clear_node_artifacts(request: ClearNodeArtifactsRequest):
     """Clear only artifacts published by the specified node IDs."""
@@ -691,6 +735,12 @@ async def clear_node_artifacts(request: ClearNodeArtifactsRequest):
         set(request.node_ids),
         flow_id=request.flow_id,
     )
+    for name in removed:
+        if request.flow_id is not None:
+            _artifact_preview_store.pop((request.flow_id, name), None)
+        else:
+            for key in [k for k in _artifact_preview_store if k[1] == name]:
+                del _artifact_preview_store[key]
     return {"status": "cleared", "removed": removed}
 
 
