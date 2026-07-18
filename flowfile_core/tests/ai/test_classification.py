@@ -25,7 +25,8 @@ def test_dynamic_set_matches_design() -> None:
         "graph_solver",
         "python_script",
         "polars_code",
-        "sql_query",
+        # sql_query is static: add_sql_query registers a schema_callback that
+        # resolves the output schema by running the query plan over 0-row inputs.
         "user_defined",
         # run_flow's output schema only exists after the referenced subflow runs.
         "run_flow",

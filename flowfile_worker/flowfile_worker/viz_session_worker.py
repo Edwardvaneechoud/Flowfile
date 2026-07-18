@@ -25,6 +25,11 @@ def _build_sql_lazyframe_in_child(
     tables: dict[str, str] | None,
     virtual_refs: dict[str, str] | None,
 ) -> pl.LazyFrame:
+    from shared.sql_validation import validate_sql_query
+
+    # Re-validate server-side: the worker must not trust the core caller.
+    validate_sql_query(sql_query)
+
     ctx = pl.SQLContext()
     # Cloud tables are excluded upstream (resolve_all_queryable_tables); dir_name is always local here.
     for name, dir_name in (tables or {}).items():

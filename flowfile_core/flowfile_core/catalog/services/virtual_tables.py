@@ -301,6 +301,12 @@ class VirtualTableService:
         if table is None or not getattr(table, "sql_query", None):
             raise TableNotFoundError(table_id=table_id)
 
+        from shared.sql_validation import validate_sql_query
+
+        # Re-validate the stored query at resolve time: a query persisted before
+        # validation existed (or written straight to the DB) must not run unchecked.
+        validate_sql_query(table.sql_query)
+
         all_tables = [t for t in self.repo.list_tables() if t.id != table_id]
         bare_counts: dict[str, int] = {}
         for t in all_tables:

@@ -899,6 +899,11 @@ def execute_sql_query(
     import re
     import time
 
+    from shared.sql_validation import validate_sql_query
+
+    # Re-validate server-side: the worker must not trust the core caller.
+    validate_sql_query(query)
+
     start = time.perf_counter()
 
     ctx = pl.SQLContext()
