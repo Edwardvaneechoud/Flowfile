@@ -11,6 +11,7 @@ import type { DrawerDef, DrawerCtx } from "../../types/drawer.types";
 const props = defineProps<{
   def: DrawerDef;
   heightOverride?: number;
+  leftOverride?: number;
 }>();
 
 const itemStore = useItemStore();
@@ -80,9 +81,8 @@ const onMinimize = () => props.def.onMinimize?.(ctx);
     :show-bottom="def.side === 'bottom'"
     :initial-position="def.side"
     :initial-width="def.initialWidth"
-    :initial-height="heightOverride ?? def.initialHeight"
-    :initial-left="def.initialLeft"
-    :initial-top="def.initialTop"
+    :initial-height="heightOverride"
+    :initial-left="leftOverride"
     :width-behaviour="def.widthBehaviour"
     :height-behaviour="def.heightBehaviour"
     :allow-full-screen="def.allowFullScreen ?? true"
