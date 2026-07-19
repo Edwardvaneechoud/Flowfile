@@ -156,7 +156,7 @@ open_graph_in_editor(result.flow_graph)
 
 ## Other Ways to Run It
 
-**Desktop app** — Windows, macOS, or Linux. Download from [Releases](https://github.com/Edwardvaneechoud/Flowfile/releases).
+**Desktop app** — Windows and macOS installers are on [Releases](https://github.com/Edwardvaneechoud/Flowfile/releases). Linux desktop packages are not published yet — use `pip install Flowfile`, the [browser demo](https://demo.flowfile.org), Docker, or the from-source steps below.
 
 <details>
 <summary><b>Docker</b> — full stack via Docker Compose</summary>
