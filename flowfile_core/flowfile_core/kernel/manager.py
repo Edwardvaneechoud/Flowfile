@@ -35,9 +35,9 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.5.0"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.5.0"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.5.0"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.5.1"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.5.1"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.5.1"
 
 _KERNEL_DOWN_MSG = (
     "Kernel is not running — its container was stopped or removed (often after a "
