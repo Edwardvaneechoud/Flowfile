@@ -1334,6 +1334,8 @@ class SchemaRef:
         """Read a table from this schema as a Polars ``LazyFrame``.
 
         Equivalent to ``flowfile_ctx.read_catalog_table(name, namespace_id=self.id, ...)``.
+        Views are supported (materialised to a snapshot — re-call for fresh
+        data); ``delta_version`` time travel is physical-only.
         """
         return read_catalog_table(name, namespace_id=self.id, delta_version=delta_version)
 
@@ -1480,13 +1482,19 @@ class TableRef:
     column_count: int | None = None
     size_bytes: int | None = None
     schema_columns: list[dict[str, str]] = field(default_factory=list)
+    table_type: str = "physical"
 
     def exists(self) -> bool:
         """``True`` if this ref points at a table that exists in the catalog."""
         return self.id is not None
 
     def read(self, *, delta_version: int | None = None) -> pl.LazyFrame:
-        """Read this table as a Polars ``LazyFrame``."""
+        """Read this table as a Polars ``LazyFrame``.
+
+        Works for views (``table_type="virtual"``) too: the view is
+        materialised to a snapshot file — re-call :meth:`read` for fresh
+        data. ``delta_version`` time travel is physical-only.
+        """
         return read_catalog_table(self, delta_version=delta_version)
 
     def write(
@@ -1549,6 +1557,7 @@ def _table_ref_from_row(row: dict[str, Any], schema: SchemaRef) -> TableRef:
         column_count=row.get("column_count"),
         size_bytes=row.get("size_bytes"),
         schema_columns=list(row.get("schema_columns") or []),
+        table_type=row.get("table_type") or "physical",
     )
 
 
@@ -1705,8 +1714,13 @@ def read_catalog_table(
 ) -> pl.LazyFrame:
     """Read a catalog table as a Polars ``LazyFrame``.
 
-    Calls Core to resolve the table's path, then opens the Delta directory
-    locally via ``pl.scan_delta`` — Core never materialises the dataset.
+    Physical tables: calls Core to resolve the table's path, then opens the
+    Delta directory locally via ``pl.scan_delta`` — Core never materialises
+    the dataset. Views (``table_type="virtual"``): every call has Core's
+    worker materialise a fresh Arrow IPC snapshot on the shared volume,
+    which is then scanned lazily. The snapshot file can be swept later —
+    collect promptly, or re-call this function instead of holding the
+    LazyFrame across long gaps.
 
     Args:
         table: Either a :class:`TableRef` (returned from :func:`list_catalog_tables`
@@ -1715,14 +1729,17 @@ def read_catalog_table(
         schema: Only used when ``table`` is a string. Schema name; resolved
             via Core. Mutually exclusive with ``namespace_id``.
         namespace_id: Only used when ``table`` is a string. Explicit namespace ID.
-        delta_version: If provided, opens that specific Delta commit (time travel).
+        delta_version: If provided, opens that specific Delta commit (time
+            travel). Physical tables only — views reject it.
 
     Returns:
-        A lazy ``pl.LazyFrame`` over the Delta directory.
+        A lazy ``pl.LazyFrame`` over the Delta directory (or IPC snapshot for views).
 
     Raises:
         KeyError: Table not found.
-        ValueError: Both ``schema`` and ``namespace_id`` were passed alongside a string.
+        ValueError: Both ``schema`` and ``namespace_id`` were passed alongside a
+            string, or ``delta_version`` was passed for a view.
+        PermissionError: Not authorized to read the view.
     """
     if isinstance(table, TableRef):
         if schema is not None or namespace_id is not None:
@@ -1741,6 +1758,13 @@ def read_catalog_table(
         row = _resolve_catalog_table(client, table_name, target_ns, strict=False)
         if row is None:
             raise KeyError(f"Catalog table '{table_name}' not found")
+        if row.get("table_type") == "virtual":
+            if delta_version is not None:
+                raise ValueError(
+                    f"Catalog table '{table_name}' is a view (virtual table); "
+                    "delta_version time travel only applies to physical tables."
+                )
+            return _read_virtual_table(client, row, table_name)
         host_path = _table_file_path(row)
         if host_path is None:
             raise RuntimeError(f"Catalog table '{table_name}' has no file_path")
@@ -1748,6 +1772,34 @@ def read_catalog_table(
     if delta_version is not None:
         return pl.scan_delta(kernel_path, version=delta_version)
     return pl.scan_delta(kernel_path)
+
+
+def _read_virtual_table(client: httpx.Client, row: dict[str, Any], table_name: str) -> pl.LazyFrame:
+    """Materialise a view via Core (worker-executed) and lazily scan the snapshot.
+
+    Each call produces a fresh snapshot (plan hashes don't track data changes,
+    so Core rebuilds rather than caching). The file rides the shared-volume TTL
+    sweep, so a long-held LazyFrame can go stale — re-calling ``.read()`` heals it.
+    """
+    # Producer re-runs can be slow; override the client's default timeout.
+    resp = client.post(f"{_CORE_URL}/catalog/tables/{row['id']}/materialize", timeout=600.0)
+    if resp.status_code == 403:
+        raise PermissionError(f"Not authorized to read catalog view '{table_name}'")
+    if resp.status_code == 404:
+        raise KeyError(
+            f"Could not materialize catalog view '{table_name}' (404). If the table exists, "
+            "this Core version may predate view materialization — update flowfile_core."
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Materializing catalog view '{table_name}' failed: {resp.text}")
+    body = resp.json()
+    kernel_path = _translate_host_path_to_container(body["path"])
+    fmt = body.get("format", "ipc")
+    if fmt == "ipc":
+        return pl.scan_ipc(kernel_path)
+    if fmt == "delta":
+        return pl.scan_delta(kernel_path)
+    raise RuntimeError(f"Unsupported materialization format '{fmt}' for catalog view '{table_name}'")
 
 
 def write_catalog_table(
@@ -1785,7 +1837,8 @@ def write_catalog_table(
 
     Raises:
         ValueError: Unknown ``write_mode`` or missing ``merge_keys`` for merge modes,
-            or ``schema``/``namespace_id`` were passed alongside a ``TableRef``.
+            ``schema``/``namespace_id`` were passed alongside a ``TableRef``, or the
+            target table is a view (virtual tables cannot be written to).
         FileExistsError: ``write_mode="error"`` and the table already exists.
     """
     if write_mode not in _CATALOG_VALID_WRITE_MODES:
@@ -1819,6 +1872,9 @@ def write_catalog_table(
             target_ns = _resolve_target_namespace_id(client, schema, namespace_id)
             target_schema = _schema_ref_for_namespace_id(client, target_ns)
         existing = _resolve_catalog_table(client, table_name, target_ns, strict=False)
+
+        if existing is not None and existing.get("table_type") == "virtual":
+            raise ValueError(f"Catalog table '{table_name}' is a view (virtual table); views cannot be written to.")
 
         if write_mode == "error" and existing is not None:
             raise FileExistsError(

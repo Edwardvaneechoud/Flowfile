@@ -180,6 +180,21 @@ class TableNotFoundError(CatalogError):
         super().__init__(detail)
 
 
+class NotAVirtualTableError(CatalogError):
+    """Raised when a virtual-table-only operation targets a physical table."""
+
+    def __init__(self, table_id: int):
+        self.table_id = table_id
+        super().__init__(f"Catalog table with id={table_id} is not a virtual table")
+
+
+class WorkerUnavailableError(CatalogError):
+    """Raised when the worker cannot be reached (or fails) while materialising a table."""
+
+    def __init__(self, message: str):
+        super().__init__(f"Worker materialisation failed: {message}")
+
+
 class TableVersionUnavailableError(CatalogError):
     """Raised when a requested Delta table version can no longer be read.
 

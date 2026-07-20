@@ -89,6 +89,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
+    CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
     ColumnStatsResponse,
@@ -1104,6 +1105,11 @@ class CatalogService:
         return self._virtual_tables.resolve_virtual_flow_table(
             table_id, user_id=user_id, run_location=run_location, node_logger=node_logger
         )
+
+    def materialize_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
+        """Materialise a virtual table to a kernel-readable IPC file (worker-executed)."""
+        self._require_use("catalog_table", table_id)
+        return self._virtual_tables.materialize_virtual_table(table_id, user_id=user_id)
 
     def get_table_preview(
         self,

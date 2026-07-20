@@ -314,12 +314,15 @@ def trigger_resolve_virtual_table(
     table_id: int,
     plan_bytes: bytes,
     source_versions_hash: str,
+    target: str = "virtual_results",
 ) -> dict:
     """Ask the worker to materialise a flow-virtual table to its IPC cache.
 
     Ships *plan_bytes* (output of ``pl.LazyFrame.serialize()``); the worker
     deserialises in a spawned child, collects, and writes IPC. Idempotent on
-    ``(table_id, source_versions_hash)``.
+    ``(table_id, source_versions_hash)``. *target* selects the destination
+    directory: ``"virtual_results"`` (worker-private cache, the default) or
+    ``"kernel_shared"`` (kernel-mounted shared volume).
     """
     from base64 import b64encode
 
@@ -327,6 +330,7 @@ def trigger_resolve_virtual_table(
         "table_id": table_id,
         "plan_bytes": b64encode(plan_bytes).decode("ascii"),
         "source_versions_hash": source_versions_hash,
+        "target": target,
     }
     response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
     if not response.ok:

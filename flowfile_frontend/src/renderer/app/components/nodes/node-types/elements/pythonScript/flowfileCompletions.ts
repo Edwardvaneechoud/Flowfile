@@ -379,6 +379,11 @@ export function createScopeCompletions(getPriorCellCodes: () => string[]): Compl
     if (symbols.length === 0) return null;
     const match = context.matchBefore(/[A-Za-z_]\w*/);
     if (!match || (match.from === match.to && !context.explicit)) return null;
+    // Skip if preceded by a dot — prior-cell globals are noise in attribute position.
+    if (match.from > 0) {
+      const prev = context.state.doc.sliceString(match.from - 1, match.from);
+      if (prev === ".") return null;
+    }
     return {
       from: match.from,
       options: symbols.map((s) => ({

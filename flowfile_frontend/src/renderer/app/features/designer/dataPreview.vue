@@ -354,7 +354,7 @@ async function handleFetchData() {
         return;
       }
 
-      await triggerNodeFetch(currentNodeId.value);
+      await triggerNodeFetch(currentNodeId.value, { focusLogs: false });
 
       // Since polling is persistent, we need to check periodically
       const checkInterval = setInterval(async () => {

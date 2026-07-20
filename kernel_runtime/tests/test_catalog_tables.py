@@ -46,6 +46,12 @@ class _MockCore:
         self._next_id = 100
         self.refresh_calls: list[tuple[int, dict[str, Any]]] = []
         self.from_data_calls: list[dict[str, Any]] = []
+        # View materialization state (POST /catalog/tables/{id}/materialize)
+        self.view_rows: dict[int, list[dict[str, Any]]] = {}
+        self.view_results_dir: Path | None = None
+        self.view_host_prefix: str | None = None
+        self.materialize_status: int = 200
+        self.materialize_calls: list[int] = []
 
     def add_schema(self, name: str, *, parent_id: int = CATALOG_GENERAL_ID) -> int:
         """Helper for tests that want extra schemas under a catalog."""
@@ -58,6 +64,31 @@ class _MockCore:
         cid = max((n["id"] for n in self.namespaces), default=0) + 1
         self.namespaces.append({"id": cid, "name": name, "parent_id": None})
         return cid
+
+    def add_view(
+        self,
+        name: str,
+        rows: list[dict[str, Any]],
+        *,
+        namespace_id: int = SCHEMA_DEFAULT_ID,
+    ) -> int:
+        """Register a query-based virtual table whose materialization yields *rows*."""
+        view_id = self._next_id
+        self._next_id += 1
+        self.tables[view_id] = {
+            "id": view_id,
+            "name": name,
+            "namespace_id": namespace_id,
+            "file_path": None,
+            "table_type": "virtual",
+            "sql_query": f"SELECT * FROM {name}_source",
+            "row_count": len(rows),
+            "column_count": len(rows[0]) if rows else 0,
+            "size_bytes": None,
+            "schema_columns": [],
+        }
+        self.view_rows[view_id] = rows
+        return view_id
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -116,6 +147,32 @@ class _MockCore:
             }
             self.tables[new_id] = record
             return httpx.Response(201, json=record)
+        if request.method == "POST" and path.startswith("/catalog/tables/") and path.endswith("/materialize"):
+            table_id = int(path.split("/")[3])
+            self.materialize_calls.append(table_id)
+            if self.materialize_status != 200:
+                return httpx.Response(self.materialize_status, json={"detail": "forced status"})
+            table = self.tables.get(table_id)
+            if table is None:
+                return httpx.Response(404, json={"detail": "Catalog table not found"})
+            if table.get("table_type") != "virtual":
+                return httpx.Response(400, json={"detail": "not a virtual table"})
+            assert self.view_results_dir is not None, "test must set mock_core.view_results_dir"
+            self.view_results_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"fvt-{table_id}-deadbeefdeadbeef.arrow"
+            fpath = self.view_results_dir / fname
+            df = pl.DataFrame(self.view_rows[table_id])
+            df.write_ipc(fpath)
+            host_path = f"{self.view_host_prefix}/{fname}" if self.view_host_prefix else str(fpath)
+            return httpx.Response(
+                200,
+                json={
+                    "path": host_path,
+                    "format": "ipc",
+                    "row_count": df.height,
+                    "mtime": fpath.stat().st_mtime,
+                },
+            )
         if request.method == "POST" and path.startswith("/catalog/tables/") and path.endswith("/refresh"):
             import json as _json
 
@@ -741,3 +798,123 @@ class TestTopLevelAcceptsRef:
             ref = sch.get_table_ref("orders")
             with pytest.raises(ValueError, match="must be omitted"):
                 flowfile_client.read_catalog_table(ref, schema="default")
+
+
+# Views (virtual tables): read via materialization, write rejected
+
+
+@pytest.fixture()
+def view_results_dir(mock_core: _MockCore, tmp_path: Path) -> Path:
+    """Give the mock a directory to write materialized view snapshots into."""
+    results_dir = tmp_path / "kernel_shared" / "catalog_virtual_results"
+    mock_core.view_results_dir = results_dir
+    return results_dir
+
+
+_VIEW_ROWS = [{"name": "Alice", "age": 30}, {"name": "Charlie", "age": 35}]
+
+
+class TestReadCatalogView:
+    def test_view_read_by_name_returns_rows(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        view_id = mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            lf = flowfile_client.read_catalog_table("adults")
+            assert isinstance(lf, pl.LazyFrame)
+            out = lf.collect().sort("age")
+        assert out["name"].to_list() == ["Alice", "Charlie"]
+        assert mock_core.materialize_calls == [view_id]
+
+    def test_view_read_via_tableref_and_table_type_field(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            refs = flowfile_client.list_catalog_tables()
+            assert len(refs) == 1
+            ref = refs[0]
+            assert ref.table_type == "virtual"
+            assert ref.file_path is None
+            out = ref.read().collect()
+        assert out.height == 2
+
+    def test_physical_ref_has_physical_table_type(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path
+    ):
+        df = _df([{"id": 1}])
+        with _patch_core_client(mock_core):
+            written = flowfile_client.write_catalog_table(df, "orders", write_mode="overwrite")
+        assert written.table_type == "physical"
+
+    def test_delta_version_on_view_raises_before_materialize(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            with pytest.raises(ValueError, match="time travel"):
+                flowfile_client.read_catalog_table("adults", delta_version=0)
+        assert mock_core.materialize_calls == []
+
+    def test_write_to_view_raises(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        mock_core.add_view("adults", _VIEW_ROWS)
+        df = _df([{"name": "Bob", "age": 25}])
+        with _patch_core_client(mock_core):
+            with pytest.raises(ValueError, match="views cannot be written to"):
+                flowfile_client.write_catalog_table(df, "adults", write_mode="overwrite")
+
+    def test_view_403_raises_permission_error(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        mock_core.add_view("adults", _VIEW_ROWS)
+        mock_core.materialize_status = 403
+        with _patch_core_client(mock_core):
+            with pytest.raises(PermissionError, match="Not authorized"):
+                flowfile_client.read_catalog_table("adults")
+
+    def test_view_404_raises_key_error_with_update_hint(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        """An old Core without the materialize endpoint 404s: surface an upgrade hint."""
+        mock_core.add_view("adults", _VIEW_ROWS)
+        mock_core.materialize_status = 404
+        with _patch_core_client(mock_core):
+            with pytest.raises(KeyError, match="update flowfile_core"):
+                flowfile_client.read_catalog_table("adults")
+
+    def test_view_other_error_raises_runtime_error(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, view_results_dir: Path
+    ):
+        mock_core.add_view("adults", _VIEW_ROWS)
+        mock_core.materialize_status = 503
+        with _patch_core_client(mock_core):
+            with pytest.raises(RuntimeError, match="failed"):
+                flowfile_client.read_catalog_table("adults")
+
+    def test_view_host_path_translated_to_container_mount(
+        self,
+        mock_core: _MockCore,
+        kernel_catalog_dir: Path,
+        view_results_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Core returns host paths; the kernel must rebase them onto /shared."""
+        host_shared = tmp_path / "host_side" / "kernel_shared"
+        monkeypatch.setenv("FLOWFILE_HOST_SHARED_DIR", str(host_shared))
+        mock_core.view_host_prefix = str(host_shared / "catalog_virtual_results")
+        view_id = mock_core.add_view("adults", _VIEW_ROWS)
+
+        captured: dict[str, str] = {}
+
+        def fake_scan_ipc(path, *args, **kwargs):
+            captured["path"] = path
+            return pl.LazyFrame(_VIEW_ROWS)
+
+        monkeypatch.setattr(flowfile_client.pl, "scan_ipc", fake_scan_ipc)
+        with _patch_core_client(mock_core):
+            lf = flowfile_client.read_catalog_table("adults")
+        assert isinstance(lf, pl.LazyFrame)
+        assert captured["path"] == f"/shared/catalog_virtual_results/fvt-{view_id}-deadbeefdeadbeef.arrow"

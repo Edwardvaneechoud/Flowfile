@@ -38,6 +38,7 @@ from flowfile_core.catalog import (
     NestingLimitError,
     NoSnapshotError,
     NotAuthorizedError,
+    NotAVirtualTableError,
     NotebookExistsError,
     NotebookNotFoundError,
     RunNotFoundError,
@@ -50,6 +51,7 @@ from flowfile_core.catalog import (
     VisualizationComputeError,
     VisualizationExistsError,
     VisualizationNotFoundError,
+    WorkerUnavailableError,
 )
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
@@ -63,6 +65,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
     CatalogTableCreate,
     CatalogTableFromDataCreate,
+    CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableRefreshRequest,
@@ -163,6 +166,8 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     FlowAlreadyRunningError: (409, "Flow already has an active run"),
     TableNotFoundError: (404, "Catalog table not found"),
     TableVersionUnavailableError: (410, None),
+    NotAVirtualTableError: (400, None),
+    WorkerUnavailableError: (503, None),
     TableExistsError: (409, "A table with this name already exists in this namespace"),
     AmbiguousTableError: (409, None),
     RunNotFoundError: (404, "Run not found"),
@@ -751,6 +756,23 @@ def get_table_preview(
     data from that specific historical version.
     """
     return service.get_table_preview(table_id, limit=limit, version=version, user_id=current_user.id)
+
+
+@router.post("/tables/{table_id}/materialize", response_model=CatalogTableMaterializeResult)
+@handle_catalog_exceptions()
+def materialize_table(
+    table_id: int,
+    current_user=Depends(get_user_or_internal_service),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Materialise a virtual table to a kernel-readable IPC snapshot.
+
+    Resolves the view (SQL, optimized plan, or producer re-run), has the
+    worker collect it to an Arrow IPC file under the kernel-shared volume,
+    and returns the host path. Used by ``flowfile_ctx.read_catalog_table``
+    for views; physical tables are rejected with 400.
+    """
+    return service.materialize_table(table_id, user_id=current_user.id)
 
 
 @router.get(

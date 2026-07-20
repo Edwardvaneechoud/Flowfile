@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import polars as pl
+from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
+    CatalogError,
     FlowNotFoundError,
     NotAuthorizedError,
+    NotAVirtualTableError,
     TableNotFoundError,
+    WorkerUnavailableError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.services._resolve import resolve_or_log
@@ -31,12 +37,24 @@ from flowfile_core.catalog.text_utils import (
 from flowfile_core.catalog.validators import format_full_name
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import CatalogTable
-from flowfile_core.schemas.catalog_schema import CatalogTableOut
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_resolve_virtual_table,
+)
+from flowfile_core.schemas.catalog_schema import CatalogTableMaterializeResult, CatalogTableOut
+from shared.delta_utils import validate_catalog_path
+from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
 
 logger = logging.getLogger(__name__)
+
+_ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
+
+
+def _scrub_abs_paths(text: str) -> str:
+    """Replace absolute filesystem paths in error text with their basename so callers don't learn server layout."""
+    return _ABS_PATH_RE.sub(lambda m: m.group(0).rsplit("/", 1)[-1], text)
 
 
 def _should_offload() -> bool:
@@ -454,6 +472,40 @@ class VirtualTableService:
         # Do not mutate the shared memoized engine; .lazy() is an identity on
         # LazyFrames and a cheap wrap on eager frames.
         return flowframe.data_frame.lazy()
+
+    def materialize_virtual_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
+        """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file.
+
+        Every call rebuilds the snapshot: a serialised plan records table paths,
+        not data, so its sha256 stays constant when referenced data changes.
+        The plan hash therefore only names the snapshot file (the worker skips
+        its idempotency cache for the kernel_shared target).
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        if getattr(table, "table_type", "physical") != "virtual":
+            raise NotAVirtualTableError(table_id=table_id)
+
+        try:
+            plan_bytes = self.resolve_virtual_flow_table(table_id, user_id=user_id).serialize()
+        except (CatalogError, ValueError):
+            raise
+        except pl.exceptions.PolarsError as e:
+            # e.g. a circular view leaves an unregistered relation behind.
+            raise ValueError(f"Could not resolve virtual table '{table.name}': {_scrub_abs_paths(str(e))}") from e
+
+        key = hashlib.sha256(plan_bytes).hexdigest()
+        try:
+            result = trigger_resolve_virtual_table(table_id, plan_bytes, key, target="kernel_shared")
+        except (RequestException, RuntimeError) as e:
+            raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e
+        ipc_path = validate_catalog_path(result["ipc_path"], storage.shared_virtual_results_directory)
+        return CatalogTableMaterializeResult(
+            path=str(ipc_path),
+            row_count=result["row_count"],
+            mtime=result["mtime"],
+        )
 
     # ---- Discovery ------------------------------------------------------- #
 

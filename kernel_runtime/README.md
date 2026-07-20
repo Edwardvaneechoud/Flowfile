@@ -55,6 +55,73 @@ docker compose --profile kernel build flowfile-kernel
 docker compose --profile kernel build flowfile-kernel-ml
 ```
 
+### Using a locally-built image with `flowfile_core`
+
+By default `flowfile_core` launches the exact published kernel tag pinned in
+`flowfile_core/kernel/manager.py`, so a local `docker build` is **not** picked
+up until you point core at it. Set the flavour-specific override before starting
+core (reads happen at kernel-launch time, so no rebuild of core is needed):
+
+```bash
+docker build -t flowfile-kernel-base:local kernel_runtime/
+FLOWFILE_KERNEL_IMAGE_BASE=flowfile-kernel-base:local poetry run flowfile_core
+```
+
+From the repo root, `make rebuild_kernel` removes and rebuilds
+`flowfile-kernel-base:local` in one step (`KERNEL_FLAVOUR=ml` / `=lite` for the
+other flavours). Use it whenever you change kernel source — including bumping the
+runtime version in `kernel_runtime/__init__.py`, which `/health` reports and the
+Kernel Manager displays; that value is baked into the image at build time, so a
+kernel keeps reporting the version of the image it was **created from** until you
+rebuild.
+
+Use `FLOWFILE_KERNEL_IMAGE_ML` / `FLOWFILE_KERNEL_IMAGE_LITE` for those flavours
+(`FLOWFILE_KERNEL_IMAGE` is a legacy alias for the base override). This is the
+workflow for iterating on kernel code — e.g. changes to `flowfile_client.py`
+ship *inside* the image, so they only take effect after a rebuild + relaunch.
+To iterate without Docker at all, see [Running Locally (without Docker)](#running-locally-without-docker).
+
+### Cleaning up kernels
+
+Each kernel runs as a container named `flowfile-kernel-<kernel_id>`; kernels
+created with extra packages also get a per-kernel derived image tagged
+`flowfile-kernel-derived-<kernel_id>:latest`. `flowfile_core` owns their
+lifecycle:
+
+- **From the app / core API** — stopping a kernel (`POST /kernels/{id}/stop`)
+  stops and removes its container but keeps it startable; deleting a kernel
+  (`DELETE /kernels/{id}`) also drops its database record and removes its
+  derived image (if it had one).
+- **Automatically** — on core shutdown every running kernel container is
+  stopped and removed. On the next startup core reclaims the containers it
+  still tracks and garbage-collects orphans: containers with no database record
+  are removed, as are derived images whose owning kernel no longer exists.
+
+To wipe every local kernel in one shot, run this from the repo root (backed by
+`tools/clean_kernels.py`):
+
+```bash
+make clean_kernels
+```
+
+It removes all `flowfile-kernel-*` containers and `flowfile-kernel-derived-*`
+images, and — **only when core is not running** — clears the kernel records from
+the local catalog DB so they don't linger as stopped kernels in the app. Stop
+core first (`make stop_servers`) if you want the records gone too.
+
+The flavour images (`flowfile-kernel-base:local`, the pulled
+`edwardvaneechoud/flowfile-kernel-*` tags, …) are **left alone** by
+`clean_kernels`. To reclaim those too, use:
+
+```bash
+make clean_kernel_images
+```
+
+Core re-pulls a published flavour on demand, and `make rebuild_kernel` rebuilds a
+local one, so this is always recoverable. Removing a container this way is safe
+as well: core treats a missing container as stopped and re-creates it on next
+start (or reaps the stale record if the kernel was already deleted).
+
 ## Running the Container
 
 ### Basic Run
@@ -120,7 +187,7 @@ Response:
 ```json
 {
   "status": "healthy",
-  "version": "0.2.0",
+  "version": "0.5.1",
   "artifact_count": 0
 }
 ```
@@ -343,7 +410,7 @@ kernel_runtime/
 |-----------------------------|-----------------------------------------------------------------------------------|------------------------|
 | `KERNEL_PACKAGES`           | Additional pip packages to install at startup (resolved against `/opt/constraints.txt`)             | None                   |
 | `KERNEL_CONSTRAINTS_FILE`   | Path inside the container to the pip constraints file used by `KERNEL_PACKAGES`                     | `/opt/constraints.txt` |
-| `FLOWFILE_KERNEL_IMAGE`     | Read by `flowfile_core`'s `KernelManager` to choose which image to launch (override flavour)         | `edwardvaneechoud/flowfile-kernel-base:0.3.0` |
+| `FLOWFILE_KERNEL_IMAGE`     | Read by `flowfile_core`'s `KernelManager` to choose which image to launch (override flavour)         | `edwardvaneechoud/flowfile-kernel-base:0.5.0` |
 
 ## Health Check
 
