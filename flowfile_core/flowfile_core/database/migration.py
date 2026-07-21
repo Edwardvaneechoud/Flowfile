@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
 import shared.storage_config as _storage_config
+from flowfile_core.database import backup as _backup
 
 logger = logging.getLogger(__name__)
 
@@ -128,11 +129,45 @@ def _ensure_known_revision(cfg: Config) -> None:
         engine.dispose()
 
 
+def _database_path(cfg: Config) -> Path | None:
+    url = cfg.get_main_option("sqlalchemy.url") or ""
+    if url.startswith("sqlite:///"):
+        return Path(url.replace("sqlite:///", ""))
+    return None
+
+
+def _snapshot_if_migration_pending(cfg: Config) -> Path | None:
+    """Snapshot the catalog DB when the upcoming upgrade (or re-stamp) will mutate it."""
+    db_path = _database_path(cfg)
+    if db_path is None or not db_path.exists():
+        return None
+    try:
+        engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+        try:
+            with engine.connect() as conn:
+                current = MigrationContext.configure(conn).get_current_revision()
+        finally:
+            engine.dispose()
+        head = ScriptDirectory.from_config(cfg).get_current_head()
+    except Exception:
+        logger.warning("Could not determine catalog DB revision; skipping pre-migration snapshot", exc_info=True)
+        return None
+    if current == head:
+        return None
+    return _backup.snapshot_database(db_path, current, head)
+
+
 def run_alembic_upgrade() -> None:
     """Run all pending Alembic migrations up to *head*."""
     cfg = _get_alembic_config()
-    _ensure_known_revision(cfg)
-    command.upgrade(cfg, "head")
+    snapshot = _snapshot_if_migration_pending(cfg)
+    try:
+        _ensure_known_revision(cfg)
+        command.upgrade(cfg, "head")
+    except Exception:
+        if snapshot is not None:
+            logger.error("Migration failed; pre-migration snapshot available at %s", snapshot)
+        raise
     logger.info("Alembic migrations applied successfully")
 
 
