@@ -526,3 +526,297 @@ class TestUnknownRevisionRollback:
         _run_migration(db_path, monkeypatch)
 
         assert "alembic_version" in _get_tables(db_path)
+
+
+class TestSnapshotDatabase:
+    def _make_db(self, path: Path) -> None:
+        create_legacy_db(
+            path,
+            {
+                "things": {
+                    "columns": ["id", "name"],
+                    "col_types": {"id": "INTEGER PRIMARY KEY"},
+                    "rows": [(1, "alpha"), (2, "beta")],
+                },
+            },
+        )
+
+    def test_snapshot_is_faithful_copy(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        target = snapshot_database(db_path, "003", "028")
+
+        assert target is not None
+        assert target.parent == tmp_path / "db_backups"
+        assert "003-to-028" in target.name
+        engine = create_engine(f"sqlite:///{target}")
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT id, name FROM things ORDER BY id")).fetchall()
+        engine.dispose()
+        assert rows == [(1, "alpha"), (2, "beta")]
+
+    def test_none_revision_labelled(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        target = snapshot_database(db_path, None, "028")
+
+        assert target is not None
+        assert "none-to-028" in target.name
+
+    def test_disabled_when_keep_zero(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_DB_BACKUP_KEEP", "0")
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        assert snapshot_database(db_path, "003", "028") is None
+        assert not (tmp_path / "db_backups").exists()
+
+    def test_invalid_keep_falls_back_to_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_DB_BACKUP_KEEP", "not-a-number")
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        assert snapshot_database(db_path, "003", "028") is not None
+
+    def _freeze_time(self, monkeypatch) -> None:
+        import flowfile_core.database.backup as backup_mod
+
+        fixed = backup_mod.datetime.now(backup_mod.timezone.utc)
+
+        class _Frozen:
+            @staticmethod
+            def now(tz=None):
+                return fixed
+
+        monkeypatch.setattr(backup_mod, "datetime", _Frozen)
+
+    def test_same_second_snapshots_get_unique_names(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        self._freeze_time(monkeypatch)
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        first = snapshot_database(db_path, "003", "028")
+        second = snapshot_database(db_path, "003", "028")
+
+        assert first is not None and second is not None
+        assert first != second
+        assert second.name.endswith("-1.db")
+        assert first.exists() and second.exists()
+
+    def test_prune_mtime_tie_protects_newest(self, tmp_path):
+        import os as _os
+
+        from flowfile_core.database.backup import _prune
+
+        backup_dir = tmp_path / "db_backups"
+        backup_dir.mkdir()
+        older = backup_dir / "catalog.001-to-028.20260101T000000Z.db"
+        newest = backup_dir / "catalog.001-to-028.20260101T000000Z-1.db"
+        older.write_text("old")
+        newest.write_text("new")
+        # exact mtime tie: '-1' sorts below the unsuffixed name
+        _os.utime(older, (1000, 1000))
+        _os.utime(newest, (1000, 1000))
+
+        _prune(backup_dir, "catalog", ".db", keep=1, protect=newest)
+
+        assert newest.exists()
+        assert not older.exists()
+
+    def test_glob_metachars_in_db_name_still_pruned(self, tmp_path, monkeypatch):
+        self._freeze_time(monkeypatch)
+        monkeypatch.setenv("FLOWFILE_DB_BACKUP_KEEP", "1")
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "my[db].db"
+        self._make_db(db_path)
+
+        snapshot_database(db_path, "001", "028")
+        newest = snapshot_database(db_path, "002", "028")
+
+        remaining = list((tmp_path / "db_backups").iterdir())
+        assert remaining == [newest]
+
+    def test_busy_database_times_out_without_snapshot(self, tmp_path, monkeypatch):
+        import sqlite3
+
+        import flowfile_core.database.backup as backup_mod
+
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        monkeypatch.setattr(backup_mod, "_BACKUP_TIMEOUT_SECONDS", 0.5)
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+        locker = sqlite3.connect(db_path)
+        locker.execute("BEGIN EXCLUSIVE")
+        try:
+            assert backup_mod.snapshot_database(db_path, "003", "028") is None
+        finally:
+            locker.rollback()
+            locker.close()
+
+        backup_dir = tmp_path / "db_backups"
+        assert not backup_dir.exists() or list(backup_dir.iterdir()) == []
+
+    def test_prune_keeps_newest(self, tmp_path, monkeypatch):
+        import os as _os
+
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        older = [snapshot_database(db_path, "001", "028") for _ in range(3)]
+        for i, snap in enumerate(older):
+            _os.utime(snap, (1000 + i, 1000 + i))
+
+        monkeypatch.setenv("FLOWFILE_DB_BACKUP_KEEP", "2")
+        newest = snapshot_database(db_path, "002", "028")
+
+        remaining = sorted(p.name for p in (tmp_path / "db_backups").iterdir())
+        assert len(remaining) == 2
+        assert newest.name in remaining
+        assert older[2].name in remaining  # highest mtime of the older three survives
+
+    def test_never_raises_when_backup_dir_unwritable(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+        (tmp_path / "db_backups").write_text("not a directory")
+
+        assert snapshot_database(db_path, "003", "028") is None
+
+
+# Pre-migration snapshot hook
+
+
+class TestPreMigrationSnapshot:
+    def _backups(self, tmp_path: Path) -> list[Path]:
+        backup_dir = tmp_path / "db_backups"
+        return sorted(backup_dir.iterdir()) if backup_dir.exists() else []
+
+    def test_no_snapshot_on_fresh_install(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        assert self._backups(tmp_path) == []
+
+    def test_no_snapshot_when_already_at_head(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        _run_migration(db_path, monkeypatch)
+        assert self._backups(tmp_path) == []
+
+    def test_snapshot_taken_when_migration_pending(self, tmp_path, monkeypatch):
+        """A DB at an older revision gets snapshotted before the upgrade mutates it."""
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "020")
+
+        _run_migration(db_path, monkeypatch)
+
+        backups = self._backups(tmp_path)
+        assert len(backups) == 1
+        assert "020-to-" in backups[0].name
+
+        engine = create_engine(f"sqlite:///{backups[0]}")
+        with engine.connect() as conn:
+            snap_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        engine.dispose()
+        assert snap_rev == "020"  # snapshot preserves the pre-upgrade state
+
+    def test_snapshot_taken_before_unknown_revision_restamp(self, tmp_path, monkeypatch):
+        """The snapshot preserves the unknown stamp before _ensure_known_revision rewrites it."""
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = '999fakeXYZ'"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        backups = self._backups(tmp_path)
+        assert len(backups) == 1
+        assert "999fakeXYZ-to-" in backups[0].name
+
+        engine = create_engine(f"sqlite:///{backups[0]}")
+        with engine.connect() as conn:
+            snap_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        engine.dispose()
+        assert snap_rev == "999fakeXYZ"
+
+    def test_migration_failure_logs_snapshot_path(self, tmp_path, monkeypatch, capsys):
+        """A failing upgrade must leave the snapshot in place and log its path."""
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from alembic import command
+
+        import flowfile_core.database.migration as migration_mod
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "020")
+
+        def _boom(cfg, rev):
+            raise RuntimeError("upgrade exploded")
+
+        monkeypatch.setattr(migration_mod, "command", SimpleNamespace(upgrade=_boom, stamp=command.stamp))
+
+        with pytest.raises(RuntimeError, match="upgrade exploded"):
+            _run_migration(db_path, monkeypatch)
+        captured = capsys.readouterr()
+
+        backups = self._backups(tmp_path)
+        assert len(backups) == 1
+        assert str(backups[0]) in captured.err
+
+    def test_snapshot_disabled_by_env(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "020")
+
+        monkeypatch.setenv("FLOWFILE_DB_BACKUP_KEEP", "0")
+        _run_migration(db_path, monkeypatch)
+
+        assert self._backups(tmp_path) == []
+        # migration itself still ran to head
+        from alembic.script import ScriptDirectory
+
+        head = ScriptDirectory.from_config(_get_alembic_config()).get_current_head()
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            ver = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        engine.dispose()
+        assert ver == head
