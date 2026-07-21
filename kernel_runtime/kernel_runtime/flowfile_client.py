@@ -1330,14 +1330,18 @@ class SchemaRef:
         name: str,
         *,
         delta_version: int | None = None,
+        ignore_warning: bool = False,
     ) -> pl.LazyFrame:
         """Read a table from this schema as a Polars ``LazyFrame``.
 
         Equivalent to ``flowfile_ctx.read_catalog_table(name, namespace_id=self.id, ...)``.
         Views are supported (materialised to a snapshot — re-call for fresh
-        data); ``delta_version`` time travel is physical-only.
+        data); ``delta_version`` time travel is physical-only. Pass
+        ``ignore_warning=True`` to silence the view snapshot warning.
         """
-        return read_catalog_table(name, namespace_id=self.id, delta_version=delta_version)
+        return read_catalog_table(
+            name, namespace_id=self.id, delta_version=delta_version, ignore_warning=ignore_warning
+        )
 
     def write_table(
         self,
@@ -1369,9 +1373,10 @@ class SchemaRef:
         name: str,
         *,
         delta_version: int | None = None,
+        ignore_warning: bool = False,
     ) -> pl.LazyFrame:
         """Alias for :meth:`read_table` — same name as ``flowfile_ctx.read_catalog_table``."""
-        return self.read_table(name, delta_version=delta_version)
+        return self.read_table(name, delta_version=delta_version, ignore_warning=ignore_warning)
 
     def write_catalog_table(
         self,
@@ -1488,14 +1493,15 @@ class TableRef:
         """``True`` if this ref points at a table that exists in the catalog."""
         return self.id is not None
 
-    def read(self, *, delta_version: int | None = None) -> pl.LazyFrame:
+    def read(self, *, delta_version: int | None = None, ignore_warning: bool = False) -> pl.LazyFrame:
         """Read this table as a Polars ``LazyFrame``.
 
         Works for views (``table_type="virtual"``) too: the view is
         materialised to a snapshot file — re-call :meth:`read` for fresh
-        data. ``delta_version`` time travel is physical-only.
+        data. ``delta_version`` time travel is physical-only. Pass
+        ``ignore_warning=True`` to silence the view snapshot warning.
         """
-        return read_catalog_table(self, delta_version=delta_version)
+        return read_catalog_table(self, delta_version=delta_version, ignore_warning=ignore_warning)
 
     def write(
         self,
@@ -1711,6 +1717,7 @@ def read_catalog_table(
     schema: str | None = None,
     namespace_id: int | None = None,
     delta_version: int | None = None,
+    ignore_warning: bool = False,
 ) -> pl.LazyFrame:
     """Read a catalog table as a Polars ``LazyFrame``.
 
@@ -1731,6 +1738,8 @@ def read_catalog_table(
         namespace_id: Only used when ``table`` is a string. Explicit namespace ID.
         delta_version: If provided, opens that specific Delta commit (time
             travel). Physical tables only — views reject it.
+        ignore_warning: Silence the point-in-time-snapshot warning emitted when
+            reading a view. Ignored for physical tables (they never warn).
 
     Returns:
         A lazy ``pl.LazyFrame`` over the Delta directory (or IPC snapshot for views).
@@ -1764,7 +1773,7 @@ def read_catalog_table(
                     f"Catalog table '{table_name}' is a view (virtual table); "
                     "delta_version time travel only applies to physical tables."
                 )
-            return _read_virtual_table(client, row, table_name)
+            return _read_virtual_table(client, row, table_name, ignore_warning=ignore_warning)
         host_path = _table_file_path(row)
         if host_path is None:
             raise RuntimeError(f"Catalog table '{table_name}' has no file_path")
@@ -1774,13 +1783,31 @@ def read_catalog_table(
     return pl.scan_delta(kernel_path)
 
 
-def _read_virtual_table(client: httpx.Client, row: dict[str, Any], table_name: str) -> pl.LazyFrame:
+def _read_virtual_table(
+    client: httpx.Client, row: dict[str, Any], table_name: str, ignore_warning: bool = False
+) -> pl.LazyFrame:
     """Materialise a view via Core (worker-executed) and lazily scan the snapshot.
 
     Each call produces a fresh snapshot (plan hashes don't track data changes,
     so Core rebuilds rather than caching). The file rides the shared-volume TTL
     sweep, so a long-held LazyFrame can go stale — re-calling ``.read()`` heals it.
+
+    Emits a one-line snapshot warning via :func:`log_warning` unless
+    *ignore_warning* is set. The warning is best-effort — a delivery failure
+    (e.g. no execute context) never breaks the read.
     """
+    if not ignore_warning:
+        try:
+            log_warning(
+                f"Reading virtual table '{table_name}' returns a point-in-time snapshot. "
+                f"Flowfile recomputes the view and overwrites the same Arrow file on every "
+                f"read, so the scan path is identical each call but the contents are freshly "
+                f"recomputed (it won't auto-update on its own, and a LazyFrame you keep will "
+                f"reflect the most recent read). Collect promptly, or call read() again. "
+                f"Pass ignore_warning=True to silence."
+            )
+        except Exception:  # noqa: BLE001 - warning is best-effort, never break the read
+            pass
     # Producer re-runs can be slow; override the client's default timeout.
     resp = client.post(f"{_CORE_URL}/catalog/tables/{row['id']}/materialize", timeout=600.0)
     if resp.status_code == 403:

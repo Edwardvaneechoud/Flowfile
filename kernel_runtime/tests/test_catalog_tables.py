@@ -918,3 +918,82 @@ class TestReadCatalogView:
             lf = flowfile_client.read_catalog_table("adults")
         assert isinstance(lf, pl.LazyFrame)
         assert captured["path"] == f"/shared/catalog_virtual_results/fvt-{view_id}-deadbeefdeadbeef.arrow"
+
+    def test_view_read_emits_snapshot_warning(
+        self,
+        mock_core: _MockCore,
+        kernel_catalog_dir: Path,
+        view_results_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        seen: list[str] = []
+        monkeypatch.setattr(flowfile_client, "log_warning", lambda msg: seen.append(msg))
+        view_id = mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            out = flowfile_client.read_catalog_table("adults").collect()
+        assert out.height == 2
+        assert mock_core.materialize_calls == [view_id]
+        assert len(seen) == 1
+        assert "snapshot" in seen[0]
+        assert "adults" in seen[0]
+
+    def test_view_read_ignore_warning_suppresses(
+        self,
+        mock_core: _MockCore,
+        kernel_catalog_dir: Path,
+        view_results_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        seen: list[str] = []
+        monkeypatch.setattr(flowfile_client, "log_warning", lambda msg: seen.append(msg))
+        mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            out = flowfile_client.read_catalog_table("adults", ignore_warning=True).collect()
+        assert out.height == 2
+        assert seen == []
+
+    def test_view_read_via_tableref_respects_ignore_warning(
+        self,
+        mock_core: _MockCore,
+        kernel_catalog_dir: Path,
+        view_results_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        seen: list[str] = []
+        monkeypatch.setattr(flowfile_client, "log_warning", lambda msg: seen.append(msg))
+        mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            ref = flowfile_client.list_catalog_tables()[0]
+            ref.read().collect()  # warns
+            ref.read(ignore_warning=True).collect()  # silent
+        assert len(seen) == 1
+
+    def test_view_read_warns_on_every_call(
+        self,
+        mock_core: _MockCore,
+        kernel_catalog_dir: Path,
+        view_results_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        seen: list[str] = []
+        monkeypatch.setattr(flowfile_client, "log_warning", lambda msg: seen.append(msg))
+        mock_core.add_view("adults", _VIEW_ROWS)
+        with _patch_core_client(mock_core):
+            flowfile_client.read_catalog_table("adults").collect()
+            flowfile_client.read_catalog_table("adults").collect()
+        assert len(seen) == 2  # no dedup — every read is a fresh snapshot, so every read warns
+
+    def test_physical_read_does_not_warn(
+        self,
+        mock_core: _MockCore,
+        kernel_catalog_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        seen: list[str] = []
+        monkeypatch.setattr(flowfile_client, "log_warning", lambda msg: seen.append(msg))
+        df = _df([{"id": 1, "v": "a"}])
+        with _patch_core_client(mock_core):
+            flowfile_client.write_catalog_table(df, "orders", write_mode="overwrite")
+            out = flowfile_client.read_catalog_table("orders").collect()
+        assert out.height == 1
+        assert seen == []
