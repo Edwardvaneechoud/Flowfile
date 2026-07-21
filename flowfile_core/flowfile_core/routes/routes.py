@@ -28,6 +28,8 @@ from flowfile_core import flow_file_handler
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.exceptions import NamespaceNotFoundError, NotAuthorizedError
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.configs.settings import is_electron_mode
@@ -52,6 +54,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     find_registration_by_registration_id,
     namespace_exists,
     register_flow_in_namespace,
+    require_flow_save_permitted,
     resolve_source_registration_id,
     sync_api_compatibility,
 )
@@ -993,6 +996,15 @@ def save_generated_project(request: output_model.ProjectSaveRequest) -> output_m
     return output_model.ProjectSaveResponse(saved_to=str(project_dir), file_count=len(manifest.files))
 
 
+def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None, current_user) -> None:
+    """403 before any file/DB side effect when the user may neither manage an
+    existing registration at ``flow_path`` nor create in ``namespace_id``."""
+    try:
+        require_flow_save_permitted(flow_path, namespace_id, current_user)
+    except NotAuthorizedError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from None
+
+
 @router.post("/editor/create_flow/", tags=["editor"])
 def create_flow(
     flow_path: str = None,
@@ -1032,6 +1044,7 @@ def create_flow(
     user_id = current_user.id if current_user else None
     if namespace_id is not None and not namespace_exists(namespace_id):
         raise HTTPException(404, "Namespace not found")
+    _require_flow_save_permitted(flow_path, namespace_id, current_user)
     if namespace_id is not None and flow_path is not None:
         # Pre-validate before add_flow writes any YAML so a rejected create
         # leaves no orphaned file or session behind.
@@ -1055,9 +1068,19 @@ def create_flow(
     flow = flow_file_handler.get_flow(flow_id)
     if register_in_catalog and flow and flow.flow_settings:
         try:
-            register_flow_in_namespace(flow.flow_settings.path, name or flow.flow_settings.name, user_id, namespace_id)
+            register_flow_in_namespace(
+                flow.flow_settings.path,
+                name or flow.flow_settings.name,
+                user_id,
+                namespace_id,
+                requesting_user=current_user,
+            )
         except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+        except NotAuthorizedError as err:
+            raise HTTPException(status_code=403, detail=str(err)) from None
+        except NamespaceNotFoundError:
+            raise HTTPException(status_code=404, detail="Namespace not found") from None
         resolve_source_registration_id(flow)
     return flow_id
 
@@ -1155,6 +1178,91 @@ def _format_validation_error(error: ValidationError) -> str:
     return "; ".join(messages) or str(error)
 
 
+def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, current_user, flow) -> None:
+    """Save-time gate for catalog-writer settings; the run-time check in flow_graph
+    is authoritative. Incomplete settings (no namespace resolved yet) pass — the
+    user may still be configuring the node. An unchanged target also passes: the
+    settings drawer re-POSTs on close, and merely viewing a shared flow's writer
+    node must not surface a permission error."""
+    settings = node.catalog_write_settings
+    existing_node = flow.get_node(node.node_id)
+    existing_settings = getattr(existing_node, "setting_input", None)
+    current = getattr(existing_settings, "catalog_write_settings", None)
+    if current is not None and (
+        (current.table_name, current.namespace_id, current.namespace_full_name)
+        == (settings.table_name, settings.namespace_id, settings.namespace_full_name)
+    ):
+        # Unchanged target (the drawer re-POSTs on close): preserve the original
+        # author's id so a viewer merely inspecting the node can't re-stamp the
+        # run-time executing principal and break the owner's later runs.
+        prior_user_id = getattr(existing_settings, "user_id", None)
+        if prior_user_id is not None:
+            node.user_id = prior_user_id
+        return
+    with get_db_context() as db:
+        resolver = AccessResolver(db, current_user)
+        if not resolver.restricted:
+            return
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        ns_id = svc.resolve_namespace_id_by_full_name(settings.namespace_full_name)
+        if ns_id is None:
+            ns_id = settings.namespace_id
+        if ns_id is None:
+            return
+        existing = svc.repo.get_table_by_name(settings.table_name, ns_id) if settings.table_name else None
+        if existing is not None:
+            if not resolver.can_manage("catalog_table", existing.id, owner_id=existing.owner_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You do not have permission to overwrite catalog table '{settings.table_name}'",
+                )
+        elif ns_id not in resolver.writable_namespace_ids():
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have write access to the selected catalog namespace",
+            )
+
+
+def _validate_catalog_namespace_writable_for_user(namespace_id: int | None, current_user, detail: str) -> None:
+    """Raise 403 when a restricted user may not create in ``namespace_id``. Shared
+    save-time gate for catalog-publishing nodes; run-time checks are authoritative."""
+    if namespace_id is None:
+        return
+    with get_db_context() as db:
+        resolver = AccessResolver(db, current_user)
+        if resolver.restricted and namespace_id not in resolver.writable_namespace_ids():
+            raise HTTPException(status_code=403, detail=detail)
+
+
+def _validate_train_model_target(node: input_schema.NodeTrainModel, current_user, flow) -> None:
+    """Save-time gate for a Train Model node that publishes its model to the
+    catalog; the run-time check in flow_graph is authoritative. Passes when not
+    publishing, when the target isn't resolved yet, or when the target is
+    unchanged (the drawer re-POSTs on close)."""
+    settings = node.train_input
+    if not settings.publish_to_catalog:
+        return
+    existing_settings = getattr(flow.get_node(node.node_id), "setting_input", None)
+    current = getattr(existing_settings, "train_input", None)
+    if current is not None and (current.namespace_id, current.namespace_full_name, current.publish_to_catalog) == (
+        settings.namespace_id,
+        settings.namespace_full_name,
+        settings.publish_to_catalog,
+    ):
+        prior_user_id = getattr(existing_settings, "user_id", None)
+        if prior_user_id is not None:
+            node.user_id = prior_user_id
+        return
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        ns_id = svc.resolve_namespace_id_by_full_name(settings.namespace_full_name)
+        if ns_id is None:
+            ns_id = settings.namespace_id
+    _validate_catalog_namespace_writable_for_user(
+        ns_id, current_user, "You do not have write access to the selected catalog namespace"
+    )
+
+
 @router.post("/update_settings/", tags=["transform"], response_model=OperationResponse)
 def add_generic_settings(
     input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)
@@ -1193,6 +1301,10 @@ def add_generic_settings(
         raise HTTPException(422, str(e)) from e
     if parsed_input is None:
         raise HTTPException(404, "could not find the interface")
+    if node_type == "catalog_writer":
+        _validate_catalog_writer_target(parsed_input, current_user, flow)
+    elif node_type == "train_model":
+        _validate_train_model_target(parsed_input, current_user, flow)
     try:
         # History capture is handled by the decorator on each add_* method
         add_func(parsed_input)
@@ -1566,11 +1678,15 @@ def _save_flow_impl(
 
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
+    # Refuse before any YAML write so a rejected save leaves no orphan file and
+    # never overwrites another user's registered flow file.
+    _require_flow_save_permitted(flow_path, namespace_id, current_user)
+
     if is_new_path:
         user_id = current_user.id if current_user else None
 
         def _register(fp: str, n: str, uid: int | None) -> None:
-            register_flow_in_namespace(fp, n, uid, namespace_id)
+            register_flow_in_namespace(fp, n, uid, namespace_id, requesting_user=current_user)
 
         try:
             new_flow_id = flow_file_handler.save_as_flow(
@@ -1580,8 +1696,12 @@ def _save_flow_impl(
                 on_catalog_register=_register,
                 on_resolve_registration=resolve_source_registration_id,
             )
-        except FlowPathNamespaceCollision as err:
+        except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+        except NotAuthorizedError as err:
+            raise HTTPException(status_code=403, detail=str(err)) from None
+        except NamespaceNotFoundError:
+            raise HTTPException(status_code=404, detail="Namespace not found") from None
         sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
         _project_flow_saved(flow_path, user_id)
         return new_flow_id
@@ -1593,9 +1713,15 @@ def _save_flow_impl(
     if namespace_id is not None:
         user_id = current_user.id if current_user else None
         try:
-            register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
-        except FlowPathNamespaceCollision as err:
+            register_flow_in_namespace(
+                flow_path, flow.flow_settings.name, user_id, namespace_id, requesting_user=current_user
+            )
+        except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+        except NotAuthorizedError as err:
+            raise HTTPException(status_code=403, detail=str(err)) from None
+        except NamespaceNotFoundError:
+            raise HTTPException(status_code=404, detail="Namespace not found") from None
     sync_api_compatibility(flow)
     _project_flow_saved(flow_path, current_user.id if current_user else None)
     return flow_id
@@ -1671,6 +1797,10 @@ def save_flow_to_catalog(
     if flow is None:
         raise HTTPException(404, "Flow not found")
 
+    # Refuse before any side effect (ghost cleanup, YAML write) when the caller
+    # may neither write the target namespace nor manage a flow already at the path.
+    _require_flow_save_permitted(flow_path=None, namespace_id=namespace_id, current_user=current_user)
+
     filename = f"{int(flow_id)}_{safe_stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
 
@@ -1701,9 +1831,12 @@ def save_flow_to_catalog(
         # conflict if it can't be cleanly removed (e.g. it still has artifacts).
         try:
             with get_db_context() as db:
-                CatalogService(SQLAlchemyCatalogRepository(db)).delete_flow(
-                    registration_id=existing_by_name.id, delete_file=False
-                )
+                # Resolver-injected so delete_flow's manage gate applies: only the
+                # ghost's owner (or admin/manage-grantee) may reclaim the name.
+                CatalogService(
+                    SQLAlchemyCatalogRepository(db),
+                    access=AccessResolver(db, current_user),
+                ).delete_flow(registration_id=existing_by_name.id, delete_file=False)
         except Exception as err:
             raise name_conflict from err
 
@@ -1726,7 +1859,7 @@ def save_flow_to_catalog(
     # what the user typed — and so the name-collision check above compares apples
     # to apples.
     def _register(fp: str, _n: str, uid: int | None) -> None:
-        register_flow_in_namespace(fp, display_name, uid, namespace_id)
+        register_flow_in_namespace(fp, display_name, uid, namespace_id, requesting_user=current_user)
 
     if is_new_path:
         try:
@@ -1741,6 +1874,10 @@ def save_flow_to_catalog(
             raise HTTPException(status_code=409, detail=str(err)) from err
         except FlowNameNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+        except NotAuthorizedError as err:
+            raise HTTPException(status_code=403, detail=str(err)) from None
+        except NamespaceNotFoundError:
+            raise HTTPException(status_code=404, detail="Namespace not found") from None
 
         # Save-As under a new name is a copy: the original flow file and its
         # catalog registration stay intact. Only clean up throwaway scratch
@@ -1765,11 +1902,15 @@ def save_flow_to_catalog(
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
     try:
-        register_flow_in_namespace(flow_path, display_name, user_id, namespace_id)
+        register_flow_in_namespace(flow_path, display_name, user_id, namespace_id, requesting_user=current_user)
     except FlowPathNamespaceCollision as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
     except FlowNameNamespaceCollision as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+    except NotAuthorizedError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from None
+    except NamespaceNotFoundError:
+        raise HTTPException(status_code=404, detail="Namespace not found") from None
     sync_api_compatibility(flow)
     return flow_id
 

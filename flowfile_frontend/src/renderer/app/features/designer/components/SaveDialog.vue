@@ -54,6 +54,7 @@
               <catalog-namespace-picker
                 v-model="selectedNamespaceId"
                 :hide-system-namespaces="true"
+                :writable-only="true"
               />
             </div>
           </div>
@@ -143,6 +144,7 @@ import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import CatalogFlowPicker from "./CatalogFlowPicker.vue";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import type { FlowRegistration } from "../../../types";
+import { catalogSaveErrorMessage } from "../../../composables/saveError";
 
 const props = defineProps({
   visible: {
@@ -316,7 +318,7 @@ const handleSaveFlow = async (flowPath: string) => {
   } catch (error: any) {
     console.error("Error saving flow:", error);
     ElMessage.error({
-      message: error?.message || "Failed to save flow",
+      message: catalogSaveErrorMessage(error, "Failed to save flow"),
       duration: 5000,
     });
   }
@@ -419,9 +421,8 @@ const handleCatalogSave = async () => {
     emit("save-complete", newFlowId || props.flowId);
   } catch (error: any) {
     console.error("Error saving flow to catalog:", error);
-    const detail = error?.response?.data?.detail;
     ElMessage.error({
-      message: detail || error?.message || "Failed to save flow",
+      message: catalogSaveErrorMessage(error, "Failed to save flow"),
       duration: 5000,
     });
   }

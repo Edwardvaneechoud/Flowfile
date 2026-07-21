@@ -143,6 +143,7 @@ import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import DynamicParams from "./DynamicParams.vue";
 
@@ -153,6 +154,7 @@ const nodeData = ref<NodeData | null>(null);
 const algorithms = ref<MLAlgorithmSpec[]>([]);
 const namespaceTree = ref<CatalogNamespaceTree[]>([]);
 const loadingNamespaces = ref(false);
+const { isWritableNamespace } = useWritableNamespaces();
 
 // Walk the catalog tree and surface every selectable schema as
 // "Catalog > Schema". We skip the root catalog nodes themselves because
@@ -160,14 +162,21 @@ const loadingNamespaces = ref(false);
 function flattenNamespaceTree(
   tree: CatalogNamespaceTree[],
   parentLabel: string | null,
+  parentAccess: CatalogNamespaceTree["access"] = null,
 ): NamespaceOption[] {
   const out: NamespaceOption[] = [];
   for (const node of tree) {
     const label = parentLabel ? `${parentLabel} > ${node.name}` : node.name;
+    // The backend stamps direct grants only; an unstamped schema inherits its
+    // catalog's grant level.
+    const effectiveAccess = node.access ?? parentAccess;
     if (node.level >= 1) {
-      // Hide system-managed schemas so only "default" + user-created namespaces
-      // are offered as a publish target.
-      if (!(parentLabel === "General" && SYSTEM_NAMESPACE_NAMES.has(node.name))) {
+      // Hide system-managed schemas and read-only ("use" grant) schemas so only
+      // writable namespaces are offered as a publish target.
+      if (
+        !(parentLabel === "General" && SYSTEM_NAMESPACE_NAMES.has(node.name)) &&
+        isWritableNamespace({ access: effectiveAccess })
+      ) {
         out.push({
           id: node.id,
           label,
@@ -176,7 +185,7 @@ function flattenNamespaceTree(
       }
     }
     if (node.children && node.children.length) {
-      out.push(...flattenNamespaceTree(node.children, label));
+      out.push(...flattenNamespaceTree(node.children, label, effectiveAccess));
     }
   }
   return out;

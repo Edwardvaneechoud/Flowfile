@@ -171,6 +171,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
@@ -202,6 +203,9 @@ const { saveSettings, pushNodeData } = useNodeSettings({
 });
 
 const catalogNamespaces = ref<{ id: number; label: string; full: string }[]>([]);
+// System-stripped but unpruned — for restoring a configured target the pruned list hides.
+const allCatalogNamespaces = ref<{ id: number; label: string; full: string }[]>([]);
+const { pruneNonWritable } = useWritableNamespaces();
 
 // Keep the portable name in sync with the numeric selection. ``namespace_full_name`` ("catalog.schema")
 // is what survives recreation on another machine; the id is install-local. Mirrors the catalog reader.
@@ -217,8 +221,24 @@ function onNamespaceChange(id: number | null) {
 function reconcileNamespaceSelection() {
   const settings = nodeData.value?.catalog_write_settings;
   if (!settings || settings.namespace_id != null || !settings.namespace_full_name) return;
-  const match = catalogNamespaces.value.find((ns) => ns.full === settings.namespace_full_name);
+  const match = allCatalogNamespaces.value.find((ns) => ns.full === settings.namespace_full_name);
   if (match) settings.namespace_id = match.id;
+}
+
+// A pre-configured target outside the writable list (manage-granted table in a
+// read-only namespace, or access revoked after configuration) must keep rendering
+// with its label and stay re-selectable; the backend gates any actual retarget.
+function ensureConfiguredOption() {
+  const settings = nodeData.value?.catalog_write_settings;
+  if (!settings) return;
+  const current = allCatalogNamespaces.value.find(
+    (ns) =>
+      ns.id === settings.namespace_id ||
+      (settings.namespace_full_name != null && ns.full === settings.namespace_full_name),
+  );
+  if (current && !catalogNamespaces.value.some((ns) => ns.id === current.id)) {
+    catalogNamespaces.value.push(current);
+  }
 }
 
 // Tab state — determines whether we're in physical write or virtual mode
@@ -353,25 +373,34 @@ async function fetchLazinessCheck() {
   }
 }
 
+function collectSchemaOptions(tree: { name: string; children?: { id: number; name: string }[] }[]) {
+  const options: { id: number; label: string; full: string }[] = [];
+  for (const catalog of tree) {
+    for (const schema of catalog.children ?? []) {
+      // Hide system-managed schemas so only "default" + user-created
+      // namespaces are offered as a write target.
+      if (catalog.name === "General" && SYSTEM_NAMESPACE_NAMES.has(schema.name)) continue;
+      options.push({
+        id: schema.id,
+        label: `${catalog.name} / ${schema.name}`,
+        full: `${catalog.name}.${schema.name}`,
+      });
+    }
+  }
+  return options;
+}
+
 onMounted(async () => {
   try {
-    const tree = await CatalogApi.getNamespaceTree();
-    for (const catalog of tree) {
-      for (const schema of catalog.children ?? []) {
-        // Hide system-managed schemas so only "default" + user-created
-        // namespaces are offered as a write target.
-        if (catalog.name === "General" && SYSTEM_NAMESPACE_NAMES.has(schema.name)) continue;
-        catalogNamespaces.value.push({
-          id: schema.id,
-          label: `${catalog.name} / ${schema.name}`,
-          full: `${catalog.name}.${schema.name}`,
-        });
-      }
-    }
+    const fetched = await CatalogApi.getNamespaceTree();
+    allCatalogNamespaces.value = collectSchemaOptions(fetched);
+    // Read-only ("use" grant) schemas are pruned — the backend refuses writes there.
+    catalogNamespaces.value = collectSchemaOptions(pruneNonWritable(fetched));
   } catch {
     // Catalog not available
   }
   reconcileNamespaceSelection();
+  ensureConfiguredOption();
 });
 
 async function loadNodeData(nodeId: number) {
@@ -419,6 +448,7 @@ async function loadNodeData(nodeId: number) {
   }
 
   reconcileNamespaceSelection();
+  ensureConfiguredOption();
   dataLoaded.value = true;
 }
 

@@ -64,6 +64,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import type {
   CatalogVisualization,
   VisualizationCreatePayload,
@@ -178,7 +179,7 @@ const save = async () => {
     ElMessage.success(`Saved "${saved.name}"`);
     emit("saved", saved);
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to save visualization"));
   } finally {
     saving.value = false;
   }
