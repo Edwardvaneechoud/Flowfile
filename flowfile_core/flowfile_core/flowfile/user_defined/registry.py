@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from flowfile_core.configs.settings import FLOWFILE_CUSTOM_NODE_HOT_RELOAD
 from flowfile_core.flowfile.node_designer.parsing import NodeSourceError, scan_node_source
 from flowfile_core.flowfile.user_defined.mounts import load_mounts
 from flowfile_core.flowfile.user_defined.templates import manifest_to_template
@@ -251,33 +252,55 @@ class CustomNodeRegistry:
             target.exec_error = source.exec_error
             target.template = source.template
 
+    def _file_changed(self, entry: LoadedNode) -> bool:
+        """Lock-free: has the file's mtime moved since we scanned it? (hot-reload off ⇒ False)."""
+        if not FLOWFILE_CUSTOM_NODE_HOT_RELOAD:
+            return False
+        try:
+            return entry.file_path.stat().st_mtime != entry.mtime
+        except OSError:
+            return False
+
+    def _revalidate_locked(self, current: LoadedNode) -> LoadedNode:
+        """Under ``_exec_lock``: reload ``current`` if its file changed on disk (mtime then sha256)."""
+        hot = bool(FLOWFILE_CUSTOM_NODE_HOT_RELOAD)
+        if not hot and current.node_class is not None:
+            return current
+        try:
+            on_disk_mtime = current.file_path.stat().st_mtime
+        except OSError:
+            return current  # vanished mid-edit: serve last-known-good
+        if current.node_class is not None and on_disk_mtime == current.mtime:
+            return current
+        try:
+            raw = current.file_path.read_bytes()
+        except OSError:
+            return current
+        if hashlib.sha256(raw).hexdigest() == current.source_hash:
+            with self._lock:
+                current.mtime = on_disk_mtime  # a touch, not an edit
+            return current
+        return self.load_file(current.file_path, mount_path=current.mount_path)
+
     def ensure_class(self, entry: LoadedNode) -> type[CustomNodeBase]:
         """Exec the entry's module and return its node class, caching the result.
 
-        Scanning is AST-only, so this is the single point where user node code
-        executes inside core — call it only from placement-shaped sites (drawer,
-        flow build, publish, code export). Raises ``CustomNodeExecError`` on
-        failure; the failure is cached until the entry is replaced
-        (save / install / rescan / mount change).
+        The single point where user node code executes inside core — call it only
+        from placement-shaped sites. Raises ``CustomNodeExecError`` on failure
+        (cached until the entry is replaced by save / install / rescan / mount
+        change, or an on-disk edit when ``FLOWFILE_CUSTOM_NODE_HOT_RELOAD`` is on).
         """
-        if entry.node_class is not None:
+        if entry.node_class is not None and not self._file_changed(entry):
             return entry.node_class
         with self._exec_lock:
             key = str(entry.file_path)
             with self._lock:
                 current = self._entries.get(key, entry)
+            current = self._revalidate_locked(current)
             if current.node_class is not None:
                 with self._lock:
                     self._sync_exec_state(current, entry)
                 return current.node_class
-            if current.error is None and current.exec_error is None:
-                # Out-of-band edits between scan and first exec: re-AST before exec.
-                try:
-                    on_disk_hash = hashlib.sha256(current.file_path.read_bytes()).hexdigest()
-                except OSError as e:
-                    raise CustomNodeExecError(f"Cannot read file: {e}") from e
-                if on_disk_hash != current.source_hash:
-                    current = self.load_file(current.file_path, mount_path=current.mount_path)
             if current.error is not None:
                 raise CustomNodeExecError(current.error)
             if current.exec_error is not None:
