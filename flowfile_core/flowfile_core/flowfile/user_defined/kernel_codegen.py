@@ -246,11 +246,21 @@ class _Section:
         for _name, _value in components.items():
             setattr(self, _name, _Component(_value))
 
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return _Component(None)
+
 
 class _Settings:
     def __init__(self, sections):
         for _name, _value in sections.items():
             setattr(self, _name, _Section(_value))
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return _Section({{}})
 
 
 _SETTINGS = _json.loads({settings_json!r})
