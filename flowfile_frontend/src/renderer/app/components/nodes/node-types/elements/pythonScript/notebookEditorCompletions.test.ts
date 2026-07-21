@@ -24,7 +24,7 @@ const mockCaps = LspApi.capabilities as unknown as ReturnType<typeof vi.fn>;
 const mockComplete = LspApi.complete as unknown as ReturnType<typeof vi.fn>;
 
 function optsFor(overrides: Partial<NotebookEditorOptions> = {}): NotebookEditorOptions {
-  return { onRun: () => {}, ...overrides };
+  return { onRun: () => undefined, ...overrides };
 }
 
 /** Run every override source against one context and concatenate the surviving options. */
@@ -49,7 +49,9 @@ beforeEach(() => {
 describe("buildNotebookCompletionSources", () => {
   it("yields exactly one row when Jedi and a prior cell both know a symbol", async () => {
     mockComplete.mockResolvedValue({
-      items: [{ label: "catalog", type: "instance", detail: "instance catalog", documentation: "" }],
+      items: [
+        { label: "catalog", type: "instance", detail: "instance catalog", documentation: "" },
+      ],
     });
     const opts = optsFor({
       getKernelId: () => "k1",

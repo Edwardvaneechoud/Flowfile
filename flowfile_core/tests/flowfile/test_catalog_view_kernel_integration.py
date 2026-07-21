@@ -103,7 +103,7 @@ class TestKernelReadsCatalogView:
         manager, kernel_id = kernel_manager_with_core
 
         code = f"""
-df = flowfile_ctx.read_catalog_table("{seeded_view}").collect()
+df = flowfile_ctx.read_catalog_table("{seeded_view}", schema="ViewE2ESch").collect()
 print("VIEW_ROWS:", df.height)
 print("VIEW_NAMES:", sorted(df["name"].to_list()))
 """
