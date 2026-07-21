@@ -153,6 +153,25 @@ export async function getNodeTemplateByItem(item: string): Promise<NodeTemplate 
   }
 }
 
+function missingNodeTemplate(node: NodeInput): NodeTemplate {
+  return {
+    name: node.name || node.item,
+    color: node.color || "#9ca3af",
+    item: node.item,
+    input: node.input ?? node.input_names?.length ?? 1,
+    output: node.output ?? node.output_names?.length ?? 1,
+    image: node.image || "user-defined-icon.png",
+    multi: node.multi ?? true,
+    node_group: node.node_group || "custom",
+    prod_ready: node.prod_ready ?? true,
+    drawer_title: node.drawer_title || node.item,
+    drawer_intro: node.drawer_intro || "This node type is not available on this machine.",
+    custom_node: true,
+    output_names: node.output_names,
+    dynamic_inputs: node.dynamic_inputs,
+  };
+}
+
 /**
  * Gets a Vue component for a node
  */
@@ -407,8 +426,19 @@ export default function useDragAndDrop() {
   };
 
   async function getNodeToAdd(node: NodeInput): Promise<Node> {
-    const nodeTemplate = await getNodeTemplateByItem(node.item);
-    const component = await getComponent(nodeTemplate || node.item);
+    let nodeTemplate = await getNodeTemplateByItem(node.item);
+    let component: any;
+    try {
+      component = await getComponent(nodeTemplate || node.item);
+    } catch (error) {
+      // Unavailable node type: show the not-installed placeholder so the rest of the flow still loads.
+      console.warn(
+        `Node type "${node.item}" is unavailable; rendering a not-installed placeholder.`,
+        error,
+      );
+      nodeTemplate = missingNodeTemplate(node);
+      component = await getComponent(nodeTemplate);
+    }
 
     // The per-instance NodeInput carries input_names/output_names; the template
     // flag covers dynamic nodes saved before a subflow was picked.

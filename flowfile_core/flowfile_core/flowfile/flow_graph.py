@@ -2184,7 +2184,7 @@ class FlowGraph:
             code = generate_kernel_script(
                 node_source=registry_entry.source_text,
                 class_name=registry_entry.class_name,
-                settings_values=user_defined_node_settings.settings or custom_node._extract_settings_values(),
+                settings_values=custom_node._extract_settings_values(),
                 output_names=output_names,
                 number_of_inputs=custom_node.number_of_inputs,
             )
