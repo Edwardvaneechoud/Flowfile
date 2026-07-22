@@ -47,6 +47,7 @@
                 ref="filePicker"
                 v-model="selectedNamespaceId"
                 :hide-system-namespaces="true"
+                :writable-only="true"
               />
             </div>
           </div>
@@ -72,6 +73,7 @@
                 ref="catalogPicker"
                 v-model="selectedNamespaceId"
                 :hide-system-namespaces="true"
+                :writable-only="true"
               />
             </div>
           </div>

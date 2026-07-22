@@ -162,6 +162,8 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { validateCatalogName } from "../../composables/catalogNameValidation";
 import SqlExplorePanel from "./SqlExplorePanel.vue";
 import type { SqlQueryResult } from "../../types";
@@ -300,15 +302,7 @@ const canSaveAsVirtual = computed(() => result.value !== null && !result.value.e
 
 const sqlNameError = computed(() => validateCatalogName(saveForm.name, "Table") ?? "");
 
-const schemaNamespaces = computed(() => {
-  const items: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      items.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return items;
-});
+const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
 
 watch(showSaveDialog, (val) => {
   if (val) {
@@ -334,7 +328,7 @@ async function saveAsVirtualTable() {
     showSaveDialog.value = false;
     await Promise.all([catalogStore.loadTree(), catalogStore.loadAllTables()]);
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to create virtual table");
+    ElMessage.error(catalogSaveErrorMessage(e, "Failed to create virtual table"));
   } finally {
     savingVirtual.value = false;
   }

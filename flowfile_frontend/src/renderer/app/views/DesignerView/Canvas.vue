@@ -262,8 +262,7 @@ const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGrou
 const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
 const drawerHeightOverride = (d: DrawerDef): number | undefined => {
   if (d.id === "bottomDock") return tablePreviewHeight.value;
-  if (d.side === "right")
-    return Math.max(200, availableHeight.value - tablePreviewHeight.value);
+  if (d.side === "right") return Math.max(200, availableHeight.value - tablePreviewHeight.value);
   return undefined;
 };
 const DATA_ACTIONS_WIDTH = 230;

@@ -94,6 +94,8 @@ import type {
 import type { SqlQueryResult } from "../../types";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 
 const catalogStore = useCatalogStore();
@@ -228,17 +230,7 @@ const saveForm = reactive({
 });
 const exportedCharts = ref<Record<string, any>[]>([]);
 
-// Flatten the namespace tree to a list of schema-level entries the user
-// can attach a chart to. Mirrors the existing virtual-table save form.
-const schemaNamespaces = computed(() => {
-  const items: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      items.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return items;
-});
+const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
 
 async function openSaveDialog() {
   if (!props.sourceQuery || !vueGraphicWalkerRef.value) return;
@@ -286,7 +278,7 @@ async function onConfirmSave() {
     // catalog/schema right away.
     catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to save chart"));
   } finally {
     saving.value = false;
   }

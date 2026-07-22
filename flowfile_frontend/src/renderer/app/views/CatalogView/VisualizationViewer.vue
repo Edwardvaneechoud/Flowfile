@@ -48,10 +48,11 @@
             @change="onNamespaceChange"
           >
             <el-option
-              v-for="ns in schemaNamespaces"
+              v-for="ns in namespaceOptions"
               :key="ns.id"
               :label="ns.label"
               :value="ns.id"
+              :disabled="ns.disabled"
             />
           </el-select>
         </div>
@@ -126,9 +127,12 @@ import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
 import type { CatalogVisualization, VisualizationUpdatePayload } from "../../types";
+import { findNamespacePath } from "../../types/catalog.types";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 
 const showShareDialog = ref(false);
 const { canShare, canManageGrants } = useResourceSharing();
@@ -172,15 +176,24 @@ const { computation: computeOnWorker, lastError: computeError } = useGraphicWalk
   "saved",
 );
 
-// Flat schema-level list for the namespace picker. Mirrors the SQL save dialog.
-const schemaNamespaces = computed(() => {
-  const items: { id: number; label: string }[] = [];
-  for (const cat of store.tree) {
-    for (const schema of cat.children) {
-      items.push({ id: schema.id, label: `${cat.name} / ${schema.name}` });
-    }
+// Flat schema-level list for the namespace picker; read-only grants excluded.
+const { writableSchemaNamespaces } = useWritableNamespaces();
+
+// The viz's current namespace may be read-only or system-managed and thus absent
+// from the writable list — keep it rendered with its label (disabled) instead of
+// showing a raw numeric id.
+const namespaceOptions = computed(() => {
+  const options = writableSchemaNamespaces.value.map((o) => ({ ...o, disabled: false }));
+  const current = namespaceDraft.value;
+  if (current != null && !options.some((o) => o.id === current)) {
+    const path = findNamespacePath(store.tree, current);
+    options.push({
+      id: current,
+      label: path.length ? path.join(" / ") : `Namespace ${current}`,
+      disabled: true,
+    });
   }
-  return items;
+  return options;
 });
 
 const plainFields = computed(() => toPlainJson(fields.value));
@@ -271,7 +284,7 @@ async function onSave() {
     ElMessage.success("Saved chart updates");
     store.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to save visualization"));
   } finally {
     saving.value = false;
   }
@@ -295,7 +308,7 @@ async function onNamespaceChange(value: number | null | undefined) {
   } catch (err: any) {
     // Roll the picker back if the update failed.
     namespaceDraft.value = viz.value.namespace_id ?? null;
-    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to move visualization"));
   } finally {
     saving.value = false;
   }

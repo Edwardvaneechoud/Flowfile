@@ -105,6 +105,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { fetchKafkaConnections, fetchKafkaTopics, createKafkaSync } from "./api";
 import type { KafkaConnectionOut, KafkaTopicInfo } from "./KafkaConnectionTypes";
 import { ElMessage } from "element-plus";
@@ -136,15 +138,7 @@ const loadingConnections = ref(false);
 const availableTopics = ref<KafkaTopicInfo[]>([]);
 const loadingTopics = ref(false);
 
-const schemaNamespaces = computed(() => {
-  const result: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return result;
-});
+const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
 
 const isValid = computed(() => {
   return (
@@ -226,7 +220,7 @@ async function submit() {
       catalogStore.loadStats(),
     ]);
   } catch (e: any) {
-    ElMessage.error(e?.message ?? "Failed to create sync");
+    ElMessage.error(catalogSaveErrorMessage(e, "Failed to create sync"));
   } finally {
     submitting.value = false;
   }

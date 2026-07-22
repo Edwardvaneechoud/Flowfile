@@ -5,7 +5,8 @@
   <div class="ns-tree-item">
     <div
       class="ns-row"
-      :class="{ selected: selectedId === node.id, selectable: node.level === 1 }"
+      :class="{ selected: selectedId === node.id, selectable: isSelectable, disabled: isReadOnly }"
+      :title="isReadOnly ? 'Read-only — you need edit (manage) access to save here' : undefined"
       @click="handleRowClick"
     >
       <i
@@ -20,6 +21,7 @@
         class="ns-icon"
       ></i>
       <span class="ns-name">{{ node.name }}</span>
+      <i v-if="isReadOnly" class="fa-solid fa-lock ns-lock"></i>
     </div>
     <div v-if="expanded && node.children && node.children.length > 0" class="ns-children">
       <namespace-tree-item
@@ -28,6 +30,8 @@
         :node="child"
         :selected-id="selectedId"
         :initially-expanded="initiallyExpanded"
+        :writable-only="writableOnly"
+        :inherited-access="node.access ?? inheritedAccess"
         @select="$emit('select', $event)"
       />
     </div>
@@ -35,30 +39,49 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { NamespaceTree } from "../../../types";
+import type { AccessInfo } from "../../../types/sharing.types";
+import { useWritableNamespaces } from "../../../composables/useWritableNamespaces";
 
 const props = defineProps<{
   node: NamespaceTree;
   selectedId: number | null;
   initiallyExpanded?: boolean;
+  // Save-target mode: grey out and block selecting read-only (use-grant) schemas.
+  // Leave unset for browse/read pickers (Open dialog) — a use grant is a valid read target.
+  writableOnly?: boolean;
+  // Parent namespace's access stamp: the backend stamps direct grants only, so an
+  // unstamped schema inherits its catalog's grant level.
+  inheritedAccess?: AccessInfo | null;
 }>();
 
 const emit = defineEmits<{
   (e: "select", namespaceId: number): void;
 }>();
 
+const { isWritableNamespace } = useWritableNamespaces();
+
 const expanded = ref(props.initiallyExpanded ?? false);
+
+// In save-target mode, read-only schemas stay visible so the hierarchy is
+// legible, but are greyed out and not selectable.
+const isReadOnly = computed(
+  () =>
+    (props.writableOnly ?? false) &&
+    props.node.level === 1 &&
+    !isWritableNamespace({ access: props.node.access ?? props.inheritedAccess }),
+);
+const isSelectable = computed(() => props.node.level === 1 && !isReadOnly.value);
 
 const toggle = () => {
   expanded.value = !expanded.value;
 };
 
 const handleRowClick = () => {
-  // Only allow selection on schema-level (level 1) namespaces
-  if (props.node.level === 1) {
+  if (isSelectable.value) {
     emit("select", props.node.id);
-  } else {
+  } else if (props.node.level !== 1) {
     toggle();
   }
 };
@@ -84,6 +107,16 @@ const handleRowClick = () => {
 
 .ns-row.selectable:hover {
   background-color: var(--color-background-tertiary);
+}
+
+.ns-row.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ns-lock {
+  font-size: 10px;
+  color: var(--color-text-muted);
 }
 
 .ns-row.selected {
