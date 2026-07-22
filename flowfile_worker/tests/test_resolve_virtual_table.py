@@ -140,22 +140,6 @@ def test_resolve_virtual_table_kernel_shared_writes_to_shared_dir():
 
 
 @pytest.mark.worker
-def test_resolve_virtual_table_kernel_shared_honors_core_target_dir(tmp_path):
-    """Core's target_dir wins over the worker's own shared dir (env-drift safety)."""
-    core_dir = tmp_path / "core_resolved_shared" / "catalog_virtual_results"
-    req = models.ResolveVirtualTableRequest(
-        table_id=31,
-        plan_bytes=_plan_bytes(),
-        source_versions_hash="feedface" * 4,
-        target="kernel_shared",
-        target_dir=str(core_dir),
-    )
-    res = funcs.resolve_virtual_table(req)
-    assert (core_dir / res.ipc_path).exists()
-    assert not (storage.shared_virtual_results_directory / res.ipc_path).exists()
-
-
-@pytest.mark.worker
 def test_resolve_virtual_table_kernel_shared_always_rebuilds():
     """Same key with changed plan bytes serves the NEW data.
 

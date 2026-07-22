@@ -187,14 +187,11 @@ def managed_kernel(
     original_shared_dir = None
     original_kernel_image = os.environ.get("FLOWFILE_KERNEL_IMAGE")
 
-    # 1 — Create temp shared volume FIRST (needed for storage config)
-    shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
-
-    # Configure storage to use this shared directory (must be done before Core starts)
-    # This ensures Core and kernel use the same paths for artifact staging
+    # 1 — Reuse the session-pinned shared dir; a fresh one here would desync the running worker.
     original_shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+    shared_dir = original_shared_dir or str(Path(tempfile.mkdtemp(prefix="kernel_test_shared_")).resolve())
     os.environ["FLOWFILE_SHARED_DIR"] = shared_dir
-    logger.info("Set FLOWFILE_SHARED_DIR=%s for artifact staging", shared_dir)
+    logger.info("Using FLOWFILE_SHARED_DIR=%s for the kernel shared volume", shared_dir)
 
     # Reset storage singletons so they pick up the new path
     from shared.storage_config import FlowfileStorage
@@ -282,10 +279,11 @@ def managed_kernel(
         # Belt-and-suspenders: force-remove the container
         _remove_container(container_name)
 
-        # Clean up shared dir
-        import shutil
+        # Only remove a dir we minted; a session-pinned one outlives us
+        if original_shared_dir is None:
+            import shutil
 
-        shutil.rmtree(shared_dir, ignore_errors=True)
+            shutil.rmtree(shared_dir, ignore_errors=True)
 
         # Stop Core server if we started it
         if core_started_by_us:
