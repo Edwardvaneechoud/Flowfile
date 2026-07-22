@@ -341,6 +341,7 @@ class ResolveVirtualTableRequest(BaseModel):
     source_versions_hash: str
     # "kernel_shared" writes into the kernel-mounted shared volume so Docker kernels can scan the result.
     target: Literal["virtual_results", "kernel_shared"] = "virtual_results"
+    target_dir: str | None = None
 
 
 class ResolveVirtualTableResponse(BaseModel):

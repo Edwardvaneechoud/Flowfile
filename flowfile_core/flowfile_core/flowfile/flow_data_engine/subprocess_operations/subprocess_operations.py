@@ -315,6 +315,7 @@ def trigger_resolve_virtual_table(
     plan_bytes: bytes,
     source_versions_hash: str,
     target: str = "virtual_results",
+    target_dir: str | None = None,
 ) -> dict:
     """Ask the worker to materialise a flow-virtual table to its IPC cache.
 
@@ -322,7 +323,8 @@ def trigger_resolve_virtual_table(
     deserialises in a spawned child, collects, and writes IPC. Idempotent on
     ``(table_id, source_versions_hash)``. *target* selects the destination
     directory: ``"virtual_results"`` (worker-private cache, the default) or
-    ``"kernel_shared"`` (kernel-mounted shared volume).
+    ``"kernel_shared"`` (kernel-mounted shared volume; pass *target_dir*,
+    core's resolved shared dir, so the worker writes where core mounted it).
     """
     from base64 import b64encode
 
@@ -332,6 +334,8 @@ def trigger_resolve_virtual_table(
         "source_versions_hash": source_versions_hash,
         "target": target,
     }
+    if target_dir is not None:
+        payload["target_dir"] = target_dir
     response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
     if not response.ok:
         raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")

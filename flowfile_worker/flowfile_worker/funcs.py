@@ -1150,7 +1150,10 @@ def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.Reso
     data does — an exists() check would serve the first snapshot forever.
     """
     if req.target == "kernel_shared":
-        target_dir = storage.shared_virtual_results_directory
+        if req.target_dir and Path(req.target_dir).is_absolute():
+            target_dir = Path(req.target_dir)
+        else:
+            target_dir = storage.shared_virtual_results_directory
     else:
         target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)

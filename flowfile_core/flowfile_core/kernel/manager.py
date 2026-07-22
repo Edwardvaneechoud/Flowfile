@@ -381,11 +381,12 @@ class KernelManager:
         # a network call (the actual pull runs on a thread without the lock).
         self._pull_state: dict[str, str] = {}
         self._pull_state_lock = threading.Lock()
-        self._shared_volume = shared_volume_path or str(storage.cache_directory)
+        # resolve() so the kernel's host-path prefix translation matches the resolved paths core returns
+        self._shared_volume = str(Path(shared_volume_path or storage.cache_directory).resolve())
         # Catalog tables (Delta-format) live outside the shared volume. The
         # kernel needs a separate mount so ``flowfile_ctx.read_catalog_table`` /
         # ``write_catalog_table`` can read/write Delta directories directly.
-        self._catalog_tables_dir = str(storage.catalog_tables_directory)
+        self._catalog_tables_dir = str(storage.catalog_tables_directory.resolve())
 
         # Docker-in-Docker settings: when core itself runs in a container,
         # kernel containers must use a named volume (not a bind mount) and

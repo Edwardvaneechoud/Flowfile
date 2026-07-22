@@ -9,6 +9,7 @@ real IPC file so the path/row-count contract is exercised end-to-end without a w
 import hashlib
 import io
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
@@ -104,16 +105,17 @@ def fake_worker(monkeypatch) -> list[dict]:
     """Replace the worker trigger with a fake that records args and writes real IPC."""
     calls: list[dict] = []
 
-    def fake_trigger(table_id, plan_bytes, source_versions_hash, target="virtual_results"):
+    def fake_trigger(table_id, plan_bytes, source_versions_hash, target="virtual_results", target_dir=None):
         calls.append(
             {
                 "table_id": table_id,
                 "plan_bytes": plan_bytes,
                 "source_versions_hash": source_versions_hash,
                 "target": target,
+                "target_dir": target_dir,
             }
         )
-        target_dir = storage.shared_virtual_results_directory
+        target_dir = Path(target_dir) if target_dir else storage.shared_virtual_results_directory
         target_dir.mkdir(parents=True, exist_ok=True)
         name = f"fvt-{table_id}-{source_versions_hash[:16]}.arrow"
         df = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes)).collect()

@@ -497,7 +497,13 @@ class VirtualTableService:
 
         key = hashlib.sha256(plan_bytes).hexdigest()
         try:
-            result = trigger_resolve_virtual_table(table_id, plan_bytes, key, target="kernel_shared")
+            result = trigger_resolve_virtual_table(
+                table_id,
+                plan_bytes,
+                key,
+                target="kernel_shared",
+                target_dir=str(storage.shared_virtual_results_directory),
+            )
         except (RequestException, RuntimeError) as e:
             raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e
         ipc_path = validate_catalog_path(result["ipc_path"], storage.shared_virtual_results_directory)
