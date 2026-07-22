@@ -59,6 +59,10 @@ def _bare_manager() -> KernelManager:
         mgr._catalog_mount_target = None
         mgr._pull_state = {}
         mgr._pull_state_lock = threading.Lock()
+        mgr._start_flights = {}
+        mgr._start_flights_lock = threading.Lock()
+        mgr._build_locks = {}
+        mgr._build_locks_lock = threading.Lock()
     return mgr
 
 
@@ -623,13 +627,18 @@ class TestStartupSequence:
         )
         monkeypatch.setattr(
             KernelManager,
+            "_remove_orphan_build_containers",
+            lambda self: called.append("build_gc"),
+        )
+        monkeypatch.setattr(
+            KernelManager,
             "_remove_orphan_derived_images",
             lambda self: called.append("gc"),
         )
 
         KernelManager(shared_volume_path="/tmp/x")
 
-        assert called == ["restore", "reclaim", "gc"]
+        assert called == ["restore", "reclaim", "build_gc", "gc"]
 
 
 # Registry-mutation concurrency (N3): _kernels_lock now guards the launch-path

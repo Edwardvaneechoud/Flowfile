@@ -99,15 +99,16 @@ class TestSingleFlightStart:
         n = 8
         barrier = threading.Barrier(n)
         errors: list[BaseException] = []
+        results: list[KernelInfo] = []
 
-        def _ensure() -> None:
+        def _start() -> None:
             barrier.wait()
             try:
-                mgr._ensure_running_sync("ml")
+                results.append(mgr.start_kernel_sync("ml"))
             except BaseException as exc:  # noqa: BLE001
                 errors.append(exc)
 
-        threads = [threading.Thread(target=_ensure) for _ in range(n)]
+        threads = [threading.Thread(target=_start) for _ in range(n)]
         for t in threads:
             t.start()
         for t in threads:
@@ -117,6 +118,8 @@ class TestSingleFlightStart:
         assert mgr._docker.containers.run.call_count == 1
         assert kernel.state == KernelState.IDLE
         assert kernel.container_id == "c-1"
+        assert len(results) == n
+        assert all(r is kernel for r in results)
         assert not mgr._start_flights
 
     def test_followers_receive_leader_error_without_retry(self):
@@ -231,6 +234,20 @@ class TestConflictAdoption:
         assert kernel.port == 19005
         existing.start.assert_not_called()
         existing.remove.assert_not_called()
+
+    def test_409_adopts_running_container_dind_mode(self):
+        kernel = _kernel(port=None)
+        mgr = _start_ready_manager(kernel)
+        mgr._kernel_volume = "flowfile-internal-storage"
+        existing = _fake_container("adopted-dind", status="running")
+        mgr._docker.containers.run.side_effect = _api_error(409)
+        mgr._docker.containers.get.return_value = existing
+
+        result = mgr.start_kernel_sync("ml")
+
+        assert result.state == KernelState.IDLE
+        assert kernel.container_id == "adopted-dind"
+        assert kernel.port is None
 
     def test_409_starts_stopped_container(self):
         kernel = _kernel()
@@ -369,10 +386,51 @@ class TestResolverContainerCleanup:
         assert mgr._resolve_installed_versions("tag:1", ["matplotlib"]) == []
         container.remove.assert_called_once_with(force=True)
 
+    def test_resolver_removed_on_wait_timeout(self):
+        import requests
+
+        mgr = _bare_manager()
+        container = MagicMock()
+        container.wait.side_effect = requests.exceptions.ReadTimeout("pip list stuck")
+        mgr._docker.containers.create.return_value = container
+
+        assert mgr._resolve_installed_versions("tag:1", ["matplotlib"]) == []
+        container.remove.assert_called_once_with(force=True)
+
     def test_resolver_create_failure_is_best_effort(self):
         mgr = _bare_manager()
         mgr._docker.containers.create.side_effect = _api_error(500)
         assert mgr._resolve_installed_versions("tag:1", ["matplotlib"]) == []
+
+
+class TestReconcileVsFlight:
+    def test_reconcile_skips_kernel_with_active_flight(self, monkeypatch):
+        """A DB reconcile must not prune a kernel whose start flight is running."""
+        from concurrent.futures import Future
+        from contextlib import contextmanager
+
+        mgr = _bare_manager()
+        kernel = _kernel()
+        kernel.container_id = "live-1"
+        mgr._kernels["ml"] = kernel
+        mgr._kernel_owners["ml"] = 1
+        mgr._start_flights["ml"] = Future()
+
+        @contextmanager
+        def _fake_db():
+            yield None
+
+        monkeypatch.setattr("flowfile_core.database.connection.get_db_context", _fake_db)
+        monkeypatch.setattr("flowfile_core.kernel.persistence.get_all_kernels", lambda db: [])
+
+        mgr.reconcile_configs_from_db()
+        assert "ml" in mgr._kernels
+        mgr._docker.containers.get.assert_not_called()
+
+        mgr._start_flights.pop("ml")
+        mgr.reconcile_configs_from_db()
+        assert "ml" not in mgr._kernels
+        mgr._docker.containers.get.assert_called_once_with("live-1")
 
 
 class TestStartupReconcile:

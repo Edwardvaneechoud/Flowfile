@@ -101,10 +101,11 @@ async def shutdown_handler(app: FastAPI):
 def _shutdown_kernels():
     """Stop all running kernel containers during shutdown."""
     try:
-        from flowfile_core.kernel import get_kernel_manager
+        from flowfile_core.kernel import get_kernel_manager_if_initialized
 
-        manager = get_kernel_manager()
-        manager.shutdown_all()
+        manager = get_kernel_manager_if_initialized()
+        if manager is not None:
+            manager.shutdown_all()
     except Exception as exc:
         print(f"Error shutting down kernels: {exc}")
 

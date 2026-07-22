@@ -5,7 +5,9 @@ crash-safe manager boot with leftover containers."""
 from __future__ import annotations
 
 import threading
+import time
 
+import httpx
 import pytest
 
 from flowfile_core.kernel.manager import KernelManager
@@ -15,20 +17,34 @@ pytestmark = pytest.mark.kernel
 
 
 def _containers_named(manager: KernelManager, kernel_id: str):
-    return manager._docker.containers.list(all=True, filters={"name": f"flowfile-kernel-{kernel_id}"})
+    # Docker's name filter matches substrings; compare exactly so the
+    # "integration-test" kernel doesn't also count "integration-test-core".
+    name = f"flowfile-kernel-{kernel_id}"
+    candidates = manager._docker.containers.list(all=True, filters={"name": name})
+    return [c for c in candidates if c.name == name]
 
 
 def _assert_executes(manager: KernelManager, kernel_id: str, node_id: int) -> None:
-    result = manager.execute_sync(
-        kernel_id,
-        ExecuteRequest(
-            node_id=node_id,
-            code="x = 1 + 1",
-            input_paths={},
-            output_dir=f"/shared/test_race_{node_id}",
-        ),
-    )
-    assert result.success, result.error
+    # A just-adopted container can drop the first connection while the kernel
+    # app finishes booting; retry briefly before judging liveness.
+    last_exc: Exception | None = None
+    for _ in range(3):
+        try:
+            result = manager.execute_sync(
+                kernel_id,
+                ExecuteRequest(
+                    node_id=node_id,
+                    code="x = 1 + 1",
+                    input_paths={},
+                    output_dir=f"/shared/test_race_{node_id}",
+                ),
+            )
+            assert result.success, result.error
+            return
+        except (httpx.HTTPError, OSError) as exc:
+            last_exc = exc
+            time.sleep(2)
+    raise AssertionError(f"kernel '{kernel_id}' did not execute after adoption: {last_exc}")
 
 
 class TestConcurrentKernelStart:

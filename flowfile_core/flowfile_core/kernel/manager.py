@@ -8,6 +8,8 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 import docker
@@ -318,6 +320,8 @@ _BASE_PORT = 19000
 _PORT_RANGE = 1000  # 19000-19999
 _HEALTH_TIMEOUT = 120
 _HEALTH_POLL_INTERVAL = 2
+# Follower wait allowance beyond health_timeout (covers a derived-image bake).
+_START_FLIGHT_GRACE = 600
 
 
 def _is_docker_mode() -> bool:
@@ -381,6 +385,12 @@ class KernelManager:
         # a network call (the actual pull runs on a thread without the lock).
         self._pull_state: dict[str, str] = {}
         self._pull_state_lock = threading.Lock()
+        # Single-flight starts: kernel_id -> Future shared by concurrent callers.
+        self._start_flights: dict[str, Future] = {}
+        self._start_flights_lock = threading.Lock()
+        # Per-derived-tag build locks so concurrent starts bake an image once.
+        self._build_locks: dict[str, threading.Lock] = {}
+        self._build_locks_lock = threading.Lock()
         self._shared_volume = shared_volume_path or str(storage.cache_directory)
         # Catalog tables (Delta-format) live outside the shared volume. The
         # kernel needs a separate mount so ``flowfile_ctx.read_catalog_table`` /
@@ -440,6 +450,7 @@ class KernelManager:
 
         self._restore_kernels_from_db()
         self._reclaim_running_containers()
+        self._remove_orphan_build_containers()
         self._remove_orphan_derived_images()
 
     @property
@@ -691,7 +702,8 @@ class KernelManager:
 
         A running kernel keeps its live container — only a STOPPED kernel's cached config is
         refreshed to match the imported definition (a running container still reflects the config it
-        was started with)."""
+        was started with). Kernels with a start flight in progress are skipped entirely so the
+        reconcile can't prune or reconfigure a kernel out from under its flight leader."""
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import get_all_kernels
@@ -708,7 +720,11 @@ class KernelManager:
                 owner_rows = {kid: v for kid, v in all_rows.items() if v[2] == owner_id}
                 # Drop the owner's kernels that are no longer in the DB (pruned); never touch other owners.
                 for kernel_id in list(self._kernels):
-                    if self._kernel_owners.get(kernel_id) == owner_id and kernel_id not in owner_rows:
+                    if (
+                        self._kernel_owners.get(kernel_id) == owner_id
+                        and kernel_id not in owner_rows
+                        and not self._has_active_flight(kernel_id)
+                    ):
                         self._cleanup_container(kernel_id)
                         self._kernels.pop(kernel_id, None)
                         self._kernel_owners.pop(kernel_id, None)
@@ -717,7 +733,7 @@ class KernelManager:
             else:
                 # Full reconcile (startup): drop any kernel absent from the DB entirely.
                 for kernel_id in list(self._kernels):
-                    if kernel_id not in all_rows:
+                    if kernel_id not in all_rows and not self._has_active_flight(kernel_id):
                         self._cleanup_container(kernel_id)
                         self._kernels.pop(kernel_id, None)
                         self._kernel_owners.pop(kernel_id, None)
@@ -741,7 +757,7 @@ class KernelManager:
                         custom_image=config.custom_image,
                     )
                     self._kernel_owners[kernel_id] = user_id
-                elif existing.state == KernelState.STOPPED:
+                elif existing.state == KernelState.STOPPED and not self._has_active_flight(kernel_id):
                     existing.name = config.name
                     existing.packages = config.packages
                     existing.resolved_packages = resolved_packages
@@ -890,9 +906,10 @@ class KernelManager:
     # Port allocation
 
     def _reclaim_running_containers(self) -> None:
-        """Discover running flowfile-kernel containers and reclaim their ports."""
+        """Adopt pre-existing flowfile-kernel containers on startup: running ones
+        become IDLE, stopped leftovers are recorded so the next start replaces them."""
         try:
-            containers = self._docker.containers.list(filters={"name": "flowfile-kernel-", "status": "running"})
+            containers = self._docker.containers.list(all=True, filters={"name": "flowfile-kernel-"})
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Could not list running containers: %s", exc)
             return
@@ -904,26 +921,28 @@ class KernelManager:
             kernel_id = name[len("flowfile-kernel-") :]
 
             if kernel_id in self._kernels:
-                # Determine which host port is mapped (not available in DinD mode)
-                port = None
-                if not self._kernel_volume:
-                    try:
-                        bindings = container.attrs["NetworkSettings"]["Ports"].get("9999/tcp")
-                        if bindings:
-                            port = int(bindings[0]["HostPort"])
-                    except (KeyError, IndexError, TypeError, ValueError):
-                        pass
-
-                # Kernel was restored from DB — update with runtime info
-                self._kernels[kernel_id].container_id = container.id
-                if port is not None:
-                    self._kernels[kernel_id].port = port
-                self._kernels[kernel_id].state = KernelState.IDLE
-                logger.info(
-                    "Reclaimed running kernel '%s' (container %s)",
-                    kernel_id,
-                    container.short_id,
-                )
+                kernel = self._kernels[kernel_id]
+                if container.status == "running":
+                    # Kernel was restored from DB — update with runtime info
+                    port = self._host_port_of(container) if not self._kernel_volume else None
+                    kernel.container_id = container.id
+                    if port is not None:
+                        kernel.port = port
+                    kernel.state = KernelState.IDLE
+                    logger.info(
+                        "Reclaimed running kernel '%s' (container %s)",
+                        kernel_id,
+                        container.short_id,
+                    )
+                else:
+                    # Record the leftover so the next start replaces it instead of 409ing.
+                    kernel.container_id = container.id
+                    kernel.state = KernelState.STOPPED
+                    logger.info(
+                        "Found stopped kernel container '%s' (container %s); will be replaced on next start",
+                        kernel_id,
+                        container.short_id,
+                    )
             else:
                 # Orphan container with no DB record — stop it
                 logger.warning(
@@ -935,6 +954,17 @@ class KernelManager:
                     container.remove(force=True)
                 except Exception as exc:
                     logger.warning("Error stopping orphan container '%s': %s", kernel_id, exc)
+
+    @staticmethod
+    def _host_port_of(container) -> int | None:
+        """Host port mapped to the kernel's 9999/tcp, if any (local mode only)."""
+        try:
+            bindings = container.attrs["NetworkSettings"]["Ports"].get("9999/tcp")
+            if bindings:
+                return int(bindings[0]["HostPort"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            pass
+        return None
 
     def _allocate_port(self) -> int:
         """Find the next available port in the kernel port range."""
@@ -1010,16 +1040,25 @@ class KernelManager:
 
     # Derived image build (per-kernel, packages baked in)
 
+    def _tag_build_lock(self, tag: str) -> threading.Lock:
+        with self._build_locks_lock:
+            return self._build_locks.setdefault(tag, threading.Lock())
+
     def _build_derived_image(self, kernel: KernelInfo) -> str:
         """Build a derived image with the kernel's extra packages baked in.
 
-        Reuses the existing image if it is already present locally. Returns the
-        derived image tag.
+        Reuses the existing image if it is already present locally. At most one
+        build runs per tag; concurrent callers wait and reuse the result.
+        Returns the derived image tag.
         """
         _validate_packages(kernel.packages)
         base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
         derived_tag = _derived_image_tag(kernel.id)
 
+        with self._tag_build_lock(derived_tag):
+            return self._build_derived_image_locked(kernel, base_image, derived_tag)
+
+    def _build_derived_image_locked(self, kernel: KernelInfo, base_image: str, derived_tag: str) -> str:
         try:
             self._docker.images.get(derived_tag)
             logger.info("Reusing existing derived image '%s'", derived_tag)
@@ -1089,18 +1128,27 @@ class KernelManager:
         if not package_specs:
             return []
         wanted = {_spec_to_name(s): s for s in package_specs}
+        # Explicit lifecycle so the finally removes the container on every path.
+        container = None
         try:
-            output = self._docker.containers.run(
+            container = self._docker.containers.create(
                 image_tag,
+                name=f"flowfile-pipresolve-{uuid.uuid4().hex[:12]}",
                 entrypoint=["pip"],
                 command=["list", "--format=json", "--disable-pip-version-check"],
-                remove=True,
-                stdout=True,
-                stderr=False,
             )
-        except (docker.errors.ContainerError, docker.errors.APIError, docker.errors.DockerException) as exc:
+            container.start()
+            container.wait(timeout=120)
+            output = container.logs(stdout=True, stderr=False)
+        except (docker.errors.ContainerError, docker.errors.APIError, docker.errors.DockerException, OSError) as exc:
             logger.warning("Could not inspect '%s' for resolved versions: %s", image_tag, exc)
             return []
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except docker.errors.DockerException:
+                    pass
 
         if isinstance(output, bytes):
             output = output.decode("utf-8", errors="replace")
@@ -1196,6 +1244,38 @@ class KernelManager:
                 pass
             except docker.errors.APIError as exc:
                 logger.warning("Could not remove orphan derived image '%s': %s", target, exc)
+
+    def _remove_orphan_build_containers(self) -> None:
+        """Remove pip-resolver and build-step containers left by an interrupted
+        bake; kernel containers are excluded by name so adopted ones survive."""
+        try:
+            # Skip running resolvers — they may belong to a sibling core and
+            # remove themselves when done.
+            candidates = [
+                c
+                for c in self._docker.containers.list(all=True, filters={"name": "flowfile-pipresolve-"})
+                if c.name.startswith("flowfile-pipresolve-") and c.status != "running"
+            ]
+            candidates += [
+                c
+                for c in self._docker.containers.list(
+                    all=True,
+                    filters={"label": f"{_IMAGE_LABEL_CORE_INSTANCE}={self._core_instance_id}"},
+                )
+                if not c.name.startswith("flowfile-kernel-") and c.status != "running"
+            ]
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.warning("Could not list containers for build-orphan GC: %s", exc)
+            return
+
+        for container in candidates:
+            try:
+                container.remove(force=True)
+                logger.info("Removed orphan build container '%s'", container.name)
+            except docker.errors.NotFound:
+                pass
+            except (docker.errors.APIError, docker.errors.DockerException) as exc:
+                logger.warning("Could not remove orphan build container '%s': %s", container.name, exc)
 
     def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
         """Build the environment dictionary for a kernel container.
@@ -1315,9 +1395,77 @@ class KernelManager:
         return kernel
 
     async def start_kernel(self, kernel_id: str) -> KernelInfo:
+        return await asyncio.to_thread(self._get_or_start_kernel, kernel_id)
+
+    def start_kernel_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
+        """Synchronous version of start_kernel() for use from non-async code."""
+        return self._get_or_start_kernel(kernel_id, flow_logger=flow_logger)
+
+    def _get_or_start_kernel(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
+        """Single-flight start: one leader runs the start sequence, concurrent
+        callers wait on the same flight and share its outcome."""
         kernel = self._get_kernel_or_raise(kernel_id)
-        if kernel.state == KernelState.IDLE:
+        if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return kernel
+        with self._start_flights_lock:
+            flight = self._start_flights.get(kernel_id)
+            leader = flight is None
+            if leader:
+                flight = Future()
+                self._start_flights[kernel_id] = flight
+        if not leader:
+            return self._wait_for_flight(kernel_id, flight)
+        try:
+            result = self._start_kernel_inner(kernel_id, flow_logger)
+        except BaseException as exc:
+            flight.set_exception(exc)
+            raise
+        else:
+            flight.set_result(result)
+            return result
+        finally:
+            with self._start_flights_lock:
+                self._start_flights.pop(kernel_id, None)
+
+    def _wait_for_flight(self, kernel_id: str, flight: Future) -> KernelInfo:
+        kernel = self._get_kernel_or_raise(kernel_id)
+        deadline = time.monotonic() + kernel.health_timeout + _START_FLIGHT_GRACE
+        while time.monotonic() < deadline:
+            try:
+                return flight.result(timeout=0.5)
+            except (TimeoutError, FutureTimeoutError):
+                # A done flight means the leader itself raised a TimeoutError.
+                if flight.done():
+                    raise
+        raise TimeoutError(f"Timed out waiting for kernel '{kernel_id}' to start")
+
+    def _has_active_flight(self, kernel_id: str) -> bool:
+        with self._start_flights_lock:
+            return kernel_id in self._start_flights
+
+    def _wait_out_flight(self, kernel_id: str, timeout: float | None = None) -> None:
+        """Block until any in-progress start for this kernel finishes (outcome ignored)."""
+        with self._start_flights_lock:
+            flight = self._start_flights.get(kernel_id)
+        if flight is None:
+            return
+        try:
+            if timeout is None:
+                self._wait_for_flight(kernel_id, flight)
+            else:
+                flight.result(timeout=timeout)
+        except Exception:
+            pass
+
+    def _start_kernel_inner(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
+        """The actual start sequence. Only ever runs in a flight leader."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
+            return kernel
+
+        # Clear any stale container from a failed start or unclean shutdown.
+        self._cleanup_container(kernel_id)
+        kernel.container_id = None
 
         base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
 
@@ -1331,71 +1479,13 @@ class KernelManager:
                 f"Pull it with: docker pull {base_image} "
                 "(or pick a different image flavour)."
             )
+            if flow_logger:
+                flow_logger.error(kernel.error_message)
             raise RuntimeError(kernel.error_message) from None
 
         # If the kernel was created with extra packages, use the derived image
         # (built once at create_kernel time). Rebuild on the fly if a previous
         # core run was interrupted before the image landed.
-        if kernel.packages:
-            try:
-                image = await asyncio.to_thread(self._build_derived_image, kernel)
-            except (RuntimeError, ValueError) as exc:
-                kernel.state = KernelState.ERROR
-                kernel.error_message = str(exc)
-                raise RuntimeError(kernel.error_message) from exc
-        else:
-            image = base_image
-
-        kernel.image = image
-
-        # Allocate a port if needed (local mode only, not needed for DinD).
-        # Guard the read of the shared registry so two concurrent launches
-        # don't pick the same free port.
-        if kernel.port is None and not self._kernel_volume:
-            with self._kernels_lock:
-                kernel.port = self._allocate_port()
-
-        kernel.state = KernelState.STARTING
-        kernel.error_message = None
-
-        try:
-            env = self._build_kernel_env(kernel_id, kernel)
-            run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
-            container = self._docker.containers.run(image, **run_kwargs)
-            kernel.container_id = container.id
-            await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
-            kernel.state = KernelState.IDLE
-            logger.info("Kernel '%s' is idle (container %s, image %s)", kernel_id, container.short_id, image)
-        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
-            kernel.state = KernelState.ERROR
-            kernel.error_message = str(exc)
-            logger.error("Failed to start kernel '%s': %s", kernel_id, exc)
-            self._cleanup_container(kernel_id)
-            raise
-
-        return kernel
-
-    def start_kernel_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
-        """Synchronous version of start_kernel() for use from non-async code."""
-        kernel = self._get_kernel_or_raise(kernel_id)
-        if kernel.state == KernelState.IDLE:
-            return kernel
-
-        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
-
-        try:
-            self._docker.images.get(base_image)
-        except docker.errors.ImageNotFound:
-            kernel.state = KernelState.ERROR
-            kernel.error_message = (
-                f"Docker image '{base_image}' not found. "
-                f"Pull it with: docker pull {base_image} "
-                "(or pick a different image flavour)."
-            )
-            if flow_logger:
-                flow_logger.error(kernel.error_message)
-            raise RuntimeError(kernel.error_message) from None
-
         if kernel.packages:
             try:
                 image = self._build_derived_image(kernel)
@@ -1418,26 +1508,69 @@ class KernelManager:
         kernel.state = KernelState.STARTING
         kernel.error_message = None
 
+        # The failure path may only remove a container this flight obtained.
+        created_id: str | None = None
         try:
             env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
-            container = self._docker.containers.run(image, **run_kwargs)
+            try:
+                container = self._docker.containers.run(image, **run_kwargs)
+            except docker.errors.APIError as exc:
+                if exc.status_code != 409:
+                    raise
+                container = self._adopt_or_replace_container(kernel_id, kernel, image, run_kwargs)
+            created_id = container.id
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
             if flow_logger:
                 flow_logger.info(f"Kernel {kernel_id} is idle (container {container.short_id}, image {image})")
+            logger.info("Kernel '%s' is idle (container %s, image %s)", kernel_id, container.short_id, image)
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
             flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
-            self._cleanup_container(kernel_id)
+            logger.error("Failed to start kernel '%s': %s", kernel_id, exc)
+            if created_id is not None:
+                self._remove_container_by_id(created_id)
+                if kernel.container_id == created_id:
+                    kernel.container_id = None
             raise
-        flow_logger.info(f"Kernel {kernel_id} started (container {container.short_id})") if flow_logger else None
         return kernel
+
+    def _adopt_or_replace_container(self, kernel_id: str, kernel: KernelInfo, image: str, run_kwargs: dict):
+        """Resolve a create-name conflict: adopt the existing container (start it
+        if stopped), else replace it with one fresh create — no loops."""
+        name = f"flowfile-kernel-{kernel_id}"
+        try:
+            container = self._docker.containers.get(name)
+        except docker.errors.NotFound:
+            return self._docker.containers.run(image, **run_kwargs)
+
+        if container.status == "running":
+            logger.info("Adopting running container '%s' for kernel '%s'", name, kernel_id)
+        else:
+            try:
+                container.start()
+                logger.info("Adopted and started stopped container '%s' for kernel '%s'", name, kernel_id)
+            except (docker.errors.APIError, docker.errors.DockerException):
+                try:
+                    container.remove(force=True)
+                except docker.errors.DockerException:
+                    pass
+                return self._docker.containers.run(image, **run_kwargs)
+
+        if not self._kernel_volume:
+            # The adopted container's published port wins over any allocation.
+            port = self._host_port_of(container)
+            if port is not None:
+                kernel.port = port
+        return container
 
     async def stop_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
+        # Don't tear down a container an in-progress start still owns.
+        await asyncio.to_thread(self._wait_out_flight, kernel_id)
         self._cleanup_container(kernel_id)
         kernel.state = KernelState.STOPPED
         kernel.container_id = None
@@ -1505,6 +1638,7 @@ class KernelManager:
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
         owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
+        await asyncio.to_thread(self._wait_out_flight, kernel_id)
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
@@ -1528,6 +1662,12 @@ class KernelManager:
 
     def shutdown_all(self) -> None:
         """Stop and remove all running kernel containers. Called on core shutdown."""
+        # Briefly wait out in-progress starts so a leader can't re-create a
+        # container after the sweep.
+        with self._start_flights_lock:
+            starting = list(self._start_flights)
+        for kernel_id in starting:
+            self._wait_out_flight(kernel_id, timeout=15)
         kernel_ids = list(self._kernels.keys())
         for kernel_id in kernel_ids:
             kernel = self._kernels.get(kernel_id)
@@ -1971,58 +2111,39 @@ class KernelManager:
         return kernel
 
     async def _ensure_running(self, kernel_id: str) -> None:
-        """Restart the kernel if it is STOPPED or ERROR, then wait until IDLE."""
+        """Start the kernel if it is not ready (single-flight), then wait until IDLE."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return
-        if kernel.state in (KernelState.STOPPED, KernelState.ERROR):
-            logger.info(
-                "Kernel '%s' is %s, attempting automatic restart...",
-                kernel_id,
-                kernel.state.value,
-            )
-            self._cleanup_container(kernel_id)
-            kernel.container_id = None
-            await self.start_kernel(kernel_id)
-            return
-        # STARTING — wait for it to finish
-        if kernel.state == KernelState.STARTING:
-            logger.info("Kernel '%s' is starting, waiting for it to become ready...", kernel_id)
-            await self._wait_for_healthy(kernel_id)
-            kernel.state = KernelState.IDLE
+        logger.info("Kernel '%s' is %s, ensuring it is running...", kernel_id, kernel.state.value)
+        await asyncio.to_thread(self._get_or_start_kernel, kernel_id)
 
     def _ensure_running_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> None:
         """Synchronous version of _ensure_running."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return
-        if kernel.state in (KernelState.STOPPED, KernelState.ERROR):
-            msg = f"Kernel '{kernel_id}' is {kernel.state.value}, attempting automatic restart..."
-            logger.info(msg)
-            if flow_logger:
-                flow_logger.info(msg)
-            self._cleanup_container(kernel_id)
-            kernel.container_id = None
-            self.start_kernel_sync(kernel_id, flow_logger=flow_logger)
-            return
-        # STARTING — wait for it to finish
-        if kernel.state == KernelState.STARTING:
-            logger.info("Kernel '%s' is starting, waiting for it to become ready...", kernel_id)
-            self._wait_for_healthy_sync(kernel_id)
-            kernel.state = KernelState.IDLE
+        msg = f"Kernel '{kernel_id}' is {kernel.state.value}, ensuring it is running..."
+        logger.info(msg)
+        if flow_logger:
+            flow_logger.info(msg)
+        self._get_or_start_kernel(kernel_id, flow_logger=flow_logger)
 
     def _cleanup_container(self, kernel_id: str) -> None:
         kernel = self._kernels.get(kernel_id)
         if kernel is None or kernel.container_id is None:
             return
+        self._remove_container_by_id(kernel.container_id)
+
+    def _remove_container_by_id(self, container_id: str) -> None:
         try:
-            container = self._docker.containers.get(kernel.container_id)
+            container = self._docker.containers.get(container_id)
             container.stop(timeout=10)
             container.remove(force=True)
         except docker.errors.NotFound:
             pass
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
-            logger.warning("Error cleaning up container for kernel '%s': %s", kernel_id, exc)
+            logger.warning("Error cleaning up container '%s': %s", container_id, exc)
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
