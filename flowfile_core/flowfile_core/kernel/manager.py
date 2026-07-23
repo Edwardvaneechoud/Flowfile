@@ -37,9 +37,9 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.5.0"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.5.0"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.5.0"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.5.1"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.5.1"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.5.1"
 
 _KERNEL_DOWN_MSG = (
     "Kernel is not running — its container was stopped or removed (often after a "
@@ -398,11 +398,12 @@ class KernelManager:
         # lock first, then flight/leaf locks; interrupt takes no locks at all.
         self._exec_locks: dict[str, threading.Lock] = {}
         self._exec_locks_lock = threading.Lock()
-        self._shared_volume = shared_volume_path or str(storage.cache_directory)
+        # resolve() so the kernel's host-path prefix translation matches the resolved paths core returns
+        self._shared_volume = str(Path(shared_volume_path or storage.cache_directory).resolve())
         # Catalog tables (Delta-format) live outside the shared volume. The
         # kernel needs a separate mount so ``flowfile_ctx.read_catalog_table`` /
         # ``write_catalog_table`` can read/write Delta directories directly.
-        self._catalog_tables_dir = str(storage.catalog_tables_directory)
+        self._catalog_tables_dir = str(storage.catalog_tables_directory.resolve())
 
         # Docker-in-Docker settings: when core itself runs in a container,
         # kernel containers must use a named volume (not a bind mount) and

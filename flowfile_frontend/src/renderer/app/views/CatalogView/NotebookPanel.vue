@@ -252,6 +252,8 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
@@ -268,20 +270,14 @@ const saveAsName = ref("");
 const saveAsNamespaceId = ref<number | null>(null);
 const saveAsSaving = ref(false);
 
-// Selectable namespaces (level-1 schemas), mirroring RegisterFlowModal.
-const schemaNamespaces = computed(() => {
-  const result: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return result;
-});
+const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
 
+// Prefer General/default when writable; otherwise the first writable schema.
 const defaultNamespaceId = computed<number | null>(() => {
   const general = catalogStore.tree.find((c) => c.name === "General");
-  return general?.children.find((s) => s.name === "default")?.id ?? null;
+  const preferred = general?.children.find((s) => s.name === "default");
+  if (preferred && schemaNamespaces.value.some((o) => o.id === preferred.id)) return preferred.id;
+  return schemaNamespaces.value[0]?.id ?? null;
 });
 
 const kernels = ref<KernelInfo[]>([]);
@@ -356,7 +352,7 @@ async function onSave() {
       void catalogStore.loadTree();
       ElMessage.success("Notebook saved");
     } catch (e: any) {
-      ElMessage.error(e?.message ?? "Failed to save notebook");
+      ElMessage.error(catalogSaveErrorMessage(e, "Failed to save notebook"));
     }
     return;
   }
@@ -368,7 +364,11 @@ async function onSaveAs() {
     await catalogStore.loadTree().catch(() => undefined);
   }
   saveAsName.value = isPersisted.value ? `${store.active?.name} copy` : "";
-  saveAsNamespaceId.value = store.active?.namespaceId ?? defaultNamespaceId.value;
+  const current = store.active?.namespaceId ?? null;
+  saveAsNamespaceId.value =
+    current != null && schemaNamespaces.value.some((o) => o.id === current)
+      ? current
+      : defaultNamespaceId.value;
   saveAsVisible.value = true;
 }
 
@@ -385,7 +385,7 @@ async function confirmSaveAs() {
     ElMessage.success("Notebook saved");
     saveAsVisible.value = false;
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Failed to save notebook");
+    ElMessage.error(catalogSaveErrorMessage(e, "Failed to save notebook"));
   } finally {
     saveAsSaving.value = false;
   }

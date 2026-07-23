@@ -15,6 +15,7 @@
         :node="node"
         :selected-id="selectedId"
         :initially-expanded="true"
+        :writable-only="writableOnly"
         @select="handleSelect"
       />
     </div>
@@ -27,12 +28,18 @@ import NamespaceTreeItem from "./NamespaceTreeItem.vue";
 import { CatalogApi } from "../../../api";
 import { filterSelectableNamespaces, findNamespacePath } from "../../../types";
 import type { NamespaceTree } from "../../../types";
+import { useWritableNamespaces } from "../../../composables/useWritableNamespaces";
+
+const { isWritableNamespace } = useWritableNamespaces();
 
 const props = defineProps<{
   modelValue: number | null;
   // When true, hide system-managed schemas (e.g. Unnamed/Local Flows) so only
   // "default" + user-created namespaces are offered as a store target.
   hideSystemNamespaces?: boolean;
+  // Save-target mode: disable read-only (use-grant) schemas and skip them for
+  // the default selection. Leave unset for browse/read use (Open dialog).
+  writableOnly?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -82,12 +89,13 @@ const loadTree = async () => {
  * Local Flows namespace hasn't been seeded yet.
  */
 const findDefaultNamespace = (nodes: NamespaceTree[]): NamespaceTree | null => {
+  const selectable = (c: NamespaceTree) => !props.writableOnly || isWritableNamespace(c);
   for (const node of nodes) {
     if (node.name === "General" && node.parent_id === null) {
       const local = node.children.find((c) => c.name === "Local Flows");
-      if (local) return local;
+      if (local && selectable(local)) return local;
       const defaultChild = node.children.find((c) => c.name === "default");
-      if (defaultChild) return defaultChild;
+      if (defaultChild && selectable(defaultChild)) return defaultChild;
     }
   }
   return null;

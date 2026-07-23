@@ -206,7 +206,11 @@ export function useFlowExecution(
     type: runInfo.success ? "success" : "error",
   });
 
-  const checkRunStatus = async (customSuccessMessage?: string, pollingKeySuffix = "") => {
+  const checkRunStatus = async (
+    customSuccessMessage?: string,
+    pollingKeySuffix = "",
+    focusLogsOnComplete = true,
+  ) => {
     try {
       const response = await updateRunStatus(getFlowId(), nodeStore);
 
@@ -224,7 +228,9 @@ export function useFlowExecution(
         }
 
         editorStore.setShowFlowResult(true);
-        editorStore.updateLogViewerVisibility(true);
+        if (focusLogsOnComplete) {
+          editorStore.updateLogViewerVisibility(true);
+        }
 
         console.log("response data", response.data);
         const notificationConfig = createNotificationConfig(response.data);
@@ -320,8 +326,11 @@ export function useFlowExecution(
     }
   };
 
-  const triggerNodeFetch = async (nodeId: number) => {
+  const triggerNodeFetch = async (nodeId: number, opts: { focusLogs?: boolean } = {}) => {
     const pollingKeySuffix = `node_${nodeId}`;
+    // Data-tab fetches opt out so the bottom dock stays on Data instead of
+    // flipping to Logs; canvas "Run node" keeps the default (show logs).
+    const focusLogs = opts.focusLogs ?? true;
 
     if (isPollingActive(pollingKeySuffix)) {
       console.log(`Node ${nodeId} fetch already in progress`);
@@ -351,9 +360,12 @@ export function useFlowExecution(
         headers: { accept: "application/json" },
       });
 
-      nodeStore.showLogViewer();
+      if (focusLogs) {
+        nodeStore.showLogViewer();
+      }
       startPolling(
-        () => checkRunStatus("Node data has been fetched successfully", pollingKeySuffix),
+        () =>
+          checkRunStatus("Node data has been fetched successfully", pollingKeySuffix, focusLogs),
         pollingKeySuffix,
       );
     } catch (error: any) {

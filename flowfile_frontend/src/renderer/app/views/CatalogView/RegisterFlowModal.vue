@@ -20,11 +20,11 @@
           <div class="form-group">
             <label class="field-label">Catalog / Schema</label>
             <select v-model="selectedNamespaceId" class="input-field">
-              <option v-for="ns in schemaNamespaces" :key="ns.id" :value="ns.id">
+              <option v-for="ns in writableSchemaNamespaces" :key="ns.id" :value="ns.id">
                 {{ ns.label }}
               </option>
             </select>
-            <p v-if="schemaNamespaces.length === 0" class="ns-hint">
+            <p v-if="writableSchemaNamespaces.length === 0" class="ns-hint">
               No schemas available. Create a catalog and schema first.
             </p>
           </div>
@@ -65,8 +65,11 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
 
 const props = defineProps<{
@@ -78,20 +81,11 @@ const props = defineProps<{
 const emit = defineEmits(["close"]);
 
 const catalogStore = useCatalogStore();
+const { writableSchemaNamespaces } = useWritableNamespaces();
 const name = ref("");
 const path = ref("");
 const description = ref("");
 const selectedNamespaceId = ref<number | null>(null);
-
-const schemaNamespaces = computed(() => {
-  const result: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return result;
-});
 
 const fileName = computed(() => {
   if (!path.value) return "";
@@ -145,7 +139,7 @@ async function submit() {
       catalogStore.loadStats(),
     ]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to register flow");
+    ElMessage.error(catalogSaveErrorMessage(e, "Failed to register flow"));
   }
 }
 </script>

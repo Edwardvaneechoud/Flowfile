@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.exceptions import NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowApiEndpoint, FlowRegistration
@@ -75,11 +77,50 @@ def auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
         logger.info(f"Auto-registration failed for '{flow_path}' (non-critical)", exc_info=True)
 
 
+def _access_for(db, requesting_user) -> AccessResolver | None:
+    """Build an access resolver for HTTP callers; ``None`` keeps the service
+    unrestricted for internal callers (electron, flowfile_frame, seeding)."""
+    return AccessResolver(db, requesting_user) if requesting_user is not None else None
+
+
+def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None, requesting_user) -> None:
+    """Authorize a flow save before any YAML is written, mirroring
+    :func:`register_flow_in_namespace`'s own branching:
+
+    - the path is already registered → managing that flow is sufficient (an
+      in-place re-save can't move namespaces, so no create-permission is needed
+      and a use-grantee who manages the flow is not wrongly refused);
+    - otherwise → creating in ``namespace_id`` requires it to be writable.
+
+    Existence is deliberately NOT probed: a restricted user gets the same 403 for
+    a missing and an unwritable namespace (no cross-tenant existence oracle),
+    while unrestricted callers fall through to ``register_flow``'s 404. No-op when
+    there is no requesting user.
+    """
+    if requesting_user is None:
+        return
+    with get_db_context() as db:
+        resolver = AccessResolver(db, requesting_user)
+        existing = (
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).first()
+            if flow_path is not None
+            else None
+        )
+        if existing is not None:
+            if not resolver.can_manage("flow", existing.id, owner_id=existing.owner_id):
+                raise NotAuthorizedError(resolver.user_id or -1, "overwrite this registered flow")
+            return
+        if namespace_id is not None and resolver.restricted and namespace_id not in resolver.writable_namespace_ids():
+            raise NotAuthorizedError(resolver.user_id or -1, "create items in this namespace")
+
+
 def register_flow_in_namespace(
     flow_path: str,
     name: str,
     user_id: int | None,
     namespace_id: int | None,
+    *,
+    requesting_user=None,
 ) -> None:
     """Register a flow in a specific namespace, or auto-register if namespace_id is None.
 
@@ -88,6 +129,10 @@ def register_flow_in_namespace(
     ``FlowPathNamespaceCollision`` — normal callers prefix filenames with the flow id
     so this signals a real bug rather than user error.  The route layer is
     responsible for translating this to an HTTP 409.
+
+    ``requesting_user`` enables namespace-write authorization (403 for use-level
+    grantees in multi-user mode); ``None`` keeps the historic unrestricted
+    behavior for internal callers.
 
     Unlike :func:`auto_register_flow`, this is an explicit save-to-namespace path:
     unexpected errors (e.g. DB failures) propagate to the caller instead of being
@@ -99,7 +144,7 @@ def register_flow_in_namespace(
     if user_id is None or flow_path is None:
         return
     with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        service = CatalogService(SQLAlchemyCatalogRepository(db), access=_access_for(db, requesting_user))
         existing = service.repo.get_flow_by_path(flow_path)
         if existing:
             if existing.namespace_id != namespace_id:
@@ -107,10 +152,12 @@ def register_flow_in_namespace(
                     f"flow_path '{flow_path}' is already registered under "
                     f"namespace {existing.namespace_id}; refusing to reassign to {namespace_id}"
                 )
+            # Same-namespace in-place update (the collision check above guarantees
+            # it): don't re-pass namespace_id, or update_flow would demand
+            # namespace-create rights a flow-manager may legitimately lack.
             service.update_flow(
                 registration_id=existing.id,
                 requesting_user_id=user_id,
-                namespace_id=namespace_id,
             )
             return
         reg_name = name or Path(flow_path).stem
@@ -123,13 +170,12 @@ def register_flow_in_namespace(
                 f"A flow named '{reg_name}' already exists in this namespace. "
                 "Select it in the catalog picker to overwrite, or choose a different name."
             )
-        reg = FlowRegistration(
+        service.register_flow(
             name=reg_name,
             flow_path=flow_path,
-            namespace_id=namespace_id,
             owner_id=user_id,
+            namespace_id=namespace_id,
         )
-        service.repo.create_flow(reg)
 
 
 def sync_api_compatibility(flow) -> None:
@@ -235,6 +281,12 @@ def register_python_editor_flow(
     user_id: int | None = None,
 ) -> int:
     """Save and register a Python-authored flow with the catalog.
+
+    Deliberately unrestricted (no access resolver): every caller is in-process
+    (the virtual catalog-writer auto-register into the system ``General >
+    Python Editor`` namespace, demo seeding, flowfile_frame) and none accepts a
+    caller-supplied namespace over HTTP. The catalog-writer's run-time
+    authorization gate covers the actual table write.
 
     Mirrors what the canvas does for in-designer flows: persists the flow as
     YAML on disk, creates a ``FlowRegistration`` row, and stamps the

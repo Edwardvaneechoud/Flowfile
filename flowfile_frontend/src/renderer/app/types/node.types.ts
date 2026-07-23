@@ -3,6 +3,7 @@
 import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes";
 import type { DisplayOutput } from "./kernel.types";
 import type { FlowParameter } from "./flow.types";
+import type { AccessInfo } from "./sharing.types";
 
 // Data Type Definitions
 
@@ -1191,6 +1192,7 @@ export interface CatalogNamespaceOut {
   parent_id: number | null;
   level: number;
   description?: string | null;
+  access?: AccessInfo | null;
 }
 
 export interface CatalogNamespaceTree extends CatalogNamespaceOut {

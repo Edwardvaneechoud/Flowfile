@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import time
 from collections.abc import Callable
 from logging import Logger
 from multiprocessing import Array, Queue, Value
@@ -1117,7 +1118,8 @@ def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Que
         lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
         df = lf.collect()
         target = Path(target_path)
-        tmp = target.with_suffix(target.suffix + ".tmp")
+        # Unique tmp per child: concurrent same-key rebuilds must not share one.
+        tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
         df.write_ipc(str(tmp))
         os.replace(str(tmp), str(target))
         queue.put({"name": target.name, "mtime": target.stat().st_mtime, "row_count": int(df.height)})
@@ -1125,12 +1127,37 @@ def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Que
         queue.put({"error": str(exc)[:1024]})
 
 
+_SUPERSEDED_MIN_AGE_S = 3600
+
+
+def _drop_superseded_results(target_dir: Path, table_id: int, keep: str) -> None:
+    """Drop old kernel_shared snapshots of a table, sparing recent ones a concurrent request may still scan."""
+    cutoff = time.time() - _SUPERSEDED_MIN_AGE_S
+    for stale in target_dir.glob(f"fvt-{table_id}-*.arrow"):
+        try:
+            if stale.name != keep and stale.stat().st_mtime < cutoff:
+                stale.unlink()
+        except OSError:
+            pass
+
+
 def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
-    """Materialise a virtual flow table to disk; idempotent on (table_id, source_versions_hash)."""
-    target_dir = storage.catalog_virtual_results_directory
+    """Materialise a virtual flow table to disk.
+
+    The default target is an idempotent cache on (table_id, source_versions_hash).
+    The kernel_shared target always rebuilds: a serialised plan records table
+    paths, not data snapshots, so its hash does not change when the underlying
+    data does — an exists() check would serve the first snapshot forever.
+    """
+    if req.target == "kernel_shared":
+        target_dir = storage.shared_virtual_results_directory
+    else:
+        target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
-    if target.exists():
+    if req.target == "kernel_shared":
+        _drop_superseded_results(target_dir, req.table_id, keep=target.name)
+    elif target.exists():
         return models.ResolveVirtualTableResponse(
             ipc_path=target.name,
             mtime=target.stat().st_mtime,

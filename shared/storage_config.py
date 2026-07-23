@@ -255,6 +255,19 @@ class FlowfileStorage:
             return Path(shared_dir) / "artifact_staging"
         return self.temp_directory / "kernel_shared" / "artifact_staging"
 
+    @property
+    def shared_virtual_results_directory(self) -> Path:
+        """Kernel-readable IPC cache for materialised virtual tables (views).
+
+        Must be under the kernel's shared volume so Docker kernels can scan
+        the files.  Uses the same resolution logic as
+        ``artifact_staging_directory``.
+        """
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir) / "catalog_virtual_results"
+        return self.temp_directory / "kernel_shared" / "catalog_virtual_results"
+
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""
         internal_directories = [
@@ -266,6 +279,7 @@ class FlowfileStorage:
             self.temp_directory_for_flows,
             self.shared_directory,
             self.artifact_staging_directory,
+            self.shared_virtual_results_directory,
         ]
 
         user_directories = [

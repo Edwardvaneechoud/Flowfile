@@ -104,6 +104,18 @@ export class FlowApi {
   }
 
   /**
+   * Rename a flow (catalog registration + in-memory session name)
+   */
+  static async renameFlow(flowId: number, name: string): Promise<FlowSettings> {
+    const response = await axios.post<FlowSettings>(
+      "/editor/rename_flow/",
+      { flow_id: flowId, name },
+      { headers: { accept: "application/json" } },
+    );
+    return response.data;
+  }
+
+  /**
    * Close a flow
    */
   static async closeFlow(flowId: number): Promise<any> {

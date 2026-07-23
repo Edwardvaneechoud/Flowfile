@@ -20,11 +20,11 @@
         <div class="form-group">
           <label class="field-label">Catalog / Schema</label>
           <select v-model="selectedNamespaceId" class="input-field">
-            <option v-for="ns in schemaNamespaces" :key="ns.id" :value="ns.id">
+            <option v-for="ns in writableSchemaNamespaces" :key="ns.id" :value="ns.id">
               {{ ns.label }}
             </option>
           </select>
-          <p v-if="schemaNamespaces.length === 0" class="hint">
+          <p v-if="writableSchemaNamespaces.length === 0" class="hint">
             No schemas available. Create a catalog and schema first.
           </p>
         </div>
@@ -86,6 +86,8 @@ import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { validateCatalogName } from "../../composables/catalogNameValidation";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
 import type { CatalogTable, FlowRegistration } from "../../types";
 
 const props = defineProps<{
@@ -105,16 +107,7 @@ const submitting = ref(false);
 const createdTable = ref<CatalogTable | null>(null);
 
 const flows = computed((): FlowRegistration[] => catalogStore.allFlows);
-
-const schemaNamespaces = computed(() => {
-  const result: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return result;
-});
+const { writableSchemaNamespaces } = useWritableNamespaces();
 
 const nameError = computed(() => validateCatalogName(name.value, "Table"));
 
@@ -154,7 +147,7 @@ async function submit() {
       catalogStore.loadStats(),
     ]);
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to create virtual table");
+    ElMessage.error(catalogSaveErrorMessage(e, "Failed to create virtual table"));
   } finally {
     submitting.value = false;
   }

@@ -392,6 +392,15 @@ class CatalogTablePreview(BaseModel):
     total_rows: int = 0
 
 
+class CatalogTableMaterializeResult(BaseModel):
+    """Result of materialising a virtual table to a kernel-readable file."""
+
+    path: str
+    format: Literal["ipc"] = "ipc"
+    row_count: int
+    mtime: float
+
+
 class DeltaTableHistory(BaseModel):
     """Version history of a Delta table."""
 

@@ -448,6 +448,35 @@ def _accessible_catalog_table_ids(db, user_id: int | None) -> set[int] | None:
     return AccessResolver(db, user).accessible_ids("catalog_table")
 
 
+def _authorize_catalog_write(db, user_id: int | None, *, existing, namespace_id: int | None) -> None:
+    """Raise ``PermissionError`` when the executing principal may not write the target.
+
+    Mirrors ``_accessible_catalog_table_ids`` semantics: ``user_id is None``
+    (internal/scheduler/CLI runs) or sharing disabled means unrestricted; an id
+    that doesn't resolve to a ``User`` fails closed; admins bypass. An existing
+    table requires manage on the table (parity with ``overwrite_table_data``); a
+    new table requires the target namespace to be writable — public, owned, or
+    manage-granted — with ``namespace_id is None`` skipped exactly like
+    ``_require_namespace_writable`` (the write then lands in the seeded public
+    default namespace).
+    """
+    if user_id is None or not sharing.sharing_enabled():
+        return
+    user = db.get(db_models.User, user_id)
+    if user is None:
+        raise PermissionError("Executing user could not be resolved; refusing catalog write")
+    if getattr(user, "is_admin", False):
+        return
+    from flowfile_core.catalog.access import AccessResolver
+
+    resolver = AccessResolver(db, user)
+    if existing is not None:
+        if not resolver.can_manage("catalog_table", existing.id, owner_id=existing.owner_id):
+            raise PermissionError(f"Not authorized to overwrite catalog table '{existing.name}'")
+    elif namespace_id is not None and namespace_id not in resolver.writable_namespace_ids():
+        raise PermissionError("Not authorized to create a table in the target catalog namespace")
+
+
 def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) -> CatalogSqlTables:
     """Resolve all catalog tables (physical Delta + virtual) for a SQL query node.
 
@@ -888,6 +917,7 @@ def _handle_virtual_table_write(
         svc = CatalogService(repo)
         ns_id = _effective_namespace_id(svc, settings)
         existing = repo.get_table_by_name(settings.table_name, ns_id)
+        _authorize_catalog_write(db, node_catalog_writer.user_id, existing=existing, namespace_id=ns_id)
         if existing is not None and getattr(existing, "table_type", "physical") != "virtual":
             raise ValueError(
                 f"Cannot write virtual table '{settings.table_name}': a non-virtual "
@@ -946,6 +976,9 @@ def _handle_physical_table_write(
             write_mode=settings.write_mode,
             target=target,
         )
+        # Before any dispatch: neither the worker nor the local writer may
+        # receive a destination the executing principal cannot write.
+        _authorize_catalog_write(db, node_catalog_writer.user_id, existing=existing, namespace_id=namespace_id)
 
     # Forward-only: an existing table keeps its own location; the catalog config only steers new tables.
     dest_is_cloud = _is_cloud_uri(dest_path)
@@ -2843,6 +2876,11 @@ class FlowGraph:
                 with get_db_context() as _ns_db:
                     effective_namespace_id = _effective_namespace_id(
                         CatalogService(SQLAlchemyCatalogRepository(_ns_db)), settings
+                    )
+                    # A published model is a new catalog artifact — gate the target
+                    # namespace on the executing principal, mirroring the catalog writer.
+                    _authorize_catalog_write(
+                        _ns_db, train_settings.user_id, existing=None, namespace_id=effective_namespace_id
                     )
                 prepare_request = PrepareUploadRequest(
                     name=settings.model_name,

@@ -124,9 +124,11 @@ class NotAuthorizedError(CatalogError):
     """Raised when a user attempts an action they are not permitted to perform."""
 
     def __init__(self, user_id: int, action: str = "perform this action"):
+        # user_id is kept for logging/telemetry but deliberately left out of the
+        # message: it becomes the HTTP 403 detail shown to end users.
         self.user_id = user_id
         self.action = action
-        super().__init__(f"User {user_id} is not authorized to {action}")
+        super().__init__(f"Not authorized to {action}")
 
 
 class FavoriteNotFoundError(CatalogError):
@@ -178,6 +180,21 @@ class TableNotFoundError(CatalogError):
         elif name is not None:
             detail = f"Catalog table '{name}' not found"
         super().__init__(detail)
+
+
+class NotAVirtualTableError(CatalogError):
+    """Raised when a virtual-table-only operation targets a physical table."""
+
+    def __init__(self, table_id: int):
+        self.table_id = table_id
+        super().__init__(f"Catalog table with id={table_id} is not a virtual table")
+
+
+class WorkerUnavailableError(CatalogError):
+    """Raised when the worker cannot be reached (or fails) while materialising a table."""
+
+    def __init__(self, message: str):
+        super().__init__(f"Worker materialisation failed: {message}")
 
 
 class TableVersionUnavailableError(CatalogError):

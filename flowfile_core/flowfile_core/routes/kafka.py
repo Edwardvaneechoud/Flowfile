@@ -9,10 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.exceptions import NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import CatalogService
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
+from flowfile_core.database.models import CatalogNamespace as CatalogNamespaceModel
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
     decrypt_secret_value,
@@ -225,14 +228,33 @@ def reset_sync_offsets_route(
 
 
 def _ensure_sync_namespace(service: CatalogService, owner_id: int) -> int:
-    """Return the namespace ID for ``General / sync``, creating both if needed."""
+    """Return the namespace ID for ``General / sync``, creating both if needed.
+
+    ``sync`` is a shared system container (like the seeded General schemas): it is
+    created public so every user's default-namespace sync keeps working, and an
+    older private row is healed to public for the same reason.
+    """
     repo = service.repo
     general = repo.get_namespace_by_name("General", parent_id=None)
     if general is None:
         general = service.create_namespace("General", owner_id=owner_id)
     sync_ns = repo.get_namespace_by_name("sync", parent_id=general.id)
     if sync_ns is None:
-        sync_ns = service.create_namespace("sync", owner_id=owner_id, parent_id=general.id)
+        sync_ns = repo.create_namespace(
+            CatalogNamespaceModel(
+                name="sync",
+                parent_id=general.id,
+                level=1,
+                description="Kafka sync flows",
+                owner_id=owner_id,
+                is_public=True,
+            )
+        )
+    elif not sync_ns.is_public and sync_ns.owner_id == owner_id:
+        # Heal a legacy private sync only for its own owner — never force-publish
+        # another user's private namespace that happens to be named "sync".
+        sync_ns.is_public = True
+        repo.update_namespace(sync_ns)
     return sync_ns.id
 
 
@@ -361,7 +383,7 @@ def create_kafka_sync(
 
     # Register in catalog first to get the registration ID
     repo = SQLAlchemyCatalogRepository(db)
-    service = CatalogService(repo)
+    service = CatalogService(repo, access=AccessResolver(db, current_user))
 
     # Default to "General / sync" namespace when not specified
     namespace_id = body.namespace_id
@@ -377,6 +399,8 @@ def create_kafka_sync(
             namespace_id=namespace_id,
             description=f"Kafka sync: {body.topic_name} → {body.table_name}",
         )
+    except NotAuthorizedError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from None
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
