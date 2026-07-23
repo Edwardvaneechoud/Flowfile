@@ -116,6 +116,101 @@ class TestConcurrentKernelStart:
         assert len(_containers_named(manager, kernel_id)) == 1
         _assert_executes(manager, kernel_id, node_id=9103)
 
+    def test_untracked_stopped_conflict_raced_by_six_threads(self, kernel_manager: tuple[KernelManager, str]):
+        """The automl_demo incident: an untracked stopped container holds the
+        name while a parallel stage races N starts. Every caller must converge
+        on one healthy container with zero 409 failures.
+
+        (Stale-image replacement is covered mocked-only in
+        test_kernel_start_race.py — building a second same-tag image here would
+        be slow and flaky in CI.)"""
+        manager, kernel_id = kernel_manager
+        manager.start_kernel_sync(kernel_id)
+        kernel = manager._kernels[kernel_id]
+        manager._docker.containers.get(kernel.container_id).stop(timeout=10)
+
+        kernel.state = KernelState.STOPPED
+        kernel.container_id = None
+
+        n = 6
+        barrier = threading.Barrier(n)
+        errors: list[BaseException] = []
+
+        def _start() -> None:
+            barrier.wait()
+            try:
+                manager.start_kernel_sync(kernel_id)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_start) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert kernel.state == KernelState.IDLE
+        assert len(_containers_named(manager, kernel_id)) == 1
+        _assert_executes(manager, kernel_id, node_id=9104)
+
+
+class TestConcurrentExecution:
+    def test_parallel_execute_sync_serialized_on_one_kernel(self, kernel_manager: tuple[KernelManager, str]):
+        """Cells from parallel nodes must run one at a time per kernel — the
+        runtime execs them into a shared namespace in one interpreter."""
+        manager, kernel_id = kernel_manager
+        manager.start_kernel_sync(kernel_id)
+
+        n = 6
+        barrier = threading.Barrier(n)
+        results: list = []
+        errors: list[BaseException] = []
+        code = (
+            "import time\n"
+            "_s = time.monotonic()\n"
+            "time.sleep(0.4)\n"
+            'print(f"SPAN {_s} {time.monotonic()}")\n'
+        )
+
+        def _run(node_id: int) -> None:
+            barrier.wait()
+            try:
+                results.append(
+                    manager.execute_sync(
+                        kernel_id,
+                        ExecuteRequest(
+                            node_id=node_id,
+                            code=code,
+                            input_paths={},
+                            output_dir=f"/shared/test_serial_{node_id}",
+                        ),
+                    )
+                )
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_run, args=(9200 + i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert len(results) == n
+        assert all(r.success for r in results), [r.error for r in results if not r.success]
+
+        spans = []
+        for r in results:
+            for line in r.stdout.splitlines():
+                if line.startswith("SPAN "):
+                    _, start, end = line.split()
+                    spans.append((float(start), float(end)))
+        assert len(spans) == n
+        spans.sort()
+        for (_, prev_end), (next_start, _) in zip(spans, spans[1:], strict=False):
+            assert next_start >= prev_end, f"cells overlapped: {spans}"
+
 
 class TestManagerBootWithLeftovers:
     def test_fresh_manager_boot_adopts_running_container(self, kernel_manager: tuple[KernelManager, str]):

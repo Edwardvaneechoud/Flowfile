@@ -320,8 +320,9 @@ _BASE_PORT = 19000
 _PORT_RANGE = 1000  # 19000-19999
 _HEALTH_TIMEOUT = 120
 _HEALTH_POLL_INTERVAL = 2
-# Follower wait allowance beyond health_timeout (covers a derived-image bake).
 _START_FLIGHT_GRACE = 600
+_CONVERGE_ATTEMPTS = 5
+_CONVERGE_DELAY_S = 0.5
 
 
 def _is_docker_mode() -> bool:
@@ -391,6 +392,12 @@ class KernelManager:
         # Per-derived-tag build locks so concurrent starts bake an image once.
         self._build_locks: dict[str, threading.Lock] = {}
         self._build_locks_lock = threading.Lock()
+        # Per-kernel execution locks: one cell at a time per kernel — the kernel
+        # runtime execs cells into a shared namespace in one interpreter, so
+        # concurrent cells race imports and clobber globals. Lock order: exec
+        # lock first, then flight/leaf locks; interrupt takes no locks at all.
+        self._exec_locks: dict[str, threading.Lock] = {}
+        self._exec_locks_lock = threading.Lock()
         self._shared_volume = shared_volume_path or str(storage.cache_directory)
         # Catalog tables (Delta-format) live outside the shared volume. The
         # kernel needs a separate mount so ``flowfile_ctx.read_catalog_table`` /
@@ -1513,12 +1520,7 @@ class KernelManager:
         try:
             env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
-            try:
-                container = self._docker.containers.run(image, **run_kwargs)
-            except docker.errors.APIError as exc:
-                if exc.status_code != 409:
-                    raise
-                container = self._adopt_or_replace_container(kernel_id, kernel, image, run_kwargs)
+            container = self._create_or_adopt_container(kernel_id, kernel, image, run_kwargs)
             created_id = container.id
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
@@ -1538,34 +1540,62 @@ class KernelManager:
             raise
         return kernel
 
-    def _adopt_or_replace_container(self, kernel_id: str, kernel: KernelInfo, image: str, run_kwargs: dict):
-        """Resolve a create-name conflict: adopt the existing container (start it
-        if stopped), else replace it with one fresh create — no loops."""
+    def _create_or_adopt_container(self, kernel_id: str, kernel: KernelInfo, image: str, run_kwargs: dict):
+        """Create the kernel container, converging on name conflicts.
+
+        A 409 means something holds the name ``flowfile-kernel-<id>`` — an
+        untracked leftover, a removal still in progress, or a create window.
+        Resolve it by adopting the holder when it runs the desired image (start
+        it if stopped), removing it otherwise, and retrying a bounded number of
+        times so transient Docker states converge instead of erroring."""
         name = f"flowfile-kernel-{kernel_id}"
-        try:
-            container = self._docker.containers.get(name)
-        except docker.errors.NotFound:
-            return self._docker.containers.run(image, **run_kwargs)
-
-        if container.status == "running":
-            logger.info("Adopting running container '%s' for kernel '%s'", name, kernel_id)
-        else:
+        desired_image_id = self._docker.images.get(image).id
+        last_exc: Exception | None = None
+        for attempt in range(_CONVERGE_ATTEMPTS):
+            if attempt:
+                time.sleep(_CONVERGE_DELAY_S)
             try:
-                container.start()
-                logger.info("Adopted and started stopped container '%s' for kernel '%s'", name, kernel_id)
-            except (docker.errors.APIError, docker.errors.DockerException):
-                try:
-                    container.remove(force=True)
-                except docker.errors.DockerException:
-                    pass
                 return self._docker.containers.run(image, **run_kwargs)
+            except docker.errors.APIError as exc:
+                if exc.status_code != 409:
+                    raise
+                last_exc = exc
 
-        if not self._kernel_volume:
-            # The adopted container's published port wins over any allocation.
-            port = self._host_port_of(container)
-            if port is not None:
+            try:
+                holder = self._docker.containers.get(name)
+            except docker.errors.NotFound:
+                continue  # create/removal window — the name should free up
+            except docker.errors.APIError as exc:
+                last_exc = exc
+                continue
+
+            if holder.attrs.get("Image") != desired_image_id:
+                # Stale container (e.g. derived image rebuilt under the same tag).
+                self._remove_container_by_id(holder.id)
+                continue
+
+            if holder.status != "running":
+                try:
+                    holder.start()
+                except (docker.errors.APIError, docker.errors.DockerException) as exc:
+                    last_exc = exc
+                    self._remove_container_by_id(holder.id)
+                    continue
+
+            if not self._kernel_volume:
+                # The adopted container's published port wins over any allocation.
+                holder.reload()
+                port = self._host_port_of(holder)
+                if port is None:
+                    # Unreachable adoption would burn the full health timeout.
+                    self._remove_container_by_id(holder.id)
+                    continue
                 kernel.port = port
-        return container
+            logger.info("Adopted container '%s' for kernel '%s'", name, kernel_id)
+            return holder
+        raise docker.errors.DockerException(
+            f"Could not start or adopt container '{name}' after {_CONVERGE_ATTEMPTS} attempts"
+        ) from last_exc
 
     async def stop_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
@@ -1638,9 +1668,9 @@ class KernelManager:
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
         owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
-        await asyncio.to_thread(self._wait_out_flight, kernel_id)
-        if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
-            await self.stop_kernel(kernel_id)
+        # Unconditional: a STOPPED/ERROR kernel may still track a leftover container.
+        # stop_kernel waits out any in-progress start flight itself.
+        await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
         # Delete the scratch FlowRegistration first so the FK ON DELETE SET NULL
         # doesn't fire as a side-effect; explicit deletion keeps the catalog
@@ -1705,51 +1735,21 @@ class KernelManager:
             return True
 
     async def execute(self, kernel_id: str, request: ExecuteRequest) -> ExecuteResult:
-        kernel = self._get_kernel_or_raise(kernel_id)
-        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            await self._ensure_running(kernel_id)
+        return await asyncio.to_thread(self.execute_sync, kernel_id, request)
 
-        # Fall back to the per-kernel scratch FlowRegistration so artifacts
-        # published from interactive cells have a valid producer to point at.
-        # Registered-flow execution paths set ``source_registration_id`` ahead
-        # of time, so this short-circuits when it's already populated.
-        if request.source_registration_id is None:
-            request.source_registration_id = self.get_scratch_flow_id(kernel_id)
+    def _exec_lock_for(self, kernel_id: str) -> threading.Lock:
+        with self._exec_locks_lock:
+            return self._exec_locks.setdefault(kernel_id, threading.Lock())
 
-        kernel.state = KernelState.EXECUTING
-        try:
-            url = f"{self._kernel_url(kernel)}/execute"
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-                response = await client.post(url, json=request.model_dump())
-                response.raise_for_status()
-                return ExecuteResult(**response.json())
-        except (httpx.HTTPError, OSError) as exc:
-            if self._check_oom_killed(kernel_id):
-                kernel.state = KernelState.ERROR
-                kernel.error_message = "Kernel ran out of memory"
-                oom_msg = (
-                    f"Kernel ran out of memory. The container exceeded its {kernel.memory_gb} GB "
-                    "memory limit and was terminated. Consider increasing the kernel's memory "
-                    "allocation or reducing your data size."
-                )
-                return ExecuteResult(success=False, error=oom_msg)
-            if not self._is_container_running(kernel_id):
-                kernel.state = KernelState.STOPPED
-                kernel.container_id = None
-                return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)
-            if isinstance(exc, httpx.TimeoutException):
-                # Tell the kernel to interrupt the still-running cell, otherwise it
-                # keeps mutating the namespace and the next cell runs concurrently.
-                self.interrupt_execution_sync(kernel_id)
-                return ExecuteResult(
-                    success=False,
-                    error="Cell exceeded the 300s execution limit and was interrupted.",
-                )
-            raise
-        finally:
-            # Only return to IDLE if we haven't been stopped/errored in the meantime
-            if kernel.state == KernelState.EXECUTING:
-                kernel.state = KernelState.IDLE
+    @staticmethod
+    def _acquire_cancellable(lock: threading.Lock, cancel_event: threading.Event | None) -> bool:
+        if cancel_event is None:
+            lock.acquire()
+            return True
+        while not lock.acquire(timeout=0.5):
+            if cancel_event.is_set():
+                return False
+        return True
 
     def execute_sync(
         self,
@@ -1758,18 +1758,45 @@ class KernelManager:
         flow_logger: FlowLogger | None = None,
         cancel_event: threading.Event | None = None,
     ) -> ExecuteResult:
-        """Synchronous wrapper around execute() for use from non-async code.
+        """Execute one cell on a kernel, serialised per kernel.
 
         When *cancel_event* is provided the HTTP call runs in a daemon thread
         so the caller can be unblocked promptly when the event is set.
         """
         kernel = self._get_kernel_or_raise(kernel_id)
+        # Pre-lock ensure so concurrent callers share one start flight (and
+        # share its failure) instead of retrying a bad start one by one.
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
-        # See ``execute`` above — same scratch-flow fallback applies here.
+        # Fall back to the per-kernel scratch FlowRegistration so artifacts
+        # published from interactive cells have a valid producer to point at.
+        # Registered-flow execution paths set ``source_registration_id`` ahead
+        # of time, so this short-circuits when it's already populated.
         if request.source_registration_id is None:
             request.source_registration_id = self.get_scratch_flow_id(kernel_id)
+
+        lock = self._exec_lock_for(kernel_id)
+        if not self._acquire_cancellable(lock, cancel_event):
+            # Nothing was submitted — do NOT interrupt (that would kill the
+            # cell another node is currently running on this kernel).
+            return ExecuteResult(success=False, error="Execution cancelled by user")
+        try:
+            return self._execute_locked(kernel_id, kernel, request, flow_logger, cancel_event)
+        finally:
+            lock.release()
+
+    def _execute_locked(
+        self,
+        kernel_id: str,
+        kernel: KernelInfo,
+        request: ExecuteRequest,
+        flow_logger: FlowLogger | None,
+        cancel_event: threading.Event | None,
+    ) -> ExecuteResult:
+        # The kernel may have died while we were queued behind another cell.
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
         kernel.state = KernelState.EXECUTING
         try:
@@ -1811,7 +1838,7 @@ class KernelManager:
                 return result_holder[0]
             raise RuntimeError("Kernel execution returned no result")
 
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError) as exc:
             if self._check_oom_killed(kernel_id):
                 kernel.state = KernelState.ERROR
                 kernel.error_message = "Kernel ran out of memory"
@@ -1824,11 +1851,20 @@ class KernelManager:
                     flow_logger.error(oom_msg)
                 return ExecuteResult(success=False, error=oom_msg)
             if not self._is_container_running(kernel_id):
+                # Keep container_id: the stopped container still holds the name,
+                # and the tracked cleanup on the next start replaces it cleanly.
                 kernel.state = KernelState.STOPPED
-                kernel.container_id = None
                 if flow_logger:
                     flow_logger.error(_KERNEL_DOWN_MSG)
                 return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)
+            if isinstance(exc, httpx.TimeoutException):
+                # Tell the kernel to interrupt the still-running cell, otherwise it
+                # keeps mutating the namespace and the next cell runs concurrently.
+                self.interrupt_execution_sync(kernel_id)
+                return ExecuteResult(
+                    success=False,
+                    error="Cell exceeded the 300s execution limit and was interrupted.",
+                )
             raise
         finally:
             if kernel.state == KernelState.EXECUTING:

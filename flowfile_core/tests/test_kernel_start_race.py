@@ -1,18 +1,27 @@
 """Regression tests for the parallel kernel-start race: single-flight start,
-409-adopt, build dedup, resolver cleanup, and startup reconcile. Docker is
-mocked throughout — no daemon required."""
+409 create-or-adopt convergence, per-kernel execution serialization, build
+dedup, resolver cleanup, and startup reconcile. Docker is mocked throughout —
+no daemon required."""
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import docker.errors
+import httpx
 import pytest
 
 from flowfile_core.kernel import manager as kernel_manager
 from flowfile_core.kernel.manager import KernelManager
-from flowfile_core.kernel.models import ImageFlavour, KernelInfo, KernelState
+from flowfile_core.kernel.models import ExecuteRequest, ImageFlavour, KernelInfo, KernelState
+
+
+@pytest.fixture(autouse=True)
+def _fast_converge(monkeypatch):
+    monkeypatch.setattr(kernel_manager, "_CONVERGE_DELAY_S", 0)
 
 
 def _bare_manager() -> KernelManager:
@@ -41,6 +50,8 @@ def _bare_manager() -> KernelManager:
         mgr._start_flights_lock = threading.Lock()
         mgr._build_locks = {}
         mgr._build_locks_lock = threading.Lock()
+        mgr._exec_locks = {}
+        mgr._exec_locks_lock = threading.Lock()
     return mgr
 
 
@@ -66,13 +77,18 @@ def _api_error(status_code: int, msg: str = "boom") -> docker.errors.APIError:
     return docker.errors.APIError(msg, response=resp, explanation=msg)
 
 
-def _fake_container(container_id: str = "c-1", status: str = "running", host_port: str | None = None):
+def _fake_container(
+    container_id: str = "c-1",
+    status: str = "running",
+    host_port: str | None = None,
+    image_id: str = "sha256:desired",
+):
     container = MagicMock()
     container.id = container_id
     container.short_id = container_id[:10]
     container.status = status
     ports = {"9999/tcp": [{"HostPort": host_port}]} if host_port else {}
-    container.attrs = {"NetworkSettings": {"Ports": ports}}
+    container.attrs = {"NetworkSettings": {"Ports": ports}, "Image": image_id}
     return container
 
 
@@ -85,6 +101,7 @@ def _start_ready_manager(kernel: KernelInfo) -> KernelManager:
     mgr._build_run_kwargs = MagicMock(return_value={"name": f"flowfile-kernel-{kernel.id}"})
     mgr._wait_for_healthy_sync = MagicMock()
     mgr._allocate_port = MagicMock(return_value=19099)
+    mgr._docker.images.get.return_value = MagicMock(id="sha256:desired")
     return mgr
 
 
@@ -252,7 +269,7 @@ class TestConflictAdoption:
     def test_409_starts_stopped_container(self):
         kernel = _kernel()
         mgr = _start_ready_manager(kernel)
-        existing = _fake_container("adopted-2", status="exited")
+        existing = _fake_container("adopted-2", status="exited", host_port="19007")
         mgr._docker.containers.run.side_effect = _api_error(409)
         mgr._docker.containers.get.return_value = existing
 
@@ -260,6 +277,7 @@ class TestConflictAdoption:
 
         assert result.state == KernelState.IDLE
         assert kernel.container_id == "adopted-2"
+        assert kernel.port == 19007
         existing.start.assert_called_once()
 
     def test_409_replaces_unstartable_container(self):
@@ -318,6 +336,278 @@ class TestConflictAdoption:
         mgr._docker.containers.get.assert_called_once_with("stale-1")
         stale.remove.assert_called_once_with(force=True)
         assert kernel.container_id == "fresh-3"
+
+    def test_409_replaces_stale_image_container(self):
+        """A holder built from an older image (e.g. derived tag rebuilt after a
+        package edit) must be replaced, not adopted."""
+        kernel = _kernel()
+        mgr = _start_ready_manager(kernel)
+        stale = _fake_container("stale-img", status="running", image_id="sha256:old")
+        fresh = _fake_container("fresh-4")
+        mgr._docker.containers.run.side_effect = [_api_error(409), fresh]
+        mgr._docker.containers.get.return_value = stale
+
+        result = mgr.start_kernel_sync("ml")
+
+        assert result.state == KernelState.IDLE
+        assert kernel.container_id == "fresh-4"
+        stale.remove.assert_called_once_with(force=True)
+        stale.start.assert_not_called()
+
+    def test_409_notfound_window_converges_after_retries(self):
+        """The incident shape: create 409s while get-by-name 404s (removal or
+        create in progress elsewhere). The loop must retry until the name frees."""
+        kernel = _kernel()
+        mgr = _start_ready_manager(kernel)
+        fresh = _fake_container("fresh-5")
+        mgr._docker.containers.run.side_effect = [_api_error(409), _api_error(409), fresh]
+        mgr._docker.containers.get.side_effect = docker.errors.NotFound("removing")
+
+        result = mgr.start_kernel_sync("ml")
+
+        assert result.state == KernelState.IDLE
+        assert kernel.container_id == "fresh-5"
+        assert mgr._docker.containers.run.call_count == 3
+
+    def test_converge_exhaustion_raises_and_sets_error(self):
+        kernel = _kernel()
+        mgr = _start_ready_manager(kernel)
+        mgr._docker.containers.run.side_effect = _api_error(409)
+        mgr._docker.containers.get.side_effect = docker.errors.NotFound("still held")
+
+        with pytest.raises(docker.errors.DockerException, match="Could not start or adopt"):
+            mgr.start_kernel_sync("ml")
+
+        assert kernel.state == KernelState.ERROR
+        assert mgr._docker.containers.run.call_count == kernel_manager._CONVERGE_ATTEMPTS
+
+    def test_409_replaces_portless_running_holder_local_mode(self):
+        """A running holder with no published host port is unreachable in local
+        mode — adopting it would burn the whole health timeout."""
+        kernel = _kernel(port=None)
+        mgr = _start_ready_manager(kernel)
+        holder = _fake_container("portless-1", status="running")
+        fresh = _fake_container("fresh-6", host_port="19012")
+        mgr._docker.containers.run.side_effect = [_api_error(409), fresh]
+        mgr._docker.containers.get.return_value = holder
+
+        result = mgr.start_kernel_sync("ml")
+
+        assert result.state == KernelState.IDLE
+        assert kernel.container_id == "fresh-6"
+        holder.remove.assert_called_once_with(force=True)
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _RecordingTransport:
+    """Stands in for httpx.Client; records concurrent in-flight posts."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._inflight = 0
+        self.max_inflight = 0
+        self.calls = 0
+        self.behavior = None  # optional callable overriding the default response
+
+    def client_factory(self):
+        transport = self
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def post(self, url, json=None):
+                return transport._post()
+
+        return _Client
+
+    def _post(self):
+        with self._lock:
+            self._inflight += 1
+            self.calls += 1
+            self.max_inflight = max(self.max_inflight, self._inflight)
+        try:
+            if self.behavior is not None:
+                return self.behavior()
+            time.sleep(0.05)
+            return _FakeResponse({"success": True})
+        finally:
+            with self._lock:
+                self._inflight -= 1
+
+
+def _exec_ready_manager(kernel: KernelInfo) -> KernelManager:
+    mgr = _start_ready_manager(kernel)
+    mgr._check_oom_killed = MagicMock(return_value=False)
+    mgr._is_container_running = MagicMock(return_value=True)
+    return mgr
+
+
+def _request() -> ExecuteRequest:
+    return ExecuteRequest(node_id=1, code="x = 1", source_registration_id=1)
+
+
+class TestExecuteSerialization:
+    def test_concurrent_execute_sync_serialized(self, monkeypatch):
+        """One kernel runs one cell at a time — the runtime execs cells into a
+        shared namespace, so concurrent posts would race imports/globals."""
+        kernel = _kernel(state=KernelState.IDLE)
+        mgr = _exec_ready_manager(kernel)
+        transport = _RecordingTransport()
+        monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
+
+        n = 6
+        barrier = threading.Barrier(n)
+        results: list = []
+
+        def _run() -> None:
+            barrier.wait()
+            results.append(mgr.execute_sync("ml", _request()))
+
+        threads = [threading.Thread(target=_run) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == n
+        assert all(r.success for r in results)
+        assert transport.calls == n
+        assert transport.max_inflight == 1
+        mgr._docker.containers.run.assert_not_called()
+
+    def test_cold_start_plus_execute_one_create_serial_posts(self, monkeypatch):
+        kernel = _kernel()
+        mgr = _exec_ready_manager(kernel)
+        mgr._docker.containers.run.return_value = _fake_container("c-1", host_port="19001")
+        transport = _RecordingTransport()
+        monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
+
+        n = 6
+        barrier = threading.Barrier(n)
+        results: list = []
+
+        def _run() -> None:
+            barrier.wait()
+            results.append(mgr.execute_sync("ml", _request()))
+
+        threads = [threading.Thread(target=_run) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert all(r.success for r in results)
+        assert mgr._docker.containers.run.call_count == 1
+        assert transport.max_inflight == 1
+
+    def test_cancel_while_waiting_returns_without_interrupt(self, monkeypatch):
+        """A waiter that cancels before acquiring the lock has submitted nothing
+        — interrupting would kill the other node's running cell."""
+        kernel = _kernel(state=KernelState.IDLE)
+        mgr = _exec_ready_manager(kernel)
+        mgr.interrupt_execution_sync = MagicMock(return_value=True)
+        transport = _RecordingTransport()
+        started = threading.Event()
+        release = threading.Event()
+
+        def _blocking():
+            started.set()
+            release.wait(timeout=10)
+            return _FakeResponse({"success": True})
+
+        transport.behavior = _blocking
+        monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
+
+        holder_result: list = []
+        t = threading.Thread(target=lambda: holder_result.append(mgr.execute_sync("ml", _request())))
+        t.start()
+        assert started.wait(timeout=5)
+
+        cancel = threading.Event()
+        cancel.set()
+        result = mgr.execute_sync("ml", _request(), cancel_event=cancel)
+
+        assert result.success is False
+        assert "cancelled" in (result.error or "")
+        mgr.interrupt_execution_sync.assert_not_called()
+        assert transport.calls == 1
+
+        release.set()
+        t.join(timeout=5)
+        assert holder_result and holder_result[0].success
+
+    def test_timeout_interrupts_and_releases_lock(self, monkeypatch):
+        kernel = _kernel(state=KernelState.IDLE)
+        mgr = _exec_ready_manager(kernel)
+        mgr.interrupt_execution_sync = MagicMock(return_value=True)
+        transport = _RecordingTransport()
+        attempts = [0]
+
+        def _behavior():
+            attempts[0] += 1
+            if attempts[0] == 1:
+                raise httpx.ReadTimeout("cell overran")
+            return _FakeResponse({"success": True})
+
+        transport.behavior = _behavior
+        monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
+
+        result = mgr.execute_sync("ml", _request())
+        assert result.success is False
+        assert "300s" in (result.error or "")
+        mgr.interrupt_execution_sync.assert_called_once_with("ml")
+
+        follow_up = mgr.execute_sync("ml", _request())
+        assert follow_up.success
+
+    def test_kernel_death_preserves_container_id(self, monkeypatch):
+        """The death path must keep the container reference so the next start's
+        tracked cleanup replaces the name-holder instead of 409ing."""
+        kernel = _kernel(state=KernelState.IDLE)
+        kernel.container_id = "c-dead"
+        mgr = _exec_ready_manager(kernel)
+        mgr._is_container_running = MagicMock(return_value=False)
+        transport = _RecordingTransport()
+
+        def _behavior():
+            raise httpx.ConnectError("kernel down")
+
+        transport.behavior = _behavior
+        monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
+
+        result = mgr.execute_sync("ml", _request())
+
+        assert result.success is False
+        assert kernel.state == KernelState.STOPPED
+        assert kernel.container_id == "c-dead"
+
+    def test_async_execute_delegates(self, monkeypatch):
+        kernel = _kernel(state=KernelState.IDLE)
+        mgr = _exec_ready_manager(kernel)
+        transport = _RecordingTransport()
+        monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
+
+        result = asyncio.run(mgr.execute("ml", _request()))
+
+        assert result.success
+        assert transport.calls == 1
 
 
 class TestDerivedImageBuildDedup:
