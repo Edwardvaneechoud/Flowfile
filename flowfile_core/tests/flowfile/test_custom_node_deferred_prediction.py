@@ -142,6 +142,60 @@ def test_hookless_kernel_node_own_prediction_warns(monkeypatch):
     assert kernel_node._schema_prediction_blocked is not None
 
 
+def test_warning_propagates_to_all_downstream_nodes(monkeypatch):
+    """a -> b(kernel) -> c(select) -> d(select): both c and d must warn."""
+    monkeypatch.setattr(
+        FlowGraph, "_execute_on_kernel", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no kernel"))
+    )
+    flow = create_graph()
+    add_manual_source(flow)
+    add_custom(flow, KernelSourceNode, node_id=2, upstream_id=1, kernel_id="test-kernel")
+    for node_id, upstream_id in ((3, 2), (4, 3)):
+        flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=node_id, node_type="select"))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(upstream_id, node_id))
+        flow.add_select(input_schema.NodeSelect(flow_id=1, node_id=node_id, select_input=[], keep_missing=True))
+
+    for node_id in (3, 4):
+        node_data = flow.get_node(node_id).get_node_data(flow_id=1, include_output=False, include_inputs=True)
+        assert node_data.prediction_warning is not None, f"node {node_id} must surface the kernel warning"
+        assert "(id 2)" in node_data.prediction_warning
+
+
+def test_declared_output_schema_clears_warning_downstream(monkeypatch):
+    """Declaring c's columns (Schema Validator) resolves it — c and d stop warning."""
+    monkeypatch.setattr(
+        FlowGraph, "_execute_on_kernel", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no kernel"))
+    )
+    flow = create_graph()
+    add_manual_source(flow)
+    add_custom(flow, KernelSourceNode, node_id=2, upstream_id=1, kernel_id="test-kernel")
+    # c declares its output columns; d is a plain passthrough downstream of c.
+    flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=3, node_type="select"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_select(
+        input_schema.NodeSelect(
+            flow_id=1,
+            node_id=3,
+            select_input=[],
+            keep_missing=True,
+            output_field_config=input_schema.OutputFieldConfig(
+                enabled=True,
+                fields=[
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="score", data_type="Float64"),
+                ],
+            ),
+        )
+    )
+    flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=4, node_type="select"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+    flow.add_select(input_schema.NodeSelect(flow_id=1, node_id=4, select_input=[], keep_missing=True))
+
+    for node_id in (3, 4):
+        node_data = flow.get_node(node_id).get_node_data(flow_id=1, include_output=False, include_inputs=True)
+        assert node_data.prediction_warning is None, f"node {node_id} must not warn once c's schema is declared"
+
+
 def test_prediction_warning_reaches_node_data(monkeypatch):
     monkeypatch.setattr(
         FlowGraph, "_execute_on_kernel", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no kernel"))

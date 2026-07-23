@@ -81,6 +81,29 @@ def kernel_block_reason(node: "FlowNode", include_self: bool) -> str | None:
     return None
 
 
+def first_upstream_prediction_warning(node: "FlowNode") -> str | None:
+    """Propagate a kernel-gate warning to every downstream node, not just the
+    direct neighbour. Walks this node plus its upstreams and returns the first
+    block reason found. A node with a resolved output schema (it ran, or its
+    columns were declared in the Schema Validator) is a boundary: downstream
+    columns come from it, so an un-run kernel further up no longer matters."""
+    stack = [node]
+    seen: set = set()
+    while stack:
+        current = stack.pop()
+        if current.node_id in seen:
+            continue
+        seen.add(current.node_id)
+        if current.node_stats.has_completed_last_run or current.node_schema.result_schema:
+            continue
+        if current.node_schema.predicted_schema:
+            continue
+        if current._schema_prediction_blocked:
+            return current._schema_prediction_blocked
+        stack.extend(n for n, _ in current._slot_input_pairs() if n is not None)
+    return None
+
+
 class FlowNode:
     """Represents a single node in a data flow graph.
 
@@ -2002,7 +2025,6 @@ class FlowNode:
             flow_type=self.node_type,
         )
         if include_inputs:
-            warning_sources: list[FlowNode] = [self]
             if self.accepts_dynamic_inputs:
                 # The settings panel's main_input is the parameter-data connection
                 # (handle input-0) specifically — not whichever slot happens to be
@@ -2010,21 +2032,28 @@ class FlowNode:
                 param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
                 if param_node is not None:
                     node.main_input = param_node.get_table_example()
-                    warning_sources.append(param_node)
             elif self.main_input:
                 node.main_input = self.main_input[0].get_table_example()
-                warning_sources.append(self.main_input[0])
             if self.left_input:
                 node.left_input = self.left_input.get_table_example()
-                warning_sources.append(self.left_input)
             if self.right_input:
                 node.right_input = self.right_input.get_table_example()
-                warning_sources.append(self.right_input)
-            # Read after the get_table_example calls above — they run the upstream
-            # predictions that may hit the kernel gate.
-            node.prediction_warning = next(
-                (n._schema_prediction_blocked for n in warning_sources if n._schema_prediction_blocked), None
-            )
+            # The get_table_example calls above cascade the inputs' predictions,
+            # setting the kernel-gate flag; walk the whole upstream chain so the
+            # warning reaches every downstream node.
+            warning = first_upstream_prediction_warning(self)
+            if warning and not (self.node_schema.result_schema or self.node_schema.predicted_schema):
+                # This node may resolve its own columns independently (declared in
+                # the Schema Validator). Compute its prediction — cheap here since
+                # the blocked upstream means it either resolves from the
+                # declaration or hits the gate, never materializing through it.
+                try:
+                    self.get_predicted_schema()
+                except Exception:
+                    pass
+                if self.node_schema.result_schema or self.node_schema.predicted_schema:
+                    warning = None
+            node.prediction_warning = warning
         if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
         node = setting_generator.get_setting_generator(self.node_type)(node)
