@@ -97,6 +97,26 @@ def test_edit_between_calls_reloads_class(local_registry, nodes_dir, hot_reload_
     assert local_registry.get("reload_node").source_hash != old_hash
 
 
+def test_same_mtime_content_edit_reloads_class(local_registry, nodes_dir, hot_reload_on):
+    """An edit landing within mtime resolution must still reload (content hash).
+
+    Trusting mtime alone once served a stale class whose missing
+    predict_output_schema silently disabled hook wiring at placement.
+    """
+    path = nodes_dir / "reload.py"
+    _write(path, category="V1")
+    local_registry.scan()
+    cls1 = local_registry.ensure_class(local_registry.get("reload_node"))
+    stat = path.stat()
+
+    _write(path, category="V2")
+    os.utime(path, (stat.st_atime, stat.st_mtime))  # pin mtime back: same-tick rewrite
+    cls2 = local_registry.ensure_class(local_registry.get("reload_node"))
+
+    assert cls2 is not cls1
+    assert cls2().node_category == "V2"
+
+
 def test_unchanged_and_touch_do_not_reexec(local_registry, nodes_dir, hot_reload_on):
     path = nodes_dir / "reload.py"
     _write(path, category="V1")

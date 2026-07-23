@@ -55,7 +55,6 @@ FLOWFILE_CUSTOM_NODE_HOT_RELOAD: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_CUSTOM_NODE_HOT_RELOAD", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
-
 def get_catalog_storage_uri() -> str | None:
     """Object-storage root for catalog table data, e.g. ``s3://bucket/catalog``.
 

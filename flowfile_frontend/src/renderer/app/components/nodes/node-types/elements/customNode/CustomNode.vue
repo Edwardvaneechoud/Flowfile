@@ -146,6 +146,8 @@ const globalArtifacts = ref<GlobalArtifactOption[]>([]);
 const columnsLoading = ref(false);
 const kernelsLoading = ref(false);
 const artifactsLoading = ref(false);
+// The prediction warning renders in the shared GenericNodeSettings banner,
+// sourced from the store slot the stage-2 full fetch below populates.
 // Kernel id the artifacts were last fetched for — idempotence guard for the
 // selectedKernelId watcher (a timing-based guard would double-fetch).
 const lastArtifactsKernelId = ref<string | null | undefined>(undefined);
@@ -327,7 +329,7 @@ async function hydrateColumns(nodeId: number, seq: number) {
     if (mainColumns.length) {
       availableColumns.value = mainColumns;
       columnTypes.value = full.main_input?.table_schema ?? [];
-    } else {
+    } else if (!full.prediction_warning) {
       console.warn(
         `No main_input or columns found for node ${nodeId}. Select components may be empty.`,
       );

@@ -438,6 +438,12 @@ class CustomNodeBase(BaseModel):
     environment: Literal["local", "kernel"] = "local"
     dependencies: list[str] = Field(default_factory=list)
 
+    # Schema prediction may need real data (a collect) — e.g. one-hot encoding.
+    # Conservative default: pre-run hook inputs carry real upstream data when the
+    # un-run chain is kernel-free; a kernel in the chain yields a warning instead.
+    # Set False for pure schema hooks to skip upstream materialization entirely.
+    requires_data_for_prediction: bool = True
+
     # Optional sample data for dry-runs: one column-oriented dict per input port
     # ({column: [values]}), plus the settings values to test with.
     example_inputs: list[dict[str, list]] | None = None
@@ -795,6 +801,16 @@ if not inputs:
         (``self.settings_schema...``). It always runs in the main Flowfile
         process, even for ``environment="kernel"`` nodes — don't depend on
         kernel-only packages here.
+
+        With ``requires_data_for_prediction`` (the default), pre-run inputs
+        carry the upstream's real lazy data when everything un-run upstream is
+        kernel-free: Flowfile materializes in-core, pivot-style, and your
+        ``collect()`` bounds what is computed. When an un-run kernel node is in
+        the chain, Flowfile never executes it implicitly — prediction stops
+        with a visible "run the upstream first" warning instead. Set
+        ``requires_data_for_prediction = False`` for pure schema hooks to skip
+        upstream materialization; such hooks see schema-only empty frames
+        pre-run.
 
         Args:
             *inputs: One ``pl.LazyFrame`` per connected input, in port order —

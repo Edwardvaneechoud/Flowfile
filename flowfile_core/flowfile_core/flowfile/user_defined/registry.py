@@ -253,32 +253,36 @@ class CustomNodeRegistry:
             target.template = source.template
 
     def _file_changed(self, entry: LoadedNode) -> bool:
-        """Lock-free: has the file's mtime moved since we scanned it? (hot-reload off ⇒ False)."""
+        """Lock-free staleness probe: mtime moved, or content differs at equal mtime.
+
+        Content is checked because editors/codegen can rewrite a file within the
+        mtime resolution; trusting mtime alone once served a stale class whose
+        missing ``predict_output_schema`` silently disabled hook wiring.
+        Hot-reload off ⇒ False (documented freeze until save/rescan/restart).
+        """
         if not FLOWFILE_CUSTOM_NODE_HOT_RELOAD:
             return False
         try:
-            return entry.file_path.stat().st_mtime != entry.mtime
+            if entry.file_path.stat().st_mtime != entry.mtime:
+                return True
+            return hashlib.sha256(entry.file_path.read_bytes()).hexdigest() != entry.source_hash
         except OSError:
             return False
 
     def _revalidate_locked(self, current: LoadedNode) -> LoadedNode:
-        """Under ``_exec_lock``: reload ``current`` if its file changed on disk (mtime then sha256)."""
+        """Under ``_exec_lock``: reload ``current`` when its on-disk content changed (sha256)."""
         hot = bool(FLOWFILE_CUSTOM_NODE_HOT_RELOAD)
         if not hot and current.node_class is not None:
             return current
         try:
             on_disk_mtime = current.file_path.stat().st_mtime
-        except OSError:
-            return current  # vanished mid-edit: serve last-known-good
-        if current.node_class is not None and on_disk_mtime == current.mtime:
-            return current
-        try:
             raw = current.file_path.read_bytes()
         except OSError:
-            return current
+            return current  # vanished mid-edit: serve last-known-good
         if hashlib.sha256(raw).hexdigest() == current.source_hash:
-            with self._lock:
-                current.mtime = on_disk_mtime  # a touch, not an edit
+            if on_disk_mtime != current.mtime:
+                with self._lock:
+                    current.mtime = on_disk_mtime  # a touch, not an edit
             return current
         return self.load_file(current.file_path, mount_path=current.mount_path)
 

@@ -217,8 +217,9 @@ def test_concurrent_prediction_executes_once():
     assert results[0] == results[1]
 
 
-def test_data_dependent_hook_sees_real_upstream_data_after_run():
-    """Hooks receive the upstream's real lazy data once it has run (one-hot style)."""
+def test_data_dependent_hook_sees_real_upstream_data():
+    """One-hot style hooks get real upstream data: pre-run via in-core
+    materialization of the kernel-free chain, and the actual results after a run."""
 
     class OneHotStyleNode(CustomNodeBase):
         node_name: str = "One Hot Style Node"
@@ -233,15 +234,15 @@ def test_data_dependent_hook_sees_real_upstream_data_after_run():
         def predict_output_schema(self, *inputs):
             values = inputs[0].select(pl.col("a").unique().sort()).collect()["a"].to_list()
             if not values:
-                return None  # pre-run: no data yet, fall back
+                return None
             return inputs[0].with_columns([pl.lit(0).alias(f"a_{v}") for v in values])
 
     flow = build_flow_with_custom_node(OneHotStyleNode)
     node = flow.get_node(2)
 
-    # Before the upstream ran the frame is schema-only: the hook opts out and
-    # the exec tier supplies the passthrough schema.
-    assert [c.column_name for c in node.get_predicted_schema()] == ["a"]
+    assert [c.column_name for c in node.get_predicted_schema()] == ["a", "a_1", "a_2"], (
+        "pre-run prediction materializes the kernel-free chain in-core"
+    )
 
     flow.run_graph()
     predicted = node.get_predicted_schema(force=True)

@@ -102,11 +102,14 @@ class SingleExecutionFuture(Generic[T]):
             # Start if not already started
             if not self._has_started:
                 self.start()
+            # Capture under the lock: a concurrent reset() nulls self._future,
+            # which would make this call return None instead of the result.
+            future = self._future
 
         # Wait for completion outside the lock to avoid blocking other threads
-        if self._future:
+        if future:
             try:
-                result: T = self._future.result()
+                result: T = future.result()
                 logger.info("Function completed successfully")
                 return result
             except Exception as e:
