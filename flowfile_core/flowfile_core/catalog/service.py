@@ -1139,6 +1139,7 @@ class CatalogService:
 
     def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table."""
+        self._require_manage("catalog_table", table_id)
         return self._tables.optimize_table(table_id, z_order_columns)
 
     def vacuum_table(
@@ -1148,6 +1149,7 @@ class CatalogService:
         dry_run: bool = True,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table."""
+        self._require_manage("catalog_table", table_id)
         return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run)
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
@@ -1338,6 +1340,7 @@ class CatalogService:
         used_tables: list[str] | None = None,
     ) -> int:
         """Create a registered flow from a SQL query and return the registration ID."""
+        self._require_namespace_writable(namespace_id)
         # Only embed catalog_reader nodes for tables the caller may read, so the
         # generated flow can't be used to exfiltrate another user's table.
         accessible = self.access.accessible_ids("catalog_table") if self._restricted else None

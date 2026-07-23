@@ -543,6 +543,7 @@ import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { findNamespacePath } from "../../types";
 import { catalogTabs } from "./catalogTabs";
@@ -570,6 +571,7 @@ const { openFlow } = useFlowOpener();
 
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
+const { writableSchemaNamespaces } = useWritableNamespaces();
 const shareNamespace = ref<NamespaceTree | null>(null);
 const showNamespaceShareDialog = ref(false);
 const openNamespaceShare = (node: NamespaceTree) => {
@@ -1001,13 +1003,8 @@ function openRegisterTable(namespaceId: number) {
 
 /** Open register table modal from the sidebar header (no pre-selected namespace). */
 function openRegisterTableGlobal() {
-  const schemaNamespaces: { id: number }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      schemaNamespaces.push({ id: schema.id });
-    }
-  }
-  registerTableNamespaceId.value = defaultNamespaceId.value ?? schemaNamespaces[0]?.id ?? null;
+  registerTableNamespaceId.value =
+    defaultNamespaceId.value ?? writableSchemaNamespaces.value[0]?.id ?? null;
   showRegisterTable.value = true;
 }
 

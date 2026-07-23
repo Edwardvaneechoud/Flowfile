@@ -1227,6 +1227,8 @@ def save_query_as_flow(
             used_tables=body.used_tables,
         )
         return {"flow_id": flow_id}
+    except NotAuthorizedError as e:
+        raise HTTPException(403, str(e)) from None
     except Exception as e:
         raise HTTPException(500, str(e)) from e
 

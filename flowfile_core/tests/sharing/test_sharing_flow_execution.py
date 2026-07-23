@@ -164,7 +164,36 @@ def _reader_table_ids(flow_path: str) -> list[int]:
     return [n["setting_input"].get("catalog_table_id") for n in data["nodes"] if n["type"] == "catalog_reader"]
 
 
-def test_save_as_flow_drops_unshared_table(monkeypatch, tmp_path, users, alice_table):
+@pytest.fixture
+def public_sql_ns(users, resource_factory):
+    """A public (writable-by-anyone) schema holding a private table of alice's.
+
+    Used tables resolve by name within the save-target namespace, and saving into
+    alice's private schema is now refused with 403 — a public schema keeps the
+    save allowed while table access still depends on grants.
+    """
+    catalog_id = resource_factory(
+        db_models.CatalogNamespace, name="SqlPub", parent_id=None, level=0, owner_id=users["alice"].id, is_public=True
+    )
+    schema_id = resource_factory(
+        db_models.CatalogNamespace,
+        name="sql_pub_schema",
+        parent_id=catalog_id,
+        level=1,
+        owner_id=users["alice"].id,
+        is_public=True,
+    )
+    table_id = resource_factory(
+        db_models.CatalogTable,
+        name="alice_pub_ns_table",
+        namespace_id=schema_id,
+        owner_id=users["alice"].id,
+        file_path="/tmp/alice_pub_ns_table",
+    )
+    return {"schema": schema_id, "table": table_id}
+
+
+def test_save_as_flow_drops_unshared_table(monkeypatch, tmp_path, users, public_sql_ns):
     """A restricted user saving a query over alice's table embeds no reader for it."""
     monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
     with get_db_context() as db:
@@ -172,11 +201,11 @@ def test_save_as_flow_drops_unshared_table(monkeypatch, tmp_path, users, alice_t
         reg_id = _save_as_flow(
             db,
             bob,
-            query="SELECT * FROM alice_exec_table",
+            query="SELECT * FROM alice_pub_ns_table",
             name="bob_steal",
             owner_id=users["bob"].id,
-            namespace_id=alice_table["schema"],
-            used_tables=["alice_exec_table"],
+            namespace_id=public_sql_ns["schema"],
+            used_tables=["alice_pub_ns_table"],
         )
         flow_path = db.get(db_models.FlowRegistration, reg_id).flow_path
 
@@ -191,24 +220,26 @@ def test_save_as_flow_drops_unshared_table(monkeypatch, tmp_path, users, alice_t
                 db.commit()
 
 
-def test_save_as_flow_keeps_accessible_table(monkeypatch, tmp_path, users, alice_table, team, grant_factory):
+def test_save_as_flow_keeps_accessible_table(
+    monkeypatch, tmp_path, users, public_sql_ns, team, grant_factory
+):
     monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
-    grant_factory("catalog_table", alice_table["table"], team, permission="use", granted_by=users["alice"].id)
+    grant_factory("catalog_table", public_sql_ns["table"], team, permission="use", granted_by=users["alice"].id)
     with get_db_context() as db:
         bob = db.get(db_models.User, users["bob"].id)
         reg_id = _save_as_flow(
             db,
             bob,
-            query="SELECT * FROM alice_exec_table",
+            query="SELECT * FROM alice_pub_ns_table",
             name="bob_shared_query",
             owner_id=users["bob"].id,
-            namespace_id=alice_table["schema"],
-            used_tables=["alice_exec_table"],
+            namespace_id=public_sql_ns["schema"],
+            used_tables=["alice_pub_ns_table"],
         )
         flow_path = db.get(db_models.FlowRegistration, reg_id).flow_path
 
     try:
-        assert alice_table["table"] in _reader_table_ids(flow_path)
+        assert public_sql_ns["table"] in _reader_table_ids(flow_path)
     finally:
         with get_db_context() as db:
             row = db.get(db_models.FlowRegistration, reg_id)
