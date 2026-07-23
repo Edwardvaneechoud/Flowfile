@@ -2181,28 +2181,7 @@ class KernelManager:
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Error cleaning up container '%s': %s", container_id, exc)
 
-    async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
-        kernel = self._get_kernel_or_raise(kernel_id)
-        url = f"{self._kernel_url(kernel)}/health"
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-
-        while loop.time() < deadline:
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-                    response = await client.get(url)
-                    if response.status_code == 200:
-                        data = response.json()
-                        kernel.kernel_version = data.get("version")
-                        return
-            except (httpx.HTTPError, OSError) as exc:
-                logger.debug("Health poll for kernel '%s' failed: %s", kernel_id, exc)
-            await asyncio.sleep(_HEALTH_POLL_INTERVAL)
-
-        raise TimeoutError(f"Kernel '{kernel_id}' did not become healthy within {timeout}s")
-
     def _wait_for_healthy_sync(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
-        """Synchronous version of _wait_for_healthy."""
         kernel = self._get_kernel_or_raise(kernel_id)
         url = f"{self._kernel_url(kernel)}/health"
         deadline = time.monotonic() + timeout
