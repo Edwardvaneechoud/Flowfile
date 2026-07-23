@@ -63,6 +63,8 @@ def _bare_manager() -> KernelManager:
         mgr._start_flights_lock = threading.Lock()
         mgr._build_locks = {}
         mgr._build_locks_lock = threading.Lock()
+        mgr._exec_locks = {}
+        mgr._exec_locks_lock = threading.Lock()
     return mgr
 
 
@@ -843,20 +845,21 @@ class TestExecuteKernelDown:
         # Container is gone — both the OOM probe and the liveness probe see NotFound.
         mgr._docker.containers.get.side_effect = docker.errors.NotFound("gone")
 
+        # execute() delegates to the sync path, so patch the sync client.
         class _FailingClient:
             def __init__(self, *a, **kw):
                 pass
 
-            async def __aenter__(self):
+            def __enter__(self):
                 return self
 
-            async def __aexit__(self, *a):
+            def __exit__(self, *a):
                 return False
 
-            async def post(self, *a, **kw):
+            def post(self, *a, **kw):
                 raise httpx.ConnectError("connection failed")
 
-        monkeypatch.setattr(httpx, "AsyncClient", _FailingClient)
+        monkeypatch.setattr(httpx, "Client", _FailingClient)
 
         req = ExecuteRequest(node_id=1, code="1", source_registration_id=1)
         result = _run(mgr.execute("k1", req))
@@ -864,4 +867,6 @@ class TestExecuteKernelDown:
         assert result.success is False
         assert result.error == _KERNEL_DOWN_MSG
         assert k.state == KernelState.STOPPED
-        assert k.container_id is None
+        # The container reference is kept so the next start's tracked cleanup
+        # replaces the name-holder instead of 409ing on it.
+        assert k.container_id == "abc"
