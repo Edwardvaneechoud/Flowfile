@@ -1392,7 +1392,10 @@ defineExpose({
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />
+      <!-- Floating panels sit above the DesignerView empty-state overlay
+           (z-index 100000) — hide them while no flow is open. -->
       <draggable-item
+        v-if="flowStore.flowId > 0"
         id="dataActions"
         :show-left="true"
         :initial-width="DATA_ACTIONS_WIDTH"
@@ -1411,7 +1414,7 @@ defineExpose({
         :left-override="drawerLeftOverride(d)"
       />
       <AiCommandPalette />
-      <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
+      <layoutControls v-if="flowStore.flowId > 0" @reset-layout-graph="handleResetLayoutGraph" />
     </main>
   </div>
 </template>

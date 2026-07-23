@@ -15,10 +15,16 @@
         </button>
       </div>
       <p class="empty-kbd-hint">
-        <span class="kbd-group"><kbd>{{ MODIFIER_LABEL }}</kbd><kbd>N</kbd></span>
+        <span class="kbd-group"
+          ><kbd>{{ MODIFIER_LABEL }}</kbd
+          ><kbd>N</kbd></span
+        >
         new
         <span class="kbd-sep">·</span>
-        <span class="kbd-group"><kbd>{{ MODIFIER_LABEL }}</kbd><kbd>O</kbd></span>
+        <span class="kbd-group"
+          ><kbd>{{ MODIFIER_LABEL }}</kbd
+          ><kbd>O</kbd></span
+        >
         open
       </p>
       <div v-if="recentsToShow.length" class="empty-recents">
