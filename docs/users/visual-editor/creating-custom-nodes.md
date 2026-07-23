@@ -105,18 +105,21 @@ class MyCustomNode(nd.CustomNodeBase):
 
 By default, Flowfile predicts a custom node's output schema by actually running `process` on schema-only frames — for a kernel node that means starting a container just so a downstream settings panel can list your columns. Implementing the optional `predict_output_schema` method skips all of that: you declare the output schema as a pure function of the input schemas and the node's settings, and prediction becomes instant.
 
-For the greeting node above, the declaration mirrors what `process` produces:
+The signature mirrors `process` — return a frame and Flowfile reads its schema lazily. For a node built from pure polars expressions, prediction is one line:
 
 ```python
 --8<-- "docs/examples/custom_node.py:predict-schema"
 ```
 
-- One `pl.Schema` arrives per connected input port, in the same order as `process`.
-- Return a `pl.Schema`, or for a multi-output node a `dict[str, pl.Schema]` keyed by output name.
+- One `pl.LazyFrame` arrives per connected input port, in the same order as `process`. Each is the upstream's **best-available** frame: its real lazy data once that upstream has run, a schema-only empty frame before then.
+- Data-dependent schemas are yours to trade off: a one-hot encoder can `collect()` the `unique()` values of a column and build its dummy columns from them — just handle the empty pre-run case (returning `None` is a fine answer, and prediction upgrades itself after the first run).
+- Return a `pl.LazyFrame` (or `pl.DataFrame`); for a multi-output node return a `dict[str, pl.LazyFrame]` keyed by output name. A hand-built `pl.Schema` also works.
 - Return `None` (or raise) to fall back to the default execution-based prediction.
 
-!!! tip "Keep it pure"
-    `predict_output_schema` always runs in the main Flowfile process — even for `environment="kernel"` nodes — so it must not depend on kernel-only packages or touch data. Read settings the same way as in `process`; derive the output purely from the input schemas and those settings.
+In the Node Designer, the **Code** tab has a collapsible **Schema prediction (optional)** panel below the `process` editor — it scaffolds the method for you and edits just the body under a read-only signature, exactly like the `process` editor.
+
+!!! tip "It runs in the main process"
+    `predict_output_schema` always runs in the main Flowfile process — even for `environment="kernel"` nodes — so it must not depend on kernel-only packages. Read settings the same way as in `process`, and keep any data peeks bounded (unique lists, small samples): this runs when settings panels open.
 
 ### Palette placement
 

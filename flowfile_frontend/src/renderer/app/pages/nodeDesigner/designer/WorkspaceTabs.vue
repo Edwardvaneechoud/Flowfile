@@ -59,6 +59,50 @@
               />
             </div>
             <CollapsibleSection
+              v-if="!store.codeOnly"
+              title="Schema prediction (optional)"
+              icon="fa-solid fa-table-columns"
+              persist-key="nd-code-predict-schema"
+              :default-open="store.predictSchemaEnabled"
+              class="code-predict-dock"
+            >
+              <div v-if="!store.predictSchemaEnabled" class="predict-schema-empty">
+                <p class="predict-schema-hint">
+                  Declare the output schema so Flowfile can predict columns instantly, without
+                  running the node (or starting a kernel). Mirrors <code>process</code> on
+                  schema-only inputs — pure-polars nodes can just
+                  <code>return self.process(*inputs)</code>.
+                </p>
+                <button
+                  class="btn btn-sm btn-secondary"
+                  type="button"
+                  @click="store.predictSchemaEnabled = true"
+                >
+                  <i class="fa-solid fa-plus"></i>
+                  Add schema prediction
+                </button>
+              </div>
+              <div v-else class="predict-schema-editor">
+                <ProcessCodeEditor
+                  v-model="predictSchemaBody"
+                  :extensions="extensions"
+                  :signature="store.predictSchemaSignature"
+                  title="Schema Prediction"
+                  hint="Inputs mirror process: real upstream data once it has run, schema-only before. Return a frame with the output schema, or None to fall back to running the node."
+                  hide-help
+                  height="100%"
+                  @insert="handleInsertPredictVariable"
+                />
+                <button
+                  class="btn btn-sm btn-secondary predict-schema-remove"
+                  type="button"
+                  @click="store.predictSchemaEnabled = false"
+                >
+                  Remove schema prediction
+                </button>
+              </div>
+            </CollapsibleSection>
+            <CollapsibleSection
               title="Test"
               icon="fa-solid fa-flask"
               persist-key="nd-code-test"
@@ -110,6 +154,26 @@ const processCode = computed({
     else store.processBody = value;
   },
 });
+
+const predictSchemaBody = computed({
+  get: () => store.predictSchemaBody,
+  set: (value: string) => {
+    store.predictSchemaBody = value;
+  },
+});
+
+function handleInsertPredictVariable(code: string) {
+  const lines = store.predictSchemaBody.split("\n");
+  let insertIndex = 0;
+  while (
+    insertIndex < lines.length &&
+    (lines[insertIndex].trim().startsWith("#") || lines[insertIndex].trim() === "")
+  ) {
+    insertIndex++;
+  }
+  lines.splice(insertIndex, 0, code);
+  store.predictSchemaBody = lines.join("\n");
+}
 
 async function recheck() {
   rechecking.value = true;
@@ -237,6 +301,41 @@ function handleInsertVariable(code: string) {
    the dock body is capped with its own scroll so it reads like an IDE panel. */
 .code-test-dock {
   flex-shrink: 0;
+}
+
+.code-predict-dock {
+  flex-shrink: 0;
+}
+
+.code-predict-dock :deep(.cs-body) {
+  margin-top: 0.5rem;
+}
+
+.predict-schema-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.predict-schema-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.predict-schema-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.predict-schema-editor :deep(.cm-editor) {
+  max-height: 220px;
+}
+
+.predict-schema-remove {
+  align-self: flex-end;
 }
 
 .code-test-dock :deep(.cs-body) {

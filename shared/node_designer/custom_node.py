@@ -776,24 +776,34 @@ if not inputs:
         """
         raise NotImplementedError
 
-    def predict_output_schema(self, *input_schemas: pl.Schema) -> "pl.Schema | dict[str, pl.Schema] | None":
+    def predict_output_schema(self, *inputs: pl.LazyFrame) -> "pl.LazyFrame | dict[str, pl.LazyFrame] | None":
         """
         Optionally declare the node's output schema without running ``process``.
 
         When implemented, Flowfile predicts this node's output schema from it
-        directly — no kernel container, worker round-trip, or ``process`` call —
-        so downstream settings panels resolve columns instantly. Read settings
-        the same way as in ``process`` (``self.settings_schema...``). Keep it
-        pure and dependency-light: it always runs in the main Flowfile process,
-        even for ``environment="kernel"`` nodes.
+        directly — no kernel container or worker round-trip — so downstream
+        settings panels resolve columns instantly. Inputs mirror ``process``:
+        each is the upstream's **best-available** ``pl.LazyFrame`` — its real
+        lazy data once that upstream has run, a schema-only empty frame before
+        then. Return a frame whose schema is the output schema; Flowfile reads
+        it lazily. For a node built from pure polars expressions that simply
+        means ``return self.process(*inputs)``. Data-dependent schemas (e.g.
+        one-hot encoding) may collect bounded samples — ``unique()`` of a
+        column, a ``limit()`` — from the inputs; how much compute prediction is
+        worth is your trade-off, but handle the empty pre-run frames (returning
+        ``None`` is a fine answer). Read settings the same way as in ``process``
+        (``self.settings_schema...``). It always runs in the main Flowfile
+        process, even for ``environment="kernel"`` nodes — don't depend on
+        kernel-only packages here.
 
         Args:
-            *input_schemas: One ``pl.Schema`` per connected input, in port order.
+            *inputs: One ``pl.LazyFrame`` per connected input, in port order —
+                real upstream data when available, schema-only otherwise.
 
         Returns:
-            A ``pl.Schema`` (single output), a ``dict[str, pl.Schema]`` keyed by
-            output name (multi-output), or ``None`` to fall back to the default
-            execution-based prediction.
+            A ``pl.LazyFrame`` (single output), a ``dict[str, pl.LazyFrame]``
+            keyed by output name (multi-output), or ``None`` to fall back to
+            the default execution-based prediction.
         """
         return None
 

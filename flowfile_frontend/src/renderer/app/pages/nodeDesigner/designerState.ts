@@ -157,6 +157,7 @@ export interface DesignerState {
   publishes: PublishState[];
   sections: SectionState[];
   process_code: string; // full `def process(...)` source, dedented, verbatim
+  predict_schema_code: string; // full `def predict_output_schema(...)` source; "" = no hook
   example_inputs: ExampleInput[] | null;
   example_settings: Record<string, Record<string, unknown>> | null;
   extra_imports: string[];
@@ -216,6 +217,7 @@ export function newDesignerState(): DesignerState {
       },
     ],
     process_code: "",
+    predict_schema_code: "",
     example_inputs: null,
     example_settings: null,
     extra_imports: [],

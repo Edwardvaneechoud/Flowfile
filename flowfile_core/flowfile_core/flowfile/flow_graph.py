@@ -2035,58 +2035,89 @@ class FlowGraph:
                 error=missing_custom_node_error(node_type),
             )
 
+    @staticmethod
+    def _predicted_value_to_columns(value) -> list[FlowfileColumn] | None:
+        """Normalize a predict_output_schema return value into FlowfileColumns.
+
+        LazyFrames/DataFrames contribute their (lazily resolved) schema; a plain
+        ``pl.Schema`` is tolerated for hand-declared shapes. None means unusable.
+        """
+        if isinstance(value, pl.LazyFrame):
+            return pl_schema_to_flowfile_columns(value.collect_schema())
+        if isinstance(value, pl.DataFrame):
+            return pl_schema_to_flowfile_columns(value.schema)
+        if isinstance(value, pl.Schema):
+            return pl_schema_to_flowfile_columns(value)
+        return None
+
     def _make_user_defined_schema_callback(
         self, *, custom_node: CustomNodeBase, node_id: int, output_names: list[str]
     ) -> Callable:
         """Build a schema callback from the node's ``predict_output_schema`` hook.
 
         Exec-free prediction that always runs in core, even for kernel nodes.
+        The hook mirrors process but receives schema-only empty LazyFrames and
+        returns a frame (or dict of frames) whose schema is read lazily.
         Returning ``[]`` makes the prediction ladder fall back to the
         execution-based path. The node is resolved lazily so the callback can be
         passed into ``add_node_step`` before the node exists.
         """
         resolved_output_names = output_names or ["main"]
 
+        def _best_available_input_frame(input_node: FlowNode, src_handle: str) -> pl.LazyFrame:
+            # The upstream's real lazy data when it has run (worker results are
+            # scan_ipc plans, cheap to sample); schema-only empty frame otherwise.
+            # Data-dependent hooks (e.g. one-hot encoding) may collect bounded
+            # samples from it — that trade-off belongs to the node author.
+            if input_node.node_stats.has_completed_last_run:
+                engine = (input_node._named_outputs or {}).get(src_handle) or input_node.results.resulting_data
+                if engine is not None:
+                    frame = engine.data_frame
+                    return frame if isinstance(frame, pl.LazyFrame) else frame.lazy()
+            frame = input_node.get_predicted_resulting_data(src_handle).data_frame
+            return frame if isinstance(frame, pl.LazyFrame) else frame.lazy()
+
         def schema_callback() -> list[FlowfileColumn]:
             node = self.get_node(node_id)
             if node is None:
                 return []
             try:
-                input_schemas = []
+                input_frames = []
                 for input_node, src_handle in node._slot_input_pairs():
                     if input_node is None:
-                        input_schemas.append(pl.Schema())
+                        input_frames.append(pl.LazyFrame())
                         continue
-                    frame = input_node.get_predicted_resulting_data(src_handle).data_frame
-                    input_schemas.append(frame.collect_schema() if isinstance(frame, pl.LazyFrame) else frame.schema)
-                predicted = custom_node.predict_output_schema(*input_schemas)
+                    input_frames.append(_best_available_input_frame(input_node, src_handle))
+                predicted = custom_node.predict_output_schema(*input_frames)
             except Exception as e:
                 logger.warning(f"predict_output_schema failed for node {node_id}: {e}")
                 return []
             if predicted is None:
                 return []
-            if isinstance(predicted, pl.Schema):
-                if len(resolved_output_names) > 1:
-                    logger.warning(
-                        f"predict_output_schema for node {node_id} returned a single Schema but the node "
-                        f"declares outputs {resolved_output_names}; falling back to execution-based prediction"
-                    )
-                    return []
-                return pl_schema_to_flowfile_columns(predicted)
-            if isinstance(predicted, dict) and predicted and all(isinstance(v, pl.Schema) for v in predicted.values()):
+            if isinstance(predicted, dict) and not isinstance(predicted, pl.Schema):
                 named: dict[str, list[FlowfileColumn]] = {}
                 for i, name in enumerate(resolved_output_names):
-                    if name not in predicted:
-                        logger.warning(f"predict_output_schema for node {node_id} missing declared output '{name}'")
+                    columns = self._predicted_value_to_columns(predicted.get(name))
+                    if columns is None:
+                        logger.warning(
+                            f"predict_output_schema for node {node_id} missing or unsupported "
+                            f"declared output '{name}'"
+                        )
                         return []
-                    named[output_handle(i)] = pl_schema_to_flowfile_columns(predicted[name])
+                    named[output_handle(i)] = columns
                 node._named_schemas = named
                 return named.get(DEFAULT_OUTPUT_HANDLE, [])
-            try:
-                return pl_schema_to_flowfile_columns(pl.Schema(predicted))
-            except Exception:
+            columns = self._predicted_value_to_columns(predicted)
+            if columns is None:
                 logger.warning(f"predict_output_schema for node {node_id} returned an unsupported value")
                 return []
+            if len(resolved_output_names) > 1:
+                logger.warning(
+                    f"predict_output_schema for node {node_id} returned a single frame but the node "
+                    f"declares outputs {resolved_output_names}; falling back to execution-based prediction"
+                )
+                return []
+            return columns
 
         return schema_callback
 

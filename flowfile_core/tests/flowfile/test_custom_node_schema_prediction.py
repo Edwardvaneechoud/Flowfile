@@ -74,10 +74,9 @@ def test_declared_schema_predicts_without_execution():
             process_calls.append("ran")
             return inputs[0]
 
-        def predict_output_schema(self, *input_schemas):
-            schema = dict(input_schemas[0])
-            schema[self.settings_schema.main_section.result_column.value] = pl.Float64()
-            return pl.Schema(schema)
+        def predict_output_schema(self, *inputs):
+            result_column = self.settings_schema.main_section.result_column.value
+            return inputs[0].with_columns(pl.lit(0.0).alias(result_column))
 
     flow = build_flow_with_custom_node(
         DeclaredSchemaNode, settings={"main_section": {"result_column": "score"}}
@@ -88,6 +87,28 @@ def test_declared_schema_predicts_without_execution():
     predicted = node.get_predicted_schema()
     assert [c.column_name for c in predicted] == ["a", "score"]
     assert process_calls == [], "declared schema must not execute process()"
+
+
+def test_hook_can_reuse_process_on_schema_frames():
+    """Pure-polars nodes can predict via `return self.process(*inputs)`."""
+
+    class ProcessReuseNode(CustomNodeBase):
+        node_name: str = "Process Reuse Node"
+        node_category: str = "Testing"
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            return inputs[0].with_columns((pl.col("a") * 1.5).alias("scaled"))
+
+        def predict_output_schema(self, *inputs):
+            return self.process(*inputs)
+
+    flow = build_flow_with_custom_node(ProcessReuseNode)
+    node = flow.get_node(2)
+    predicted = node.get_predicted_schema()
+    assert [c.column_name for c in predicted] == ["a", "scaled"]
 
 
 def test_dict_return_fills_per_handle_schemas():
@@ -103,10 +124,10 @@ def test_dict_return_fills_per_handle_schemas():
         def process(self, *inputs):
             raise AssertionError("must not run for declared schemas")
 
-        def predict_output_schema(self, *input_schemas):
+        def predict_output_schema(self, *inputs):
             return {
-                "main": pl.Schema(dict(input_schemas[0])),
-                "stats": pl.Schema({"metric": pl.String(), "value": pl.Float64()}),
+                "main": inputs[0],
+                "stats": pl.LazyFrame(schema={"metric": pl.String(), "value": pl.Float64()}),
             }
 
     flow = build_flow_with_custom_node(MultiOutNode)
@@ -133,7 +154,7 @@ def test_raising_hook_falls_back_to_execution():
             process_calls.append("ran")
             return inputs[0]
 
-        def predict_output_schema(self, *input_schemas):
+        def predict_output_schema(self, *inputs):
             raise ValueError("cannot predict")
 
     flow = build_flow_with_custom_node(RaisingHookNode)
@@ -196,6 +217,39 @@ def test_concurrent_prediction_executes_once():
     assert results[0] == results[1]
 
 
+def test_data_dependent_hook_sees_real_upstream_data_after_run():
+    """Hooks receive the upstream's real lazy data once it has run (one-hot style)."""
+
+    class OneHotStyleNode(CustomNodeBase):
+        node_name: str = "One Hot Style Node"
+        node_category: str = "Testing"
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            return inputs[0]
+
+        def predict_output_schema(self, *inputs):
+            values = inputs[0].select(pl.col("a").unique().sort()).collect()["a"].to_list()
+            if not values:
+                return None  # pre-run: no data yet, fall back
+            return inputs[0].with_columns([pl.lit(0).alias(f"a_{v}") for v in values])
+
+    flow = build_flow_with_custom_node(OneHotStyleNode)
+    node = flow.get_node(2)
+
+    # Before the upstream ran the frame is schema-only: the hook opts out and
+    # the exec tier supplies the passthrough schema.
+    assert [c.column_name for c in node.get_predicted_schema()] == ["a"]
+
+    flow.run_graph()
+    predicted = node.get_predicted_schema(force=True)
+    assert [c.column_name for c in predicted] == ["a", "a_1", "a_2"], (
+        "post-run prediction must see the upstream's real values"
+    )
+
+
 def test_none_hook_downstream_sees_exec_predicted_schema():
     """A hook that opts out (returns None) must not starve downstream predictions."""
     process_calls: list[str] = []
@@ -211,7 +265,7 @@ def test_none_hook_downstream_sees_exec_predicted_schema():
             process_calls.append("ran")
             return inputs[0]
 
-        def predict_output_schema(self, *input_schemas):
+        def predict_output_schema(self, *inputs):
             return None
 
     class DownstreamPlain(CustomNodeBase):
@@ -260,8 +314,8 @@ def test_zero_input_hook_node_never_executes_at_placement():
             process_calls.append("ran")
             return pl.LazyFrame({"generated": [1]})
 
-        def predict_output_schema(self, *input_schemas):
-            return pl.Schema({"generated": pl.Int64()})
+        def predict_output_schema(self, *inputs):
+            return pl.LazyFrame(schema={"generated": pl.Int64()})
 
     node_store.add_to_custom_node_store(SourceHookNode)
     flow = create_graph()
@@ -280,7 +334,7 @@ def test_zero_input_hook_node_never_executes_at_placement():
 
 
 def test_multi_output_single_schema_falls_back_to_execution():
-    """A single Schema from a multi-output hook is ambiguous — exec tier must fill handles."""
+    """A single frame from a multi-output hook is ambiguous — exec tier must fill handles."""
 
     class MultiOutSingleSchema(CustomNodeBase):
         node_name: str = "Multi Out Single Schema"
@@ -297,8 +351,8 @@ def test_multi_output_single_schema_falls_back_to_execution():
                 "stats": pl.LazyFrame({"metric": ["rows"], "value": [1.0]}),
             }
 
-        def predict_output_schema(self, *input_schemas):
-            return pl.Schema(dict(input_schemas[0]))
+        def predict_output_schema(self, *inputs):
+            return inputs[0]
 
     flow = build_flow_with_custom_node(MultiOutSingleSchema)
     node = flow.get_node(2)
@@ -328,10 +382,8 @@ class AddScoreColumn(nd.CustomNodeBase):
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
         return inputs[0].with_columns(pl.lit(1.0).alias(self.settings_schema.main_section.result_column.value))
 
-    def predict_output_schema(self, *input_schemas: pl.Schema) -> pl.Schema:
-        schema = dict(input_schemas[0])
-        schema[self.settings_schema.main_section.result_column.value] = pl.Float64()
-        return pl.Schema(schema)
+    def predict_output_schema(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return self.process(*inputs)
 '''
 
 
@@ -340,12 +392,22 @@ def test_designer_roundtrip_preserves_hook_method():
     from flowfile_core.flowfile.node_designer.parsing import parse_source
 
     parsed = parse_source(HOOK_NODE_SOURCE)
+    # The hook lifts into its dedicated field (editable in the designer), not class_extra.
+    assert "def predict_output_schema" in parsed.designer_state.predict_schema_code
+    assert not any("predict_output_schema" in block for block in parsed.designer_state.class_extra)
+
     regenerated = generate_source(parsed.designer_state)
     assert "def predict_output_schema" in regenerated
-    assert "pl.Float64()" in regenerated
+    assert "return self.process(*inputs)" in regenerated
 
     # Byte-stable fixed point: re-saving from the designer never mutates the hook.
     assert generate_source(parse_source(regenerated).designer_state) == regenerated
+
+    # Clearing the field removes the method from the generated source.
+    parsed.designer_state.predict_schema_code = ""
+    without_hook = generate_source(parsed.designer_state)
+    assert "predict_output_schema" not in without_hook
+    assert parse_source(without_hook).designer_state.predict_schema_code == ""
 
 
 def test_security_scan_accepts_hook_method():

@@ -436,6 +436,11 @@ class _Renderer:
         lines.append("")
         lines.extend(self._render_process())
 
+        predict_code = state.predict_schema_code.strip("\n")
+        if predict_code:
+            lines.append("")
+            lines.extend(self._indent_block(predict_code, _INDENT))
+
         for block in state.class_extra:
             lines.append("")
             lines.extend(self._indent_block(block, _INDENT))

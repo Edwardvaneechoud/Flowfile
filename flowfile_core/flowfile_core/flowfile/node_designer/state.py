@@ -169,6 +169,7 @@ class DesignerState(BaseModel):
     environment: EnvironmentState = EnvironmentState()
     sections: list[SectionState] = []
     process_code: str = ""  # full `def process(...)` source, dedented, verbatim
+    predict_schema_code: str = ""  # full `def predict_output_schema(...)` source; "" = no hook
     example_inputs: list[ExampleInput] | None = None
     example_settings: dict[str, dict[str, Any]] | None = None
     extra_imports: list[str] = []  # verbatim statements, order preserved

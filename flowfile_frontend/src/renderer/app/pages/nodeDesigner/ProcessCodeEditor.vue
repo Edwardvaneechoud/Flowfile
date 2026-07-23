@@ -1,13 +1,19 @@
 <template>
   <div class="code-editor-section">
     <div class="code-editor-header">
-      <h4>Process Method</h4>
-      <button class="btn btn-sm btn-secondary" title="Show help" @click="showHelp = true">
+      <h4>{{ title ?? "Process Method" }}</h4>
+      <button
+        v-if="!hideHelp"
+        class="btn btn-sm btn-secondary"
+        title="Show help"
+        @click="showHelp = true"
+      >
         <i class="fa-solid fa-circle-question"></i>
         <span>Help</span>
       </button>
     </div>
-    <p class="code-hint">
+    <p v-if="hint" class="code-hint">{{ hint }}</p>
+    <p v-else class="code-hint">
       Write your data transformation logic. Access settings via
       <code>self.settings_schema.section_name.component_name.value</code>
     </p>
@@ -60,6 +66,9 @@ const props = defineProps<{
   height?: string;
   signature?: string;
   outputNames?: string[];
+  title?: string;
+  hint?: string;
+  hideHelp?: boolean;
 }>();
 
 const emit = defineEmits<{

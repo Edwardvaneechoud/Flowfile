@@ -45,10 +45,9 @@ class GreetingNode(nd.CustomNodeBase):
 # --8<-- [end:example]
 
 # --8<-- [start:predict-schema]
-    def predict_output_schema(self, *input_schemas: pl.Schema) -> pl.Schema:
-        schema = dict(input_schemas[0])
-        schema["greeting"] = pl.String()
-        return pl.Schema(schema)
+    def predict_output_schema(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        # Inputs are schema-only (no rows); pure polars logic predicts itself.
+        return self.process(*inputs)
 # --8<-- [end:predict-schema]
 
 node = GreetingNode()
@@ -61,4 +60,5 @@ result = node.process(frame).collect()
 
 assert result.columns == ["name", "greeting"]
 assert result["greeting"].to_list() == ["Hello, Alice", "Hello, Bob"]
-assert node.predict_output_schema(frame.collect_schema()) == result.lazy().collect_schema()
+schema_only = pl.LazyFrame(schema=frame.collect_schema())
+assert node.predict_output_schema(schema_only).collect_schema() == result.lazy().collect_schema()

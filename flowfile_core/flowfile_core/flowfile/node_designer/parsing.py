@@ -800,6 +800,7 @@ class _SourceParser:
     def _lift_node_class(self, cls: ast.ClassDef) -> DesignerState | None:
         attrs: dict[str, tuple[ast.expr, ast.stmt]] = {}
         process_def: ast.FunctionDef | None = None
+        predict_schema_def: ast.FunctionDef | None = None
         class_extra: list[str] = []
 
         body = list(cls.body)
@@ -819,6 +820,8 @@ class _SourceParser:
                 attrs[target] = (value, stmt)
             elif isinstance(stmt, ast.FunctionDef) and stmt.name == "process":
                 process_def = stmt
+            elif isinstance(stmt, ast.FunctionDef) and stmt.name == "predict_output_schema":
+                predict_schema_def = stmt
             elif isinstance(stmt, ast.Pass):
                 continue
             else:
@@ -848,6 +851,7 @@ class _SourceParser:
             "environment": environment,
             "sections": sections,
             "process_code": self.verbatim(process_def),
+            "predict_schema_code": self.verbatim(predict_schema_def) if predict_schema_def is not None else "",
             "extra_imports": self.extra_imports,
             "module_extra": self._collect_module_extra(),
             "class_extra": class_extra,
