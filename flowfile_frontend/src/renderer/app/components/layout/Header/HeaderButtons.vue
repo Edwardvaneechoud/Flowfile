@@ -506,6 +506,10 @@ watch(
   async (newId, oldId) => {
     if (newId !== oldId && newId > 0) {
       await loadFlowSettings();
+    } else if (newId <= 0) {
+      // No flow open — drop the cache so the settings modal can't show
+      // (or POST back) a closed flow's settings.
+      flowSettings.value = null;
     }
   },
 );

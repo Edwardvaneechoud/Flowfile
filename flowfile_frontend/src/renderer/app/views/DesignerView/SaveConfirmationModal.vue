@@ -9,7 +9,10 @@
     :close-on-press-escape="false"
     @closed="handleDialogClosed"
   >
-    <span>Do you want to save changes to this flow before closing?</span>
+    <span v-if="currentFlowName">
+      Do you want to save changes to "{{ currentFlowName }}" before closing?
+    </span>
+    <span v-else>Do you want to save changes to this flow before closing?</span>
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="handleDontSave">No</el-button>
@@ -22,14 +25,16 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-const emit = defineEmits(["save", "dont-save"]);
+const emit = defineEmits(["save", "dont-save", "cancelled"]);
 
 const isOpen = ref(false);
 const currentFlowId = ref<number | null>(null);
+const currentFlowName = ref<string | null>(null);
 const pendingAction = ref<"save" | "dont-save" | null>(null);
 
-const open = (flowId: number) => {
+const open = (flowId: number, flowName: string | null = null) => {
   currentFlowId.value = flowId;
+  currentFlowName.value = flowName;
   pendingAction.value = null;
   isOpen.value = true;
   return flowId;
@@ -60,6 +65,9 @@ const handleDialogClosed = () => {
     emit("save", currentFlowId.value);
   } else if (pendingAction.value === "dont-save") {
     emit("dont-save", currentFlowId.value);
+  } else {
+    // Closed via the dialog X — no decision made.
+    emit("cancelled", currentFlowId.value);
   }
 
   pendingAction.value = null;

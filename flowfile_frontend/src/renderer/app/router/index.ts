@@ -27,8 +27,8 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true },
     children: [
       {
-        // App entry always lands in the designer; DesignerView auto-opens a
-        // blank flow when no session is active (Home stays on the sidebar).
+        // App entry always lands in the designer; with no session active it
+        // shows an in-canvas empty state (Home stays on the sidebar).
         path: "",
         redirect: { name: "designer" },
       },
