@@ -21,6 +21,16 @@ else
 	CHECK_POETRY := if ! poetry check 2>/dev/null; then echo "Lock file needs updating. Running poetry lock..."; poetry lock --no-update; fi
 endif
 
+# Kernel image flavour to (re)build locally: base (default), ml, or lite.
+KERNEL_FLAVOUR ?= base
+ifeq ($(KERNEL_FLAVOUR),ml)
+KERNEL_BUILD_ARG := --build-arg EXTRAS=ml
+else ifeq ($(KERNEL_FLAVOUR),lite)
+KERNEL_BUILD_ARG := --build-arg SLIM_CONSTRAINTS=true
+else
+KERNEL_BUILD_ARG :=
+endif
+
 # Default target: install dependencies, build Python services, stage sidecars, build Tauri app, generate key
 all: install_python_deps build_python_services rename_sidecars sign_sidecars build_tauri_app generate_key
 
@@ -234,6 +244,25 @@ else
 endif
 	@echo "Servers stopped."
 
+# Remove all local kernels: their Docker containers + per-kernel derived images,
+# and (when Core is stopped) their catalog-DB records. See tools/clean_kernels.py.
+clean_kernels:
+	$(POETRY_RUN) python tools/clean_kernels.py
+
+# Same as clean_kernels, but ALSO removes the kernel flavour images (base/ml/lite,
+# local builds + pulled published tags). Core re-pulls/rebuilds them on demand.
+clean_kernel_images:
+	$(POETRY_RUN) python tools/clean_kernels.py --images
+
+# Remove and rebuild a local kernel image so it picks up current source (e.g. a
+# bumped runtime __version__). Flavour via KERNEL_FLAVOUR=base|ml|lite (default base).
+# Point core at the result with FLOWFILE_KERNEL_IMAGE_BASE=flowfile-kernel-base:local.
+rebuild_kernel:
+	@echo "Rebuilding flowfile-kernel-$(KERNEL_FLAVOUR):local ..."
+	-@docker rmi -f flowfile-kernel-$(KERNEL_FLAVOUR):local $(NULL_OUTPUT)
+	docker build $(KERNEL_BUILD_ARG) -t flowfile-kernel-$(KERNEL_FLAVOUR):local kernel_runtime/
+	@echo "Built flowfile-kernel-$(KERNEL_FLAVOUR):local (reports __version__ via /health)."
+
 clean_test:
 	@echo "Cleaning test artifacts..."
 	$(RMRF) $(FRONTEND_DIR)/test-results/ $(FRONTEND_DIR)/playwright-report/
@@ -299,5 +328,12 @@ bump-version:
 check-version:
 	$(POETRY_RUN) python tools/check_version_sync.py
 
+# Bump the kernel runtime version (kernel_runtime pyproject + __init__ __version__),
+# independent of the app version. The kernel_runtime test_version_sync test guards
+# the two stay in sync. Usage: make bump-version-kernel VERSION=X.Y.Z
+bump-version-kernel:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-version-kernel VERSION=X.Y.Z"; exit 1; fi
+	$(POETRY_RUN) python tools/bump_kernel_version.py $(VERSION)
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs formula_docs check_formula_docs bump-version check-version
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs bump-version check-version bump-version-kernel

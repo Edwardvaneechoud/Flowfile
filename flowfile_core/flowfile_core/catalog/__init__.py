@@ -26,6 +26,7 @@ from .exceptions import (
     NestingLimitError,
     NoSnapshotError,
     NotAuthorizedError,
+    NotAVirtualTableError,
     NotebookExistsError,
     NotebookNotFoundError,
     RunNotFoundError,
@@ -38,6 +39,7 @@ from .exceptions import (
     VisualizationComputeError,
     VisualizationExistsError,
     VisualizationNotFoundError,
+    WorkerUnavailableError,
 )
 from .repository import CatalogRepository, SQLAlchemyCatalogRepository
 from .service import CatalogService
@@ -68,6 +70,8 @@ __all__ = [
     "TableVersionUnavailableError",
     "TableExistsError",
     "TableFavoriteNotFoundError",
+    "NotAVirtualTableError",
+    "WorkerUnavailableError",
     "AmbiguousTableError",
     "VisualizationNotFoundError",
     "VisualizationExistsError",

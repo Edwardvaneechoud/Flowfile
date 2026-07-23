@@ -156,6 +156,9 @@ docker compose up -d
 | `make generate_key` / `make force_key` | Generate Fernet master key (no-op if present) / regenerate unconditionally |
 | `make update_lock` / `make force_lock` | Refresh Poetry lock (`poetry lock` / `poetry lock --no-update`) |
 | `make stop_servers` | Kill stray `flowfile_core` / Vite dev-server processes |
+| `make clean_kernels` | Remove all local kernel containers + derived images (and kernel DB records when core is stopped) |
+| `make clean_kernel_images` | Same as `clean_kernels`, plus the kernel flavour images (base/ml/lite, local + pulled) |
+| `make rebuild_kernel` | Remove and rebuild a local kernel image (`KERNEL_FLAVOUR=base\|ml\|lite`) |
 | `make clean` | Remove all build artifacts including `src-tauri/target` and `src-tauri/binaries` |
 | `make clean_test` | Remove Playwright `test-results/` and `playwright-report/` |
 | `npm run build:web` (in `flowfile_frontend/`) | Build web-only frontend (lint + `vue-tsc --noEmit` + `vite build`) |
