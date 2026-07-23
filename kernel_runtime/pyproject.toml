@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kernel-runtime"
-version = "0.5.0"
+version = "0.5.1"
 description = "FlowFile kernel runtime - executes Python code in isolated Docker containers"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 readme = "README.md"

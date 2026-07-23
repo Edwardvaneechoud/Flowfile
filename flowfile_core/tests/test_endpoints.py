@@ -285,6 +285,157 @@ def test_close_flow_idempotent_for_unknown_flow():
     assert response.status_code == 200
 
 
+def _ensure_namespace(name: str) -> dict:
+    """Create-or-fetch a root namespace so tests survive re-runs against a persistent DB."""
+    resp = client.post("/catalog/namespaces", json={"name": name})
+    if resp.status_code == 201:
+        return resp.json()
+    listing = client.get("/catalog/namespaces").json()
+    return next(n for n in listing if n["name"] == name)
+
+
+def test_rename_flow_updates_catalog_registration_and_display_name():
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "rename_endpoint_src.yaml")
+    remove_flow(src_path)
+    ns = _ensure_namespace("NsRenameEndpoint")
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    expected_file = storage.flows_directory / f"{flow_id}_rename_ep_before.yaml"
+    if expected_file.exists():
+        expected_file.unlink()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "rename_ep_before", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        flow_id = resp.json()
+
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "rename_ep_after"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["name"] == "rename_ep_after"
+        assert body["display_name"] == "rename_ep_after"
+
+        sessions = client.get("/active_flowfile_sessions/").json()
+        session = next(s for s in sessions if s["flow_id"] == flow_id)
+        assert session["display_name"] == "rename_ep_after"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected_file)).one()
+            assert reg.name == "rename_ep_after"
+    finally:
+        remove_flow(src_path)
+        if expected_file.exists():
+            expected_file.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected_file)).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_rename_flow_scratch_flow_in_memory_only():
+    """Renaming an unregistered scratch flow updates only the in-memory session:
+    no catalog registration appears and nothing is written to disk."""
+    from flowfile_core.database.models import FlowRegistration
+
+    flow_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    try:
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "My scratch name"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["name"] == "My scratch name"
+        assert body["display_name"] is None
+
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow.flow_settings.name == "My scratch name"
+        assert not os.path.exists(flow.flow_settings.path), "Rename must not persist a scratch flow"
+        with get_db_context() as db:
+            count = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow.flow_settings.path).count()
+            assert count == 0, "Rename must not register a scratch flow in the catalog"
+    finally:
+        client.post("/editor/close_flow/", params={"flow_id": flow_id})
+
+
+def test_rename_flow_unknown_flow_404():
+    r = client.post("/editor/rename_flow/", json={"flow_id": 999999999, "name": "x"})
+    assert r.status_code == 404
+
+
+def test_rename_flow_empty_name_422():
+    flow_id = ensure_clean_flow()
+    r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "   "})
+    assert r.status_code == 422
+
+
+def test_rename_flow_does_not_mark_dirty():
+    flow_id = ensure_clean_flow()
+    settings = client.get("editor/flow", params={"flow_id": flow_id}).json()
+    assert settings["has_unsaved_changes"] is False
+    r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "renamed_clean"})
+    assert r.status_code == 200, r.text
+    settings = client.get("editor/flow", params={"flow_id": flow_id}).json()
+    assert settings["has_unsaved_changes"] is False
+
+
+def test_rename_flow_collision_with_sibling_409():
+    """Renaming to a name already used by another flow in the same namespace is rejected,
+    and the failed rename leaves the session name untouched."""
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_a = str(base_dir / "rename_col_src_a.yaml")
+    src_b = str(base_dir / "rename_col_src_b.yaml")
+    remove_flow(src_a)
+    remove_flow(src_b)
+    ns = _ensure_namespace("NsRenameCollision")
+
+    flow_id_a = client.post("editor/create_flow", params={"flow_path": src_a}).json()
+    flow_id_b = client.post("editor/create_flow", params={"flow_path": src_b}).json()
+    file_a = storage.flows_directory / f"{flow_id_a}_rn_col_a.yaml"
+    file_b = storage.flows_directory / f"{flow_id_b}_rn_col_b.yaml"
+    for p in (file_a, file_b):
+        if p.exists():
+            p.unlink()
+    try:
+        resp_a = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id_a, "flow_name": "rn_col_a", "namespace_id": ns["id"]},
+        )
+        assert resp_a.status_code == 200, resp_a.text
+        resp_b = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id_b, "flow_name": "rn_col_b", "namespace_id": ns["id"]},
+        )
+        assert resp_b.status_code == 200, resp_b.text
+        flow_id_b = resp_b.json()
+
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id_b, "name": "rn_col_a"})
+        assert r.status_code == 409, r.text
+
+        # A failed rename must not leave a half-renamed session.
+        flow_b = flow_file_handler.get_flow(flow_id_b)
+        assert flow_b.flow_settings.name != "rn_col_a"
+        with get_db_context() as db:
+            reg_b = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(file_b)).one()
+            assert reg_b.name == "rn_col_b"
+    finally:
+        for p in (src_a, src_b):
+            remove_flow(p)
+        for p in (file_a, file_b):
+            if p.exists():
+                p.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path.in_([str(file_a), str(file_b)])
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
 def test_add_node():
     flow_id = ensure_clean_flow()
     response = client.post(

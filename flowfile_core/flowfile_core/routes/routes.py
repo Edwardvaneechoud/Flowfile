@@ -29,7 +29,12 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.access import AccessResolver
-from flowfile_core.catalog.exceptions import NamespaceNotFoundError, NotAuthorizedError
+from flowfile_core.catalog.exceptions import (
+    FlowExistsError,
+    FlowNotFoundError,
+    NamespaceNotFoundError,
+    NotAuthorizedError,
+)
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.configs.settings import is_electron_mode
@@ -1093,6 +1098,48 @@ def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> N
     if not flow_file_handler.user_has_flow(user_id, flow_id):
         return
     flow_file_handler.delete_flow(flow_id, user_id=user_id)
+
+
+class RenameFlowInput(BaseModel):
+    flow_id: int
+    name: str
+
+
+@router.post("/editor/rename_flow/", tags=["editor"], response_model=schemas.FlowSettingsResponse)
+def rename_flow(
+    body: RenameFlowInput, current_user=Depends(get_current_active_user)
+) -> schemas.FlowSettingsResponse:
+    """Renames a flow's display name: the catalog registration (when one exists) plus the
+    in-memory session name. Metadata-only — the YAML file and its path are never touched."""
+    user_id = current_user.id if current_user else None
+    flow = flow_file_handler.get_flow(body.flow_id, user_id)
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "Flow name cannot be empty")
+    resolve_source_registration_id(flow)
+    reg_id = flow.flow_settings.source_registration_id
+    renamed_registration = False
+    if reg_id is not None:
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, current_user))
+            try:
+                service.update_flow(registration_id=reg_id, requesting_user_id=user_id, name=name)
+                renamed_registration = True
+            except NotAuthorizedError as e:
+                raise HTTPException(403, str(e)) from e
+            except FlowExistsError as e:
+                raise HTTPException(409, "A flow with this name already exists in this namespace") from e
+            except FlowNotFoundError:
+                # Registration deleted concurrently — the in-memory rename below still applies.
+                pass
+    # Only after catalog success, so a 403/409 leaves the session name untouched.
+    flow.flow_settings.name = name
+    response = flow_file_handler.get_flow_info_with_runtime(body.flow_id)
+    if renamed_registration:
+        response.display_name = name
+    return response
 
 
 # ==================== History/Undo-Redo Endpoints ====================

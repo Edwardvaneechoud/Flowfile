@@ -1,7 +1,8 @@
-// Jedi-backed CodeMirror completion source. Async, abortable, and gated on a cached
-// capabilities probe + a live kernel. Returns null (so the static client-side sources
-// serve) when LSP is disabled, no kernel is selected, the request is superseded, or
-// the backend degrades to empty.
+// Merged identifier completion source: Jedi-backed LSP items (async, abortable, gated
+// on a cached capabilities probe + a live kernel) plus prior-cell scope symbols, deduped
+// by label with the Jedi entry winning (it carries detail + docs). Degrades cleanly:
+// no kernel / LSP off / backend empty -> scope-only; nothing to offer -> null so the
+// other sources serve.
 import type {
   CompletionContext,
   CompletionResult,
@@ -10,7 +11,7 @@ import type {
 } from "@codemirror/autocomplete";
 
 import { LspApi } from "@/api/lsp.api";
-import type { LspCompletionItem } from "@/api/lsp.api";
+import { createScopeCompletions } from "./flowfileCompletions";
 
 /** Per-cell context resolved fresh on each completion (kernel/flow can change live). */
 export interface LspContext {
@@ -65,43 +66,61 @@ export function fallbackWhenNoLsp(
   };
 }
 
-export function createLspCompletionSource(getCtx: () => LspContext) {
+export function createIdentifierCompletionSource(
+  getCtx: () => LspContext,
+  getPriorCellCodes: () => string[] = () => [],
+) {
+  const scopeSource = createScopeCompletions(getPriorCellCodes);
   // Per-editor: a new keystroke in this cell aborts only this cell's previous fetch.
   let inflight: AbortController | null = null;
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
-    const ctx = getCtx();
-    if (!ctx.kernelId) return null;
-
     const word = context.matchBefore(/[A-Za-z_][A-Za-z0-9_]*$/);
     const charBefore = context.state.sliceDoc(Math.max(0, context.pos - 1), context.pos);
     // Fire on an identifier prefix, right after a "." (attribute access), or explicit (Ctrl-Space).
     if (!context.explicit && !word && charBefore !== ".") return null;
 
-    const caps = await LspApi.capabilities();
-    if (!caps.enabled || context.aborted) return null;
-
-    const line = context.state.doc.lineAt(context.pos);
-    const payload = {
-      code: context.state.doc.toString(),
-      line: line.number, // CodeMirror lines are 1-based, matching Jedi
-      column: context.pos - line.from, // 0-based column within the line
-      flow_id: ctx.flowId,
-      node_id: ctx.nodeId ?? null,
-    };
-
-    if (inflight) inflight.abort();
-    inflight = new AbortController();
-    const res = await LspApi.complete(ctx.kernelId, payload, inflight.signal);
-    if (context.aborted || !res.items.length) return null;
-
-    const options: Completion[] = res.items.map((it: LspCompletionItem) => ({
-      label: it.label,
-      type: mapType(it.type),
-      detail: it.detail || undefined,
-      info: it.documentation || undefined,
-      boost: boostFor(it.label),
-    }));
     const from = word ? word.from : context.pos;
-    return { from, options, validFor: /^[A-Za-z0-9_]*$/ };
+    // Prior-cell symbols are bare globals — meaningless (and noisy) in attribute position.
+    const inAttribute = context.state.sliceDoc(Math.max(0, from - 1), from) === ".";
+    const scopeResult = inAttribute ? null : await scopeSource(context);
+
+    // Label -> completion, LSP items first so a symbol Jedi knows keeps its detail + docs.
+    const merged = new Map<string, Completion>();
+    const ctx = getCtx();
+    if (ctx.kernelId) {
+      const caps = await LspApi.capabilities();
+      if (context.aborted) return null;
+      if (caps.enabled) {
+        const line = context.state.doc.lineAt(context.pos);
+        const payload = {
+          code: context.state.doc.toString(),
+          line: line.number, // CodeMirror lines are 1-based, matching Jedi
+          column: context.pos - line.from, // 0-based column within the line
+          flow_id: ctx.flowId,
+          node_id: ctx.nodeId ?? null,
+        };
+        if (inflight) inflight.abort();
+        inflight = new AbortController();
+        const res = await LspApi.complete(ctx.kernelId, payload, inflight.signal);
+        if (context.aborted) return null;
+        for (const it of res.items) {
+          if (merged.has(it.label)) continue; // Jedi can emit a name twice (parse + live namespace)
+          merged.set(it.label, {
+            label: it.label,
+            type: mapType(it.type),
+            detail: it.detail || undefined,
+            info: it.documentation || undefined,
+            boost: boostFor(it.label),
+          });
+        }
+      }
+    }
+    if (scopeResult) {
+      for (const opt of scopeResult.options) {
+        if (!merged.has(opt.label)) merged.set(opt.label, opt);
+      }
+    }
+    if (merged.size === 0) return null;
+    return { from, options: [...merged.values()], validFor: /^[A-Za-z0-9_]*$/ };
   };
 }

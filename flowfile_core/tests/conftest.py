@@ -25,6 +25,12 @@ os.environ['TESTING'] = 'True'
 # warm-up thread touch Docker (container reclaim / image GC) from tests.
 os.environ.setdefault('FLOWFILE_KERNEL_WARMUP', '0')
 
+# Pin before core imports / worker spawn so every process derives the same shared paths.
+if 'FLOWFILE_SHARED_DIR' not in os.environ:
+    import tempfile
+    from pathlib import Path
+    os.environ['FLOWFILE_SHARED_DIR'] = str(Path(tempfile.mkdtemp(prefix='flowfile_test_shared_')).resolve())
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 

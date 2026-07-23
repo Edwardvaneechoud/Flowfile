@@ -14,7 +14,7 @@ vi.mock("@/api/lsp.api", () => ({
 
 import { LspApi } from "@/api/lsp.api";
 import {
-  createLspCompletionSource,
+  createIdentifierCompletionSource,
   fallbackWhenNoLsp,
   lspActiveFor,
   type LspContext,
@@ -28,12 +28,15 @@ function ctxFor(code: string, pos: number, explicit = false): CompletionContext 
   return new CompletionContext(state, pos, explicit);
 }
 
-function source(ctx: Partial<LspContext> = {}) {
-  return createLspCompletionSource(() => ({
-    kernelId: ctx.kernelId === undefined ? "k1" : ctx.kernelId,
-    flowId: ctx.flowId ?? -42,
-    nodeId: ctx.nodeId ?? 7,
-  }));
+function source(ctx: Partial<LspContext> = {}, priorCells: string[] = []) {
+  return createIdentifierCompletionSource(
+    () => ({
+      kernelId: ctx.kernelId === undefined ? "k1" : ctx.kernelId,
+      flowId: ctx.flowId ?? -42,
+      nodeId: ctx.nodeId ?? 7,
+    }),
+    () => priorCells,
+  );
 }
 
 beforeEach(() => {
@@ -42,7 +45,7 @@ beforeEach(() => {
   mockComplete.mockResolvedValue({ items: [] });
 });
 
-describe("createLspCompletionSource", () => {
+describe("createIdentifierCompletionSource (LSP side)", () => {
   it("returns null and does not call the API when no kernel is selected", async () => {
     const result = await source({ kernelId: null })(ctxFor("df.", 3));
     expect(result).toBeNull();
@@ -110,6 +113,69 @@ describe("createLspCompletionSource", () => {
     expect(byLabel["__repr__"]).toBe(-99);
     expect(byLabel["catalog"]!).toBeGreaterThan(byLabel["_internal"]!);
     expect(byLabel["_internal"]!).toBeGreaterThan(byLabel["__repr__"]!);
+  });
+});
+
+describe("createIdentifierCompletionSource (merged prior-cell scope)", () => {
+  it("dedupes a symbol known to both Jedi and a prior cell — the Jedi entry wins", async () => {
+    mockComplete.mockResolvedValue({
+      items: [{ label: "catalog", type: "instance", detail: "instance catalog", documentation: "" }],
+    });
+    const result = await source({}, ["catalog = 1"])(ctxFor("cat", 3));
+    const catalogs = result!.options.filter((o) => o.label === "catalog");
+    expect(catalogs).toHaveLength(1);
+    expect(catalogs[0].detail).toBe("instance catalog");
+  });
+
+  it("keeps unexecuted prior-cell symbols alongside LSP items", async () => {
+    mockComplete.mockResolvedValue({
+      items: [{ label: "executed_var", type: "instance", detail: "", documentation: "" }],
+    });
+    const result = await source({}, ["pending_var = 5"])(ctxFor("pe", 2));
+    const labels = result!.options.map((o) => o.label);
+    expect(labels).toContain("executed_var");
+    expect(labels).toContain("pending_var");
+  });
+
+  it("serves scope symbols without a kernel and never calls the LSP api", async () => {
+    const result = await source({ kernelId: null }, ["foo = 1"])(ctxFor("fo", 2));
+    expect(result!.options.map((o) => o.label)).toEqual(["foo"]);
+    expect(mockCaps).not.toHaveBeenCalled();
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+
+  it("serves scope symbols when capabilities are disabled", async () => {
+    mockCaps.mockResolvedValue({ enabled: false, version: "", features: [] });
+    const result = await source({}, ["foo = 1"])(ctxFor("fo", 2));
+    expect(result!.options.map((o) => o.label)).toEqual(["foo"]);
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+
+  it("serves scope symbols when the LSP backend degrades to empty", async () => {
+    mockComplete.mockResolvedValue({ items: [] });
+    const result = await source({}, ["foo = 1"])(ctxFor("fo", 2));
+    expect(result!.options.map((o) => o.label)).toEqual(["foo"]);
+  });
+
+  it("excludes scope symbols in attribute position", async () => {
+    mockComplete.mockResolvedValue({
+      items: [{ label: "select", type: "function", detail: "", documentation: "" }],
+    });
+    const result = await source({}, ["foo = 1"])(ctxFor("df.", 3));
+    expect(result!.options.map((o) => o.label)).toEqual(["select"]);
+  });
+
+  it("dedupes repeated labels within the LSP response (first wins)", async () => {
+    mockComplete.mockResolvedValue({
+      items: [
+        { label: "dup", type: "function", detail: "first", documentation: "" },
+        { label: "dup", type: "instance", detail: "second", documentation: "" },
+      ],
+    });
+    const result = await source()(ctxFor("du", 2));
+    const dups = result!.options.filter((o) => o.label === "dup");
+    expect(dups).toHaveLength(1);
+    expect(dups[0].detail).toBe("first");
   });
 });
 

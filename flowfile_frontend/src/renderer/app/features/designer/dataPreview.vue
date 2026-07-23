@@ -78,10 +78,10 @@
           <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
           <button
             class="fetch-data-button"
-            :disabled="nodeStore.isRunning"
+            :disabled="nodeStore.isRunning || isFetching"
             @click="handleFetchData"
           >
-            <span v-if="!nodeStore.isRunning">Fetch Data</span>
+            <span v-if="!nodeStore.isRunning && !isFetching">Fetch Data</span>
             <span v-else>Fetching...</span>
           </button>
         </div>
@@ -136,6 +136,9 @@ const gridApi = ref<GridApi | null>(null);
 const gridComponentRef = ref<{ $el?: HTMLElement } | null>(null);
 const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
+// True from the moment Fetch Data is clicked until the grid is reloaded, so the
+// button can't be clicked again in the gap between run-complete and data landing.
+const isFetching = ref(false);
 const currentNodeId = ref<number | null>(null);
 const selectedOutputHandle = ref<string>(DEFAULT_OUTPUT_HANDLE);
 
@@ -349,25 +352,37 @@ async function downloadData(nodeId: number) {
 async function handleFetchData() {
   if (currentNodeId.value !== null) {
     try {
-      if (isPollingActive(`node_${currentNodeId.value}`)) {
+      if (isFetching.value || isPollingActive(`node_${currentNodeId.value}`)) {
         console.log("Fetch already in progress for this node");
         return;
       }
 
-      await triggerNodeFetch(currentNodeId.value);
+      isFetching.value = true;
+      await triggerNodeFetch(currentNodeId.value, { focusLogs: false });
 
-      // Since polling is persistent, we need to check periodically
+      // Polling is persistent, so poll for completion. Keep isFetching held
+      // until the grid is actually reloaded — the run flips isRunning off ~1s
+      // before the data lands, and without this the button would be clickable
+      // again in that gap even though the data is already fetched.
       const checkInterval = setInterval(async () => {
         if (!isPollingActive(`node_${currentNodeId.value}`)) {
           clearInterval(checkInterval);
-          await downloadData(currentNodeId.value!);
+          try {
+            await downloadData(currentNodeId.value!);
+          } finally {
+            isFetching.value = false;
+          }
         }
-      }, 1000);
+      }, 250);
 
       // Safety timeout to prevent infinite checking
-      setTimeout(() => clearInterval(checkInterval), 60000); // 1 minute max
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        isFetching.value = false;
+      }, 60000); // 1 minute max
     } catch (error) {
       console.error("Error fetching data:", error);
+      isFetching.value = false;
     }
   }
 }

@@ -60,6 +60,37 @@ def test_complete_does_not_create_namespace(client):
     assert unseen not in main._namespace_access
 
 
+def test_complete_dedupes_repeated_name_type_pairs(client, monkeypatch):
+    """jedi.Interpreter can emit a name twice (static parse + live namespace); complete() dedupes."""
+    from kernel_runtime.lsp import analysis
+
+    class _FakeCompletion:
+        def __init__(self, name, type_):
+            self.name = name
+            self.type = type_
+            self.description = f"{type_} {name}"
+
+        def docstring(self, raw=True):
+            return ""
+
+    class _FakeInterpreter:
+        def complete(self, line, column):
+            return [
+                _FakeCompletion("catalog", "instance"),
+                _FakeCompletion("catalog", "instance"),
+                _FakeCompletion("catalog", "statement"),
+                _FakeCompletion("other", "instance"),
+            ]
+
+    monkeypatch.setattr(analysis, "_interpreter", lambda code, live: _FakeInterpreter())
+    resp = client.post("/lsp/complete", json={"code": "cat", "line": 1, "column": 3, "flow_id": 1})
+    assert resp.status_code == 200
+    pairs = [(i["label"], i["type"]) for i in resp.json()["items"]]
+    assert pairs.count(("catalog", "instance")) == 1
+    assert ("catalog", "statement") in pairs  # same name, different type stays a distinct entry
+    assert ("other", "instance") in pairs
+
+
 def test_hover(client):
     resp = client.post("/lsp/hover", json={"code": "pl.col", "line": 1, "column": 6, "flow_id": 1})
     assert resp.status_code == 200

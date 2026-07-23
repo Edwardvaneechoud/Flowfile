@@ -87,11 +87,17 @@ def complete(code: str, line: int, column: int, live: dict | None) -> CompleteRe
     except Exception as exc:  # noqa: BLE001
         logger.debug("jedi.complete failed: %s", exc)
         return CompleteResponse(items=items)
+    seen: set[tuple[str, str]] = set()
     for comp in completions[:_MAX_COMPLETIONS]:
+        comp_type = _safe(lambda c=comp: c.type) or ""
+        # jedi.Interpreter can emit a name twice (static parse + live namespace)
+        if (comp.name, comp_type) in seen:
+            continue
+        seen.add((comp.name, comp_type))
         items.append(
             CompletionItem(
                 label=comp.name,
-                type=_safe(lambda c=comp: c.type) or "",
+                type=comp_type,
                 detail=_safe(lambda c=comp: c.description) or "",
                 documentation=_truncate(_safe(lambda c=comp: c.docstring(raw=True))),
             )

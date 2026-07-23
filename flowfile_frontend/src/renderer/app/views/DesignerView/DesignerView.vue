@@ -18,6 +18,9 @@
             ref="flowSelector"
             @flow-changed="handleFlowChange"
             @close-tab="handleCloseFlow"
+            @close-tabs="handleCloseFlows"
+            @flow-renamed="handleFlowRenamed"
+            @create-flow="headerButtons?.handleQuickCreate()"
           />
         </div>
         <div v-if="hasOpenFlow" class="right-section">
@@ -42,6 +45,12 @@
         @open="headerButtons?.openOpenDialog()"
         @open-settings="headerButtons?.openSettings()"
       />
+      <designer-empty-state
+        v-if="!hasOpenFlow"
+        @new-flow="headerButtons?.handleQuickCreate()"
+        @open-flow="headerButtons?.openOpenDialog()"
+        @open-recent="handleOpenRecent"
+      />
       <div v-if="showSwitchIndicator" class="switch-indicator" aria-live="polite">
         <span class="switch-spinner" />
         <span>Loading flow…</span>
@@ -52,18 +61,20 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from "vue";
-import { ElNotification } from "element-plus";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
 import FlowSelector from "../FlowSelectorView/FlowSelectorView.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
+import DesignerEmptyState from "./DesignerEmptyState.vue";
 import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
+import type { RecentFlow } from "../../composables/useRecentFlows";
+import { resolveBootFlowId, resolveNextFlowAfterClose } from "./flowSessionState";
 
 const getAllFlows = FlowApi.getAllFlows;
 const closeFlow = FlowApi.closeFlow;
@@ -133,27 +144,8 @@ const reloadCanvas = async (flowPath: string, meta?: { name?: string; catalogRef
   }
 };
 
-// Create a fresh backend flow and make it the active one so the designer always
-// lands on a blank canvas when nothing is open (initial boot + after the last
-// flow is closed). register_in_catalog=false keeps these ephemeral scratch flows
-// out of the catalog; not recorded as a recent either. Returns false on failure
-// (there is no empty-state screen anymore, so notify and leave a blank canvas).
-const openBlankFlow = async (): Promise<boolean> => {
-  try {
-    const newFlowId = await FlowApi.createFlow(null, null, null, false);
-    await fetchActiveFlows();
-    nodeStore.setFlowId(newFlowId);
-    return true;
-  } catch (error) {
-    console.error("Failed to auto-create blank flow:", error);
-    ElNotification({
-      title: "Couldn't open a new flow",
-      message: "Creating a blank flow failed. Is the backend running? Use New or Open to retry.",
-      type: "error",
-      position: "top-left",
-    });
-    return false;
-  }
+const handleOpenRecent = (flow: RecentFlow) => {
+  reloadCanvas(flow.path, { name: flow.name, catalogRef: flow.catalogRef });
 };
 
 // A run_flow node's "Go to Flow" menu dispatches this; route it through the
@@ -167,36 +159,52 @@ watch(
 );
 
 const handleCloseFlow = async (flowId: number) => {
+  await handleCloseFlows([flowId]);
+};
+
+// Bulk closes route through here with one list refresh + one active-flow switch —
+// per-flow close-tab emits would cascade intermediate flow loads through the canvas.
+const handleCloseFlows = async (flowIds: number[]) => {
+  if (flowIds.length === 0) return;
   try {
-    console.log("Closing flow:", flowId);
+    console.log("Closing flows:", flowIds);
 
-    const isCurrentFlow = nodeStore.flow_id === flowId;
-
-    await closeFlow(flowId);
-
-    nodeStore.clearFlowResults(flowId);
-    nodeStore.clearFlowDescriptionCache(flowId);
+    const currentFlowId = nodeStore.flow_id;
     isSwitching.value = true;
+
+    for (const flowId of flowIds) {
+      await closeFlow(flowId);
+      nodeStore.clearFlowResults(flowId);
+      nodeStore.clearFlowDescriptionCache(flowId);
+    }
 
     await fetchActiveFlows();
 
-    if (isCurrentFlow) {
-      if (flowsActive.value.length > 0) {
-        const newFlowId = flowsActive.value[0].flow_id;
-        console.log("Switching to flow:", newFlowId);
-        await handleFlowChange(newFlowId);
+    const next = resolveNextFlowAfterClose(
+      flowsActive.value.map((f) => f.flow_id),
+      flowIds,
+      currentFlowId,
+    );
+    if (next !== null) {
+      if (next > 0) {
+        console.log("Switching to flow:", next);
+        await handleFlowChange(next);
       } else {
-        // Last flow closed — land on a fresh blank canvas. On failure, drop to
-        // flowId<=0 so the Canvas watcher clears to an empty canvas.
-        const created = await openBlankFlow();
-        if (!created) nodeStore.setFlowId(-1);
+        // Last flow closed — the empty state takes over (no auto-created flow).
+        nodeStore.setFlowId(-1);
       }
     }
   } catch (error) {
-    console.error("Error closing flow:", error);
+    console.error("Error closing flows:", error);
   } finally {
     isSwitching.value = false;
   }
+};
+
+// HeaderButtons caches a full FlowSettings and posts it back wholesale from the
+// settings modal — refresh it so a stale cached name can't revert the rename.
+const handleFlowRenamed = async () => {
+  await headerButtons.value?.loadFlowSettings();
 };
 
 const handleFlowChange = async (flowId: number) => {
@@ -230,7 +238,7 @@ const refreshFlow = async () => {
     console.log("refreshFlow");
     await fetchActiveFlows();
     // Same flowId — watcher won't fire, so trigger reload explicitly.
-    if (canvasFlow.value && flowsActive.value.length > 0) {
+    if (canvasFlow.value && flowsActive.value.length > 0 && nodeStore.flow_id > 0) {
       await canvasFlow.value.reloadCurrentFlow();
     }
     console.log("refreshFlow end");
@@ -255,20 +263,14 @@ const initialSetup = async () => {
     const [nodes, flows] = await Promise.all([fetchNodes(), fetchActiveFlows()]);
 
     nodeOptions.value = nodes;
-    const persistedFlowId = nodeStore.flow_id;
-    const persistedIsActive =
-      persistedFlowId > 0 && flows.some((f) => f.flow_id === persistedFlowId);
-
-    if (flows.length === 0) {
-      // Nothing open — land on a fresh blank canvas.
-      const created = await openBlankFlow();
-      if (!created && persistedFlowId > 0) nodeStore.setFlowId(-1);
-    } else if (!persistedIsActive) {
-      console.log("Setting initial flow ID to:", flows[0].flow_id);
-      nodeStore.setFlowId(flows[0].flow_id);
-    } else {
-      console.log("Using existing flow ID:", persistedFlowId);
-    }
+    // Zero flows parks at -1 (empty state) — also clears a stale persisted id
+    // so the Canvas watcher never 404s against a session gone from the backend.
+    const bootFlowId = resolveBootFlowId(
+      flows.map((f) => f.flow_id),
+      nodeStore.flow_id,
+    );
+    console.log("Setting initial flow ID to:", bootFlowId);
+    nodeStore.setFlowId(bootFlowId);
 
     console.log("Initial setup completed");
   } catch (error) {
