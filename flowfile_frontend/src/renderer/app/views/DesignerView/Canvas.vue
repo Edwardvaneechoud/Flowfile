@@ -859,6 +859,9 @@ const copyValue = async (x: number, y: number) => {
 };
 
 const handleCanvasPaste = async (x: number, y: number, clipboardText?: string | null) => {
+  // The document-level ClipboardEvent listener bypasses the empty-state
+  // overlay — never paste against a dead flow id.
+  if (flowStore.flowId <= 0) return;
   const hasCopiedNode =
     localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
 
@@ -948,7 +951,7 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     // — pull the canonical flow name server-side so the doc title
     // matches what the user sees in the title bar. Falsy → undefined so
     // the store falls back to ``flow ${flowId}``.
-    if (flowStore.flowId === null) return;
+    if (flowStore.flowId <= 0) return;
     const settings = await FlowApi.getFlowSettings(flowStore.flowId);
     const name = settings?.name?.trim() || undefined;
     await aiStore.generateDocumentation(flowStore.flowId, name);
@@ -958,7 +961,7 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     // linearly with N), then streams them sequentially through the quiet
     // ai-store path that writes straight to node.setting_input.description
     // without flooding the chat drawer.
-    if (flowStore.flowId === null) return;
+    if (flowStore.flowId <= 0) return;
     const allNodes = instance.getNodes.value;
     if (allNodes.length === 0) {
       ElMessage.info("No nodes on the canvas.");
@@ -994,13 +997,13 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     }
   } else if (actionId === "ask-lineage") {
     // — whole-flow lineage Q&A.
-    if (flowStore.flowId === null) return;
+    if (flowStore.flowId <= 0) return;
     const question = await promptLineageQuestion("this flow");
     if (!question) return;
     await aiStore.askLineageQuestion(flowStore.flowId, question);
   } else if (actionId === "ask-lineage-node") {
     // — focused lineage Q&A on a single node id.
-    if (flowStore.flowId === null) return;
+    if (flowStore.flowId <= 0) return;
     const focusNodeId = Number(targetId);
     if (!Number.isFinite(focusNodeId)) return;
     const question = await promptLineageQuestion(`node ${focusNodeId}`);
@@ -1083,22 +1086,22 @@ const handleKeyDown = (event: KeyboardEvent) => {
     event.preventDefault();
     emit("new");
   } else if (eventKeyClicked && key === "s") {
-    if (flowStore.flowId) {
+    if (flowStore.flowId > 0) {
       event.preventDefault();
       emit("save", flowStore.flowId);
     }
   } else if (eventKeyClicked && key === "e") {
-    if (flowStore.flowId) {
+    if (flowStore.flowId > 0) {
       event.preventDefault();
       emit("run", flowStore.flowId);
     }
   } else if (eventKeyClicked && key === "g") {
-    if (flowStore.flowId) {
+    if (flowStore.flowId > 0) {
       event.preventDefault();
       nodeStore.toggleCodeGenerator();
     }
   } else if (eventKeyClicked && key === ",") {
-    if (flowStore.flowId) {
+    if (flowStore.flowId > 0) {
       event.preventDefault();
       emit("openSettings");
     }
@@ -1178,6 +1181,7 @@ const handleSelectionEnd = () => {
 const getViewportStorageKey = (flowId: number) => `flowfile_viewport_${flowId}`;
 
 const saveViewportToSession = () => {
+  if (flowStore.flowId <= 0) return;
   const viewport = instance.getViewport();
   const key = getViewportStorageKey(flowStore.flowId);
   sessionStorage.setItem(key, JSON.stringify(viewport));

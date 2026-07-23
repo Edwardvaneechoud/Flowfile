@@ -6,6 +6,7 @@ import logging
 import os
 
 from flowfile_core.catalog.exceptions import (
+    FlowExistsError,
     FlowHasArtifactsError,
     FlowNotFoundError,
     NamespaceNotFoundError,
@@ -192,6 +193,15 @@ class FlowRegistrationService:
         name_changed = name is not None and flow.name != name
         desc_changed = description is not None and flow.description != description
         ns_changed = namespace_id is not None and flow.namespace_id != namespace_id
+        if name_changed or ns_changed:
+            # Two same-named flows in one namespace render ambiguously in the
+            # catalog picker — same doctrine as registration-time collisions.
+            target_name = name if name is not None else flow.name
+            target_ns = namespace_id if namespace_id is not None else flow.namespace_id
+            if target_ns is not None:
+                clash = self.repo.get_flow_by_name(target_name, target_ns)
+                if clash is not None and clash.id != registration_id:
+                    raise FlowExistsError(target_name, target_ns)
         moved_path, moved_owner = flow.flow_path, flow.owner_id
         if name is not None:
             flow.name = name

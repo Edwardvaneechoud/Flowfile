@@ -1,12 +1,15 @@
 <template>
   <div class="flow-tabs-container">
     <div class="flow-tabs">
+      <!-- trigger-keys=[] : the trigger's default keys include Space, and its keydown
+           handler preventDefaults it — swallowing spaces typed in the rename input. -->
       <el-tooltip
         v-for="flow in flows"
         :key="flow.flow_id"
         placement="bottom"
         :show-after="400"
         :hide-after="0"
+        :trigger-keys="[]"
       >
         <template #content>
           <div>{{ flow.display_name || flow.name }}</div>
@@ -16,12 +19,28 @@
           class="flow-tab"
           :class="{ active: selectedFlowId === flow.flow_id, dirty: isDirty(flow.flow_id) }"
           @click="selectFlow(flow.flow_id)"
+          @dblclick="startRename(flow.flow_id)"
+          @contextmenu.prevent="openTabMenu($event, flow.flow_id)"
         >
           <div class="tab-content">
             <span class="material-icons tab-icon">account_tree</span>
-            <span class="tab-name">{{ flow.display_name || flow.name }}</span>
+            <!-- keydown.stop: typing must not reach the tooltip trigger or the
+                 canvas/undo global shortcut handlers. -->
+            <input
+              v-if="renamingFlowId === flow.flow_id"
+              :ref="setRenameInput"
+              v-model="renameValue"
+              class="tab-rename-input"
+              @keydown.stop
+              @keydown.enter.prevent="commitRename"
+              @keydown.escape="cancelRename"
+              @blur="commitRename"
+              @click.stop
+              @dblclick.stop
+            />
+            <span v-else class="tab-name">{{ flow.display_name || flow.name }}</span>
           </div>
-          <span class="tab-indicator">
+          <span class="tab-indicator" @dblclick.stop>
             <span
               v-if="isDirty(flow.flow_id)"
               class="dirty-dot"
@@ -33,6 +52,15 @@
           </span>
         </div>
       </el-tooltip>
+      <button
+        type="button"
+        class="new-flow-tab"
+        aria-label="New flow"
+        title="New flow"
+        @click="emit('create-flow')"
+      >
+        <span class="material-icons">add</span>
+      </button>
     </div>
   </div>
 
@@ -41,6 +69,7 @@
     ref="saveConfirmationModal"
     @save="handleSaveAndClose"
     @dont-save="handleCloseWithoutSaving"
+    @cancelled="handleCloseCancelled"
   />
 
   <!-- Save Dialog -->
@@ -51,16 +80,31 @@
     @save-complete="handleSaveComplete"
     @save-cancelled="handleSaveCancelled"
   />
+
+  <!-- Right-click context menu for flow tabs -->
+  <Teleport to="body">
+    <ContextMenu
+      v-if="tabMenu"
+      :position="{ x: tabMenu.x, y: tabMenu.y }"
+      :options="tabMenuOptionsComputed"
+      @select="onTabMenuSelect"
+      @close="tabMenu = null"
+    />
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, computed } from "vue";
+import { ref, watch, onMounted, computed, nextTick } from "vue";
+import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { FlowApi } from "../../api";
 import type { FlowSettings } from "../../types";
 import SaveDialog from "../../features/designer/components/SaveDialog.vue";
 import SaveConfirmationModal from "../DesignerView/SaveConfirmationModal.vue";
+import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
+import { computeCloseTargets, tabMenuOptions, type TabCloseAction } from "./flowTabActions";
 
 const getAllFlows = FlowApi.getAllFlows;
 
@@ -72,16 +116,42 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["flow-changed", "close-tab", "create-flow"]);
+const emit = defineEmits([
+  "flow-changed",
+  "close-tab",
+  "close-tabs",
+  "flow-renamed",
+  "create-flow",
+]);
 
 // State
 const flows = ref<FlowSettings[]>([]);
 const selectedFlowId = ref<number | null>(null);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const catalogStore = useCatalogStore();
 const saveDialogVisible = ref(false);
 const pendingCloseFlowId = ref<number | null>(null);
 const isLoading = ref(false);
+
+// Inline rename
+const renamingFlowId = ref<number | null>(null);
+const renameValue = ref("");
+const renameSeed = ref("");
+const renameInput = ref<HTMLInputElement | null>(null);
+// Function ref: template refs inside v-for collect into arrays; only one rename
+// input exists at a time, so capture it directly.
+const setRenameInput = (el: unknown) => {
+  renameInput.value = (el as HTMLInputElement) ?? null;
+};
+
+// Tab context menu
+const tabMenu = ref<{ flowId: number; x: number; y: number } | null>(null);
+
+// Bulk close (Close Others / All / Left / Right)
+const bulkQueue = ref<number[]>([]);
+const decidedCloseIds = ref<number[]>([]);
+const bulkActive = ref(false);
 
 const isDirty = (flowId: number): boolean => {
   const flow = flows.value.find((f) => f.flow_id === flowId);
@@ -166,6 +236,135 @@ const selectFlow = (flowId: number) => {
   refreshDirtyState(flowId);
 };
 
+const tabLabelFor = (flowId: number): string | null => {
+  const flow = flows.value.find((f) => f.flow_id === flowId);
+  return flow ? flow.display_name || flow.name : null;
+};
+
+// ---- Inline rename ----
+
+const startRename = (flowId: number) => {
+  const label = tabLabelFor(flowId);
+  if (label === null) return;
+  renameSeed.value = label;
+  renameValue.value = renameSeed.value;
+  renamingFlowId.value = flowId;
+  nextTick(() => {
+    renameInput.value?.focus();
+    renameInput.value?.select();
+  });
+};
+
+const commitRename = async () => {
+  // Cleared first: Enter unmounts the input, whose blur re-enters this handler.
+  if (renamingFlowId.value === null) return;
+  const flowId = renamingFlowId.value;
+  renamingFlowId.value = null;
+  const trimmed = renameValue.value.trim();
+  if (!trimmed || trimmed === renameSeed.value) return;
+  try {
+    await FlowApi.renameFlow(flowId, trimmed);
+    await loadFlows();
+    emit("flow-renamed", flowId);
+    // Keep the catalog views in sync, but don't force-load the catalog from here.
+    if (catalogStore.tree.length) catalogStore.loadTree();
+    if (catalogStore.allFlows.length) catalogStore.loadAllFlows();
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail ?? "Failed to rename flow");
+  }
+};
+
+const cancelRename = () => {
+  renamingFlowId.value = null;
+};
+
+// ---- Tab context menu ----
+
+const openTabMenu = (event: MouseEvent, flowId: number) => {
+  tabMenu.value = {
+    flowId,
+    // The menu doesn't self-clamp; keep it on-screen for right-edge tabs.
+    x: Math.min(event.clientX, window.innerWidth - 200),
+    y: event.clientY,
+  };
+};
+
+const tabMenuOptionsComputed = computed(() =>
+  tabMenu.value
+    ? tabMenuOptions(
+        flows.value.map((f) => f.flow_id),
+        tabMenu.value.flowId,
+      )
+    : [],
+);
+
+const onTabMenuSelect = (action: string) => {
+  const target = tabMenu.value?.flowId;
+  if (target === undefined) return;
+  if (action === "rename") {
+    startRename(target);
+  } else if (action === "close") {
+    confirmCloseTab(target);
+  } else {
+    startBulkClose(
+      computeCloseTargets(
+        flows.value.map((f) => f.flow_id),
+        target,
+        action as TabCloseAction,
+      ),
+    );
+  }
+};
+
+// ---- Bulk close queue ----
+// Walks the targets sequentially: clean flows are marked for closing, dirty ones
+// get the save-confirmation modal. Cancel (dialog X or backing out of the save
+// dialog) aborts the rest; decisions already made still close (VS Code semantics).
+
+const startBulkClose = (targets: number[]) => {
+  if (bulkActive.value || targets.length === 0) return;
+  bulkActive.value = true;
+  bulkQueue.value = [...targets];
+  decidedCloseIds.value = [];
+  processNextBulkClose();
+};
+
+const processNextBulkClose = async () => {
+  const next = bulkQueue.value.shift();
+  if (next === undefined) {
+    flushBulkClose();
+    return;
+  }
+  const settings = await FlowApi.getFlowSettings(next);
+  // Gone sessions (null) close as a no-op — close_flow is idempotent.
+  if (settings === null || settings.has_unsaved_changes === false) {
+    decidedCloseIds.value.push(next);
+    processNextBulkClose();
+    return;
+  }
+  pendingCloseFlowId.value = next;
+  if (saveConfirmationModal.value) {
+    saveConfirmationModal.value.open(next, tabLabelFor(next));
+  } else {
+    // Modal unavailable — leave the flow open rather than dropping unsaved work.
+    pendingCloseFlowId.value = null;
+    processNextBulkClose();
+  }
+};
+
+const flushBulkClose = () => {
+  const ids = decidedCloseIds.value;
+  bulkActive.value = false;
+  bulkQueue.value = [];
+  decidedCloseIds.value = [];
+  pendingCloseFlowId.value = null;
+  if (ids.length === 1) {
+    emit("close-tab", ids[0]);
+  } else if (ids.length > 1) {
+    emit("close-tabs", ids);
+  }
+};
+
 // Show confirmation dialog before closing tab — only if the flow has unsaved changes
 const confirmCloseTab = async (flowId: number) => {
   try {
@@ -181,7 +380,7 @@ const confirmCloseTab = async (flowId: number) => {
   pendingCloseFlowId.value = flowId;
 
   if (saveConfirmationModal.value) {
-    saveConfirmationModal.value.open(flowId);
+    saveConfirmationModal.value.open(flowId, tabLabelFor(flowId));
   } else {
     console.error("Save confirmation modal reference not available");
   }
@@ -197,6 +396,13 @@ const handleSaveAndClose = async () => {
 
 const handleSaveComplete = (flowId: number) => {
   saveDialogVisible.value = false;
+  if (bulkActive.value) {
+    // Save-As during a close can rekey the flow — flowId is the current id.
+    decidedCloseIds.value.push(flowId);
+    pendingCloseFlowId.value = null;
+    processNextBulkClose();
+    return;
+  }
   emit("close-tab", flowId);
   pendingCloseFlowId.value = null;
   // The saved flow is now clean; refresh its dirty state so the dot clears.
@@ -205,11 +411,24 @@ const handleSaveComplete = (flowId: number) => {
 
 const handleSaveCancelled = () => {
   pendingCloseFlowId.value = null;
+  // Backing out of the save dialog aborts the rest; the undecided flow stays open.
+  if (bulkActive.value) flushBulkClose();
 };
 
 const handleCloseWithoutSaving = (flowId: number) => {
+  if (bulkActive.value) {
+    decidedCloseIds.value.push(flowId);
+    pendingCloseFlowId.value = null;
+    processNextBulkClose();
+    return;
+  }
   emit("close-tab", flowId);
   pendingCloseFlowId.value = null;
+};
+
+const handleCloseCancelled = () => {
+  pendingCloseFlowId.value = null;
+  if (bulkActive.value) flushBulkClose();
 };
 
 watch(
@@ -345,6 +564,19 @@ defineExpose({
   color: var(--color-text-secondary);
 }
 
+.tab-rename-input {
+  width: 100%;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius-sm);
+  padding: 1px 4px;
+  outline: none;
+}
+
 /* TODO(ux): announce dirty-state changes via aria-live so screen readers
    are notified when a flow becomes dirty, instead of relying on the static
    aria-label alone. */
@@ -422,14 +654,22 @@ defineExpose({
   opacity: 0.9;
 }
 
-/* New flow tab styling */
 .new-flow-tab {
-  min-width: 40px;
-  max-width: 40px;
+  flex-shrink: 0;
+  width: 34px;
+  height: 30px;
   display: flex;
   justify-content: center;
   align-items: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
   color: var(--color-primary);
+  border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+}
+
+.new-flow-tab .material-icons {
+  font-size: 18px;
 }
 
 .new-flow-tab:hover {

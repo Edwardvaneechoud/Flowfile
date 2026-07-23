@@ -202,6 +202,46 @@ class TestFlowRegistration:
         assert resp.status_code == 200
         assert resp.json()["name"] == "new_name"
 
+    def test_update_flow_rejects_duplicate_name_in_namespace(self):
+        ns_id = self._make_namespace()
+        client.post(
+            "/catalog/flows",
+            json={"name": "taken", "flow_path": "/tmp/taken.yaml", "namespace_id": ns_id},
+        )
+        other = client.post(
+            "/catalog/flows",
+            json={"name": "other", "flow_path": "/tmp/other.yaml", "namespace_id": ns_id},
+        ).json()
+        resp = client.put(f"/catalog/flows/{other['id']}", json={"name": "taken"})
+        assert resp.status_code == 409
+        assert client.get(f"/catalog/flows/{other['id']}").json()["name"] == "other"
+
+    def test_update_flow_rename_to_own_name_succeeds(self):
+        ns_id = self._make_namespace()
+        created = client.post(
+            "/catalog/flows",
+            json={"name": "same", "flow_path": "/tmp/same.yaml", "namespace_id": ns_id},
+        ).json()
+        resp = client.put(f"/catalog/flows/{created['id']}", json={"name": "same"})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "same"
+
+    def test_update_flow_namespace_move_with_name_clash_rejected(self):
+        ns_a = self._make_namespace()
+        cat_b = client.post("/catalog/namespaces", json={"name": "FC2"}).json()
+        ns_b = client.post("/catalog/namespaces", json={"name": "FS2", "parent_id": cat_b["id"]}).json()["id"]
+        client.post(
+            "/catalog/flows",
+            json={"name": "clash", "flow_path": "/tmp/clash_b.yaml", "namespace_id": ns_b},
+        )
+        moving = client.post(
+            "/catalog/flows",
+            json={"name": "clash", "flow_path": "/tmp/clash_a.yaml", "namespace_id": ns_a},
+        ).json()
+        resp = client.put(f"/catalog/flows/{moving['id']}", json={"namespace_id": ns_b})
+        assert resp.status_code == 409
+        assert client.get(f"/catalog/flows/{moving['id']}").json()["namespace_id"] == ns_a
+
     def test_delete_flow(self):
         ns_id = self._make_namespace()
         created = client.post(
