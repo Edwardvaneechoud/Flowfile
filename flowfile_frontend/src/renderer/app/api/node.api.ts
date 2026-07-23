@@ -9,14 +9,24 @@ export class NodeApi {
    * preview (`main_output`). The settings panel only needs the input schemas, so
    * it defaults to false to avoid the potentially expensive output-schema
    * prediction (e.g. a pivot must materialize data to list its output columns).
+   *
+   * `includeInputs=false` additionally skips the input schemas — resolving them
+   * can execute un-run upstream custom nodes (kernel/worker). The custom-node
+   * drawer uses it to render instantly, then hydrates columns with a full fetch.
    */
   static async getNodeData(
     flowId: number,
     nodeId: number,
     includeOutput = false,
+    includeInputs = true,
   ): Promise<NodeData> {
     const response = await axios.get<NodeData>("/node", {
-      params: { flow_id: flowId, node_id: nodeId, include_output: includeOutput },
+      params: {
+        flow_id: flowId,
+        node_id: nodeId,
+        include_output: includeOutput,
+        include_inputs: includeInputs,
+      },
       headers: { accept: "application/json" },
     });
     return response.data;

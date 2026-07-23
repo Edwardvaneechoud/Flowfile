@@ -1447,7 +1447,9 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
 
 
 @router.get("/node", response_model=output_model.NodeData, tags=["editor"])
-def get_node(flow_id: int, node_id: int, get_data: bool = False, include_output: bool = True):
+def get_node(
+    flow_id: int, node_id: int, get_data: bool = False, include_output: bool = True, include_inputs: bool = True
+):
     """Retrieves the complete state and data preview for a single node.
 
     When ``include_output`` is False the node's own output preview
@@ -1455,13 +1457,23 @@ def get_node(flow_id: int, node_id: int, get_data: bool = False, include_output:
     schemas, and computing the output can be expensive for data-dependent nodes
     (e.g. a pivot must materialize data to determine its output columns), so the
     editor opens settings with ``include_output=false`` for an instant response.
+
+    When ``include_inputs`` is also False the input schemas are skipped too:
+    resolving them can execute un-run upstream custom nodes (kernel/worker).
+    The custom-node drawer uses this to render settings instantly and hydrates
+    columns with a follow-up full fetch.
     """
     logging.info(f"Getting node {node_id} from flow {flow_id}")
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(422, "Not found")
-    v = node.get_node_data(flow_id=flow.flow_id, include_example=get_data, include_output=include_output)
+    v = node.get_node_data(
+        flow_id=flow.flow_id,
+        include_example=get_data,
+        include_output=include_output,
+        include_inputs=include_inputs,
+    )
     return v
 
 

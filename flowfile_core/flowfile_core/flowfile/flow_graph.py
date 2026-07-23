@@ -71,7 +71,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
-from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
     add_un_drawn_nodes,
@@ -94,6 +94,7 @@ from flowfile_core.flowfile.schema_callbacks import (
     calculate_cross_join_schema,
     calculate_fuzzy_match_schema,
     calculate_join_schema,
+    pl_schema_to_flowfile_columns,
     pre_calculate_pivot_schema,
 )
 from flowfile_core.flowfile.sources import external_sources
@@ -1962,12 +1963,24 @@ class FlowGraph:
                 registry_entry=registry_entry,
             )
 
+        # Wire the hook through add_node_step so user_provided_schema_callback is set
+        # BEFORE setting_input triggers reset(): otherwise a 0-input node's eager
+        # schema prefetch would run the real function (kernel/worker) in the background.
+        schema_callback = None
+        if type(custom_node).predict_output_schema is not CustomNodeBase.predict_output_schema:
+            schema_callback = self._make_user_defined_schema_callback(
+                custom_node=custom_node,
+                node_id=user_defined_node_settings.node_id,
+                output_names=output_names,
+            )
+
         self.add_node_step(
             node_id=user_defined_node_settings.node_id,
             function=_func,
             setting_input=user_defined_node_settings,
             input_node_ids=user_defined_node_settings.depending_on_ids,
             node_type=custom_node.item,
+            schema_callback=schema_callback,
         )
         node = self.get_node(user_defined_node_settings.node_id)
         if custom_node.number_of_inputs == 0:
@@ -2021,6 +2034,61 @@ class FlowGraph:
                 node_type=node_type,
                 error=missing_custom_node_error(node_type),
             )
+
+    def _make_user_defined_schema_callback(
+        self, *, custom_node: CustomNodeBase, node_id: int, output_names: list[str]
+    ) -> Callable:
+        """Build a schema callback from the node's ``predict_output_schema`` hook.
+
+        Exec-free prediction that always runs in core, even for kernel nodes.
+        Returning ``[]`` makes the prediction ladder fall back to the
+        execution-based path. The node is resolved lazily so the callback can be
+        passed into ``add_node_step`` before the node exists.
+        """
+        resolved_output_names = output_names or ["main"]
+
+        def schema_callback() -> list[FlowfileColumn]:
+            node = self.get_node(node_id)
+            if node is None:
+                return []
+            try:
+                input_schemas = []
+                for input_node, src_handle in node._slot_input_pairs():
+                    if input_node is None:
+                        input_schemas.append(pl.Schema())
+                        continue
+                    frame = input_node.get_predicted_resulting_data(src_handle).data_frame
+                    input_schemas.append(frame.collect_schema() if isinstance(frame, pl.LazyFrame) else frame.schema)
+                predicted = custom_node.predict_output_schema(*input_schemas)
+            except Exception as e:
+                logger.warning(f"predict_output_schema failed for node {node_id}: {e}")
+                return []
+            if predicted is None:
+                return []
+            if isinstance(predicted, pl.Schema):
+                if len(resolved_output_names) > 1:
+                    logger.warning(
+                        f"predict_output_schema for node {node_id} returned a single Schema but the node "
+                        f"declares outputs {resolved_output_names}; falling back to execution-based prediction"
+                    )
+                    return []
+                return pl_schema_to_flowfile_columns(predicted)
+            if isinstance(predicted, dict) and predicted and all(isinstance(v, pl.Schema) for v in predicted.values()):
+                named: dict[str, list[FlowfileColumn]] = {}
+                for i, name in enumerate(resolved_output_names):
+                    if name not in predicted:
+                        logger.warning(f"predict_output_schema for node {node_id} missing declared output '{name}'")
+                        return []
+                    named[output_handle(i)] = pl_schema_to_flowfile_columns(predicted[name])
+                node._named_schemas = named
+                return named.get(DEFAULT_OUTPUT_HANDLE, [])
+            try:
+                return pl_schema_to_flowfile_columns(pl.Schema(predicted))
+            except Exception:
+                logger.warning(f"predict_output_schema for node {node_id} returned an unsupported value")
+                return []
+
+        return schema_callback
 
     def _make_local_user_defined_func(
         self,

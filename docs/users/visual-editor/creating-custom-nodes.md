@@ -101,6 +101,23 @@ class MyCustomNode(nd.CustomNodeBase):
 !!! tip "Collect only when you must"
     Because inputs are lazy, prefer to express the transform as lazy Polars operations and return the `LazyFrame` unmaterialized — that keeps the frame streamable. If a step genuinely needs eager data (row-wise Python, `map_elements`, a shape-dependent branch), call `.collect()` **inside** `process` on just that frame. `process` never runs on core's hot path, so an in-node `.collect()` is fine — it materializes in the worker subprocess, not in core.
 
+### Declaring the output schema — `predict_output_schema`
+
+By default, Flowfile predicts a custom node's output schema by actually running `process` on schema-only frames — for a kernel node that means starting a container just so a downstream settings panel can list your columns. Implementing the optional `predict_output_schema` method skips all of that: you declare the output schema as a pure function of the input schemas and the node's settings, and prediction becomes instant.
+
+For the greeting node above, the declaration mirrors what `process` produces:
+
+```python
+--8<-- "docs/examples/custom_node.py:predict-schema"
+```
+
+- One `pl.Schema` arrives per connected input port, in the same order as `process`.
+- Return a `pl.Schema`, or for a multi-output node a `dict[str, pl.Schema]` keyed by output name.
+- Return `None` (or raise) to fall back to the default execution-based prediction.
+
+!!! tip "Keep it pure"
+    `predict_output_schema` always runs in the main Flowfile process — even for `environment="kernel"` nodes — so it must not depend on kernel-only packages or touch data. Read settings the same way as in `process`; derive the output purely from the input schemas and those settings.
+
 ### Palette placement
 
 `node_category` is a real palette group. A node with `node_category = "Text Processing"` appears under a **Text Processing** group in the palette; the group is created from the category name (slugified internally, displayed as written). The default category, `"Custom"`, keeps the historical **User Defined Operations** group. A node can also target a built-in group by naming it exactly.

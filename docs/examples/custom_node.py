@@ -44,6 +44,13 @@ class GreetingNode(nd.CustomNodeBase):
         )
 # --8<-- [end:example]
 
+# --8<-- [start:predict-schema]
+    def predict_output_schema(self, *input_schemas: pl.Schema) -> pl.Schema:
+        schema = dict(input_schemas[0])
+        schema["greeting"] = pl.String()
+        return pl.Schema(schema)
+# --8<-- [end:predict-schema]
+
 node = GreetingNode()
 node.settings_schema.populate_values(
     {"main_config": {"name_column": "name", "greeting": "formal"}}
@@ -54,3 +61,4 @@ result = node.process(frame).collect()
 
 assert result.columns == ["name", "greeting"]
 assert result["greeting"].to_list() == ["Hello, Alice", "Hello, Bob"]
+assert node.predict_output_schema(frame.collect_schema()) == result.lazy().collect_schema()

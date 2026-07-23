@@ -58,7 +58,9 @@
 
         <!-- Kernel-instance picker (only for isolated-kernel nodes). -->
         <template v-if="isKernelEnv">
-          <div v-if="availableKernels.length" class="kernel-select-row">
+          <!-- Kernels hydrate in the background; never flash the empty state while loading. -->
+          <div v-if="kernelsLoading" class="kernel-loading-state">Loading kernels…</div>
+          <div v-else-if="availableKernels.length" class="kernel-select-row">
             <label class="kernel-label" for="kernel-select">Kernel instance</label>
             <select id="kernel-select" v-model="selectedKernelId" class="kernel-select">
               <option :value="null">Select a kernel…</option>
@@ -94,6 +96,8 @@
         :column-types="columnTypes"
         :artifact-options="artifactOptions"
         :global-artifacts="globalArtifacts"
+        :columns-loading="columnsLoading"
+        :artifacts-loading="artifactsLoading"
       />
     </generic-node-settings>
   </div>
@@ -102,9 +106,11 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import axios from "axios";
-import { CustomNodeSchema, SectionComponent } from "./interface";
+import { CustomNodeSchema } from "./interface";
 import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
+import { initializeFormData, schemaWantsGlobalArtifacts } from "./formInit";
+import type { CustomNodeFormData } from "./formInit";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeUserDefined } from "../../../baseNode/nodeInput";
 import { NodeData, FileColumn } from "../../../baseNode/nodeInterfaces";
@@ -122,7 +128,7 @@ interface KernelInfo {
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
-const formData = ref<any>(null);
+const formData = ref<CustomNodeFormData | null>(null);
 const loading = ref(true);
 const error = ref<string>("");
 const schemaError = ref<CustomNodeSchemaError | null>(null);
@@ -135,6 +141,18 @@ const columnTypes = ref<FileColumn[]>([]);
 const artifactOptions = ref<ArtifactOption[]>([]);
 const globalArtifacts = ref<GlobalArtifactOption[]>([]);
 
+// Background-hydration state: the form renders after stage 1 (settings + schema);
+// columns/kernels/artifacts fill in afterwards behind these flags.
+const columnsLoading = ref(false);
+const kernelsLoading = ref(false);
+const artifactsLoading = ref(false);
+// Kernel id the artifacts were last fetched for — idempotence guard for the
+// selectedKernelId watcher (a timing-based guard would double-fetch).
+const lastArtifactsKernelId = ref<string | null | undefined>(undefined);
+// Monotonic load token: the drawer reuses this component across node switches
+// and never awaits loadNodeData, so every post-await write must check it.
+let loadSeq = 0;
+
 // Kernel state
 const availableKernels = ref<KernelInfo[]>([]);
 const selectedKernelId = ref<string | null>(null);
@@ -144,8 +162,11 @@ const isKernelEnv = computed(
   () => schema.value?.environment === "kernel" || !!schema.value?.requires_kernel,
 );
 
-// Reactive so the "select a kernel" warning clears the moment a kernel is chosen.
-const kernelRequiredError = computed(() => isKernelEnv.value && !selectedKernelId.value);
+// Reactive so the "select a kernel" warning clears the moment a kernel is chosen;
+// suppressed while the kernel list is still hydrating.
+const kernelRequiredError = computed(
+  () => isKernelEnv.value && !selectedKernelId.value && !kernelsLoading.value,
+);
 
 const introHtml = computed(() =>
   schema.value?.intro ? renderSafeMarkdown(schema.value.intro) : "",
@@ -169,10 +190,15 @@ async function fetchKernels() {
 }
 
 async function fetchAvailableArtifacts(nodeId: number, kernelId: string | null) {
+  // Both callers record lastArtifactsKernelId before firing, so it doubles as the
+  // ordering token: a stale in-flight response must never clobber a newer kernel's list.
+  const isCurrent = () =>
+    currentNodeId.value === nodeId && lastArtifactsKernelId.value === kernelId;
   try {
     const response = await axios.get("/flow/node_available_artifacts", {
       params: { flow_id: nodeStore.flow_id, node_id: nodeId, kernel_id: kernelId },
     });
+    if (!isCurrent()) return;
     const artifacts = response.data?.artifacts ?? [];
     artifactOptions.value = artifacts.map((a: any) => ({
       name: a.name,
@@ -181,7 +207,7 @@ async function fetchAvailableArtifacts(nodeId: number, kernelId: string | null) 
       status: a.status,
     }));
   } catch {
-    artifactOptions.value = [];
+    if (isCurrent()) artifactOptions.value = [];
   }
 }
 
@@ -202,83 +228,143 @@ async function fetchGlobalArtifacts() {
   }
 }
 
-// True when any select in the schema opts into the global (catalog) artifact source.
-function schemaWantsGlobalArtifacts(schemaData: CustomNodeSchema): boolean {
-  for (const sectionKey in schemaData.settings_schema) {
-    const section = schemaData.settings_schema[sectionKey];
-    for (const componentKey in section.components) {
-      const options = (section.components[componentKey] as any).options;
-      if (
-        options?.__type__ === "AvailableArtifacts" &&
-        (options.scope === "global" || options.scope === "all")
-      )
-        return true;
-    }
-  }
-  return false;
-}
-
-// Re-fetch upstream artifacts when the picked kernel changes; skip the initial
-// load's own assignment (fetched explicitly there).
+// Re-fetch upstream artifacts when the picked kernel changes. Idempotence guard:
+// the hydration task records the kernel id it fetched for before this watcher
+// flushes, so the initial load's own assignment never double-fetches.
 watch(selectedKernelId, (kernelId) => {
   if (loading.value || currentNodeId.value === null) return;
-  void fetchAvailableArtifacts(currentNodeId.value, kernelId);
+  if (kernelId === lastArtifactsKernelId.value) return;
+  lastArtifactsKernelId.value = kernelId;
+  void refetchArtifactsForKernel(currentNodeId.value, kernelId);
 });
+
+// Global (catalog) artifacts are kernel-independent — only the upstream list refetches.
+async function refetchArtifactsForKernel(nodeId: number, kernelId: string | null) {
+  artifactsLoading.value = true;
+  try {
+    await fetchAvailableArtifacts(nodeId, kernelId);
+  } finally {
+    // The flag is owned by the latest artifact request (kernel token + node).
+    if (currentNodeId.value === nodeId && lastArtifactsKernelId.value === kernelId) {
+      artifactsLoading.value = false;
+    }
+  }
+}
 
 // --- Lifecycle Methods (exposed to parent) ---
 
 const loadNodeData = async (nodeId: number) => {
+  const seq = ++loadSeq;
   loading.value = true;
   error.value = "";
   schemaError.value = null;
   currentNodeId.value = nodeId;
+  availableColumns.value = [];
+  columnTypes.value = [];
+  artifactOptions.value = [];
+  globalArtifacts.value = [];
+  columnsLoading.value = false;
+  kernelsLoading.value = false;
+  artifactsLoading.value = false;
+  lastArtifactsKernelId.value = undefined;
 
+  // Stage 1 (blocks the spinner): saved settings + UI schema — everything the
+  // form structure needs. Columns/kernels/artifacts hydrate in stage 2.
   try {
-    const inputNodeData = await nodeStore.getNodeData(nodeId, false);
+    const [nodeRes, schemaRes] = await Promise.allSettled([
+      nodeStore.getNodeDataLight(nodeId),
+      getCustomNodeSchema(nodeStore.flow_id, nodeId),
+    ]);
+    if (seq !== loadSeq) return;
+    // The schema error decides the drawer surface (404 missing / 409 broken cards).
+    if (schemaRes.status === "rejected") throw schemaRes.reason;
+    if (nodeRes.status === "rejected") throw nodeRes.reason;
+    const inputNodeData = nodeRes.value;
     if (!inputNodeData) {
+      error.value = "Failed to load node data.";
       return;
     }
-    const [schemaData] = await Promise.all([
-      getCustomNodeSchema(nodeStore.flow_id, nodeId),
-      fetchKernels(),
-    ]);
+    const schemaData = schemaRes.value;
 
     schema.value = schemaData;
     nodeData.value = inputNodeData;
-    nodeUserDefined.value = nodeData.value?.setting_input;
+    nodeUserDefined.value = inputNodeData.setting_input;
 
-    if (!nodeData.value?.setting_input.is_setup && nodeUserDefined.value) {
+    if (!inputNodeData.setting_input.is_setup && nodeUserDefined.value) {
       nodeUserDefined.value.settings = {};
     }
 
     selectedKernelId.value = nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
 
-    const mainColumns = inputNodeData?.main_input?.columns ?? [];
-    if (mainColumns.length) {
-      availableColumns.value = mainColumns;
-      columnTypes.value = inputNodeData.main_input?.table_schema ?? [];
-    } else {
-      console.warn(
-        `No main_input or columns found for node ${nodeId}. Select components may be empty.`,
-      );
-    }
-
-    await fetchAvailableArtifacts(nodeId, selectedKernelId.value ?? schemaData.kernel_id ?? null);
-    if (schemaWantsGlobalArtifacts(schemaData)) {
-      await fetchGlobalArtifacts();
-    }
-
-    initializeFormData(schemaData, inputNodeData?.setting_input);
+    formData.value = initializeFormData(schemaData, inputNodeData.setting_input);
   } catch (err: any) {
+    if (seq !== loadSeq) return;
     if (err instanceof CustomNodeSchemaError) {
       schemaError.value = err;
     } else {
       error.value = err.message || "An unknown error occurred while loading node data.";
     }
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
+
+  // Stage 2 (fire-and-forget): option data behind per-section loading flags.
+  if (seq !== loadSeq || !schema.value || !formData.value) return;
+  void hydrateColumns(nodeId, seq);
+  if (isKernelEnv.value) void hydrateKernels(seq);
+  void hydrateArtifacts(nodeId, selectedKernelId.value ?? schema.value.kernel_id ?? null, seq);
 };
+
+async function hydrateColumns(nodeId: number, seq: number) {
+  // Source-style nodes have no inputs — nothing to hydrate, no prediction to warm.
+  if ((schema.value?.number_of_inputs ?? 0) === 0) return;
+  columnsLoading.value = true;
+  try {
+    const full = await nodeStore.getNodeData(nodeId, false);
+    if (seq !== loadSeq || !full) return;
+    nodeData.value = full;
+    const mainColumns = full.main_input?.columns ?? [];
+    if (mainColumns.length) {
+      availableColumns.value = mainColumns;
+      columnTypes.value = full.main_input?.table_schema ?? [];
+    } else {
+      console.warn(
+        `No main_input or columns found for node ${nodeId}. Select components may be empty.`,
+      );
+    }
+  } finally {
+    if (seq === loadSeq) columnsLoading.value = false;
+  }
+}
+
+async function hydrateKernels(seq: number) {
+  kernelsLoading.value = true;
+  try {
+    await fetchKernels();
+  } finally {
+    if (seq === loadSeq) kernelsLoading.value = false;
+  }
+}
+
+async function hydrateArtifacts(nodeId: number, kernelId: string | null, seq: number) {
+  // Recorded synchronously, before Vue flushes the selectedKernelId watcher,
+  // so the initial assignment never triggers a duplicate fetch.
+  lastArtifactsKernelId.value = kernelId;
+  artifactsLoading.value = true;
+  try {
+    await Promise.all([
+      fetchAvailableArtifacts(nodeId, kernelId),
+      schema.value && schemaWantsGlobalArtifacts(schema.value)
+        ? fetchGlobalArtifacts()
+        : Promise.resolve(),
+    ]);
+  } finally {
+    // The flag is owned by the latest artifact request (kernel token + load).
+    if (seq === loadSeq && lastArtifactsKernelId.value === kernelId) {
+      artifactsLoading.value = false;
+    }
+  }
+}
 
 const pushNodeData = async () => {
   if (!nodeData.value || currentNodeId.value === null) {
@@ -296,35 +382,6 @@ const pushNodeData = async () => {
   }
   nodeStore.updateUserDefinedSettings(nodeUserDefined);
 };
-
-// --- Helper Functions ---
-
-function initializeFormData(schemaData: CustomNodeSchema, savedSettings: any) {
-  const data: any = {};
-
-  for (const sectionKey in schemaData.settings_schema) {
-    data[sectionKey] = {};
-    const section: SectionComponent = schemaData.settings_schema[sectionKey];
-    for (const componentKey in section.components) {
-      const component = section.components[componentKey];
-
-      const savedValue = savedSettings?.[sectionKey]?.[componentKey];
-
-      if (savedValue !== undefined) {
-        data[sectionKey][componentKey] = savedValue;
-      } else if (component.value !== undefined) {
-        data[sectionKey][componentKey] = component.value;
-      } else {
-        let defaultValue = component.default ?? null;
-        if (component.input_type === "array" && defaultValue === null) {
-          defaultValue = [];
-        }
-        data[sectionKey][componentKey] = defaultValue;
-      }
-    }
-  }
-  formData.value = data;
-}
 
 defineExpose({
   loadNodeData,
@@ -409,6 +466,12 @@ defineExpose({
   padding: var(--spacing-3, 12px);
   background-color: var(--color-background-tertiary, #f1f3f5);
   border-radius: var(--border-radius-md, 6px);
+}
+
+.kernel-loading-state {
+  margin: 0 var(--spacing-4, 16px) var(--spacing-2, 8px);
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-secondary);
 }
 
 .kernel-empty-message {

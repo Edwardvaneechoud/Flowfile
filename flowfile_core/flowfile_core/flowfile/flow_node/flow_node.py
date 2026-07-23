@@ -871,20 +871,26 @@ class FlowNode:
             logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
 
         logger.debug(f"get_predicted_schema: node_id={self.node_id} - falling back to _predicted_data_getter")
-        predicted_data = self._predicted_data_getter()
-        if predicted_data is not None and predicted_data.schema is not None:
-            self.print("Calculating the schema based on the predicted resulting data")
-            logger.info(
-                f"get_predicted_schema: node_id={self.node_id} - using schema from predicted_data "
-                f"({len(predicted_data.schema)} columns)"
-            )
-            self.node_schema.predicted_schema = self._predicted_data_getter().schema
-        else:
-            logger.warning(
-                f"get_predicted_schema: node_id={self.node_id} - no schema available from any source "
-                f"(predicted_data={'None' if predicted_data is None else 'has_data'}, "
-                f"schema={'None' if predicted_data is None or predicted_data.schema is None else 'has_schema'})"
-            )
+        # Serialize the fallback: without a callback, prediction executes the node's
+        # real function (kernel/worker for custom nodes) — concurrent callers must
+        # not run it twice into the same working dirs.
+        with self._execution_lock:
+            if self.node_schema.predicted_schema and not force:
+                return self.node_schema.predicted_schema
+            predicted_data = self._predicted_data_getter()
+            if predicted_data is not None and predicted_data.schema is not None:
+                self.print("Calculating the schema based on the predicted resulting data")
+                logger.info(
+                    f"get_predicted_schema: node_id={self.node_id} - using schema from predicted_data "
+                    f"({len(predicted_data.schema)} columns)"
+                )
+                self.node_schema.predicted_schema = predicted_data.schema
+            else:
+                logger.warning(
+                    f"get_predicted_schema: node_id={self.node_id} - no schema available from any source "
+                    f"(predicted_data={'None' if predicted_data is None else 'has_data'}, "
+                    f"schema={'None' if predicted_data is None or predicted_data.schema is None else 'has_schema'})"
+                )
 
         return self.node_schema.predicted_schema
 
@@ -1168,9 +1174,17 @@ class FlowNode:
                 _s = self.schema_callback()
                 if handle != DEFAULT_OUTPUT_HANDLE and handle in self._named_schemas:
                     _s = self._named_schemas[handle]
+                if not _s:
+                    # Empty is the callback's "no declared schema" sentinel (e.g. a
+                    # predict_output_schema hook opting out) — use the full prediction
+                    # ladder, which falls back to execution-based prediction.
+                    _s = self.get_predicted_schema()
+                    if handle != DEFAULT_OUTPUT_HANDLE:
+                        # The exec fallback fills the per-handle caches; prefer them.
+                        _s = self.schema_for_handle(handle)
             else:
                 _s = self.node_schema.result_schema
-            return FlowDataEngine.create_from_schema(_s)
+            return FlowDataEngine.create_from_schema(_s or [])
         else:
             if isinstance(self.function, FlowDataEngine):
                 fl = self.function
@@ -1908,7 +1922,13 @@ class FlowNode:
                 data=[],
             )
 
-    def get_node_data(self, flow_id: int, include_example: bool = False, include_output: bool = True) -> NodeData:
+    def get_node_data(
+        self,
+        flow_id: int,
+        include_example: bool = False,
+        include_output: bool = True,
+        include_inputs: bool = True,
+    ) -> NodeData:
         """Gathers all necessary data for representing the node in the UI.
 
         Args:
@@ -1919,6 +1939,13 @@ class FlowNode:
                 schemas, so callers that just open settings pass False to skip
                 the potentially expensive output-schema prediction (e.g. a pivot
                 must materialize data to determine its output columns).
+            include_inputs: If True, resolves each connected input's schema
+                (``main_input``/``left_input``/``right_input``). False is the
+                settings-open fast path: it skips upstream schema prediction
+                entirely (which can execute un-run custom nodes on a kernel or
+                worker) and therefore also the main_input-guarded setting
+                generators/updators (join/cross_join/fuzzy_match). Only the
+                custom-node drawer should use it for now.
 
         Returns:
             A `NodeData` object.
@@ -1930,19 +1957,20 @@ class FlowNode:
             setting_input=self.setting_input,
             flow_type=self.node_type,
         )
-        if self.accepts_dynamic_inputs:
-            # The settings panel's main_input is the parameter-data connection
-            # (handle input-0) specifically — not whichever slot happens to be
-            # connected first.
-            param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
-            if param_node is not None:
-                node.main_input = param_node.get_table_example()
-        elif self.main_input:
-            node.main_input = self.main_input[0].get_table_example()
-        if self.left_input:
-            node.left_input = self.left_input.get_table_example()
-        if self.right_input:
-            node.right_input = self.right_input.get_table_example()
+        if include_inputs:
+            if self.accepts_dynamic_inputs:
+                # The settings panel's main_input is the parameter-data connection
+                # (handle input-0) specifically — not whichever slot happens to be
+                # connected first.
+                param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
+                if param_node is not None:
+                    node.main_input = param_node.get_table_example()
+            elif self.main_input:
+                node.main_input = self.main_input[0].get_table_example()
+            if self.left_input:
+                node.left_input = self.left_input.get_table_example()
+            if self.right_input:
+                node.right_input = self.right_input.get_table_example()
         if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
         node = setting_generator.get_setting_generator(self.node_type)(node)

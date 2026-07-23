@@ -136,6 +136,33 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
+    // Settings-open fast path: fetches without input schemas so the custom-node
+    // drawer renders before upstream schema prediction runs. Always fetches and
+    // writes the store's single nodeData slot so it stays pointed at the current
+    // node — but until the follow-up full fetch lands, main_input is unset, so
+    // cached readers may only rely on fields the light payload carries
+    // (e.g. setting_input).
+    async getNodeDataLight(nodeId: number): Promise<NodeData | null> {
+      const flowStore = useFlowStore();
+      const flowId = flowStore.flowId;
+
+      try {
+        const data = await NodeApi.getNodeData(flowId, nodeId, false, false);
+        this.nodeData = data;
+        this.nodeDataFlowId = flowId;
+        this.isLoaded = true;
+        this.nodeExists = true;
+        return this.nodeData;
+      } catch (error) {
+        console.error("Error fetching node data:", error);
+        this.nodeData = null;
+        this.nodeDataFlowId = -1;
+        this.isLoaded = false;
+        this.nodeExists = false;
+        return null;
+      }
+    },
+
     async reloadCurrentNodeData(): Promise<NodeData | null> {
       return this.getNodeData(this.nodeId, false);
     },

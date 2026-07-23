@@ -11,6 +11,8 @@
       :placeholder="schema.multiple ? 'Select columns...' : 'Select a column...'"
       style="width: 100%"
       size="small"
+      :loading="loading"
+      loading-text="Loading columns…"
       @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option
@@ -43,6 +45,10 @@ const props = defineProps({
   incomingColumns: {
     type: Array as PropType<FileColumn[]>,
     default: () => [],
+  },
+  loading: {
+    type: Boolean,
+    default: false,
   },
 });
 

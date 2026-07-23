@@ -776,6 +776,27 @@ if not inputs:
         """
         raise NotImplementedError
 
+    def predict_output_schema(self, *input_schemas: pl.Schema) -> "pl.Schema | dict[str, pl.Schema] | None":
+        """
+        Optionally declare the node's output schema without running ``process``.
+
+        When implemented, Flowfile predicts this node's output schema from it
+        directly — no kernel container, worker round-trip, or ``process`` call —
+        so downstream settings panels resolve columns instantly. Read settings
+        the same way as in ``process`` (``self.settings_schema...``). Keep it
+        pure and dependency-light: it always runs in the main Flowfile process,
+        even for ``environment="kernel"`` nodes.
+
+        Args:
+            *input_schemas: One ``pl.Schema`` per connected input, in port order.
+
+        Returns:
+            A ``pl.Schema`` (single output), a ``dict[str, pl.Schema]`` keyed by
+            output name (multi-output), or ``None`` to fall back to the default
+            execution-based prediction.
+        """
+        return None
+
     def _palette_group(self) -> tuple[str, str | None]:
         return palette_group(self.node_category, self.node_group)
 
