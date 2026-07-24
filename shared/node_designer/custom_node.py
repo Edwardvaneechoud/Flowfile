@@ -438,11 +438,8 @@ class CustomNodeBase(BaseModel):
     environment: Literal["local", "kernel"] = "local"
     dependencies: list[str] = Field(default_factory=list)
 
-    # Schema prediction may need real data (a collect) — e.g. one-hot encoding.
-    # Conservative default: pre-run hook inputs carry real upstream data when the
-    # un-run chain is kernel-free; a kernel in the chain yields a warning instead.
-    # Set False for pure schema hooks to skip upstream materialization entirely.
-    requires_data_for_prediction: bool = True
+    # True = schema depends on data values: hooks get real pre-run data; hookless nodes must run first.
+    requires_data_for_prediction: bool = False
 
     # Optional sample data for dry-runs: one column-oriented dict per input port
     # ({column: [values]}), plus the settings values to test with.
@@ -802,15 +799,17 @@ if not inputs:
         process, even for ``environment="kernel"`` nodes — don't depend on
         kernel-only packages here.
 
-        With ``requires_data_for_prediction`` (the default), pre-run inputs
-        carry the upstream's real lazy data when everything un-run upstream is
-        kernel-free: Flowfile materializes in-core, pivot-style, and your
-        ``collect()`` bounds what is computed. When an un-run kernel node is in
-        the chain, Flowfile never executes it implicitly — prediction stops
-        with a visible "run the upstream first" warning instead. Set
-        ``requires_data_for_prediction = False`` for pure schema hooks to skip
-        upstream materialization; such hooks see schema-only empty frames
-        pre-run.
+        By default (``requires_data_for_prediction = False``) pre-run inputs
+        are schema-only empty frames. Set ``requires_data_for_prediction =
+        True`` to opt into real pre-run data: inputs then carry the upstream's
+        real lazy data when everything un-run upstream is kernel-free —
+        Flowfile materializes in-core, pivot-style, and your ``collect()``
+        bounds what is computed. When an un-run kernel node is in the chain,
+        Flowfile never executes it implicitly — prediction stops with a
+        visible "run the upstream first" warning instead. On a node *without*
+        this hook, ``requires_data_for_prediction = True`` instead disables
+        implicit prediction entirely: users must run the node once to resolve
+        its columns.
 
         Args:
             *inputs: One ``pl.LazyFrame`` per connected input, in port order —

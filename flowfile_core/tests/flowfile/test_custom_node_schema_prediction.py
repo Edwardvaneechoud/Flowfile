@@ -224,6 +224,7 @@ def test_data_dependent_hook_sees_real_upstream_data():
     class OneHotStyleNode(CustomNodeBase):
         node_name: str = "One Hot Style Node"
         node_category: str = "Testing"
+        requires_data_for_prediction: bool = True
         settings_schema: NodeSettings = NodeSettings(
             main_section=Section(title="Config", note=TextInput(label="Note")),
         )

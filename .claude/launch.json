@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "core",
+      "runtimeExecutable": "poetry",
+      "runtimeArgs": ["run", "flowfile_core"],
+      "port": 63578
+    },
+    {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:web", "--prefix", "flowfile_frontend"],

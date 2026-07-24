@@ -158,6 +158,7 @@ export interface DesignerState {
   sections: SectionState[];
   process_code: string; // full `def process(...)` source, dedented, verbatim
   predict_schema_code: string; // full `def predict_output_schema(...)` source; "" = no hook
+  requires_data_for_prediction: boolean; // true + no hook: users must run the node to resolve columns
   example_inputs: ExampleInput[] | null;
   example_settings: Record<string, Record<string, unknown>> | null;
   extra_imports: string[];
@@ -218,6 +219,7 @@ export function newDesignerState(): DesignerState {
     ],
     process_code: "",
     predict_schema_code: "",
+    requires_data_for_prediction: false,
     example_inputs: null,
     example_settings: null,
     extra_imports: [],

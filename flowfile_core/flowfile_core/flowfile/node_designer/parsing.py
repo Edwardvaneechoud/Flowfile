@@ -126,6 +126,7 @@ _RECOGNIZED_NODE_ATTRS = {
     "example_settings",
     "publishes",
     "requires_kernel",
+    "requires_data_for_prediction",
     "kernel_id",
 }
 
@@ -859,7 +860,7 @@ class _SourceParser:
         for attr in ("node_category", "node_group", "node_icon", "title", "intro", "author", "version"):
             if lifted.get(attr) is not None:
                 state_kwargs[attr] = lifted[attr]
-        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags"):
+        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags", "requires_data_for_prediction"):
             if attr in lifted:
                 state_kwargs[attr] = lifted[attr]
         if "example_inputs" in lifted:
@@ -918,7 +919,7 @@ class _SourceParser:
                 self.error(ParseIssueCode.NON_LITERAL_ATTR, f"'{name}' must be an integer", node)
                 return _INVALID
             return value
-        if name == "requires_kernel":
+        if name in ("requires_kernel", "requires_data_for_prediction"):
             if not isinstance(value, bool):
                 self.error(ParseIssueCode.NON_LITERAL_ATTR, f"'{name}' must be a boolean", node)
                 return _INVALID

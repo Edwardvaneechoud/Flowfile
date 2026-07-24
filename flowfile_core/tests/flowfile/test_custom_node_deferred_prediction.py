@@ -1,10 +1,12 @@
-"""Kernel-gated schema prediction.
+"""Deferred (gated) schema prediction.
 
-Data-needing predictions (requires_data_for_prediction, default True for custom
-nodes; pivot among built-ins) get real upstream data by materializing kernel-free
-chains in-core, pivot-style. An un-run kernel node in the chain is never executed
-implicitly: prediction stops with a user-facing warning instead, and the exec-tier
-fallback is suppressed so no kernel spins on empty inputs.
+Data-needing predictions (requires_data_for_prediction, default False; pivot among
+built-ins opts in) behave by declaration: hooks marked True get real upstream data
+by materializing kernel-free chains in-core, pivot-style, while an un-run kernel
+node in the chain is never executed implicitly — prediction stops with a
+user-facing warning instead, and the exec-tier fallback is suppressed so no kernel
+spins on empty inputs. A hookless node marked True never predicts by executing at
+all: it blocks with a "run it to resolve" warning until the node has actually run.
 """
 import polars as pl
 import pytest
@@ -64,6 +66,7 @@ def make_one_hot_node(process_calls: list) -> type[CustomNodeBase]:
     class OneHotHookNode(CustomNodeBase):
         node_name: str = "One Hot Hook Node"
         node_category: str = "Testing"
+        requires_data_for_prediction: bool = True
         settings_schema: NodeSettings = NodeSettings(
             main_section=Section(title="Config", note=TextInput(label="Note")),
         )
@@ -316,11 +319,180 @@ def test_pivot_kernel_free_chain_still_materializes():
     assert pivot_node._schema_prediction_blocked is None
 
 
-def test_designer_roundtrip_preserves_marker():
-    from flowfile_core.flowfile.node_designer.codegen import generate_source
-    from flowfile_core.flowfile.node_designer.parsing import parse_source
+def make_hookless_data_node(process_calls: list) -> type[CustomNodeBase]:
+    class HooklessDataNode(CustomNodeBase):
+        node_name: str = "Hookless Data Node"
+        node_category: str = "Testing"
+        requires_data_for_prediction: bool = True
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
 
-    source = '''import polars as pl
+        def process(self, *inputs):
+            process_calls.append("ran")
+            values = inputs[0].select(pl.col("a").unique().sort()).collect()["a"].to_list()
+            return inputs[0].with_columns([pl.lit(0).alias(f"a_{v}") for v in values])
+
+    return HooklessDataNode
+
+
+def test_hookless_requires_data_true_blocks_prediction():
+    process_calls: list = []
+    flow = create_graph()
+    add_manual_source(flow)
+    node = add_custom(flow, make_hookless_data_node(process_calls), node_id=2, upstream_id=1)
+
+    assert predicted_names(node) == []
+    assert node._schema_prediction_blocked is not None
+    assert "(id 2)" in node._schema_prediction_blocked
+    assert "Run it to resolve them." in node._schema_prediction_blocked
+    assert node.results.warnings == node._schema_prediction_blocked
+    assert process_calls == [], "blocked prediction must never execute process()"
+
+
+def test_hookless_blocked_warning_propagates_downstream():
+    process_calls: list = []
+    flow = create_graph()
+    add_manual_source(flow)
+    add_custom(flow, make_hookless_data_node(process_calls), node_id=2, upstream_id=1)
+    for node_id, upstream_id in ((3, 2), (4, 3)):
+        flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=node_id, node_type="select"))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(upstream_id, node_id))
+        flow.add_select(input_schema.NodeSelect(flow_id=1, node_id=node_id, select_input=[], keep_missing=True))
+
+    for node_id in (3, 4):
+        node_data = flow.get_node(node_id).get_node_data(flow_id=1, include_output=False, include_inputs=True)
+        assert node_data.prediction_warning is not None, f"node {node_id} must surface the blocked warning"
+        assert "(id 2)" in node_data.prediction_warning
+    assert process_calls == []
+
+
+def test_hookless_blocked_clears_after_run():
+    process_calls: list = []
+    flow = create_graph()
+    add_manual_source(flow)
+    node = add_custom(flow, make_hookless_data_node(process_calls), node_id=2, upstream_id=1)
+
+    assert predicted_names(node) == []
+    flow.run_graph()
+    assert node.node_stats.has_completed_last_run
+    assert process_calls == ["ran"], "the explicit run is the only execution"
+
+    schema = node.get_predicted_schema(force=True)
+    assert [c.column_name for c in schema] == ["a", "a_1", "a_2"]
+    assert node._schema_prediction_blocked is None
+    node_data = node.get_node_data(flow_id=1, include_output=False, include_inputs=True)
+    assert node_data.prediction_warning is None
+
+
+def test_hookless_blocked_reblocks_after_settings_change():
+    process_calls: list = []
+    flow = create_graph()
+    add_manual_source(flow)
+    node_class = make_hookless_data_node(process_calls)
+    node = add_custom(flow, node_class, node_id=2, upstream_id=1)
+    flow.run_graph()
+    assert node.get_predicted_schema(force=True), "post-run schema must resolve"
+
+    flow.add_user_defined_node(
+        custom_node=node_class.from_settings({"main_section": {"note": "changed"}}),
+        user_defined_node_settings=input_schema.UserDefinedNode(
+            flow_id=1, node_id=2, settings={"main_section": {"note": "changed"}}, is_user_defined=True
+        ),
+    )
+    node = flow.get_node(2)
+    assert predicted_names(node) == []
+    assert node._schema_prediction_blocked is not None
+
+
+def test_zero_input_hookless_blocked_never_runs_at_placement():
+    """The eager is_start prefetch must hit the blocking callback, not process()."""
+    import time
+
+    process_calls: list = []
+
+    class SourceDataNode(CustomNodeBase):
+        node_name: str = "Source Data Node"
+        node_category: str = "Testing"
+        number_of_inputs: int = 0
+        requires_data_for_prediction: bool = True
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            process_calls.append("ran")
+            return pl.LazyFrame({"generated": [1]})
+
+    node_store.add_to_custom_node_store(SourceDataNode)
+    flow = create_graph()
+    flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="source_data_node"))
+    flow.add_user_defined_node(
+        custom_node=SourceDataNode.from_settings({}),
+        user_defined_node_settings=input_schema.UserDefinedNode(
+            flow_id=1, node_id=1, settings={}, is_user_defined=True
+        ),
+    )
+    node = flow.get_node(1)
+    assert predicted_names(node) == []
+    assert node._schema_prediction_blocked is not None
+    time.sleep(0.3)  # let any orphaned background prefetch surface
+    assert process_calls == [], "placement of a 0-input blocked node must never run process()"
+
+
+def test_hookless_default_predicts_via_empty_frame_execution():
+    """The flipped default (False): hookless prediction still runs process() on
+    empty schema-only frames, exactly the pre-existing exec-tier mechanics."""
+    heights: list = []
+
+    class PlainAddColumnNode(CustomNodeBase):
+        node_name: str = "Plain Add Column Node"
+        node_category: str = "Testing"
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            heights.append(inputs[0].collect().height)
+            return inputs[0].with_columns(pl.lit(0.0).alias("added"))
+
+    flow = create_graph()
+    add_manual_source(flow)
+    node = add_custom(flow, PlainAddColumnNode, node_id=2, upstream_id=1)
+
+    assert predicted_names(node) == ["a", "added"]
+    assert heights == [0], "exec-tier prediction feeds schema-only empty frames"
+    assert node._schema_prediction_blocked is None
+
+
+def test_hookless_kernel_flag_true_keeps_kernel_message(monkeypatch):
+    monkeypatch.setattr(
+        FlowGraph, "_execute_on_kernel", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no kernel"))
+    )
+
+    class KernelDataNode(CustomNodeBase):
+        node_name: str = "Kernel Data Node"
+        node_category: str = "Testing"
+        environment: str = "kernel"
+        requires_data_for_prediction: bool = True
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            return inputs[0]
+
+    flow = create_graph()
+    add_manual_source(flow)
+    node = add_custom(flow, KernelDataNode, node_id=2, upstream_id=1, kernel_id="test-kernel")
+
+    assert predicted_names(node) == []
+    assert node._schema_prediction_blocked is not None
+    assert "kernel node" in node._schema_prediction_blocked
+
+
+def _marker_node_source(marker_value: bool) -> str:
+    return f'''import polars as pl
 
 from flowfile import node_designer as nd
 
@@ -328,7 +500,7 @@ from flowfile import node_designer as nd
 class PureSchemaNode(nd.CustomNodeBase):
     node_name: str = "Pure Schema Node"
     node_category: str = "Testing"
-    requires_data_for_prediction: bool = False
+    requires_data_for_prediction: bool = {marker_value}
 
     settings_schema: nd.NodeSettings = nd.NodeSettings(
         main_section=nd.Section(
@@ -340,7 +512,24 @@ class PureSchemaNode(nd.CustomNodeBase):
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
         return inputs[0]
 '''
-    parsed = parse_source(source)
+
+
+def test_designer_roundtrip_preserves_marker():
+    """The flag is a structured designer attribute: lifted (not class_extra),
+    emitted once when True, and normalized away at the False default."""
+    from flowfile_core.flowfile.node_designer.codegen import generate_source
+    from flowfile_core.flowfile.node_designer.parsing import parse_source
+
+    parsed = parse_source(_marker_node_source(True))
+    assert parsed.designer_state.requires_data_for_prediction is True
+    assert parsed.designer_state.class_extra == []
     regenerated = generate_source(parsed.designer_state)
-    assert "requires_data_for_prediction: bool = False" in regenerated
+    assert regenerated.count("requires_data_for_prediction: bool = True") == 1
     assert generate_source(parse_source(regenerated).designer_state) == regenerated
+
+    parsed_false = parse_source(_marker_node_source(False))
+    assert parsed_false.designer_state.requires_data_for_prediction is False
+    regenerated_false = generate_source(parsed_false.designer_state)
+    assert "requires_data_for_prediction" not in regenerated_false
+    assert parse_source(regenerated_false).designer_state.requires_data_for_prediction is False
+    assert generate_source(parse_source(regenerated_false).designer_state) == regenerated_false

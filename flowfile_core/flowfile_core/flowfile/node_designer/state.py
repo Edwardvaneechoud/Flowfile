@@ -170,6 +170,7 @@ class DesignerState(BaseModel):
     sections: list[SectionState] = []
     process_code: str = ""  # full `def process(...)` source, dedented, verbatim
     predict_schema_code: str = ""  # full `def predict_output_schema(...)` source; "" = no hook
+    requires_data_for_prediction: bool = False  # True + no hook: blocked until run; True + hook: real pre-run data
     example_inputs: list[ExampleInput] | None = None
     example_settings: dict[str, dict[str, Any]] | None = None
     extra_imports: list[str] = []  # verbatim statements, order preserved

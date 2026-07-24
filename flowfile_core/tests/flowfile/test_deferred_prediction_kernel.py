@@ -47,6 +47,7 @@ class CategorySourceKernelNode(CustomNodeBase):
 class OneHotDownstreamNode(CustomNodeBase):
     node_name: str = "One Hot Downstream Node"
     node_category: str = "Testing"
+    requires_data_for_prediction: bool = True
     settings_schema: NodeSettings = NodeSettings(
         main_section=Section(title="Config", note=TextInput(label="Note")),
     )

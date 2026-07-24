@@ -521,6 +521,44 @@ def test_publish_metadata_tags_must_be_list_of_strings():
     assert ParseIssueCode.NON_LITERAL_ATTR.value in error_codes(result)
 
 
+def _requires_data_source(attr_line: str) -> str:
+    return (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n\n\n"
+        "class DataNode(nd.CustomNodeBase):\n"
+        '    node_name: str = "Data Node"\n'
+        f"{attr_line}"
+        "\n    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n"
+        "        return inputs[0]\n"
+    )
+
+
+def test_requires_data_for_prediction_lifts_annotated():
+    result = parse_source(_requires_data_source("    requires_data_for_prediction: bool = True\n"))
+    assert result.mode == "designer"
+    assert result.designer_state.requires_data_for_prediction is True
+    assert result.designer_state.class_extra == []
+
+
+def test_requires_data_for_prediction_lifts_plain_assign():
+    result = parse_source(_requires_data_source("    requires_data_for_prediction = True\n"))
+    assert result.mode == "designer"
+    assert result.designer_state.requires_data_for_prediction is True
+    assert result.designer_state.class_extra == []
+
+
+def test_requires_data_for_prediction_absent_defaults_false():
+    result = parse_source(_requires_data_source(""))
+    assert result.mode == "designer"
+    assert result.designer_state.requires_data_for_prediction is False
+
+
+def test_requires_data_for_prediction_must_be_boolean():
+    result = parse_source(_requires_data_source("    requires_data_for_prediction: bool = 1\n"))
+    assert result.mode == "code_only"
+    assert ParseIssueCode.NON_LITERAL_ATTR.value in error_codes(result)
+
+
 def test_section_builder_is_code_only():
     result = parse("codeonly_section_builder.py")
     assert result.mode == "code_only"

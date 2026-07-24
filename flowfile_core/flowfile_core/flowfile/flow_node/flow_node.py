@@ -81,6 +81,15 @@ def kernel_block_reason(node: "FlowNode", include_self: bool) -> str | None:
     return None
 
 
+def data_needed_block_reason(node: "FlowNode") -> str:
+    """A hookless data-dependent custom node never predicts by executing;
+    the user must run it once to resolve its columns."""
+    return (
+        f"Columns can't be predicted yet: node '{node.name}' (id {node.node_id}) "
+        f"needs its data to determine them. Run it to resolve them."
+    )
+
+
 def first_upstream_prediction_warning(node: "FlowNode") -> str | None:
     """Propagate a kernel-gate warning to every downstream node, not just the
     direct neighbour. Walks this node plus its upstreams and returns the first
@@ -928,7 +937,7 @@ class FlowNode:
         else:
             logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
 
-        if self._schema_prediction_blocked is None and self._prediction_requires_data:
+        if self._schema_prediction_blocked is None and (self._prediction_requires_data or self._executes_on_kernel):
             self._schema_prediction_blocked = kernel_block_reason(self, include_self=True)
         if self._schema_prediction_blocked:
             # Prediction would require executing an un-run kernel node: never do

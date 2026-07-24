@@ -69,7 +69,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLTrainFetcher,
     fetch_kafka_offsets,
 )
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode, kernel_block_reason
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode, data_needed_block_reason, kernel_block_reason
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
@@ -1976,6 +1976,9 @@ class FlowGraph:
                 node_id=user_defined_node_settings.node_id,
                 output_names=output_names,
             )
+        elif not kernel_id and bool(getattr(custom_node, "requires_data_for_prediction", False)):
+            # Hookless data-dependent node: never predict by executing; block until run.
+            schema_callback = self._make_blocked_prediction_callback(node_id=user_defined_node_settings.node_id)
         else:
             # Traceability: a stale registry class (or a genuinely hook-less node)
             # lands here and schema prediction degrades to the execution tier.
@@ -1995,7 +1998,7 @@ class FlowGraph:
         )
         node = self.get_node(user_defined_node_settings.node_id)
         node._executes_on_kernel = bool(kernel_id)
-        node._prediction_requires_data = bool(getattr(custom_node, "requires_data_for_prediction", True))
+        node._prediction_requires_data = bool(getattr(custom_node, "requires_data_for_prediction", False))
         if custom_node.number_of_inputs == 0:
             self.add_node_to_starting_list(node)
         if custom_node.settings_schema is not None and user_defined_node_settings.settings:
@@ -2063,6 +2066,26 @@ class FlowGraph:
             return pl_schema_to_flowfile_columns(value)
         return None
 
+    def _make_blocked_prediction_callback(self, *, node_id: int) -> Callable:
+        """Hookless ``requires_data_for_prediction=True``: prediction must never
+        execute ``process()``. Wired through ``add_node_step`` so a 0-input
+        node's eager prefetch hits this cheap callback instead of the real
+        function."""
+
+        def schema_callback() -> list[FlowfileColumn]:
+            node = self.get_node(node_id)
+            if node is None:
+                return []
+            if node.node_stats.has_completed_last_run and node.node_schema.result_schema:
+                node._schema_prediction_blocked = None
+                return node.node_schema.result_schema
+            reason = data_needed_block_reason(node)
+            node._schema_prediction_blocked = reason
+            node.results.warnings = reason
+            return []
+
+        return schema_callback
+
     def _make_user_defined_schema_callback(
         self, *, custom_node: CustomNodeBase, node_id: int, output_names: list[str]
     ) -> Callable:
@@ -2070,7 +2093,7 @@ class FlowGraph:
 
         The hook always runs in core, even for kernel nodes, and returns a frame
         (or dict of frames) whose schema is read lazily. Data-needing hooks
-        (``requires_data_for_prediction``, the default) get real upstream data —
+        (``requires_data_for_prediction=True``) get real upstream data —
         materialized in-core when the un-run chain is kernel-free, or a kernel
         warning instead (never an implicit kernel run). Returning ``[]`` makes
         the prediction ladder fall back to the execution-based path. The node is
@@ -2078,7 +2101,7 @@ class FlowGraph:
         before the node exists.
         """
         resolved_output_names = output_names or ["main"]
-        requires_data = bool(getattr(custom_node, "requires_data_for_prediction", True))
+        requires_data = bool(getattr(custom_node, "requires_data_for_prediction", False))
 
         def _hook_input_frame(input_node: FlowNode, src_handle: str) -> pl.LazyFrame:
             # Real lazy data when the upstream has run (worker results are

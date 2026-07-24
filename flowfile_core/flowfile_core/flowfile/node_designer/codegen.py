@@ -397,6 +397,8 @@ class _Renderer:
             attrs.append(("dependencies", "list[str]", list(state.environment.dependencies)))
         if state.environment.default_kernel_id is not None:
             attrs.append(("kernel_id", "str", state.environment.default_kernel_id))
+        if state.requires_data_for_prediction:
+            attrs.append(("requires_data_for_prediction", "bool", True))
         if state.example_inputs is not None:
             attrs.append(("example_inputs", "list[dict[str, list]]", [ex.data for ex in state.example_inputs]))
         if state.example_settings is not None:

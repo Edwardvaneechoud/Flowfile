@@ -63,9 +63,30 @@
               title="Schema prediction (optional)"
               icon="fa-solid fa-table-columns"
               persist-key="nd-code-predict-schema"
-              :default-open="store.predictSchemaEnabled"
+              :default-open="store.predictSchemaEnabled || store.predictionRequiresRun"
               class="code-predict-dock"
             >
+              <label class="predict-requires-data">
+                <input v-model="store.requiresDataForPrediction" type="checkbox" />
+                <span>Schema depends on data values</span>
+              </label>
+              <p v-if="requiresDataHint" class="predict-schema-hint predict-requires-data-hint">
+                {{ requiresDataHint }}
+              </p>
+              <div v-if="store.predictionRequiresRun" class="mode-banner predict-warning">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <div>
+                  <p class="mode-banner-title">
+                    Users must run this node to see its output columns
+                  </p>
+                  <p class="mode-banner-body">
+                    Without schema prediction, Flowfile won't guess this node's schema — downstream
+                    nodes show "run this node to resolve columns" until it has run. If the output
+                    columns can be derived without data, add schema prediction below so they resolve
+                    instantly.
+                  </p>
+                </div>
+              </div>
               <div v-if="!store.predictSchemaEnabled" class="predict-schema-empty">
                 <p class="predict-schema-hint">
                   Declare the output schema so Flowfile can predict columns instantly, without
@@ -160,6 +181,16 @@ const predictSchemaBody = computed({
   set: (value: string) => {
     store.predictSchemaBody = value;
   },
+});
+
+const requiresDataHint = computed(() => {
+  if (!store.requiresDataForPrediction) {
+    return "Off: Flowfile predicts this node's output columns by running process() on empty, schema-only inputs.";
+  }
+  if (store.predictSchemaEnabled) {
+    return "On: predict_output_schema receives real upstream data where available; an un-run kernel upstream shows a warning instead of running implicitly.";
+  }
+  return "";
 });
 
 function handleInsertPredictVariable(code: string) {
@@ -342,6 +373,23 @@ function handleInsertVariable(code: string) {
   height: 320px;
   overflow: hidden;
   margin-top: 0.5rem;
+}
+
+.predict-requires-data {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+}
+
+.predict-requires-data-hint {
+  margin: 0 0 0.5rem;
+}
+
+.predict-warning {
+  margin-bottom: 0.5rem;
 }
 
 .mode-banner,

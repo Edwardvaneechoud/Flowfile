@@ -597,4 +597,58 @@ describe("predict_output_schema hook editor", () => {
   });
 });
 
+describe("requires_data_for_prediction flag", () => {
+  it("defaults to false on a fresh state", () => {
+    expect(newDesignerState().requires_data_for_prediction).toBe(false);
+    const store = useNodeDesignerStore();
+    expect(store.requiresDataForPrediction).toBe(false);
+  });
+
+  it("tolerates states and drafts saved before the field existed", () => {
+    const state = newDesignerState();
+    state.node_name = "Legacy";
+    delete (state as Partial<typeof state>).requires_data_for_prediction;
+    const store = useNodeDesignerStore();
+    store.loadDesignerState(state);
+    store.markSaved();
+    expect(store.requiresDataForPrediction).toBe(false);
+    expect(store.isDirty).toBe(false);
+  });
+
+  it("restores a pre-field draft with the flag defaulted to false", () => {
+    const state = newDesignerState();
+    state.node_name = "Recovered";
+    delete (state as Partial<typeof state>).requires_data_for_prediction;
+    localStorageMock.setItem(NEW_DRAFT_KEY, v2Draft(state));
+    const store = useNodeDesignerStore();
+    store.initialize();
+    store.restore();
+    expect(store.requiresDataForPrediction).toBe(false);
+  });
+
+  it("predictionRequiresRun is only on for flag-true hookless states", () => {
+    const store = useNodeDesignerStore();
+    expect(store.predictionRequiresRun).toBe(false);
+    store.requiresDataForPrediction = true;
+    expect(store.predictionRequiresRun).toBe(true);
+    store.predictSchemaEnabled = true;
+    expect(store.predictionRequiresRun).toBe(false);
+    store.requiresDataForPrediction = false;
+    store.predictSchemaEnabled = false;
+    expect(store.predictionRequiresRun).toBe(false);
+  });
+
+  it("flipping the flag marks the state dirty and survives a draft round-trip", async () => {
+    const store = useNodeDesignerStore();
+    store.nodeMetadata.node_name = "Flagged";
+    store.markSaved();
+    store.requiresDataForPrediction = true;
+    expect(store.isDirty).toBe(true);
+    await flushDraft();
+    const raw = localStorageMock.getItem(NEW_DRAFT_KEY);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw as string).designerState.requires_data_for_prediction).toBe(true);
+  });
+});
+
 export { defaultProcessCode };

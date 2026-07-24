@@ -300,6 +300,7 @@ def _random_state(seed: int) -> DesignerState:
         output_names=output_names,
         environment=environment,
         sections=sections,
+        requires_data_for_prediction=rng.random() < 0.3,
         process_code="def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n    return inputs[0]",
         example_inputs=_example_inputs(rng),
         example_settings=example_settings,
