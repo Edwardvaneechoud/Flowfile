@@ -6,14 +6,27 @@
       <p>Loading connections...</p>
     </div>
     <div v-else>
-      <select id="connection-select" :value="modelValue" class="form-control" @change="onChange">
-        <option :value="null">{{ noConnectionLabel }}</option>
-        <option v-for="conn in connections" :key="conn.connectionName" :value="conn">
+      <select
+        id="connection-select"
+        :value="connectionSelectValue(modelValue, unavailableConnection)"
+        class="form-control"
+        @change="onChange"
+      >
+        <option :value="NO_CONNECTION_VALUE">{{ noConnectionLabel }}</option>
+        <option v-if="unavailableConnection" :value="unavailableConnection" disabled>
+          {{ unavailableConnection }} (unavailable)
+        </option>
+        <option v-for="conn in connections" :key="conn.connectionName" :value="conn.connectionName">
           {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
           {{ getAuthMethodLabel(conn.authMethod) }})
         </option>
       </select>
-      <div v-if="!modelValue" class="helper-text">
+      <div v-if="unavailableConnection" class="warning-text">
+        <i class="fa-solid fa-triangle-exclamation" />
+        Connection "{{ unavailableConnection }}" is no longer available. Pick another connection, or
+        this node will fail when it runs.
+      </div>
+      <div v-else-if="!modelValue" class="helper-text">
         <i class="fa-solid fa-info-circle" />
         {{ helperText }}
       </div>
@@ -27,17 +40,20 @@ import {
   getAuthMethodLabel,
   getStorageTypeLabel,
 } from "../../../views/CloudConnectionView/cloudConnectionFormatters";
+import { NO_CONNECTION_VALUE, connectionSelectValue, resolveConnection } from "./connectionOptions";
 
 const props = withDefaults(
   defineProps<{
     modelValue: FullCloudStorageConnectionInterface | null;
     connections: FullCloudStorageConnectionInterface[];
+    unavailableConnection?: string | null;
     loading?: boolean;
     label?: string;
     noConnectionLabel?: string;
     helperText?: string;
   }>(),
   {
+    unavailableConnection: null,
     loading: false,
     label: "Cloud Storage Connection",
     noConnectionLabel: "No connection (use local credentials)",
@@ -48,10 +64,7 @@ const props = withDefaults(
 const emit = defineEmits(["update:modelValue", "change"]);
 
 function onChange(event: Event) {
-  const select = event.target as HTMLSelectElement;
-  const idx = select.selectedIndex;
-  // Index 0 is the "no connection" option (null); the rest map to connections by offset.
-  const value = idx === 0 ? null : (props.connections[idx - 1] ?? null);
+  const value = resolveConnection(props.connections, (event.target as HTMLSelectElement).value);
   emit("update:modelValue", value);
   emit("change", value);
 }
@@ -100,6 +113,20 @@ select.form-control {
 
 .helper-text i {
   color: #4299e1;
+  font-size: 0.875rem;
+}
+
+.warning-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: #b7791f;
+}
+
+.warning-text i {
+  color: #d69e2e;
   font-size: 0.875rem;
 }
 
