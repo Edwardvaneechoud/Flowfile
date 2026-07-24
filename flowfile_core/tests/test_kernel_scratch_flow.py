@@ -56,6 +56,8 @@ def _bare_manager() -> KernelManager:
         mgr._kernel_mount_target = None
         mgr._pull_state = {}
         mgr._pull_state_lock = threading.Lock()
+        mgr._exec_locks = {}
+        mgr._exec_locks_lock = threading.Lock()
     return mgr
 
 
