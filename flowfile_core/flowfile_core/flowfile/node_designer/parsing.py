@@ -126,6 +126,7 @@ _RECOGNIZED_NODE_ATTRS = {
     "example_settings",
     "publishes",
     "requires_kernel",
+    "requires_data_for_prediction",
     "kernel_id",
 }
 
@@ -800,6 +801,7 @@ class _SourceParser:
     def _lift_node_class(self, cls: ast.ClassDef) -> DesignerState | None:
         attrs: dict[str, tuple[ast.expr, ast.stmt]] = {}
         process_def: ast.FunctionDef | None = None
+        predict_schema_def: ast.FunctionDef | None = None
         class_extra: list[str] = []
 
         body = list(cls.body)
@@ -819,6 +821,8 @@ class _SourceParser:
                 attrs[target] = (value, stmt)
             elif isinstance(stmt, ast.FunctionDef) and stmt.name == "process":
                 process_def = stmt
+            elif isinstance(stmt, ast.FunctionDef) and stmt.name == "predict_output_schema":
+                predict_schema_def = stmt
             elif isinstance(stmt, ast.Pass):
                 continue
             else:
@@ -848,6 +852,7 @@ class _SourceParser:
             "environment": environment,
             "sections": sections,
             "process_code": self.verbatim(process_def),
+            "predict_schema_code": self.verbatim(predict_schema_def) if predict_schema_def is not None else "",
             "extra_imports": self.extra_imports,
             "module_extra": self._collect_module_extra(),
             "class_extra": class_extra,
@@ -855,7 +860,7 @@ class _SourceParser:
         for attr in ("node_category", "node_group", "node_icon", "title", "intro", "author", "version"):
             if lifted.get(attr) is not None:
                 state_kwargs[attr] = lifted[attr]
-        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags"):
+        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags", "requires_data_for_prediction"):
             if attr in lifted:
                 state_kwargs[attr] = lifted[attr]
         if "example_inputs" in lifted:
@@ -914,7 +919,7 @@ class _SourceParser:
                 self.error(ParseIssueCode.NON_LITERAL_ATTR, f"'{name}' must be an integer", node)
                 return _INVALID
             return value
-        if name == "requires_kernel":
+        if name in ("requires_kernel", "requires_data_for_prediction"):
             if not isinstance(value, bool):
                 self.error(ParseIssueCode.NON_LITERAL_ATTR, f"'{name}' must be a boolean", node)
                 return _INVALID

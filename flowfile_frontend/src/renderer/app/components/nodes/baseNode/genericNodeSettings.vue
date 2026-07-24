@@ -34,6 +34,16 @@
       </el-popover>
     </div>
 
+    <div v-if="predictionWarning" class="prediction-warning-banner">
+      <span class="material-icons prediction-warning-banner__icon" aria-hidden="true">warning</span>
+      <span class="prediction-warning-banner__text">
+        {{ predictionWarning }}
+        <el-button link type="primary" size="small" @click="activeTab = 'output-schema'">
+          Or declare the expected columns in the Schema Validator
+        </el-button>
+      </span>
+    </div>
+
     <el-tabs v-model="activeTab">
       <el-tab-pane label="Main Settings" name="main">
         <slot></slot>
@@ -298,6 +308,14 @@ const emit = defineEmits<{
 
 const isLoadingSchema = ref(false);
 
+// Column prediction blocked by an un-run kernel node (backend warning text).
+// The store slot holds whichever node fetched last, so gate on this drawer's id.
+const predictionWarning = computed(() => {
+  const data = nodeStore.currentNodeData;
+  if (!data || String(data.node_id) !== String(props.modelValue.node_id)) return null;
+  return data.prediction_warning ?? null;
+});
+
 const activeTab = ref("main");
 
 // Lets a node's main-tab content (rendered in the default slot) send the user to
@@ -538,6 +556,28 @@ const loadFieldsFromSchema = async () => {
 </script>
 
 <style scoped>
+.prediction-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2, 8px);
+  margin: var(--spacing-2, 8px) var(--spacing-2, 8px) 0;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border: 1px solid var(--color-border-warning, #fcd34d);
+  border-radius: 6px;
+  background: var(--color-bg-warning, #fffbeb);
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-warning, #b45309);
+}
+
+.prediction-warning-banner__icon {
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.prediction-warning-banner__text {
+  flex: 1;
+}
+
 .settings-wrapper {
   width: 100%;
   height: 100%;

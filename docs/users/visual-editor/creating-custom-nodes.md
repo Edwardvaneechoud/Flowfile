@@ -101,6 +101,30 @@ class MyCustomNode(nd.CustomNodeBase):
 !!! tip "Collect only when you must"
     Because inputs are lazy, prefer to express the transform as lazy Polars operations and return the `LazyFrame` unmaterialized — that keeps the frame streamable. If a step genuinely needs eager data (row-wise Python, `map_elements`, a shape-dependent branch), call `.collect()` **inside** `process` on just that frame. `process` never runs on core's hot path, so an in-node `.collect()` is fine — it materializes in the worker subprocess, not in core.
 
+### Declaring the output schema — `predict_output_schema`
+
+By default, Flowfile predicts a custom node's output schema by actually running `process` on schema-only frames — and a kernel node is never run implicitly at all, so its columns stay unknown until it runs. Implementing the optional `predict_output_schema` method skips all of that: you declare the output schema as a pure function of the input schemas and the node's settings, and prediction becomes instant.
+
+The signature mirrors `process` — return a frame and Flowfile reads its schema lazily. For a node built from pure polars expressions, prediction is one line:
+
+```python
+--8<-- "docs/examples/custom_node.py:predict-schema"
+```
+
+- One `pl.LazyFrame` arrives per connected input port, in the same order as `process`. By default each is a **schema-only empty frame** — the hook derives the output schema from input schemas and settings alone.
+- Data-dependent schemas opt in with `requires_data_for_prediction = True`: pre-run inputs then carry the upstream's real lazy data whenever everything un-run upstream is kernel-free. A one-hot encoder can `collect()` the `unique()` values of a column and build its dummy columns from them — just handle the empty case (returning `None` is a fine answer, and prediction upgrades itself after the first run). When an un-run kernel node sits upstream, Flowfile never executes it implicitly: prediction shows a "run it to resolve" warning instead.
+- Return a `pl.LazyFrame` (or `pl.DataFrame`); for a multi-output node return a `dict[str, pl.LazyFrame]` keyed by output name. A hand-built `pl.Schema` also works.
+- Return `None` (or raise) to fall back to the default execution-based prediction.
+
+In the Node Designer, the **Code** tab has a collapsible **Schema prediction (optional)** panel below the `process` editor — it scaffolds the method for you and edits just the body under a read-only signature, exactly like the `process` editor. The panel's **Schema depends on data values** checkbox is the `requires_data_for_prediction` flag.
+
+!!! tip "It runs in the main process"
+    `predict_output_schema` always runs in the main Flowfile process — even for `environment="kernel"` nodes — so it must not depend on kernel-only packages. Read settings the same way as in `process`, and keep any data peeks bounded (unique lists, small samples): this runs when settings panels open.
+
+### Data-dependent nodes without a hook
+
+Setting `requires_data_for_prediction = True` on a node **without** `predict_output_schema` disables implicit prediction entirely: Flowfile will not run `process` just to discover the columns. The node — and everything downstream of it — shows *"Columns can't be predicted yet: … Run it to resolve them."* until the node has actually run once. Use this marker when the output schema genuinely depends on data values (so predicting on empty frames would be wrong) and a data-free hook isn't possible; the Node Designer shows a warning for this combination and nudges you toward adding schema prediction instead. At the default (`False`), Flowfile predicts by running `process` on empty schema-only frames, which is correct for any schema-stable transformation.
+
 ### Palette placement
 
 `node_category` is a real palette group. A node with `node_category = "Text Processing"` appears under a **Text Processing** group in the palette; the group is created from the category name (slugified internally, displayed as written). The default category, `"Custom"`, keeps the historical **User Defined Operations** group. A node can also target a built-in group by naming it exactly.

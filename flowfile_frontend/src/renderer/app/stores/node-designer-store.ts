@@ -259,6 +259,75 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     },
   });
 
+  // --- predict_output_schema: optional exec-free schema hook -----------------
+  // Same body-under-read-only-signature contract as process_code; an empty
+  // predict_schema_code means "no hook" and codegen emits nothing. Mirrors
+  // process, but the inputs are schema-only LazyFrames carrying no rows.
+  const derivedPredictSchemaSignature = () =>
+    `def predict_output_schema(self, *inputs: pl.LazyFrame) -> ${
+      designerState.value.number_of_outputs > 1 ? "dict[str, pl.LazyFrame]" : "pl.LazyFrame"
+    } | None:`;
+
+  const splitPredictSchemaCode = (code: string): { signature: string; body: string } => {
+    const lines = code.split("\n");
+    const defIndex = lines.findIndex((line) =>
+      line.trimStart().startsWith("def predict_output_schema"),
+    );
+    if (defIndex === -1) return { signature: derivedPredictSchemaSignature(), body: code };
+    let end = defIndex;
+    while (end < lines.length && !lines[end].trimEnd().endsWith(":")) end += 1;
+    if (end >= lines.length) return { signature: derivedPredictSchemaSignature(), body: code };
+    return {
+      signature: lines.slice(0, end + 1).join("\n"),
+      body: lines.slice(end + 1).join("\n"),
+    };
+  };
+
+  const predictSchemaScaffoldBody = () =>
+    [
+      "    # Inputs are lazy: real upstream data once it has run, schema-only before.",
+      "    # Return a frame with the output schema, or None to fall back to running the node.",
+      "    return self.process(*inputs)",
+    ].join("\n");
+
+  const predictSchemaSignature = computed(() => derivedPredictSchemaSignature());
+
+  const predictSchemaEnabled = computed({
+    get: () => (designerState.value.predict_schema_code ?? "").trim() !== "",
+    set: (enabled: boolean) => {
+      if (enabled === predictSchemaEnabled.value) return;
+      designerState.value.predict_schema_code = enabled
+        ? `${derivedPredictSchemaSignature()}\n${predictSchemaScaffoldBody()}`
+        : "";
+    },
+  });
+
+  const predictSchemaBody = computed({
+    get: () => splitPredictSchemaCode(designerState.value.predict_schema_code ?? "").body,
+    set: (v: string) => {
+      designerState.value.predict_schema_code =
+        v.trim() === "" ? "" : `${derivedPredictSchemaSignature()}\n${v}`;
+    },
+  });
+
+  const normalizePredictSchemaSignature = () => {
+    if (!predictSchemaEnabled.value) return;
+    const { body } = splitPredictSchemaCode(designerState.value.predict_schema_code ?? "");
+    designerState.value.predict_schema_code = `${derivedPredictSchemaSignature()}\n${body}`;
+  };
+
+  const requiresDataForPrediction = computed({
+    get: () => designerState.value.requires_data_for_prediction ?? false,
+    set: (v: boolean) => {
+      designerState.value.requires_data_for_prediction = v;
+    },
+  });
+
+  // Flag on + no hook: canvas users always have to run the node to resolve columns.
+  const predictionRequiresRun = computed(
+    () => requiresDataForPrediction.value && !predictSchemaEnabled.value,
+  );
+
   // Coherence: when the output count changes, resize output_names to match and
   // refresh the stored signature line (covers an edited body that won't be
   // rescaffolded below). Created before the scaffold watcher so names are settled
@@ -269,6 +338,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
       if (codeOnly.value) return;
       reconcileOutputNames(n);
       normalizeProcessSignature();
+      normalizePredictSchemaSignature();
     },
   );
 
@@ -428,6 +498,9 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
 
   function restore() {
     if (!pendingDraft) return;
+    // Drafts persisted before the fields existed load without them.
+    pendingDraft.predict_schema_code ??= "";
+    pendingDraft.requires_data_for_prediction ??= false;
     designerState.value = pendingDraft;
     codeOnly.value = false;
     pendingDraft = null;
@@ -449,6 +522,9 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
   // --- state loading / lifecycle ---
 
   function loadDesignerState(state: DesignerState) {
+    // Older backends and pre-field drafts ship states without these fields.
+    state.predict_schema_code ??= "";
+    state.requires_data_for_prediction ??= false;
     designerState.value = state;
     // Fold count/name coherence and the derived signature into the loaded state
     // BEFORE markSaved snapshots it, so a stale-but-valid file never opens dirty.
@@ -709,6 +785,11 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     processCode,
     processSignature,
     processBody,
+    predictSchemaSignature,
+    predictSchemaEnabled,
+    predictSchemaBody,
+    requiresDataForPrediction,
+    predictionRequiresRun,
     codeOnly,
     codeText,
     parseIssues,

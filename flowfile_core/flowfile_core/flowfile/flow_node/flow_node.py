@@ -51,6 +51,67 @@ from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
+ExternalTaskHandle = (
+    ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | ExternalOutputWriter
+)
+
+
+def kernel_block_reason(node: "FlowNode", include_self: bool) -> str | None:
+    """Name the first un-run kernel node a data-needing prediction would execute.
+
+    Walks the not-yet-run upstream chain (nodes that already have data are
+    boundaries). None when the chain is kernel-free — materializing it in-core
+    during prediction is then acceptable, pivot-style.
+    """
+    stack = [node] if include_self else [n for n, _ in node._slot_input_pairs() if n is not None]
+    seen: set = set()
+    while stack:
+        current = stack.pop()
+        if current.node_id in seen:
+            continue
+        seen.add(current.node_id)
+        if current.node_stats.has_completed_last_run:
+            continue
+        if current._executes_on_kernel:
+            return (
+                f"Columns can't be predicted yet: kernel node '{current.name}' (id {current.node_id}) "
+                f"has not run. Run it to resolve them."
+            )
+        stack.extend(n for n, _ in current._slot_input_pairs() if n is not None)
+    return None
+
+
+def data_needed_block_reason(node: "FlowNode") -> str:
+    """A hookless data-dependent custom node never predicts by executing;
+    the user must run it once to resolve its columns."""
+    return (
+        f"Columns can't be predicted yet: node '{node.name}' (id {node.node_id}) "
+        f"needs its data to determine them. Run it to resolve them."
+    )
+
+
+def first_upstream_prediction_warning(node: "FlowNode") -> str | None:
+    """Propagate a kernel-gate warning to every downstream node, not just the
+    direct neighbour. Walks this node plus its upstreams and returns the first
+    block reason found. A node with a resolved output schema (it ran, or its
+    columns were declared in the Schema Validator) is a boundary: downstream
+    columns come from it, so an un-run kernel further up no longer matters."""
+    stack = [node]
+    seen: set = set()
+    while stack:
+        current = stack.pop()
+        if current.node_id in seen:
+            continue
+        seen.add(current.node_id)
+        if current.node_stats.has_completed_last_run or current.node_schema.result_schema:
+            continue
+        if current.node_schema.predicted_schema:
+            continue
+        if current._schema_prediction_blocked:
+            return current._schema_prediction_blocked
+        stack.extend(n for n, _ in current._slot_input_pairs() if n is not None)
+    return None
+
 
 class FlowNode:
     """Represents a single node in a data flow graph.
@@ -61,50 +122,49 @@ class FlowNode:
 
     parent_uuid: str
     node_type: str
+    active: bool
     node_template: node_store.NodeTemplate
     node_default: schemas.NodeDefault
+    node_information: schemas.NodeInformation | None
+
     node_schema: NodeSchemaInformation
     node_inputs: NodeStepInputs
     node_stats: NodeStepStats
     node_settings: NodeStepSettings
     results: NodeResults
-    node_information: schemas.NodeInformation | None = None
-    leads_to_nodes: list["FlowNode"] = []  # list with target flows, after execution the step will trigger those step(s)
-    user_provided_schema_callback: Callable | None = None  # user provided callback function for schema calculation
-    _setting_input: Any = None
-    _hash: str | None = None  # host this for caching results
-    _cache_epoch: int = 0  # incremented by invalidate_cache() to bust the hash
-    _function: Callable = None  # the function that needs to be executed when triggered
-    _name: str = None  # name of the node, used for display
-    _schema_callback: SingleExecutionFuture | None = None  # Function that calculates the schema without executing
-    _state_needs_reset: bool = False
-    _fetch_cached_df: (
-        ExternalDfFetcher
-        | ExternalDatabaseFetcher
-        | ExternalDatabaseWriter
-        | ExternalCloudWriter
-        | ExternalOutputWriter
-        | None
-    ) = None
-    _cache_progress: (
-        ExternalDfFetcher
-        | ExternalDatabaseFetcher
-        | ExternalDatabaseWriter
-        | ExternalCloudWriter
-        | ExternalOutputWriter
-        | None
-    ) = None
-    _execution_state: NodeExecutionState = None
-    _executor: NodeExecutor | None = None  # Lazy-initialized
-    # Callable that returns the parent flow's current parameters (name → value).
-    # Set by FlowGraph so that lazy schema prediction can substitute ${...} refs.
-    # Using a callable avoids sync issues when flow_settings.parameters is mutated
-    # directly without going through the FlowGraph.flow_settings setter.
-    _params_getter: Callable[[], dict[str, ParamValue]] | None = None
-    # Post-execution callback — invoked by run_graph() after all stages complete.
-    # Receives success=True when this node and all downstream dependents succeeded.
-    # Used e.g. by Kafka sources to commit offsets only on success.
-    _on_flow_complete: Callable[[bool], None] | None = None
+    leads_to_nodes: list["FlowNode"]
+
+    _name: str | None
+    _function: Callable
+    _setting_input: Any
+    _executor: NodeExecutor | None
+    _execution_state: NodeExecutionState
+    _execution_lock: threading.RLock  # guards concurrent get_resulting_data
+    _state_needs_reset: bool
+    # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
+    _on_flow_complete: Callable[[bool], None] | None
+
+    user_provided_schema_callback: Callable | None
+    _schema_callback: SingleExecutionFuture | None
+    _named_outputs: dict[str, FlowDataEngine]
+    _named_schemas: dict[str, list[FlowfileColumn]]
+    _input_output_handles: dict[int, str]
+
+    _hash: str | None
+    _cache_epoch: int  # bumped by invalidate_cache() to bust the hash
+    _fetch_cached_df: ExternalTaskHandle | None
+    _cache_progress: ExternalTaskHandle | None
+
+    _kernel_cancel_context: Any
+    _kernel_cancel_event: threading.Event | None
+    _subflow_cancel_context: Any  # a running child FlowGraph of a run_flow node
+
+    # a live getter (not a snapshot) so ${...} refs resolve against current parameter edits
+    _params_getter: Callable[[], dict[str, ParamValue]] | None
+    # warning text when prediction would require executing an un-run kernel node
+    _schema_prediction_blocked: str | None
+    _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
+    _executes_on_kernel: bool  # stamped at placement: function runs on a kernel container
 
     def __init__(
         self,
@@ -139,10 +199,8 @@ class FlowNode:
             pos_y: The y-coordinate on the canvas.
             schema_callback: A custom function to calculate the output schema.
         """
-        self._name = None
         self.parent_uuid = parent_uuid
         self.post_init()
-        self.active = True
         self.node_information.id = node_id
         self.node_type = node_type
         self.node_settings.renew_schema = renew_schema
@@ -159,35 +217,44 @@ class FlowNode:
         )
 
     def post_init(self):
-        """Initializes or resets the node's attributes to their default states."""
+        """Reset every instance attribute to its default state."""
+        self.active = True
+        self.node_information = schemas.NodeInformation()
         self.node_inputs = NodeStepInputs()
         self.node_stats = NodeStepStats()
         self.node_settings = NodeStepSettings()
         self.node_schema = NodeSchemaInformation()
         self.results = NodeResults()
-        self.node_information = schemas.NodeInformation()
         self.leads_to_nodes = []
+
+        self._name = None
+        self._function = None
         self._setting_input = None
-        self._cache_progress = None
-        self._schema_callback = None
-        self._state_needs_reset = False
-        self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
-        self._kernel_cancel_context = None
-        self._kernel_cancel_event: threading.Event | None = None
-        self._subflow_cancel_context = None  # running child FlowGraph of a run_flow node
-        self._cache_epoch = 0
+        self._executor = None
         self._execution_state = NodeExecutionState()
-        self._executor = None  # Will be lazily created
-        # Multi-output: output handle (e.g. "output-0") → FlowDataEngine
-        self._named_outputs: dict[str, FlowDataEngine] = {}
-        # Parallel cache: output handle → schema, populated whenever the node
-        # function runs and produces a NamedOutputs (either full execution or
-        # schema callback). Consulted by downstream nodes needing the schema
-        # of a specific handle rather than the default.
-        self._named_schemas: dict[str, list[FlowfileColumn]] = {}
-        # Maps source node id -> output handle used in the connection
-        self._input_output_handles: dict[int, str] = {}
+        self._execution_lock = threading.RLock()
+        self._state_needs_reset = False
         self._on_flow_complete = None
+
+        self.user_provided_schema_callback = None
+        self._schema_callback = None
+        self._named_outputs = {}  # per-handle output engines, keyed by output handle
+        self._named_schemas = {}  # per-handle schemas, populated alongside _named_outputs
+        self._input_output_handles = {}  # source node id -> the output handle it connects through
+
+        self._hash = None
+        self._cache_epoch = 0
+        self._cache_progress = None
+        self._fetch_cached_df = None
+
+        self._kernel_cancel_context = None
+        self._kernel_cancel_event = None
+        self._subflow_cancel_context = None
+
+        self._params_getter = None
+        self._schema_prediction_blocked = None
+        self._prediction_requires_data = False
+        self._executes_on_kernel = False
 
     @property
     def state_needs_reset(self) -> bool:
@@ -870,21 +937,35 @@ class FlowNode:
         else:
             logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
 
+        if self._schema_prediction_blocked is None and (self._prediction_requires_data or self._executes_on_kernel):
+            self._schema_prediction_blocked = kernel_block_reason(self, include_self=True)
+        if self._schema_prediction_blocked:
+            # Prediction would require executing an un-run kernel node: never do
+            # that implicitly — surface the warning and skip the exec tier.
+            self.results.warnings = self._schema_prediction_blocked
+            return self.node_schema.predicted_schema
+
         logger.debug(f"get_predicted_schema: node_id={self.node_id} - falling back to _predicted_data_getter")
-        predicted_data = self._predicted_data_getter()
-        if predicted_data is not None and predicted_data.schema is not None:
-            self.print("Calculating the schema based on the predicted resulting data")
-            logger.info(
-                f"get_predicted_schema: node_id={self.node_id} - using schema from predicted_data "
-                f"({len(predicted_data.schema)} columns)"
-            )
-            self.node_schema.predicted_schema = self._predicted_data_getter().schema
-        else:
-            logger.warning(
-                f"get_predicted_schema: node_id={self.node_id} - no schema available from any source "
-                f"(predicted_data={'None' if predicted_data is None else 'has_data'}, "
-                f"schema={'None' if predicted_data is None or predicted_data.schema is None else 'has_schema'})"
-            )
+        # Serialize the fallback: without a callback, prediction executes the node's
+        # real function (kernel/worker for custom nodes) — concurrent callers must
+        # not run it twice into the same working dirs.
+        with self._execution_lock:
+            if self.node_schema.predicted_schema and not force:
+                return self.node_schema.predicted_schema
+            predicted_data = self._predicted_data_getter()
+            if predicted_data is not None and predicted_data.schema is not None:
+                self.print("Calculating the schema based on the predicted resulting data")
+                logger.info(
+                    f"get_predicted_schema: node_id={self.node_id} - using schema from predicted_data "
+                    f"({len(predicted_data.schema)} columns)"
+                )
+                self.node_schema.predicted_schema = predicted_data.schema
+            else:
+                logger.warning(
+                    f"get_predicted_schema: node_id={self.node_id} - no schema available from any source "
+                    f"(predicted_data={'None' if predicted_data is None else 'has_data'}, "
+                    f"schema={'None' if predicted_data is None or predicted_data.schema is None else 'has_schema'})"
+                )
 
         return self.node_schema.predicted_schema
 
@@ -1168,9 +1249,17 @@ class FlowNode:
                 _s = self.schema_callback()
                 if handle != DEFAULT_OUTPUT_HANDLE and handle in self._named_schemas:
                     _s = self._named_schemas[handle]
+                if not _s:
+                    # Empty is the callback's "no declared schema" sentinel (e.g. a
+                    # predict_output_schema hook opting out) — use the full prediction
+                    # ladder, which falls back to execution-based prediction.
+                    _s = self.get_predicted_schema()
+                    if handle != DEFAULT_OUTPUT_HANDLE:
+                        # The exec fallback fills the per-handle caches; prefer them.
+                        _s = self.schema_for_handle(handle)
             else:
                 _s = self.node_schema.result_schema
-            return FlowDataEngine.create_from_schema(_s)
+            return FlowDataEngine.create_from_schema(_s or [])
         else:
             if isinstance(self.function, FlowDataEngine):
                 fl = self.function
@@ -1636,6 +1725,7 @@ class FlowNode:
             self.results.reset()
             self.node_schema.result_schema = None
             self.node_schema.predicted_schema = None
+            self._schema_prediction_blocked = None
             self._hash = None
             self.node_information.is_setup = None
             self.results.errors = None
@@ -1908,7 +1998,13 @@ class FlowNode:
                 data=[],
             )
 
-    def get_node_data(self, flow_id: int, include_example: bool = False, include_output: bool = True) -> NodeData:
+    def get_node_data(
+        self,
+        flow_id: int,
+        include_example: bool = False,
+        include_output: bool = True,
+        include_inputs: bool = True,
+    ) -> NodeData:
         """Gathers all necessary data for representing the node in the UI.
 
         Args:
@@ -1919,6 +2015,13 @@ class FlowNode:
                 schemas, so callers that just open settings pass False to skip
                 the potentially expensive output-schema prediction (e.g. a pivot
                 must materialize data to determine its output columns).
+            include_inputs: If True, resolves each connected input's schema
+                (``main_input``/``left_input``/``right_input``). False is the
+                settings-open fast path: it skips upstream schema prediction
+                entirely (which can execute un-run custom nodes on a kernel or
+                worker) and therefore also the main_input-guarded setting
+                generators/updators (join/cross_join/fuzzy_match). Only the
+                custom-node drawer should use it for now.
 
         Returns:
             A `NodeData` object.
@@ -1930,19 +2033,36 @@ class FlowNode:
             setting_input=self.setting_input,
             flow_type=self.node_type,
         )
-        if self.accepts_dynamic_inputs:
-            # The settings panel's main_input is the parameter-data connection
-            # (handle input-0) specifically — not whichever slot happens to be
-            # connected first.
-            param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
-            if param_node is not None:
-                node.main_input = param_node.get_table_example()
-        elif self.main_input:
-            node.main_input = self.main_input[0].get_table_example()
-        if self.left_input:
-            node.left_input = self.left_input.get_table_example()
-        if self.right_input:
-            node.right_input = self.right_input.get_table_example()
+        if include_inputs:
+            if self.accepts_dynamic_inputs:
+                # The settings panel's main_input is the parameter-data connection
+                # (handle input-0) specifically — not whichever slot happens to be
+                # connected first.
+                param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
+                if param_node is not None:
+                    node.main_input = param_node.get_table_example()
+            elif self.main_input:
+                node.main_input = self.main_input[0].get_table_example()
+            if self.left_input:
+                node.left_input = self.left_input.get_table_example()
+            if self.right_input:
+                node.right_input = self.right_input.get_table_example()
+            # The get_table_example calls above cascade the inputs' predictions,
+            # setting the kernel-gate flag; walk the whole upstream chain so the
+            # warning reaches every downstream node.
+            warning = first_upstream_prediction_warning(self)
+            if warning and not (self.node_schema.result_schema or self.node_schema.predicted_schema):
+                # This node may resolve its own columns independently (declared in
+                # the Schema Validator). Compute its prediction — cheap here since
+                # the blocked upstream means it either resolves from the
+                # declaration or hits the gate, never materializing through it.
+                try:
+                    self.get_predicted_schema()
+                except Exception:
+                    pass
+                if self.node_schema.result_schema or self.node_schema.predicted_schema:
+                    warning = None
+            node.prediction_warning = warning
         if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
         node = setting_generator.get_setting_generator(self.node_type)(node)

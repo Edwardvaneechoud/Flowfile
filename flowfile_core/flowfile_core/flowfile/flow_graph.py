@@ -69,9 +69,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLTrainFetcher,
     fetch_kafka_offsets,
 )
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode, data_needed_block_reason, kernel_block_reason
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
-from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
     add_un_drawn_nodes,
@@ -94,6 +94,7 @@ from flowfile_core.flowfile.schema_callbacks import (
     calculate_cross_join_schema,
     calculate_fuzzy_match_schema,
     calculate_join_schema,
+    pl_schema_to_flowfile_columns,
     pre_calculate_pivot_schema,
 )
 from flowfile_core.flowfile.sources import external_sources
@@ -1155,6 +1156,9 @@ class FlowGraph:
         self._groups: dict[int, schemas.GroupInformation] = {}
         self._group_id_seq: int = 0  # monotonic group-id allocator; never reuses a freed id
         self._active_group_id: int | None = None
+        # Serializes claiming flow_settings.is_running: the bare check-then-set in the
+        # run entry points raced when callers arrive from non-asyncio threads.
+        self._run_claim_lock = threading.Lock()
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
@@ -1962,14 +1966,39 @@ class FlowGraph:
                 registry_entry=registry_entry,
             )
 
+        # Wire the hook through add_node_step so user_provided_schema_callback is set
+        # BEFORE setting_input triggers reset(): otherwise a 0-input node's eager
+        # schema prefetch would run the real function (kernel/worker) in the background.
+        schema_callback = None
+        if type(custom_node).predict_output_schema is not CustomNodeBase.predict_output_schema:
+            schema_callback = self._make_user_defined_schema_callback(
+                custom_node=custom_node,
+                node_id=user_defined_node_settings.node_id,
+                output_names=output_names,
+            )
+        elif not kernel_id and bool(getattr(custom_node, "requires_data_for_prediction", False)):
+            # Hookless data-dependent node: never predict by executing; block until run.
+            schema_callback = self._make_blocked_prediction_callback(node_id=user_defined_node_settings.node_id)
+        else:
+            # Traceability: a stale registry class (or a genuinely hook-less node)
+            # lands here and schema prediction degrades to the execution tier.
+            logger.info(
+                f"custom node {custom_node.item}: no predict_output_schema override on "
+                f"{type(custom_node).__module__}.{type(custom_node).__name__}; "
+                f"schema prediction uses the execution tier"
+            )
+
         self.add_node_step(
             node_id=user_defined_node_settings.node_id,
             function=_func,
             setting_input=user_defined_node_settings,
             input_node_ids=user_defined_node_settings.depending_on_ids,
             node_type=custom_node.item,
+            schema_callback=schema_callback,
         )
         node = self.get_node(user_defined_node_settings.node_id)
+        node._executes_on_kernel = bool(kernel_id)
+        node._prediction_requires_data = bool(getattr(custom_node, "requires_data_for_prediction", False))
         if custom_node.number_of_inputs == 0:
             self.add_node_to_starting_list(node)
         if custom_node.settings_schema is not None and user_defined_node_settings.settings:
@@ -2021,6 +2050,128 @@ class FlowGraph:
                 node_type=node_type,
                 error=missing_custom_node_error(node_type),
             )
+
+    @staticmethod
+    def _predicted_value_to_columns(value) -> list[FlowfileColumn] | None:
+        """Normalize a predict_output_schema return value into FlowfileColumns.
+
+        LazyFrames/DataFrames contribute their (lazily resolved) schema; a plain
+        ``pl.Schema`` is tolerated for hand-declared shapes. None means unusable.
+        """
+        if isinstance(value, pl.LazyFrame):
+            return pl_schema_to_flowfile_columns(value.collect_schema())
+        if isinstance(value, pl.DataFrame):
+            return pl_schema_to_flowfile_columns(value.schema)
+        if isinstance(value, pl.Schema):
+            return pl_schema_to_flowfile_columns(value)
+        return None
+
+    def _make_blocked_prediction_callback(self, *, node_id: int) -> Callable:
+        """Hookless ``requires_data_for_prediction=True``: prediction must never
+        execute ``process()``. Wired through ``add_node_step`` so a 0-input
+        node's eager prefetch hits this cheap callback instead of the real
+        function."""
+
+        def schema_callback() -> list[FlowfileColumn]:
+            node = self.get_node(node_id)
+            if node is None:
+                return []
+            if node.node_stats.has_completed_last_run and node.node_schema.result_schema:
+                node._schema_prediction_blocked = None
+                return node.node_schema.result_schema
+            reason = data_needed_block_reason(node)
+            node._schema_prediction_blocked = reason
+            node.results.warnings = reason
+            return []
+
+        return schema_callback
+
+    def _make_user_defined_schema_callback(
+        self, *, custom_node: CustomNodeBase, node_id: int, output_names: list[str]
+    ) -> Callable:
+        """Build a schema callback from the node's ``predict_output_schema`` hook.
+
+        The hook always runs in core, even for kernel nodes, and returns a frame
+        (or dict of frames) whose schema is read lazily. Data-needing hooks
+        (``requires_data_for_prediction=True``) get real upstream data —
+        materialized in-core when the un-run chain is kernel-free, or a kernel
+        warning instead (never an implicit kernel run). Returning ``[]`` makes
+        the prediction ladder fall back to the execution-based path. The node is
+        resolved lazily so the callback can be passed into ``add_node_step``
+        before the node exists.
+        """
+        resolved_output_names = output_names or ["main"]
+        requires_data = bool(getattr(custom_node, "requires_data_for_prediction", False))
+
+        def _hook_input_frame(input_node: FlowNode, src_handle: str) -> pl.LazyFrame:
+            # Real lazy data when the upstream has run (worker results are
+            # scan_ipc plans, cheap to sample). For data-needing hooks on a
+            # kernel-free chain, materialize the un-run upstream in-core,
+            # pivot-style — the hook's own collect bounds what is computed.
+            if input_node.node_stats.has_completed_last_run:
+                engine = (input_node._named_outputs or {}).get(src_handle) or input_node.results.resulting_data
+                if engine is not None:
+                    frame = engine.data_frame
+                    return frame if isinstance(frame, pl.LazyFrame) else frame.lazy()
+            if requires_data:
+                engine = input_node.get_output(src_handle) or input_node.get_resulting_data()
+            else:
+                engine = input_node.get_predicted_resulting_data(src_handle)
+            frame = engine.data_frame
+            return frame if isinstance(frame, pl.LazyFrame) else frame.lazy()
+
+        def schema_callback() -> list[FlowfileColumn]:
+            node = self.get_node(node_id)
+            if node is None:
+                return []
+            node._schema_prediction_blocked = None
+            if requires_data:
+                reason = kernel_block_reason(node, include_self=False)
+                if reason:
+                    # Never execute a kernel implicitly for prediction: surface
+                    # the warning and let the exec-tier gate suppress fallback.
+                    node._schema_prediction_blocked = reason
+                    node.results.warnings = reason
+                    return []
+            try:
+                input_frames = []
+                for input_node, src_handle in node._slot_input_pairs():
+                    if input_node is None:
+                        input_frames.append(pl.LazyFrame())
+                        continue
+                    input_frames.append(_hook_input_frame(input_node, src_handle))
+                predicted = custom_node.predict_output_schema(*input_frames)
+            except Exception as e:
+                logger.warning(f"predict_output_schema failed for node {node_id}: {e}")
+                return []
+            if predicted is None:
+                return []
+            if isinstance(predicted, dict) and not isinstance(predicted, pl.Schema):
+                named: dict[str, list[FlowfileColumn]] = {}
+                for i, name in enumerate(resolved_output_names):
+                    columns = self._predicted_value_to_columns(predicted.get(name))
+                    if columns is None:
+                        logger.warning(
+                            f"predict_output_schema for node {node_id} missing or unsupported "
+                            f"declared output '{name}'"
+                        )
+                        return []
+                    named[output_handle(i)] = columns
+                node._named_schemas = named
+                return named.get(DEFAULT_OUTPUT_HANDLE, [])
+            columns = self._predicted_value_to_columns(predicted)
+            if columns is None:
+                logger.warning(f"predict_output_schema for node {node_id} returned an unsupported value")
+                return []
+            if len(resolved_output_names) > 1:
+                logger.warning(
+                    f"predict_output_schema for node {node_id} returned a single frame but the node "
+                    f"declares outputs {resolved_output_names}; falling back to execution-based prediction"
+                )
+                return []
+            return columns
+
+        return schema_callback
 
     def _make_local_user_defined_func(
         self,
@@ -2260,8 +2411,16 @@ class FlowGraph:
         )
 
         node = self.get_node(pivot_settings.node_id)
+        node._prediction_requires_data = True
 
         def schema_callback():
+            node._schema_prediction_blocked = None
+            reason = kernel_block_reason(node, include_self=False)
+            if reason:
+                # Pivot columns need real data; never run a kernel implicitly for it.
+                node._schema_prediction_blocked = reason
+                node.results.warnings = reason
+                return []
             input_data = node.singular_main_input.get_resulting_data()
             # Runs on a background thread: never mutate the shared memoized
             # engine (input_data.lazy = ...); build a local lazy frame instead.
@@ -2590,9 +2749,11 @@ class FlowGraph:
             schema_callback=schema_callback,
         )
 
+        node = self.get_node(node_python_script.node_id)
+        if node is not None:
+            node._executes_on_kernel = bool(node_python_script.python_script_input.kernel_id)
         output_names = node_python_script.output_names
         if len(output_names) > 1:
-            node = self.get_node(node_python_script.node_id)
             if node is not None:
                 node.node_template = node.node_template.model_copy(update={"output": len(output_names)})
 
@@ -5156,12 +5317,24 @@ class FlowGraph:
             run_type="init",
         )
 
+    def try_claim_run(self) -> bool:
+        """Atomically claim the flow's single-run slot; False when a run is already in flight."""
+        with self._run_claim_lock:
+            if self.flow_settings.is_running:
+                return False
+            self.flow_settings.is_running = True
+            return True
+
+    def release_run(self) -> None:
+        """Release the single-run slot claimed by try_claim_run (idempotent)."""
+        with self._run_claim_lock:
+            self.flow_settings.is_running = False
+
     def trigger_fetch_node(self, node_id: int) -> RunInformation | None:
         """Executes a specific node in the graph by its ID."""
-        if self.flow_settings.is_running:
+        if not self.try_claim_run():
             raise Exception("Flow is already running")
         flow_node = self.get_node(node_id)
-        self.flow_settings.is_running = True
         self.flow_settings.is_canceled = False
         self.flow_logger.clear_log_file()
         self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
@@ -5192,7 +5365,7 @@ class FlowGraph:
             node_result.is_running = False
             self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
-            self.flow_settings.is_running = False
+            self.release_run()
             return self.get_run_info()
         except Exception as e:
             node_result.error = "Node did not run"
@@ -5202,7 +5375,7 @@ class FlowGraph:
             node_result.is_running = False
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
         finally:
-            self.flow_settings.is_running = False
+            self.release_run()
 
     # Artifact helpers
 
@@ -5557,10 +5730,9 @@ class FlowGraph:
         Raises:
             Exception: If the flow is already running.
         """
-        if self.flow_settings.is_running:
+        if not self.try_claim_run():
             raise Exception("Flow is already running")
         try:
-            self.flow_settings.is_running = True
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
@@ -5586,14 +5758,14 @@ class FlowGraph:
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
             self.end_datetime = datetime.datetime.now()
-            self.flow_settings.is_running = False
+            self.release_run()
             if self.flow_settings.is_canceled:
                 self.flow_logger.info("Flow canceled")
             return self.get_run_info()
         except Exception as e:
             raise e
         finally:
-            self.flow_settings.is_running = False
+            self.release_run()
 
     def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.

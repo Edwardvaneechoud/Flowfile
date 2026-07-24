@@ -51,6 +51,8 @@ export interface NodeData {
   has_run: boolean;
   is_cached: boolean;
   setting_input?: any | null;
+  /** Column prediction needs an un-run kernel node to run first; warning text to show. */
+  prediction_warning?: string | null;
 }
 
 export interface NodeValidationInput {

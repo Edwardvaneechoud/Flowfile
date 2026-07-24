@@ -527,4 +527,128 @@ describe("multi-output signature & scaffold", () => {
   });
 });
 
+describe("predict_output_schema hook editor", () => {
+  const SINGLE_SIG =
+    "def predict_output_schema(self, *inputs: pl.LazyFrame) -> pl.LazyFrame | None:";
+  const MULTI_SIG =
+    "def predict_output_schema(self, *inputs: pl.LazyFrame) -> dict[str, pl.LazyFrame] | None:";
+
+  it("is disabled by default and scaffolds on enable", () => {
+    const store = useNodeDesignerStore();
+    expect(store.predictSchemaEnabled).toBe(false);
+    expect(store.designerState.predict_schema_code).toBe("");
+
+    store.predictSchemaEnabled = true;
+    const code = store.designerState.predict_schema_code;
+    expect(code.split("\n")[0]).toBe(SINGLE_SIG);
+    expect(code).toContain("return self.process(*inputs)");
+  });
+
+  it("tolerates states and drafts saved before the field existed", () => {
+    const state = newDesignerState();
+    state.node_name = "Legacy";
+    delete (state as Partial<typeof state>).predict_schema_code;
+    const store = useNodeDesignerStore();
+    store.loadDesignerState(state);
+    expect(store.predictSchemaEnabled).toBe(false);
+    expect(store.predictSchemaBody).toBe("");
+    expect(store.designerState.predict_schema_code).toBe("");
+  });
+
+  it("clears the stored def on disable and on an emptied body", () => {
+    const store = useNodeDesignerStore();
+    store.predictSchemaEnabled = true;
+    store.predictSchemaEnabled = false;
+    expect(store.designerState.predict_schema_code).toBe("");
+
+    store.predictSchemaEnabled = true;
+    store.predictSchemaBody = "   ";
+    expect(store.designerState.predict_schema_code).toBe("");
+    expect(store.predictSchemaEnabled).toBe(false);
+  });
+
+  it("recomposes an edited body under the derived signature", () => {
+    const store = useNodeDesignerStore();
+    store.predictSchemaBody = "    return None";
+    const code = store.designerState.predict_schema_code;
+    expect(code.split("\n")[0]).toBe(SINGLE_SIG);
+    expect(code).toContain("return None");
+    expect(store.predictSchemaBody).toBe("    return None");
+  });
+
+  it("re-derives the signature when the output count changes", async () => {
+    const store = useNodeDesignerStore();
+    store.predictSchemaEnabled = true;
+    store.nodeMetadata.number_of_outputs = 2;
+    await nextTick();
+    expect(store.predictSchemaSignature).toBe(MULTI_SIG);
+    expect(store.designerState.predict_schema_code.split("\n")[0]).toBe(MULTI_SIG);
+    expect(store.designerState.predict_schema_code).toContain("return self.process(*inputs)");
+  });
+
+  it("round-trips a loaded state's hook body", () => {
+    const state = newDesignerState();
+    state.node_name = "Hooked";
+    state.predict_schema_code = `${SINGLE_SIG}\n    return pl.Schema({"a": pl.Int64()})`;
+    const store = useNodeDesignerStore();
+    store.loadDesignerState(state);
+    expect(store.predictSchemaEnabled).toBe(true);
+    expect(store.predictSchemaBody).toBe('    return pl.Schema({"a": pl.Int64()})');
+  });
+});
+
+describe("requires_data_for_prediction flag", () => {
+  it("defaults to false on a fresh state", () => {
+    expect(newDesignerState().requires_data_for_prediction).toBe(false);
+    const store = useNodeDesignerStore();
+    expect(store.requiresDataForPrediction).toBe(false);
+  });
+
+  it("tolerates states and drafts saved before the field existed", () => {
+    const state = newDesignerState();
+    state.node_name = "Legacy";
+    delete (state as Partial<typeof state>).requires_data_for_prediction;
+    const store = useNodeDesignerStore();
+    store.loadDesignerState(state);
+    store.markSaved();
+    expect(store.requiresDataForPrediction).toBe(false);
+    expect(store.isDirty).toBe(false);
+  });
+
+  it("restores a pre-field draft with the flag defaulted to false", () => {
+    const state = newDesignerState();
+    state.node_name = "Recovered";
+    delete (state as Partial<typeof state>).requires_data_for_prediction;
+    localStorageMock.setItem(NEW_DRAFT_KEY, v2Draft(state));
+    const store = useNodeDesignerStore();
+    store.initialize();
+    store.restore();
+    expect(store.requiresDataForPrediction).toBe(false);
+  });
+
+  it("predictionRequiresRun is only on for flag-true hookless states", () => {
+    const store = useNodeDesignerStore();
+    expect(store.predictionRequiresRun).toBe(false);
+    store.requiresDataForPrediction = true;
+    expect(store.predictionRequiresRun).toBe(true);
+    store.predictSchemaEnabled = true;
+    expect(store.predictionRequiresRun).toBe(false);
+    store.requiresDataForPrediction = false;
+    store.predictSchemaEnabled = false;
+    expect(store.predictionRequiresRun).toBe(false);
+  });
+
+  it("flipping the flag marks the state dirty and survives a draft round-trip", async () => {
+    const store = useNodeDesignerStore();
+    store.nodeMetadata.node_name = "Flagged";
+    store.markSaved();
+    store.requiresDataForPrediction = true;
+    expect(store.isDirty).toBe(true);
+    await flushDraft();
+    const raw = localStorageMock.getItem(NEW_DRAFT_KEY);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw as string).designerState.requires_data_for_prediction).toBe(true);
+  });
+});
+
 export { defaultProcessCode };

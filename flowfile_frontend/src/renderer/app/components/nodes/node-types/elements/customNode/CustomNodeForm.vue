@@ -59,6 +59,7 @@
           :incoming-columns="incomingColumns"
           :available-artifacts="artifactOptions"
           :global-artifacts="globalArtifacts"
+          :loading="selectLoading(component)"
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
@@ -69,6 +70,7 @@
           :incoming-columns="incomingColumns"
           :available-artifacts="artifactOptions"
           :global-artifacts="globalArtifacts"
+          :loading="selectLoading(component)"
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
@@ -84,6 +86,7 @@
           :model-value="formData[sectionKey]?.[componentKey]"
           :schema="component"
           :incoming-columns="columnTypes"
+          :loading="columnsLoading"
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
@@ -99,6 +102,7 @@
           :model-value="formData[sectionKey]?.[componentKey]"
           :schema="component"
           :incoming-columns="columnTypes"
+          :loading="columnsLoading"
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
@@ -132,11 +136,10 @@ import SingleSelect from "./components/SingleSelect.vue";
 import ColumnSelector from "./components/ColumnSelector.vue";
 import SecretSelector from "./components/SecretSelector.vue";
 import ColumnActionInput from "./components/ColumnActionInput.vue";
+import { resolveOptionsLoading } from "./formInit";
+import type { CustomNodeFormData } from "./formInit";
 
-// Inner values are `any`: the nine child inputs each declare their own modelValue type
-// and the drawer has always fed them untyped saved-settings values.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CustomNodeFormData = Record<string, Record<string, any>>;
+export type { CustomNodeFormData };
 
 const props = withDefaults(
   defineProps<{
@@ -146,6 +149,8 @@ const props = withDefaults(
     columnTypes?: FileColumn[];
     artifactOptions?: ArtifactOption[];
     globalArtifacts?: GlobalArtifactOption[];
+    columnsLoading?: boolean;
+    artifactsLoading?: boolean;
     editMode?: boolean;
     selectedSectionKey?: string | null;
   }>(),
@@ -154,10 +159,17 @@ const props = withDefaults(
     columnTypes: () => [],
     artifactOptions: () => [],
     globalArtifacts: () => [],
+    columnsLoading: false,
+    artifactsLoading: false,
     editMode: false,
     selectedSectionKey: null,
   },
 );
+
+// Which hydration flag gates a component's option list (columns vs artifacts).
+function selectLoading(component: (typeof props.schema)[string]["components"][string]): boolean {
+  return resolveOptionsLoading(component, props.columnsLoading, props.artifactsLoading);
+}
 
 const emit = defineEmits<{
   (e: "update:formData", value: CustomNodeFormData): void;

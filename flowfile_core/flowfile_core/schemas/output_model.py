@@ -108,6 +108,9 @@ class NodeData(BaseModel):
     has_run: bool = False
     is_cached: bool = False
     setting_input: Any = None
+    # Set when column prediction for this node (or one of its inputs) would
+    # require executing an un-run kernel node — the user-facing warning text.
+    prediction_warning: str | None = None
 
 
 class OutputFile(BaseItem):

@@ -97,6 +97,50 @@ describe("node-store getNodeData flow-aware cache", () => {
   });
 });
 
+describe("node-store getNodeDataLight fast path", () => {
+  it("always fetches without inputs/output and writes the store slot", async () => {
+    const store = useNodeStore();
+    mocks.getNodeData.mockImplementation((flowId: number, id: number) =>
+      Promise.resolve(nodeData(id, `flow-${flowId}`)),
+    );
+
+    store.nodeId = 3;
+    const light = await store.getNodeDataLight(3);
+    expect(mocks.getNodeData).toHaveBeenCalledWith(1, 3, false, false);
+    expect(light?.node_id).toBe(3);
+    expect(store.nodeData?.node_id).toBe(3);
+    expect(store.isLoaded).toBe(true);
+
+    // Light fetch never serves the cache — a second call fetches again.
+    await store.getNodeDataLight(3);
+    expect(mocks.getNodeData).toHaveBeenCalledTimes(2);
+  });
+
+  it("a subsequent full fetch overwrites the light payload", async () => {
+    const store = useNodeStore();
+    mocks.getNodeData.mockResolvedValueOnce(nodeData(3, "light"));
+    mocks.getNodeData.mockResolvedValueOnce(nodeData(3, "full"));
+
+    store.nodeId = 3;
+    await store.getNodeDataLight(3);
+    expect(store.nodeData?.setting_input?.description).toBe("light");
+
+    await store.getNodeData(3, false);
+    expect(store.nodeData?.setting_input?.description).toBe("full");
+  });
+
+  it("nulls the slot on failure", async () => {
+    const store = useNodeStore();
+    mocks.getNodeData.mockRejectedValueOnce(new Error("boom"));
+
+    store.nodeId = 3;
+    const result = await store.getNodeDataLight(3);
+    expect(result).toBeNull();
+    expect(store.nodeData).toBeNull();
+    expect(store.isLoaded).toBe(false);
+  });
+});
+
 describe("node-store description write-back guard", () => {
   it("does not patch a nodeData blob owned by a different flow", () => {
     const store = useNodeStore();

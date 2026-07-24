@@ -21,6 +21,9 @@ import pytest
 import requests
 
 os.environ['TESTING'] = 'True'
+# TestClient lifespans open constantly in the suite; never let the kernel
+# warm-up thread touch Docker (container reclaim / image GC) from tests.
+os.environ.setdefault('FLOWFILE_KERNEL_WARMUP', '0')
 
 # Pin before core imports / worker spawn so every process derives the same shared paths.
 if 'FLOWFILE_SHARED_DIR' not in os.environ:

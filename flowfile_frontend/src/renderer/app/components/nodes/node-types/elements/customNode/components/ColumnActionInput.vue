@@ -12,6 +12,8 @@
           filterable
           placeholder="Select columns to group by..."
           style="width: 100%"
+          :loading="loading"
+          loading-text="Loading columns…"
           @change="emitUpdate"
         >
           <el-option
@@ -34,6 +36,8 @@
           clearable
           placeholder="Select column to order by..."
           style="width: 100%"
+          :loading="loading"
+          loading-text="Loading columns…"
           @change="emitUpdate"
         >
           <el-option
@@ -53,6 +57,7 @@
     <div class="column-list-wrapper">
       <div class="listbox-subtitle">Available Columns</div>
       <ul class="listbox">
+        <li v-if="loading && !filteredColumns.length" class="loading-row">Loading columns…</li>
         <li
           v-for="(column, index) in filteredColumns"
           :key="column.name"
@@ -153,6 +158,10 @@ const props = defineProps({
   incomingColumns: {
     type: Array as PropType<FileColumn[]>,
     default: () => [],
+  },
+  loading: {
+    type: Boolean,
+    default: false,
   },
 });
 
@@ -285,6 +294,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-4);
+}
+
+.loading-row {
+  color: var(--color-text-secondary);
+  font-style: italic;
+  cursor: default;
+  pointer-events: none;
 }
 
 .config-section {

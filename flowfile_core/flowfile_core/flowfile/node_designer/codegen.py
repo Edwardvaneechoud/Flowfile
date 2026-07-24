@@ -397,6 +397,8 @@ class _Renderer:
             attrs.append(("dependencies", "list[str]", list(state.environment.dependencies)))
         if state.environment.default_kernel_id is not None:
             attrs.append(("kernel_id", "str", state.environment.default_kernel_id))
+        if state.requires_data_for_prediction:
+            attrs.append(("requires_data_for_prediction", "bool", True))
         if state.example_inputs is not None:
             attrs.append(("example_inputs", "list[dict[str, list]]", [ex.data for ex in state.example_inputs]))
         if state.example_settings is not None:
@@ -435,6 +437,11 @@ class _Renderer:
 
         lines.append("")
         lines.extend(self._render_process())
+
+        predict_code = state.predict_schema_code.strip("\n")
+        if predict_code:
+            lines.append("")
+            lines.extend(self._indent_block(predict_code, _INDENT))
 
         for block in state.class_extra:
             lines.append("")

@@ -12,7 +12,8 @@ const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
 // flowfile_core dev port. The renderer talks to it via the /api proxy below so
 // requests stay same-origin (mirrors the nginx setup in Docker / web mode).
-const CORE_PORT = 63578;
+// FLOWFILE_CORE_PORT lets a second dev instance target a core on another port.
+const CORE_PORT = Number(process.env.FLOWFILE_CORE_PORT ?? 63578);
 
 // Web-mode fallback for the app version shown on the welcome screen; the
 // desktop shell reports its real version via the get_app_version command.

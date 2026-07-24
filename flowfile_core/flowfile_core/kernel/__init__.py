@@ -1,3 +1,5 @@
+import threading
+
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
     ArtifactIdentifier,
@@ -41,19 +43,24 @@ __all__ = [
 ]
 
 _manager: KernelManager | None = None
+_manager_lock = threading.Lock()
 
 
 def get_kernel_manager() -> KernelManager:
     global _manager
+    # Double-checked: the startup warm-up thread can race the first /kernels/
+    # request, and two constructions would double-run container reclaim + image GC.
     if _manager is None:
-        from shared.storage_config import storage
+        with _manager_lock:
+            if _manager is None:
+                from shared.storage_config import storage
 
-        # Use a sub-directory of the standard temp/internal_storage tree.
-        # In Docker mode this resolves to /app/internal_storage/temp/kernel_shared
-        # which is on the flowfile-internal-storage volume already shared
-        # between core, worker, and (via KernelManager) kernel containers.
-        shared_path = str(storage.temp_directory / "kernel_shared")
-        _manager = KernelManager(shared_volume_path=shared_path)
+                # Use a sub-directory of the standard temp/internal_storage tree.
+                # In Docker mode this resolves to /app/internal_storage/temp/kernel_shared
+                # which is on the flowfile-internal-storage volume already shared
+                # between core, worker, and (via KernelManager) kernel containers.
+                shared_path = str(storage.temp_directory / "kernel_shared")
+                _manager = KernelManager(shared_volume_path=shared_path)
     return _manager
 
 

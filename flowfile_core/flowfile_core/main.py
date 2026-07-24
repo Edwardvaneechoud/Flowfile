@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -79,6 +80,11 @@ async def shutdown_handler(app: FastAPI):
         set_scheduler(scheduler)
         print("Flow scheduler started")
 
+    # Warm the kernel manager off the request path: its first construction makes
+    # slow Docker daemon calls that would otherwise land on the first /kernels/.
+    if os.environ.get("FLOWFILE_KERNEL_WARMUP", "1").lower() in ("true", "1", "yes"):
+        threading.Thread(target=_warm_kernel_manager, name="kernel-manager-warmup", daemon=True).start()
+
     try:
         yield
     finally:
@@ -96,6 +102,17 @@ async def shutdown_handler(app: FastAPI):
         _shutdown_local_model()
         clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
+
+
+def _warm_kernel_manager():
+    """Best-effort kernel-manager construction; Docker-absent machines skip quietly."""
+    try:
+        from flowfile_core.kernel import get_kernel_manager
+
+        get_kernel_manager()
+        print("Kernel manager warmed up")
+    except Exception as exc:
+        print(f"Kernel manager warm-up skipped: {exc}")
 
 
 def _shutdown_kernels():

@@ -14,6 +14,11 @@ if TYPE_CHECKING:
     from flowfile_core.schemas.transform_schema import JoinSelectManagerMixin
 
 
+def pl_schema_to_flowfile_columns(schema: pl.Schema) -> list[FlowfileColumn]:
+    """Convert a polars ``Schema`` into the internal ``FlowfileColumn`` list."""
+    return [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in schema.items()]
+
+
 def _ensure_all_columns_have_select(
     left_cols: list[str],
     right_cols: list[str],

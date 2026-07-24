@@ -438,6 +438,9 @@ class CustomNodeBase(BaseModel):
     environment: Literal["local", "kernel"] = "local"
     dependencies: list[str] = Field(default_factory=list)
 
+    # True = schema depends on data values: hooks get real pre-run data; hookless nodes must run first.
+    requires_data_for_prediction: bool = False
+
     # Optional sample data for dry-runs: one column-oriented dict per input port
     # ({column: [values]}), plus the settings values to test with.
     example_inputs: list[dict[str, list]] | None = None
@@ -775,6 +778,49 @@ if not inputs:
             ``dict`` of them keyed by output name (multi-output).
         """
         raise NotImplementedError
+
+    def predict_output_schema(self, *inputs: pl.LazyFrame) -> "pl.LazyFrame | dict[str, pl.LazyFrame] | None":
+        """
+        Optionally declare the node's output schema without running ``process``.
+
+        When implemented, Flowfile predicts this node's output schema from it
+        directly — no kernel container or worker round-trip — so downstream
+        settings panels resolve columns instantly. Inputs mirror ``process``:
+        each is the upstream's **best-available** ``pl.LazyFrame`` — its real
+        lazy data once that upstream has run, a schema-only empty frame before
+        then. Return a frame whose schema is the output schema; Flowfile reads
+        it lazily. For a node built from pure polars expressions that simply
+        means ``return self.process(*inputs)``. Data-dependent schemas (e.g.
+        one-hot encoding) may collect bounded samples — ``unique()`` of a
+        column, a ``limit()`` — from the inputs; how much compute prediction is
+        worth is your trade-off, but handle the empty pre-run frames (returning
+        ``None`` is a fine answer). Read settings the same way as in ``process``
+        (``self.settings_schema...``). It always runs in the main Flowfile
+        process, even for ``environment="kernel"`` nodes — don't depend on
+        kernel-only packages here.
+
+        By default (``requires_data_for_prediction = False``) pre-run inputs
+        are schema-only empty frames. Set ``requires_data_for_prediction =
+        True`` to opt into real pre-run data: inputs then carry the upstream's
+        real lazy data when everything un-run upstream is kernel-free —
+        Flowfile materializes in-core, pivot-style, and your ``collect()``
+        bounds what is computed. When an un-run kernel node is in the chain,
+        Flowfile never executes it implicitly — prediction stops with a
+        visible "run the upstream first" warning instead. On a node *without*
+        this hook, ``requires_data_for_prediction = True`` instead disables
+        implicit prediction entirely: users must run the node once to resolve
+        its columns.
+
+        Args:
+            *inputs: One ``pl.LazyFrame`` per connected input, in port order —
+                real upstream data when available, schema-only otherwise.
+
+        Returns:
+            A ``pl.LazyFrame`` (single output), a ``dict[str, pl.LazyFrame]``
+            keyed by output name (multi-output), or ``None`` to fall back to
+            the default execution-based prediction.
+        """
+        return None
 
     def _palette_group(self) -> tuple[str, str | None]:
         return palette_group(self.node_category, self.node_group)

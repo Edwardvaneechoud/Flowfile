@@ -8,6 +8,8 @@
       placeholder="Select one or more options"
       style="width: 100%"
       size="small"
+      :loading="loading"
+      loading-text="Loading options…"
       @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option
@@ -45,6 +47,10 @@ const props = defineProps({
   globalArtifacts: {
     type: Array as PropType<GlobalArtifactOption[]>,
     default: () => [],
+  },
+  loading: {
+    type: Boolean,
+    default: false,
   },
 });
 

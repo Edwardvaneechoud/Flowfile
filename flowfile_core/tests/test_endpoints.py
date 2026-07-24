@@ -1689,6 +1689,70 @@ def test_get_node_skips_output_schema_when_not_requested():
         assert "John" in node_data.main_output.columns
 
 
+def test_get_node_skips_input_schemas_when_not_requested():
+    """The custom-node drawer's stage-1 fetch must not execute upstream nodes.
+
+    Resolving input schemas for a node downstream of an un-run custom node runs
+    that node's real function (a kernel container or worker round-trip in
+    production). `include_inputs=false` must skip that entirely; the default
+    full fetch still predicts through it (and proves the rig detects execution).
+    """
+    from flowfile_core.configs import node_store
+    from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
+
+    calls: list[str] = []
+
+    class RecordingPassthrough(CustomNodeBase):
+        node_name: str = "Recording Passthrough"
+        node_category: str = "Testing"
+
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Configuration", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            calls.append("ran")
+            return inputs[0]
+
+    node_store.add_to_custom_node_store(RecordingPassthrough)
+    try:
+        flow_id = create_flow_with_manual_input()  # node 1: manual_input with columns ['name', 'city']
+        flow = flow_file_handler.get_flow(flow_id)
+
+        for node_id, source_id in ((2, 1), (3, 2)):
+            flow.add_node_promise(
+                input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type="recording_passthrough")
+            )
+            add_connection(flow, input_schema.NodeConnection.create_from_simple_input(source_id, node_id))
+            flow.add_user_defined_node(
+                custom_node=RecordingPassthrough.from_settings({}),
+                user_defined_node_settings=input_schema.UserDefinedNode(
+                    flow_id=flow_id, node_id=node_id, settings={}, is_user_defined=True
+                ),
+            )
+
+        # Fast path: no input schemas, no upstream execution — the drawer renders on this.
+        response = client.get(
+            "/node",
+            params={"flow_id": flow_id, "node_id": 3, "include_output": False, "include_inputs": False},
+        )
+        assert response.status_code == 200
+        node_data = output_model.NodeData(**response.json())
+        assert node_data.main_input is None, "input schemas must be skipped when include_inputs=false"
+        assert node_data.setting_input is not None
+        assert calls == [], "the un-run upstream custom node must not execute on the settings fast path"
+
+        # Control arm: the default fetch still predicts through the upstream node.
+        response = client.get("/node", params={"flow_id": flow_id, "node_id": 3, "include_output": False})
+        assert response.status_code == 200
+        node_data = output_model.NodeData(**response.json())
+        assert node_data.main_input is not None
+        assert node_data.main_input.columns == ["name", "city"]
+        assert calls, "the control fetch proves the rig detects upstream execution"
+    finally:
+        node_store.remove_from_custom_node_store("recording_passthrough")
+
+
 def test_get_node_data_after_run():
     flow_id = create_flow_with_manual_input()
     flow = flow_file_handler.get_flow(flow_id)

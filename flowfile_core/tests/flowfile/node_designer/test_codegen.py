@@ -159,6 +159,18 @@ def test_kernel_environment_and_dependencies_emitted():
     assert '"polars-ds==0.6.0"' in src
 
 
+def test_requires_data_for_prediction_emitted_when_true():
+    src = generate_source(_minimal_state(requires_data_for_prediction=True))
+    assert "requires_data_for_prediction: bool = True" in src
+    assert parse_source(src).designer_state.requires_data_for_prediction is True
+
+
+def test_requires_data_for_prediction_omitted_when_false():
+    src = generate_source(_minimal_state(requires_data_for_prediction=False))
+    assert "requires_data_for_prediction" not in src
+    assert parse_source(src).designer_state.requires_data_for_prediction is False
+
+
 def test_example_inputs_and_settings_emitted():
     src = generate_source(
         _minimal_state(
