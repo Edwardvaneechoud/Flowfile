@@ -39,6 +39,7 @@ __all__ = [
     "RecoveryStatus",
     "router",
     "get_kernel_manager",
+    "get_kernel_manager_if_initialized",
 ]
 
 _manager: KernelManager | None = None
@@ -60,4 +61,9 @@ def get_kernel_manager() -> KernelManager:
                 # between core, worker, and (via KernelManager) kernel containers.
                 shared_path = str(storage.temp_directory / "kernel_shared")
                 _manager = KernelManager(shared_volume_path=shared_path)
+    return _manager
+
+
+def get_kernel_manager_if_initialized() -> KernelManager | None:
+    """The manager if one was already constructed; never constructs one."""
     return _manager

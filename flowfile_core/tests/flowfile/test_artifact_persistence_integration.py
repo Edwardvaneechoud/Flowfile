@@ -361,7 +361,7 @@ class TestKernelStartupEnvironment:
             mock_container.id = "fake-id"
             mock_docker.from_env.return_value.containers.run.return_value = mock_container
 
-            with patch.object(manager, "_wait_for_healthy", new_callable=AsyncMock):
+            with patch.object(manager, "_wait_for_healthy_sync"):
                 _run(manager.start_kernel("env-test"))
 
             call_args = mock_docker.from_env.return_value.containers.run.call_args
@@ -403,7 +403,7 @@ class TestKernelStartupEnvironment:
             mock_container.id = "fake-id"
             mock_docker.from_env.return_value.containers.run.return_value = mock_container
 
-            with patch.object(manager, "_wait_for_healthy", new_callable=AsyncMock):
+            with patch.object(manager, "_wait_for_healthy_sync"):
                 _run(manager.start_kernel("custom-persist"))
 
             call_args = mock_docker.from_env.return_value.containers.run.call_args
