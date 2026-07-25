@@ -86,6 +86,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 )
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
     build_rest_api_worker_settings,
     infer_schema_from_sample,
@@ -2113,6 +2114,15 @@ def get_flow_artifacts(flow_id: int):
         "nodes": ctx.get_node_summaries(),
         "edges": ctx.get_artifact_edges(),
     }
+
+
+@router.get("/flow/settings_validation", tags=["editor"], response_model=FlowSettingsValidation)
+def get_flow_settings_validation(flow_id: int) -> FlowSettingsValidation:
+    """Conservative static check: node settings that reference missing input columns."""
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+    return validate_flow_settings(flow)
 
 
 @router.get("/flow/node_upstream_ids", tags=["editor"])

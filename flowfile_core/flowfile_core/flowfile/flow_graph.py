@@ -5847,6 +5847,7 @@ class FlowGraph:
             execution_location=self.flow_settings.execution_location,
             auto_save=self.flow_settings.auto_save,
             show_detailed_progress=self.flow_settings.show_detailed_progress,
+            validate_settings=self.flow_settings.validate_settings,
             max_parallel_workers=self.flow_settings.max_parallel_workers,
             source_registration_id=self.flow_settings.source_registration_id,
             parameters=self.flow_settings.parameters,

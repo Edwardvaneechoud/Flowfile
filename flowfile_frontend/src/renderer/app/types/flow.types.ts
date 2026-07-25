@@ -41,6 +41,25 @@ export interface FlowSettings {
   parameters?: FlowParameter[];
   has_unsaved_changes?: boolean;
   display_name?: string | null;
+  validate_settings: boolean;
+}
+
+// Settings Validation (backend static check for missing column references)
+
+export interface SettingsValidationIssue {
+  input_handle: "main" | "left" | "right";
+  missing_columns: string[];
+  message: string;
+}
+
+export interface NodeSettingsValidation {
+  node_id: number;
+  issues: SettingsValidationIssue[];
+}
+
+export interface FlowSettingsValidation {
+  enabled: boolean;
+  nodes: NodeSettingsValidation[];
 }
 
 // Run Information

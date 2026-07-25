@@ -232,6 +232,19 @@
             />
             <span class="form-hint"> Display input names on connections between nodes. </span>
           </div>
+          <div class="form-group">
+            <el-checkbox
+              v-model="flowSettings.validate_settings"
+              label="Warn when settings reference missing columns"
+              size="small"
+              @change="pushFlowSettings"
+            />
+            <span class="form-hint">
+              Shows a warning on nodes whose settings use columns that are no longer available from
+              their input. Only applies when the input schema can be predicted without running the
+              flow.
+            </span>
+          </div>
         </div>
         <div class="settings-section">
           <h4 class="settings-section-title">Parameters</h4>
@@ -401,6 +414,7 @@ const pushFlowSettings = async () => {
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
     editorStore.bumpGraphVersion();
+    flowStore.fetchSettingsValidation();
   }
 };
 

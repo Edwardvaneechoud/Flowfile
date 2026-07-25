@@ -203,6 +203,7 @@ class FlowSettings(FlowGraphConfig):
         is_running (bool): Indicates if the flow is currently running.
         is_canceled (bool): Indicates if the flow execution has been canceled.
         track_history (bool): Flag to enable or disable undo/redo history tracking.
+        validate_settings (bool): Flag to warn on nodes whose settings reference missing input columns.
     """
 
     auto_save: bool = False
@@ -212,6 +213,7 @@ class FlowSettings(FlowGraphConfig):
     is_running: bool = False
     is_canceled: bool = False
     track_history: bool = True
+    validate_settings: bool = True
 
     @classmethod
     def from_flow_settings_input(cls, flow_graph_config: FlowGraphConfig):
@@ -261,6 +263,7 @@ class FlowfileSettings(BaseModel):
     execution_location: ExecutionLocationsLiteral = "local"
     auto_save: bool = False
     show_detailed_progress: bool = True
+    validate_settings: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
