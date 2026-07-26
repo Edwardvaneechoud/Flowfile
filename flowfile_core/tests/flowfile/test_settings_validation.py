@@ -209,7 +209,8 @@ def test_formula_type_error_is_reported():
     assert issue.input_handle == "main"
     assert issue.missing_columns == []
     assert issue.message == (
-        "Invalid formula: arithmetic on string and numeric not allowed, try an explicit cast first"
+        "Invalid formula: arithmetic on dtypes i64 and str is not allowed "
+        "(lhs: column 'a', rhs: expression `\"x\"`); try an explicit cast first"
     )
 
 
