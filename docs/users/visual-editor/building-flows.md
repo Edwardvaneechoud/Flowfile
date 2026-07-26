@@ -53,10 +53,25 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 | Parallel workers | 1–32, default 4 — remote execution only |
 | Show detailed progress | More granular per-node status during runs |
 | Show edge labels | Display each connection's name on the canvas |
+| Warn about invalid node settings | Flag nodes whose settings no longer match their input, before you run |
 
 **Parallel workers** applies to Remote runs. The worker service runs independent steps at the same time, up to the number you set, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 — or on Local, which is always sequential — every step waits its turn.
 
 ![The same flow — four Read data inputs, a Group by and a Formula transforming two of them, all merged by Union data — at two Parallel workers settings. With one worker the seven steps run one after another (numbered 1 to 7) and the total-time bar is long; with four workers the four reads run together as round 1, the two transforms as round 2, and Union data as round 3, so the flow finishes in three rounds instead of seven and the total-time bar is far shorter, the rest marked time saved.](../../assets/images/concepts/parallel-workers.svg)
+
+### Settings warnings
+
+With **Warn about invalid node settings** on (the default), Flowfile checks each node against the columns its input will actually produce and marks the ones that no longer add up — without running the flow. Two things are flagged:
+
+- Settings that reference a column that is gone, usually after an upstream rename or a column dropped in a Select.
+- Formula and filter expressions that cannot run against the input — `[amount] + "x"` on a numeric column, or an advanced filter that does not produce true or false.
+
+An amber dot appears on the node; hover it to see what is wrong. Fix the setting and the dot clears — no run needed.
+
+Nodes that *tolerate* a missing column are never flagged. Select and Dynamic rename skip a column that is no longer there and keep running, and a Join ignores unavailable entries in its column lists — only a missing **join key** breaks the node, so only that warns.
+
+!!! info "Silence is not a clean bill of health"
+    The check never guesses. A node stays unmarked whenever its input schema cannot be known without running the flow — downstream of a custom node or Python Script that has to execute once first — and raw Python and SQL nodes are never checked at all. Run the flow to catch what static analysis cannot see.
 
 ### Edge labels and Python Script nodes
 

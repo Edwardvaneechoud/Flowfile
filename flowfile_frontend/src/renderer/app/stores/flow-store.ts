@@ -5,6 +5,7 @@ import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../typ
 import type { FlowParameter } from "../types/flow.types";
 import { FlowApi } from "../api";
 import { useEditorStore } from "./editor-store";
+import { useResultsStore } from "./results-store";
 
 export const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
@@ -135,6 +136,20 @@ export const useFlowStore = defineStore("flow", {
 
     getNodeArtifactSummary(nodeId: number): NodeArtifactSummary | null {
       return this.artifactData.nodes[String(nodeId)] ?? null;
+    },
+
+    // Backend settings validation (missing-column warnings). Same staleness
+    // handling as fetchArtifacts; advisory, so failures never break the UI.
+    async fetchSettingsValidation(flowId?: number) {
+      const targetId = flowId ?? this.flowId;
+      if (targetId < 0) return;
+      try {
+        const data = await FlowApi.getSettingsValidation(targetId);
+        if (this.flowId !== targetId) return;
+        useResultsStore().applySettingsValidation(targetId, data);
+      } catch {
+        // Validation is advisory; don't break the UI
+      }
     },
 
     // Signal "the backend mutated the flow; please re-fetch and re-render".

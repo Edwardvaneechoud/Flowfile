@@ -275,7 +275,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   onAfterSave: async () => {
     validateNode();
   },
-  getValidationFunc: () => (nodeWindow.value?.window_input ? validateNode : undefined),
 });
 
 const autoNameFor = (item: WindowFunctionInput): string => {

@@ -446,6 +446,9 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if "parameters" not in fs.__dict__:
         object.__setattr__(fs, "__dict__", {**fs.__dict__, "parameters": []})
 
+    if "validate_settings" not in fs.__dict__:
+        object.__setattr__(fs, "__dict__", {**fs.__dict__, "validate_settings": True})
+
     return flow_storage_obj
 
 

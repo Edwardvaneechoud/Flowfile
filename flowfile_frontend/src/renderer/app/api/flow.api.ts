@@ -12,6 +12,7 @@ import type {
   UndoRedoResult,
   OperationResponse,
   FlowArtifactData,
+  FlowSettingsValidation,
   CreateGroupRequest,
   UpdateGroupRequest,
   UpdateLayoutRequest,
@@ -421,6 +422,17 @@ export class FlowApi {
    */
   static async getArtifacts(flowId: number): Promise<FlowArtifactData> {
     const response = await axios.get<FlowArtifactData>("/flow/artifacts", {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Get the backend's conservative settings validation (missing column references) for a flow.
+   */
+  static async getSettingsValidation(flowId: number): Promise<FlowSettingsValidation> {
+    const response = await axios.get<FlowSettingsValidation>("/flow/settings_validation", {
       params: { flow_id: flowId },
       headers: { accept: "application/json" },
     });
