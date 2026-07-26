@@ -62,6 +62,9 @@ export interface NodeValidationInput {
 
 export interface NodeValidation extends NodeValidationInput {
   validationTime: number;
+  // "backend" entries are owned (set and cleared) by applySettingsValidation;
+  // entries without a source come from in-drawer config checks.
+  source?: "backend";
 }
 
 export interface NodeResult {

@@ -108,13 +108,7 @@ const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeGroupBy,
   onAfterSave: async () => {
-    await instantValidate();
-  },
-  getValidationFunc: () => {
-    if (nodeGroupBy.value?.groupby_input) {
-      return validateNode;
-    }
-    return undefined;
+    validateConfig();
   },
 });
 const showContextMenu = ref(false);
@@ -292,66 +286,16 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
-const getMissingColumns = (availableColumns: string[], usedColumns: string[]): string[] => {
-  const availableSet = new Set(availableColumns);
-  return Array.from(new Set(usedColumns.filter((usedColumn) => !availableSet.has(usedColumn))));
-};
-
-const missingColumns = computed(() => {
-  if (nodeData.value && nodeData.value.main_input?.columns) {
-    return getMissingColumns(
-      nodeData.value.main_input?.columns,
-      groupByInput.value.agg_cols.map((col) => col.old_name),
-    );
-  }
-  return [];
-});
-
-const calculateMissingColumns = (): string[] => {
-  if (nodeData.value && nodeData.value.main_input?.columns) {
-    return getMissingColumns(
-      nodeData.value.main_input?.columns,
-      groupByInput.value.agg_cols.map((col) => col.old_name),
-    );
-  }
-  return [];
-};
-
-const validateNode = async () => {
-  if (nodeGroupBy.value?.groupby_input) {
-    await loadData(Number(nodeGroupBy.value.node_id));
-  }
-  const missingColumnsLocal = calculateMissingColumns();
-  if (missingColumnsLocal.length > 0 && nodeGroupBy.value) {
-    nodeStore.setNodeValidation(nodeGroupBy.value.node_id, {
-      isValid: false,
-      error: `The fields ${missingColumns.value.join(", ")} are missing in the available columns.`,
-    });
-  } else if (nodeGroupBy.value?.groupby_input.agg_cols.length == 0) {
+// Missing-column warnings come from the backend settings validation; this only
+// covers configuration completeness the backend does not check.
+const validateConfig = () => {
+  if (!nodeGroupBy.value) return;
+  if (nodeGroupBy.value.groupby_input.agg_cols.length == 0) {
     nodeStore.setNodeValidation(nodeGroupBy.value.node_id, {
       isValid: false,
       error: "Please select at least one field.",
     });
-  } else if (nodeGroupBy.value) {
-    nodeStore.setNodeValidation(nodeGroupBy.value.node_id, {
-      isValid: true,
-      error: "",
-    });
-  }
-};
-
-const instantValidate = async () => {
-  if (missingColumns.value.length > 0 && nodeGroupBy.value) {
-    nodeStore.setNodeValidation(nodeGroupBy.value.node_id, {
-      isValid: false,
-      error: `The fields ${missingColumns.value.join(", ")} are missing in the available columns.`,
-    });
-  } else if (nodeGroupBy.value?.groupby_input.agg_cols.length == 0) {
-    nodeStore.setNodeValidation(nodeGroupBy.value.node_id, {
-      isValid: false,
-      error: "Please select at least one field.",
-    });
-  } else if (nodeGroupBy.value) {
+  } else {
     nodeStore.setNodeValidation(nodeGroupBy.value.node_id, {
       isValid: true,
       error: "",

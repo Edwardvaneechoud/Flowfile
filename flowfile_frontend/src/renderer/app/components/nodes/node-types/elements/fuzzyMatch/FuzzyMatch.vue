@@ -197,21 +197,10 @@ const nodeStore = useNodeStore();
 const isLoaded = ref(false);
 const nodeFuzzyJoin = ref<NodeJoin | null>(null);
 
+// Missing join fields light the canvas dot via the backend settings validation;
+// the in-drawer field highlighting (hasInvalidFields) stays client-side.
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeFuzzyJoin,
-  onAfterSave: () => {
-    if (hasInvalidFields.value && nodeFuzzyJoin.value) {
-      nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
-        isValid: false,
-        error: "Join fields are not valid",
-      });
-    } else if (nodeFuzzyJoin.value) {
-      nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
-        isValid: true,
-        error: "",
-      });
-    }
-  },
 });
 
 const createSelectInput = (field: string): SelectInput => {
