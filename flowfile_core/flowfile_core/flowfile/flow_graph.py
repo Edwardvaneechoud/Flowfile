@@ -3669,18 +3669,17 @@ class FlowGraph:
             input_cols = set(f.name for f in table.schema)
             ids_to_remove = []
             for i, select_col in enumerate(select_cols):
-                if select_col.data_type is None:
-                    select_col.data_type = table.get_schema_column(select_col.old_name).data_type
                 if select_col.old_name not in input_cols:
                     select_col.is_available = False
                     if not select_col.keep:
                         ids_to_remove.append(i)
-                else:
-                    select_col.is_available = True
+                    continue
+                select_col.is_available = True
+                if select_col.data_type is None:
+                    select_col.data_type = table.get_schema_column(select_col.old_name).data_type
             ids_to_remove.reverse()
             for i in ids_to_remove:
-                v = select_cols.pop(i)
-                del v
+                select_cols.pop(i)
             return table.do_select(
                 select_inputs=transform_schema.SelectInputs(select_cols), keep_missing=select_settings.keep_missing
             )
@@ -5847,6 +5846,7 @@ class FlowGraph:
             execution_location=self.flow_settings.execution_location,
             auto_save=self.flow_settings.auto_save,
             show_detailed_progress=self.flow_settings.show_detailed_progress,
+            validate_settings=self.flow_settings.validate_settings,
             max_parallel_workers=self.flow_settings.max_parallel_workers,
             source_registration_id=self.flow_settings.source_registration_id,
             parameters=self.flow_settings.parameters,

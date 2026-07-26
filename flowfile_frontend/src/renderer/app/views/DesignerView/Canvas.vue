@@ -407,6 +407,7 @@ const loadFlow = async () => {
     }
     // Fire-and-forget; fetchArtifacts re-checks flowId before writing.
     flowStore.fetchArtifacts(flowIdAtStart);
+    flowStore.fetchSettingsValidation(flowIdAtStart);
   } finally {
     // Only clear if we're still the most recent run — otherwise the newer
     // run's spinner would be turned off prematurely.
@@ -597,6 +598,7 @@ async function onConnect(params: Connection & { label?: string }) {
   if (response?.history) {
     flowStore.updateHistoryState(response.history);
   }
+  flowStore.fetchSettingsValidation();
 }
 
 // Open + front a node's Settings drawer. Settings only ever opens by setting
@@ -670,6 +672,9 @@ const handleNodeChange = async (nodeChangesEvent: any) => {
       useTutorialStore().notify({ type: "node-removed", nodeId: nodeChangeId });
     }
   }
+  if (lastResponse) {
+    flowStore.fetchSettingsValidation();
+  }
   if (lastResponse?.history) {
     flowStore.updateHistoryState(lastResponse.history);
   }
@@ -708,6 +713,9 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
       lastResponse = await deleteConnection(flowStore.flowId, nodeConnection);
     }
+  }
+  if (lastResponse) {
+    flowStore.fetchSettingsValidation();
   }
   if (lastResponse?.history) {
     flowStore.updateHistoryState(lastResponse.history);
@@ -1277,6 +1285,7 @@ onMounted(async () => {
     (running, wasRunning) => {
       if (!running && wasRunning) {
         flowStore.fetchArtifacts();
+        flowStore.fetchSettingsValidation();
       }
     },
   );

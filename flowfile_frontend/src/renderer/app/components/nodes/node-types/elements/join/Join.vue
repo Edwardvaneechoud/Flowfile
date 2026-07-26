@@ -158,15 +158,10 @@ const nodeJoin = ref<NodeJoin | null>(null);
 const aiSuggesting = ref(false);
 const aiSuggestNotice = ref<string>("");
 
+// Missing join keys light the canvas dot via the backend settings validation;
+// the in-drawer banner (invalidJoinKeys) stays client-side.
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeJoin,
-  onAfterSave: () => {
-    if (!nodeJoin.value) return;
-    nodeStore.setNodeValidation(nodeJoin.value.node_id, {
-      isValid: !hasInvalidFields.value,
-      error: hasInvalidFields.value ? "Join keys reference columns that no longer exist" : "",
-    });
-  },
 });
 
 const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
