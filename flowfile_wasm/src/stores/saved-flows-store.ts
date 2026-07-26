@@ -72,9 +72,16 @@ export const useSavedFlowsStore = defineStore('savedFlows', () => {
     }
   }
 
-  /** Open a saved flow in a new designer tab. */
+  /** Open a saved flow in a new designer tab. If the flow is already open in a
+   *  tab, focus that tab instead (live unsaved edits win; duplicate() gives a
+   *  fresh copy). Returns true so callers still navigate to the designer. */
   async function open(id: string): Promise<boolean> {
     const tabs = useFlowTabsStore()
+    const existing = tabs.tabs.find((t) => t.flowId === id)
+    if (existing) {
+      tabs.switchTab(existing.id)
+      return true
+    }
     return tabs.openWith(() => loadInto(id))
   }
 

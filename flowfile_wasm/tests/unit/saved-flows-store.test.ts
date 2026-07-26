@@ -1,7 +1,8 @@
 /**
  * Saved Flows Store Unit Tests
  * The persistent flow library: list/recent, rename (non-lossy), updateDescription,
- * duplicate (new id), remove. Backed by an in-memory IndexedDB mock.
+ * duplicate (new id), remove, and open() tab dedupe (an already-open flow focuses
+ * its existing tab). Backed by an in-memory IndexedDB mock.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -42,12 +43,16 @@ vi.mock('../../src/stores/file-storage', () => ({
   }
 }))
 
+import { fileStorage } from '../../src/stores/file-storage'
 import { useSavedFlowsStore } from '../../src/stores/saved-flows-store'
+import { useFlowTabsStore } from '../../src/stores/flow-tabs-store'
 
 function seed(n: number) {
   for (let i = 0; i < n; i++) {
     backing.set(`f${i}`, {
-      id: `f${i}`, name: `Flow ${i}`, description: '', createdAt: i, updatedAt: i, nodeCount: i, snapshot: {}
+      id: `f${i}`, name: `Flow ${i}`, description: '', createdAt: i, updatedAt: i, nodeCount: i,
+      // Minimal valid FlowfileData so open() can import it into the live flow.
+      snapshot: { flowfile_name: `Flow ${i}`, nodes: [], connections: [] }
     })
   }
 }
@@ -110,5 +115,54 @@ describe('Saved Flows Store', () => {
     await s.remove('f0')
     expect(backing.has('f0')).toBe(false)
     expect(s.flows.map((f) => f.id)).toEqual(['f1'])
+  })
+
+  describe('open dedupe', () => {
+    it('with no matching tab, open falls through to openWith and creates a tab', async () => {
+      seed(1)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+
+      expect(await s.open('f0')).toBe(true)
+
+      expect(tabs.tabs.length).toBe(2)
+      expect(tabs.activeTab?.flowId).toBe('f0')
+      expect(fileStorage.getSavedFlow).toHaveBeenCalledWith('f0')
+    })
+
+    it('focuses the existing tab for an already-open flow and returns true', async () => {
+      seed(1)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+      await s.open('f0')
+      const f0TabId = tabs.activeTabId
+      tabs.newTab() // switch away so the f0 tab is inactive
+      expect(tabs.activeTabId).not.toBe(f0TabId)
+      vi.mocked(fileStorage.getSavedFlow).mockClear()
+
+      expect(await s.open('f0')).toBe(true)
+
+      expect(tabs.activeTabId).toBe(f0TabId)
+      expect(tabs.tabs.filter((t) => t.flowId === 'f0')).toHaveLength(1)
+      expect(fileStorage.getSavedFlow).not.toHaveBeenCalled() // dedupe skips the load
+    })
+
+    it('still returns true when the matching tab is already active (switchTab no-op)', async () => {
+      seed(1)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+      await s.open('f0')
+      const f0TabId = tabs.activeTabId
+      vi.mocked(fileStorage.getSavedFlow).mockClear()
+
+      expect(await s.open('f0')).toBe(true)
+
+      expect(tabs.activeTabId).toBe(f0TabId)
+      expect(tabs.tabs.length).toBe(2)
+      expect(fileStorage.getSavedFlow).not.toHaveBeenCalled()
+    })
   })
 })

@@ -510,17 +510,21 @@ onUnmounted(() => {
 
 .tooltip-text {
   visibility: hidden;
-  width: 120px;
+  width: max-content;
+  max-width: 300px;
   background-color: var(--color-gray-800);
   color: var(--color-text-inverse);
-  text-align: center;
+  text-align: left;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   border-radius: 6px;
-  padding: 5px 0;
+  padding: 8px 12px;
   position: absolute;
-  z-index: 1;
-  bottom: 100%;
+  z-index: 300; /* above canvas panels (zIndex.ts FULLSCREEN = 250) */
+  bottom: calc(100% + 6px);
   left: 50%;
-  margin-left: -60px;
+  transform: translateX(-50%);
   opacity: 0;
   transition: opacity 0.3s;
   font-size: 11px;

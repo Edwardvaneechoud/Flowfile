@@ -99,6 +99,18 @@
       </div>
 
       <div class="form-group">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="csvSettings?.infer_schema ?? true"
+            @change="updateTableSetting('infer_schema', ($event.target as HTMLInputElement).checked)"
+          />
+          <span>Infer data types</span>
+        </label>
+        <span class="hint">When unchecked, every column loads as text</span>
+      </div>
+
+      <div class="form-group">
         <label>Skip Rows</label>
         <input
           type="number"
@@ -165,7 +177,8 @@ const localSettings = ref<NodeReadSettings>({
       delimiter: ',',
       has_headers: true,
       encoding: 'utf-8',
-      starting_from_line: 0
+      starting_from_line: 0,
+      infer_schema: true
     }
   },
   file_name: ''
@@ -210,7 +223,8 @@ function loadSettings(settings: NodeSettings) {
         delimiter: s.delimiter ?? ',',
         has_headers: s.has_headers ?? true,
         encoding: 'utf-8',
-        starting_from_line: s.skip_rows ?? 0
+        starting_from_line: s.skip_rows ?? 0,
+        infer_schema: true
       }
     }
   }
@@ -344,7 +358,14 @@ function applyPickedFile(name: string, type: 'csv' | 'excel' | 'parquet') {
           }
         : type === 'parquet'
           ? { file_type: 'parquet' }
-          : { file_type: 'csv', delimiter: ',', has_headers: true, encoding: 'utf-8', starting_from_line: 0 }
+          : {
+              file_type: 'csv',
+              delimiter: ',',
+              has_headers: true,
+              encoding: 'utf-8',
+              starting_from_line: 0,
+              infer_schema: true
+            }
   }
   localSettings.value.is_setup = true
 }

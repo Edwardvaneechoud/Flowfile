@@ -159,6 +159,91 @@ describe('Flow Tabs Store', () => {
     expect(tabs.tabs.length).toBe(1)
   })
 
+  describe('closeTabs (bulk)', () => {
+    // Three tabs: A (2 nodes), B (1 node), C (blank, active).
+    function buildTabs() {
+      const flow = useFlowStore()
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const tabA = tabs.activeTabId
+      flow.addNode('filter', 0, 0)
+      flow.addNode('select', 0, 0)
+      tabs.newTab()
+      const tabB = tabs.activeTabId
+      flow.addNode('sort', 0, 0)
+      tabs.newTab()
+      const tabC = tabs.activeTabId
+      return { flow, tabs, tabA, tabB, tabC }
+    }
+
+    it('closes several tabs with one confirm covering the content tabs', () => {
+      const confirmMock = vi.fn(() => true)
+      vi.stubGlobal('confirm', confirmMock)
+      const { tabs, tabA, tabB, tabC } = buildTabs()
+
+      tabs.closeTabs([tabA, tabB])
+
+      expect(confirmMock).toHaveBeenCalledTimes(1)
+      expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining('2 flows'))
+      expect(tabs.tabs.map((t) => t.id)).toEqual([tabC])
+      expect(tabs.activeTabId).toBe(tabC)
+    })
+
+    it('cancelling the confirm aborts the whole bulk close', () => {
+      vi.stubGlobal('confirm', vi.fn(() => false))
+      const { tabs, tabA, tabB, tabC } = buildTabs()
+
+      tabs.closeTabs([tabA, tabB])
+
+      expect(tabs.tabs.map((t) => t.id)).toEqual([tabA, tabB, tabC])
+      expect(tabs.activeTabId).toBe(tabC)
+    })
+
+    it('skips the confirm when no affected tab has content', () => {
+      const confirmMock = vi.fn(() => true)
+      vi.stubGlobal('confirm', confirmMock)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const tabA = tabs.activeTabId
+      tabs.newTab()
+      const tabB = tabs.activeTabId
+      tabs.newTab()
+
+      tabs.closeTabs([tabA, tabB])
+
+      expect(confirmMock).not.toHaveBeenCalled()
+      expect(tabs.tabs.length).toBe(1)
+    })
+
+    it('switches once to a surviving neighbour when the active tab closes', () => {
+      const { flow, tabs, tabA, tabB, tabC } = buildTabs()
+
+      tabs.closeTabs([tabB, tabC])
+
+      expect(tabs.tabs.map((t) => t.id)).toEqual([tabA])
+      expect(tabs.activeTabId).toBe(tabA)
+      expect(flow.nodes.size).toBe(2) // A's graph restored into the live flow
+    })
+
+    it('closing every tab seeds a single blank tab (always-one-tab invariant)', () => {
+      const { flow, tabs, tabA, tabB, tabC } = buildTabs()
+
+      tabs.closeTabs([tabA, tabB, tabC])
+
+      expect(tabs.tabs.length).toBe(1)
+      expect([tabA, tabB, tabC]).not.toContain(tabs.tabs[0].id)
+      expect(tabs.activeTabId).toBe(tabs.tabs[0].id)
+      expect(flow.nodes.size).toBe(0)
+      expect(flow.currentFlowName).toBe('Untitled Flow')
+    })
+
+    it('ignores unknown ids without touching the open tabs', () => {
+      const { tabs, tabA, tabB, tabC } = buildTabs()
+      tabs.closeTabs(['nope'])
+      expect(tabs.tabs.map((t) => t.id)).toEqual([tabA, tabB, tabC])
+    })
+  })
+
   it('persists tabs to sessionStorage and restores them on a fresh store', () => {
     const tabs = useFlowTabsStore()
     tabs.init()
