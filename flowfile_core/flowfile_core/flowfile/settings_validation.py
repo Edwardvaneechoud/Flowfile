@@ -14,7 +14,13 @@ new) are never analyzed. To cover a node type, register a small pure function wi
 ``@_extractor`` that maps its settings model to the input columns it references, per input
 handle. Flowfile formulas (formula node, advanced filter) are covered by parsing the
 expression with polars_expr_transformer and collecting ``pl.col`` references from the parse
-tree — unparseable expressions are skipped, never guessed at.
+tree — an unparseable expression yields no column references, never guessed-at ones.
+
+A second phase checks whether a flowfile expression can run at all: ``@_expression_probe``
+node types hand their expression to ``real_time_interface.check_expression``, which resolves it
+against an empty LazyFrame built from the predicted input schema (same parser as execution, no
+data touched). Only definite failures — a parse error, or a polars error raised while resolving
+the schema — are reported.
 """
 
 from collections.abc import Callable, Sequence
@@ -24,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel
 
 from flowfile_core.configs.flow_logger import main_logger
+from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema
 
 if TYPE_CHECKING:
@@ -31,12 +38,14 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 InputHandle = Literal["main", "left", "right"]
+IssueKind = Literal["missing_columns", "invalid_expression"]
 
 
 class SettingsValidationIssue(BaseModel):
     input_handle: InputHandle
-    missing_columns: list[str]
+    missing_columns: list[str] = []
     message: str
+    kind: IssueKind = "missing_columns"
 
 
 class NodeSettingsValidation(BaseModel):
@@ -248,6 +257,41 @@ def _dynamic_rename(settings: input_schema.NodeDynamicRename) -> ColumnReference
     return ColumnReferences(main=d.selected_columns)
 
 
+@dataclass(frozen=True)
+class ExpressionProbe:
+    """A flowfile expression that can be resolved against the node's main input schema."""
+
+    expression: str
+    as_predicate: bool  # True -> applied with filter(), mirroring FlowDataEngine.do_filter
+    label: str
+
+
+_EXPRESSION_PROBES: dict[str, Callable[[Any], ExpressionProbe | None]] = {}
+
+
+def _expression_probe(node_type: str):
+    def wrap(fn):
+        _EXPRESSION_PROBES[node_type] = fn
+        return fn
+
+    return wrap
+
+
+@_expression_probe("formula")
+def _formula_expression(settings: input_schema.NodeFormula) -> ExpressionProbe | None:
+    if settings.function is None:
+        return None
+    return ExpressionProbe(settings.function.function, False, "Invalid formula")
+
+
+@_expression_probe("filter")
+def _filter_expression(settings: input_schema.NodeFilter) -> ExpressionProbe | None:
+    if not settings.filter_input.is_advanced():
+        return None
+    # split_mode also routes through .filter(), so a predicate probe is correct either way.
+    return ExpressionProbe(settings.filter_input.advanced_filter, True, "Invalid filter expression")
+
+
 def _clean_refs(refs: Sequence[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -288,7 +332,69 @@ def _resolved_schema(input_node: "FlowNode", allow_prediction: bool):
     return schema
 
 
+def _polars_schema(schema) -> dict | None:
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+
+    try:
+        return {c.name: cast_str_to_polars_type(c.data_type) for c in schema}
+    except Exception:
+        return None
+
+
+def _resolved_expression(node: "FlowNode", expression: str) -> str | None:
+    """Expression with ``${param}`` refs substituted, or None when it cannot be resolved."""
+    if not expression or not expression.strip():
+        return None
+    if "${" not in expression:
+        return expression
+    params_getter = getattr(node, "_params_getter", None)
+    if params_getter is None:
+        return None
+    resolved = resolve_expression_parameters(expression, params_getter())
+    return None if "${" in resolved else resolved
+
+
+def _expression_issues(node: "FlowNode", allow_prediction: bool) -> list[SettingsValidationIssue]:
+    from flowfile_core.flowfile._extensions.real_time_interface import check_expression
+
+    probe_factory = _EXPRESSION_PROBES.get(node.node_type)
+    if probe_factory is None or not node.is_setup:
+        return []
+    probe = probe_factory(node.setting_input)
+    if probe is None:
+        return []
+    expression = _resolved_expression(node, probe.expression)
+    if expression is None:
+        return []
+    input_node = _input_node(node, "main")
+    if input_node is None:
+        return []
+    schema = _resolved_schema(input_node, allow_prediction)
+    if schema is None:
+        return []
+    pl_schema = _polars_schema(schema)
+    if pl_schema is None:
+        return []
+    issue = check_expression(pl_schema, expression, as_predicate=probe.as_predicate)
+    if issue is None or issue.kind == "missing_column":
+        return []  # missing columns are reported by the column phase, with the exact names
+    return [
+        SettingsValidationIssue(
+            kind="invalid_expression",
+            input_handle="main",
+            message=f"{probe.label}: {issue.message}",
+        )
+    ]
+
+
 def _validate_node(node: "FlowNode", allow_prediction: bool) -> list[SettingsValidationIssue]:
+    issues = _column_issues(node, allow_prediction)
+    if not any(issue.input_handle == "main" for issue in issues):
+        issues.extend(_expression_issues(node, allow_prediction))
+    return issues
+
+
+def _column_issues(node: "FlowNode", allow_prediction: bool) -> list[SettingsValidationIssue]:
     extractor = _EXTRACTORS.get(node.node_type)
     if extractor is None or not node.is_setup:
         return []

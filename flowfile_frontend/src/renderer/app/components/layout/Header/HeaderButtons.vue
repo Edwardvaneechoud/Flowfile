@@ -235,14 +235,14 @@
           <div class="form-group">
             <el-checkbox
               v-model="flowSettings.validate_settings"
-              label="Warn when settings reference missing columns"
+              label="Warn about invalid node settings"
               size="small"
               @change="pushFlowSettings"
             />
             <span class="form-hint">
-              Shows a warning on nodes whose settings use columns that are no longer available from
-              their input. Only applies when the input schema can be predicted without running the
-              flow.
+              Shows a warning on nodes that use columns no longer available from their input, and on
+              formula or filter expressions that cannot run against it. Only applies when the input
+              schema is known without running the flow.
             </span>
           </div>
         </div>

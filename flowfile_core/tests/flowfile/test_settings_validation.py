@@ -4,6 +4,7 @@ import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.flowfile.settings_validation import validate_flow_settings
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
@@ -142,11 +143,31 @@ def test_filter_advanced_expression_missing_column_warns():
     assert issues[2][0].missing_columns == ["gone"]
 
 
-def test_filter_advanced_expression_valid_or_unparseable_stays_silent():
+def test_filter_advanced_expression_valid_stays_silent():
     graph = filter_graph(transform_schema.FilterInput(mode="advanced", advanced_filter="[a] > 1"))
     assert validate_flow_settings(graph).nodes == []
 
-    graph = filter_graph(transform_schema.FilterInput(mode="advanced", advanced_filter="((( [gone]"))
+
+def test_filter_advanced_expression_must_be_boolean():
+    graph = filter_graph(transform_schema.FilterInput(mode="advanced", advanced_filter="[a]"))
+    issues = issues_by_node(validate_flow_settings(graph))
+    assert set(issues) == {2}
+    (issue,) = issues[2]
+    assert issue.kind == "invalid_expression"
+    assert issue.missing_columns == []
+    assert issue.message.startswith("Invalid filter expression: ")
+    assert "filter predicate must be of type" in issue.message
+
+
+def test_filter_advanced_expression_unparseable_is_reported():
+    graph = filter_graph(transform_schema.FilterInput(mode="advanced", advanced_filter="((( [a]"))
+    issues = issues_by_node(validate_flow_settings(graph))
+    assert issues[2][0].kind == "invalid_expression"
+
+
+def test_basic_filter_is_never_expression_checked():
+    graph = filter_graph(transform_schema.FilterInput(
+        mode="basic", basic_filter=transform_schema.BasicFilter(field="a", value="1")))
     assert validate_flow_settings(graph).nodes == []
 
 
@@ -178,8 +199,68 @@ def test_formula_conservative_cases_stay_silent():
     assert validate_flow_settings(formula_graph("[a] + [b]")).nodes == []
     # brackets inside a string literal are not column references
     assert validate_flow_settings(formula_graph('"literal [gone] text"')).nodes == []
-    # unparseable expressions are skipped, never guessed at
-    assert validate_flow_settings(formula_graph("((( [gone]")).nodes == []
+
+
+def test_formula_type_error_is_reported():
+    issues = issues_by_node(validate_flow_settings(formula_graph('[a] + "x"')))
+    assert set(issues) == {2}
+    (issue,) = issues[2]
+    assert issue.kind == "invalid_expression"
+    assert issue.input_handle == "main"
+    assert issue.missing_columns == []
+    assert issue.message == (
+        "Invalid formula: arithmetic on string and numeric not allowed, try an explicit cast first"
+    )
+
+
+@pytest.mark.parametrize("expression", ["((( [a]", "sum([a])"])
+def test_formula_unparseable_is_reported(expression):
+    issues = issues_by_node(validate_flow_settings(formula_graph(expression)))
+    assert issues[2][0].kind == "invalid_expression"
+    assert "\n" not in issues[2][0].message
+
+
+def test_missing_column_wins_over_expression_issue():
+    """A missing column must not also be re-reported as an invalid expression."""
+    issues = issues_by_node(validate_flow_settings(formula_graph('[gone] + "x"')))
+    (issue,) = issues[2]
+    assert issue.kind == "missing_columns"
+    assert issue.missing_columns == ["gone"]
+
+
+def test_formula_with_defined_parameter_is_resolved_then_checked():
+    graph = formula_graph("[a] + ${bump}")
+    graph.flow_settings.parameters = [FlowParameter(name="bump", type="integer", default_value="2")]
+    assert validate_flow_settings(graph).nodes == []
+
+    graph = formula_graph("[a] + ${label}")
+    graph.flow_settings.parameters = [FlowParameter(name="label", type="string", default_value="x")]
+    issues = issues_by_node(validate_flow_settings(graph))
+    assert issues[2][0].kind == "invalid_expression"
+
+
+def test_formula_with_undefined_parameter_stays_silent():
+    assert validate_flow_settings(formula_graph("[a] + ${nowhere}")).nodes == []
+
+
+def test_blocked_prediction_upstream_suppresses_expression_issue():
+    graph = create_graph()
+    add_manual_input(graph, BASE_DATA, node_id=1)
+    add_promise(graph, "select", 2)
+    connect(graph, 1, 2)
+    add_select(graph, 2, [("a", "a"), ("b", "b")])
+    add_promise(graph, "formula", 3)
+    connect(graph, 2, 3)
+    graph.add_formula(input_schema.NodeFormula(
+        flow_id=graph.flow_id, node_id=3,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="out"), function='[a] + "x"')))
+    assert issues_by_node(validate_flow_settings(graph))
+
+    select_node = graph.get_node(2)
+    select_node._executes_on_kernel = True
+    select_node.reset()
+    assert validate_flow_settings(graph).nodes == []
 
 
 def test_blocked_prediction_upstream_suppresses_warning():
@@ -328,6 +409,7 @@ def test_endpoint_response_shape():
                 "input_handle": "main",
                 "missing_columns": ["gone"],
                 "message": "Column(s) not available from the main input: gone",
+                "kind": "missing_columns",
             }],
         }]
 

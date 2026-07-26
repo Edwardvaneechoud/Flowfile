@@ -17,6 +17,7 @@ const issue = (message: string, missing: string[] = ["a"]) => ({
   input_handle: "main" as const,
   missing_columns: missing,
   message,
+  kind: "missing_columns" as const,
 });
 
 describe("applySettingsValidation", () => {
