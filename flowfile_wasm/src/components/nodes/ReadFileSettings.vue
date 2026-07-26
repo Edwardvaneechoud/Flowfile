@@ -376,7 +376,7 @@ function updateTableSetting(key: string, value: any) {
   }
   emitUpdate()
 
-  if (key === 'delimiter' || key === 'has_headers') {
+  if (key === 'delimiter' || key === 'has_headers' || key === 'infer_schema') {
     const content = flowStore.getTextContent(props.nodeId)
     if (content) {
       // The settings need to be updated first, so we delay slightly

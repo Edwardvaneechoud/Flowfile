@@ -77,7 +77,12 @@ export const useSavedFlowsStore = defineStore('savedFlows', () => {
    *  fresh copy). Returns true so callers still navigate to the designer. */
   async function open(id: string): Promise<boolean> {
     const tabs = useFlowTabsStore()
-    const existing = tabs.tabs.find((t) => t.flowId === id)
+    const flowStore = useFlowStore()
+    // The active tab's stashed flowId can be stale (demo/share import replaces
+    // the live flow without syncing the record) — match it on live identity.
+    const existing = tabs.tabs.find((t) =>
+      t.id === tabs.activeTabId ? flowStore.currentFlowId === id : t.flowId === id,
+    )
     if (existing) {
       tabs.switchTab(existing.id)
       return true

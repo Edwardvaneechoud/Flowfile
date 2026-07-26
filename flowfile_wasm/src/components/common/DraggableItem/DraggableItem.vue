@@ -509,9 +509,12 @@ defineExpose({
   color: var(--color-text-primary);
   background-color: var(--color-background-hover);
 }
-/* Close button is pushed to the far right of the header, past the tab strip. */
+/* Close button is pushed to the far right of the header, past the tab strip.
+   flex-shrink: 0 keeps it reachable at MIN_PANEL_W; the tab strip shrinks
+   and ellipsizes instead. */
 .close-button {
   margin-left: auto;
+  flex-shrink: 0;
 }
 .close-button:hover {
   color: var(--color-text-inverse);
@@ -525,6 +528,8 @@ defineExpose({
   display: flex;
   align-self: stretch;
   margin: -4px 0 -4px 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 .dragitem-tab {
   display: flex;

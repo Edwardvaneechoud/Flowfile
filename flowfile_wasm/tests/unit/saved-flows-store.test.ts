@@ -46,6 +46,7 @@ vi.mock('../../src/stores/file-storage', () => ({
 import { fileStorage } from '../../src/stores/file-storage'
 import { useSavedFlowsStore } from '../../src/stores/saved-flows-store'
 import { useFlowTabsStore } from '../../src/stores/flow-tabs-store'
+import { useFlowStore } from '../../src/stores/flow-store'
 
 function seed(n: number) {
   for (let i = 0; i < n; i++) {
@@ -163,6 +164,25 @@ describe('Saved Flows Store', () => {
       expect(tabs.activeTabId).toBe(f0TabId)
       expect(tabs.tabs.length).toBe(2)
       expect(fileStorage.getSavedFlow).not.toHaveBeenCalled()
+    })
+
+    it('ignores a stale active-tab record when the live flow was replaced in place', async () => {
+      // Demo/share import replaces the live flow without syncing the tab
+      // record — the dedupe must match the active tab on live identity, not
+      // the stashed flowId, or open() would "focus" the wrong content.
+      seed(1)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+      await s.open('f0')
+      const flowStore = useFlowStore()
+      flowStore.currentFlowId = null // in-place import: record still says f0
+      vi.mocked(fileStorage.getSavedFlow).mockClear()
+
+      expect(await s.open('f0')).toBe(true)
+
+      expect(fileStorage.getSavedFlow).toHaveBeenCalledWith('f0') // real reload
+      expect(flowStore.currentFlowId).toBe('f0')
     })
   })
 })

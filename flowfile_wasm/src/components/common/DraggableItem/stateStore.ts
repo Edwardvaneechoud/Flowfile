@@ -85,19 +85,22 @@ export const useItemStore = defineStore('itemStore', () => {
   const registerContainer = (el: HTMLElement): (() => void) => {
     containerObserver?.disconnect()
     containerBounds.value = { width: el.clientWidth, height: el.clientHeight }
-    containerObserver = new ResizeObserver((entries) => {
+    const observer = new ResizeObserver((entries) => {
       const entry = entries[0]
-      if (entry) {
+      if (entry && containerObserver === observer) {
         containerBounds.value = {
           width: entry.contentRect.width,
           height: entry.contentRect.height,
         }
       }
     })
-    containerObserver.observe(el)
+    containerObserver = observer
+    observer.observe(el)
     return () => {
-      containerObserver?.disconnect()
-      containerObserver = null
+      // Only tear down if this registration still owns the slot — a later
+      // registration (second embedded editor) must keep its own observer.
+      observer.disconnect()
+      if (containerObserver === observer) containerObserver = null
       // Keep the last bounds: zeroing them would blank every panel rect
       // during a route transition.
     }

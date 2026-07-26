@@ -520,8 +520,11 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
   border-radius: 6px;
   padding: 8px 12px;
+  box-shadow: var(--shadow-md);
   position: absolute;
-  z-index: 300; /* above canvas panels (zIndex.ts FULLSCREEN = 250) */
+  /* Orders the tooltip within the node's own stacking context only — the
+     .vue-flow root isolates it, so no value here can rise above the panels. */
+  z-index: 10;
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);

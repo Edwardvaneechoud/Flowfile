@@ -24,6 +24,7 @@
           @blur="commitRename"
           @click.stop
           @dblclick.stop
+          @contextmenu.stop
         />
         <span v-else class="flow-tab__name">{{ tabLabel(tab) }}</span>
         <button
