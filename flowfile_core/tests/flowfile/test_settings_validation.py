@@ -308,7 +308,8 @@ def test_unconnected_node_no_issues():
     assert validate_flow_settings(graph).nodes == []
 
 
-def test_select_only_kept_entries_warn():
+def test_select_never_warns_it_skips_missing_columns():
+    """A select drops an unavailable column from its selection and still runs."""
     graph = create_graph()
     add_manual_input(graph, BASE_DATA, node_id=1)
     add_promise(graph, "select", 2)
@@ -320,9 +321,122 @@ def test_select_only_kept_entries_warn():
     ]
     graph.add_select(input_schema.NodeSelect(flow_id=graph.flow_id, node_id=2,
                                              select_input=select_input, keep_missing=True))
-    issues = issues_by_node(validate_flow_settings(graph))
-    assert set(issues) == {2}
-    assert issues[2][0].missing_columns == ["gone_keep"]
+    assert validate_flow_settings(graph).nodes == []
+    # data_type is unset here, which used to crash on the missing column
+    assert graph.run_graph().success
+
+
+ORACLE_DATA = [{"a": 1, "b": 2.5, "s": "x,y"}, {"a": 2, "b": 3.5, "s": "z"}]
+
+
+def _oracle_graph(node_type: str, target: str, drop_target: bool) -> FlowGraph:
+    """input(a, b, s) -> select (optionally renaming `target` away) -> the node under test."""
+    graph = create_graph()
+    add_manual_input(graph, ORACLE_DATA, node_id=1)
+    add_promise(graph, "select", 2)
+    connect(graph, 1, 2)
+    add_select(graph, 2, [(c, f"{c}_gone" if drop_target and c == target else c)
+                          for c in ("a", "b", "s")])
+    add_promise(graph, node_type, 3)
+    connect(graph, 2, 3)
+    return graph
+
+
+def _tolerance_cases():
+    """(node_type, add_method, target column, settings referencing that column)."""
+    return [
+        ("select", "add_select", "a", lambda fid: input_schema.NodeSelect(
+            flow_id=fid, node_id=3, keep_missing=True,
+            select_input=[transform_schema.SelectInput(old_name="a", data_type="Int64")])),
+        ("dynamic_rename", "add_dynamic_rename", "a", lambda fid: input_schema.NodeDynamicRename(
+            flow_id=fid, node_id=3,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="prefix", prefix="x_", selection_mode="list", selected_columns=["a"]))),
+        ("group_by", "add_group_by", "a", lambda fid: input_schema.NodeGroupBy(
+            flow_id=fid, node_id=3,
+            groupby_input=transform_schema.GroupByInput([transform_schema.AggColl("a", "sum")]))),
+        ("sort", "add_sort", "a", lambda fid: input_schema.NodeSort(
+            flow_id=fid, node_id=3, sort_input=[transform_schema.SortByInput(column="a")])),
+        ("unique", "add_unique", "a", lambda fid: input_schema.NodeUnique(
+            flow_id=fid, node_id=3, unique_input=transform_schema.UniqueInput(columns=["a"]))),
+        ("record_id", "add_record_id", "a", lambda fid: input_schema.NodeRecordId(
+            flow_id=fid, node_id=3,
+            record_id_input=transform_schema.RecordIdInput(group_by=True, group_by_columns=["a"]))),
+        ("text_to_rows", "add_text_to_rows", "s", lambda fid: input_schema.NodeTextToRows(
+            flow_id=fid, node_id=3,
+            text_to_rows_input=transform_schema.TextToRowsInput(column_to_split="s"))),
+        ("unpivot", "add_unpivot", "a", lambda fid: input_schema.NodeUnpivot(
+            flow_id=fid, node_id=3,
+            unpivot_input=transform_schema.UnpivotInput(value_columns=["a"],
+                                                        data_type_selector_mode="column"))),
+        ("filter", "add_filter", "a", lambda fid: input_schema.NodeFilter(
+            flow_id=fid, node_id=3,
+            filter_input=transform_schema.FilterInput(
+                mode="basic", basic_filter=transform_schema.BasicFilter(field="a", value="1")))),
+        ("formula", "add_formula", "a", lambda fid: input_schema.NodeFormula(
+            flow_id=fid, node_id=3,
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name="out"), function="[a] + 1"))),
+    ]
+
+
+def _node_produces_data(graph: FlowGraph, node_id: int) -> bool:
+    """Whether the node runs *and* its output can be materialized.
+
+    A leaf node's LazyFrame is never collected by the run itself, so `run_graph().success`
+    alone reports True for a node that fails the moment anyone looks at its data.
+    """
+    if not graph.run_graph().success:
+        return False
+    try:
+        graph.get_node(node_id).get_resulting_data().collect()
+    except Exception:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("node_type,add_method,target,settings_factory", _tolerance_cases(),
+                         ids=[c[0] for c in _tolerance_cases()])
+def test_warning_matches_runtime_behaviour(node_type, add_method, target, settings_factory):
+    """The registry's entry criterion, made executable: warn if and only if the node fails.
+
+    Nodes that skip missing columns (select, dynamic_rename) must stay silent; nodes that
+    raise must warn. Any new extractor for a forgiving node type gets caught here.
+    """
+    control = _oracle_graph(node_type, target, drop_target=False)
+    getattr(control, add_method)(settings_factory(control.flow_id))
+    assert _node_produces_data(control, 3), f"{node_type}: control config is broken on its own"
+    assert 3 not in issues_by_node(validate_flow_settings(control))
+
+    graph = _oracle_graph(node_type, target, drop_target=True)
+    getattr(graph, add_method)(settings_factory(graph.flow_id))
+    warned = 3 in issues_by_node(validate_flow_settings(graph))
+    ran_ok = _node_produces_data(graph, 3)
+    assert warned == (not ran_ok), (
+        f"{node_type}: validator warned={warned} but the node produced data={ran_ok}"
+    )
+
+
+def test_join_key_warning_matches_runtime_behaviour():
+    """Join *keys* do break the node — unlike the join's select lists, which are reconciled."""
+    graph = create_graph()
+    add_manual_input(graph, [{"id": 1, "name": "x"}], node_id=1)
+    add_manual_input(graph, [{"id": 1, "value": 2}], node_id=2)
+    add_promise(graph, "select", 3)
+    connect(graph, 1, 3)
+    add_select(graph, 3, [("id", "id2"), ("name", "name")])
+    add_promise(graph, "join", 4)
+    connect(graph, 3, 4, "main")
+    connect(graph, 2, 4, "right")
+    join_input = {"join_mapping": [{"left_col": "id", "right_col": "id"}],
+                  "left_select": {"renames": []}, "right_select": {"renames": []}, "how": "inner"}
+    graph.add_join(input_schema.NodeJoin(flow_id=graph.flow_id, node_id=4, join_input=join_input,
+                                         auto_generate_selection=True, verify_integrity=False))
+
+    warned = 4 in issues_by_node(validate_flow_settings(graph))
+    ran_ok = _node_produces_data(graph, 4)
+    assert warned is True
+    assert warned == (not ran_ok)
 
 
 def _single_input_node_cases():

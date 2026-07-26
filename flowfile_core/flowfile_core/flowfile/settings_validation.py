@@ -11,10 +11,12 @@ Invariants:
 
 Node types without a registered extractor (custom nodes, raw polars/SQL/python code, anything
 new) are never analyzed. To cover a node type, register a small pure function with
-``@_extractor`` that maps its settings model to the input columns it references, per input
-handle. Flowfile formulas (formula node, advanced filter) are covered by parsing the
-expression with polars_expr_transformer and collecting ``pl.col`` references from the parse
-tree — an unparseable expression yields no column references, never guessed-at ones.
+``@_extractor`` that maps its settings model to the input columns **whose absence makes the node
+fail**, per input handle. That is the whole entry criterion: a node that skips missing columns and
+keeps running (select, dynamic_rename, the join-family select lists) gets no extractor, because a
+warning there is noise on a flow that works. Flowfile formulas (formula node, advanced filter) are
+covered by parsing the expression with polars_expr_transformer and collecting ``pl.col`` references
+from the parse tree — an unparseable expression yields no column references, never guessed-at ones.
 
 A second phase checks whether a flowfile expression can run at all: ``@_expression_probe``
 node types hand their expression to ``real_time_interface.check_expression``, which resolves it
@@ -102,6 +104,11 @@ def _expression_column_references(expression: str) -> list[str] | None:
 
 # Extractors return None when the configuration is not analyzable (unparseable expression,
 # dtype-based selection, unconfigured sub-model) — the node is then skipped entirely.
+# Deliberately absent: select and dynamic_rename skip missing columns and keep running, so a
+# warning there would fire on a flow that works. See test_warning_matches_runtime_behaviour.
+# Also absent: run_flow — its parameter columns come from keyed handle input-0, but main_inputs is
+# a compacted projection, so a single data-only connection would be checked as if it were the
+# parameter input.
 _EXTRACTORS: dict[str, Callable[[Any], ColumnReferences | None]] = {}
 
 
@@ -111,11 +118,6 @@ def _extractor(node_type: str):
         return fn
 
     return wrap
-
-
-@_extractor("select")
-def _select(settings: input_schema.NodeSelect) -> ColumnReferences:
-    return ColumnReferences(main=[s.old_name for s in settings.select_input if s.keep or s.join_key])
 
 
 @_extractor("filter")
@@ -241,20 +243,6 @@ def _evaluate_model(settings: input_schema.NodeEvaluateModel) -> ColumnReference
 def _catalog_writer(settings: input_schema.NodeCatalogWriter) -> ColumnReferences:
     c = settings.catalog_write_settings
     return ColumnReferences(main=[*c.merge_keys, *c.partition_by])
-
-
-@_extractor("run_flow")
-def _run_flow(settings: input_schema.NodeRunFlow) -> ColumnReferences:
-    refs = [b.column_name for b in settings.parameter_bindings if b.source == "column" and b.column_name]
-    return ColumnReferences(main=refs)
-
-
-@_extractor("dynamic_rename")
-def _dynamic_rename(settings: input_schema.NodeDynamicRename) -> ColumnReferences | None:
-    d = settings.dynamic_rename_input
-    if d.selection_mode != "list":
-        return None
-    return ColumnReferences(main=d.selected_columns)
 
 
 @dataclass(frozen=True)
