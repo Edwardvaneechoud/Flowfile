@@ -44,7 +44,8 @@ migration · `19` CI job slow/flaky, or want pytest-xdist ·
 (HTTP polling vs WebSocket) · `22` GA4 / any connection failing only when
 flow is opened · `23` Airbyte, in-house fuzzy match, `website/` ·
 `24` draggable panels, z-index, overlay resize · `25` run history /
-flow-version linkage · a `git tag` or "since v0.9.4" claim → **Tag/release
+flow-version linkage · `26` polars version bump, silent CI hang/timeout,
+`SQLContext` + `scan_delta` deadlock · a `git tag` or "since v0.9.4" claim → **Tag/release
 gotchas** below · an old/unmerged branch that "already does this" →
 **Branch inventory** below · lowering the worker poll, the catalog sleep,
 coverage `parallel=true`, re-trying the FastAPI bump →
@@ -367,6 +368,33 @@ in one week on the same subsystem, plus unmerged branches
 `fix/flowfile-lite-run-history-on-error`. **Rule: run-history/flow-version
 linkage is fragile — read all three merged commits and check the two
 near-duplicate branches before modifying this area.**
+
+**26. Polars 1.43.0 SQLContext-over-delta deadlock (the silent CI hang).**
+Symptom: after bumping polars 1.39.3→1.43.0 (branch
+`maintance/polars-version-bump`, PR #617, 2026-07-26), every CI job hung
+with **zero output** until the job timeout — kernel job stalled after
+`test_artifact_lineage_kernel_integration` PASSED (20 min kill), all five
+backend matrix jobs (incl. Windows/macOS, no Docker) stalled entering
+`tests/docs_examples/` (40 min kill). Root cause: on polars 1.43.0 +
+deltalake 1.6.2, `pl.SQLContext.execute("SELECT ...")` over a registered
+`pl.scan_delta(...)` frame **deadlocks in Rust while holding the GIL** —
+5-line repro, main thread, no threads/network needed; plain
+`scan_delta().collect()`/`collect_schema()` are fine. Every catalog SQL
+reader / virtual view (schema prediction via `_add_catalog_sql_reader`'s
+`SQLContext`, view materialization) freezes the whole process — new
+threads can't even bootstrap (`Thread.start()` never returns). 1.40.1 /
+1.41.2 / 1.42.1 all pass; no upstream issue existed as of 2026-07-26.
+Silence explained: the hang sites emit nothing before the wedge (fixture
+`write_delta` line / `runpy` of a docs example) and pytest-timeout (1800s)
+exceeds the CI job timeouts, so no traceback ever printed. Fix: ceiling
+`<1.43` in root + kernel_runtime (lands 1.42.1); same change also caught
+the kernel image pins in `kernel/manager.py` still at 0.5.1 after the
+0.5.2 bump (masked because CI never reached
+`test_kernel_image_pin_sync.py`). **Rule: before raising the polars
+ceiling past 1.42, run the SQLContext-over-scan_delta repro (root
+CLAUDE.md "Things to Avoid"); and treat a totally-silent CI timeout as "a
+test wedged before its first log line" — check what the *next* collected
+test would be, not the last one printed.**
 
 ---
 

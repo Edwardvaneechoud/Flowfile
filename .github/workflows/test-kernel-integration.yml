@@ -65,7 +65,10 @@ jobs:
 
       - name: Run kernel integration tests
         run: |
-          poetry run pytest flowfile_core/tests -m kernel -vv --tb=long --log-cli-level=INFO
+          # faulthandler_timeout dumps every thread's stack from a C watchdog (works even when a native
+          # call wedges while holding the GIL); --timeout kills the run when Python-level timers can fire.
+          # Both sit below the job timeout so a hang leaves stacks in the log instead of a silent job kill.
+          poetry run pytest flowfile_core/tests -m kernel -vv --tb=long --log-cli-level=INFO -o faulthandler_timeout=600 --timeout=900 --timeout-method=thread
         timeout-minutes: 20
         env:
           # Set test mode to avoid conflicts

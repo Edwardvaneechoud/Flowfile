@@ -440,7 +440,9 @@ jobs:
 
       - name: Run kernel integration tests
         run: |
-          poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings
+          # faulthandler_timeout dumps every thread's stack from a C watchdog (works even when a native
+          # call wedges while holding the GIL); --timeout kills the run when Python-level timers can fire.
+          poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings -o faulthandler_timeout=600 --timeout=900 --timeout-method=thread
 
   # Type-stub drift check — runs when flowfile_frame source changes.
   # Regenerates the .pyi stubs and fails if they don't match what's committed.
