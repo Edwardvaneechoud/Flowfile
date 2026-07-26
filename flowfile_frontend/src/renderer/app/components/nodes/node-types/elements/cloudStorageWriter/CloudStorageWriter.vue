@@ -9,6 +9,7 @@
         <CloudConnectionPicker
           v-model="selectedConnection"
           :connections="connectionInterfaces"
+          :unavailable-connection="unavailableConnection"
           :loading="connectionsAreLoading"
           @change="updateConnection"
         />
@@ -177,6 +178,10 @@ import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudC
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CloudConnectionPicker } from "../../../../common";
+import {
+  resolveConnection,
+  unavailableConnectionName,
+} from "../../../../common/CloudConnectionPicker/connectionOptions";
 
 interface Props {
   nodeId: number;
@@ -194,6 +199,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
+const unavailableConnection = ref<string | null>(null);
 
 const handleFileFormatChange = () => {
   if (nodeCloudStorageWriter.value) {
@@ -224,6 +230,7 @@ const handleFileFormatChange = () => {
 
 const updateConnection = () => {
   if (nodeCloudStorageWriter.value) {
+    unavailableConnection.value = null;
     if (!selectedConnection.value) {
       nodeCloudStorageWriter.value.cloud_storage_settings.auth_mode = "aws-cli";
       nodeCloudStorageWriter.value.cloud_storage_settings.connection_name = undefined;
@@ -236,9 +243,12 @@ const updateConnection = () => {
   }
 };
 
-const setConnectionOnConnectionName = async (connectionName: string | null) => {
-  selectedConnection.value =
-    connectionInterfaces.value.find((ci) => ci.connectionName === connectionName) || null;
+const setConnectionOnConnectionName = (connectionName: string | null) => {
+  selectedConnection.value = resolveConnection(connectionInterfaces.value, connectionName ?? "");
+  unavailableConnection.value = unavailableConnectionName(
+    connectionInterfaces.value,
+    connectionName,
+  );
 };
 
 const loadNodeData = async (nodeId: number) => {
@@ -259,13 +269,9 @@ const loadNodeData = async (nodeId: number) => {
         nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by = [];
       }
 
-      if (nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name) {
-        await setConnectionOnConnectionName(
-          nodeCloudStorageWriter.value.cloud_storage_settings.connection_name,
-        );
-      } else {
-        selectedConnection.value = null;
-      }
+      setConnectionOnConnectionName(
+        nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name ?? null,
+      );
     }
     dataLoaded.value = true;
   } catch (error) {
