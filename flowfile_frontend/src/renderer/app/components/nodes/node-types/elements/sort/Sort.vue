@@ -51,25 +51,23 @@
               </tr>
             </thead>
             <tbody>
-              <div v-if="nodeSort">
-                <tr
-                  v-for="(item, index) in nodeSort.sort_input"
-                  :key="index"
-                  @contextmenu.prevent="openRowContextMenu($event, index)"
-                >
-                  <td>{{ item.column }}</td>
-                  <td>
-                    <el-select v-model="item.how" size="small">
-                      <el-option
-                        v-for="aggOption in sortOptions"
-                        :key="aggOption"
-                        :label="aggOption"
-                        :value="aggOption"
-                      />
-                    </el-select>
-                  </td>
-                </tr>
-              </div>
+              <tr
+                v-for="(item, index) in nodeSort.sort_input"
+                :key="index"
+                @contextmenu.prevent="openRowContextMenu($event, index)"
+              >
+                <td>{{ item.column }}</td>
+                <td>
+                  <el-select v-model="item.how" size="small">
+                    <el-option
+                      v-for="aggOption in sortOptions"
+                      :key="aggOption"
+                      :label="aggOption"
+                      :value="aggOption"
+                    />
+                  </el-select>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
