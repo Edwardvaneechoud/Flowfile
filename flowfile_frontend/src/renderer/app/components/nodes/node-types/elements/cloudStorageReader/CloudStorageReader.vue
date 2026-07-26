@@ -10,8 +10,9 @@
         <CloudConnectionPicker
           v-model="selectedConnection"
           :connections="connectionInterfaces"
+          :unavailable-connection="unavailableConnection"
           :loading="connectionsAreLoading"
-          @change="resetFields"
+          @change="updateConnection"
         />
       </div>
       <!-- File Path and Scan Settings -->
@@ -159,6 +160,10 @@ import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudC
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CloudConnectionPicker } from "../../../../common";
+import {
+  resolveConnection,
+  unavailableConnectionName,
+} from "../../../../common/CloudConnectionPicker/connectionOptions";
 
 interface Props {
   nodeId: number;
@@ -175,6 +180,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
+const unavailableConnection = ref<string | null>(null);
 
 const handleFileFormatChange = () => {
   resetFields();
@@ -203,9 +209,18 @@ const handleFileFormatChange = () => {
   }
 };
 
+// Only invalidates the cached schema — must not touch the connection, or editing
+// the file path would wipe a connection the picker merely failed to resolve.
 const resetFields = () => {
   if (nodeCloudStorageReader.value) {
     nodeCloudStorageReader.value.fields = [];
+  }
+};
+
+const updateConnection = () => {
+  resetFields();
+  if (nodeCloudStorageReader.value) {
+    unavailableConnection.value = null;
     if (!selectedConnection.value) {
       nodeCloudStorageReader.value.cloud_storage_settings.auth_mode = "aws-cli";
       nodeCloudStorageReader.value.cloud_storage_settings.connection_name = undefined;
@@ -218,11 +233,12 @@ const resetFields = () => {
   }
 };
 
-const setConnectionOnConnectionName = async (connectionName: string | null) => {
-  selectedConnection.value =
-    connectionInterfaces.value.find(
-      (connectionInterface) => connectionInterface.connectionName === connectionName,
-    ) || null;
+const setConnectionOnConnectionName = (connectionName: string | null) => {
+  selectedConnection.value = resolveConnection(connectionInterfaces.value, connectionName ?? "");
+  unavailableConnection.value = unavailableConnectionName(
+    connectionInterfaces.value,
+    connectionName,
+  );
 };
 
 const loadNodeData = async (nodeId: number) => {
@@ -236,13 +252,9 @@ const loadNodeData = async (nodeId: number) => {
       nodeCloudStorageReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
-      if (nodeCloudStorageReader.value?.cloud_storage_settings.connection_name) {
-        await setConnectionOnConnectionName(
-          nodeCloudStorageReader.value.cloud_storage_settings.connection_name,
-        );
-      } else {
-        selectedConnection.value = null;
-      }
+      setConnectionOnConnectionName(
+        nodeCloudStorageReader.value?.cloud_storage_settings.connection_name ?? null,
+      );
     }
     dataLoaded.value = true;
   } catch (error) {
