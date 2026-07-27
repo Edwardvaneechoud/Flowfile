@@ -27,7 +27,10 @@ def test_blank_expression_returns_none(expression):
 def test_type_error_matches_the_runtime_message():
     issue = check_expression(SCHEMA, '[number] + "a"')
     assert issue.kind == "type"
-    assert issue.message == "arithmetic on string and numeric not allowed, try an explicit cast first"
+    assert issue.message == (
+        "arithmetic on dtypes i32 and str is not allowed "
+        "(lhs: column 'number', rhs: expression `\"a\"`); try an explicit cast first"
+    )
 
 
 def test_type_error_message_is_a_single_short_line():
