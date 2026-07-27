@@ -237,6 +237,28 @@ describe('Flow Tabs Store', () => {
       expect(flow.currentFlowName).toBe('Untitled Flow')
     })
 
+    it('prefers the right neighbour when the closed active tab has one on both sides', () => {
+      vi.stubGlobal('confirm', vi.fn(() => true))
+      const { flow, tabs, tabA, tabB, tabC } = buildTabs()
+      tabs.switchTab(tabB)
+
+      tabs.closeTabs([tabB])
+
+      expect(tabs.tabs.map((t) => t.id)).toEqual([tabA, tabC])
+      expect(tabs.activeTabId).toBe(tabC)
+      expect(flow.nodes.size).toBe(0) // C is the blank tab
+    })
+
+    it('falls back to the left neighbour when the closed active tab is last', () => {
+      const { flow, tabs, tabA, tabB, tabC } = buildTabs() // C is active and blank
+
+      tabs.closeTabs([tabC])
+
+      expect(tabs.tabs.map((t) => t.id)).toEqual([tabA, tabB])
+      expect(tabs.activeTabId).toBe(tabB)
+      expect(flow.nodes.size).toBe(1) // B's graph restored
+    })
+
     it('ignores unknown ids without touching the open tabs', () => {
       const { tabs, tabA, tabB, tabC } = buildTabs()
       tabs.closeTabs(['nope'])

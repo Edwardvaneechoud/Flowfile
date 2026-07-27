@@ -185,4 +185,52 @@ describe('Saved Flows Store', () => {
       expect(flowStore.currentFlowId).toBe('f0')
     })
   })
+
+  describe('rename write-through to open tabs', () => {
+    it('renames the inactive tab holding the flow, so open() cannot restore the old name', async () => {
+      seed(1)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+      await s.open('f0')
+      const f0TabId = tabs.activeTabId
+      tabs.newTab() // switch away so f0's tab is inactive
+
+      await s.rename('f0', 'Renamed')
+
+      expect(tabs.tabs.find((t) => t.id === f0TabId)?.name).toBe('Renamed')
+
+      const flowStore = useFlowStore()
+      expect(await s.open('f0')).toBe(true)
+      expect(tabs.activeTabId).toBe(f0TabId)
+      expect(flowStore.currentFlowName).toBe('Renamed')
+    })
+
+    it('keeps the active tab record in sync when renaming the live flow', async () => {
+      seed(1)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+      await s.open('f0')
+      const flowStore = useFlowStore()
+
+      await s.rename('f0', 'Live Rename')
+
+      expect(flowStore.currentFlowName).toBe('Live Rename')
+      expect(tabs.activeTab?.name).toBe('Live Rename')
+    })
+
+    it('leaves tabs alone when the renamed flow is not open', async () => {
+      seed(2)
+      const tabs = useFlowTabsStore()
+      tabs.init()
+      const s = useSavedFlowsStore()
+      await s.open('f0')
+      const before = tabs.tabs.map((t) => t.name)
+
+      await s.rename('f1', 'Untouched')
+
+      expect(tabs.tabs.map((t) => t.name)).toEqual(before)
+    })
+  })
 })

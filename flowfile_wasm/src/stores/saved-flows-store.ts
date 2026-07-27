@@ -98,6 +98,11 @@ export const useSavedFlowsStore = defineStore('savedFlows', () => {
     if (!entry) return
     await fileStorage.putSavedFlow({ ...entry, name: trimmed, updatedAt: Date.now() })
     const flowStore = useFlowStore()
+    const tabs = useFlowTabsStore()
+    const tab = tabs.tabs.find((t) =>
+      t.id === tabs.activeTabId ? flowStore.currentFlowId === id : t.flowId === id,
+    )
+    if (tab) tabs.renameTab(tab.id, trimmed)
     if (flowStore.currentFlowId === id) flowStore.currentFlowName = trimmed
     await refresh()
   }
