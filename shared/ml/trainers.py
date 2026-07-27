@@ -515,8 +515,17 @@ class KNNClassifierTrainer:
             pl.col("__test_pos"),
         )
 
-        combined = pl.concat([train_lf, test_features], how="vertical").with_row_index(
-            "__row_idx"
+        # The kd-tree query needs the whole feature matrix as one contiguous
+        # array, which a lazy plugin expression is not guaranteed under the
+        # streaming engine (polars >=1.40 hands it morsel-sized chunks:
+        # "chunked array is not contiguous"). Materialize the compact
+        # feature-only frame — train rows plus feature/bookkeeping columns,
+        # never the user's full-width data — and run the query eagerly.
+        combined = (
+            pl.concat([train_lf, test_features], how="vertical")
+            .collect()
+            .rechunk()
+            .with_row_index("__row_idx")
         )
 
         knn_lf = combined.with_columns(
@@ -527,9 +536,9 @@ class KNNClassifierTrainer:
                 dist=dist,
                 data_mask="__is_train",
             ).alias("__nb_idx")
-        )
+        ).lazy()
 
-        label_lookup = combined.select(
+        label_lookup = combined.lazy().select(
             pl.col("__row_idx").alias("__nb_idx"),
             pl.col("__label").alias("__nb_label"),
         )

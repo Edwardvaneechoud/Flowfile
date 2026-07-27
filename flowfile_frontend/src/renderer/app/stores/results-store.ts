@@ -6,6 +6,7 @@ import type {
   NodeResult,
   NodeValidation,
   NodeValidationInput,
+  FlowSettingsValidation,
 } from "../types";
 
 export const useResultsStore = defineStore("results", {
@@ -84,6 +85,29 @@ export const useResultsStore = defineStore("results", {
           validationTime: 0,
         }
       );
+    },
+
+    // Replaces this flow's backend-owned validation entries with the backend
+    // result: nodes absent from the response (fixed, or validation disabled)
+    // revert to valid. Client-written entries (in-drawer config checks, no
+    // source marker) are preserved.
+    applySettingsValidation(flowId: number, result: FlowSettingsValidation): void {
+      const current = this.runNodeValidations[flowId] ?? {};
+      const next: Record<number, NodeValidation> = {};
+      for (const [nodeId, validation] of Object.entries(current)) {
+        if (validation.source !== "backend") {
+          next[Number(nodeId)] = validation;
+        }
+      }
+      for (const node of result.nodes) {
+        next[node.node_id] = {
+          isValid: false,
+          error: node.issues.map((issue) => issue.message).join("\n"),
+          validationTime: Date.now() / 1000,
+          source: "backend",
+        };
+      }
+      this.runNodeValidations[flowId] = next;
     },
 
     // ========== Run Results Management ==========

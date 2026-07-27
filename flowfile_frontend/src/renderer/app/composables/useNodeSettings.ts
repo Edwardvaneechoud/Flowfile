@@ -29,12 +29,6 @@ export interface UseNodeSettingsOptions<T extends NodeBase> {
   onAfterSave?: () => void | Promise<void>;
 
   /**
-   * Optional callback to set up validation function for the node.
-   * Called after save to register the validation function with the store.
-   */
-  getValidationFunc?: () => (() => void) | undefined;
-
-  /**
    * Whether to automatically set is_setup to true before saving.
    * Defaults to true.
    */
@@ -92,7 +86,7 @@ export interface UseNodeSettingsReturn {
  * } = useNodeSettings({
  *   nodeRef: nodeFilter,
  *   onAfterSave: async () => {
- *     await validateNode();
+ *     await refreshPreview();
  *   }
  * });
  *
@@ -114,7 +108,7 @@ export interface UseNodeSettingsReturn {
 export function useNodeSettings<T extends NodeBase>(
   options: UseNodeSettingsOptions<T>,
 ): UseNodeSettingsReturn {
-  const { nodeRef, onBeforeSave, onAfterSave, getValidationFunc, autoSetIsSetup = true } = options;
+  const { nodeRef, onBeforeSave, onAfterSave, autoSetIsSetup = true } = options;
 
   const nodeStore = useNodeStore();
   const isSaving = ref(false);
@@ -147,13 +141,6 @@ export function useNodeSettings<T extends NodeBase>(
 
       if (onAfterSave) {
         await onAfterSave();
-      }
-
-      if (getValidationFunc) {
-        const validateFunc = getValidationFunc();
-        if (validateFunc && nodeRef.value) {
-          nodeStore.setNodeValidateFunc(nodeRef.value.node_id, validateFunc);
-        }
       }
 
       return true;
