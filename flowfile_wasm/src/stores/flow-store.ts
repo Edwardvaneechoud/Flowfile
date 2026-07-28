@@ -960,14 +960,16 @@ export const useFlowStore = defineStore('flow', () => {
     if (fc.kind === 'text' && node && (node.type === 'read' || node.type === 'manual_input')) {
       let hasHeaders = true
       let delimiter = ','
+      let inferTypes = true
 
       if (node.type === 'read') {
         const settings = node.settings as any
         hasHeaders = settings?.received_file?.table_settings?.has_headers ?? true
         delimiter = settings?.received_file?.table_settings?.delimiter ?? ','
+        inferTypes = settings?.received_file?.table_settings?.infer_schema ?? true
       }
 
-      const schema = inferSchemaFromCsv(fc.data, hasHeaders, delimiter)
+      const schema = inferSchemaFromCsv(fc.data, hasHeaders, delimiter, inferTypes)
       if (schema) {
         // Set schema for source node (success undefined = not yet executed, shows grey)
         nodeResults.value.set(nodeId, { schema })
@@ -1576,7 +1578,8 @@ result
     const s = node.settings as any
     const hasHeaders = s?.received_file?.table_settings?.has_headers ?? s?.manual_input?.has_headers ?? true
     const delimiter = s?.received_file?.table_settings?.delimiter ?? s?.manual_input?.delimiter ?? ','
-    return inferSchemaFromCsv(content.data, hasHeaders, delimiter)
+    const inferTypes = s?.received_file?.table_settings?.infer_schema ?? true
+    return inferSchemaFromCsv(content.data, hasHeaders, delimiter, inferTypes)
   }
 
   /**
@@ -2543,6 +2546,7 @@ result
               has_headers: true,
               encoding: 'utf-8',
               starting_from_line: 0,
+              infer_schema: true,
               infer_schema_length: 100,
               truncate_ragged_lines: false,
               ignore_errors: false

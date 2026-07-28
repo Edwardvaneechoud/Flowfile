@@ -8,10 +8,25 @@
         :class="{ active: tab.id === tabsStore.activeTabId }"
         :title="tabLabel(tab)"
         @click="tabsStore.switchTab(tab.id)"
-        @dblclick="promptRename(tab.id)"
+        @dblclick="startRename(tab.id)"
+        @contextmenu.prevent="openTabMenu($event, tab.id)"
       >
         <span class="flow-tab__dot" :class="{ filled: tabsStore.tabHasContent(tab) }"></span>
-        <span class="flow-tab__name">{{ tabLabel(tab) }}</span>
+        <!-- keydown.stop: Canvas's window shortcuts (Ctrl+V pastes nodes) must not fire mid-rename -->
+        <input
+          v-if="renamingTabId === tab.id"
+          :ref="setRenameInput"
+          v-model="renameValue"
+          class="flow-tab__rename"
+          @keydown.stop
+          @keydown.enter.prevent="commitRename"
+          @keydown.escape="cancelRename"
+          @blur="commitRename"
+          @click.stop
+          @dblclick.stop
+          @contextmenu.stop
+        />
+        <span v-else class="flow-tab__name">{{ tabLabel(tab) }}</span>
         <button
           class="flow-tab__close"
           title="Close flow"
@@ -24,13 +39,25 @@
     <button class="flow-tabs__new" title="New flow tab" @click="tabsStore.newTab()">
       <span class="material-icons">add</span>
     </button>
+
+    <Teleport to="body">
+      <ContextMenu
+        v-if="tabMenu"
+        :position="{ x: tabMenu.x, y: tabMenu.y }"
+        :options="tabMenuOptionsComputed"
+        @select="onTabMenuSelect"
+        @close="tabMenu = null"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { useFlowTabsStore, type FlowTab } from '../stores/flow-tabs-store'
 import { useFlowStore } from '../stores/flow-store'
+import ContextMenu from './common/ContextMenu.vue'
+import { computeCloseTargets, tabMenuOptions, type TabCloseAction } from '../utils/flowTabActions'
 
 const tabsStore = useFlowTabsStore()
 const flowStore = useFlowStore()
@@ -41,10 +68,82 @@ function tabLabel(tab: FlowTab): string {
   return tab.id === tabsStore.activeTabId ? flowStore.currentFlowName : tab.name
 }
 
-function promptRename(id: string): void {
-  const current = id === tabsStore.activeTabId ? flowStore.currentFlowName : (tabsStore.tabs.find((t) => t.id === id)?.name ?? '')
-  const name = window.prompt('Rename flow:', current)
-  if (name !== null) tabsStore.renameTab(id, name)
+function labelFor(id: string): string {
+  if (id === tabsStore.activeTabId) return flowStore.currentFlowName
+  return tabsStore.tabs.find((t) => t.id === id)?.name ?? ''
+}
+
+// Inline rename
+const renamingTabId = ref<string | null>(null)
+const renameValue = ref('')
+const renameSeed = ref('')
+const renameInput = ref<HTMLInputElement | null>(null)
+// Function ref: only one rename input exists at a time, capture it directly.
+const setRenameInput = (el: unknown) => {
+  renameInput.value = (el as HTMLInputElement) ?? null
+}
+
+function startRename(id: string): void {
+  renameSeed.value = labelFor(id)
+  renameValue.value = renameSeed.value
+  renamingTabId.value = id
+  nextTick(() => {
+    renameInput.value?.focus()
+    renameInput.value?.select()
+  })
+}
+
+function commitRename(): void {
+  // Cleared first: Enter unmounts the input, whose blur re-enters this handler.
+  if (renamingTabId.value === null) return
+  const id = renamingTabId.value
+  renamingTabId.value = null
+  const trimmed = renameValue.value.trim()
+  if (!trimmed || trimmed === renameSeed.value) return
+  tabsStore.renameTab(id, trimmed)
+}
+
+function cancelRename(): void {
+  renamingTabId.value = null
+}
+
+// Tab context menu
+const tabMenu = ref<{ tabId: string; x: number; y: number } | null>(null)
+
+function openTabMenu(event: MouseEvent, tabId: string): void {
+  tabMenu.value = {
+    tabId,
+    // The menu doesn't self-clamp; keep it on-screen for right-edge tabs.
+    x: Math.min(event.clientX, window.innerWidth - 200),
+    y: event.clientY
+  }
+}
+
+const tabMenuOptionsComputed = computed(() =>
+  tabMenu.value
+    ? tabMenuOptions(
+        tabsStore.tabs.map((t) => t.id),
+        tabMenu.value.tabId
+      )
+    : []
+)
+
+function onTabMenuSelect(action: string): void {
+  const target = tabMenu.value?.tabId
+  if (!target) return
+  if (action === 'rename') {
+    startRename(target)
+  } else if (action === 'close') {
+    tabsStore.closeTab(target)
+  } else {
+    tabsStore.closeTabs(
+      computeCloseTargets(
+        tabsStore.tabs.map((t) => t.id),
+        target,
+        action as TabCloseAction
+      )
+    )
+  }
 }
 
 onMounted(() => {
@@ -122,6 +221,20 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.flow-tab__rename {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--border-radius-sm);
+  padding: 1px 4px;
+  outline: none;
 }
 
 .flow-tab__close {

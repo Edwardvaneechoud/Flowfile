@@ -246,16 +246,43 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
 
   /** Close a tab. If it was active, switch to a neighbour (or seed a blank one). */
   function closeTab(id: string): void {
-    const idx = tabs.value.findIndex((t) => t.id === id)
-    if (idx === -1) return
+    closeTabs([id])
+  }
 
-    const tab = tabs.value[idx]
-    if (tabHasContent(tab) && !window.confirm(`Close "${tab.name}"? Unsaved changes will be lost.`)) {
-      return
+  /**
+   * Close several tabs at once (context-menu bulk actions). One confirm covers
+   * every affected tab that has content; unknown ids are ignored. Closing every
+   * tab seeds a fresh blank one — there is always at least one open flow.
+   */
+  function closeTabs(ids: string[]): void {
+    const remove = new Set(ids)
+    const targets = tabs.value.filter((t) => remove.has(t.id))
+    if (targets.length === 0) return
+
+    const withContent = targets.filter((t) => tabHasContent(t))
+    if (withContent.length > 0) {
+      const names = withContent.map((t) => `"${t.name}"`)
+      const message =
+        names.length === 1
+          ? `Close ${names[0]}? Unsaved changes will be lost.`
+          : `Close ${names.length} flows (${names.join(', ')})? Unsaved changes will be lost.`
+      if (!window.confirm(message)) return
     }
 
-    const wasActive = id === activeTabId.value
-    tabs.value.splice(idx, 1)
+    const closingActive = remove.has(activeTabId.value)
+    let next: FlowTab | null = null
+    if (closingActive) {
+      // Same neighbour preference as a single close: right first, else left.
+      const activeIdx = tabs.value.findIndex((t) => t.id === activeTabId.value)
+      for (let i = activeIdx + 1; i < tabs.value.length && !next; i++) {
+        if (!remove.has(tabs.value[i].id)) next = tabs.value[i]
+      }
+      for (let i = activeIdx - 1; i >= 0 && !next; i--) {
+        if (!remove.has(tabs.value[i].id)) next = tabs.value[i]
+      }
+    }
+
+    tabs.value = tabs.value.filter((t) => !remove.has(t.id))
 
     if (tabs.value.length === 0) {
       // Always keep at least one open flow.
@@ -266,8 +293,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
       const newId = genId()
       tabs.value.push({ id: newId, name, flowId: snap.flowId, snapshot: snap.snapshot, fileContents: {}, nodeIdCounter: snap.nodeIdCounter })
       activeTabId.value = newId
-    } else if (wasActive) {
-      const next = tabs.value[Math.min(idx, tabs.value.length - 1)]
+    } else if (closingActive && next) {
       activeTabId.value = next.id
       flowStore.loadFromSnapshot({
         name: next.name,
@@ -322,6 +348,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     openWith,
     openFile,
     closeTab,
+    closeTabs,
     renameTab,
     syncActiveName,
     syncActiveIdentity

@@ -409,6 +409,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 import DraggableItem from './common/DraggableItem/DraggableItem.vue'
 import { useItemStore } from './common/DraggableItem/stateStore'
 import { Z_INDEX } from './common/DraggableItem/zIndex'
+import { useStaleModifierGuard } from '../composables/useStaleModifierGuard'
 import FlowNode from './nodes/FlowNode.vue'
 import DeletableEdge from './DeletableEdge.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
@@ -490,13 +491,14 @@ const toolbarRef = ref<HTMLElement | null>(null)
 // so a stale mount-time offset would otherwise never self-correct.)
 const toolbarHeight = ref(props.showToolbar ? 52 : 0)
 
-// Live height of the canvas container, tracked by a ResizeObserver (see onMounted).
-// Drives the default tiled heights so the right Settings drawer and the bottom
-// Table dock dock without overlapping — DraggableItem reads these once on first
-// open (and on Reset Layout); the user resizes freely from there.
+// Live height of the canvas container, from the item store's shared container
+// measurement (registered in onMounted). Drives the default tiled heights so
+// the right Settings drawer and the bottom Table dock tile without overlapping;
+// these are reactive DEFAULTS — once the user commits an explicit size, intent
+// wins. Falls back to the window while the container is unmeasured (first frame).
 const canvasContainerRef = ref<HTMLElement | null>(null)
-let containerResizeObserver: ResizeObserver | null = null
-const availableHeight = ref(window.innerHeight)
+let unregisterContainer: (() => void) | null = null
+const availableHeight = computed(() => itemStore.containerBounds.height || window.innerHeight)
 const tablePreviewHeight = computed(() =>
   Math.max(160, Math.floor((availableHeight.value - toolbarHeight.value) * 0.3)),
 )
@@ -504,6 +506,8 @@ const settingsPanelHeight = computed(() =>
   Math.max(220, availableHeight.value - toolbarHeight.value - tablePreviewHeight.value),
 )
 const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut } = useVueFlow()
+
+useStaleModifierGuard()
 
 // Canvas (pane) right-click menu state.
 const paneMenuVisible = ref(false)
@@ -1337,9 +1341,7 @@ function handleClearFlow() {
 }
 
 function handleResetLayout() {
-  // Clears saved geometry, restores each panel's registered initial state, and
-  // dispatches `layout-reset` so mounted DraggableItems re-apply their sticky
-  // positions.
+  // Clears saved intent records; panels re-derive their rects from defaults.
   itemStore.resetLayout()
 }
 
@@ -1414,16 +1416,11 @@ onMounted(async () => {
     toolbarHeight.value = 0
   }
 
-  // Track the canvas container height so the default tiled panel heights stay
-  // in sync with the real region (handles embedded/resized editors), not a
-  // stale window.innerHeight snapshot.
+  // Single shared container measurement for every overlay panel (and the
+  // derived tiled heights above) — panels derive their rects from it instead
+  // of each observing their own offsetParent.
   if (canvasContainerRef.value) {
-    availableHeight.value = canvasContainerRef.value.clientHeight
-    containerResizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (entry) availableHeight.value = entry.contentRect.height
-    })
-    containerResizeObserver.observe(canvasContainerRef.value)
+    unregisterContainer = itemStore.registerContainer(canvasContainerRef.value)
   }
 })
 
@@ -1432,8 +1429,8 @@ onUnmounted(() => {
   window.removeEventListener('click', handlePaneMenuClickOutside)
   cancelEdgeLeave()
   uiStore.clearActions()
-  containerResizeObserver?.disconnect()
-  containerResizeObserver = null
+  unregisterContainer?.()
+  unregisterContainer = null
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)
   }
