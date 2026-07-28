@@ -298,7 +298,7 @@ const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
-const { recordFlowFromSettings, refreshCatalogRefs } = useRecentFlows();
+const { recordFlow, recordFlowFromSettings, refreshCatalogRefs, removeFlow } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -428,8 +428,9 @@ const openDialogRef = ref<{
   close: () => void;
 } | null>(null);
 
-const handleSaveDialogComplete = (flowId: number) => {
+const handleSaveDialogComplete = async (flowId: number) => {
   modalVisibleForSave.value = false;
+  const previousPath = flowSettings.value?.path ?? null;
   if (flowId && flowId !== nodeStore.flow_id) {
     // "Save As" produced a new flow identity — switch to it
     nodeStore.setFlowId(flowId);
@@ -438,11 +439,27 @@ const handleSaveDialogComplete = (flowId: number) => {
     emit("flowSaved", flowId);
   }
   projectStore.onSourceChanged();
+  tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
   // A catalog save adds/updates a registration; refresh the cached listing so
   // the Catalog view and recents reflect it without a manual reload.
-  catalogStore.loadAllFlows();
-  refreshCatalogRefs();
-  tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
+  await catalogStore.loadAllFlows();
+  await recordRelocatedFlowAsRecent(previousPath);
+  await refreshCatalogRefs();
+};
+
+// Save As / save-to-catalog move the flow, and recents are keyed by path.
+const recordRelocatedFlowAsRecent = async (previousPath: string | null) => {
+  await loadFlowSettings();
+  const newPath = flowSettings.value?.path;
+  if (!newPath) return;
+  // Label from the registration: flow_settings.name is the on-disk stem after a save.
+  const registration = catalogStore.allFlows.find((f) => f.flow_path === newPath);
+  recordFlow({ path: newPath, name: registration?.name, catalogId: registration?.id });
+  if (!previousPath || previousPath === newPath) return;
+  // Prune only when the backend removed the old file (it unlinks scratch flows on
+  // Save As). A regular Save As is a copy, so the original still opens.
+  const previous = catalogStore.allFlows.find((f) => f.flow_path === previousPath);
+  if (previous && previous.file_exists === false) removeFlow(previousPath);
 };
 
 function handleOpenFromDialog(payload: {

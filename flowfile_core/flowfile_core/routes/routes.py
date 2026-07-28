@@ -60,6 +60,8 @@ from flowfile_core.flowfile.catalog_helpers import (
     namespace_exists,
     register_flow_in_namespace,
     require_flow_save_permitted,
+    resolve_display_name,
+    resolve_display_names,
     resolve_source_registration_id,
     sync_api_compatibility,
 )
@@ -262,16 +264,7 @@ async def get_active_flow_file_sessions(
     sessions = [
         flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)
     ]
-    paths = {s.path or s.save_location for s in sessions if s.path or s.save_location}
-    if paths:
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            name_by_path = {p: reg.name for p in paths if (reg := repo.get_flow_by_path(p)) is not None}
-        for s in sessions:
-            p = s.path or s.save_location
-            if p and p in name_by_path:
-                s.display_name = name_by_path[p]
-    return sessions
+    return _with_display_names(sessions)
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
@@ -290,6 +283,27 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
     return JSONResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
+
+
+def _with_display_name(settings: schemas.FlowSettingsResponse) -> schemas.FlowSettingsResponse:
+    """Overlay the catalog display name onto a single flow's settings.
+
+    Every route handing ``FlowSettingsResponse`` to the UI goes through here (or its
+    batch sibling) so the tab pill, the save dialog and the session list can never
+    disagree about what a flow is called.
+    """
+    settings.display_name = resolve_display_name(settings.path or settings.save_location)
+    return settings
+
+
+def _with_display_names(
+    sessions: list[schemas.FlowSettingsResponse],
+) -> list[schemas.FlowSettingsResponse]:
+    """Batch variant of :func:`_with_display_name` — one query for the whole listing."""
+    names = resolve_display_names(s.path or s.save_location for s in sessions)
+    for s in sessions:
+        s.display_name = names.get(s.path or s.save_location)
+    return sessions
 
 
 def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
@@ -1137,8 +1151,10 @@ def rename_flow(
                 pass
     # Only after catalog success, so a 403/409 leaves the session name untouched.
     flow.flow_settings.name = name
-    response = flow_file_handler.get_flow_info_with_runtime(body.flow_id)
+    response = _with_display_name(flow_file_handler.get_flow_info_with_runtime(body.flow_id))
     if renamed_registration:
+        # Prefer the write we just made: a by-path lookup misses when the
+        # registration's flow_path has drifted from the session's path.
         response.display_name = name
     return response
 
@@ -1861,15 +1877,6 @@ def save_flow_to_catalog(
     # may neither write the target namespace nor manage a flow already at the path.
     _require_flow_save_permitted(flow_path=None, namespace_id=namespace_id, current_user=current_user)
 
-    filename = f"{int(flow_id)}_{safe_stem}.yaml"
-    flow_path = resolve_managed_flow_path(filename)
-
-    current_path = flow.flow_settings.path or flow.flow_settings.save_location
-    normalized_current = validate_path_under_cwd(current_path) if current_path else None
-    is_new_path = bool(normalized_current) and flow_path != normalized_current
-
-    # Overwrite guard: if the resolved target file is already registered to a
-    # different flow, or exists on disk without any registration, refuse.
     source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
 
     # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
@@ -1900,6 +1907,21 @@ def save_flow_to_catalog(
         except Exception as err:
             raise name_conflict from err
 
+    if existing_by_name is not None and existing_by_name.id == source_registration_id:
+        # Re-saving under the name this flow already carries: overwrite in place.
+        # Re-deriving the filename would target a new path (Save-As mints a fresh
+        # flow_id) and collide with this flow's own registration.
+        flow_path = validate_path_under_cwd(existing_by_name.flow_path)
+        _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    else:
+        flow_path = resolve_managed_flow_path(f"{int(flow_id)}_{safe_stem}.yaml")
+
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+    is_new_path = bool(normalized_current) and flow_path != normalized_current
+
+    # Overwrite guard: if the resolved target file is already registered to a
+    # different flow, or exists on disk without any registration, refuse.
     existing_reg = find_registration_by_path(flow_path)
     if existing_reg is not None and existing_reg.id != source_registration_id:
         raise HTTPException(
@@ -2076,7 +2098,7 @@ def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettingsResponse:
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
-    return flow_file_handler.get_flow_info_with_runtime(flow_id)
+    return _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
 
 
 @router.post("/flow_settings", tags=["manager"])

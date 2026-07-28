@@ -436,6 +436,149 @@ def test_rename_flow_collision_with_sibling_409():
             db.commit()
 
 
+def test_flow_settings_exposes_catalog_display_name():
+    """The catalog registration is the naming authority, so every settings read exposes it.
+
+    Regression: only /active_flowfile_sessions/ resolved display_name, so the save
+    dialog (which reads /editor/flow) fell back to the file stem and re-registered
+    the flow under its pre-rename name.
+    """
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "disp_name_src.yaml")
+    remove_flow(src_path)
+    ns = _ensure_namespace("NsDisplayName")
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    expected_file = storage.flows_directory / f"{flow_id}_disp_before.yaml"
+    if expected_file.exists():
+        expected_file.unlink()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "disp_before", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        flow_id = resp.json()
+
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "disp_after"})
+        assert r.status_code == 200, r.text
+
+        editor = client.get("editor/flow", params={"flow_id": flow_id}).json()
+        assert editor["display_name"] == "disp_after"
+        manager = client.get("/flow_settings", params={"flow_id": flow_id}).json()
+        assert manager["display_name"] == "disp_after"
+    finally:
+        remove_flow(src_path)
+        if expected_file.exists():
+            expected_file.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected_file)).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_flow_settings_display_name_none_for_unregistered_flow():
+    """An unregistered scratch flow has no catalog name to resolve."""
+    flow_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    try:
+        settings = client.get("editor/flow", params={"flow_id": flow_id}).json()
+        assert settings["display_name"] is None
+    finally:
+        client.post("/editor/close_flow/", params={"flow_id": flow_id})
+
+
+def test_silent_save_of_opened_flow_preserves_rename():
+    """Saving a flow opened from disk must not revert a rename to the file stem.
+
+    Uses /import_flow/ rather than create_flow because only an opened flow has an
+    unset save_location, which is what makes save_flow reach its back-fill branch.
+    Display-name exposure is covered separately, by a test that owns its own catalog
+    registration — auto-registration on import depends on the default namespace.
+    """
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "reopen_rename_src.yaml")
+    remove_flow(src_path)
+
+    created_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    client.post("/editor/close_flow/", params={"flow_id": created_id})
+    try:
+        flow_id = client.get("/import_flow/", params={"flow_path": src_path}).json()
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow.flow_settings.save_location is None, "Precondition: opened flows have no save_location"
+
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "renamed_after_open"})
+        assert r.status_code == 200, r.text
+
+        save = client.post("/save_flow", params={"flow_id": flow_id})
+        assert save.status_code == 200, save.text
+
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow.flow_settings.name == "renamed_after_open", "Save reverted the rename to the file stem"
+        assert flow.flow_settings.save_location, "Save should still back-fill save_location"
+    finally:
+        remove_flow(src_path)
+
+
+def test_catalog_resave_under_own_name_is_idempotent():
+    """Saving an already-registered flow to the catalog under its own name overwrites in place.
+
+    Regression: the target filename was always re-derived as ``{flow_id}_{stem}.yaml``,
+    which resolves to a new path after a Save-As minted a fresh flow_id — so the
+    re-save wrote a YAML and then 409'd on its own registration's name, leaving an
+    orphan file behind.
+    """
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "resave_src.yaml")
+    remove_flow(src_path)
+    ns = _ensure_namespace("NsResaveIdempotent")
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    expected_file = storage.flows_directory / f"{flow_id}_resave_flow.yaml"
+    if expected_file.exists():
+        expected_file.unlink()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "resave_flow", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        flow_id = resp.json()
+
+        again = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "resave_flow", "namespace_id": ns["id"]},
+        )
+        assert again.status_code == 200, again.text
+        assert again.json() == flow_id, "A re-save under the same name must not mint a new flow id"
+
+        with get_db_context() as db:
+            regs = (
+                db.query(FlowRegistration)
+                .filter(FlowRegistration.name == "resave_flow", FlowRegistration.namespace_id == ns["id"])
+                .all()
+            )
+            assert len(regs) == 1, "Re-save must not create a second registration"
+            assert regs[0].flow_path == str(expected_file)
+        second_file = storage.flows_directory / f"{flow_id}_resave_flow.yaml"
+        if second_file != expected_file:
+            assert not second_file.exists(), "Re-save must not leave an orphan file"
+    finally:
+        remove_flow(src_path)
+        for p in (expected_file, storage.flows_directory / f"{flow_id}_resave_flow.yaml"):
+            if p.exists():
+                p.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.name == "resave_flow").delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
 def test_add_node():
     flow_id = ensure_clean_flow()
     response = client.post(

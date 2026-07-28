@@ -81,6 +81,12 @@
             </button>
           </div>
           <div v-else>
+            <p v-if="treeSearchFilter.query && searchMatchCount === 0" class="search-empty">
+              No matches for "{{ searchQuery.trim() }}".
+              <template v-if="hiddenUnavailableMatches > 0">
+                Tick "Show unavailable" — the only matches are items whose files are missing.
+              </template>
+            </p>
             <CatalogTreeNode
               v-for="node in catalogStore.tree"
               :key="node.id"
@@ -545,6 +551,9 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { useFlowOpener } from "../../composables/useFlowOpener";
+import { useRecentFlows } from "../../composables/useRecentFlows";
+import { countMatches, normalizeQuery } from "./catalogTreeFilter";
+import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
@@ -568,6 +577,7 @@ const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
 const { openFlow } = useFlowOpener();
+const { renameFlow: renameRecentFlow, refreshCatalogRefs } = useRecentFlows();
 
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
@@ -600,6 +610,24 @@ const isCommunityTab = computed(() => (catalogStore.activeTab as string) === "co
 // Search and filter state
 const searchQuery = ref("");
 const showUnavailable = ref(false);
+
+const treeSearchFilter = computed(() => ({
+  query: normalizeQuery(searchQuery.value),
+  showUnavailable: showUnavailable.value,
+}));
+const { resetSearchOverrides } = useCatalogTreeExpansion();
+watch(() => treeSearchFilter.value.query, resetSearchOverrides);
+
+const searchMatchCount = computed(() =>
+  treeSearchFilter.value.query ? countMatches(catalogStore.tree, treeSearchFilter.value) : 0,
+);
+// Only nudge toward "Show unavailable" when it would actually reveal something.
+const hiddenUnavailableMatches = computed(() => {
+  if (!treeSearchFilter.value.query || showUnavailable.value || searchMatchCount.value > 0) {
+    return 0;
+  }
+  return countMatches(catalogStore.tree, { ...treeSearchFilter.value, showUnavailable: true });
+});
 
 // Client-side filter for the Favorites tab (fully-loaded list).
 const favoritesSearch = ref("");
@@ -1132,7 +1160,10 @@ async function handleDeleteFlow(flowId: number) {
 
 async function handleRenameFlow(flowId: number, newName: string) {
   try {
-    await CatalogApi.updateFlow(flowId, { name: newName });
+    const updated = await CatalogApi.updateFlow(flowId, { name: newName });
+    // Recents are keyed by path and the rename doesn't move the file.
+    if (updated?.flow_path) renameRecentFlow(updated.flow_path, updated.name);
+    void refreshCatalogRefs();
     await Promise.all([
       catalogStore.loadTree(),
       catalogStore.loadAllFlows(),
@@ -2122,6 +2153,14 @@ onUnmounted(() => {
 .search-input:focus {
   outline: none;
   border-color: var(--color-primary);
+}
+
+.search-empty {
+  margin: 0 0 var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
 }
 
 .unavailable-toggle {

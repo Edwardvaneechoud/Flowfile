@@ -131,7 +131,7 @@
                     class="fa-solid fa-folder-tree recent-icon recent-icon--catalog"
                   ></i>
                   <span v-else class="material-icons recent-icon">description</span>
-                  <span class="recent-name">{{ displayName(flow) }}</span>
+                  <span class="recent-name">{{ recentDisplayName(flow) }}</span>
                   <span v-if="flow.catalogRef" class="recent-catalog-ref">
                     {{ flow.catalogRef }}
                   </span>
@@ -142,7 +142,7 @@
                   <button
                     class="recent-remove"
                     type="button"
-                    :aria-label="`Remove ${displayName(flow)} from recents`"
+                    :aria-label="`Remove ${recentDisplayName(flow)} from recents`"
                     title="Remove from recents"
                     @click.stop="emit('remove-recent', flow.path)"
                     @keydown.enter.stop="emit('remove-recent', flow.path)"
@@ -261,7 +261,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 import { desktop, isDesktop } from "../../../lib/desktop";
-import type { RecentFlow } from "../../composables/useRecentFlows";
+import { recentDisplayName, type RecentFlow } from "../../composables/useRecentFlows";
 import type { FlowSettings } from "../../types";
 import { useTutorialStore } from "../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../components/tutorial/tutorials";
@@ -316,14 +316,6 @@ const viewInCatalog = (flow: RecentFlow) => {
   if (flow.catalogId === undefined) return;
   router.push({ name: "catalog", query: { tab: "catalog", flowId: String(flow.catalogId) } });
 };
-
-const KNOWN_FLOW_EXTS = /\.(ya?ml|flowfile)$/i;
-
-// Display-only; never mutates the stored entry. Catalog names have no extension
-// and pass through unchanged.
-function displayName(flow: RecentFlow): string {
-  return flow.name.replace(KNOWN_FLOW_EXTS, "");
-}
 
 // Parent directory only (e.g. "unnamed_flows") — the orientation the chip shows
 // in place of the full path, which now lives in the row tooltip.

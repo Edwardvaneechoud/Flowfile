@@ -45,7 +45,7 @@
                 class="fa-solid fa-folder-tree recent-icon recent-icon--catalog"
               ></i>
               <span v-else class="material-icons recent-icon">description</span>
-              <span class="recent-name">{{ flow.name }}</span>
+              <span class="recent-name">{{ recentDisplayName(flow) }}</span>
               <span v-if="flow.catalogRef" class="recent-sub recent-sub--catalog">
                 {{ flow.catalogRef }}
               </span>
@@ -62,7 +62,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { useRecentFlows, type RecentFlow } from "../../composables/useRecentFlows";
+import {
+  recentDisplayName,
+  useRecentFlows,
+  type RecentFlow,
+} from "../../composables/useRecentFlows";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 
 const emit = defineEmits<{
