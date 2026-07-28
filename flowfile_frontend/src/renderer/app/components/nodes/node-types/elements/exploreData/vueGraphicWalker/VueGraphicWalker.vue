@@ -21,6 +21,8 @@ interface VueGWProps {
   defaultTab?: "data" | "vis";
   /** Server-side compute callback; when set, GW aggregates through this instead of in-browser `data`. */
   computation?: (payload: any) => Promise<IRow[]>;
+  /** Hide GW's chart-tab bar so the surface is a single chart. */
+  hideChartNav?: boolean;
 }
 
 const props = defineProps<VueGWProps>();
@@ -56,6 +58,7 @@ const getReactProps = () => {
     storeRef: internalStoreRef.value,
     hideProfiling: true,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
+    ...(props.hideChartNav && { hideChartNav: true }),
   };
 
   if (usingComputation) {
