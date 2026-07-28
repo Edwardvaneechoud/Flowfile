@@ -1,10 +1,11 @@
 /**
  * DraggableItem component tests.
  *
- * Guards the initial-offset resolution: a docked panel given initialTop=0 (e.g.
- * docking flush to the container top when the app toolbar is hidden) must stay
- * at top 0 and not be coerced to the 100 "unset" default — while an unset
- * offset must still fall back to 100.
+ * Guards the initial-offset resolution across the intent-store rework: a docked
+ * panel given initialTop=0 (e.g. docking flush to the container top when the
+ * app toolbar is hidden) must render at top 0 and not be coerced to the
+ * free-panel 100 default — while a free panel with no initialTop must still
+ * fall back to 100.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -14,8 +15,6 @@ import { nextTick } from 'vue'
 import DraggableItem from '../../src/components/common/DraggableItem/DraggableItem.vue'
 import { useItemStore } from '../../src/components/common/DraggableItem/stateStore'
 
-// onMounted registers state, then applyStickyPosition runs on nextTick; give it
-// a couple of ticks to settle.
 const settle = async () => {
   await nextTick()
   await nextTick()
@@ -31,9 +30,10 @@ describe('DraggableItem component', () => {
     vi.restoreAllMocks()
   })
 
-  it('docks at top:0 when initialTop is 0 (does not coerce a real 0 to the 100 default)', async () => {
+  it('renders at top:0 when initialTop is 0 (does not coerce a real 0 to the 100 default)', async () => {
     const store = useItemStore()
-    mount(DraggableItem, {
+    store.containerBounds = { width: 1200, height: 800 }
+    const wrapper = mount(DraggableItem, {
       props: {
         id: 'panel-zero-top',
         showRight: true,
@@ -47,12 +47,14 @@ describe('DraggableItem component', () => {
     })
     await settle()
 
-    expect(store.items['panel-zero-top'].top).toBe(0)
+    expect(store.panelConfigs['panel-zero-top'].v.defaultOffset).toBe(0)
+    expect((wrapper.element as HTMLElement).style.top).toBe('0px')
   })
 
-  it('falls back to the 100 default when initialTop is unset', async () => {
+  it('falls back to the 100 default when initialTop is unset on a free panel', async () => {
     const store = useItemStore()
-    mount(DraggableItem, {
+    store.containerBounds = { width: 1200, height: 800 }
+    const wrapper = mount(DraggableItem, {
       props: {
         id: 'panel-free',
         initialPosition: 'free',
@@ -63,6 +65,7 @@ describe('DraggableItem component', () => {
     })
     await settle()
 
-    expect(store.items['panel-free'].top).toBe(100)
+    expect(store.panelConfigs['panel-free'].v.defaultOffset).toBe(100)
+    expect((wrapper.element as HTMLElement).style.top).toBe('100px')
   })
 })

@@ -72,9 +72,21 @@ export const useSavedFlowsStore = defineStore('savedFlows', () => {
     }
   }
 
-  /** Open a saved flow in a new designer tab. */
+  /** Open a saved flow in a new designer tab. If the flow is already open in a
+   *  tab, focus that tab instead (live unsaved edits win; duplicate() gives a
+   *  fresh copy). Returns true so callers still navigate to the designer. */
   async function open(id: string): Promise<boolean> {
     const tabs = useFlowTabsStore()
+    const flowStore = useFlowStore()
+    // The active tab's stashed flowId can be stale (demo/share import replaces
+    // the live flow without syncing the record) — match it on live identity.
+    const existing = tabs.tabs.find((t) =>
+      t.id === tabs.activeTabId ? flowStore.currentFlowId === id : t.flowId === id,
+    )
+    if (existing) {
+      tabs.switchTab(existing.id)
+      return true
+    }
     return tabs.openWith(() => loadInto(id))
   }
 
@@ -86,6 +98,11 @@ export const useSavedFlowsStore = defineStore('savedFlows', () => {
     if (!entry) return
     await fileStorage.putSavedFlow({ ...entry, name: trimmed, updatedAt: Date.now() })
     const flowStore = useFlowStore()
+    const tabs = useFlowTabsStore()
+    const tab = tabs.tabs.find((t) =>
+      t.id === tabs.activeTabId ? flowStore.currentFlowId === id : t.flowId === id,
+    )
+    if (tab) tabs.renameTab(tab.id, trimmed)
     if (flowStore.currentFlowId === id) flowStore.currentFlowName = trimmed
     await refresh()
   }
