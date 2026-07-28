@@ -9,7 +9,7 @@ from flowfile_worker.external_sources.sql_source.models import (
     DatabaseWriteSettings,
 )
 from flowfile_worker.flow_logger import get_worker_logger
-from shared.db_reader import read_sql_with_fallback
+from shared.db_dialects import get_dialect_or_generic, read_sql
 from shared.db_writer import write_dataframe_to_database
 
 # Default ports per database type for the pre-flight connectivity check.
@@ -30,12 +30,13 @@ def verify_database_reachable(connection: DataBaseConnection, timeout: float = 3
 
     connectorx/r2d2 retries a refused or unreachable connection for ~30s before
     giving up; a short TCP pre-check surfaces the failure immediately. Best-effort:
-    skips file-based (sqlite) and url-based connections where host/port is unknown.
+    skips file-based (sqlite, duckdb) and url-based connections where host/port is unknown.
     """
-    if connection.url or connection.database_type.lower() == "sqlite":
+    dialect = get_dialect_or_generic(connection.database_type)
+    if connection.url or dialect.file_based:
         return
     host = connection.host
-    port = connection.port or _DEFAULT_DB_PORTS.get(connection.database_type.lower())
+    port = connection.port or dialect.default_port or _DEFAULT_DB_PORTS.get(connection.database_type.lower())
     if not host or not port:
         return
     try:
@@ -93,6 +94,9 @@ def read_sql_source(database_read_settings: DatabaseReadSettings):
         database_read_settings.flowfile_flow_id, database_read_settings.flowfile_node_id
     )
     verify_database_reachable(database_read_settings.connection)
-    return read_sql_with_fallback(
-        database_read_settings.query, database_read_settings.connection.create_uri(), logger
+    return read_sql(
+        database_read_settings.query,
+        database_read_settings.connection.create_uri(),
+        logger,
+        database_type=database_read_settings.connection.database_type,
     )

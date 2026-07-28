@@ -2,19 +2,19 @@
 Shared SQL URI construction and conversion utilities.
 
 Used by both flowfile_core and flowfile_worker to avoid duplicating
-URI-building logic across services.
+URI-building logic across services. Per-dialect behavior lives in
+``shared.db_dialects``; this module is the stable entry point.
 """
 
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote_plus
+
+from shared.db_dialects import POSTGRES_FAMILY, get_dialect_or_generic, iter_dialects
 
 logger = logging.getLogger(__name__)
 
-# Database types speaking the postgres wire protocol, where libpq-style
-# sslmode/connect_timeout query params are valid (pymysql rejects unknown params).
-POSTGRES_FAMILY = {"postgresql", "postgres", "redshift"}
+__all__ = ["POSTGRES_FAMILY", "SQLALCHEMY_DRIVER_MAP", "construct_sql_uri", "get_sqlalchemy_uri"]
 
 
 def construct_sql_uri(
@@ -53,58 +53,22 @@ def construct_sql_uri(
     if url:
         return url
 
-    if database_type.lower() == "sqlite":
-        path = database or host or "./database.db"
-        # Strip sqlite:/// prefix if the full URI was passed as the path
-        if path.startswith("sqlite:///"):
-            path = path[len("sqlite:///"):]
-        return f"sqlite:///{path}"
-
-    if not host:
-        raise ValueError("Host is required to create a URI")
-
-    credentials = ""
-    if username:
-        credentials = username
-        if password:
-            encoded_password = quote_plus(password)
-            credentials += f":{encoded_password}"
-        credentials += "@"
-
-    port_section = f":{port}" if port else ""
-
-    if database:
-        base_uri = f"{database_type}://{credentials}{host}{port_section}/{database}"
-    else:
-        base_uri = f"{database_type}://{credentials}{host}{port_section}"
-
-    query_params: dict[str, str] = {}
-    if database_type.lower() in POSTGRES_FAMILY:
-        if ssl_enabled:
-            query_params["sslmode"] = "require"
-        if connect_timeout is not None:
-            query_params["connect_timeout"] = str(connect_timeout)
-    elif ssl_enabled:
-        logger.warning(
-            "ssl_enabled was requested but database_type %r is not in the postgres family; "
-            "no SSL parameter was applied and the connection may be unencrypted.",
-            database_type,
-        )
-    query_params.update(kwargs)
-
-    if query_params:
-        sep = "&" if "?" in base_uri else "?"
-        params = "&".join(f"{key}={quote_plus(str(value))}" for key, value in query_params.items())
-        base_uri += f"{sep}{params}"
-
-    return base_uri
+    return get_dialect_or_generic(database_type).build_uri(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        database=database,
+        ssl_enabled=ssl_enabled,
+        connect_timeout=connect_timeout,
+        **kwargs,
+    )
 
 
 # Mapping from base database URI schemes to SQLAlchemy-compatible schemes with driver suffixes.
 # connectorx uses base schemes (e.g. mysql://) while SQLAlchemy needs driver-specific schemes.
-SQLALCHEMY_DRIVER_MAP = {
-    "mysql": "mysql+pymysql",
-}
+# Built from the dialect registry; kept as a module constant for backward compatibility.
+SQLALCHEMY_DRIVER_MAP = {d.name: d.sqlalchemy_driver for d in iter_dialects() if d.sqlalchemy_driver}
 
 
 def get_sqlalchemy_uri(uri: str) -> str:

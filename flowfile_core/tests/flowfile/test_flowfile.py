@@ -1609,6 +1609,100 @@ def test_database_writer_sqlite_local_runs_without_worker(sqlite_db, monkeypatch
     assert len(written_df) == 3, f'Expected 3 rows written, got {len(written_df)}'
 
 
+def test_add_database_reader_duckdb(duckdb_db, execution_location):
+    graph = create_graph(execution_location=execution_location)
+    add_node_promise_on_type(graph, 'database_reader', 1)
+    database_connection = input_schema.DatabaseConnection(database_type='duckdb',
+                                                          password_ref="",
+                                                          database=duckdb_db)
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      table_name='movies')
+    node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_reader(node_database_reader)
+    node = graph.get_node(1)
+    assert node.name == 'database_reader', 'Node name should be database_reader'
+    predicted_schema = node.get_predicted_schema()
+    assert len(predicted_schema) == 6, f'Expected 6 columns in the schema, got {len(predicted_schema)}'
+    schema_by_name = {c.column_name: c.data_type for c in predicted_schema}
+    assert schema_by_name['rating'] != 'String', 'DuckDB fast schema must predict real types before any run'
+    predicted_lf = node.get_predicted_resulting_data()
+    assert len(predicted_lf.collect()) == 0, 'Should be able to predict data frame without actually getting any data'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+def test_add_database_writer_duckdb(duckdb_db, execution_location):
+    graph = create_graph(execution_location=execution_location)
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_node_promise_on_type(graph, 'database_writer', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    database_connection = input_schema.DatabaseConnection(database_type='duckdb',
+                                                          password_ref="",
+                                                          database=duckdb_db)
+    database_write_settings = input_schema.DatabaseWriteSettings(
+        database_connection=database_connection,
+        table_name='test_write_table',
+        connection_mode='inline',
+        if_exists='replace',
+    )
+    graph.add_database_writer(input_schema.NodeDatabaseWriter(
+        database_write_settings=database_write_settings, node_id=2, flow_id=1, user_id=1))
+    node = graph.get_node(2)
+    assert node.name == 'database_writer', 'Node name should be database_writer'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+
+    import duckdb
+    con = duckdb.connect(duckdb_db, read_only=True)
+    try:
+        written_df = con.execute("SELECT * FROM test_write_table").pl()
+    finally:
+        con.close()
+    assert len(written_df) == 3, f'Expected 3 rows written, got {len(written_df)}'
+    assert 'name' in written_df.columns, 'Written table should have a name column'
+
+
+def test_database_writer_duckdb_local_runs_without_worker(duckdb_db, monkeypatch):
+    """Local execution must write in-process and never offload to the worker (scheduled/CLI path)."""
+    import flowfile_core.flowfile.flow_graph as flow_graph_module
+
+    def _no_worker(*args, **kwargs):
+        raise AssertionError("local database write must not call the worker")
+
+    monkeypatch.setattr(flow_graph_module, "ExternalDatabaseWriter", _no_worker)
+
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_node_promise_on_type(graph, 'database_writer', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    database_connection = input_schema.DatabaseConnection(database_type='duckdb', password_ref="",
+                                                          database=duckdb_db)
+    database_write_settings = input_schema.DatabaseWriteSettings(
+        database_connection=database_connection,
+        table_name='local_write_table',
+        connection_mode='inline',
+        if_exists='replace',
+    )
+    graph.add_database_writer(input_schema.NodeDatabaseWriter(
+        database_write_settings=database_write_settings, node_id=2, flow_id=1, user_id=1))
+
+    run_info = graph.run_graph()
+    assert run_info.success, 'Local duckdb write should succeed without a worker'
+    import duckdb
+    con = duckdb.connect(duckdb_db, read_only=True)
+    try:
+        written_df = con.execute("SELECT * FROM local_write_table").pl()
+    finally:
+        con.close()
+    assert len(written_df) == 3, f'Expected 3 rows written, got {len(written_df)}'
+
+
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_reader_from_stored_database(execution_location):

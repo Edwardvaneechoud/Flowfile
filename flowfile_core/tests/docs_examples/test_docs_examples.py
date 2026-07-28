@@ -79,6 +79,7 @@ def _kafka_available() -> bool:
 
 INTEGRATION_GATES = {
     "database_read": _postgres_available,
+    "database_read_duckdb": lambda: True,  # in-process, no backing service
     "database_transform_write": _postgres_available,
     "cloud_storage_s3": _minio_available,
     "kafka_read": _kafka_available,

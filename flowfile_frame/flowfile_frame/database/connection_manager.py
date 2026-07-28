@@ -4,8 +4,6 @@ This module provides functions for managing database connections,
 similar to how cloud_storage/secret_manager.py handles cloud storage connections.
 """
 
-from typing import Literal
-
 from pydantic import SecretStr
 
 from flowfile_core.database.connection import get_db_context
@@ -18,6 +16,7 @@ from flowfile_core.schemas.input_schema import (
     FullDatabaseConnection,
     FullDatabaseConnectionInterface,
 )
+from shared.db_dialects import KNOWN_DIALECT_NAMES
 
 
 def get_current_user_id() -> int:
@@ -33,7 +32,7 @@ def get_current_user_id() -> int:
 def create_database_connection(
     connection_name: str,
     *,
-    database_type: Literal["postgresql", "mysql", "sqlite", "mssql", "oracle"] = "postgresql",
+    database_type: str = "postgresql",
     host: str | None = None,
     port: int | None = None,
     database: str | None = None,
@@ -46,7 +45,8 @@ def create_database_connection(
 
     Args:
         connection_name: Unique name for this connection.
-        database_type: Type of database (postgresql, mysql, sqlite, mssql, oracle).
+        database_type: Type of database (one of shared.db_dialects.KNOWN_DIALECT_NAMES,
+            e.g. postgresql, mysql, sqlite).
         host: Database server hostname.
         port: Database server port.
         database: Database name.
@@ -59,8 +59,13 @@ def create_database_connection(
         FullDatabaseConnection: The created connection object.
 
     Raises:
-        ValueError: If a connection with this name already exists.
+        ValueError: If a connection with this name already exists, or the
+            database_type is not a supported dialect.
     """
+    if database_type.lower() not in KNOWN_DIALECT_NAMES:
+        raise ValueError(
+            f"Unsupported database type '{database_type}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}"
+        )
     user_id = get_current_user_id()
 
     if isinstance(password, str):
@@ -87,7 +92,7 @@ def create_database_connection(
 def create_database_connection_if_not_exists(
     connection_name: str,
     *,
-    database_type: Literal["postgresql", "mysql", "sqlite", "mssql", "oracle"] = "postgresql",
+    database_type: str = "postgresql",
     host: str | None = None,
     port: int | None = None,
     database: str | None = None,
@@ -100,7 +105,8 @@ def create_database_connection_if_not_exists(
 
     Args:
         connection_name: Unique name for this connection.
-        database_type: Type of database (postgresql, mysql, sqlite, mssql, oracle).
+        database_type: Type of database (one of shared.db_dialects.KNOWN_DIALECT_NAMES,
+            e.g. postgresql, mysql, sqlite).
         host: Database server hostname.
         port: Database server port.
         database: Database name.

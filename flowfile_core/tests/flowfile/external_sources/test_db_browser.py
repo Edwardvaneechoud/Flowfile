@@ -95,3 +95,40 @@ class TestCreateEngineFromDbSettings:
         assert "movies" in tables
         assert "actors" in tables
         engine.dispose()
+
+
+class TestListDbHelpers:
+    """Direct coverage of the list_db_schemas/list_db_tables helpers backing /db_schemas and /db_tables."""
+
+    @staticmethod
+    def _settings(sqlite_db, schema_name=None):
+        from flowfile_core.schemas.input_schema import DatabaseConnection, DatabaseSettings
+
+        return DatabaseSettings(
+            connection_mode="inline",
+            database_connection=DatabaseConnection(database_type="sqlite", database=f"sqlite:///{sqlite_db}"),
+            query_mode="table",
+            schema_name=schema_name,
+        )
+
+    def test_list_db_schemas(self, sqlite_db):
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import list_db_schemas
+
+        schemas = list_db_schemas(self._settings(sqlite_db), user_id=1)
+        assert schemas == sorted(schemas)
+        assert "main" in schemas
+
+    def test_list_db_tables_with_schema_returns_plain_names(self, sqlite_db):
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import list_db_tables
+
+        tables = list_db_tables(self._settings(sqlite_db, schema_name="main"), user_id=1)
+        assert "movies" in tables
+        assert "actors" in tables
+
+    def test_list_db_tables_without_schema_returns_qualified_names(self, sqlite_db):
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import list_db_tables
+
+        tables = list_db_tables(self._settings(sqlite_db), user_id=1)
+        assert tables == sorted(tables)
+        assert "main.movies" in tables
+        assert "main.actors" in tables

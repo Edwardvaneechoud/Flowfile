@@ -94,8 +94,9 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
     resolve_auth_secret_encrypted,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
-    create_engine_from_db_settings,
     create_sql_source_from_db_settings,
+    list_db_schemas,
+    list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.routes._connection_sharing import (
@@ -111,6 +112,7 @@ from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
+from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog
 from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -700,6 +702,20 @@ def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConne
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
+@router.get("/db_dialects", tags=["db_connections"], response_model=list[DialectInfo])
+def get_db_dialects() -> list[DialectInfo]:
+    """Returns the supported database dialects (drives the frontend's dialect dropdowns)."""
+    return dialect_catalog()
+
+
+def _require_known_database_type(database_type: str) -> None:
+    if database_type.lower() not in KNOWN_DIALECT_NAMES:
+        raise HTTPException(
+            422,
+            f"Unsupported database type '{database_type}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}",
+        )
+
+
 @router.post("/db_connection_lib", tags=["db_connections"])
 def create_db_connection(
     input_connection: input_schema.FullDatabaseConnection,
@@ -708,6 +724,7 @@ def create_db_connection(
 ):
     """Creates and securely stores a new database connection."""
     logger.info(f"Creating database connection {input_connection.connection_name}")
+    _require_known_database_type(input_connection.database_type)
     try:
         store_database_connection(db, input_connection, current_user.id)
     except ValueError:
@@ -729,6 +746,10 @@ def update_db_connection(
     db_connection = get_database_connection(db, input_connection.connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
+    # Only gate a CHANGED type: legacy rows may hold pre-registry values (e.g. redshift)
+    # and must stay updatable (password rotation) as long as the type is untouched.
+    if input_connection.database_type != db_connection.database_type:
+        _require_known_database_type(input_connection.database_type)
     if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
         changed = changed_target_fields(
             db_connection, input_connection, ("host", "port", "database", "database_type", "ssl_enabled")
@@ -2325,13 +2346,7 @@ async def get_db_schemas(
 ) -> list[str]:
     """Returns available schema names for the given database connection."""
     try:
-        engine = create_engine_from_db_settings(database_settings, user_id=current_user.id)
-        from sqlalchemy import inspect as sa_inspect
-
-        inspector = sa_inspect(engine)
-        schemas = sorted(inspector.get_schema_names())
-        engine.dispose()
-        return schemas
+        return list_db_schemas(database_settings, user_id=current_user.id)
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -2347,29 +2362,7 @@ async def get_db_tables(
     accessible schemas (skipping any that the user cannot read).
     """
     try:
-        engine = create_engine_from_db_settings(database_settings, user_id=current_user.id)
-        from sqlalchemy import inspect as sa_inspect
-
-        inspector = sa_inspect(engine)
-        schema = database_settings.schema_name if database_settings.schema_name else None
-
-        if schema:
-            tables = sorted(inspector.get_table_names(schema=schema))
-        else:
-            tables = []
-            for s in inspector.get_schema_names():
-                if s == "information_schema":
-                    continue
-                try:
-                    schema_tables = inspector.get_table_names(schema=s)
-                except Exception:
-                    # Skip schemas we don't have access to (e.g. performance_schema)
-                    continue
-                for t in schema_tables:
-                    tables.append(f"{s}.{t}")
-            tables.sort()
-        engine.dispose()
-        return tables
+        return list_db_tables(database_settings, user_id=current_user.id)
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 

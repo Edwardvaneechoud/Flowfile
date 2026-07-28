@@ -919,13 +919,22 @@ class NodeRead(NodeBase):
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 
-    database_type: Literal["sqlite", "postgresql", "mysql"] = "postgresql"
+    database_type: str = "postgresql"
     username: str | None = None
     password_ref: SecretRef | None = None
     host: str | None = None
     port: int | None = None
     database: str | None = None
     url: str | None = None
+
+    @field_validator("database_type")
+    @classmethod
+    def known_database_type(cls, v: str) -> str:
+        from shared.db_dialects import KNOWN_DIALECT_NAMES
+
+        if v.lower() not in KNOWN_DIALECT_NAMES:
+            raise ValueError(f"Unsupported database type '{v}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}")
+        return v
 
     @field_validator("password_ref", mode="before")
     @classmethod
