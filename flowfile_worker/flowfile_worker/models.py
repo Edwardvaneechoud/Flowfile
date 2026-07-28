@@ -341,10 +341,6 @@ class ResolveVirtualTableRequest(BaseModel):
     source_versions_hash: str
     # "kernel_shared" writes into the kernel-mounted shared volume so Docker kernels can scan the result.
     target: Literal["virtual_results", "kernel_shared"] = "virtual_results"
-    # Overrides the "fvt-{table_id}" filename stem for callers that aren't catalog
-    # tables (flow-node visualizations). Charset-restricted: the worker builds a
-    # filesystem path from it and must not trust the core caller.
-    cache_key: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class ResolveVirtualTableResponse(BaseModel):
@@ -361,7 +357,7 @@ class VizWorkerSource(BaseModel):
     requests against the same source skip the load step.
     """
 
-    kind: Literal["physical", "sql", "ipc_path"]
+    kind: Literal["physical", "sql", "ipc_path", "plan"]
     session_key: str
     table_path: str | None = None  # bare directory name for kind="physical"
     sql_query: str | None = None
@@ -369,6 +365,9 @@ class VizWorkerSource(BaseModel):
     virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")
     ipc_path: str | None = None  # bare filename under catalog_virtual_results_directory
     mtime: float | None = None  # cache file mtime; used in session-key contract
+    # Serialized pl.LazyFrame for kind="plan" (flow nodes): the child scans the
+    # node's own sources per query rather than materialising them first.
+    plan_bytes: Base64Bytes | None = None
 
 
 class VisualizeQueryRequest(BaseModel):

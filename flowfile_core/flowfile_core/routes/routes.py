@@ -278,8 +278,18 @@ async def get_active_flow_file_sessions(
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
-async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: BackgroundTasks):
-    """Fetches and refreshes the data for a specific node."""
+async def trigger_fetch_node_data(
+    flow_id: int,
+    node_id: int,
+    background_tasks: BackgroundTasks,
+    performance_mode: bool = False,
+):
+    """Fetches and refreshes the data for a specific node.
+
+    ``performance_mode=true`` builds the node's query plan without storing its
+    result — enough for the Explore Data drawer, which charts through the worker
+    and never reads the example rows the default (preview) path materialises.
+    """
     flow = flow_file_handler.get_flow(flow_id)
     lock = get_flow_run_lock(flow_id)
     async with lock:
@@ -289,7 +299,12 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
             flow.validate_if_node_can_be_fetched(node_id)
         except Exception as e:
             raise HTTPException(422, str(e)) from e
-        background_tasks.add_task(flow.trigger_fetch_node, node_id)
+        background_tasks.add_task(
+            flow.trigger_fetch_node,
+            node_id,
+            performance_mode=performance_mode,
+            reset_cache=not performance_mode,
+        )
     return JSONResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
@@ -2237,6 +2252,8 @@ def compute_node_visualization(body: gs_schemas.NodeVisualizationComputeRequest)
         return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
     except node_viz.NodeNotRunError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except node_viz.CloudPlanNotVisualizableError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
 
@@ -2249,6 +2266,8 @@ def get_node_visualization_fields(body: gs_schemas.NodeVisualizationFieldsReques
         return node_viz.get_node_fields(flow, node)
     except node_viz.NodeNotRunError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except node_viz.CloudPlanNotVisualizableError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
 

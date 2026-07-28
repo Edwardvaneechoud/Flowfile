@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import sys
+from base64 import b64encode
 import threading
 import time
 from typing import Any
@@ -764,80 +765,80 @@ def test_visualize_query_degenerate_column_bins_without_error(tmp_path):
 _ = REQUEST_QUEUE_MAXSIZE
 
 
-# ---- Flow-node source materialisation (cache_key) ---------------------------
+# ---- Flow-node sources: a serialised plan, scanned live ---------------------
 
 
-def _node_resolve_request(plan_bytes: bytes, versions_hash: str, cache_key: str | None):
-    return models.ResolveVirtualTableRequest(
-        table_id=7,
-        plan_bytes=plan_bytes,
-        source_versions_hash=versions_hash,
-        cache_key=cache_key,
+@pytest.mark.worker
+def test_visualize_query_endpoint_plan(tmp_path):
+    """A flow node ships its plan; the child scans the source per query.
+
+    Nothing is materialised — the whole point of `kind="plan"` is that Polars
+    pushes each chart's projection into the node's own sources.
+    """
+    _setup_storage(tmp_path)
+    viz_session_registry.evict_all()
+
+    src = tmp_path / "node_source.parquet"
+    pl.DataFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).write_parquet(str(src))
+    plan_bytes = pl.scan_parquet(str(src)).serialize()
+
+    client = TestClient(main.app)
+    r = client.post(
+        "/catalog/visualize_query",
+        json={
+            "source": {
+                "kind": "plan",
+                "session_key": "test:plan:1",
+                "plan_bytes": b64encode(plan_bytes).decode("ascii"),
+            },
+            "payload": _AGG_PAYLOAD,
+        },
     )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] is None
+    assert {row["category"]: row["value_sum"] for row in body["rows"]} == {"a": 4, "b": 2}
+
+    # No file was written anywhere on the way.
+    assert list(storage.catalog_virtual_results_directory.glob("*.arrow")) == []
 
 
 @pytest.mark.worker
-def test_resolve_virtual_table_cache_key_names_and_reuses(tmp_path):
-    """A cache_key replaces the fvt- stem; an identical request reuses the file."""
-    from flowfile_worker import funcs
-
+def test_visualize_plan_session_is_reused(tmp_path):
+    """Successive chart queries on one plan must hit the same warm child."""
     _setup_storage(tmp_path)
-    plan = pl.LazyFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).serialize()
+    viz_session_registry.evict_all()
 
-    first = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-12"))
-    assert first.ipc_path == "node-3-12-aaaaaaaaaaaaaaaa.arrow"
-    assert first.row_count == 3
+    src = tmp_path / "node_source_reuse.parquet"
+    pl.DataFrame({"category": ["a", "b"], "value": [1, 2]}).write_parquet(str(src))
+    body = {
+        "source": {
+            "kind": "plan",
+            "session_key": "test:plan:reuse",
+            "plan_bytes": b64encode(pl.scan_parquet(str(src)).serialize()).decode("ascii"),
+        },
+        "payload": _AGG_PAYLOAD,
+    }
 
-    written = storage.catalog_virtual_results_directory / first.ipc_path
-    marker = written.stat().st_mtime_ns
-
-    second = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-12"))
-    assert second.ipc_path == first.ipc_path
-    assert written.stat().st_mtime_ns == marker, "identical request must not re-materialise"
-
-    # A new run token yields a new versions hash, hence a new file and session key.
-    third = funcs.resolve_virtual_table(_node_resolve_request(plan, "b" * 32, "node-3-12"))
-    assert third.ipc_path == "node-3-12-bbbbbbbbbbbbbbbb.arrow"
-    assert third.ipc_path != first.ipc_path
+    client = TestClient(main.app)
+    first = client.post("/catalog/visualize_query", json=body)
+    second = client.post("/catalog/visualize_query", json=body)
+    assert first.status_code == 200 and second.status_code == 200, second.text
+    assert first.json()["cache_hit"] is False
+    assert second.json()["cache_hit"] is True, "same session_key must reuse the child"
 
 
 @pytest.mark.worker
-def test_resolve_virtual_table_cache_key_prunes_superseded(tmp_path, monkeypatch):
-    """Node snapshots are per-run, so old ones must not accumulate forever."""
-    from flowfile_worker import funcs
-
+def test_visualize_plan_requires_plan_bytes(tmp_path):
     _setup_storage(tmp_path)
-    monkeypatch.setattr(funcs, "_SUPERSEDED_MIN_AGE_S", -1)  # everything counts as old
-    plan = pl.LazyFrame({"value": [1, 2, 3]}).serialize()
+    viz_session_registry.evict_all()
 
-    old = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-12"))
-    other_node = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-99"))
-    new = funcs.resolve_virtual_table(_node_resolve_request(plan, "c" * 32, "node-3-12"))
-
-    results_dir = storage.catalog_virtual_results_directory
-    assert not (results_dir / old.ipc_path).exists(), "superseded snapshot should be swept"
-    assert (results_dir / new.ipc_path).exists()
-    assert (results_dir / other_node.ipc_path).exists(), "a different node must not be swept"
-
-
-@pytest.mark.worker
-def test_resolve_virtual_table_without_cache_key_keeps_fvt_naming(tmp_path):
-    """The catalog path is untouched: no cache_key still means fvt-{table_id}-."""
-    from flowfile_worker import funcs
-
-    _setup_storage(tmp_path)
-    plan = pl.LazyFrame({"value": [1]}).serialize()
-    resolved = funcs.resolve_virtual_table(_node_resolve_request(plan, "d" * 32, None))
-    assert resolved.ipc_path == "fvt-7-dddddddddddddddd.arrow"
-
-
-@pytest.mark.worker
-def test_resolve_virtual_table_rejects_path_traversal_cache_key():
-    """The worker builds a path from cache_key, so it must not trust the caller."""
-    import pydantic
-
-    for bad in ("../escape", "node/3/12", "node-3-12.arrow", "a" * 65, ""):
-        with pytest.raises(pydantic.ValidationError):
-            models.ResolveVirtualTableRequest(
-                table_id=7, plan_bytes=b"x", source_versions_hash="a" * 32, cache_key=bad
-            )
+    client = TestClient(main.app)
+    r = client.post(
+        "/catalog/visualize_query",
+        json={
+            "source": {"kind": "plan", "session_key": "test:plan:empty"},
+            "payload": _AGG_PAYLOAD,
+        },
+    )
+    assert r.status_code >= 400 or r.json().get("error")

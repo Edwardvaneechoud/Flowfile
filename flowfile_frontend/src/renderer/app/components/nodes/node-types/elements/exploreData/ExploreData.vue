@@ -137,7 +137,7 @@ const handleFetchData = async () => {
   fetchAttempted.value = true;
   status.value = "fetching";
   try {
-    await triggerNodeFetch(nodeId, { focusResultPanels: false });
+    await triggerNodeFetch(nodeId, { focusResultPanels: false, performanceMode: true });
   } catch {
     // triggerNodeFetch already surfaced the backend detail as a notification.
     status.value = "not-run";

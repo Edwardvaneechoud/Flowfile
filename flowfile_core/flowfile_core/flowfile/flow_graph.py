@@ -5305,8 +5305,21 @@ class FlowGraph:
         with self._run_claim_lock:
             self.flow_settings.is_running = False
 
-    def trigger_fetch_node(self, node_id: int) -> RunInformation | None:
-        """Executes a specific node in the graph by its ID."""
+    def trigger_fetch_node(
+        self,
+        node_id: int,
+        *,
+        performance_mode: bool = False,
+        reset_cache: bool = True,
+    ) -> RunInformation | None:
+        """Executes a specific node in the graph by its ID.
+
+        The defaults are the data-preview contract: a non-performance run, so the
+        node stores its result and can serve the 100-row example grid. Callers
+        that only need the node's query plan (the Explore Data drawer) pass
+        ``performance_mode=True``, which skips that store entirely, and
+        ``reset_cache=False`` so exploring doesn't evict a useful cache.
+        """
         if not self.try_claim_run():
             raise Exception("Flow is already running")
         flow_node = self.get_node(node_id)
@@ -5324,10 +5337,10 @@ class FlowGraph:
             self.latest_run_info.node_step_result.append(node_result)
             flow_node.execute_node(
                 run_location=self.flow_settings.execution_location,
-                performance_mode=False,
+                performance_mode=performance_mode,
                 node_logger=node_logger,
                 optimize_for_downstream=False,
-                reset_cache=True,
+                reset_cache=reset_cache,
             )
             node_result.error = str(flow_node.results.errors)
             if self.flow_settings.is_canceled:

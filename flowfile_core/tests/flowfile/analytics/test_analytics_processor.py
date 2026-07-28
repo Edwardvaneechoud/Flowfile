@@ -579,3 +579,47 @@ def test_readiness_signal_holds_in_every_execution_mode(execution_mode, executio
     assert has_result_to_visualize(graph.get_node(2)), (
         f'{execution_mode}/{execution_location} left the explorer gated after a successful run'
     )
+
+
+def _worker_cache_files(flow) -> set:
+    """Cache files for this flow. The dir is shared across runs, so compare deltas."""
+    from shared.storage_config import storage
+    return set((storage.cache_directory / str(flow.flow_id)).glob("*.arrow"))
+
+
+def test_fetch_in_performance_mode_stores_nothing():
+    """The Explore drawer's fetch must not materialise the node.
+
+    The default (preview) fetch stores the whole result so the 100-row example
+    grid has something to read. The chart builder charts through the worker and
+    never reads those rows, so it pays that cost for nothing — on a 294 MB
+    Parquet source the store was 4.9 GB.
+    """
+    graph = create_graph()
+    graph.flow_settings.execution_location = "remote"
+    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    before = _worker_cache_files(graph)
+    graph.trigger_fetch_node(2, performance_mode=True, reset_cache=False)
+
+    node = graph.get_node(2)
+    assert has_result_to_visualize(node), 'the plan must still be built, so the drawer opens'
+    assert _worker_cache_files(graph) - before == set(), 'a performance-mode fetch must write no IPC'
+
+
+def test_default_fetch_still_stores_for_the_preview_grid():
+    """Regression guard: the data-preview contract is unchanged."""
+    graph = create_graph()
+    graph.flow_settings.execution_location = "remote"
+    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    before = _worker_cache_files(graph)
+    graph.trigger_fetch_node(2)
+
+    node = graph.get_node(2)
+    assert node.results.example_data_generator is not None, 'the preview grid needs example rows'
+    assert _worker_cache_files(graph) - before, 'the default fetch must still store the result'

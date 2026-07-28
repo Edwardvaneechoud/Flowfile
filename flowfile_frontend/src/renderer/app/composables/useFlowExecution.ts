@@ -329,11 +329,18 @@ export function useFlowExecution(
     }
   };
 
-  const triggerNodeFetch = async (nodeId: number, opts: { focusResultPanels?: boolean } = {}) => {
+  const triggerNodeFetch = async (
+    nodeId: number,
+    opts: { focusResultPanels?: boolean; performanceMode?: boolean } = {},
+  ) => {
     const pollingKeySuffix = `node_${nodeId}`;
     // Fetches driven from a panel (Data tab, Explore Data) opt out so that
     // panel keeps focus; canvas "Run node" keeps the default (show logs).
     const focusResultPanels = opts.focusResultPanels ?? true;
+    // Explore Data charts through the worker and never reads the example rows,
+    // so it skips storing the node's result — which on a large source is the
+    // whole cost of the fetch.
+    const performanceMode = opts.performanceMode ?? false;
 
     if (isPollingActive(pollingKeySuffix)) {
       console.log(`Node ${nodeId} fetch already in progress`);
@@ -359,6 +366,7 @@ export function useFlowExecution(
         params: {
           flow_id: getFlowId(),
           node_id: nodeId,
+          performance_mode: performanceMode,
         },
         headers: { accept: "application/json" },
       });

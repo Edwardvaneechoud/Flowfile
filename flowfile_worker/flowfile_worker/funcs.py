@@ -1113,14 +1113,19 @@ def generic_task(
 
 
 def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Queue) -> None:
-    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC."""
+    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC.
+
+    Streaming keeps the child from holding the whole frame at once, and lz4 keeps
+    the snapshot near the source's size — write_ipc defaults to uncompressed, and
+    dictionary-encoded Parquet strings expand many-fold when written out raw.
+    """
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
-        df = lf.collect()
+        df = lf.collect(engine="streaming")
         target = Path(target_path)
         # Unique tmp per child: concurrent same-key rebuilds must not share one.
         tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-        df.write_ipc(str(tmp))
+        df.write_ipc(str(tmp), compression="lz4")
         os.replace(str(tmp), str(target))
         queue.put({"name": target.name, "mtime": target.stat().st_mtime, "row_count": int(df.height)})
     except Exception as exc:
@@ -1130,10 +1135,10 @@ def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Que
 _SUPERSEDED_MIN_AGE_S = 3600
 
 
-def _drop_superseded_results(target_dir: Path, stem: str, keep: str) -> None:
-    """Drop old snapshots sharing a stem, sparing recent ones a concurrent request may still scan."""
+def _drop_superseded_results(target_dir: Path, table_id: int, keep: str) -> None:
+    """Drop old kernel_shared snapshots of a table, sparing recent ones a concurrent request may still scan."""
     cutoff = time.time() - _SUPERSEDED_MIN_AGE_S
-    for stale in target_dir.glob(f"{stem}-*.arrow"):
+    for stale in target_dir.glob(f"fvt-{table_id}-*.arrow"):
         try:
             if stale.name != keep and stale.stat().st_mtime < cutoff:
                 stale.unlink()
@@ -1144,26 +1149,20 @@ def _drop_superseded_results(target_dir: Path, stem: str, keep: str) -> None:
 def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
     """Materialise a virtual flow table to disk.
 
-    The default target is an idempotent cache on (stem, source_versions_hash),
-    where the stem is ``fvt-{table_id}`` or a caller-supplied ``cache_key``.
+    The default target is an idempotent cache on (table_id, source_versions_hash).
     The kernel_shared target always rebuilds: a serialised plan records table
     paths, not data snapshots, so its hash does not change when the underlying
     data does — an exists() check would serve the first snapshot forever.
-
-    Callers that pass a ``cache_key`` fold a per-run token into the versions
-    hash rather than being content-addressed, so their snapshots are swept on
-    every request; otherwise each flow run would leave a result file behind.
     """
     if req.target == "kernel_shared":
         target_dir = storage.shared_virtual_results_directory
     else:
         target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
-    stem = req.cache_key or f"fvt-{req.table_id}"
-    target = target_dir / f"{stem}-{req.source_versions_hash[:16]}.arrow"
-    if req.target == "kernel_shared" or req.cache_key is not None:
-        _drop_superseded_results(target_dir, stem, keep=target.name)
-    if req.target != "kernel_shared" and target.exists():
+    target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
+    if req.target == "kernel_shared":
+        _drop_superseded_results(target_dir, req.table_id, keep=target.name)
+    elif target.exists():
         return models.ResolveVirtualTableResponse(
             ipc_path=target.name,
             mtime=target.stat().st_mtime,

@@ -3,11 +3,17 @@
 Mirrors `test_catalog_visualizations.py`'s dispatch tests: the worker is patched
 out, and what is asserted is the source descriptor core emits.
 """
+import io
+from base64 import b64decode
 from unittest.mock import patch
 
+import polars as pl
 import pytest
 
 from flowfile_core.flowfile.analytics import node_viz
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
+    subprocess_operations as subprocess_operations_module,
+)
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.schemas import input_schema
@@ -40,15 +46,6 @@ def fake_worker():
     """Capture what core ships to the worker instead of calling it."""
     captured = {}
 
-    def fake_resolve(table_id, plan_bytes, source_versions_hash, target="virtual_results", cache_key=None):
-        captured["resolve"] = {
-            "table_id": table_id,
-            "hash": source_versions_hash,
-            "cache_key": cache_key,
-            "plan_len": len(plan_bytes),
-        }
-        return {"ipc_path": f"{cache_key}-{source_versions_hash[:16]}.arrow", "mtime": 1234.5, "row_count": 50}
-
     def fake_query(worker_source, payload, max_rows):
         captured["source"] = worker_source
         captured["payload"] = payload
@@ -60,53 +57,85 @@ def fake_worker():
         return {"fields": [{"fid": "g"}], "cache_hit": False}
 
     with (
-        patch.object(node_viz, "trigger_resolve_virtual_table", side_effect=fake_resolve),
         patch.object(node_viz, "trigger_visualize_query", side_effect=fake_query),
         patch.object(node_viz, "trigger_visualize_fields", side_effect=fake_fields),
+        patch.object(subprocess_operations_module, "trigger_resolve_virtual_table") as resolve_mock,
     ):
+        captured["_resolve_mock"] = resolve_mock
         yield captured
 
 
-def test_compute_emits_an_ipc_path_source(fake_worker):
+def test_compute_ships_the_plan_and_never_materialises(fake_worker):
+    """The regression this path was rewritten for: no IPC file, ever.
+
+    Materialising a node's result cost 4.9 GB of uncompressed Arrow for a 294 MB
+    Parquet source, to answer queries Polars serves off the Parquet in ~0.04 s.
+    """
     graph, node = _run_explore_flow()
 
     resp = node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=1000)
 
     assert resp.error is None
     source = fake_worker["source"]
-    assert source["kind"] == "ipc_path"
-    # Keyed on the versions hash, not the file mtime — mtime is second-resolution.
-    assert source["session_key"] == f"node:{graph.flow_id}:2:{fake_worker['resolve']['hash'][:16]}"
-    assert source["ipc_path"].startswith("node-1-2-")
-    assert fake_worker["resolve"]["cache_key"] == "node-1-2"
-    assert fake_worker["resolve"]["plan_len"] > 0, "core must ship a serialised plan, not data"
+    assert source["kind"] == "plan"
+    assert "ipc_path" not in source and "mtime" not in source
+    assert fake_worker["_resolve_mock"].call_count == 0, "node viz must never materialise to IPC"
     assert fake_worker["payload"] is _AGG_PAYLOAD, "the GW payload is passed through opaquely"
+
+    # The plan must round-trip back into a LazyFrame the worker child can hold.
+    restored = pl.LazyFrame.deserialize(io.BytesIO(b64decode(source["plan_bytes"])))
+    assert restored.collect_schema().names() == node.get_resulting_data().columns
 
 
 def test_fields_uses_the_same_source(fake_worker):
     graph, node = _run_explore_flow()
 
     node_viz.get_node_fields(graph, node)
+    fields_key = fake_worker["fields_source"]["session_key"]
+    node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
 
-    assert fake_worker["fields_source"]["kind"] == "ipc_path"
-    assert fake_worker["fields_source"]["session_key"].startswith(f"node:{graph.flow_id}:2:")
+    assert fake_worker["fields_source"]["kind"] == "plan"
+    assert fake_worker["source"]["session_key"] == fields_key, "fields and compute share one child"
 
 
-def test_rerunning_the_flow_invalidates_the_materialised_file(fake_worker):
+def test_session_key_is_content_addressed_and_stable(fake_worker):
+    """Repeated drawer opens must reuse one warm child, so the key can't drift."""
+    graph, node = _run_explore_flow()
+
+    node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
+    first = fake_worker["source"]["session_key"]
+    node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
+    assert fake_worker["source"]["session_key"] == first
+
+    # flow_id is regenerated on every flow open, so it must not be key material.
+    graph.flow_id = graph.flow_id + 1
+    node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
+    assert fake_worker["source"]["session_key"] == first
+
+
+def test_rerunning_the_flow_rotates_the_session_key(fake_worker):
     """A serialised plan's hash doesn't move when its data does — the run token must."""
     graph, node = _run_explore_flow()
     node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
-    first_hash = fake_worker["resolve"]["hash"]
+    first = fake_worker["source"]["session_key"]
 
-    first_session_key = fake_worker["source"]["session_key"]
-
-    # Sub-second: two runs inside the same second must still invalidate.
+    # Sub-second: two runs inside the same second must still rotate the key.
     graph.latest_run_info.start_time = graph.latest_run_info.start_time.replace(microsecond=999_999)
     node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
 
-    assert fake_worker["resolve"]["hash"] != first_hash
-    assert fake_worker["source"]["session_key"] != first_session_key
-    assert fake_worker["resolve"]["cache_key"] == "node-1-2", "the stem is stable across runs"
+    assert fake_worker["source"]["session_key"] != first
+
+
+def test_cloud_backed_plans_are_refused(fake_worker):
+    """Polars inlines storage_options, so a cloud plan carries live credentials."""
+    graph, node = _run_explore_flow()
+    cloud_plan = pl.scan_parquet("s3://bucket/secret.parquet").serialize()
+
+    with patch.object(node.results.resulting_data.data_frame, "serialize", return_value=cloud_plan):
+        with pytest.raises(node_viz.CloudPlanNotVisualizableError):
+            node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
+
+    assert "source" not in fake_worker, "nothing may reach the worker once refused"
 
 
 def test_compute_refuses_a_node_that_has_not_run(fake_worker):
@@ -117,7 +146,7 @@ def test_compute_refuses_a_node_that_has_not_run(fake_worker):
 
     with pytest.raises(node_viz.NodeNotRunError):
         node_viz.compute_node_rows(graph, graph.get_node(2), _AGG_PAYLOAD, max_rows=None)
-    assert "resolve" not in fake_worker, "an un-run node must not trigger a materialisation"
+    assert "source" not in fake_worker
 
 
 @pytest.mark.parametrize(
