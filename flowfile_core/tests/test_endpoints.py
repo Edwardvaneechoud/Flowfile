@@ -532,13 +532,15 @@ def test_scratch_flow_registration_survives_catalog_save_as_unavailable():
     from flowfile_core.database.models import FlowRegistration
 
     ns = _ensure_namespace("NsScratchPrune")
-    flow_id = client.post("editor/create_flow").json()
+    # Registered into an explicit namespace: auto-registration targets General and
+    # silently skips when that namespace is absent, which no test can rely on.
+    flow_id = client.post("editor/create_flow", params={"namespace_id": ns["id"]}).json()
     scratch_path = flow_file_handler.get_flow(flow_id).flow_settings.path
     assert storage.unnamed_flows_directory.resolve() in Path(scratch_path).resolve().parents, (
-        "Precondition: a quick-created flow lives under unnamed_flows/"
+        "Precondition: a flow created without a path lives under unnamed_flows/"
     )
     listing = client.get("/catalog/flows").json()
-    assert any(f["flow_path"] == scratch_path for f in listing), "Quick create must register the flow"
+    assert any(f["flow_path"] == scratch_path for f in listing), "Precondition: the scratch flow is registered"
 
     new_flow_id = flow_id
     try:
