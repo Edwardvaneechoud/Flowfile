@@ -250,6 +250,31 @@ button {
   color: var(--color-background-primary);
 }
 
+/* ========== Element Plus Message ========== */
+.el-message {
+  font-family: var(--font-family-base);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.el-message__content {
+  font-size: var(--font-size-sm);
+}
+
+/* Noise is click-through; things you need to read stay hoverable (pauses the timer). */
+.el-message .el-message__closeBtn,
+.el-message--warning,
+.el-message--error {
+  pointer-events: auto;
+}
+
+[data-theme="dark"] .el-message {
+  background-color: var(--color-background-secondary);
+  border-color: var(--color-border-primary);
+}
+
 /* ========== Element Plus Notification ========== */
 .el-notification {
   font-family: var(--font-family-base);

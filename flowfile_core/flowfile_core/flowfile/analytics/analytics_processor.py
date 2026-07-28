@@ -1,5 +1,5 @@
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.analytics.graphic_walker import convert_ff_columns_to_gw_fields, get_initial_gf_data_from_ff
+from flowfile_core.flowfile.analytics.graphic_walker import convert_ff_columns_to_gw_fields
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import (
     DataModel,
@@ -28,13 +28,16 @@ class AnalyticsProcessor:
     def create_graphic_walker_input(
         node_step: FlowNode, graphic_walker_input: GraphicWalkerInput = None
     ) -> GraphicWalkerInput:
-        if not node_step.results.analysis_data_generator:
-            node_step.get_predicted_schema()
-            fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
-            data_model = DataModel(data=[], fields=fields)
-        else:
-            data_model = get_initial_gf_data_from_ff(node_step.get_resulting_data())
-            data_model.data = node_step.results.analysis_data_generator().to_pylist()
+        """Build the explorer's setup payload: fields and specs, never rows.
+
+        Rows are not shipped to the browser — Graphic Walker aggregates on the
+        worker via ``/analysis_data/compute``, and takes its authoritative field
+        schema from ``/analysis_data/fields`` (``polars_gw.get_fields``). The
+        fields here exist only so saved specs can be reconciled against the
+        node's current schema.
+        """
+        fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
+        data_model = DataModel(data=[], fields=fields)
         if graphic_walker_input:
             if graphic_walker_input.specList:
                 validate_spec_lists_with_data_model(graphic_walker_input.specList, data_model)

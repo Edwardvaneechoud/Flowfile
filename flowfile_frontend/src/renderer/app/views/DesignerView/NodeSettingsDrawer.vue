@@ -9,7 +9,7 @@
         :node-id="nodeStore.node_id"
       />
     </div>
-    <div v-if="nodeStore.node_id !== -1" class="node-settings-footer">
+    <div v-if="nodeStore.node_id !== -1 && canApply" class="node-settings-footer">
       <el-button type="primary" size="small" :loading="isApplying" @click="applySettings">
         {{ justApplied ? "Applied ✓" : "Apply" }}
       </el-button>
@@ -17,7 +17,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, watch, nextTick } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
@@ -25,6 +25,10 @@ import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
 interface DrawerComponentInstance {
   loadNodeData: (nodeId: number) => void;
   pushNodeData: () => void | Promise<void>;
+  // Opt-in: a component that can have nothing to save (ExploreData before its
+  // data is fetched) exposes this to hide the Apply footer. Undefined keeps
+  // Apply visible, which is what every other node settings component wants.
+  canApply?: boolean;
 }
 
 const nodeStore = useNodeStore();
@@ -38,8 +42,10 @@ const isApplying = ref(false);
 const justApplied = ref(false);
 let appliedTimer: ReturnType<typeof setTimeout> | null = null;
 
+const canApply = computed(() => drawerComponentInstance.value?.canApply !== false);
+
 const applySettings = async () => {
-  if (!drawerComponentInstance.value?.pushNodeData) return;
+  if (!drawerComponentInstance.value?.pushNodeData || !canApply.value) return;
   isApplying.value = true;
   try {
     await drawerComponentInstance.value.pushNodeData();

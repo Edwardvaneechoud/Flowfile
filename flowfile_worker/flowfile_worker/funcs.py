@@ -1113,14 +1113,19 @@ def generic_task(
 
 
 def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Queue) -> None:
-    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC."""
+    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC.
+
+    Streaming keeps the child from holding the whole frame at once, and lz4 keeps
+    the snapshot near the source's size — write_ipc defaults to uncompressed, and
+    dictionary-encoded Parquet strings expand many-fold when written out raw.
+    """
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
-        df = lf.collect()
+        df = lf.collect(engine="streaming")
         target = Path(target_path)
         # Unique tmp per child: concurrent same-key rebuilds must not share one.
         tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-        df.write_ipc(str(tmp))
+        df.write_ipc(str(tmp), compression="lz4")
         os.replace(str(tmp), str(target))
         queue.put({"name": target.name, "mtime": target.stat().st_mtime, "row_count": int(df.height)})
     except Exception as exc:

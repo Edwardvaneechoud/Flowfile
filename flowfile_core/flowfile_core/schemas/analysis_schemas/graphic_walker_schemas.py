@@ -116,3 +116,25 @@ class GraphicWalkerInput(BaseModel):
     dataModel: DataModel = Field(default_factory=lambda: DataModel(data=[], fields=[]))
     is_initial: bool = True
     specList: list[Any] | None = None
+
+
+class NodeVisualizationComputeRequest(BaseModel):
+    """Body for the Explore Data node's compute route.
+
+    ``payload`` is a Graphic Walker ``IDataQueryPayload``, passed through to
+    ``polars_gw.execute_workflow`` in a worker child — the same opaque contract
+    the catalog compute routes use. It is what GW's ``computation`` callback
+    posts on every aggregation.
+    """
+
+    flow_id: int
+    node_id: int
+    payload: dict
+    max_rows: int | None = None
+
+
+class NodeVisualizationFieldsRequest(BaseModel):
+    """Body for the Explore Data node's field-schema route."""
+
+    flow_id: int
+    node_id: int

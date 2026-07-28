@@ -357,7 +357,7 @@ class VizWorkerSource(BaseModel):
     requests against the same source skip the load step.
     """
 
-    kind: Literal["physical", "sql", "ipc_path"]
+    kind: Literal["physical", "sql", "ipc_path", "plan"]
     session_key: str
     table_path: str | None = None  # bare directory name for kind="physical"
     sql_query: str | None = None
@@ -365,6 +365,7 @@ class VizWorkerSource(BaseModel):
     virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")
     ipc_path: str | None = None  # bare filename under catalog_virtual_results_directory
     mtime: float | None = None  # cache file mtime; used in session-key contract
+    plan_bytes: Base64Bytes | None = None  # serialized pl.LazyFrame for kind="plan"
 
 
 class VisualizeQueryRequest(BaseModel):
