@@ -522,6 +522,51 @@ def test_silent_save_of_opened_flow_preserves_rename():
         remove_flow(src_path)
 
 
+def test_scratch_flow_registration_survives_catalog_save_as_unavailable():
+    """A quick-created flow keeps its registration after being saved into the catalog,
+    reported as ``file_exists=False`` once the scratch file is unlinked.
+
+    The designer prunes the stale recents entry off exactly this signal, so the
+    registration must outlive the file rather than disappearing with it.
+    """
+    from flowfile_core.database.models import FlowRegistration
+
+    ns = _ensure_namespace("NsScratchPrune")
+    flow_id = client.post("editor/create_flow").json()
+    scratch_path = flow_file_handler.get_flow(flow_id).flow_settings.path
+    assert storage.unnamed_flows_directory.resolve() in Path(scratch_path).resolve().parents, (
+        "Precondition: a quick-created flow lives under unnamed_flows/"
+    )
+    listing = client.get("/catalog/flows").json()
+    assert any(f["flow_path"] == scratch_path for f in listing), "Quick create must register the flow"
+
+    new_flow_id = flow_id
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "scratch_prune_flow", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        new_flow_id = resp.json()
+
+        assert not os.path.exists(scratch_path), "Save-As must unlink the scratch file"
+        listing = client.get("/catalog/flows").json()
+        stale = next((f for f in listing if f["flow_path"] == scratch_path), None)
+        assert stale is not None, "The scratch registration must outlive its file"
+        assert stale["file_exists"] is False
+    finally:
+        for fid in {flow_id, new_flow_id}:
+            client.post("/editor/close_flow/", params={"flow_id": fid})
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path.in_([scratch_path]),
+            ).delete(synchronize_session=False)
+            db.query(FlowRegistration).filter(FlowRegistration.name == "scratch_prune_flow").delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
 def test_catalog_resave_under_own_name_is_idempotent():
     """Saving an already-registered flow to the catalog under its own name overwrites in place.
 

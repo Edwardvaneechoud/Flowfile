@@ -131,7 +131,7 @@ const selectedFlowId = ref<number | null>(null);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const catalogStore = useCatalogStore();
-const { renameFlow: renameRecentFlow, refreshCatalogRefs } = useRecentFlows();
+const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 const saveDialogVisible = ref(false);
 const pendingCloseFlowId = ref<number | null>(null);
 const isLoading = ref(false);
@@ -271,7 +271,7 @@ const commitRename = async () => {
     // The rename never moves the file, so the path-keyed recents entry only needs
     // its label updated.
     if (settings?.path) renameRecentFlow(settings.path, trimmed);
-    void refreshCatalogRefs();
+    void reconcileWithCatalog();
     // Keep the catalog views in sync, but don't force-load the catalog from here.
     if (catalogStore.tree.length) catalogStore.loadTree();
     if (catalogStore.allFlows.length) catalogStore.loadAllFlows();

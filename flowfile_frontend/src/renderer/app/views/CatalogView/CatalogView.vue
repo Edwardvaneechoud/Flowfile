@@ -577,7 +577,7 @@ const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
 const { openFlow } = useFlowOpener();
-const { renameFlow: renameRecentFlow, refreshCatalogRefs } = useRecentFlows();
+const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
@@ -1163,7 +1163,7 @@ async function handleRenameFlow(flowId: number, newName: string) {
     const updated = await CatalogApi.updateFlow(flowId, { name: newName });
     // Recents are keyed by path and the rename doesn't move the file.
     if (updated?.flow_path) renameRecentFlow(updated.flow_path, updated.name);
-    void refreshCatalogRefs();
+    void reconcileWithCatalog();
     await Promise.all([
       catalogStore.loadTree(),
       catalogStore.loadAllFlows(),
@@ -1200,7 +1200,7 @@ async function openFlowInDesigner(
 ) {
   // openFlow owns the shared contract: reuse an already-open session by catalog
   // id (falling back to importFlow), set the flow id, record recents, and notify
-  // on failure. We only build catalogRef (exactly like refreshCatalogRefs) and
+  // on failure. We only build catalogRef (exactly like reconcileWithCatalog) and
   // navigate to the designer once the open succeeds.
   const nsPath =
     flow.namespace_id != null ? findNamespacePath(catalogStore.tree, flow.namespace_id) : [];

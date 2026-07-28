@@ -84,10 +84,11 @@ export function visibleNotebooks(node: NamespaceTree, filter: TreeFilter): Noteb
   return filter.query ? notebooks.filter((n) => matches(n.name, filter.query)) : notebooks;
 }
 
-// Mirrors the template: leaf sections only render on level-1 (schema) nodes. The
-// backend does attach flows/tables to level-0 catalogs and the tree deliberately
-// never shows them, so counting them as matches would expand a catalog row with
-// nothing underneath it.
+/**
+ * Leaf sections render only on level-1 (schema) nodes. The backend also attaches
+ * flows and tables to level-0 catalogs, which the tree never shows — matching on
+ * those would expand a catalog row with nothing under it.
+ */
 export const rendersLeaves = (node: NamespaceTree): boolean => node.level === 1;
 
 export const namespaceNameMatches = (node: NamespaceTree, query: string): boolean =>

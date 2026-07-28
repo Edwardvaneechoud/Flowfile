@@ -75,7 +75,7 @@ const emit = defineEmits<{
   (e: "open-recent", flow: RecentFlow): void;
 }>();
 
-const { recentFlows, refreshCatalogRefs } = useRecentFlows();
+const { recentFlows, reconcileWithCatalog } = useRecentFlows();
 
 // Miniature of the Home screen's recents — full management (remove, context menu) stays there.
 const recentsToShow = computed(() => recentFlows.value.slice(0, 5));
@@ -86,7 +86,7 @@ const parentFolder = (path: string): string => {
 };
 
 onMounted(() => {
-  refreshCatalogRefs();
+  reconcileWithCatalog();
 });
 </script>
 

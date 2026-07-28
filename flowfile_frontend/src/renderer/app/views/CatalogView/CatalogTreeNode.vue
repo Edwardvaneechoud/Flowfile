@@ -456,36 +456,31 @@ const showNotebooksSection = computed(
   () => props.node.level === 1 && visibleNotebooks.value.length > 0,
 );
 
-// Reveal a selection made elsewhere (detail panel, deep link). Write the section
-// key directly — a collapsed or hidden section isn't mounted, so a component ref
-// to it would be null here.
+// Open this namespace down to one of its sections, so a selection made elsewhere
+// (detail panel, deep link) is visible.
+const revealSection = (kind: SectionKind) => {
+  expanded.value = true;
+  treeState.setExpanded(sectionKey(kind), true);
+};
+
 watch(
   () => props.selectedFlowId,
   (flowId) => {
-    if (flowId !== null && containsFlow(props.node, flowId)) {
-      expanded.value = true;
-      treeState.setExpanded(secKey(props.node.id, "flows"), true);
-    }
+    if (flowId !== null && containsFlow(props.node, flowId)) revealSection("flows");
   },
 );
 
 watch(
   () => props.selectedArtifactId,
   (artifactId) => {
-    if (artifactId !== null && containsArtifact(props.node, artifactId)) {
-      expanded.value = true;
-      treeState.setExpanded(secKey(props.node.id, "models"), true);
-    }
+    if (artifactId !== null && containsArtifact(props.node, artifactId)) revealSection("models");
   },
 );
 
 watch(
   () => props.selectedTableId,
   (tableId) => {
-    if (tableId !== null && containsTable(props.node, tableId)) {
-      expanded.value = true;
-      treeState.setExpanded(secKey(props.node.id, "tables"), true);
-    }
+    if (tableId !== null && containsTable(props.node, tableId)) revealSection("tables");
   },
 );
 

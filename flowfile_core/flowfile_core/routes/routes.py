@@ -306,6 +306,43 @@ def _with_display_names(
     return sessions
 
 
+def _resolve_catalog_save_path(flow_id: int, safe_stem: str, own_registration) -> str:
+    """Where a catalog save writes: an existing registration's file, else a fresh managed path.
+
+    Re-saving under the name a flow already carries has to overwrite in place. Deriving
+    ``{flow_id}_{stem}.yaml`` again would point at a different file, because Save-As mints
+    a fresh flow_id, and the write would then collide with the flow's own registration.
+    """
+    if own_registration is not None:
+        return validate_path_under_cwd(own_registration.flow_path)
+    return resolve_managed_flow_path(f"{int(flow_id)}_{safe_stem}.yaml")
+
+
+def _is_scratch_flow_path(flow_path: str) -> bool:
+    """Whether ``flow_path`` is a throwaway flow (quick-create / python editor)."""
+    scratch_roots = (
+        str(Path(storage.unnamed_flows_directory).resolve()) + os.sep,
+        str(Path(storage.python_editor_flows_directory).resolve()) + os.sep,
+    )
+    return flow_path.startswith(scratch_roots)
+
+
+def _discard_relocated_scratch_file(previous_path: str | None, new_path: str) -> None:
+    """Delete the file a Save-As moved away from, but only for scratch flows.
+
+    Saving a real catalog flow under a new name is a copy, so its original file and
+    registration must survive. A scratch file is not worth keeping, but its
+    auto-created registration is: it stays behind reporting ``file_exists=False``,
+    which is how stale references to the old path are recognised.
+    """
+    if not previous_path or previous_path == new_path or not _is_scratch_flow_path(previous_path):
+        return
+    try:
+        os.unlink(previous_path)
+    except OSError:
+        logger.info(f"Could not unlink old scratch flow file {previous_path}", exc_info=True)
+
+
 def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
     """Return ``(registration_id, display_name, flow_path)`` for run-tracking.
 
@@ -1907,14 +1944,12 @@ def save_flow_to_catalog(
         except Exception as err:
             raise name_conflict from err
 
-    if existing_by_name is not None and existing_by_name.id == source_registration_id:
-        # Re-saving under the name this flow already carries: overwrite in place.
-        # Re-deriving the filename would target a new path (Save-As mints a fresh
-        # flow_id) and collide with this flow's own registration.
-        flow_path = validate_path_under_cwd(existing_by_name.flow_path)
+    own_registration = (
+        existing_by_name if existing_by_name is not None and existing_by_name.id == source_registration_id else None
+    )
+    flow_path = _resolve_catalog_save_path(flow_id, safe_stem, own_registration)
+    if own_registration is not None:
         _require_flow_save_permitted(flow_path, namespace_id, current_user)
-    else:
-        flow_path = resolve_managed_flow_path(f"{int(flow_id)}_{safe_stem}.yaml")
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
@@ -1961,23 +1996,7 @@ def save_flow_to_catalog(
         except NamespaceNotFoundError:
             raise HTTPException(status_code=404, detail="Namespace not found") from None
 
-        # Save-As under a new name is a copy: the original flow file and its
-        # catalog registration stay intact. Only clean up throwaway scratch
-        # files (quick-create / python-editor temp flows) that were never meant
-        # to persist — never a real, registered catalog flow.
-        if normalized_current and normalized_current != flow_path:
-            scratch_roots = (
-                str(Path(storage.unnamed_flows_directory).resolve()) + os.sep,
-                str(Path(storage.python_editor_flows_directory).resolve()) + os.sep,
-            )
-            if normalized_current.startswith(scratch_roots):
-                try:
-                    os.unlink(normalized_current)
-                except OSError:
-                    logger.info(
-                        f"Could not unlink old scratch flow file {normalized_current}",
-                        exc_info=True,
-                    )
+        _discard_relocated_scratch_file(normalized_current, flow_path)
         sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
         return new_flow_id
 

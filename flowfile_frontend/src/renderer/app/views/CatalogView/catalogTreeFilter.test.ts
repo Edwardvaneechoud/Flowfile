@@ -1,6 +1,5 @@
-// Guards the catalog tree's search rules: which namespaces count as a match
-// (and therefore auto-expand), how "show unavailable" gates them, and the
-// storage-key format, which is a persisted-localStorage compatibility contract.
+// Guards which namespaces count as a search match (and so auto-expand), and the
+// storage-key format, which persisted localStorage depends on.
 
 import { describe, it, expect } from "vitest";
 import {

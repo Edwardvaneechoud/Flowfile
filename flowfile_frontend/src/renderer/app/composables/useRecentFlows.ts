@@ -8,7 +8,7 @@ export interface RecentFlow {
   // created via the catalog; shown on the welcome screen instead of the path.
   catalogRef?: string;
   // Catalog registration id (when the flow is registered) — enables the
-  // "View in catalog" context-menu action. Resolved by refreshCatalogRefs.
+  // "View in catalog" context-menu action. Resolved by reconcileWithCatalog.
   catalogId?: number;
 }
 
@@ -114,7 +114,7 @@ export function useRecentFlows() {
     persist(recentFlows.value);
   }
 
-  // Relabel immediately rather than waiting for the next refreshCatalogRefs.
+  // Relabel immediately rather than waiting for the next reconcileWithCatalog.
   function renameFlow(path: string, name: string): void {
     if (!path || !name) return;
     const next = renameRecent(recentFlows.value, path, name);
@@ -128,14 +128,12 @@ export function useRecentFlows() {
     recentFlows.value = readStored();
   }
 
-  // Best-effort: recompute every entry's name and catalogRef from the live
-  // catalog, so registered flows show their catalog location and current name
-  // even when the entry was recorded without one (quick create, file-system
-  // opens, pre-existing entries) — and so refs follow re-registrations / drop
-  // on unregistration. The registration is the naming authority, so a rename
-  // anywhere lands here.
-  // APIs are imported lazily to keep this module dependency-free for unit tests.
-  async function refreshCatalogRefs(): Promise<void> {
+  /**
+   * Re-derive every entry's name, catalog location and id from the live catalog,
+   * which is the authority for all three. Best-effort; APIs are imported lazily to
+   * keep this module dependency-free for unit tests.
+   */
+  async function reconcileWithCatalog(): Promise<void> {
     if (!recentFlows.value.length) return;
     try {
       const [{ CatalogApi }, { findNamespacePath }] = await Promise.all([
@@ -197,6 +195,6 @@ export function useRecentFlows() {
     removeFlow,
     renameFlow,
     loadRecentFlows,
-    refreshCatalogRefs,
+    reconcileWithCatalog,
   };
 }

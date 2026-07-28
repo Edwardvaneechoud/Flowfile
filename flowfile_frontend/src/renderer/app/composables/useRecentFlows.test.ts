@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// refreshCatalogRefs lazily imports these, so the composable itself stays
+// reconcileWithCatalog lazily imports these, so the composable itself stays
 // dependency-free; vi.mock intercepts dynamic imports too.
 const mocks = vi.hoisted(() => ({ getFlows: vi.fn(), getNamespaceTree: vi.fn() }));
 
@@ -268,7 +268,7 @@ describe("useRecentFlows", () => {
   });
 });
 
-describe("useRecentFlows.refreshCatalogRefs", () => {
+describe("useRecentFlows.reconcileWithCatalog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const store = new Map<string, string>();
@@ -282,13 +282,13 @@ describe("useRecentFlows.refreshCatalogRefs", () => {
   });
 
   it("refreshes a stale name and the catalog ref from the registration", async () => {
-    const { recentFlows, recordFlow, refreshCatalogRefs, loadRecentFlows } = useRecentFlows();
+    const { recentFlows, recordFlow, reconcileWithCatalog, loadRecentFlows } = useRecentFlows();
     recordFlow({ path: "/flows/a.yaml", name: "Untitled flow 2026-07-28" });
     mocks.getFlows.mockResolvedValue([
       { id: 3, name: "Q3 Sales", flow_path: "/flows/a.yaml", namespace_id: 2 },
     ]);
 
-    await refreshCatalogRefs();
+    await reconcileWithCatalog();
 
     expect(recentFlows.value[0].name).toBe("Q3 Sales");
     expect(recentFlows.value[0].catalogRef).toBe("General.default.Q3 Sales");
@@ -298,11 +298,11 @@ describe("useRecentFlows.refreshCatalogRefs", () => {
   });
 
   it("never clobbers the name of a flow with no registration", async () => {
-    const { recentFlows, recordFlow, refreshCatalogRefs } = useRecentFlows();
+    const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
     recordFlow({ path: "/flows/local.yaml", name: "local", catalogRef: "Gone.ref", catalogId: 9 });
     mocks.getFlows.mockResolvedValue([]);
 
-    await refreshCatalogRefs();
+    await reconcileWithCatalog();
 
     expect(recentFlows.value[0].name).toBe("local");
     expect(recentFlows.value[0].catalogRef).toBeUndefined();
@@ -310,31 +310,31 @@ describe("useRecentFlows.refreshCatalogRefs", () => {
   });
 
   it("leaves entries untouched when nothing changed", async () => {
-    const { recentFlows, recordFlow, refreshCatalogRefs } = useRecentFlows();
+    const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
     recordFlow({ path: "/flows/a.yaml", name: "Q3 Sales", catalogRef: "General.default.Q3 Sales", catalogId: 3 });
     const before = recentFlows.value[0];
     mocks.getFlows.mockResolvedValue([
       { id: 3, name: "Q3 Sales", flow_path: "/flows/a.yaml", namespace_id: 2 },
     ]);
 
-    await refreshCatalogRefs();
+    await reconcileWithCatalog();
 
     expect(recentFlows.value[0]).toBe(before);
   });
 
   it("swallows a catalog failure and keeps the list intact", async () => {
-    const { recentFlows, recordFlow, refreshCatalogRefs } = useRecentFlows();
+    const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
     recordFlow({ path: "/flows/a.yaml", name: "a" });
     mocks.getFlows.mockRejectedValue(new Error("offline"));
 
-    await refreshCatalogRefs();
+    await reconcileWithCatalog();
 
     expect(recentFlows.value.map((f) => f.name)).toEqual(["a"]);
   });
 
   it("makes no API call when there are no recents", async () => {
-    const { refreshCatalogRefs } = useRecentFlows();
-    await refreshCatalogRefs();
+    const { reconcileWithCatalog } = useRecentFlows();
+    await reconcileWithCatalog();
     expect(mocks.getFlows).not.toHaveBeenCalled();
   });
 });

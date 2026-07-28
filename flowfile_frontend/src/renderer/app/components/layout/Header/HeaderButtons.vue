@@ -298,7 +298,7 @@ const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
-const { recordFlow, recordFlowFromSettings, refreshCatalogRefs, removeFlow } = useRecentFlows();
+const { recordFlow, recordFlowFromSettings, reconcileWithCatalog, removeFlow } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -444,7 +444,7 @@ const handleSaveDialogComplete = async (flowId: number) => {
   // the Catalog view and recents reflect it without a manual reload.
   await catalogStore.loadAllFlows();
   await recordRelocatedFlowAsRecent(previousPath);
-  await refreshCatalogRefs();
+  await reconcileWithCatalog();
 };
 
 // Save As / save-to-catalog move the flow, and recents are keyed by path.
