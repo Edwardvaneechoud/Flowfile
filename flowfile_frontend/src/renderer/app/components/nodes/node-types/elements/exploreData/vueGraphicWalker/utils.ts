@@ -5,10 +5,9 @@ import type {
 } from "../../../../../../types/catalog.types";
 import { NodeGraphicWalker } from "./interfaces";
 
-// The first call against a node materialises its result to Arrow IPC on the
-// worker, so the field fetch gets the generous budget; later chart queries hit
-// the warm session and only need the worker's own 120s request ceiling.
-const MATERIALIZE_TIMEOUT_MS = 300_000;
+// The field fetch is the call that spawns the session child, so it gets the
+// generous budget; later chart queries hit the warm session.
+const FIELDS_TIMEOUT_MS = 300_000;
 const COMPUTE_TIMEOUT_MS = 120_000;
 
 export const fetchGraphicWalkerData = async (
@@ -49,7 +48,7 @@ export const fetchNodeVisualizationFields = async (
   const response = await axios.post<VisualizationFieldsResponse>(
     "/analysis_data/fields",
     { flow_id: flowId, node_id: nodeId },
-    { timeout: MATERIALIZE_TIMEOUT_MS },
+    { timeout: FIELDS_TIMEOUT_MS },
   );
   return response.data;
 };

@@ -94,16 +94,16 @@ The designer's **Explore Data** node is the same machinery pointed at a flow nod
 
 That leaves one problem — a flow node's result isn't a Delta table the worker can open by name. `flowfile_core/flowfile_core/flowfile/analytics/node_viz.py` solves it the way `physical` sources are solved, not the way virtual flow tables are: core serialises the node's `LazyFrame` and ships the plan itself as a `kind="plan"` source. The child deserialises it and holds it lazily, so Polars pushes each chart's projection into the node's own sources.
 
-**Nothing is materialised, deliberately.** An earlier version did materialise the node to Arrow IPC first. On a 294 MB Parquet of 12.6 M rows × 24 string columns that produced a **4.9 GB** file — a 16.7× blow-up — to answer queries Polars serves straight off the Parquet in ~0.04 s. Materialising a node whose plan is already a cheap scan is strictly worse on every axis: the Parquet *is* the better cache.
+**Nothing is materialised, deliberately.** Snapshotting the node to Arrow IPC first is the obvious alternative, and it is worse on every axis: on a 294 MB Parquet of 12.6 M rows × 24 string columns it produces a **4.9 GB** file — a 16.7× blow-up — to answer queries Polars serves straight off the Parquet in ~0.04 s. When a node's plan is already a cheap scan, the Parquet *is* the better cache.
 
 Two details are load-bearing:
 
-- **The session key is content-addressed.** `sha256(plan_bytes)[:16]` plus a run token. Not `flow_id` — `create_unique_id()` regenerates that on every flow open, so keying on it would spawn a new child per open and (when it named files) leak one snapshot per open.
+- **The session key is content-addressed.** `sha256(plan_bytes)[:16]` plus a run token. Not `flow_id` — `create_unique_id()` regenerates that on every flow open, so keying on it would spawn a new child per open.
 - **The run token still matters.** A serialised plan records source *paths*, not data snapshots, so its hash doesn't move when the underlying data does — the same trap that forces the `kernel_shared` target to always rebuild. `node_viz` folds `flow.latest_run_info.start_time` (microsecond resolution) into the key, so repeated drawer opens reuse one warm child while a re-run rotates to a fresh one.
 
 Cloud-backed plans are **refused**, not shipped: Polars inlines `storage_options`, so a cloud scan's blob carries the connection's decrypted credentials, and a viz session child is long-lived.
 
-Routes are `POST /analysis_data/compute` and `POST /analysis_data/fields` (`routes/routes.py`), alongside the older `GET /analysis_data/graphic_walker_input`, which now returns only the saved specs and the node's field list — never rows.
+Routes are `POST /analysis_data/compute` and `POST /analysis_data/fields` (`routes/routes.py`), alongside `GET /analysis_data/graphic_walker_input`, which returns the saved specs and the node's field list — never rows.
 
 !!! note "Readiness is `results.resulting_data`, not `has_completed_last_run`"
     The 422 that tells the drawer "this step hasn't run yet" keys on `node.results.resulting_data`. `node_stats.has_completed_last_run` looks like the right flag but is only set when `performance_mode` is off, so a Performance-mode local run leaves it `False` on a node that ran perfectly well.

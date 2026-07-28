@@ -2244,8 +2244,8 @@ def compute_node_visualization(body: gs_schemas.NodeVisualizationComputeRequest)
     """Compute Graphic Walker chart rows for an Explore Data node.
 
     GW's ``computation`` callback posts its IDataQueryPayload here on every
-    aggregation; the worker's session cache keeps the node's materialised frame
-    warm so successive calls skip the load.
+    aggregation; the worker's session cache keeps the node's lazy frame warm so
+    successive calls skip the load.
     """
     flow, node = _get_analysis_node(body.flow_id, body.node_id)
     try:

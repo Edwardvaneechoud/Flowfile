@@ -43,18 +43,15 @@ const { triggerNodeFetch, isPollingActive } = useFlowExecution(
   { persistPolling: true },
 );
 
-// Every aggregation round-trips to the worker (polars-gw) instead of running in
-// the browser, so charts cover the node's full result rather than a sample —
-// and agree with the same chart built on a catalog table.
+// Every aggregation round-trips to the worker (polars-gw), so charts cover the
+// node's full result rather than a browser-side sample.
 const { computation, lastError: computeError } = useGraphicWalkerCompute(async (payload) => {
   if (globalNodeId.value === -1) return { rows: [], error: null };
   const resp = await computeNodeVisualization(nodeStore.flow_id, globalNodeId.value, payload);
   return { rows: resp.rows, error: resp.error ?? null };
 }, "explore-data");
 
-// Readiness is the field schema, not rows: `graphic_walker_input` carries a
-// rows-free payload (the walker aggregates through /analysis_data/compute),
-// and fields are present whenever the step has run.
+// Readiness is the field schema, not rows — no route here returns rows.
 const hasFields = computed(() => fields.value.length > 0);
 const showWalker = computed(() => status.value === "ready" && hasFields.value);
 const canFetch = computed(() => !editorStore.isRunning && status.value !== "fetching");
@@ -81,9 +78,7 @@ const loadNodeData = async (nodeId: number) => {
   chartList.value = [];
 
   try {
-    // The specs come from the node's settings; the field schema comes from
-    // polars-gw on the worker, so the node and the catalog classify columns
-    // (dimension vs measure) the same way.
+    // Specs come from the node's settings; the field schema from polars-gw.
     const [fetchedNodeData, fieldsResponse] = await Promise.all([
       fetchGraphicWalkerData(nodeStore.flow_id, nodeId),
       fetchNodeVisualizationFields(nodeStore.flow_id, nodeId),
@@ -97,8 +92,7 @@ const loadNodeData = async (nodeId: number) => {
     chartList.value = fetchedNodeData.graphic_walker_input.specList || [];
     status.value = "ready";
   } catch (error: any) {
-    // 422 is the backend saying this step hasn't produced data yet — an empty
-    // state with a way out, not a failure.
+    // 422 means the step hasn't produced data yet: an empty state, not a failure.
     if (error?.response?.status === 422) {
       status.value = "not-run";
       return;
@@ -124,11 +118,9 @@ const clearFetchTimers = () => {
   }
 };
 
-// Runs this step (and lazily everything upstream of it) rather than the whole
-// flow, keeping the user on this screen: `focusResultPanels: false` stops the
-// Results/Logs tabs stealing the drawer. Polling is persistent, so completion
-// is read off `isPollingActive`; the safety timeout re-loads rather than giving
-// up, so a stalled poll degrades to the empty state, not a permanent spinner.
+// Runs this step only, and keeps the user here: `focusResultPanels: false` stops
+// the Results/Logs tabs stealing the drawer. The safety timeout re-loads rather
+// than giving up, so a stalled poll degrades to the empty state, not a spinner.
 const handleFetchData = async () => {
   const nodeId = globalNodeId.value;
   const pollingKeySuffix = `node_${nodeId}`;
@@ -156,9 +148,8 @@ const handleFetchData = async () => {
   }, 60000);
 };
 
-// A run started elsewhere (the header Run button) refreshes this screen too,
-// but only while nothing is charted — reloading resets the walker to the saved
-// spec, which would discard in-progress chart edits.
+// A run started elsewhere refreshes this screen, but only while nothing is
+// charted — reloading resets the walker and would discard in-progress edits.
 watch(
   () => editorStore.isRunning,
   (running, wasRunning) => {
@@ -168,8 +159,7 @@ watch(
   },
 );
 
-// Fullscreen is worth it for the chart builder, not for an empty state, so the
-// drawer expands only once there is something to show.
+// Fullscreen is worth it for the chart builder, not for an empty state.
 watch(showWalker, (full) => windowStore.setFullScreen("rightDrawer", full), { immediate: true });
 
 const getCurrentSpec = async (): Promise<IChart[] | null> => {
@@ -224,8 +214,8 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
   }
 };
 
-// Save failures toast instead of taking over the panel — losing the chart
-// builder is a worse outcome than a failed save.
+// Save failures toast rather than take over the panel: losing the chart builder
+// is worse than a failed save.
 const pushNodeData = async () => {
   if (!vueGraphicWalkerRef.value) return;
   const currentSpec = await getCurrentSpec();

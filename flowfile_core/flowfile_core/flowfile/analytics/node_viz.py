@@ -8,8 +8,8 @@ child — and agree.
 Core never collects here, and nothing is materialised: it ships the node's
 serialised LazyFrame and the worker child holds it lazily, exactly as the
 catalog's ``physical`` kind holds a ``scan_delta``. Polars then pushes each
-chart's projection into the node's own sources — on a 294 MB Parquet that
-answers a group-by in ~0.04 s, where materialising it first cost 4.9 GB.
+chart's projection into the node's own sources, which answers a group-by on a
+294 MB Parquet in ~0.04 s; snapshotting that source first would cost 4.9 GB.
 """
 
 from __future__ import annotations
@@ -59,9 +59,7 @@ def _run_token(flow: FlowGraph) -> str:
     """
     run_info = getattr(flow, "latest_run_info", None)
     start_time = getattr(run_info, "start_time", None)
-    # Microseconds, not whole seconds: two runs starting inside the same second
-    # would otherwise produce the same key and the second one's data would never
-    # reach the chart.
+    # Microseconds: two runs starting inside the same second must not share a key.
     return f"{start_time.timestamp():.6f}" if start_time else "norun"
 
 
@@ -88,18 +86,14 @@ def resolve_node_viz_source(flow: FlowGraph, node: FlowNode) -> dict:
 
     plan_bytes = resulting_data.data_frame.serialize()
     if serialized_frame_uses_cloud(plan_bytes):
-        # Polars inlines storage_options, so a cloud scan's plan carries the
-        # source's decrypted credentials. Shipping that per request into a
-        # long-lived session child is not something to do quietly.
+        # Polars inlines storage_options, so a cloud scan's plan carries credentials.
         raise CloudPlanNotVisualizableError(
             "Visualizing a node that reads from object storage (cloud) is not supported; "
             "its query plan embeds the connection's credentials. Write the result to a "
             "local file or catalog table and explore that instead."
         )
 
-    # Content-addressed: flow_id is regenerated on every flow open, and there is
-    # no file to take an mtime from. The run token still rotates the key when the
-    # data behind an unchanged plan changes.
+    # Content-addressed, not flow_id: that is regenerated on every flow open.
     plan_key = hashlib.sha256(plan_bytes).hexdigest()[:16]
     return {
         "kind": "plan",

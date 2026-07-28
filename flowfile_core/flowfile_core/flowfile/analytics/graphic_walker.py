@@ -47,11 +47,6 @@ def convert_ff_columns_to_gw_fields(ff_columns: list[FlowfileColumn]) -> [gw_sch
     return [convert_ff_column_to_gw_field(ff_column) for ff_column in ff_columns]
 
 
-def get_initial_gf_data_from_ff(flow_file: FlowDataEngine) -> gw_schema.DataModel:
-    fields = [convert_ff_column_to_gw_field(ff_column) for ff_column in flow_file.schema]
-    return gw_schema.DataModel(fields=fields, data=[])
-
-
 def get_gf_data_from_ff(flow_file: FlowDataEngine, fields: list[gw_schema.MutField]) -> gw_schema.DataModel:
     data = flow_file.to_pylist()
     return gw_schema.DataModel(fields=fields, data=data)

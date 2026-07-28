@@ -57,8 +57,7 @@ def _build_viz_loader_in_child(source: models.VizWorkerSource) -> pl.LazyFrame:
     if source.kind == "plan":
         if not source.plan_bytes:
             raise ValueError("plan_bytes is required for plan source")
-        # Held lazily, like the physical/sql kinds: Polars pushes each chart's
-        # projection into the node's own sources instead of materialising them.
+        # Held lazily, like the physical/sql kinds — never collected here.
         return pl.LazyFrame.deserialize(io.BytesIO(source.plan_bytes))
     raise ValueError(f"Unknown viz source kind: {source.kind}")
 

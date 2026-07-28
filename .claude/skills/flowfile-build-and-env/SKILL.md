@@ -142,11 +142,11 @@ Other things worth knowing before you run this:
 
 ```bash
 cd flowfile_wasm
-npm install                       # plain install; --legacy-peer-deps no longer required as of GW 0.5.2
+npm install
 npm run dev                       # http://localhost:5174
 ```
-- WASM has its **own** `package.json`/lockfile, independent of `flowfile_frontend`. It bumped to React 19 + `@kanaries/graphic-walker@^0.5.2` to match the main frontend. Through GW 0.5.0 this needed `--legacy-peer-deps`, because GW's transitive deps (headlessui, react-beautiful-dnd, react-leaflet…) still declared react@^16||17||18 peers. GW **0.5.2 moved those onto React-19-native majors** (headlessui 2.x, mobx-react-lite 4, react-leaflet 5, react-resizable-panels 4, react-resize-detector 12), so plain `npm install` and a clean `npm ci` both resolve — verified against a from-scratch lock as well as the committed one.
-- If a peer-dep error ever does come back, the standing rule holds: `--legacy-peer-deps` means npm will **not** auto-install peer deps for you, so add the missing package to `flowfile_wasm/package.json` explicitly rather than leaning on the flag (this has already bitten `codemirror` and `styled-components` once).
+- WASM has its **own** `package.json`/lockfile, independent of `flowfile_frontend`. It tracks React 19 and the same `@kanaries/graphic-walker` major as the main frontend; a plain `npm install` and a clean `npm ci` both resolve.
+- On a peer-dep error, add the missing package to `flowfile_wasm/package.json` explicitly rather than reaching for `--legacy-peer-deps` — that flag stops npm auto-installing peers, which has already bitten `codemirror` and `styled-components` once.
 - Pyodide is loaded from a **CDN at runtime**, pinned to **v0.27.7** (the last release with Polars support) — it is not an npm dependency, so `npm install` won't show it. The pin also appears in the pyodide-smoke CI job and `flowfile_wasm/tests/python/requirements.txt` (which separately pins polars 1.18.0, pydantic 2.10.5, polars-expr-transformer 0.5.6 for the CPython-side test suite) — bump all of these together if you touch one.
 - Dev server headers include COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) — required for `SharedArrayBuffer`; anyone embedding the built package on another host page must set the same headers.
 - Other scripts: `npm run build` (app, `vue-tsc --noEmit && vite build`), `npm run build:lib` (`BUILD_MODE=lib` → `dist/flowfile-editor.js`, the published npm package), `npm run test:run` (Vitest one-shot, happy-dom env).
@@ -234,8 +234,7 @@ Both write a Fernet key to repo-root `master_key.txt` via `cryptography.fernet.F
 9. **Frontend and WASM are on different Vite/Vitest majors** (frontend: Vite 6/Vitest 3; WASM: Vite 8/Vitest 4) — don't copy Vite/Vitest config snippets between the two packages without checking the target major's API.
 10. **`strictPort: true` + `optimizeDeps.force: true` on the frontend dev server are both intentional**, not bugs: a taken port 8080 should fail loudly (Tauri's `devUrl` is hard-coded), and a forced re-optimize on every cold start avoids a worse failure mode (stale-dep 504s).
 11. **A `v*` git tag fires two release workflows at once** (`pypi-release.yml` for PyPI, `release.yaml` for desktop installers); `wasm-v*` fires the separate npm WASM publish. Version bumps must go through `make bump-version VERSION=X.Y.Z`, not hand-edited manifests, or CI's `check_version_sync.py --expect` gate fails the release.
-12. **`flowfile_wasm` no longer needs `--legacy-peer-deps`** (it did through `@kanaries/graphic-walker` 0.5.0; 0.5.2 fixed the React-19 peer ranges). If a peer-dep error reappears, remember the flag suppresses peer auto-install — add the package to `flowfile_wasm/package.json` explicitly rather than reaching for the flag.
-13. **The PyPI wheel must contain the built frontend.** Running `poetry build` without first running `npm run build:web` and copying `build/renderer/*` into `flowfile/flowfile/web/static/` produces a wheel where `flowfile run ui` has no UI at all. The copy step only exists inside `pypi-release.yml` — it is not part of any `make` target, so don't assume `poetry build` alone is release-ready.
+12. **The PyPI wheel must contain the built frontend.** Running `poetry build` without first running `npm run build:web` and copying `build/renderer/*` into `flowfile/flowfile/web/static/` produces a wheel where `flowfile run ui` has no UI at all. The copy step only exists inside `pypi-release.yml` — it is not part of any `make` target, so don't assume `poetry build` alone is release-ready.
 
 ---
 

@@ -365,9 +365,7 @@ class VizWorkerSource(BaseModel):
     virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")
     ipc_path: str | None = None  # bare filename under catalog_virtual_results_directory
     mtime: float | None = None  # cache file mtime; used in session-key contract
-    # Serialized pl.LazyFrame for kind="plan" (flow nodes): the child scans the
-    # node's own sources per query rather than materialising them first.
-    plan_bytes: Base64Bytes | None = None
+    plan_bytes: Base64Bytes | None = None  # serialized pl.LazyFrame for kind="plan"
 
 
 class VisualizeQueryRequest(BaseModel):

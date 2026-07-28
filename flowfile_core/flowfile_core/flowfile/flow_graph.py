@@ -2502,8 +2502,8 @@ class FlowGraph:
         def analysis_preparation(flowfile_table: FlowDataEngine) -> FlowDataEngine:
             """Pass-through: Graphic Walker aggregates on the worker, not in the browser.
 
-            Charts read the node's result through ``/analysis_data/compute``, which
-            materialises it on demand, so the run itself owes the explorer nothing.
+            Charts read the node's result plan through ``/analysis_data/compute``,
+            so the run itself owes the explorer nothing.
             """
             return flowfile_table
 

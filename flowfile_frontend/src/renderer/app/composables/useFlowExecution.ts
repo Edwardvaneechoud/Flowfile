@@ -227,9 +227,8 @@ export function useFlowExecution(
           });
         }
 
-        // Surfacing Results/Logs makes the drawer's auto-focus watcher switch
-        // tabs, so a run started from inside a panel opts out — otherwise the
-        // fetch you asked for yanks you off the screen you asked it from.
+        // Surfacing Results/Logs trips the drawer's auto-focus watcher, so a run
+        // started from inside a panel opts out and stays on that panel.
         if (focusResultPanels) {
           editorStore.setShowFlowResult(true);
           editorStore.updateLogViewerVisibility(true);
@@ -337,9 +336,8 @@ export function useFlowExecution(
     // Fetches driven from a panel (Data tab, Explore Data) opt out so that
     // panel keeps focus; canvas "Run node" keeps the default (show logs).
     const focusResultPanels = opts.focusResultPanels ?? true;
-    // Explore Data charts through the worker and never reads the example rows,
-    // so it skips storing the node's result — which on a large source is the
-    // whole cost of the fetch.
+    // Explore Data never reads the example rows, so it skips storing the node's
+    // result — on a large source that store is the whole cost of the fetch.
     const performanceMode = opts.performanceMode ?? false;
 
     if (isPollingActive(pollingKeySuffix)) {
