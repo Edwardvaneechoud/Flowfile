@@ -36,7 +36,7 @@ import { gettingStartedTutorial } from "../../components/tutorial/tutorials";
 const router = useRouter();
 const nodeStore = useNodeStore();
 const tutorialStore = useTutorialStore();
-const { recentFlows, recordFlowFromSettings, refreshCatalogRefs, removeFlow } = useRecentFlows();
+const { recentFlows, recordFlowFromSettings, reconcileWithCatalog, removeFlow } = useRecentFlows();
 const { openFlow } = useFlowOpener();
 
 const openDialogVisible = ref(false);
@@ -78,7 +78,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
 };
 
 onMounted(() => {
-  refreshCatalogRefs();
+  reconcileWithCatalog();
   void loadOpenFlows();
   window.addEventListener("keydown", handleKeyDown);
   // Refresh open sessions when the user tabs back (a run may have finished or a

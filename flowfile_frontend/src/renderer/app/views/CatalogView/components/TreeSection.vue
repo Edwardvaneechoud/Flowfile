@@ -26,41 +26,38 @@ const props = withDefaults(
     hidden?: boolean;
     defaultExpanded?: boolean;
     storageKey?: string;
+    // Sections only render while they still hold matches, so a search opens them
+    // by default and keeps that state out of the persisted map.
+    searchActive?: boolean;
   }>(),
   {
     count: undefined,
     hidden: false,
     defaultExpanded: false,
     storageKey: undefined,
+    searchActive: false,
   },
 );
 
 const treeState = useCatalogTreeExpansion();
 const localExpanded = ref(props.defaultExpanded);
 const expanded = computed({
-  get: () =>
-    props.storageKey
-      ? treeState.isExpanded(props.storageKey, props.defaultExpanded)
-      : localExpanded.value,
+  get: () => {
+    if (!props.storageKey) return localExpanded.value;
+    return props.searchActive
+      ? treeState.isExpandedDuringSearch(props.storageKey, true)
+      : treeState.isExpanded(props.storageKey, props.defaultExpanded);
+  },
   set: (value) => {
-    if (props.storageKey) treeState.setExpanded(props.storageKey, value);
-    else localExpanded.value = value;
+    if (!props.storageKey) localExpanded.value = value;
+    else if (props.searchActive) treeState.setExpandedDuringSearch(props.storageKey, value);
+    else treeState.setExpanded(props.storageKey, value);
   },
 });
 
 function toggle() {
   expanded.value = !expanded.value;
 }
-
-function expand() {
-  expanded.value = true;
-}
-
-function collapse() {
-  expanded.value = false;
-}
-
-defineExpose({ expand, collapse, toggle });
 </script>
 
 <style scoped>

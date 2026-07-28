@@ -99,6 +99,7 @@ import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useRecentFlows } from "../../composables/useRecentFlows";
 import { FlowApi } from "../../api";
 import type { FlowSettings } from "../../types";
 import SaveDialog from "../../features/designer/components/SaveDialog.vue";
@@ -130,6 +131,7 @@ const selectedFlowId = ref<number | null>(null);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const catalogStore = useCatalogStore();
+const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 const saveDialogVisible = ref(false);
 const pendingCloseFlowId = ref<number | null>(null);
 const isLoading = ref(false);
@@ -263,9 +265,13 @@ const commitRename = async () => {
   const trimmed = renameValue.value.trim();
   if (!trimmed || trimmed === renameSeed.value) return;
   try {
-    await FlowApi.renameFlow(flowId, trimmed);
+    const settings = await FlowApi.renameFlow(flowId, trimmed);
     await loadFlows();
     emit("flow-renamed", flowId);
+    // The rename never moves the file, so the path-keyed recents entry only needs
+    // its label updated.
+    if (settings?.path) renameRecentFlow(settings.path, trimmed);
+    void reconcileWithCatalog();
     // Keep the catalog views in sync, but don't force-load the catalog from here.
     if (catalogStore.tree.length) catalogStore.loadTree();
     if (catalogStore.allFlows.length) catalogStore.loadAllFlows();
