@@ -2,7 +2,7 @@
   <div class="dashboard-editor">
     <div class="editor-toolbar">
       <div class="editor-toolbar-left">
-        <el-button text @click="onCancel">
+        <el-button text @click="onBack">
           <el-icon><ArrowLeft /></el-icon> Back
         </el-button>
         <el-input
@@ -13,20 +13,52 @@
           class="editor-name"
           maxlength="120"
         />
-        <span v-if="dirty" class="editor-dirty">unsaved changes</span>
+        <SaveStatusIndicator v-if="!isNew" :state="autosaveState" />
+        <SaveStatusIndicator v-else :state="autosaveState" mode="draft" :draft-saved="draftDirty" />
       </div>
       <div class="editor-toolbar-right">
-        <el-button :disabled="!dirty || store.saving" @click="onCancel">Discard</el-button>
         <el-button
+          v-if="!isNew"
+          :disabled="!canRevert || reverting"
+          :loading="reverting"
+          @click="onRevert"
+        >
+          Revert
+        </el-button>
+        <el-button
+          v-else
           type="primary"
           :loading="store.saving"
           :disabled="!nameDraft.trim()"
-          @click="onSave"
+          @click="onCreate"
         >
-          Save
+          Create dashboard
         </el-button>
       </div>
     </div>
+
+    <AutosaveConflictBanner
+      v-if="!isNew"
+      :state="autosaveState"
+      resource-label="dashboard"
+      :busy="conflictBusy"
+      @reload="onConflictReload"
+      @overwrite="onConflictOverwrite"
+    />
+
+    <el-alert
+      v-if="isNew && restoreAvailable"
+      type="info"
+      :closable="false"
+      show-icon
+      class="draft-banner"
+    >
+      <template #title>You have an unfinished dashboard from last time.</template>
+      <div class="draft-banner-actions">
+        <el-button size="small" type="primary" @click="onRestoreDraft">Continue draft</el-button>
+        <el-button size="small" @click="onDiscardDraft">Start fresh</el-button>
+      </div>
+    </el-alert>
 
     <div class="editor-body">
       <aside class="editor-sidebar">
@@ -75,14 +107,15 @@
       width="92vw"
       destroy-on-close
       append-to-body
+      :before-close="onVizDialogBeforeClose"
       @close="onCloseVizDialog"
     >
       <VisualizationViewer
         v-if="vizDialogOpen && editingVizId"
+        ref="vizViewerRef"
         :viz-id="editingVizId"
         :appearance="appearance"
-        @close="vizDialogOpen = false"
-        @deleted="onVizDeleted"
+        @updated="onVizUpdated"
       />
     </el-dialog>
 
@@ -95,9 +128,11 @@
       destroy-on-close
       append-to-body
       :close-on-click-modal="false"
+      :before-close="onVizCreatorBeforeClose"
     >
       <VisualizationEditor
         v-if="vizCreatorOpen && pendingSource"
+        ref="vizCreatorRef"
         :source="pendingSource"
         :appearance="appearance"
         @saved="onVizCreated"
@@ -109,12 +144,21 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { ArrowLeft } from "@element-plus/icons-vue";
+import { CatalogApi } from "../../api/catalog.api";
 import { useDashboardsStore } from "../../stores/dashboards-store";
+import { useAuthStore } from "../../stores/auth-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
+import { useAutosave } from "../../composables/useAutosave";
+import { classifyAutosaveError } from "../../composables/autosaveEngine";
+import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
+import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { toPlainJson } from "../../utils/structuredClone";
+import SaveStatusIndicator from "../../components/common/SaveStatusIndicator.vue";
+import AutosaveConflictBanner from "../../components/common/AutosaveConflictBanner.vue";
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
@@ -124,9 +168,11 @@ import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import {
   EMPTY_DASHBOARD_LAYOUT,
   type CatalogVisualization,
+  type Dashboard,
   type DashboardFilter,
   type DashboardLayout,
   type DashboardTile,
+  type DashboardUpdatePayload,
   type VizSourceDescriptor,
 } from "../../types";
 
@@ -138,7 +184,111 @@ const appearance = useGraphicWalkerAppearance();
 
 const isNew = computed(() => props.id === undefined);
 const nameDraft = ref("");
-const dirty = ref(false);
+
+const serializeDashboard = (dashName: string, layout: unknown) =>
+  JSON.stringify({ name: dashName, layout });
+
+// Revert anchor: the state captured when the editor opened this dashboard.
+const openSnapshot = ref<{ name: string; layout: DashboardLayout } | null>(null);
+const openSerialized = ref("");
+// CAS token echoed into every PUT; refreshed from each response.
+const expectedLayoutVersion = ref<number | null>(null);
+const sessionChanged = ref(false);
+const reverting = ref(false);
+const conflictBusy = ref(false);
+
+const { engine, state: autosaveState } = useAutosave<DashboardUpdatePayload>({
+  getSnapshot: () => {
+    if (isNew.value || !store.current) return null;
+    const trimmed = nameDraft.value.trim();
+    if (!trimmed) return null;
+    const layout = toPlainJson(store.current.layout) as DashboardLayout;
+    return {
+      payload: { name: trimmed, layout },
+      serialized: serializeDashboard(trimmed, layout),
+    };
+  },
+  save: async (payload) => {
+    const body: DashboardUpdatePayload = { ...payload };
+    if (expectedLayoutVersion.value != null) {
+      body.expected_layout_version = expectedLayoutVersion.value;
+    }
+    const updated = await store.autosaveDashboard(Number(props.id), body);
+    expectedLayoutVersion.value = updated.layout_version;
+    sessionChanged.value =
+      serializeDashboard(payload.name ?? "", payload.layout) !== openSerialized.value;
+  },
+});
+
+const canRevert = computed(() => {
+  const st = autosaveState.value.status;
+  if (st === "conflict" || st === "blocked") return false;
+  return !!openSnapshot.value && (sessionChanged.value || st !== "idle");
+});
+
+// New-dashboard mode: user-scoped localStorage draft instead of server autosave.
+const auth = useAuthStore();
+const draftDirty = ref(false);
+const restoreAvailable = ref(false);
+let draft: LocalDraft<{ name: string; layout: DashboardLayout }> | null = null;
+let pendingDraft: { name: string; layout: DashboardLayout } | null = null;
+
+const setupDraft = () => {
+  const userKey = auth.currentUser?.id ?? auth.currentUser?.username ?? "anon";
+  draft = createLocalDraft({
+    key: `dashboards.draft.new.${userKey}`,
+    version: 1,
+    serialize: () =>
+      draftDirty.value && store.current
+        ? {
+            name: nameDraft.value,
+            layout: toPlainJson(store.current.layout) as DashboardLayout,
+          }
+        : null,
+  });
+  const existing = draft.peek();
+  if (existing) {
+    pendingDraft = existing.data;
+    restoreAvailable.value = true;
+  }
+};
+
+const onRestoreDraft = () => {
+  if (!pendingDraft) return;
+  nameDraft.value = pendingDraft.name;
+  store.setLayout(pendingDraft.layout);
+  draftDirty.value = true;
+  restoreAvailable.value = false;
+};
+
+const onDiscardDraft = () => {
+  draft?.discard();
+  pendingDraft = null;
+  restoreAvailable.value = false;
+};
+
+const markChanged = () => {
+  if (isNew.value) {
+    // First edit claims the single draft slot; the restore offer is now stale.
+    if (restoreAvailable.value) {
+      restoreAvailable.value = false;
+      pendingDraft = null;
+    }
+    draftDirty.value = true;
+    draft?.scheduleWrite();
+  } else {
+    engine.notifyChange();
+  }
+};
+
+const startAutosaveSession = (dashboard: Dashboard) => {
+  const layout = toPlainJson(dashboard.layout) as DashboardLayout;
+  openSnapshot.value = { name: dashboard.name, layout };
+  openSerialized.value = serializeDashboard(dashboard.name, layout);
+  expectedLayoutVersion.value = dashboard.layout_version ?? 1;
+  sessionChanged.value = false;
+  engine.reset(openSerialized.value);
+};
 
 const layoutRef = computed<DashboardLayout>(() => store.current?.layout ?? EMPTY_DASHBOARD_LAYOUT);
 const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats } =
@@ -164,18 +314,44 @@ const findFreeRow = (layout: DashboardLayout): number => {
 const onLayoutChange = (next: DashboardLayout) => {
   if (!store.current) return;
   store.setLayout(next);
-  dirty.value = true;
+  markChanged();
 };
 
 const onFiltersChange = (next: DashboardFilter[]) => {
   if (!store.current) return;
   store.setLayout({ ...store.current.layout, filters: next });
-  dirty.value = true;
+  markChanged();
 };
 
 const editingVizId = ref<number | null>(null);
 const vizDialogOpen = ref(false);
 const vizRefreshNonces = ref<Record<number, number>>({});
+const vizViewerRef = ref<InstanceType<typeof VisualizationViewer> | null>(null);
+const vizPendingRefresh = ref(false);
+
+// Remember the change and refresh tiles once at close, not per autosave tick.
+const onVizUpdated = () => {
+  vizPendingRefresh.value = true;
+};
+
+// Flush while GW is still mounted; a failed flush gets a lose-changes confirm.
+const onVizDialogBeforeClose = async (done: () => void) => {
+  const clean = (await vizViewerRef.value?.flushAutosave()) ?? true;
+  if (clean) {
+    done();
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      "Some chart changes couldn't be saved. Close anyway and lose them?",
+      "Unsaved changes",
+      { confirmButtonText: "Close", cancelButtonText: "Keep editing", type: "warning" },
+    );
+    done();
+  } catch {
+    // stay open
+  }
+};
 
 const onEditViz = (vizId: number | null) => {
   if (vizId == null) return;
@@ -184,30 +360,16 @@ const onEditViz = (vizId: number | null) => {
 };
 
 const onCloseVizDialog = () => {
-  // Bump the nonce so every tile bound to this viz_id remounts and re-fetches.
-  // We can't tell from here whether the user actually saved (the viewer doesn't
-  // emit a "saved" event), so bump unconditionally — a no-op refresh is cheap.
-  if (editingVizId.value != null) {
+  // Refresh tiles bound to this viz only when the viewer reported a save.
+  if (editingVizId.value != null && vizPendingRefresh.value) {
     const id = editingVizId.value;
     vizRefreshNonces.value = {
       ...vizRefreshNonces.value,
       [id]: (vizRefreshNonces.value[id] ?? 0) + 1,
     };
   }
+  vizPendingRefresh.value = false;
   editingVizId.value = null;
-};
-
-const onVizDeleted = (vizId: number) => {
-  vizDialogOpen.value = false;
-  editingVizId.value = null;
-  // Drop every tile that pointed at the deleted viz.
-  if (!store.current) return;
-  const next = {
-    ...store.current.layout,
-    tiles: store.current.layout.tiles.filter((t) => t.viz_id !== vizId),
-  };
-  onLayoutChange(next);
-  ElMessage.info("Removed deleted visualization from dashboard");
 };
 
 const buildVizTile = (vizId: number, x: number, y: number): DashboardTile => ({
@@ -242,6 +404,26 @@ const onAddVizAt = ({ vizId, x, y }: { vizId: number; x: number; y: number }) =>
 const sourcePickerOpen = ref(false);
 const vizCreatorOpen = ref(false);
 const pendingSource = ref<VizSourceDescriptor | null>(null);
+const vizCreatorRef = ref<InstanceType<typeof VisualizationEditor> | null>(null);
+
+const onVizCreatorBeforeClose = async (done: () => void) => {
+  const editor = vizCreatorRef.value;
+  if (!editor?.isDirty) {
+    done();
+    return;
+  }
+  await editor.flushDraft();
+  try {
+    await ElMessageBox.confirm(
+      "Close the chart builder? Your work is kept as a draft on this device.",
+      "Close chart builder",
+      { confirmButtonText: "Close", cancelButtonText: "Keep editing", type: "warning" },
+    );
+    done();
+  } catch {
+    // stay open
+  }
+};
 
 const onSourcePicked = (source: VizSourceDescriptor) => {
   pendingSource.value = source;
@@ -285,20 +467,23 @@ const initialise = async () => {
   if (isNew.value) {
     const blank = store.newBlankDashboard();
     nameDraft.value = blank.name;
-    dirty.value = false;
+    draftDirty.value = false;
+    setupDraft();
     return;
   }
   try {
     await store.loadDashboard(Number(props.id));
-    if (store.current) nameDraft.value = store.current.name;
-    dirty.value = false;
+    if (store.current) {
+      nameDraft.value = store.current.name;
+      startAutosaveSession(store.current);
+    }
   } catch {
     ElMessage.error(store.error ?? "Failed to load dashboard");
   }
 };
 
 watch(nameDraft, (v) => {
-  if (store.current && v !== store.current.name) dirty.value = true;
+  if (store.current && v !== store.current.name) markChanged();
 });
 
 // Honour ?editViz=<id> from the route by auto-opening the chart edit dialog
@@ -330,13 +515,65 @@ const consumeEditVizQuery = async () => {
   });
 };
 
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (isNew.value) {
+    // Dirty sessions only: a clean write would delete a still-offered prior draft.
+    if (draftDirty.value) draft?.writeNow();
+    return;
+  }
+  if (engine.isDirty()) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+};
+
 onMounted(async () => {
+  window.addEventListener("beforeunload", handleBeforeUnload);
   await initialise();
   await consumeEditVizQuery();
 });
-onBeforeUnmount(() => store.reset());
 
-const onSave = async () => {
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  if (draftDirty.value) draft?.writeNow();
+  draft?.dispose();
+  store.reset();
+});
+
+// Flush-first leave guard: a confirm only appears when a flush could not land.
+onBeforeRouteLeave(async () => {
+  if (isNew.value) {
+    if (!draftDirty.value) return true;
+    draft?.writeNow();
+    try {
+      await ElMessageBox.confirm(
+        "Leave without creating this dashboard? Your draft stays on this device.",
+        "Leave draft",
+        { confirmButtonText: "Leave", cancelButtonText: "Keep editing", type: "warning" },
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const viewerClean = vizDialogOpen.value
+    ? ((await vizViewerRef.value?.flushAutosave()) ?? true)
+    : true;
+  const clean = (await engine.flush()) && viewerClean;
+  if (clean) return true;
+  try {
+    await ElMessageBox.confirm(
+      "Some changes couldn't be saved. Leave anyway and lose them?",
+      "Unsaved changes",
+      { confirmButtonText: "Leave", cancelButtonText: "Stay", type: "warning" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+const onCreate = async () => {
   if (!store.current) return;
   const trimmed = nameDraft.value.trim();
   if (!trimmed) {
@@ -344,47 +581,132 @@ const onSave = async () => {
     return;
   }
   try {
-    if (isNew.value) {
-      const created = await store.createDashboard({
-        name: trimmed,
-        description: store.current.description,
-        namespace_id: store.current.namespace_id,
-        layout: store.current.layout,
-      });
-      dirty.value = false;
-      ElMessage.success(`Created "${created.name}"`);
-      router.replace({ name: "dashboard-edit", params: { id: created.id } });
-    } else {
-      const updated = await store.updateDashboard(Number(props.id), {
-        name: trimmed,
-        layout: store.current.layout,
-      });
-      dirty.value = false;
-      ElMessage.success(`Saved "${updated.name}"`);
-    }
-  } catch {
-    ElMessage.error(store.error ?? "Failed to save");
+    const created = await store.createDashboard({
+      name: trimmed,
+      description: store.current.description,
+      namespace_id: store.current.namespace_id,
+      layout: store.current.layout,
+    });
+    draftDirty.value = false;
+    draft?.discard();
+    ElMessage.success(`Created "${created.name}"`);
+    await router.replace({ name: "dashboard-edit", params: { id: created.id } });
+    // Both routes share this instance; onMounted won't re-run after replace.
+    startAutosaveSession(created);
+  } catch (err) {
+    ElMessage.error(catalogSaveErrorMessage(err, store.error ?? "Failed to save"));
   }
 };
 
-const onCancel = async () => {
-  if (dirty.value) {
-    try {
-      await ElMessageBox.confirm("Discard unsaved changes?", "Discard", {
-        type: "warning",
-        confirmButtonText: "Discard",
-        cancelButtonText: "Stay",
-      });
-    } catch {
-      return;
-    }
-  }
-  // Brand-new dashboard with no persisted id has no view route to return to.
+const onBack = () => {
+  // The route guard flushes (existing) or keeps the draft (new); no confirm here.
   if (isNew.value || props.id === undefined) {
     router.push({ name: "catalog", query: { tab: "visuals", kind: "dashboards" } });
     return;
   }
   router.push({ name: "dashboard-view", params: { id: props.id } });
+};
+
+const onRevert = async () => {
+  if (!openSnapshot.value || !store.current) return;
+  try {
+    await ElMessageBox.confirm(
+      "Take this dashboard back to how it was when you opened it? Changes from this session will be undone.",
+      "Revert dashboard",
+      { confirmButtonText: "Revert", cancelButtonText: "Keep editing", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  reverting.value = true;
+  try {
+    // Drain any in-flight save (no new write) so the CAS token is current.
+    engine.suspend();
+    await engine.flush();
+    nameDraft.value = openSnapshot.value.name;
+    store.setLayout(toPlainJson(openSnapshot.value.layout) as DashboardLayout);
+    const body: DashboardUpdatePayload = {
+      name: openSnapshot.value.name,
+      layout: openSnapshot.value.layout,
+    };
+    if (expectedLayoutVersion.value != null) {
+      body.expected_layout_version = expectedLayoutVersion.value;
+    }
+    const updated = await store.autosaveDashboard(Number(props.id), body);
+    expectedLayoutVersion.value = updated.layout_version;
+    engine.markSaved(openSerialized.value);
+    sessionChanged.value = false;
+    // Edits made while the revert PUT was in flight must not vanish silently.
+    const nowSerialized = serializeDashboard(
+      nameDraft.value.trim(),
+      toPlainJson(store.current.layout),
+    );
+    if (nowSerialized !== openSerialized.value) engine.notifyChange();
+  } catch (err) {
+    if (classifyAutosaveError(err) === "conflict") {
+      // The revert itself hit a stale write: enter the normal conflict flow.
+      engine.enterConflict(catalogSaveErrorMessage(err, "Changed somewhere else"));
+    } else {
+      ElMessage.error(catalogSaveErrorMessage(err, "Failed to revert dashboard"));
+      // Local state is already the revert target; let autosave retry it.
+      engine.notifyChange();
+    }
+  } finally {
+    engine.resume();
+    reverting.value = false;
+  }
+};
+
+// Adopt the server's version wholesale; the revert anchor stays at original open.
+const resyncFromServer = async () => {
+  await store.loadDashboard(Number(props.id));
+  if (!store.current) return;
+  nameDraft.value = store.current.name;
+  expectedLayoutVersion.value = store.current.layout_version ?? 1;
+  engine.resolveConflictReloaded(
+    serializeDashboard(store.current.name, toPlainJson(store.current.layout)),
+  );
+};
+
+const onConflictReload = async () => {
+  conflictBusy.value = true;
+  try {
+    await resyncFromServer();
+  } catch (err) {
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to load the latest version"));
+  } finally {
+    conflictBusy.value = false;
+  }
+};
+
+const onConflictOverwrite = async () => {
+  if (!store.current) return;
+  conflictBusy.value = true;
+  try {
+    // Token-only re-GET; store.loadDashboard would clobber the state being kept.
+    const fresh = await CatalogApi.getDashboard(Number(props.id));
+    const trimmed = nameDraft.value.trim() || fresh.name;
+    const layout = toPlainJson(store.current.layout) as DashboardLayout;
+    const updated = await store.autosaveDashboard(Number(props.id), {
+      name: trimmed,
+      layout,
+      expected_layout_version: fresh.layout_version,
+    });
+    expectedLayoutVersion.value = updated.layout_version;
+    const adopted = serializeDashboard(trimmed, layout);
+    sessionChanged.value = adopted !== openSerialized.value;
+    engine.markSaved(adopted);
+    // Edits made while the overwrite PUT was in flight must not vanish silently.
+    const nowSerialized = serializeDashboard(
+      nameDraft.value.trim(),
+      toPlainJson(store.current.layout),
+    );
+    if (nowSerialized !== adopted) engine.notifyChange();
+  } catch (err) {
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to save your version"));
+  } finally {
+    conflictBusy.value = false;
+  }
 };
 </script>
 
@@ -414,10 +736,14 @@ const onCancel = async () => {
 .editor-name {
   max-width: 320px;
 }
-.editor-dirty {
-  font-size: 11px;
-  color: var(--el-color-warning);
-  text-transform: uppercase;
+.draft-banner {
+  margin: 8px 16px 0;
+  width: auto;
+}
+.draft-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
 }
 .editor-toolbar-right {
   display: flex;

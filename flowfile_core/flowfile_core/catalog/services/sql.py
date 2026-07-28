@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING
-from shared._version import get_version
+
 from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
     SAVED_FLOW_NODE_X,
@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_resolve_virtual_table,
 )
 from flowfile_core.schemas.catalog_schema import SqlQueryResult
+from shared._version import get_version
 from shared.storage_config import storage
 
 if TYPE_CHECKING:

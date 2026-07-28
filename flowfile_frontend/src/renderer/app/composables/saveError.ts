@@ -40,6 +40,10 @@ export function catalogSaveErrorMessage(error: unknown, fallback = "Failed to sa
       return messages.join("; ");
     }
   }
+  // Structured details (e.g. the stale_write 409) carry their copy in .message.
+  if (detail !== null && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
   const message = (error as any)?.message;
   return typeof message === "string" && message ? message : fallback;
 }

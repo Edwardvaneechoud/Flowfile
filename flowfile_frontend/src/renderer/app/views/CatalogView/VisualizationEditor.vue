@@ -1,5 +1,21 @@
 <template>
   <div class="viz-editor">
+    <el-alert
+      v-if="restoreAvailable"
+      type="info"
+      :closable="false"
+      show-icon
+      class="viz-draft-banner"
+    >
+      <template #title>
+        Pick up where you left off? Your unsaved chart from this source is still here.
+      </template>
+      <div class="viz-draft-actions">
+        <el-button size="small" type="primary" @click="onRestoreDraft">Restore</el-button>
+        <el-button size="small" @click="onDiscardDraft">Discard</el-button>
+      </div>
+    </el-alert>
+
     <div class="viz-editor-toolbar">
       <div class="viz-name-field">
         <label class="viz-name-label">
@@ -18,7 +34,7 @@
         <el-tooltip v-if="disabledReason" :content="disabledReason" placement="top">
           <span class="viz-disabled-hint">{{ disabledReason }}</span>
         </el-tooltip>
-        <el-button size="small" :disabled="saving" @click="emit('cancel')">Cancel</el-button>
+        <el-button size="small" :disabled="saving" @click="onCancel">Cancel</el-button>
         <el-button type="primary" size="small" :loading="saving" :disabled="!canSave" @click="save">
           {{ viz ? "Save changes" : "Save visualization" }}
         </el-button>
@@ -44,11 +60,14 @@
         />
         <VueGraphicWalker
           ref="gwRef"
+          :key="gwMountKey"
           :computation="computeOnWorker"
           :fields="plainFields"
           :spec-list="plainInitialSpecList"
           :appearance="appearance"
           :hide-chart-nav="true"
+          :watch-spec="isCreate"
+          @spec-changed="onSpecChanged"
         />
       </template>
     </div>
@@ -56,12 +75,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useAuthStore } from "../../stores/auth-store";
+import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
+import { vizDraftKey } from "./vizAutosave";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
@@ -92,6 +114,83 @@ const gwRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 const name = ref(props.viz?.name ?? "Untitled chart");
 const saving = ref(false);
 
+const isCreate = computed(() => !isExistingViz(props.viz));
+const initialName = name.value;
+
+// Create-mode crash/close protection via a localStorage draft + restore banner.
+const specDirty = ref(false);
+const restoreAvailable = ref(false);
+const specOverride = ref<Record<string, any>[] | null>(null);
+const gwMountKey = ref(0);
+let lastSpec: Record<string, any>[] | null = null;
+let draft: LocalDraft<{ name: string; spec: Record<string, any>[] }> | null = null;
+let pendingDraft: { name: string; spec: Record<string, any>[] } | null = null;
+
+const createCompleted = ref(false);
+const isDirty = computed(
+  () =>
+    isCreate.value &&
+    !createCompleted.value &&
+    (specDirty.value || name.value.trim() !== initialName.trim()),
+);
+
+// First edit claims the single draft slot; the restore offer is now stale.
+const dismissRestoreOnEdit = () => {
+  if (restoreAvailable.value) {
+    restoreAvailable.value = false;
+    pendingDraft = null;
+  }
+};
+
+const onSpecChanged = async () => {
+  const charts = await gwRef.value?.exportCode();
+  if (charts && charts.length) {
+    dismissRestoreOnEdit();
+    lastSpec = charts as unknown as Record<string, any>[];
+    specDirty.value = true;
+    draft?.scheduleWrite();
+  }
+};
+
+watch(name, () => {
+  if (isCreate.value && isDirty.value) {
+    dismissRestoreOnEdit();
+    draft?.scheduleWrite();
+  }
+});
+
+const onRestoreDraft = () => {
+  if (!pendingDraft) return;
+  name.value = pendingDraft.name;
+  specOverride.value = pendingDraft.spec;
+  lastSpec = pendingDraft.spec;
+  specDirty.value = true;
+  gwMountKey.value += 1;
+  restoreAvailable.value = false;
+};
+
+const onDiscardDraft = () => {
+  draft?.discard();
+  pendingDraft = null;
+  restoreAvailable.value = false;
+};
+
+/** Pull the latest spec out of GW (while it is still mounted) and persist the draft. */
+const flushDraft = async () => {
+  // A clean-session write would delete a previous session's still-offered draft.
+  if (!draft || !isCreate.value || !isDirty.value) return;
+  const charts = await gwRef.value?.exportCode();
+  if (charts && charts.length) lastSpec = charts as unknown as Record<string, any>[];
+  draft.writeNow();
+};
+
+const onCancel = async () => {
+  await flushDraft();
+  emit("cancel");
+};
+
+defineExpose({ isDirty, flushDraft });
+
 const loadingSample = ref(true);
 const loadError = ref<string | null>(null);
 const fields = ref<IMutField[]>([]);
@@ -99,11 +198,14 @@ const fields = ref<IMutField[]>([]);
 const initialSpec = computed(() => props.viz?.spec ?? null);
 
 const plainFields = computed(() => toPlainJson(fields.value));
-const plainInitialSpecList = computed<IChart[] | undefined>(() =>
-  initialSpec.value && initialSpec.value.length > 0
+const plainInitialSpecList = computed<IChart[] | undefined>(() => {
+  if (specOverride.value && specOverride.value.length > 0) {
+    return toPlainJson(specOverride.value) as unknown as IChart[];
+  }
+  return initialSpec.value && initialSpec.value.length > 0
     ? (toPlainJson(initialSpec.value) as unknown as IChart[])
-    : undefined,
-);
+    : undefined;
+});
 
 const SAMPLE_ROWS = 5_000;
 
@@ -124,6 +226,20 @@ const disabledReason = computed(() => {
 });
 
 onMounted(async () => {
+  if (isCreate.value) {
+    const auth = useAuthStore();
+    const userKey = auth.currentUser?.id ?? auth.currentUser?.username ?? "anon";
+    draft = createLocalDraft({
+      key: vizDraftKey(props.source, userKey),
+      version: 1,
+      serialize: () => (isDirty.value ? { name: name.value, spec: lastSpec ?? [] } : null),
+    });
+    const existing = draft.peek();
+    if (existing) {
+      pendingDraft = existing.data;
+      restoreAvailable.value = true;
+    }
+  }
   loadingSample.value = true;
   loadError.value = null;
   try {
@@ -136,6 +252,12 @@ onMounted(async () => {
   } finally {
     loadingSample.value = false;
   }
+});
+
+onBeforeUnmount(() => {
+  // Dirty sessions only: a clean write would delete a still-offered prior draft.
+  if (isDirty.value) draft?.writeNow();
+  draft?.dispose();
 });
 
 const isExistingViz = (v: any): v is CatalogVisualization =>
@@ -176,6 +298,10 @@ const save = async () => {
       };
       if (thumbnail_data_url) createPayload.thumbnail_data_url = thumbnail_data_url;
       saved = await store.createVisualization(createPayload);
+      // Created for real now; createCompleted keeps the unmount write from reviving the draft.
+      createCompleted.value = true;
+      specDirty.value = false;
+      draft?.discard();
     }
     ElMessage.success(`Saved "${saved.name}"`);
     emit("saved", saved);
@@ -250,5 +376,13 @@ const save = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.viz-draft-banner {
+  flex-shrink: 0;
+}
+.viz-draft-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
 }
 </style>

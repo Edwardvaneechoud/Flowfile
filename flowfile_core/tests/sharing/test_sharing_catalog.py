@@ -384,6 +384,69 @@ def test_dashboard_private_then_shared(users, client_for, alice_dashboard, team,
     assert bob.delete(f"/catalog/dashboards/{alice_dashboard}").status_code == 403
 
 
+def test_write_responses_stamp_owner_access(users, client_for, alice_viz, alice_dashboard):
+    alice = client_for("alice")
+    viz_resp = alice.put(f"/catalog/visualizations/{alice_viz}", json={"description": "mine"})
+    assert viz_resp.status_code == 200, viz_resp.text
+    assert viz_resp.json()["access"] == {"is_owner": True, "access_level": "owner", "shared_by": None}
+    dash_resp = alice.put(f"/catalog/dashboards/{alice_dashboard}", json={"description": "mine"})
+    assert dash_resp.status_code == 200, dash_resp.text
+    assert dash_resp.json()["access"] == {"is_owner": True, "access_level": "owner", "shared_by": None}
+
+
+def test_write_responses_stamp_manage_grantee_access(users, client_for, alice_viz, alice_dashboard, team, grant_factory):
+    grant_factory("visualization", alice_viz, team, permission="manage", granted_by=users["alice"].id)
+    grant_factory("dashboard", alice_dashboard, team, permission="manage", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    viz_resp = bob.put(f"/catalog/visualizations/{alice_viz}", json={"description": "managed"})
+    assert viz_resp.status_code == 200, viz_resp.text
+    assert viz_resp.json()["access"]["access_level"] == "manage"
+    assert viz_resp.json()["access"]["is_owner"] is False
+    dash_resp = bob.put(f"/catalog/dashboards/{alice_dashboard}", json={"description": "managed"})
+    assert dash_resp.status_code == 200, dash_resp.text
+    assert dash_resp.json()["access"]["access_level"] == "manage"
+
+
+def test_create_responses_stamp_owner_access(users, client_for):
+    bob = client_for("bob")
+    viz_resp = bob.post(
+        "/catalog/visualizations",
+        json={"name": "bob_cas_viz", "spec": [{}], "source_type": "sql", "sql_query": "SELECT 1"},
+    )
+    assert viz_resp.status_code == 201, viz_resp.text
+    assert viz_resp.json()["access"] == {"is_owner": True, "access_level": "owner", "shared_by": None}
+    dash_resp = bob.post("/catalog/dashboards", json={"name": "bob_cas_dash"})
+    assert dash_resp.status_code == 201, dash_resp.text
+    assert dash_resp.json()["access"] == {"is_owner": True, "access_level": "owner", "shared_by": None}
+    # cleanup: API-created rows aren't tracked by resource_factory.
+    with get_db_context() as db:
+        for model, row_id in (
+            (db_models.CatalogVisualization, viz_resp.json()["id"]),
+            (db_models.CatalogDashboard, dash_resp.json()["id"]),
+        ):
+            row = db.get(model, row_id)
+            if row:
+                db.delete(row)
+        db.commit()
+
+
+def test_use_grant_stale_token_yields_403_not_409(users, client_for, alice_viz, alice_dashboard, team, grant_factory):
+    """Authorization precedes the CAS check: a read-only grantee never learns write-token state."""
+    grant_factory("visualization", alice_viz, team, permission="use", granted_by=users["alice"].id)
+    grant_factory("dashboard", alice_dashboard, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    stale_viz = bob.put(
+        f"/catalog/visualizations/{alice_viz}",
+        json={"description": "x", "expected_updated_at": "2000-01-01T00:00:00"},
+    )
+    assert stale_viz.status_code == 403, stale_viz.text
+    stale_dash = bob.put(
+        f"/catalog/dashboards/{alice_dashboard}",
+        json={"description": "x", "expected_layout_version": 999},
+    )
+    assert stale_dash.status_code == 403, stale_dash.text
+
+
 # ---------- models (artifacts) + namespace cascade ----------
 
 

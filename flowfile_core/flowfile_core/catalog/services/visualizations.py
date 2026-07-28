@@ -18,6 +18,7 @@ from flowfile_core.catalog.constants import (
 from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
     NamespaceNotFoundError,
+    StaleWriteError,
     TableNotFoundError,
     VisualizationComputeError,
     VisualizationExistsError,
@@ -269,6 +270,20 @@ class VisualizationService:
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
+        if payload.expected_updated_at is not None and viz.updated_at != payload.expected_updated_at:
+            raise StaleWriteError("visualization", viz_id, expected=payload.expected_updated_at, current=viz.updated_at)
+        # Atomic guard (see repo docstring); must precede attribute edits (autoflush would fire onupdate).
+        now = datetime.now(timezone.utc)
+        if not self.repo.stamp_visualization_updated_at(viz_id, payload.expected_updated_at, now):
+            if payload.expected_updated_at is None:
+                raise VisualizationNotFoundError(viz_id=viz_id)
+            fresh = self.repo.get_visualization(viz_id)
+            raise StaleWriteError(
+                "visualization",
+                viz_id,
+                expected=payload.expected_updated_at,
+                current=fresh.updated_at if fresh else payload.expected_updated_at,
+            )
         provided = payload.model_fields_set
         if "name" in provided:
             if payload.name is None:
@@ -294,6 +309,8 @@ class VisualizationService:
             viz.catalog_table_id = payload.catalog_table_id
         if "thumbnail_data_url" in provided:
             viz.thumbnail_data_url = validate_thumbnail(payload.thumbnail_data_url)
+        # Same stamp as the guard; an explicit value suppresses the second-precision onupdate.
+        viz.updated_at = now
         try:
             updated = self.repo.update_visualization(viz)
         except IntegrityError as exc:
@@ -380,6 +397,22 @@ class VisualizationService:
         dashboard = self.repo.get_dashboard(dashboard_id)
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        current_version = dashboard.layout_version or 1
+        if payload.expected_layout_version is not None and payload.expected_layout_version != current_version:
+            raise StaleWriteError(
+                "dashboard", dashboard_id, expected=payload.expected_layout_version, current=current_version
+            )
+        # Atomic guard + counter increment in one conditional UPDATE (see repo docstring).
+        if not self.repo.bump_dashboard_layout_version(dashboard_id, payload.expected_layout_version):
+            if payload.expected_layout_version is None:
+                raise DashboardNotFoundError(dashboard_id=dashboard_id)
+            fresh = self.repo.get_dashboard(dashboard_id)
+            raise StaleWriteError(
+                "dashboard",
+                dashboard_id,
+                expected=payload.expected_layout_version,
+                current=(fresh.layout_version or 1) if fresh else payload.expected_layout_version,
+            )
         provided = payload.model_fields_set
         if "name" in provided:
             if payload.name is None:
@@ -396,7 +429,6 @@ class VisualizationService:
                 raise ValueError("layout cannot be cleared")
             self._validate_filter_datasources(payload.layout)
             dashboard.layout_json = payload.layout.model_dump_json()
-            dashboard.layout_version = payload.layout.grid.version
         dashboard.updated_at = datetime.now(timezone.utc)
         updated = self.repo.update_dashboard(dashboard)
         _project_sync_dashboards(user_id)

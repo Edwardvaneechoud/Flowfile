@@ -1381,7 +1381,7 @@ class CatalogService:
         # When namespace_id is None it defaults to the source table's namespace,
         # which the table-use check above already covers.
         self._require_namespace_writable(payload.namespace_id)
-        return self._visualizations.create_visualization(payload, user_id)
+        return self._stamp_access([self._visualizations.create_visualization(payload, user_id)], "visualization")[0]
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         """Update a visualization's spec, name, namespace or thumbnail."""
@@ -1390,7 +1390,9 @@ class CatalogService:
             self._require_use("catalog_table", payload.catalog_table_id)
         if payload.namespace_id is not None:
             self._require_namespace_writable(payload.namespace_id)
-        return self._visualizations.update_visualization(viz_id, payload, user_id)
+        return self._stamp_access(
+            [self._visualizations.update_visualization(viz_id, payload, user_id)], "visualization"
+        )[0]
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
         """Delete a visualization by ID."""
@@ -1443,14 +1445,16 @@ class CatalogService:
     def create_dashboard(self, payload: DashboardCreate, user_id: int) -> DashboardOut:
         """Create a new dashboard."""
         self._require_namespace_writable(payload.namespace_id)
-        return self._visualizations.create_dashboard(payload, user_id)
+        return self._stamp_access([self._visualizations.create_dashboard(payload, user_id)], "dashboard")[0]
 
     def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
         """Update a dashboard's name, layout, namespace or description."""
         self._require_manage_dashboard(dashboard_id)
         if payload.namespace_id is not None:
             self._require_namespace_writable(payload.namespace_id)
-        return self._visualizations.update_dashboard(dashboard_id, payload, user_id)
+        return self._stamp_access(
+            [self._visualizations.update_dashboard(dashboard_id, payload, user_id)], "dashboard"
+        )[0]
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
         """Delete a dashboard by ID."""
