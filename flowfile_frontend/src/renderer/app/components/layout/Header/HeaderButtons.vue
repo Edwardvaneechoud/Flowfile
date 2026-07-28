@@ -468,7 +468,7 @@ const openSaveModal = async () => {
       await saveFlowSilent(nodeStore.flow_id);
       emit("flowSaved", nodeStore.flow_id);
       projectStore.onSourceChanged();
-      ElMessage.success("Flow saved successfully");
+      ElMessage.success("Flow saved");
       tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
     } catch (error: any) {
       ElMessage.error({

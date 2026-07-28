@@ -181,7 +181,7 @@ const handleCreateAtPath = async (flowPath: string) => {
   try {
     const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : null;
     const newFlowId = await createFlow(flowPath, null, namespaceId);
-    ElMessage.success("Flow created successfully");
+    ElMessage.success("Flow created");
     isVisible.value = false;
     const catalogRef =
       registerInCatalog.value && selectedNamespaceId.value !== null
