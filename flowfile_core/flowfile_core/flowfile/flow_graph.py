@@ -5890,21 +5890,23 @@ class FlowGraph:
             node.remove_cache()
 
     def _handle_flow_renaming(self, new_name: str, new_path: Path):
+        """Adopt the target file's stem as the flow name, but only when a save relocates the flow.
+
+        A same-path save must never rename — the name can have been set from the
+        catalog (``POST /editor/rename_flow/``) and the file stem is not authoritative.
         """
-        Handle the rename of a flow when it is being saved.
-        """
-        if (
-            self.flow_settings
-            and self.flow_settings.path
-            and Path(self.flow_settings.path).absolute() != new_path.absolute()
-        ):
+        if not self.flow_settings:
+            return
+        if self.flow_settings.path and Path(self.flow_settings.path).absolute() != new_path.absolute():
             self.__name__ = new_name
             self.flow_settings.save_location = str(new_path.absolute())
             self.flow_settings.name = new_name
-        if self.flow_settings and not self.flow_settings.save_location:
+        elif not self.flow_settings.save_location:
+            # Back-fill where the flow lives, never what it is called.
             self.flow_settings.save_location = str(new_path.absolute())
-            self.__name__ = new_name
-            self.flow_settings.name = new_name
+            if not self.flow_settings.name:
+                self.__name__ = new_name
+                self.flow_settings.name = new_name
 
     def save_flow(self, flow_path: str):
         """Saves the current state of the flow graph to a file.

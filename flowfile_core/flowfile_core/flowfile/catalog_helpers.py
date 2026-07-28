@@ -7,6 +7,7 @@ to avoid coupling the handler to the database layer.
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -235,6 +236,44 @@ def find_registration_by_path(flow_path: str) -> FlowRegistrationSnapshot | None
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         return _snapshot(service.repo.get_flow_by_path(flow_path))
+
+
+def resolve_display_names(flow_paths: Iterable[str | None]) -> dict[str, str]:
+    """Map each registered ``flow_path`` to its catalog display name, in one query.
+
+    The registration is the naming authority: ``flow_settings.name`` is the file
+    stem for any flow opened from disk (``open_flow`` stamps it), so every route
+    that hands a flow's settings to the UI resolves the user-facing name here.
+    Unregistered paths are simply absent. Best-effort — a catalog failure yields
+    an empty map rather than breaking a settings read.
+    """
+    paths = {p for p in flow_paths if p}
+    if not paths:
+        return {}
+    try:
+        with get_db_context() as db:
+            rows = (
+                db.query(FlowRegistration.flow_path, FlowRegistration.name)
+                .filter(FlowRegistration.flow_path.in_(paths))
+                .order_by(FlowRegistration.id)
+                .all()
+            )
+        names: dict[str, str] = {}
+        for path, name in rows:
+            # Duplicate paths are possible; lowest id wins, matching get_flow_by_path.
+            if name and path not in names:
+                names[path] = name
+        return names
+    except Exception:
+        logger.info("Catalog display-name lookup failed (non-critical)", exc_info=True)
+        return {}
+
+
+def resolve_display_name(flow_path: str | None) -> str | None:
+    """The catalog registration's display name for ``flow_path``, or None."""
+    if not flow_path:
+        return None
+    return resolve_display_names([flow_path]).get(flow_path)
 
 
 def namespace_exists(namespace_id: int) -> bool:
