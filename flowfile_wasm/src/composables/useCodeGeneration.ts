@@ -530,7 +530,7 @@ class FlowToPolarsConverter {
         this.addCode(`    ignore_errors=True,`)
       }
       if (tableSettings.infer_schema === false) {
-        this.addCode(`    infer_schema=False,`)
+        this.addCode(`    infer_schema_length=0,`)
       }
     } else {
       this.addCode(`    separator=",",`)
