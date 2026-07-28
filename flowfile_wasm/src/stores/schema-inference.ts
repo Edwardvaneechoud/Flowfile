@@ -456,7 +456,8 @@ function inferDataTypeFromValues(values: string[]): string {
 export function inferSchemaFromCsv(
   csvContent: string,
   hasHeaders: boolean = true,
-  delimiter: string = ','
+  delimiter: string = ',',
+  inferTypes: boolean = true
 ): ColumnSchema[] | null {
   if (!csvContent || csvContent.trim().length === 0) {
     return null
@@ -481,7 +482,7 @@ export function inferSchemaFromCsv(
 
     columnNames.forEach((name, colIndex) => {
       const columnValues = sampleData.map(row => row[colIndex] || '')
-      const dataType = inferDataTypeFromValues(columnValues)
+      const dataType = inferTypes ? inferDataTypeFromValues(columnValues) : 'String'
 
       schema.push({
         name: name || `column_${colIndex + 1}`,
@@ -500,7 +501,7 @@ export function inferSchemaFromCsv(
 
     for (let colIndex = 0; colIndex < columnCount; colIndex++) {
       const columnValues = sampleData.map(row => row[colIndex] || '')
-      const dataType = inferDataTypeFromValues(columnValues)
+      const dataType = inferTypes ? inferDataTypeFromValues(columnValues) : 'String'
 
       schema.push({
         name: `column_${colIndex + 1}`,

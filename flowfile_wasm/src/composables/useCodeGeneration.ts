@@ -529,6 +529,9 @@ class FlowToPolarsConverter {
       if (tableSettings.ignore_errors) {
         this.addCode(`    ignore_errors=True,`)
       }
+      if (tableSettings.infer_schema === false) {
+        this.addCode(`    infer_schema_length=0,`)
+      }
     } else {
       this.addCode(`    separator=",",`)
       this.addCode(`    has_header=True,`)

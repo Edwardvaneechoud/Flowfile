@@ -64,6 +64,28 @@ describe('Code Generation', () => {
       expect(code).toContain('has_header=True')
     })
 
+    it('should emit infer_schema_length=0 when schema inference is off', () => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', {
+        received_file: {
+          name: 'data.csv',
+          file_type: 'csv',
+          table_settings: {
+            delimiter: ',',
+            has_headers: true,
+            starting_from_line: 0,
+            infer_schema: false
+          }
+        }
+      }))
+
+      const code = generateCode({ nodes, edges: [] })
+
+      // pl.scan_csv has no infer_schema kwarg; the flag maps to infer_schema_length=0
+      expect(code).toContain('infer_schema_length=0')
+      expect(code).not.toContain('infer_schema=False')
+    })
+
     it('should read from the source URL when the file was loaded from one', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read', {
