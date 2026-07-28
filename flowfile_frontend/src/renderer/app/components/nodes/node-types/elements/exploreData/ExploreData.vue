@@ -104,48 +104,34 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-let pollTimer: ReturnType<typeof setInterval> | null = null;
-let safetyTimer: ReturnType<typeof setTimeout> | null = null;
-
-const clearFetchTimers = () => {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  if (safetyTimer) {
-    clearTimeout(safetyTimer);
-    safetyTimer = null;
-  }
-};
+// The drawer can be torn down mid-fetch, and polling persists across unmount —
+// so a completion arriving afterwards must not reload into a dead component.
+let disposed = false;
 
 // Runs this step only, and keeps the user here: `focusResultPanels: false` stops
-// the Results/Logs tabs stealing the drawer. The safety timeout re-loads rather
-// than giving up, so a stalled poll degrades to the empty state, not a spinner.
+// the Results/Logs tabs stealing the drawer. `performanceMode` skips storing the
+// node's result — the chart builder reads none of it, and on a large source that
+// store is the entire cost of the fetch.
 const handleFetchData = async () => {
   const nodeId = globalNodeId.value;
-  const pollingKeySuffix = `node_${nodeId}`;
-  if (nodeId === -1 || status.value === "fetching" || isPollingActive(pollingKeySuffix)) return;
+  if (nodeId === -1 || status.value === "fetching" || isPollingActive(`node_${nodeId}`)) return;
 
   fetchAttempted.value = true;
   status.value = "fetching";
   try {
-    await triggerNodeFetch(nodeId, { focusResultPanels: false, performanceMode: true });
+    await triggerNodeFetch(nodeId, {
+      focusResultPanels: false,
+      performanceMode: true,
+      // Fires on every terminal state, so a failed run lands on the empty state
+      // rather than a stuck spinner.
+      onComplete: () => {
+        if (!disposed && globalNodeId.value === nodeId) loadNodeData(nodeId);
+      },
+    });
   } catch {
     // triggerNodeFetch already surfaced the backend detail as a notification.
     status.value = "not-run";
-    return;
   }
-
-  clearFetchTimers();
-  pollTimer = setInterval(() => {
-    if (isPollingActive(pollingKeySuffix)) return;
-    clearFetchTimers();
-    loadNodeData(nodeId);
-  }, 250);
-  safetyTimer = setTimeout(() => {
-    clearFetchTimers();
-    loadNodeData(nodeId);
-  }, 60000);
 };
 
 // A run started elsewhere refreshes this screen, but only while nothing is
@@ -227,7 +213,7 @@ const pushNodeData = async () => {
 // drawCloseFunction cleanup can run, so pushNodeData never fires — restore the
 // drawer out of fullscreen from our own teardown so it can't stay stuck.
 onBeforeUnmount(() => {
-  clearFetchTimers();
+  disposed = true;
   windowStore.setFullScreen("rightDrawer", false);
 });
 

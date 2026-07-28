@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import polars as pl
 import pytest
@@ -581,10 +582,34 @@ def test_readiness_signal_holds_in_every_execution_mode(execution_mode, executio
     )
 
 
-def _worker_cache_files(flow) -> set:
-    """Cache files for this flow. The dir is shared across runs, so compare deltas."""
-    from shared.storage_config import storage
-    return set((storage.cache_directory / str(flow.flow_id)).glob("*.arrow"))
+def _explore_flow_for_fetch():
+    graph = create_graph()
+    graph.flow_settings.execution_location = "remote"
+    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return graph
+
+
+def _fetch_recording_stores(graph, **fetch_kwargs) -> list:
+    """Run a node fetch, recording every attempt to store the node's result.
+
+    Asserting on the attempt rather than on the resulting file keeps this
+    independent of whether a worker happens to be running: what changed is
+    whether the store is *reached*, and that is what must stay pinned.
+    """
+    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
+
+    attempts = []
+    real = flow_node_module.ExternalDfFetcher
+
+    def spy(*args, **kwargs):
+        attempts.append(kwargs.get("file_ref"))
+        return real(*args, **kwargs)
+
+    with patch.object(flow_node_module, "ExternalDfFetcher", side_effect=spy):
+        graph.trigger_fetch_node(2, **fetch_kwargs)
+    return attempts
 
 
 def test_fetch_in_performance_mode_stores_nothing():
@@ -595,31 +620,18 @@ def test_fetch_in_performance_mode_stores_nothing():
     never reads those rows, so it pays that cost for nothing — on a 294 MB
     Parquet source the store was 4.9 GB.
     """
-    graph = create_graph()
-    graph.flow_settings.execution_location = "remote"
-    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
-    add_node_promise_on_type(graph, 'explore_data', 2)
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph = _explore_flow_for_fetch()
 
-    before = _worker_cache_files(graph)
-    graph.trigger_fetch_node(2, performance_mode=True, reset_cache=False)
+    attempts = _fetch_recording_stores(graph, performance_mode=True, reset_cache=False)
 
-    node = graph.get_node(2)
-    assert has_result_to_visualize(node), 'the plan must still be built, so the drawer opens'
-    assert _worker_cache_files(graph) - before == set(), 'a performance-mode fetch must write no IPC'
+    assert attempts == [], 'a performance-mode fetch must never reach the store'
+    assert has_result_to_visualize(graph.get_node(2)), 'the plan must still be built, so the drawer opens'
 
 
 def test_default_fetch_still_stores_for_the_preview_grid():
     """Regression guard: the data-preview contract is unchanged."""
-    graph = create_graph()
-    graph.flow_settings.execution_location = "remote"
-    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
-    add_node_promise_on_type(graph, 'explore_data', 2)
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph = _explore_flow_for_fetch()
 
-    before = _worker_cache_files(graph)
-    graph.trigger_fetch_node(2)
+    attempts = _fetch_recording_stores(graph)
 
-    node = graph.get_node(2)
-    assert node.results.example_data_generator is not None, 'the preview grid needs example rows'
-    assert _worker_cache_files(graph) - before, 'the default fetch must still store the result'
+    assert attempts, 'the default fetch must still store the result for the preview grid'

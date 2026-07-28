@@ -210,16 +210,30 @@ export function useFlowExecution(
     customSuccessMessage?: string,
     pollingKeySuffix = "",
     focusResultPanels = true,
+    onComplete?: () => void,
   ) => {
+    // Every terminal path — finished, flow gone, or a failed status call — releases
+    // the same state, so callers get one completion signal instead of having to
+    // poll isPollingActive themselves. The status route answers 202 while running
+    // and 200 when done, so reaching here at all means the run is over.
+    let notified = false;
+    const finish = () => {
+      stopPolling(pollingKeySuffix);
+      unFreezeFlow();
+      editorStore.isRunning = false;
+      isExecuting.value = false;
+      state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+      if (!notified) {
+        notified = true;
+        onComplete?.();
+      }
+    };
+
     try {
       const response = await updateRunStatus(getFlowId(), nodeStore);
 
       if (response.status === 200) {
-        stopPolling(pollingKeySuffix);
-        unFreezeFlow();
-        editorStore.isRunning = false;
-        isExecuting.value = false;
-        state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+        finish();
         if (pollingKeySuffix === "") {
           useTutorialStore().notify({
             type: "flow-run-completed",
@@ -246,20 +260,12 @@ export function useFlowExecution(
           notificationConfig.type,
         );
       } else if (response.status === 404) {
-        stopPolling(pollingKeySuffix);
-        unFreezeFlow();
-        editorStore.isRunning = false;
-        isExecuting.value = false;
-        state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+        finish();
         resultsStore.resetRunResults();
       }
     } catch (error) {
       console.error("Error checking run status:", error);
-      stopPolling(pollingKeySuffix);
-      unFreezeFlow();
-      editorStore.isRunning = false;
-      isExecuting.value = false;
-      state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+      finish();
     }
   };
 
@@ -330,7 +336,12 @@ export function useFlowExecution(
 
   const triggerNodeFetch = async (
     nodeId: number,
-    opts: { focusResultPanels?: boolean; performanceMode?: boolean } = {},
+    opts: {
+      focusResultPanels?: boolean;
+      performanceMode?: boolean;
+      /** Fired once when the run reaches a terminal state, however it got there. */
+      onComplete?: () => void;
+    } = {},
   ) => {
     const pollingKeySuffix = `node_${nodeId}`;
     // Fetches driven from a panel (Data tab, Explore Data) opt out so that
@@ -378,6 +389,7 @@ export function useFlowExecution(
             "Node data has been fetched successfully",
             pollingKeySuffix,
             focusResultPanels,
+            opts.onComplete,
           ),
         pollingKeySuffix,
       );
