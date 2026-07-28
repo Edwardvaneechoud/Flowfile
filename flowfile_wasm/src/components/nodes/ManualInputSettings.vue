@@ -95,6 +95,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
+import { inferColumnDataType } from '../../utils/manualInputLogic'
 import type { NodeSettings, NodeManualInputSettings, RawData, MinimalFieldInfo } from '../../types'
 
 interface Column {
@@ -260,19 +261,7 @@ function loadFromCsv(csvData: string, hasHeaders: boolean, delimiter: string) {
 }
 
 function inferDataType(colId: number): string {
-  const values = rows.value.map(r => r.values[colId]).filter(v => v !== '' && v !== null && v !== undefined)
-  if (values.length === 0) return 'String'
-
-  const allBooleans = values.every(v => v === 'true' || v === 'false')
-  if (allBooleans) return 'Boolean'
-
-  const allIntegers = values.every(v => /^-?\d+$/.test(v))
-  if (allIntegers) return 'Int64'
-
-  const allNumbers = values.every(v => !isNaN(parseFloat(v)))
-  if (allNumbers) return 'Float64'
-
-  return 'String'
+  return inferColumnDataType(rows.value.map(r => r.values[colId]))
 }
 
 function saveData() {

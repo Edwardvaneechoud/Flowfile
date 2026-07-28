@@ -26,7 +26,10 @@ const selectOption = (option: ContextMenuOption) => {
   emit('close')
 }
 
-const handleClickOutside = (event: MouseEvent) => {
+// Capture-phase pointerdown: VueFlow's pane preventDefaults pointerdown, which
+// suppresses the compatibility mousedown — a bubble mousedown listener never
+// fires for canvas clicks, leaving the menu stuck open.
+const handlePointerDownOutside = (event: PointerEvent) => {
   if (menuRef.value && !menuRef.value.contains(event.target as Node)) {
     emit('close')
   }
@@ -39,12 +42,12 @@ const handleKeyDown = (event: KeyboardEvent) => {
 }
 
 onMounted(() => {
-  document.addEventListener('mousedown', handleClickOutside)
+  document.addEventListener('pointerdown', handlePointerDownOutside, true)
   document.addEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('mousedown', handleClickOutside)
+  document.removeEventListener('pointerdown', handlePointerDownOutside, true)
   document.removeEventListener('keydown', handleKeyDown)
 })
 </script>
