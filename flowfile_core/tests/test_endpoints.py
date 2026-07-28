@@ -522,48 +522,98 @@ def test_silent_save_of_opened_flow_preserves_rename():
         remove_flow(src_path)
 
 
-def test_scratch_flow_registration_survives_catalog_save_as_unavailable():
-    """A quick-created flow keeps its registration after being saved into the catalog,
-    reported as ``file_exists=False`` once the scratch file is unlinked.
+def test_discard_relocated_scratch_file_only_unlinks_scratch_paths(tmp_path):
+    """Save-As cleanup deletes only throwaway scratch files, never a real flow's file.
 
-    The designer prunes the stale recents entry off exactly this signal, so the
-    registration must outlive the file rather than disappearing with it.
+    This is the destructive half of the recents-prune contract behind the designer's
+    ``recordRelocatedFlowAsRecent``: the old file must go so its surviving registration
+    reports ``file_exists=False`` — but a wrong predicate here destroys user data.
+    """
+    from uuid import uuid4
+
+    from flowfile_core.routes.routes import _discard_relocated_scratch_file
+
+    def make(directory: Path) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"scratch_prune_{uuid4().hex[:8]}.yaml"
+        path.write_text("flow: {}")
+        return path
+
+    target = str(tmp_path / "relocated_to.yaml")
+    quick_create = python_editor = same_path = real_flow = None
+    try:
+        quick_create = make(Path(storage.unnamed_flows_directory))
+        _discard_relocated_scratch_file(str(quick_create), target)
+        assert not quick_create.exists(), "quick-create scratch files must be unlinked"
+
+        python_editor = make(Path(storage.python_editor_flows_directory))
+        _discard_relocated_scratch_file(str(python_editor), target)
+        assert not python_editor.exists(), "python-editor scratch files must be unlinked"
+
+        same_path = make(Path(storage.unnamed_flows_directory))
+        _discard_relocated_scratch_file(str(same_path), str(same_path))
+        assert same_path.exists(), "a same-path save must not delete the file just saved"
+
+        real_flow = make(tmp_path)
+        _discard_relocated_scratch_file(str(real_flow), target)
+        assert real_flow.exists(), "a flow outside the scratch dirs must never be deleted"
+
+        _discard_relocated_scratch_file(None, target)
+        _discard_relocated_scratch_file(str(quick_create), target)  # already gone: no error
+    finally:
+        for leftover in (quick_create, python_editor, same_path, real_flow):
+            if leftover is not None:
+                leftover.unlink(missing_ok=True)
+
+
+def test_catalog_flow_listing_reports_missing_file():
+    """A registration whose file is gone stays listed with ``file_exists=False``.
+
+    The designer prunes stale recent-flow entries off exactly this signal
+    (``recordRelocatedFlowAsRecent``), so the listing must report dangling
+    registrations rather than hide or garbage-collect them.
     """
     from flowfile_core.database.models import FlowRegistration
 
-    ns = _ensure_namespace("NsScratchPrune")
-    # Registered into an explicit namespace: auto-registration targets General and
-    # silently skips when that namespace is absent, which no test can rely on.
-    flow_id = client.post("editor/create_flow", params={"namespace_id": ns["id"]}).json()
-    scratch_path = flow_file_handler.get_flow(flow_id).flow_settings.path
-    assert storage.unnamed_flows_directory.resolve() in Path(scratch_path).resolve().parents, (
-        "Precondition: a flow created without a path lives under unnamed_flows/"
-    )
-    listing = client.get("/catalog/flows").json()
-    assert any(f["flow_path"] == scratch_path for f in listing), "Precondition: the scratch flow is registered"
+    ns = _ensure_namespace("NsFileExistsSignal")
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    src_path = str(base_dir / "file_exists_signal_src.yaml")
+    remove_flow(src_path)
 
-    new_flow_id = flow_id
+    flow_id = client.post("editor/create_flow", params={"flow_path": src_path}).json()
+    registered_path = None
     try:
         resp = client.post(
             "/save_flow_to_catalog",
-            params={"flow_id": flow_id, "flow_name": "scratch_prune_flow", "namespace_id": ns["id"]},
+            params={"flow_id": flow_id, "flow_name": "file_exists_signal_flow", "namespace_id": ns["id"]},
         )
         assert resp.status_code == 200, resp.text
-        new_flow_id = resp.json()
+        flow_id = resp.json()
 
-        assert not os.path.exists(scratch_path), "Save-As must unlink the scratch file"
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.name == "file_exists_signal_flow").first()
+            assert reg is not None, "Precondition: save_flow_to_catalog registers the flow"
+            registered_path = reg.flow_path
+
         listing = client.get("/catalog/flows").json()
-        stale = next((f for f in listing if f["flow_path"] == scratch_path), None)
-        assert stale is not None, "The scratch registration must outlive its file"
-        assert stale["file_exists"] is False
+        entry = next((f for f in listing if f["flow_path"] == registered_path), None)
+        assert entry is not None and entry["file_exists"] is True
+
+        os.unlink(registered_path)
+        listing = client.get("/catalog/flows").json()
+        entry = next((f for f in listing if f["flow_path"] == registered_path), None)
+        assert entry is not None, "A registration must outlive its file"
+        assert entry["file_exists"] is False
     finally:
-        for fid in {flow_id, new_flow_id}:
-            client.post("/editor/close_flow/", params={"flow_id": fid})
+        client.post("/editor/close_flow/", params={"flow_id": flow_id})
+        remove_flow(src_path)
+        if registered_path:
+            remove_flow(registered_path)
         with get_db_context() as db:
             db.query(FlowRegistration).filter(
-                FlowRegistration.flow_path.in_([scratch_path]),
+                FlowRegistration.flow_path.in_([p for p in (src_path, registered_path) if p])
             ).delete(synchronize_session=False)
-            db.query(FlowRegistration).filter(FlowRegistration.name == "scratch_prune_flow").delete(
+            db.query(FlowRegistration).filter(FlowRegistration.name == "file_exists_signal_flow").delete(
                 synchronize_session=False
             )
             db.commit()
