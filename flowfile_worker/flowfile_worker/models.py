@@ -341,6 +341,10 @@ class ResolveVirtualTableRequest(BaseModel):
     source_versions_hash: str
     # "kernel_shared" writes into the kernel-mounted shared volume so Docker kernels can scan the result.
     target: Literal["virtual_results", "kernel_shared"] = "virtual_results"
+    # Overrides the "fvt-{table_id}" filename stem for callers that aren't catalog
+    # tables (flow-node visualizations). Charset-restricted: the worker builds a
+    # filesystem path from it and must not trust the core caller.
+    cache_key: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class ResolveVirtualTableResponse(BaseModel):

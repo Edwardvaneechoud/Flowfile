@@ -762,3 +762,82 @@ def test_visualize_query_degenerate_column_bins_without_error(tmp_path):
 
 # Silence ruff: imported for type-only constants
 _ = REQUEST_QUEUE_MAXSIZE
+
+
+# ---- Flow-node source materialisation (cache_key) ---------------------------
+
+
+def _node_resolve_request(plan_bytes: bytes, versions_hash: str, cache_key: str | None):
+    return models.ResolveVirtualTableRequest(
+        table_id=7,
+        plan_bytes=plan_bytes,
+        source_versions_hash=versions_hash,
+        cache_key=cache_key,
+    )
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_cache_key_names_and_reuses(tmp_path):
+    """A cache_key replaces the fvt- stem; an identical request reuses the file."""
+    from flowfile_worker import funcs
+
+    _setup_storage(tmp_path)
+    plan = pl.LazyFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).serialize()
+
+    first = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-12"))
+    assert first.ipc_path == "node-3-12-aaaaaaaaaaaaaaaa.arrow"
+    assert first.row_count == 3
+
+    written = storage.catalog_virtual_results_directory / first.ipc_path
+    marker = written.stat().st_mtime_ns
+
+    second = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-12"))
+    assert second.ipc_path == first.ipc_path
+    assert written.stat().st_mtime_ns == marker, "identical request must not re-materialise"
+
+    # A new run token yields a new versions hash, hence a new file and session key.
+    third = funcs.resolve_virtual_table(_node_resolve_request(plan, "b" * 32, "node-3-12"))
+    assert third.ipc_path == "node-3-12-bbbbbbbbbbbbbbbb.arrow"
+    assert third.ipc_path != first.ipc_path
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_cache_key_prunes_superseded(tmp_path, monkeypatch):
+    """Node snapshots are per-run, so old ones must not accumulate forever."""
+    from flowfile_worker import funcs
+
+    _setup_storage(tmp_path)
+    monkeypatch.setattr(funcs, "_SUPERSEDED_MIN_AGE_S", -1)  # everything counts as old
+    plan = pl.LazyFrame({"value": [1, 2, 3]}).serialize()
+
+    old = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-12"))
+    other_node = funcs.resolve_virtual_table(_node_resolve_request(plan, "a" * 32, "node-3-99"))
+    new = funcs.resolve_virtual_table(_node_resolve_request(plan, "c" * 32, "node-3-12"))
+
+    results_dir = storage.catalog_virtual_results_directory
+    assert not (results_dir / old.ipc_path).exists(), "superseded snapshot should be swept"
+    assert (results_dir / new.ipc_path).exists()
+    assert (results_dir / other_node.ipc_path).exists(), "a different node must not be swept"
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_without_cache_key_keeps_fvt_naming(tmp_path):
+    """The catalog path is untouched: no cache_key still means fvt-{table_id}-."""
+    from flowfile_worker import funcs
+
+    _setup_storage(tmp_path)
+    plan = pl.LazyFrame({"value": [1]}).serialize()
+    resolved = funcs.resolve_virtual_table(_node_resolve_request(plan, "d" * 32, None))
+    assert resolved.ipc_path == "fvt-7-dddddddddddddddd.arrow"
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_rejects_path_traversal_cache_key():
+    """The worker builds a path from cache_key, so it must not trust the caller."""
+    import pydantic
+
+    for bad in ("../escape", "node/3/12", "node-3-12.arrow", "a" * 65, ""):
+        with pytest.raises(pydantic.ValidationError):
+            models.ResolveVirtualTableRequest(
+                table_id=7, plan_bytes=b"x", source_versions_hash="a" * 32, cache_key=bad
+            )

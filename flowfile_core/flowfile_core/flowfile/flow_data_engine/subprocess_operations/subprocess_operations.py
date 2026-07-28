@@ -315,14 +315,19 @@ def trigger_resolve_virtual_table(
     plan_bytes: bytes,
     source_versions_hash: str,
     target: str = "virtual_results",
+    cache_key: str | None = None,
 ) -> dict:
     """Ask the worker to materialise a flow-virtual table to its IPC cache.
 
     Ships *plan_bytes* (output of ``pl.LazyFrame.serialize()``); the worker
     deserialises in a spawned child, collects, and writes IPC. Idempotent on
-    ``(table_id, source_versions_hash)``. *target* selects the destination
-    directory: ``"virtual_results"`` (worker-private cache, the default) or
-    ``"kernel_shared"`` (kernel-mounted shared volume).
+    ``(cache_key or table_id, source_versions_hash)``. *target* selects the
+    destination directory: ``"virtual_results"`` (worker-private cache, the
+    default) or ``"kernel_shared"`` (kernel-mounted shared volume).
+
+    *cache_key* replaces the ``fvt-{table_id}`` filename stem for callers that
+    aren't catalog tables (flow-node visualizations); the worker restricts it to
+    ``[A-Za-z0-9_-]`` and sweeps superseded snapshots sharing the stem.
     """
     from base64 import b64encode
 
@@ -332,6 +337,8 @@ def trigger_resolve_virtual_table(
         "source_versions_hash": source_versions_hash,
         "target": target,
     }
+    if cache_key is not None:
+        payload["cache_key"] = cache_key
     response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
     if not response.ok:
         raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")

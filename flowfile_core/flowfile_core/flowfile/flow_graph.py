@@ -148,7 +148,6 @@ from flowfile_core.secret_manager.secret_manager import (
     decrypt_secret,
     get_encrypted_secret,
 )
-from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared._version import get_version
 from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
@@ -2499,35 +2498,13 @@ class FlowGraph:
         Args:
             node_analysis: The settings for the data exploration node.
         """
-        sample_size: int = 10000
 
-        def analysis_preparation(flowfile_table: FlowDataEngine):
-            if flowfile_table.number_of_records <= 0:
-                calculate_in_worker = self.execution_location != "local"
-                number_of_records = flowfile_table.get_number_of_records(
-                    calculate_in_worker_process=calculate_in_worker
-                )
-            else:
-                number_of_records = flowfile_table.number_of_records
-            if number_of_records > sample_size:
-                flowfile_table = flowfile_table.get_sample(sample_size, random=True)
-            if self.execution_location == "local":
-                collected = flowfile_table.data_frame.collect()
-                pa_table = collected.to_arrow()
-                node.results.analysis_data_generator = lambda: pa_table
-            else:
-                external_sampler = ExternalDfFetcher(
-                    lf=flowfile_table.data_frame,
-                    file_ref="__gf_walker" + node.hash,
-                    wait_on_completion=False,
-                    node_id=node.node_id,
-                    flow_id=self.flow_id,
-                )
-                node._fetch_cached_df = external_sampler
-                external_sampler.get_result()
-                node.results.analysis_data_generator = get_read_top_n(
-                    external_sampler.status.file_ref, n=min(sample_size, number_of_records)
-                )
+        def analysis_preparation(flowfile_table: FlowDataEngine) -> FlowDataEngine:
+            """Pass-through: Graphic Walker aggregates on the worker, not in the browser.
+
+            Charts read the node's result through ``/analysis_data/compute``, which
+            materialises it on demand, so the run itself owes the explorer nothing.
+            """
             return flowfile_table
 
         def schema_callback():
@@ -2545,7 +2522,6 @@ class FlowGraph:
             setting_input=node_analysis,
             schema_callback=schema_callback,
         )
-        node = self.get_node(node_analysis.node_id)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):

@@ -209,7 +209,7 @@ export function useFlowExecution(
   const checkRunStatus = async (
     customSuccessMessage?: string,
     pollingKeySuffix = "",
-    focusLogsOnComplete = true,
+    focusResultPanels = true,
   ) => {
     try {
       const response = await updateRunStatus(getFlowId(), nodeStore);
@@ -227,8 +227,11 @@ export function useFlowExecution(
           });
         }
 
-        editorStore.setShowFlowResult(true);
-        if (focusLogsOnComplete) {
+        // Surfacing Results/Logs makes the drawer's auto-focus watcher switch
+        // tabs, so a run started from inside a panel opts out — otherwise the
+        // fetch you asked for yanks you off the screen you asked it from.
+        if (focusResultPanels) {
+          editorStore.setShowFlowResult(true);
           editorStore.updateLogViewerVisibility(true);
         }
 
@@ -326,11 +329,11 @@ export function useFlowExecution(
     }
   };
 
-  const triggerNodeFetch = async (nodeId: number, opts: { focusLogs?: boolean } = {}) => {
+  const triggerNodeFetch = async (nodeId: number, opts: { focusResultPanels?: boolean } = {}) => {
     const pollingKeySuffix = `node_${nodeId}`;
-    // Data-tab fetches opt out so the bottom dock stays on Data instead of
-    // flipping to Logs; canvas "Run node" keeps the default (show logs).
-    const focusLogs = opts.focusLogs ?? true;
+    // Fetches driven from a panel (Data tab, Explore Data) opt out so that
+    // panel keeps focus; canvas "Run node" keeps the default (show logs).
+    const focusResultPanels = opts.focusResultPanels ?? true;
 
     if (isPollingActive(pollingKeySuffix)) {
       console.log(`Node ${nodeId} fetch already in progress`);
@@ -360,12 +363,16 @@ export function useFlowExecution(
         headers: { accept: "application/json" },
       });
 
-      if (focusLogs) {
+      if (focusResultPanels) {
         nodeStore.showLogViewer();
       }
       startPolling(
         () =>
-          checkRunStatus("Node data has been fetched successfully", pollingKeySuffix, focusLogs),
+          checkRunStatus(
+            "Node data has been fetched successfully",
+            pollingKeySuffix,
+            focusResultPanels,
+          ),
         pollingKeySuffix,
       );
     } catch (error: any) {

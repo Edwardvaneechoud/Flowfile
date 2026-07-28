@@ -48,6 +48,7 @@ from flowfile_core.fileExplorer.funcs import (
     resolve_managed_flow_path,
     validate_path_under_cwd,
 )
+from flowfile_core.flowfile.analytics import node_viz
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.artifacts import merge_declared_artifacts
 from flowfile_core.flowfile.catalog_helpers import (
@@ -104,6 +105,8 @@ from flowfile_core.routes._connection_sharing import (
 )
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
+from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
+from flowfile_core.schemas.catalog_schema import VisualizationComputeResponse, VisualizationFieldsResponse
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
@@ -2199,13 +2202,55 @@ def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | No
 
 @router.get("/analysis_data/graphic_walker_input", tags=["analysis"], response_model=input_schema.NodeExploreData)
 def get_graphic_walker_input(flow_id: int, node_id: int):
-    """Gets the data and configuration for the Graphic Walker data exploration tool."""
+    """Gets the saved chart specs and field schema for the Graphic Walker explorer.
+
+    Carries no rows: aggregation runs on the worker via ``/analysis_data/compute``.
+    """
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
-    if node.results.analysis_data_generator is None:
+    if not node_viz.has_result_to_visualize(node):
         logger.error("The data is not refreshed and available for analysis")
         raise HTTPException(422, "The data is not refreshed and available for analysis")
     return AnalyticsProcessor.process_graphic_walker_input(node)
+
+
+def _get_analysis_node(flow_id: int, node_id: int):
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} is no longer in memory")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, f"Node {node_id} not found in flow {flow_id}")
+    return flow, node
+
+
+@router.post("/analysis_data/compute", tags=["analysis"], response_model=VisualizationComputeResponse)
+def compute_node_visualization(body: gs_schemas.NodeVisualizationComputeRequest):
+    """Compute Graphic Walker chart rows for an Explore Data node.
+
+    GW's ``computation`` callback posts its IDataQueryPayload here on every
+    aggregation; the worker's session cache keeps the node's materialised frame
+    warm so successive calls skip the load.
+    """
+    flow, node = _get_analysis_node(body.flow_id, body.node_id)
+    try:
+        return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
+    except node_viz.NodeNotRunError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/analysis_data/fields", tags=["analysis"], response_model=VisualizationFieldsResponse)
+def get_node_visualization_fields(body: gs_schemas.NodeVisualizationFieldsRequest):
+    """Return the Graphic Walker field schema for an Explore Data node's result."""
+    flow, node = _get_analysis_node(body.flow_id, body.node_id)
+    try:
+        return node_viz.get_node_fields(flow, node)
+    except node_viz.NodeNotRunError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @router.get("/custom_functions/instant_result", tags=[])

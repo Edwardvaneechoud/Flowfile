@@ -287,7 +287,6 @@ class NodeResults:
     run_time_ms: int = -1
     errors: str | None = None
     warnings: str | None = None
-    analysis_data_generator: Callable[[], pa.Table] | None = None
 
     def __init__(self):
         self._resulting_data = None
@@ -296,7 +295,6 @@ class NodeResults:
         self.errors = None
         self.warnings = None
         self.example_data_generator = None
-        self.analysis_data_generator = None
 
     def get_example_data(self) -> pa.Table | None:
         """
