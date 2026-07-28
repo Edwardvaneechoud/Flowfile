@@ -30,6 +30,7 @@ interface VueGWProps {
    * prop is here for API parity with flowfile_frontend.
    */
   computation?: (payload: any) => Promise<IRow[]>
+  hideChartNav?: boolean
 }
 
 const props = defineProps<VueGWProps>()
@@ -67,6 +68,7 @@ const getReactProps = () => {
     themeKey: props.themeKey,
     storeRef: internalStoreRef.value,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
+    ...(props.hideChartNav && { hideChartNav: true }),
   }
 
   if (usingComputation) {

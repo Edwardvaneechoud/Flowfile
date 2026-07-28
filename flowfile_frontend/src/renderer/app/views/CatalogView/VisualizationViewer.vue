@@ -110,6 +110,7 @@
           :fields="plainFields"
           :spec-list="plainSpecList"
           :appearance="appearance"
+          :hide-chart-nav="true"
         />
       </template>
     </div>
