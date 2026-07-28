@@ -2216,21 +2216,27 @@ def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | No
 
 
 @router.get("/analysis_data/graphic_walker_input", tags=["analysis"], response_model=input_schema.NodeExploreData)
-def get_graphic_walker_input(flow_id: int, node_id: int):
+def get_graphic_walker_input(flow_id: int, node_id: int, current_user=Depends(get_current_active_user)):
     """Gets the saved chart specs and field schema for the Graphic Walker explorer.
 
     Carries no rows: aggregation runs on the worker via ``/analysis_data/compute``.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    node = flow.get_node(node_id)
+    _flow, node = _get_analysis_node(flow_id, node_id, current_user.id if current_user else None)
     if not node_viz.has_result_to_visualize(node):
         logger.error("The data is not refreshed and available for analysis")
         raise HTTPException(422, "The data is not refreshed and available for analysis")
     return AnalyticsProcessor.process_graphic_walker_input(node)
 
 
-def _get_analysis_node(flow_id: int, node_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
+def _get_analysis_node(flow_id: int, node_id: int, user_id: int | None):
+    """Resolve a node for the explorer, scoped to the caller's own open flows.
+
+    ``get_flow(flow_id, user_id)`` returns None when the flow isn't in that user's
+    session, so a caller can't chart someone else's data by guessing a flow_id.
+    Both editor open paths (`import_flow`, `register_flow`) register the session,
+    so anything the drawer can reach is visible here.
+    """
+    flow = flow_file_handler.get_flow(flow_id, user_id)
     if flow is None:
         raise HTTPException(404, f"Flow {flow_id} is no longer in memory")
     node = flow.get_node(node_id)
@@ -2240,14 +2246,17 @@ def _get_analysis_node(flow_id: int, node_id: int):
 
 
 @router.post("/analysis_data/compute", tags=["analysis"], response_model=VisualizationComputeResponse)
-def compute_node_visualization(body: gs_schemas.NodeVisualizationComputeRequest):
+def compute_node_visualization(
+    body: gs_schemas.NodeVisualizationComputeRequest,
+    current_user=Depends(get_current_active_user),
+):
     """Compute Graphic Walker chart rows for an Explore Data node.
 
     GW's ``computation`` callback posts its IDataQueryPayload here on every
     aggregation; the worker's session cache keeps the node's lazy frame warm so
     successive calls skip the load.
     """
-    flow, node = _get_analysis_node(body.flow_id, body.node_id)
+    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user.id if current_user else None)
     try:
         return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
     except node_viz.NodeNotRunError as exc:
@@ -2259,9 +2268,12 @@ def compute_node_visualization(body: gs_schemas.NodeVisualizationComputeRequest)
 
 
 @router.post("/analysis_data/fields", tags=["analysis"], response_model=VisualizationFieldsResponse)
-def get_node_visualization_fields(body: gs_schemas.NodeVisualizationFieldsRequest):
+def get_node_visualization_fields(
+    body: gs_schemas.NodeVisualizationFieldsRequest,
+    current_user=Depends(get_current_active_user),
+):
     """Return the Graphic Walker field schema for an Explore Data node's result."""
-    flow, node = _get_analysis_node(body.flow_id, body.node_id)
+    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user.id if current_user else None)
     try:
         return node_viz.get_node_fields(flow, node)
     except node_viz.NodeNotRunError as exc:

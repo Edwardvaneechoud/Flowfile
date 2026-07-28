@@ -3070,3 +3070,38 @@ def test_get_input_names_node_not_found():
 
     response = client.get("/node/input_names", params={"flow_id": flow_id, "node_id": 9999})
     assert response.status_code == 404
+
+
+def test_analysis_routes_are_scoped_to_the_callers_own_flows():
+    """A flow the caller hasn't opened must not be chartable through the explorer.
+
+    The explorer's compute route can run arbitrary Graphic Walker aggregations —
+    group-bys, filters, distinct-value enumeration — over a node's full dataset,
+    so an unscoped flow_id would be a far better exfiltration primitive than the
+    100-row previews elsewhere in this router.
+    """
+    flow_id = create_flow_with_graphic_walker_input()
+    flow_file_handler.get_flow(flow_id).run_graph()
+
+    # Sanity: the caller's own flow still resolves.
+    assert client.post(
+        "/analysis_data/fields", json={"flow_id": flow_id, "node_id": 2}
+    ).status_code != 404
+
+    # Same flow, but no longer in this user's session -> invisible, not merely unauthorised.
+    handler = flow_file_handler
+    sessions = {uid: set(ids) for uid, ids in handler._user_sessions.items()}
+    for ids in handler._user_sessions.values():
+        ids.discard(flow_id)
+    try:
+        for route, body in (
+            ("/analysis_data/fields", {"flow_id": flow_id, "node_id": 2}),
+            ("/analysis_data/compute", {"flow_id": flow_id, "node_id": 2, "payload": {"workflow": []}}),
+        ):
+            assert client.post(route, json=body).status_code == 404, route
+        assert client.get(
+            "/analysis_data/graphic_walker_input", params={"flow_id": flow_id, "node_id": 2}
+        ).status_code == 404
+    finally:
+        handler._user_sessions.clear()
+        handler._user_sessions.update(sessions)
