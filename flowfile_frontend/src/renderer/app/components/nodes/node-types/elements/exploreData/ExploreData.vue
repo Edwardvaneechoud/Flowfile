@@ -1,96 +1,181 @@
 <script lang="ts" setup>
-import { ref, computed, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/interfaces";
+import { ElMessage } from "element-plus";
+import type { IMutField, IChart } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
 import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
-import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
+import {
+  computeNodeVisualization,
+  fetchGraphicWalkerData,
+  fetchNodeVisualizationFields,
+} from "./vueGraphicWalker/utils";
+import EmptyState from "../../../../common/EmptyState/EmptyState.vue";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import { useItemStore } from "../../../../common/DraggableItem/stateStore";
+import { useFlowExecution } from "../../../../../composables/useFlowExecution";
+import { useGraphicWalkerCompute } from "../../../../../composables/useGraphicWalkerCompute";
 import { useGraphicWalkerAppearance } from "../../../../../composables/useGraphicWalkerAppearance";
 
-const isLoading = ref(false);
+type Status = "loading" | "not-run" | "fetching" | "failed" | "ready";
+
+const status = ref<Status>("loading");
+const failureDetail = ref("");
+const fetchAttempted = ref(false);
 const nodeData = ref<NodeGraphicWalker | null>(null);
 const chartList = ref<IChart[]>([]);
-const data = ref<IRow[]>([]);
 const fields = ref<IMutField[]>([]);
-const errorMessage = ref<string | null>(null);
-const nodeStore = useNodeStore();
 const globalNodeId = ref(-1);
+
+const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const windowStore = useItemStore();
 const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
 const graphicWalkerAppearance = useGraphicWalkerAppearance();
 
-const canDisplayVisualization = computed(() => !isLoading.value && !errorMessage.value);
+// Default polling key (`flow_<id>`) on purpose: the header's Cancel sweeps
+// `flow_<id>_node_<n>`, so cancelling also stops our completion poll.
+const { triggerNodeFetch, isPollingActive } = useFlowExecution(
+  () => nodeStore.flow_id,
+  { interval: 2000, enabled: true },
+  { persistPolling: true },
+);
+
+// Every aggregation round-trips to the worker (polars-gw), so charts cover the
+// node's full result rather than a browser-side sample.
+const { computation, lastError: computeError } = useGraphicWalkerCompute(async (payload) => {
+  if (globalNodeId.value === -1) return { rows: [], error: null };
+  const resp = await computeNodeVisualization(nodeStore.flow_id, globalNodeId.value, payload);
+  return { rows: resp.rows, error: resp.error ?? null };
+}, "explore-data");
+
+// Readiness is the field schema, not rows — no route here returns rows.
+const hasFields = computed(() => fields.value.length > 0);
+const showWalker = computed(() => status.value === "ready" && hasFields.value);
+const canFetch = computed(() => !editorStore.isRunning && status.value !== "fetching");
+
+const notRunDescription = computed(() => {
+  if (editorStore.isRunning) {
+    return "A run is already in progress — this screen refreshes when it finishes.";
+  }
+  if (fetchAttempted.value) {
+    return "The run finished but this step didn't produce any data. Check the logs for errors.";
+  }
+  return "Run this step to open its data in the chart builder.";
+});
 
 const loadNodeData = async (nodeId: number) => {
-  isLoading.value = true;
-  errorMessage.value = null;
+  if (nodeId !== globalNodeId.value) {
+    fetchAttempted.value = false;
+  }
+  status.value = "loading";
+  failureDetail.value = "";
   globalNodeId.value = nodeId;
   nodeData.value = null;
-  data.value = [];
   fields.value = [];
   chartList.value = [];
-  windowStore.setFullScreen("rightDrawer", true);
 
   try {
-    const fetchedNodeData = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
+    // Specs come from the node's settings; the field schema from polars-gw.
+    const [fetchedNodeData, fieldsResponse] = await Promise.all([
+      fetchGraphicWalkerData(nodeStore.flow_id, nodeId),
+      fetchNodeVisualizationFields(nodeStore.flow_id, nodeId),
+    ]);
     if (!fetchedNodeData?.graphic_walker_input)
       throw new Error("Received invalid data structure from backend.");
+    if (fieldsResponse.error) throw new Error(fieldsResponse.error);
 
     nodeData.value = fetchedNodeData;
-    const inputData = fetchedNodeData.graphic_walker_input;
-    fields.value = inputData.dataModel?.fields || [];
-    data.value = inputData.dataModel?.data || [];
-    chartList.value = inputData.specList || [];
+    fields.value = (fieldsResponse.fields as IMutField[]) ?? [];
+    chartList.value = fetchedNodeData.graphic_walker_input.specList || [];
+    status.value = "ready";
   } catch (error: any) {
-    console.error("Error loading GraphicWalker data:", error);
-    if (error.response && error.response.status === 422) {
-      errorMessage.value = "The analysis flow has not been run yet.";
-    } else if (error instanceof Error) {
-      errorMessage.value = `Failed to load data: ${error.message}`;
-    } else {
-      errorMessage.value = "An unknown error occurred while loading data.";
+    // 422 means the step hasn't produced data yet: an empty state, not a failure.
+    if (error?.response?.status === 422) {
+      status.value = "not-run";
+      return;
     }
-  } finally {
-    isLoading.value = false;
+    console.error("Error loading GraphicWalker data:", error);
+    failureDetail.value =
+      error?.response?.data?.detail ?? error?.message ?? "An unknown error occurred.";
+    status.value = "failed";
   }
 };
 
-const getCurrentSpec = async (): Promise<IChart[] | null> => {
-  if (!vueGraphicWalkerRef.value) {
-    console.error("Cannot get spec: GraphicWalker component reference is missing.");
-    errorMessage.value = "Cannot get spec: Component reference missing.";
-    return null;
-  }
+// The drawer can be torn down mid-fetch, and polling persists across unmount —
+// so a completion arriving afterwards must not reload into a dead component.
+let disposed = false;
 
+// Runs this step only, and keeps the user here: `focusResultPanels: false` stops
+// the Results/Logs tabs stealing the drawer. `performanceMode` skips storing the
+// node's result — the chart builder reads none of it, and on a large source that
+// store is the entire cost of the fetch.
+const handleFetchData = async () => {
+  const nodeId = globalNodeId.value;
+  if (nodeId === -1 || status.value === "fetching" || isPollingActive(`node_${nodeId}`)) return;
+
+  fetchAttempted.value = true;
+  status.value = "fetching";
+  try {
+    await triggerNodeFetch(nodeId, {
+      focusResultPanels: false,
+      performanceMode: true,
+      // Fires on every terminal state, so a failed run lands on the empty state
+      // rather than a stuck spinner.
+      onComplete: () => {
+        if (!disposed && globalNodeId.value === nodeId) loadNodeData(nodeId);
+      },
+    });
+  } catch {
+    // triggerNodeFetch already surfaced the backend detail as a notification.
+    status.value = "not-run";
+  }
+};
+
+// A run started elsewhere refreshes this screen, but only while nothing is
+// charted — reloading resets the walker and would discard in-progress edits.
+watch(
+  () => editorStore.isRunning,
+  (running, wasRunning) => {
+    if (running || !wasRunning) return;
+    if (status.value !== "not-run" || globalNodeId.value === -1) return;
+    loadNodeData(globalNodeId.value);
+  },
+);
+
+// Fullscreen is worth it for the chart builder, not for an empty state.
+watch(showWalker, (full) => windowStore.setFullScreen("rightDrawer", full), { immediate: true });
+
+const getCurrentSpec = async (): Promise<IChart[] | null> => {
+  if (!vueGraphicWalkerRef.value) return null;
   try {
     const exportedCharts: IChart[] | null = await vueGraphicWalkerRef.value.exportCode();
-
     if (exportedCharts === null) {
-      console.error("Failed to export chart specification (method returned null or failed).");
-      errorMessage.value = "Failed to retrieve current chart configuration.";
+      ElMessage.error({
+        message: "Failed to read the current chart configuration.",
+        duration: 5000,
+      });
       return null;
     }
-
-    if (exportedCharts.length === 0) {
-      console.log("No charts were exported from Graphic Walker.");
-      return [];
-    }
-
     return exportedCharts;
   } catch (error: any) {
-    console.error("Error calling getCurrentSpec or processing result:", error);
-    errorMessage.value = `Failed to process configuration: ${error.message || "Unknown error"}`;
+    console.error("Error exporting the Graphic Walker spec:", error);
+    ElMessage.error({
+      message: `Failed to read the chart configuration: ${error?.message ?? "unknown error"}`,
+      duration: 5000,
+    });
     return null;
   }
 };
 
 const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
   if (!nodeData.value) {
-    console.error("Cannot save: Original node data context is missing.");
-    errorMessage.value = "Cannot save: Missing original node data.";
+    ElMessage.error({
+      message: "Cannot save: the node data is no longer available.",
+      duration: 5000,
+    });
     return false;
   }
   try {
@@ -104,73 +189,105 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
     };
 
     await nodeStore.updateSettingsDirectly(saveData);
-    console.log("Node settings updated successfully.");
     return true;
   } catch (error: any) {
     console.error("Error saving spec to node store:", error);
-    errorMessage.value = `Failed to save configuration: ${error.message || "Unknown error"}`;
+    ElMessage.error({
+      message: `Failed to save the chart configuration: ${error?.message ?? "unknown error"}`,
+      duration: 5000,
+    });
     return false;
   }
 };
 
+// Save failures toast rather than take over the panel: losing the chart builder
+// is worse than a failed save.
 const pushNodeData = async () => {
-  errorMessage.value = null;
-  windowStore.setFullScreen("rightDrawer", false);
+  if (!vueGraphicWalkerRef.value) return;
   const currentSpec = await getCurrentSpec();
-
-  if (currentSpec === null) {
-    console.log("Spec retrieval failed, skipping save.");
-    return;
-  }
-
-  if (currentSpec.length === 0) {
-    console.log("No chart configurations exported, skipping save.");
-    return;
-  }
-  const saveSuccess = await saveSpecToNodeStore(currentSpec);
-  if (saveSuccess) {
-    console.log("Save process completed successfully.");
-  } else {
-    console.log("Save process failed.");
-  }
+  if (currentSpec === null || currentSpec.length === 0) return;
+  await saveSpecToNodeStore(currentSpec);
 };
 
 // Close/minimize paths hide the drawer (unmounting it) before the async
 // drawCloseFunction cleanup can run, so pushNodeData never fires — restore the
 // drawer out of fullscreen from our own teardown so it can't stay stuck.
 onBeforeUnmount(() => {
+  disposed = true;
   windowStore.setFullScreen("rightDrawer", false);
 });
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  canApply: showWalker,
 });
 </script>
 
 <template>
   <div class="explore-data-container">
-    <CodeLoader v-if="isLoading" />
+    <CodeLoader v-if="status === 'loading'" />
 
-    <div v-else-if="errorMessage" class="error-display">
-      <p>⚠️ Error: {{ errorMessage }}</p>
-    </div>
+    <EmptyState
+      v-else-if="status === 'fetching'"
+      icon="fa-solid fa-spinner fa-spin"
+      title="Fetching data…"
+      description="Running this step and everything it depends on. This screen refreshes when it's done."
+    />
 
-    <div v-else-if="canDisplayVisualization" class="graphic-walker-wrapper">
+    <EmptyState
+      v-else-if="status === 'not-run'"
+      icon="fa-solid fa-chart-column"
+      title="No data to explore yet"
+      :description="notRunDescription"
+    >
+      <template #actions>
+        <el-button type="primary" size="small" :disabled="!canFetch" @click="handleFetchData">
+          {{ fetchAttempted ? "Try again" : "Fetch data" }}
+        </el-button>
+      </template>
+    </EmptyState>
+
+    <EmptyState
+      v-else-if="status === 'failed'"
+      icon="fa-solid fa-triangle-exclamation"
+      title="Couldn't load the data"
+      :description="failureDetail"
+    >
+      <template #actions>
+        <el-button size="small" @click="loadNodeData(globalNodeId)">Try again</el-button>
+      </template>
+    </EmptyState>
+
+    <div v-else-if="showWalker" class="graphic-walker-wrapper">
+      <el-alert
+        v-if="computeError"
+        :title="computeError"
+        type="error"
+        :closable="false"
+        show-icon
+      />
       <VueGraphicWalker
-        v-if="data.length > 0 && fields.length > 0"
         ref="vueGraphicWalkerRef"
         :appearance="graphicWalkerAppearance"
-        :data="data"
+        :computation="computation"
         :fields="fields"
         :spec-list="chartList"
       />
-      <div v-else class="empty-data-message">
-        Data loaded, but the dataset appears to be empty or lacks defined fields.
-      </div>
     </div>
 
-    <div v-else class="fallback-message">Please load data for the node.</div>
+    <EmptyState
+      v-else
+      icon="fa-solid fa-table"
+      title="This step has no columns to chart"
+      description="The run produced an empty schema. Check the steps upstream of this one."
+    >
+      <template #actions>
+        <el-button type="primary" size="small" :disabled="!canFetch" @click="handleFetchData">
+          Fetch again
+        </el-button>
+      </template>
+    </EmptyState>
   </div>
 </template>
 
@@ -190,28 +307,10 @@ defineExpose({
 :deep(.graphic-walker-wrapper > div) {
   height: 100%;
 }
-.error-display {
-  padding: 1rem;
-  color: var(--color-danger);
-  border: 1px solid var(--color-danger-light);
-  background-color: var(--color-danger-light);
-  margin: 1rem;
-  border-radius: 4px;
-}
-.empty-data-message,
-.fallback-message {
-  padding: 1rem;
-  text-align: center;
-  color: var(--color-text-secondary);
-}
-/* Add styles for the button if needed */
-button {
-  margin: 0.5rem 1rem;
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-}
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+/* Centre the shared empty state in whatever height the drawer has. */
+.explore-data-container :deep(.empty-state) {
+  flex: 1;
+  min-height: 0;
+  justify-content: center;
 }
 </style>

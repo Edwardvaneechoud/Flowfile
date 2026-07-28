@@ -63,7 +63,7 @@
     "@codemirror/theme-one-dark": "^6.1.2",
     "@element-plus/icons-vue": "^2.3.1",
     "@fortawesome/fontawesome-free": "^6.1.1",
-    "@kanaries/graphic-walker": "^0.5.0",
+    "@kanaries/graphic-walker": "^0.5.2",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
     "@tauri-apps/plugin-log": "^2.0.0",

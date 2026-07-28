@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import sys
+from base64 import b64encode
 import threading
 import time
 from typing import Any
@@ -762,3 +763,82 @@ def test_visualize_query_degenerate_column_bins_without_error(tmp_path):
 
 # Silence ruff: imported for type-only constants
 _ = REQUEST_QUEUE_MAXSIZE
+
+
+# ---- Flow-node sources: a serialised plan, scanned live ---------------------
+
+
+@pytest.mark.worker
+def test_visualize_query_endpoint_plan(tmp_path):
+    """A flow node ships its plan; the child scans the source per query.
+
+    Nothing is materialised — the whole point of `kind="plan"` is that Polars
+    pushes each chart's projection into the node's own sources.
+    """
+    _setup_storage(tmp_path)
+    viz_session_registry.evict_all()
+
+    src = tmp_path / "node_source.parquet"
+    pl.DataFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).write_parquet(str(src))
+    plan_bytes = pl.scan_parquet(str(src)).serialize()
+
+    client = TestClient(main.app)
+    r = client.post(
+        "/catalog/visualize_query",
+        json={
+            "source": {
+                "kind": "plan",
+                "session_key": "test:plan:1",
+                "plan_bytes": b64encode(plan_bytes).decode("ascii"),
+            },
+            "payload": _AGG_PAYLOAD,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] is None
+    assert {row["category"]: row["value_sum"] for row in body["rows"]} == {"a": 4, "b": 2}
+
+    # No file was written anywhere on the way.
+    assert list(storage.catalog_virtual_results_directory.glob("*.arrow")) == []
+
+
+@pytest.mark.worker
+def test_visualize_plan_session_is_reused(tmp_path):
+    """Successive chart queries on one plan must hit the same warm child."""
+    _setup_storage(tmp_path)
+    viz_session_registry.evict_all()
+
+    src = tmp_path / "node_source_reuse.parquet"
+    pl.DataFrame({"category": ["a", "b"], "value": [1, 2]}).write_parquet(str(src))
+    body = {
+        "source": {
+            "kind": "plan",
+            "session_key": "test:plan:reuse",
+            "plan_bytes": b64encode(pl.scan_parquet(str(src)).serialize()).decode("ascii"),
+        },
+        "payload": _AGG_PAYLOAD,
+    }
+
+    client = TestClient(main.app)
+    first = client.post("/catalog/visualize_query", json=body)
+    second = client.post("/catalog/visualize_query", json=body)
+    assert first.status_code == 200 and second.status_code == 200, second.text
+    assert first.json()["cache_hit"] is False
+    assert second.json()["cache_hit"] is True, "same session_key must reuse the child"
+
+
+@pytest.mark.worker
+def test_visualize_plan_requires_plan_bytes(tmp_path):
+    _setup_storage(tmp_path)
+    viz_session_registry.evict_all()
+
+    client = TestClient(main.app)
+    r = client.post(
+        "/catalog/visualize_query",
+        json={
+            "source": {"kind": "plan", "session_key": "test:plan:empty"},
+            "payload": _AGG_PAYLOAD,
+        },
+    )
+    assert r.status_code >= 400 or r.json().get("error")

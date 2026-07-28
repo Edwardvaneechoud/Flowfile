@@ -3,7 +3,7 @@ import stores from "./app/stores";
 import router from "./app/router";
 import App from "./app/App.vue";
 import ClickOutsideDirective from "./app/directives/ClickOutsideDirective";
-import ElementPlus from "element-plus";
+import ElementPlus, { messageConfig } from "element-plus";
 import "element-plus/dist/index.css";
 import i18n from "./app/i18n";
 import "@fortawesome/fontawesome-free/css/all.css";
@@ -30,6 +30,9 @@ app.use(ElementPlus, {
   size: "small",
   zIndex: 2000,
 });
+
+// app.use options never reach messageConfig — only <el-config-provider> writes it.
+Object.assign(messageConfig, { placement: "bottom-right", showClose: true, grouping: true });
 
 const themeStore = useThemeStore();
 themeStore.initialize();

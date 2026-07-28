@@ -209,17 +209,31 @@ export function useFlowExecution(
   const checkRunStatus = async (
     customSuccessMessage?: string,
     pollingKeySuffix = "",
-    focusLogsOnComplete = true,
+    focusResultPanels = true,
+    onComplete?: () => void,
   ) => {
+    // Every terminal path — finished, flow gone, or a failed status call — releases
+    // the same state, so callers get one completion signal instead of having to
+    // poll isPollingActive themselves. The status route answers 202 while running
+    // and 200 when done, so reaching here at all means the run is over.
+    let notified = false;
+    const finish = () => {
+      stopPolling(pollingKeySuffix);
+      unFreezeFlow();
+      editorStore.isRunning = false;
+      isExecuting.value = false;
+      state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+      if (!notified) {
+        notified = true;
+        onComplete?.();
+      }
+    };
+
     try {
       const response = await updateRunStatus(getFlowId(), nodeStore);
 
       if (response.status === 200) {
-        stopPolling(pollingKeySuffix);
-        unFreezeFlow();
-        editorStore.isRunning = false;
-        isExecuting.value = false;
-        state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+        finish();
         if (pollingKeySuffix === "") {
           useTutorialStore().notify({
             type: "flow-run-completed",
@@ -227,8 +241,10 @@ export function useFlowExecution(
           });
         }
 
-        editorStore.setShowFlowResult(true);
-        if (focusLogsOnComplete) {
+        // Surfacing Results/Logs trips the drawer's auto-focus watcher, so a run
+        // started from inside a panel opts out and stays on that panel.
+        if (focusResultPanels) {
+          editorStore.setShowFlowResult(true);
           editorStore.updateLogViewerVisibility(true);
         }
 
@@ -244,20 +260,12 @@ export function useFlowExecution(
           notificationConfig.type,
         );
       } else if (response.status === 404) {
-        stopPolling(pollingKeySuffix);
-        unFreezeFlow();
-        editorStore.isRunning = false;
-        isExecuting.value = false;
-        state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+        finish();
         resultsStore.resetRunResults();
       }
     } catch (error) {
       console.error("Error checking run status:", error);
-      stopPolling(pollingKeySuffix);
-      unFreezeFlow();
-      editorStore.isRunning = false;
-      isExecuting.value = false;
-      state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+      finish();
     }
   };
 
@@ -327,11 +335,22 @@ export function useFlowExecution(
     }
   };
 
-  const triggerNodeFetch = async (nodeId: number, opts: { focusLogs?: boolean } = {}) => {
+  const triggerNodeFetch = async (
+    nodeId: number,
+    opts: {
+      focusResultPanels?: boolean;
+      performanceMode?: boolean;
+      /** Fired once when the run reaches a terminal state, however it got there. */
+      onComplete?: () => void;
+    } = {},
+  ) => {
     const pollingKeySuffix = `node_${nodeId}`;
-    // Data-tab fetches opt out so the bottom dock stays on Data instead of
-    // flipping to Logs; canvas "Run node" keeps the default (show logs).
-    const focusLogs = opts.focusLogs ?? true;
+    // Fetches driven from a panel (Data tab, Explore Data) opt out so that
+    // panel keeps focus; canvas "Run node" keeps the default (show logs).
+    const focusResultPanels = opts.focusResultPanels ?? true;
+    // Explore Data never reads the example rows, so it skips storing the node's
+    // result — on a large source that store is the whole cost of the fetch.
+    const performanceMode = opts.performanceMode ?? false;
 
     if (isPollingActive(pollingKeySuffix)) {
       console.log(`Node ${nodeId} fetch already in progress`);
@@ -357,16 +376,22 @@ export function useFlowExecution(
         params: {
           flow_id: getFlowId(),
           node_id: nodeId,
+          performance_mode: performanceMode,
         },
         headers: { accept: "application/json" },
       });
 
-      if (focusLogs) {
+      if (focusResultPanels) {
         nodeStore.showLogViewer();
       }
       startPolling(
         () =>
-          checkRunStatus("Node data has been fetched successfully", pollingKeySuffix, focusLogs),
+          checkRunStatus(
+            "Node data has been fetched successfully",
+            pollingKeySuffix,
+            focusResultPanels,
+            opts.onComplete,
+          ),
         pollingKeySuffix,
       );
     } catch (error: any) {

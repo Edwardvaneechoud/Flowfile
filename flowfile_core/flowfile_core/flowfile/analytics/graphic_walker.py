@@ -1,4 +1,4 @@
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowfileColumn
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gw_schema
 
 
@@ -45,13 +45,3 @@ def convert_ff_column_to_gw_field(flow_file_column: FlowfileColumn) -> gw_schema
 
 def convert_ff_columns_to_gw_fields(ff_columns: list[FlowfileColumn]) -> [gw_schema.MutField]:
     return [convert_ff_column_to_gw_field(ff_column) for ff_column in ff_columns]
-
-
-def get_initial_gf_data_from_ff(flow_file: FlowDataEngine) -> gw_schema.DataModel:
-    fields = [convert_ff_column_to_gw_field(ff_column) for ff_column in flow_file.schema]
-    return gw_schema.DataModel(fields=fields, data=[])
-
-
-def get_gf_data_from_ff(flow_file: FlowDataEngine, fields: list[gw_schema.MutField]) -> gw_schema.DataModel:
-    data = flow_file.to_pylist()
-    return gw_schema.DataModel(fields=fields, data=data)

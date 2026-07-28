@@ -48,6 +48,7 @@ from flowfile_core.fileExplorer.funcs import (
     resolve_managed_flow_path,
     validate_path_under_cwd,
 )
+from flowfile_core.flowfile.analytics import node_viz
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.artifacts import merge_declared_artifacts
 from flowfile_core.flowfile.catalog_helpers import (
@@ -106,6 +107,8 @@ from flowfile_core.routes._connection_sharing import (
 )
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
+from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
+from flowfile_core.schemas.catalog_schema import VisualizationComputeResponse, VisualizationFieldsResponse
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
@@ -268,8 +271,18 @@ async def get_active_flow_file_sessions(
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
-async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: BackgroundTasks):
-    """Fetches and refreshes the data for a specific node."""
+async def trigger_fetch_node_data(
+    flow_id: int,
+    node_id: int,
+    background_tasks: BackgroundTasks,
+    performance_mode: bool = False,
+):
+    """Fetches and refreshes the data for a specific node.
+
+    ``performance_mode=true`` builds the node's query plan without storing its
+    result — enough for the Explore Data drawer, which charts through the worker
+    and never reads the example rows the default (preview) path materialises.
+    """
     flow = flow_file_handler.get_flow(flow_id)
     lock = get_flow_run_lock(flow_id)
     async with lock:
@@ -279,7 +292,12 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
             flow.validate_if_node_can_be_fetched(node_id)
         except Exception as e:
             raise HTTPException(422, str(e)) from e
-        background_tasks.add_task(flow.trigger_fetch_node, node_id)
+        background_tasks.add_task(
+            flow.trigger_fetch_node,
+            node_id,
+            performance_mode=performance_mode,
+            reset_cache=not performance_mode,
+        )
     return JSONResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
@@ -2239,14 +2257,72 @@ def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | No
 
 
 @router.get("/analysis_data/graphic_walker_input", tags=["analysis"], response_model=input_schema.NodeExploreData)
-def get_graphic_walker_input(flow_id: int, node_id: int):
-    """Gets the data and configuration for the Graphic Walker data exploration tool."""
-    flow = flow_file_handler.get_flow(flow_id)
-    node = flow.get_node(node_id)
-    if node.results.analysis_data_generator is None:
+def get_graphic_walker_input(flow_id: int, node_id: int, current_user=Depends(get_current_active_user)):
+    """Gets the saved chart specs and field schema for the Graphic Walker explorer.
+
+    Carries no rows: aggregation runs on the worker via ``/analysis_data/compute``.
+    """
+    _flow, node = _get_analysis_node(flow_id, node_id, current_user.id if current_user else None)
+    if not node_viz.has_result_to_visualize(node):
         logger.error("The data is not refreshed and available for analysis")
         raise HTTPException(422, "The data is not refreshed and available for analysis")
     return AnalyticsProcessor.process_graphic_walker_input(node)
+
+
+def _get_analysis_node(flow_id: int, node_id: int, user_id: int | None):
+    """Resolve a node for the explorer, scoped to the caller's own open flows.
+
+    ``get_flow(flow_id, user_id)`` returns None when the flow isn't in that user's
+    session, so a caller can't chart someone else's data by guessing a flow_id.
+    Both editor open paths (`import_flow`, `register_flow`) register the session,
+    so anything the drawer can reach is visible here.
+    """
+    flow = flow_file_handler.get_flow(flow_id, user_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} is no longer in memory")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, f"Node {node_id} not found in flow {flow_id}")
+    return flow, node
+
+
+@router.post("/analysis_data/compute", tags=["analysis"], response_model=VisualizationComputeResponse)
+def compute_node_visualization(
+    body: gs_schemas.NodeVisualizationComputeRequest,
+    current_user=Depends(get_current_active_user),
+):
+    """Compute Graphic Walker chart rows for an Explore Data node.
+
+    GW's ``computation`` callback posts its IDataQueryPayload here on every
+    aggregation; the worker's session cache keeps the node's lazy frame warm so
+    successive calls skip the load.
+    """
+    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user.id if current_user else None)
+    try:
+        return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
+    except node_viz.NodeNotRunError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except node_viz.CloudPlanNotVisualizableError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/analysis_data/fields", tags=["analysis"], response_model=VisualizationFieldsResponse)
+def get_node_visualization_fields(
+    body: gs_schemas.NodeVisualizationFieldsRequest,
+    current_user=Depends(get_current_active_user),
+):
+    """Return the Graphic Walker field schema for an Explore Data node's result."""
+    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user.id if current_user else None)
+    try:
+        return node_viz.get_node_fields(flow, node)
+    except node_viz.NodeNotRunError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except node_viz.CloudPlanNotVisualizableError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @router.get("/custom_functions/instant_result", tags=[])

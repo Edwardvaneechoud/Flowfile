@@ -1,6 +1,11 @@
 from pathlib import Path
+from unittest.mock import patch
+
+import polars as pl
+import pytest
 
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.analytics.node_viz import has_result_to_visualize
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, delete_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -382,7 +387,8 @@ def expected_graphic_walker_data_not_run():
     return expected_data
 
 
-def test_analytics_data_generator_when_run_development_no_settings():
+def test_analytics_ships_no_rows_after_run():
+    """Rows never reach the browser: GraphicWalker aggregates on the worker."""
     graph = create_graph()
     graph.flow_settings.execution_mode = "Development"
     input_data = (FlowDataEngine.create_random(1000)
@@ -394,7 +400,8 @@ def test_analytics_data_generator_when_run_development_no_settings():
     graph.run_graph()
     node = graph.get_node(2)
     graphic_walker_input = AnalyticsProcessor.create_graphic_walker_input(node)
-    assert len(graphic_walker_input.dataModel.data) == 1_000, "Expected a data length of 1000"
+    assert graphic_walker_input.dataModel.data == [], "The setup payload must carry no rows"
+    assert [f.fid for f in graphic_walker_input.dataModel.fields] == ['groups', 'Country', 'Work']
 
 
 def test_analytics_processor_create_graphic_walker_input_not_run():
@@ -449,9 +456,8 @@ def test_analytics_processor_existing_specs_run():
     node = graph.get_node(2)
     graph.run_graph()
     graphic_walker_input = AnalyticsProcessor.create_graphic_walker_input(node, node.setting_input.graphic_walker_input)
-    expected_data = expected_graphic_walker_data_not_run()
-    expected_data['dataModel']['data'] = data.to_pylist()
-    assert graphic_walker_input.model_dump() == expected_data
+    # A run changes nothing about the setup payload — it is fields + specs either way.
+    assert graphic_walker_input.model_dump() == expected_graphic_walker_data_not_run()
 
 
 def test_analytics_changing_data_processor_existing_specs_run():
@@ -476,7 +482,6 @@ def test_analytics_no_data_when_not_run_development():
     graph.flow_settings.execution_mode = "Development"
     node_step = graph.get_node(3)
     output = AnalyticsProcessor.process_graphic_walker_input(node_step)
-    assert not node_step.results.analysis_data_generator, 'The node should not have to run'
     assert not output.graphic_walker_input.dataModel.data, 'There should be no data in the graphic walker input'
 
 
@@ -485,50 +490,51 @@ def test_analytics_no_data_when_not_run_performance():
     graph.flow_settings.execution_mode = "Performance"
     node_step = graph.get_node(3)
     output = AnalyticsProcessor.process_graphic_walker_input(node_step)
-    assert not node_step.results.analysis_data_generator, 'The node should not have to run'
     assert not output.graphic_walker_input.dataModel.data, 'There should be no data in the graphic walker input'
 
 
-def test_analytics_data_generator_when_run_development():
+def test_analytics_no_data_when_run_development():
     graph = create_big_flow()
     graph.flow_settings.execution_mode = "Development"
     graph.run_graph()
     node_step = graph.get_node(3)
     output = AnalyticsProcessor.process_graphic_walker_input(node_step)
-    assert node_step.results.analysis_data_generator, 'The node should have to run'
-    assert output.graphic_walker_input.dataModel.data
+    assert not output.graphic_walker_input.dataModel.data
+    assert output.graphic_walker_input.dataModel.fields
 
 
-def test_analytics_data_generator_when_run_performance():
+def test_analytics_no_data_when_run_performance():
     graph = create_big_flow()
     graph.flow_settings.execution_mode = "Performance"
     graph.run_graph()
     node_step = graph.get_node(3)
     output = AnalyticsProcessor.process_graphic_walker_input(node_step)
-    assert node_step.results.analysis_data_generator, 'The node should have to run'
-    assert output.graphic_walker_input.dataModel.data
+    assert not output.graphic_walker_input.dataModel.data
+    assert output.graphic_walker_input.dataModel.fields
 
 
-def test_analytics_processor_from_parquet_file_run_performance():
+def test_explore_data_node_is_pass_through():
+    """The node no longer samples at run time; it forwards its input unchanged."""
     graph = create_graph()
     graph.flow_settings.execution_mode = "Performance"
 
     add_node_promise_on_type(graph, 'read', 1, 1)
-
     received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
                                                 path='flowfile_core/tests/support_files/data/table.parquet')
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
     graph.add_read(node_read)
     add_node_promise_on_type(graph, 'explore_data', 2, 1)
-    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    add_connection(graph, connection)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     graph.run_graph()
+
     node_step = graph.get_node(2)
-    assert node_step.results.analysis_data_generator, 'The node should have to run'
-    assert node_step.results.analysis_data_generator().__len__() == 1000, 'There should be 1000 rows in the data'
+    assert has_result_to_visualize(node_step)
+    # Full fidelity: every row is still there, where the old path sampled to 10k.
+    assert node_step.get_resulting_data().data_frame.select(pl.len()).collect().item() == 1000
+    assert node_step.get_resulting_data().columns == graph.get_node(1).get_resulting_data().columns
 
 
-def test_analytics_processor_from_parquet_file_run_in_one_local_process():
+def test_explore_data_node_is_pass_through_local_execution():
     graph = create_graph()
     graph.flow_settings.execution_location = "local"
     add_node_promise_on_type(graph, 'read', 1, 1)
@@ -538,9 +544,94 @@ def test_analytics_processor_from_parquet_file_run_in_one_local_process():
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, received_file=received_table)
     graph.add_read(node_read)
     add_node_promise_on_type(graph, 'explore_data', 2, 1)
-    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    add_connection(graph, connection)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     node_step = graph.get_node(2)
     graph.run_graph()
-    assert node_step.results.analysis_data_generator, 'The node should have to run'
-    assert node_step.results.analysis_data_generator().__len__() == 10_000, 'There should be 1000 rows in the data'
+    assert has_result_to_visualize(node_step)
+    n_rows = node_step.get_resulting_data().data_frame.select(pl.len()).collect().item()
+    assert n_rows == graph.get_node(1).get_resulting_data().data_frame.select(pl.len()).collect().item()
+    assert n_rows > 10_000, 'The 10k sample cap is gone; the full result must survive the node'
+
+
+@pytest.mark.parametrize("execution_mode", ["Development", "Performance"])
+@pytest.mark.parametrize("execution_location", ["local", "remote"])
+def test_readiness_signal_holds_in_every_execution_mode(execution_mode, execution_location):
+    """The 422 gate must clear after a run in all four mode/location combinations.
+
+    `node_stats.has_completed_last_run` does not: it is skipped in performance
+    mode, so a Performance + local run would leave the explorer permanently
+    reporting "not run".
+    """
+    graph = create_graph()
+    graph.flow_settings.execution_mode = execution_mode
+    graph.flow_settings.execution_location = execution_location
+    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    node_step = graph.get_node(2)
+    assert not has_result_to_visualize(node_step), 'Must report not-run before the flow runs'
+
+    # Opening the drawer on an un-run node must not flip the gate by itself.
+    AnalyticsProcessor.process_graphic_walker_input(node_step)
+    assert not has_result_to_visualize(node_step), 'The setup route must not count as a run'
+
+    graph.run_graph()
+    assert has_result_to_visualize(graph.get_node(2)), (
+        f'{execution_mode}/{execution_location} left the explorer gated after a successful run'
+    )
+
+
+def _explore_flow_for_fetch():
+    graph = create_graph()
+    graph.flow_settings.execution_location = "remote"
+    add_manual_input(graph, data=FlowDataEngine.create_random(50).to_raw_data())
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return graph
+
+
+def _fetch_recording_stores(graph, **fetch_kwargs) -> list:
+    """Run a node fetch, recording every attempt to store the node's result.
+
+    Asserting on the attempt rather than on the resulting file keeps this
+    independent of whether a worker happens to be running: what changed is
+    whether the store is *reached*, and that is what must stay pinned.
+    """
+    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
+
+    attempts = []
+    real = flow_node_module.ExternalDfFetcher
+
+    def spy(*args, **kwargs):
+        attempts.append(kwargs.get("file_ref"))
+        return real(*args, **kwargs)
+
+    with patch.object(flow_node_module, "ExternalDfFetcher", side_effect=spy):
+        graph.trigger_fetch_node(2, **fetch_kwargs)
+    return attempts
+
+
+def test_fetch_in_performance_mode_stores_nothing():
+    """The Explore drawer's fetch must not materialise the node.
+
+    The default (preview) fetch stores the whole result so the 100-row example
+    grid has something to read. The chart builder charts through the worker and
+    never reads those rows, so it pays that cost for nothing — on a 294 MB
+    Parquet source the store was 4.9 GB.
+    """
+    graph = _explore_flow_for_fetch()
+
+    attempts = _fetch_recording_stores(graph, performance_mode=True, reset_cache=False)
+
+    assert attempts == [], 'a performance-mode fetch must never reach the store'
+    assert has_result_to_visualize(graph.get_node(2)), 'the plan must still be built, so the drawer opens'
+
+
+def test_default_fetch_still_stores_for_the_preview_grid():
+    """Regression guard: the data-preview contract is unchanged."""
+    graph = _explore_flow_for_fetch()
+
+    attempts = _fetch_recording_stores(graph)
+
+    assert attempts, 'the default fetch must still store the result for the preview grid'

@@ -33,29 +33,59 @@ def _closed_ok() -> ConnectionClosedOK:
     return ConnectionClosedOK(Close(1000, ""), Close(1000, ""), True)
 
 
+class _FakeClock:
+    """Deterministic stand-in for ``streaming.monotonic``.
+
+    Real sleeps made the silence-threshold tests timing-dependent: a single 50ms
+    sleep overshooting under full-suite load was enough to trip a stall the test
+    was asserting *against*. Here time only moves when the fake socket says so,
+    so the margins are exact rather than hopeful.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 class _FakeWs:
     """Duck-typed stand-in for a websockets.sync client connection.
 
     The script is a list of items played back by ``recv``:
-    - ``"timeout"``: sleep ``gap`` seconds, then raise ``TimeoutError``
+    - ``"timeout"``: let ``gap`` seconds elapse, then raise ``TimeoutError``
       (simulating a quiet poll tick);
     - an Exception instance: raised as-is;
-    - anything else: returned as the received message.
+    - anything else: returned as the received message (no time passes — a
+      message that has arrived is already here).
     An exhausted script keeps raising ``TimeoutError`` (permanent silence).
+
+    With a ``clock``, "elapsed" means advancing that clock; without one it is a
+    real sleep. Prefer the clock for anything asserting on a threshold.
     """
 
-    def __init__(self, script=(), gap: float = 0.0):
+    def __init__(self, script=(), gap: float = 0.0, clock: "_FakeClock | None" = None):
         self._script = list(script)
         self._gap = gap
+        self._clock = clock
         self.closed = False
+
+    def _elapse(self):
+        if self._clock is not None:
+            self._clock.advance(self._gap)
+        else:
+            time.sleep(self._gap)
 
     def recv(self, timeout=None):
         if not self._script:
-            time.sleep(self._gap)
+            self._elapse()
             raise TimeoutError
         item = self._script.pop(0)
         if item == "timeout":
-            time.sleep(self._gap)
+            self._elapse()
             raise TimeoutError
         if isinstance(item, Exception):
             raise item
@@ -67,8 +97,10 @@ class _FakeWs:
 
 def test_silent_worker_raises_stalled(monkeypatch):
     """A worker that never sends anything must surface as a stall, promptly."""
+    clock = _FakeClock()
+    monkeypatch.setattr(stream_mod, "monotonic", clock)
     monkeypatch.setattr(stream_mod, "_WS_INACTIVITY_TIMEOUT", 0.05)
-    ws = _FakeWs(gap=0.01)
+    ws = _FakeWs(gap=0.01, clock=clock)
 
     start = time.monotonic()
     with pytest.raises(WorkerStreamStalled, match="FLOWFILE_WORKER_WS_TIMEOUT"):
@@ -77,8 +109,17 @@ def test_silent_worker_raises_stalled(monkeypatch):
 
 
 def test_heartbeats_keep_stream_alive(monkeypatch):
-    """Progress heartbeats (even with an unchanged value) reset the silence clock."""
-    monkeypatch.setattr(stream_mod, "_WS_INACTIVITY_TIMEOUT", 0.2)
+    """Progress heartbeats (even with an unchanged value) reset the silence clock.
+
+    The gaps are deliberately tuned so this fails if the reset is removed:
+    each individual silence (0.1) stays under the 0.25 threshold, but the three
+    of them *accumulate* to 0.3 and would trip it. An earlier version used
+    0.05 gaps against a 0.2 threshold — cumulative 0.15, under the threshold
+    either way — so it passed even with the reset deleted.
+    """
+    clock = _FakeClock()
+    monkeypatch.setattr(stream_mod, "monotonic", clock)
+    monkeypatch.setattr(stream_mod, "_WS_INACTIVITY_TIMEOUT", 0.25)
     ws = _FakeWs(
         script=[
             "timeout",
@@ -88,7 +129,8 @@ def test_heartbeats_keep_stream_alive(monkeypatch):
             "timeout",
             '{"type": "complete", "has_result": false, "file_ref": "x"}',
         ],
-        gap=0.05,
+        gap=0.1,
+        clock=clock,
     )
 
     raw_result, status = _receive_raw_result(ws, "task-heartbeat")

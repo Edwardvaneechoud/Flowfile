@@ -358,7 +358,7 @@ async function handleFetchData() {
       }
 
       isFetching.value = true;
-      await triggerNodeFetch(currentNodeId.value, { focusLogs: false });
+      await triggerNodeFetch(currentNodeId.value, { focusResultPanels: false });
 
       // Polling is persistent, so poll for completion. Keep isFetching held
       // until the grid is actually reloaded — the run flips isRunning off ~1s

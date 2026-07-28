@@ -317,7 +317,7 @@ const handleSaveFlow = async (flowPath: string) => {
   try {
     const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : undefined;
     const newFlowId = await saveFlow(props.flowId, flowPath, namespaceId ?? undefined);
-    ElMessage.success("Flow saved successfully");
+    ElMessage.success("Flow saved");
     isVisible.value = false;
     emit("save-complete", newFlowId || props.flowId);
   } catch (error: any) {
