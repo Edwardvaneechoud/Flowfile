@@ -21,11 +21,11 @@ def test_database_connection_default_is_postgresql():
     assert DatabaseConnection().database_type == "postgresql"
 
 
-def test_database_connection_accepts_mixed_case_and_preserves_it():
-    """Vocabulary matching is case-insensitive (the registry lowercases lookups);
-    the raw spelling is preserved on the model."""
-    assert DatabaseConnection(database_type="PostgreSQL").database_type == "PostgreSQL"
-    assert DatabaseConnection(database_type="SQLITE").database_type == "SQLITE"
+def test_database_connection_accepts_mixed_case_and_normalizes_it():
+    """Vocabulary matching is case-insensitive; the stored value is canonical lowercase
+    so downstream comparisons never see spelling variants."""
+    assert DatabaseConnection(database_type="PostgreSQL").database_type == "postgresql"
+    assert DatabaseConnection(database_type="SQLITE").database_type == "sqlite"
 
 
 class TestSqlSourceDialectInference:

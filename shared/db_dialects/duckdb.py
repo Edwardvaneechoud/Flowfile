@@ -98,12 +98,13 @@ class DuckDBDialect(DbDialect):
         """Project INTERVAL columns (incl. nested) to VARCHAR via a DESCRIBE probe.
 
         The probe plans without reading data; shapes it cannot parse run raw.
-        The substring match over-matches on purpose: extra VARCHAR degrades
-        gracefully, a missed INTERVAL fails the Arrow import.
+        The newline before the closing paren keeps trailing line comments
+        wrappable. The substring match over-matches on purpose: extra VARCHAR
+        degrades gracefully, a missed INTERVAL fails the Arrow import.
         """
         query = query.rstrip().rstrip(";").rstrip()
         try:
-            columns = con.execute(f"DESCRIBE SELECT * FROM ({query}) AS _ff_q").fetchall()
+            columns = con.execute(f"DESCRIBE SELECT * FROM ({query}\n) AS _ff_q").fetchall()
         except Exception:
             return query
         if not any("INTERVAL" in row[1].upper() for row in columns):
@@ -114,7 +115,7 @@ class DuckDBDialect(DbDialect):
             else _quote_ident(row[0])
             for row in columns
         )
-        return f"SELECT {select_list} FROM ({query}) AS _ff_q"
+        return f"SELECT {select_list} FROM ({query}\n) AS _ff_q"
 
     def read(
         self,
@@ -164,7 +165,7 @@ class DuckDBDialect(DbDialect):
         con = self._connect(uri, read_only=True)
         try:
             safe_query = self._interval_safe_query(con, query)
-            return con.execute(f"SELECT * FROM ({safe_query}) AS _ff_probe LIMIT 0").pl().schema
+            return con.execute(f"SELECT * FROM ({safe_query}\n) AS _ff_probe LIMIT 0").pl().schema
         finally:
             con.close()
 

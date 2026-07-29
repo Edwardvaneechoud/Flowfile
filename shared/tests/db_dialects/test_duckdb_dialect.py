@@ -149,3 +149,7 @@ def test_probe_tolerates_shapes_it_cannot_parse(db_uri):
     schema = dialect.query_schema(db_uri, "SELECT a FROM t;")
     assert schema is not None
     assert dict(schema) == {"a": pl.Int64}
+
+    schema = dialect.query_schema(db_uri, "SELECT a FROM t -- trailing comment")
+    assert schema is not None
+    assert dict(schema) == {"a": pl.Int64}

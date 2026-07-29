@@ -799,7 +799,7 @@ def update_db_connection(
         raise HTTPException(404, "Database connection not found")
     # Only gate a CHANGED type: legacy rows may hold pre-registry values (e.g. redshift)
     # and must stay updatable (password rotation) as long as the type is untouched.
-    if input_connection.database_type != db_connection.database_type:
+    if input_connection.database_type.lower() != (db_connection.database_type or "").lower():
         _require_known_database_type(input_connection.database_type)
     if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
         changed = changed_target_fields(
@@ -1197,9 +1197,7 @@ class RenameFlowInput(BaseModel):
 
 
 @router.post("/editor/rename_flow/", tags=["editor"], response_model=schemas.FlowSettingsResponse)
-def rename_flow(
-    body: RenameFlowInput, current_user=Depends(get_current_active_user)
-) -> schemas.FlowSettingsResponse:
+def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_user)) -> schemas.FlowSettingsResponse:
     """Renames a flow's display name: the catalog registration (when one exists) plus the
     in-memory session name. Metadata-only — the YAML file and its path are never touched."""
     user_id = current_user.id if current_user else None

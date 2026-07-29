@@ -76,6 +76,9 @@ def test_create_db_connection_accepts_mixed_case_dialect():
     }
     response = client.post("/db_connection_lib", json=payload)
     assert response.status_code == 200, response.text
+    with get_db_context() as db:
+        stored = get_database_connection(db, "mixed_case_conn", 1)
+        assert stored.database_type == "postgresql", "stored type must be canonical lowercase"
     _cleanup_connection("mixed_case_conn")
 
 
@@ -115,6 +118,37 @@ def test_update_db_connection_keeps_legacy_type_but_blocks_switch_to_unknown():
     assert "Unsupported database type" in response.text
 
     _cleanup_connection("legacy_redshift_conn")
+
+
+def test_update_same_dialect_different_case_is_not_a_type_change(tmp_path):
+    """Resubmitting 'SQLite' over a stored 'sqlite' must not trip the changed-type
+    gate or the re-enter-credentials guard."""
+    _cleanup_connection("case_insensitive_conn")
+    db_path = str(tmp_path / "case.db")
+    with get_db_context() as db:
+        store_database_connection(
+            db,
+            input_schema.FullDatabaseConnection(
+                connection_name="case_insensitive_conn",
+                database_type="sqlite",
+                username="",
+                password=SecretStr(""),
+                database=db_path,
+            ),
+            1,
+        )
+
+    payload = {
+        "connection_name": "case_insensitive_conn",
+        "database_type": "SQLite",
+        "username": "",
+        "password": "",
+        "database": db_path,
+    }
+    response = client.put("/db_connection_lib", json=payload)
+    assert response.status_code == 200, response.text
+
+    _cleanup_connection("case_insensitive_conn")
 
 
 def _browse_settings(database_type: str, db_path: str) -> dict:

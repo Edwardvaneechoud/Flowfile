@@ -932,9 +932,10 @@ class DatabaseConnection(BaseModel):
     def known_database_type(cls, v: str) -> str:
         from shared.db_dialects import KNOWN_DIALECT_NAMES
 
-        if v.lower() not in KNOWN_DIALECT_NAMES:
+        low = v.lower()
+        if low not in KNOWN_DIALECT_NAMES:
             raise ValueError(f"Unsupported database type '{v}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}")
-        return v
+        return low
 
     @field_validator("password_ref", mode="before")
     @classmethod
@@ -956,6 +957,12 @@ class FullDatabaseConnection(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+
+    @field_validator("database_type")
+    @classmethod
+    def normalize_database_type(cls, v: str) -> str:
+        # lowercase only, no vocabulary check: legacy stored types (e.g. redshift) must keep loading
+        return v.lower()
 
 
 class FullDatabaseConnectionInterface(BaseModel):
