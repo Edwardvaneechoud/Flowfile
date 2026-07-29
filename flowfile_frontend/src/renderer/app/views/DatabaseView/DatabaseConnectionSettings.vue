@@ -19,13 +19,13 @@
       <div class="form-field">
         <label for="database-type" class="form-label">Database Type</label>
         <select id="database-type" v-model="connection.databaseType" class="form-input" required>
-          <option value="postgresql">PostgreSQL</option>
-          <option value="mysql">MySQL</option>
-          <option value="sqlite">SQLite</option>
+          <option v-for="dialect in dialects" :key="dialect.name" :value="dialect.name">
+            {{ dialect.display_name }}
+          </option>
         </select>
       </div>
 
-      <div v-if="!isSqlite" class="form-field">
+      <div v-if="!isFileBasedType" class="form-field">
         <label for="host" class="form-label">Host</label>
         <input
           id="host"
@@ -37,29 +37,31 @@
         />
       </div>
 
-      <div v-if="!isSqlite" class="form-field">
+      <div v-if="!isFileBasedType" class="form-field">
         <label for="port" class="form-label">Port</label>
         <input
           id="port"
           v-model="connection.port"
           type="number"
           class="form-input"
-          :placeholder="String(defaultPorts[connection.databaseType as DatabaseType] || 5432)"
+          :placeholder="String(defaultPort(connection.databaseType) || 5432)"
         />
       </div>
 
       <div class="form-field">
-        <label for="database" class="form-label">{{ isSqlite ? "File Path" : "Database" }}</label>
+        <label for="database" class="form-label">{{
+          isFileBasedType ? "File Path" : "Database"
+        }}</label>
         <input
           id="database"
           v-model="connection.database"
           type="text"
           class="form-input"
-          :placeholder="isSqlite ? '/path/to/database.db' : 'Database name'"
+          :placeholder="isFileBasedType ? '/path/to/database.db' : 'Database name'"
         />
       </div>
 
-      <div v-if="!isSqlite" class="form-field">
+      <div v-if="!isFileBasedType" class="form-field">
         <label for="username" class="form-label">Username</label>
         <input
           id="username"
@@ -71,7 +73,7 @@
         />
       </div>
 
-      <div v-if="!isSqlite" class="form-field">
+      <div v-if="!isFileBasedType" class="form-field">
         <label for="password" class="form-label">Password</label>
         <div class="password-field">
           <input
@@ -93,7 +95,7 @@
         </div>
       </div>
 
-      <div v-if="!isSqlite" class="form-field">
+      <div v-if="!isFileBasedType" class="form-field">
         <div class="checkbox-container">
           <input
             id="ssl-enabled"
@@ -118,8 +120,7 @@
 <script lang="ts" setup>
 import { ref, computed, defineProps, defineEmits, watch } from "vue";
 import type { FullDatabaseConnection } from "./databaseConnectionTypes";
-import { defaultPorts, isFileBased } from "./databaseConnectionTypes";
-import type { DatabaseType } from "./databaseConnectionTypes";
+import { useDbDialects } from "../../composables/useDbDialects";
 
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
@@ -131,6 +132,8 @@ const emit = defineEmits<{
   (e: "submit", connection: FullDatabaseConnection): void;
   (e: "cancel"): void;
 }>();
+
+const { dialects, isFileBased, defaultPort } = useDbDialects();
 
 const defaultConnection = (): FullDatabaseConnection => ({
   connectionName: "",
@@ -161,12 +164,12 @@ watch(
   () => connection.value.databaseType,
   (newType, oldType) => {
     if (newType !== oldType) {
-      const newDefault = defaultPorts[newType as DatabaseType];
-      if (isFileBased(newType as DatabaseType)) {
-        // SQLite has no port
+      const newDefault = defaultPort(newType);
+      if (isFileBased(newType)) {
+        // File-based databases have no port
         connection.value.port = undefined;
       } else {
-        const oldDefault = defaultPorts[oldType as DatabaseType];
+        const oldDefault = defaultPort(oldType);
         if (!connection.value.port || connection.value.port === oldDefault) {
           connection.value.port = newDefault;
         }
@@ -177,10 +180,10 @@ watch(
 
 const showPassword = ref(false);
 
-const isSqlite = computed(() => isFileBased(connection.value.databaseType as DatabaseType));
+const isFileBasedType = computed(() => isFileBased(connection.value.databaseType));
 
 const isValid = computed(() => {
-  if (isSqlite.value) {
+  if (isFileBasedType.value) {
     return !!connection.value.connectionName && !!connection.value.database;
   }
   return (

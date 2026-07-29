@@ -64,6 +64,53 @@ def sqlite_db(tmp_path):
     yield db_path
 
 
+@pytest.fixture
+def duckdb_db(tmp_path):
+    """Temporary DuckDB database mirroring sqlite_db, plus a typed-columns table."""
+    import duckdb
+
+    db_path = str(tmp_path / "test.duckdb")
+    con = duckdb.connect(db_path)
+    con.execute(
+        "CREATE TABLE movies (id INTEGER, title VARCHAR, rating DOUBLE, votes BIGINT, "
+        "description VARCHAR, is_active BOOLEAN)"
+    )
+    con.execute(
+        "INSERT INTO movies VALUES "
+        "(1, 'The Matrix', 8.7, 1800000, 'A sci-fi classic', true), "
+        "(2, 'Inception', 8.8, 2200000, 'Mind-bending thriller', true), "
+        "(3, 'The Shawshank Redemption', 9.3, 2500000, 'Drama', true)"
+    )
+    con.execute("CREATE TABLE actors (id INTEGER, name VARCHAR, birth_year INTEGER)")
+    con.execute(
+        "INSERT INTO actors VALUES "
+        "(1, 'Keanu Reeves', 1964), (2, 'Leonardo DiCaprio', 1974), (3, 'Morgan Freeman', 1937)"
+    )
+    con.execute(
+        """
+        CREATE TABLE types_zoo AS SELECT
+            42::TINYINT AS c_tinyint,
+            42::UINTEGER AS c_uinteger,
+            42::HUGEINT AS c_hugeint,
+            3.140::DECIMAL(12,3) AS c_decimal,
+            2.5::DOUBLE AS c_double,
+            true AS c_bool,
+            'text' AS c_varchar,
+            DATE '2024-01-15' AS c_date,
+            TIMESTAMP '2024-01-15 10:30:00' AS c_timestamp,
+            TIMESTAMPTZ '2024-01-15 10:30:00+00' AS c_timestamptz,
+            INTERVAL 3 DAY AS c_interval,
+            'abc'::BLOB AS c_blob,
+            [1, 2, 3] AS c_list,
+            {'a': 1, 'b': 'x'} AS c_struct
+        """
+    )
+    # Single-writer file: release the write connection before tests open their own.
+    con.close()
+
+    yield db_path
+
+
 # Shared catalog test helpers
 
 CATALOG_SAMPLE_DATA = [

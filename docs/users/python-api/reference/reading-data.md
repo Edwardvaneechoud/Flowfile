@@ -353,6 +353,26 @@ The tested integration example reads a table and a query from PostgreSQL through
 --8<-- "docs/examples/integrations/database_read.py:example"
 ```
 
+### DuckDB
+
+DuckDB connections point at a local file — no host, port, or credentials:
+
+```python
+ff.create_database_connection(
+    connection_name="local_duckdb",
+    database_type="duckdb",
+    database="/path/to/analytics.duckdb",
+)
+
+df = ff.read_database("local_duckdb", table_name="events")
+```
+
+The tested DuckDB example (runs fully in-process):
+
+```python
+--8<-- "docs/examples/integrations/database_read_duckdb.py:example"
+```
+
 ## Connection Management
 
 Set up cloud and database connections once, then reference them by name. See [Cloud Connection Management](cloud-connections.md).

@@ -149,6 +149,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from shared._version import get_version
+from shared.db_dialects import get_dialect_or_generic
 from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
 from shared.google_analytics.models import (
@@ -1051,18 +1052,18 @@ def _resolve_database_credentials(
         (database_connection, encrypted_password, database_reference_settings)
         where database_reference_settings is the stored connection (or None for inline).
     """
-    is_sqlite = (
+    is_file_based = (
         database_settings.connection_mode == "inline"
         and database_settings.database_connection is not None
-        and database_settings.database_connection.database_type == "sqlite"
+        and get_dialect_or_generic(database_settings.database_connection.database_type).file_based
     )
-    if database_settings.connection_mode == "inline" and not is_sqlite:
+    if database_settings.connection_mode == "inline" and not is_file_based:
         database_connection = database_settings.database_connection
         encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
         if encrypted_password is None:
             raise HTTPException(status_code=400, detail="Password not found")
         return database_connection, encrypted_password, None
-    elif is_sqlite:
+    elif is_file_based:
         return database_settings.database_connection, None, None
     else:
         ref_settings = get_local_database_connection(database_settings.database_connection_name, user_id)
@@ -4356,6 +4357,7 @@ class FlowGraph:
                     schema_name=database_settings.schema_name,
                     fields=node_database_reader.fields,
                     cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
+                    database_type=database_connection.database_type,
                 )
                 fl = FlowDataEngine(local_source.get_pl_df())
                 fl.lazy = True
@@ -4403,6 +4405,7 @@ class FlowGraph:
                 table_name=database_settings.table_name,
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
+                database_type=database_connection.database_type,
             )
             return sql_source.get_schema()
 

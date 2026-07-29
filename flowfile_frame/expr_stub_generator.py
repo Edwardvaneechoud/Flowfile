@@ -335,6 +335,9 @@ if __name__ == "__main__":
         print(f"Type stub file generated successfully: {output_file}")
 
     except ImportError:
+        import traceback
+
+        traceback.print_exc()
         print(f"Error: Could not import module {args.module}")
         print("Please specify the correct module with --module")
         sys.exit(1)

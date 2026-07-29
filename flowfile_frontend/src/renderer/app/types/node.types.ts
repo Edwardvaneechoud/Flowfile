@@ -696,19 +696,12 @@ interface BaseConnection {
   url?: string;
 }
 
-export interface RemoteConnection extends BaseConnection {
-  database_type: "postgresql" | "mysql";
-  username: string;
-  password_ref: string; // Strictly required for remote DBs
+export interface DatabaseConnection extends BaseConnection {
+  // Dialect names come from the backend registry (GET /db_dialects).
+  database_type: string;
+  username?: string;
+  password_ref?: string; // Unused by file-based databases (sqlite, duckdb)
 }
-
-export interface SqliteConnection extends BaseConnection {
-  database_type: "sqlite";
-  username?: string; // Optional or completely remove if SQLite doesn't need it
-  password_ref?: never; // Ensures password_ref cannot be used with SQLite
-}
-
-export type DatabaseConnection = RemoteConnection | SqliteConnection;
 export type ConnectionModeOption = "inline" | "reference";
 export type IfExistAction = "append" | "replace" | "fail";
 
