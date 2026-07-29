@@ -166,8 +166,7 @@ def write_dataframe_to_database(
 ) -> None:
     """Write ``df`` to ``table_name``. ``uri`` is a base URI (``sqlite:///<path>`` or
     a base scheme; the SQLAlchemy driver suffix is applied internally)."""
+    from shared.db_dialects import get_dialect_or_generic
+
     if_exists = if_exists or "append"
-    if database_type.lower() == "sqlite":
-        _write_df_to_sqlite(df, uri, table_name, if_exists)
-    else:
-        _write_df_via_sqlalchemy_core(df, uri, table_name, if_exists)
+    get_dialect_or_generic(database_type).write(df, uri=uri, table_name=table_name, if_exists=if_exists)

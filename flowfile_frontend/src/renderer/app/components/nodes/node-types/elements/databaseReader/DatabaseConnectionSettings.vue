@@ -16,21 +16,17 @@
           :value="modelValue.database_type"
           class="form-control"
           @change="
-            (e: Event) =>
-              updateField(
-                'database_type',
-                (e.target as HTMLSelectElement).value as 'postgresql' | 'mysql' | 'sqlite',
-              )
+            (e: Event) => updateField('database_type', (e.target as HTMLSelectElement).value)
           "
         >
-          <option value="postgresql">PostgreSQL</option>
-          <option value="mysql">MySQL</option>
-          <option value="sqlite">SQLite</option>
+          <option v-for="dialect in dialects" :key="dialect.name" :value="dialect.name">
+            {{ dialect.display_name }}
+          </option>
         </select>
       </div>
 
-      <!-- Connection Details (hidden for SQLite) -->
-      <div v-if="!isSqlite" class="form-group">
+      <!-- Connection Details (hidden for file-based databases) -->
+      <div v-if="!isFileBasedConnection" class="form-group">
         <label for="username">Username</label>
         <input
           id="username"
@@ -42,7 +38,7 @@
         />
       </div>
 
-      <div v-if="!isSqlite" class="form-group">
+      <div v-if="!isFileBasedConnection" class="form-group">
         <label for="password-ref">Password Reference</label>
         <select
           id="password-ref"
@@ -57,7 +53,7 @@
         </select>
       </div>
 
-      <div v-if="!isSqlite" class="form-group">
+      <div v-if="!isFileBasedConnection" class="form-group">
         <label for="host">Host</label>
         <input
           id="host"
@@ -69,7 +65,7 @@
         />
       </div>
 
-      <div v-if="!isSqlite" class="form-row">
+      <div v-if="!isFileBasedConnection" class="form-row">
         <div class="form-group half">
           <label for="port">Port</label>
           <input
@@ -95,7 +91,7 @@
         </div>
       </div>
 
-      <div v-if="isSqlite" class="form-group">
+      <div v-if="isFileBasedConnection" class="form-group">
         <label for="database">File Path</label>
         <input
           id="database"
@@ -115,6 +111,7 @@ import { ref, computed, onMounted } from "vue";
 import { DatabaseConnection } from "../../../baseNode/nodeInput";
 import { SecretsApi } from "../../../../../api";
 import type { Secret } from "../../../../../types";
+import { useDbDialects } from "../../../../../composables/useDbDialects";
 
 const fetchSecretsApi = SecretsApi.getAll;
 
@@ -123,7 +120,9 @@ const props = defineProps<{
   modelValue: DatabaseConnection;
 }>();
 
-const isSqlite = computed(() => props.modelValue.database_type === "sqlite");
+const { dialects, isFileBased } = useDbDialects();
+
+const isFileBasedConnection = computed(() => isFileBased(props.modelValue.database_type));
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: DatabaseConnection): void;

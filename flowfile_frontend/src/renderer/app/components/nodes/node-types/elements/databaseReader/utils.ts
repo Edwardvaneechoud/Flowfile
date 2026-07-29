@@ -16,7 +16,7 @@ export const createNodeDatabaseReader = (flowId: number, nodeId: number): NodeDa
       username: "",
       password_ref: "",
       host: "localhost",
-      port: 4322,
+      port: 5432,
       database: "",
       url: undefined,
     } as DatabaseConnection,

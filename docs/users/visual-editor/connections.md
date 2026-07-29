@@ -24,9 +24,20 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | **PostgreSQL** | `postgresql` |
 | **MySQL** | `mysql` |
 | **SQLite** | `sqlite` |
+| **DuckDB** | `duckdb` |
 
-!!! note "SQLite connections"
-    SQLite connects to a local database **file path** (e.g. `/path/to/database.db`) — no host, port, or credentials are required.
+!!! note "File-based connections (SQLite, DuckDB)"
+    SQLite and DuckDB connect to a local database **file path** (e.g. `/path/to/database.db`
+    or `/path/to/analytics.duckdb`) — no host, port, or credentials are required.
+
+!!! warning "DuckDB single-writer files"
+    A DuckDB file allows many concurrent readers but only one writer at a time. When a flow
+    writes to a DuckDB file, close other tools (e.g. the DuckDB CLI or an IDE) that have the
+    same file open.
+
+!!! note "DuckDB `INTERVAL` columns"
+    `INTERVAL` columns are read as text — calendar intervals (months) have no fixed length,
+    so there is no matching Polars type.
 
 ### Creating a Database Connection
 
@@ -37,7 +48,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL, MySQL, or SQLite | `postgresql` |
+| **Database Type** | PostgreSQL, MySQL, SQLite, or DuckDB | `postgresql` |
 | **Host** | Database server hostname | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |

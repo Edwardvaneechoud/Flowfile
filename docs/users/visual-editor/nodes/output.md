@@ -144,7 +144,7 @@ The **Cloud Storage Writer** node saves your processed data directly to cloud ob
 
 ### ![Database Writer](../../../assets/images/nodes/database_writer.svg){ width="50" height="50" } Database Writer
 
-The **Database Writer** node saves processed data to a database table. It supports **PostgreSQL**, **MySQL**, and **SQLite**.
+The **Database Writer** node saves processed data to a database table. It supports **PostgreSQL**, **MySQL**, **SQLite**, and **DuckDB**.
 
 #### **Connection Modes:**
 

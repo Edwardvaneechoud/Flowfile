@@ -223,4 +223,4 @@ Each of these was shipped once and redrawn after feedback (commit `172c6ab0`, 20
 
 ## Provenance
 
-Distilled 2026-07-07 from: the original illustration style guide (git `27cb76b9:DOCS_IMAGE_TODO.md`), full-file extraction of the 24 shipped diagrams (concept + technical + placeholder sets), `docs/stylesheets/extra.css` + `mkdocs.yml` (canvas colors), the `172c6ab0` redraw diff, and the maintainer feedback record (`docs-feedback.md`). Exact values quoted from the files; re-verify against a shipped sibling before departing from them.
+Distilled 2026-07-07 from: the original illustration style guide (git `27cb76b9:DOCS_IMAGE_TODO.md`), full-file extraction of the 24 shipped diagrams (concept + technical + placeholder sets), `docs/stylesheets/extra.css` + `mkdocs.yml` (canvas colors), the `172c6ab0` redraw diff, and the maintainer feedback record (`notes/docs-feedback.md`, untracked). Exact values quoted from the files; re-verify against a shipped sibling before departing from them.

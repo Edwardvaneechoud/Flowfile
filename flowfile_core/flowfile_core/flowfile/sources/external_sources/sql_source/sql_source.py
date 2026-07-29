@@ -1,6 +1,6 @@
 import re
 from collections.abc import Callable, Generator
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import polars as pl
 from sqlalchemy import Engine, create_engine, inspect, text
@@ -16,7 +16,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
 )
 from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInfo
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
-from shared.db_reader import read_sql_with_fallback
+from shared.db_dialects import DbDialect, get_dialect_or_generic, read_sql
 from shared.sql_validation import UnsafeSQLError, validate_sql_query
 
 QueryMode = Literal["table", "query"]
@@ -111,6 +111,7 @@ class BaseSqlSource:
         table_name: str = None,
         schema_name: str = None,
         fields: list[MinimalFieldInfo] | None = None,
+        database_type: str | None = None,
     ):
         """
         Initialize a BaseSqlSource object.
@@ -120,7 +121,11 @@ class BaseSqlSource:
             table_name: Name of the table to query (if query_mode is 'table')
             schema_name: Optional database schema name
             fields: Optional list of field information
+            database_type: Optional dialect name; drives per-dialect SQL (limit clause)
+                and the fast-schema hooks. None falls back to generic behavior.
         """
+        self.database_type = database_type
+        self.dialect: DbDialect = get_dialect_or_generic(database_type or "generic")
         if schema_name == "":
             schema_name = None
 
@@ -157,9 +162,9 @@ class BaseSqlSource:
         Get a sample query that returns a limited number of rows.
         """
         if self.query_mode == "query":
-            return f"select * from ({self.query}) as main_query LIMIT 1"
+            return self.dialect.limit_query(f"select * from ({self.query}) as main_query", 1)
         else:
-            return f"{self.query} LIMIT 1"
+            return self.dialect.limit_query(self.query, 1)
 
     @staticmethod
     def _parse_table_name(table_name: str) -> tuple[str | None, str]:
@@ -193,8 +198,19 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         schema_name: str = None,
         fields: list[MinimalFieldInfo] | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        database_type: str | None = None,
     ):
-        BaseSqlSource.__init__(self, query=query, table_name=table_name, schema_name=schema_name, fields=fields)
+        if database_type is None and connection_string and "://" in connection_string:
+            # URIs built by construct_sql_uri carry the database_type as their scheme.
+            database_type = connection_string.split("://", 1)[0].split("+", 1)[0]
+        BaseSqlSource.__init__(
+            self,
+            query=query,
+            table_name=table_name,
+            schema_name=schema_name,
+            fields=fields,
+            database_type=database_type,
+        )
 
         self.connection_string = connection_string
         self.read_result = None
@@ -205,6 +221,11 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
     def validate(self) -> None:
         try:
+            dialect_schema = self._schema_from_dialect()
+            if dialect_schema is not None:
+                if len(dialect_schema) == 0:
+                    raise ValueError("No columns found in the query")
+                return
             engine = create_engine(get_sqlalchemy_uri(self.connection_string))
             if self.query_mode == "table":
                 try:
@@ -232,9 +253,15 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
     def get_sample(self, n: int = 10000) -> Generator[dict[str, Any], None, None]:
         if self.query_mode == "table":
-            query = f"{self.query} LIMIT {n}"
+            query = self.dialect.limit_query(self.query, n)
             try:
-                df = read_sql_with_fallback(query, self.connection_string, logger, cancel_check=self.cancel_check)
+                df = read_sql(
+                    query,
+                    self.connection_string,
+                    logger,
+                    database_type=self.database_type,
+                    cancel_check=self.cancel_check,
+                )
                 return (r for r in df.to_dicts())
             except Exception as e:
                 logger.error(f"Error with query: {query}")
@@ -251,10 +278,25 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
     def get_pl_df(self) -> pl.DataFrame:
         if self.read_result is None:
-            self.read_result = read_sql_with_fallback(
-                self.query, self.connection_string, logger, cancel_check=self.cancel_check
+            self.read_result = read_sql(
+                self.query,
+                self.connection_string,
+                logger,
+                database_type=self.database_type,
+                cancel_check=self.cancel_check,
             )
         return self.read_result
+
+    def _schema_from_dialect(self) -> list[FlowfileColumn] | None:
+        """Schema via the dialect's fast hooks; None = use the SQLAlchemy inspection path."""
+        schema = None
+        if self.query_mode == "table":
+            schema = self.dialect.table_schema(self.connection_string, self.table_name, self.schema_name)
+        if schema is None:
+            schema = self.dialect.query_schema(self.connection_string, self.query)
+        if schema is None:
+            return None
+        return [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in schema.items()]
 
     def get_flow_file_columns(self) -> list[FlowfileColumn]:
         """
@@ -263,6 +305,10 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         Returns:
             List of FlowfileColumn objects representing the columns in the SQL source
         """
+        dialect_schema = self._schema_from_dialect()
+        if dialect_schema is not None:
+            return dialect_schema
+
         engine = create_engine(get_sqlalchemy_uri(self.connection_string))
 
         if self.query_mode == "table":
@@ -331,7 +377,13 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             List of FlowfileColumn objects
         """
         try:
-            df = read_sql_with_fallback(query, self.connection_string, logger, cancel_check=self.cancel_check)
+            df = read_sql(
+                query,
+                self.connection_string,
+                logger,
+                database_type=self.database_type,
+                cancel_check=self.cancel_check,
+            )
             columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in df.columns]
             return columns
         except Exception as e:
@@ -370,15 +422,20 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         return self.schema
 
 
-def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int) -> str:
-    """Resolve DatabaseSettings into a connection string, handling inline/reference mode and SQLite."""
+class ResolvedConnection(NamedTuple):
+    uri: str
+    database_type: str
+
+
+def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> ResolvedConnection:
+    """Resolve DatabaseSettings into a connection URI + dialect, handling inline/reference mode."""
     database_connection = database_settings.database_connection
 
     if database_settings.connection_mode == "inline":
         if database_connection is None:
             raise ValueError("Database connection is required in inline mode")
-        is_sqlite = database_connection.database_type == "sqlite"
-        if is_sqlite:
+        is_file_based = get_dialect_or_generic(database_connection.database_type).file_based
+        if is_file_based:
             password = None
         else:
             encrypted_secret = get_encrypted_secret(
@@ -397,7 +454,7 @@ def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int
         encrypted_secret = database_connection.password.get_secret_value()
         password = decrypt_secret(encrypted_secret)
 
-    return construct_sql_uri(
+    uri = construct_sql_uri(
         database_type=database_connection.database_type,
         host=database_connection.host,
         port=database_connection.port,
@@ -407,19 +464,71 @@ def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int
         ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
         connect_timeout=10,
     )
+    return ResolvedConnection(uri=uri, database_type=database_connection.database_type)
+
+
+def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int) -> str:
+    """Resolve DatabaseSettings into a connection string, handling inline/reference mode and SQLite."""
+    return _resolve_connection(database_settings, user_id).uri
 
 
 def create_engine_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> Engine:
     """Create a SQLAlchemy Engine from DatabaseSettings."""
-    connection_string = _resolve_connection_string(database_settings, user_id)
-    return create_engine(get_sqlalchemy_uri(connection_string))
+    resolved = _resolve_connection(database_settings, user_id)
+    return create_engine(get_sqlalchemy_uri(resolved.uri))
 
 
 def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> SqlSource:
-    connection_string = _resolve_connection_string(database_settings, user_id)
+    resolved = _resolve_connection(database_settings, user_id)
     return SqlSource(
-        connection_string=connection_string,
+        connection_string=resolved.uri,
         query=None if database_settings.query_mode == "table" else database_settings.query,
         table_name=database_settings.table_name,
         schema_name=database_settings.schema_name,
+        database_type=resolved.database_type,
     )
+
+
+def list_db_schemas(database_settings: DatabaseSettings, user_id: int) -> list[str]:
+    """Schema names for connection browsing; dialect fast path, else SQLAlchemy inspection."""
+    resolved = _resolve_connection(database_settings, user_id)
+    schemas = get_dialect_or_generic(resolved.database_type).list_schemas(resolved.uri)
+    if schemas is not None:
+        return sorted(schemas)
+    engine = create_engine(get_sqlalchemy_uri(resolved.uri))
+    try:
+        return sorted(inspect(engine).get_schema_names())
+    finally:
+        engine.dispose()
+
+
+def list_db_tables(database_settings: DatabaseSettings, user_id: int) -> list[str]:
+    """Table names for browsing; plain names for an explicit schema, else schema-qualified.
+
+    Mirrors the historical /db_tables behavior: when no schema is given, tables from every
+    accessible schema are returned as ``schema.table``, skipping unreadable schemas.
+    """
+    resolved = _resolve_connection(database_settings, user_id)
+    schema = database_settings.schema_name if database_settings.schema_name else None
+    tables = get_dialect_or_generic(resolved.database_type).list_tables(resolved.uri, schema)
+    if tables is not None:
+        return sorted(tables)
+    engine = create_engine(get_sqlalchemy_uri(resolved.uri))
+    try:
+        inspector = inspect(engine)
+        if schema:
+            return sorted(inspector.get_table_names(schema=schema))
+        qualified: list[str] = []
+        for s in inspector.get_schema_names():
+            if s == "information_schema":
+                continue
+            try:
+                schema_tables = inspector.get_table_names(schema=s)
+            except Exception:
+                # Skip schemas we don't have access to (e.g. performance_schema)
+                continue
+            for t in schema_tables:
+                qualified.append(f"{s}.{t}")
+        return sorted(qualified)
+    finally:
+        engine.dispose()

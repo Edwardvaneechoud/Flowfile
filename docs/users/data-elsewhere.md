@@ -10,7 +10,7 @@ The founding idea: **credentials and pipelines are separate things.** A connecti
 
 ![One encrypted connection store in the middle holds named connections — warehouse, data-lake, events — while flows on the canvas and Python scripts around it reference those connections by name only; rotating a credential once updates every reference.](../assets/images/concepts/connection-store.svg)
 
-Supported out of the box: databases (PostgreSQL, MySQL, SQLite), cloud storage (S3, Azure Data Lake, Google Cloud Storage — with auth methods from stored keys to ambient `aws-cli`/environment credentials), Kafka/Redpanda brokers, and Google Analytics 4 properties. [Connections](visual-editor/connections.md) covers every form field.
+Supported out of the box: databases (PostgreSQL, MySQL, SQLite, DuckDB), cloud storage (S3, Azure Data Lake, Google Cloud Storage — with auth methods from stored keys to ambient `aws-cli`/environment credentials), Kafka/Redpanda brokers, and Google Analytics 4 properties. [Connections](visual-editor/connections.md) covers every form field.
 
 ## 2. Read from the source, not from copies
 
@@ -18,7 +18,7 @@ Each source is a drag-and-drop node on the canvas — with a matching `ff.*` cal
 
 | Your data is in… | On the canvas | In Python |
 |---|---|---|
-| PostgreSQL / MySQL / SQLite | Database Reader | `ff.read_database` |
+| PostgreSQL / MySQL / SQLite / DuckDB | Database Reader | `ff.read_database` |
 | S3 / ADLS / GCS (CSV, Parquet, JSON, Delta, Iceberg) | Cloud Storage Reader | `ff.scan_parquet_from_cloud_storage`, … |
 | A Kafka / Redpanda topic | Kafka Source | `ff.read_kafka` |
 | A REST endpoint | REST API Reader | `ff.read_api` |

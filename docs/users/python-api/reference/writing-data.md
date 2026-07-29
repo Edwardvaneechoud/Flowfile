@@ -280,6 +280,12 @@ df.write_database(
 
 Returns a new child `FlowFrame`.
 
+!!! note "DuckDB"
+    Connections with `database_type="duckdb"` write to a local file. The same `if_exists`
+    modes apply, and rich types (nested lists/structs, decimals, timestamps) are stored
+    natively rather than text-encoded. A DuckDB file accepts one writer at a time — close
+    other tools using the file while a flow writes to it.
+
 ## Write Modes
 
 ### Overwrite vs Append

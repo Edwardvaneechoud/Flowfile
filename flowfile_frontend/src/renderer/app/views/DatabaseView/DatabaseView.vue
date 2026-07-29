@@ -167,13 +167,9 @@ import {
   updateDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
 } from "./api";
-import {
-  FullDatabaseConnectionInterface,
-  FullDatabaseConnection,
-  defaultPorts,
-} from "./databaseConnectionTypes";
-import type { DatabaseType } from "./databaseConnectionTypes";
+import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
+import { useDbDialects } from "../../composables/useDbDialects";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -190,6 +186,7 @@ const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
 
 const { isMultiUser, isOwned, canManage, canManageGrants } = useResourceSharing();
+const { defaultPort } = useDbDialects();
 const showShareDialog = ref(false);
 const shareConnection = ref<FullDatabaseConnectionInterface | null>(null);
 
@@ -224,7 +221,7 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     username: connection.username,
     password: "", // Password is not returned from the API
     host: connection.host || "",
-    port: connection.port || defaultPorts[connection.databaseType as DatabaseType],
+    port: connection.port || defaultPort(connection.databaseType),
     database: connection.database || "",
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",
