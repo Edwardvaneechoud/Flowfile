@@ -119,8 +119,7 @@ def test_quoted_identifier_handling(db_uri):
 
 
 def test_interval_columns_surface_as_text(db_uri):
-    """Arrow month_day_nano_interval cannot import into polars; the dialect
-    projects INTERVAL columns to VARCHAR in both the read and schema paths."""
+    """INTERVAL columns must read as String in both the read and schema paths."""
     import duckdb
 
     path = db_uri[len("duckdb:///") :]
@@ -136,3 +135,17 @@ def test_interval_columns_surface_as_text(db_uri):
     schema = dialect.query_schema(db_uri, "SELECT * FROM t")
     assert schema is not None
     assert dict(schema) == {"id": pl.Int32, "gap": pl.String}, "predicted must match materialized"
+
+    with_semicolon = dialect.read("SELECT * FROM t;", db_uri, logger)
+    assert with_semicolon.schema["gap"] == pl.String
+
+
+def test_probe_tolerates_shapes_it_cannot_parse(db_uri):
+    """The DESCRIBE probe must never reject queries the raw read path accepts."""
+    _write(pl.DataFrame({"a": [1, 2]}), db_uri, "t", "replace")
+    assert dialect.read("SELECT * FROM t;", db_uri, logger).height == 2
+    assert dialect.read("SELECT * FROM t -- trailing comment", db_uri, logger).height == 2
+
+    schema = dialect.query_schema(db_uri, "SELECT a FROM t;")
+    assert schema is not None
+    assert dict(schema) == {"a": pl.Int64}

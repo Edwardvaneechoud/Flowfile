@@ -72,8 +72,7 @@ def create_database_connection(
         password = SecretStr(password)
 
     if get_dialect_or_generic(database_type).file_based:
-        # File-based databases (sqlite, duckdb) have no credentials, but the
-        # stored model requires strings — mirror the UI, which sends "".
+        # No credentials for file-based databases; the stored model requires strings
         username = username or ""
         password = password if password is not None else SecretStr("")
 

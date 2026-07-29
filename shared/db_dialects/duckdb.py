@@ -14,11 +14,9 @@ DuckDB plans the query without executing it, so the REAL column types come
 back for arbitrary queries at near-zero cost — including query mode, which
 for other dialects falls back to an all-String sample probe.
 
-INTERVAL columns are projected to VARCHAR in both the read and schema paths:
-they arrive as Arrow ``month_day_nano_interval``, which Polars cannot import
-(calendar intervals have no fixed duration), so text is the only lossless
-representation. Both paths share the rewrite, keeping predicted schema equal
-to materialized schema.
+INTERVAL columns are projected to VARCHAR in both the read and schema paths
+(Arrow's ``month_day_nano_interval`` has no Polars equivalent), so predicted
+schema stays equal to materialized schema.
 """
 
 from __future__ import annotations
@@ -83,8 +81,7 @@ class DuckDBDialect(DbDialect):
             import os
 
             if not os.path.exists(path):
-                # A read-write connect would silently create an empty file here;
-                # never do that on a read path.
+                # a read-write connect would silently create the file
                 raise FileNotFoundError(f"DuckDB file not found: {path}")
         last_error: Exception | None = None
         for attempt in range(_LOCK_RETRIES):
@@ -98,12 +95,17 @@ class DuckDBDialect(DbDialect):
 
     @staticmethod
     def _interval_safe_query(con, query: str) -> str:
-        """Project INTERVAL columns (incl. nested in lists/structs) to VARCHAR.
+        """Project INTERVAL columns (incl. nested) to VARCHAR via a DESCRIBE probe.
 
-        Arrow's month_day_nano_interval has no Polars equivalent and fails hard
-        on import; DESCRIBE only plans the query, so this probe reads no data.
+        The probe plans without reading data; shapes it cannot parse run raw.
+        The substring match over-matches on purpose: extra VARCHAR degrades
+        gracefully, a missed INTERVAL fails the Arrow import.
         """
-        columns = con.execute(f"DESCRIBE SELECT * FROM ({query}) AS _ff_q").fetchall()
+        query = query.rstrip().rstrip(";").rstrip()
+        try:
+            columns = con.execute(f"DESCRIBE SELECT * FROM ({query}) AS _ff_q").fetchall()
+        except Exception:
+            return query
         if not any("INTERVAL" in row[1].upper() for row in columns):
             return query
         select_list = ", ".join(
@@ -121,8 +123,7 @@ class DuckDBDialect(DbDialect):
         logger: logging.Logger,
         cancel_check: Callable[[], bool] | None = None,
     ) -> pl.DataFrame:
-        # cancel_check is accepted for interface parity but not polled: reads are
-        # local-file and typically fast; interrupt support is a follow-up.
+        # cancel_check accepted for interface parity, not polled (local-file reads are fast)
         con = self._connect(uri, read_only=True)
         try:
             return con.execute(self._interval_safe_query(con, query)).pl()

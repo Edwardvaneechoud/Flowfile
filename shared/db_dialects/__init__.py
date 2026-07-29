@@ -6,7 +6,8 @@ metadata). Core, the worker, and flowfile_frame all resolve dialects here;
 the frontend consumes ``dialect_catalog()`` via ``GET /db_dialects``.
 
 Adding a dialect = one module with a ``DbDialect`` subclass + one entry in
-``_BUILTIN_DIALECTS`` below (+ tests). See docs/for-developers/database-dialects.md.
+``_BUILTIN_DIALECTS`` below (+ tests); the contract suite in
+shared/tests/db_dialects/test_dialect_contract.py runs for every entry.
 """
 
 from __future__ import annotations
