@@ -33,7 +33,8 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 !!! warning "DuckDB single-writer files"
     A DuckDB file allows many concurrent readers but only one writer at a time. When a flow
     writes to a DuckDB file, close other tools (e.g. the DuckDB CLI or an IDE) that have the
-    same file open.
+    same file open. `INTERVAL` columns are read as text — calendar intervals (months) have no
+    fixed length, so there is no matching Polars type.
 
 ### Creating a Database Connection
 

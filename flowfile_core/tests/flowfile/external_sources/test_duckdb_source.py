@@ -110,6 +110,7 @@ class TestDuckDBFastSchema:
         assert df.schema["c_bool"] == pl.Boolean
         assert df.schema["c_varchar"] == pl.Utf8
         assert df.schema["c_date"] == pl.Date
+        assert df.schema["c_interval"] == pl.String, "INTERVAL has no polars equivalent; surfaced as text"
         assert isinstance(df.schema["c_list"], pl.List)
         assert isinstance(df.schema["c_struct"], pl.Struct)
 

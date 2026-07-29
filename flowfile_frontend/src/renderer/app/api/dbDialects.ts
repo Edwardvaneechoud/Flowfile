@@ -36,6 +36,14 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     supports_ssl: false,
     available: true,
   },
+  {
+    name: "duckdb",
+    display_name: "DuckDB",
+    file_based: true,
+    default_port: null,
+    supports_ssl: false,
+    available: true,
+  },
 ];
 
 let dialectsPromise: Promise<DbDialectInfo[]> | null = null;

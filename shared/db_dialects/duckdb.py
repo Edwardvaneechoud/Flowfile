@@ -13,6 +13,12 @@ The fast-schema hooks wrap the query in ``SELECT * FROM (...) LIMIT 0``:
 DuckDB plans the query without executing it, so the REAL column types come
 back for arbitrary queries at near-zero cost — including query mode, which
 for other dialects falls back to an all-String sample probe.
+
+INTERVAL columns are projected to VARCHAR in both the read and schema paths:
+they arrive as Arrow ``month_day_nano_interval``, which Polars cannot import
+(calendar intervals have no fixed duration), so text is the only lossless
+representation. Both paths share the rewrite, keeping predicted schema equal
+to materialized schema.
 """
 
 from __future__ import annotations
@@ -90,6 +96,24 @@ class DuckDBDialect(DbDialect):
                     time.sleep(_LOCK_BACKOFF_SECONDS * (attempt + 1))
         raise last_error
 
+    @staticmethod
+    def _interval_safe_query(con, query: str) -> str:
+        """Project INTERVAL columns (incl. nested in lists/structs) to VARCHAR.
+
+        Arrow's month_day_nano_interval has no Polars equivalent and fails hard
+        on import; DESCRIBE only plans the query, so this probe reads no data.
+        """
+        columns = con.execute(f"DESCRIBE SELECT * FROM ({query}) AS _ff_q").fetchall()
+        if not any("INTERVAL" in row[1].upper() for row in columns):
+            return query
+        select_list = ", ".join(
+            f"CAST({_quote_ident(row[0])} AS VARCHAR) AS {_quote_ident(row[0])}"
+            if "INTERVAL" in row[1].upper()
+            else _quote_ident(row[0])
+            for row in columns
+        )
+        return f"SELECT {select_list} FROM ({query}) AS _ff_q"
+
     def read(
         self,
         query: str,
@@ -101,7 +125,7 @@ class DuckDBDialect(DbDialect):
         # local-file and typically fast; interrupt support is a follow-up.
         con = self._connect(uri, read_only=True)
         try:
-            return con.execute(query).pl()
+            return con.execute(self._interval_safe_query(con, query)).pl()
         finally:
             con.close()
 
@@ -138,7 +162,8 @@ class DuckDBDialect(DbDialect):
     def query_schema(self, uri: str, query: str) -> pl.Schema | None:
         con = self._connect(uri, read_only=True)
         try:
-            return con.execute(f"SELECT * FROM ({query}) AS _ff_probe LIMIT 0").pl().schema
+            safe_query = self._interval_safe_query(con, query)
+            return con.execute(f"SELECT * FROM ({safe_query}) AS _ff_probe LIMIT 0").pl().schema
         finally:
             con.close()
 

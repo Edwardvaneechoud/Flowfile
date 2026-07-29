@@ -16,7 +16,7 @@ from flowfile_core.schemas.input_schema import (
     FullDatabaseConnection,
     FullDatabaseConnectionInterface,
 )
-from shared.db_dialects import KNOWN_DIALECT_NAMES
+from shared.db_dialects import KNOWN_DIALECT_NAMES, get_dialect_or_generic
 
 
 def get_current_user_id() -> int:
@@ -50,8 +50,8 @@ def create_database_connection(
         host: Database server hostname.
         port: Database server port.
         database: Database name.
-        username: Database username.
-        password: Database password.
+        username: Database username (not needed for file-based types like sqlite/duckdb).
+        password: Database password (not needed for file-based types like sqlite/duckdb).
         ssl_enabled: Whether to use SSL for the connection.
         url: Full database URL (overrides other connection parameters).
 
@@ -70,6 +70,12 @@ def create_database_connection(
 
     if isinstance(password, str):
         password = SecretStr(password)
+
+    if get_dialect_or_generic(database_type).file_based:
+        # File-based databases (sqlite, duckdb) have no credentials, but the
+        # stored model requires strings — mirror the UI, which sends "".
+        username = username or ""
+        password = password if password is not None else SecretStr("")
 
     connection = FullDatabaseConnection(
         connection_name=connection_name,
@@ -110,8 +116,8 @@ def create_database_connection_if_not_exists(
         host: Database server hostname.
         port: Database server port.
         database: Database name.
-        username: Database username.
-        password: Database password.
+        username: Database username (not needed for file-based types like sqlite/duckdb).
+        password: Database password (not needed for file-based types like sqlite/duckdb).
         ssl_enabled: Whether to use SSL for the connection.
         url: Full database URL (overrides other connection parameters).
 

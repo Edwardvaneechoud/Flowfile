@@ -116,3 +116,23 @@ def test_concurrent_read_only_connections(db_uri):
 def test_quoted_identifier_handling(db_uri):
     _write(pl.DataFrame({"a": [1]}), db_uri, "Select", "replace")
     assert dialect.read('SELECT * FROM "Select"', db_uri, logger).height == 1
+
+
+def test_interval_columns_surface_as_text(db_uri):
+    """Arrow month_day_nano_interval cannot import into polars; the dialect
+    projects INTERVAL columns to VARCHAR in both the read and schema paths."""
+    import duckdb
+
+    path = db_uri[len("duckdb:///") :]
+    con = duckdb.connect(path)
+    con.execute("CREATE TABLE t AS SELECT 1 AS id, INTERVAL 3 DAY AS gap")
+    con.close()
+
+    result = dialect.read("SELECT * FROM t", db_uri, logger)
+    assert result.schema["id"] == pl.Int32
+    assert result.schema["gap"] == pl.String
+    assert result.height == 1
+
+    schema = dialect.query_schema(db_uri, "SELECT * FROM t")
+    assert schema is not None
+    assert dict(schema) == {"id": pl.Int32, "gap": pl.String}, "predicted must match materialized"

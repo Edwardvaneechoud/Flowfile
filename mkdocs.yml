@@ -203,7 +203,6 @@ nav:
     - Internal API Reference: for-developers/python-api-reference.md
     - Catalog Architecture: for-developers/catalog-architecture.md
     - Kernel Architecture: for-developers/kernel-architecture.md
-    - Database Dialects: for-developers/database-dialects.md
     - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md
     - Custom Nodes in Code: users/visual-editor/creating-custom-nodes.md

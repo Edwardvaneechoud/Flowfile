@@ -71,4 +71,14 @@ describe("getDbDialects", () => {
     mockedGet.mockResolvedValue({ data: [] });
     expect(await getDbDialects()).toEqual(FALLBACK_DIALECTS);
   });
+
+  it("keeps the fallback list in sync with the backend's built-in dialects", async () => {
+    const { FALLBACK_DIALECTS } = await loadModule();
+    expect(FALLBACK_DIALECTS.map((dialect) => dialect.name)).toEqual([
+      "postgresql",
+      "mysql",
+      "sqlite",
+      "duckdb",
+    ]);
+  });
 });
