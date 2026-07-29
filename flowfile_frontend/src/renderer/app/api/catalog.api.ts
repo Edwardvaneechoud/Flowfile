@@ -1,5 +1,6 @@
 // Catalog API Service - Handles all catalog-related HTTP requests
 import axios from "../services/axios.config";
+import type { AxiosRequestConfig } from "axios";
 import type {
   ActiveFlowRun,
   CatalogNamespace,
@@ -490,10 +491,12 @@ export class CatalogApi {
   static async updateVisualization(
     vizId: number,
     payload: VisualizationUpdatePayload,
+    config?: AxiosRequestConfig,
   ): Promise<CatalogVisualization> {
     const response = await axios.put<CatalogVisualization>(
       `/catalog/visualizations/${vizId}`,
       payload,
+      config,
     );
     return response.data;
   }
@@ -571,8 +574,12 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async updateDashboard(id: number, payload: DashboardUpdatePayload): Promise<Dashboard> {
-    const response = await axios.put<Dashboard>(`/catalog/dashboards/${id}`, payload);
+  static async updateDashboard(
+    id: number,
+    payload: DashboardUpdatePayload,
+    config?: AxiosRequestConfig,
+  ): Promise<Dashboard> {
+    const response = await axios.put<Dashboard>(`/catalog/dashboards/${id}`, payload, config);
     return response.data;
   }
 

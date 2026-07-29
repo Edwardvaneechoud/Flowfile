@@ -4,10 +4,10 @@ Covers namespaces (Unity Catalog-style hierarchy), flow registrations,
 run history, favorites and follows.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -511,6 +511,16 @@ class VisualizationUpdate(BaseModel):
     sql_query: str | None = None
     catalog_table_id: int | None = None
     thumbnail_data_url: str | None = None
+    # Optimistic-concurrency token: echo the ``updated_at`` from the last GET/PUT.
+    expected_updated_at: datetime | None = None
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def _normalize_expected_updated_at(cls, v: datetime | None) -> datetime | None:
+        """Normalize tz-aware tokens to naive UTC — the DB returns naive UTC."""
+        if v is not None and v.tzinfo is not None:
+            return v.astimezone(timezone.utc).replace(tzinfo=None)
+        return v
 
 
 class VisualizationOut(BaseModel):
@@ -691,6 +701,8 @@ class DashboardUpdate(BaseModel):
     description: str | None = None
     namespace_id: int | None = None
     layout: DashboardLayout | None = None
+    # Optimistic-concurrency token: echo the ``layout_version`` from the last GET/PUT.
+    expected_layout_version: int | None = None
 
 
 class DashboardOut(BaseModel):

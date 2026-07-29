@@ -321,6 +321,87 @@ class TestVisualizationCRUD:
         assert len(resp.json()) == 1
 
 
+class TestVisualizationConcurrency:
+    def _create(self, client, table_id: int, name: str = "cas-viz") -> dict:
+        return client.post(
+            "/catalog/visualizations",
+            json={
+                "name": name,
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
+        ).json()
+
+    def test_matching_token_succeeds_and_bumps_updated_at(self, client):
+        table_id = _make_table()
+        viz = self._create(client, table_id)
+        token = client.get(f"/catalog/visualizations/{viz['id']}").json()["updated_at"]
+        resp = client.put(
+            f"/catalog/visualizations/{viz['id']}",
+            json={"description": "cas ok", "expected_updated_at": token},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["updated_at"] > token
+
+    def test_stale_token_returns_409_and_leaves_spec_unchanged(self, client):
+        table_id = _make_table()
+        viz = self._create(client, table_id)
+        stale = viz["updated_at"]
+        bumped = client.put(f"/catalog/visualizations/{viz['id']}", json={"description": "first"})
+        assert bumped.status_code == 200
+        resp = client.put(
+            f"/catalog/visualizations/{viz['id']}",
+            json={"spec": [{**SAMPLE_CHART, "clobbered": True}], "expected_updated_at": stale},
+        )
+        assert resp.status_code == 409, resp.text
+        detail = resp.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["error"] == "stale_write"
+        assert detail["resource_type"] == "visualization"
+        assert detail["resource_id"] == viz["id"]
+        assert "modified in another session" in detail["message"]
+        with get_db_context() as db:
+            row = db.get(CatalogVisualization, viz["id"])
+            assert json.loads(row.spec_json) == SAMPLE_SPEC
+
+    def test_omitted_token_succeeds(self, client):
+        table_id = _make_table()
+        viz = self._create(client, table_id)
+        first = client.put(f"/catalog/visualizations/{viz['id']}", json={"description": "first"})
+        assert first.status_code == 200
+        resp = client.put(f"/catalog/visualizations/{viz['id']}", json={"description": "second"})
+        assert resp.status_code == 200, resp.text
+
+    def test_back_to_back_puts_get_distinct_updated_at(self, client):
+        # Pins the explicit microsecond stamp: the column onupdate is second-precision.
+        table_id = _make_table()
+        viz = self._create(client, table_id)
+        first = client.put(f"/catalog/visualizations/{viz['id']}", json={"description": "a"}).json()
+        second = client.put(f"/catalog/visualizations/{viz['id']}", json={"description": "b"}).json()
+        assert second["updated_at"] > first["updated_at"]
+
+    def test_name_collision_keeps_plain_string_detail(self, client):
+        # The frontend discriminates stale-write (dict detail) from name-collision (string detail).
+        # No DB unique constraint exists on viz names today, so force the IntegrityError path
+        # that raises VisualizationExistsError to pin the route's plain-string 409 detail.
+        from sqlalchemy.exc import IntegrityError
+
+        table_id = _make_table()
+        viz = self._create(client, table_id, name="renaming")
+        fresh = client.get(f"/catalog/visualizations/{viz['id']}").json()["updated_at"]
+        with patch(
+            "flowfile_core.catalog.repository.SQLAlchemyCatalogRepository.update_visualization",
+            side_effect=IntegrityError("stmt", {}, Exception("duplicate name")),
+        ):
+            resp = client.put(
+                f"/catalog/visualizations/{viz['id']}",
+                json={"name": "taken", "expected_updated_at": fresh},
+            )
+        assert resp.status_code == 409, resp.text
+        assert isinstance(resp.json()["detail"], str)
+
+
 class TestVisualizationCompute:
     def test_compute_saved_dispatches_with_table_session_key(self, client):
         table_id = _make_table()

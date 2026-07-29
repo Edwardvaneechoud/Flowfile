@@ -80,6 +80,8 @@ export interface DashboardUpdatePayload {
   description?: string | null;
   namespace_id?: number | null;
   layout?: DashboardLayout;
+  /** CAS guard: server 409s with detail.error "stale_write" when layout_version has moved on. */
+  expected_layout_version?: number;
 }
 
 export const EMPTY_DASHBOARD_LAYOUT: DashboardLayout = {

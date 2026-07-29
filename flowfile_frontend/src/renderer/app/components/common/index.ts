@@ -8,6 +8,8 @@ export { default as CollapsibleSection } from "./CollapsibleSection/CollapsibleS
 export { default as CloudConnectionPicker } from "./CloudConnectionPicker/CloudConnectionPicker.vue";
 
 export { default as PageHelpModal } from "./PageHelpModal/PageHelpModal.vue";
+export { default as SaveStatusIndicator } from "./SaveStatusIndicator.vue";
+export { default as AutosaveConflictBanner } from "./AutosaveConflictBanner.vue";
 
 // Re-export types and utilities
 export * from "./DraggableItem/stateStore";

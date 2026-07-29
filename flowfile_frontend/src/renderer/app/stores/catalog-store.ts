@@ -1,5 +1,6 @@
 // Catalog Store - Manages catalog tree, flow registrations, favorites, follows, and run history
 import { defineStore } from "pinia";
+import type { AxiosRequestConfig } from "axios";
 import { CatalogApi } from "../api/catalog.api";
 import type {
   ActiveFlowRun,
@@ -796,16 +797,32 @@ export const useCatalogStore = defineStore("catalog", {
       return created;
     },
 
-    async updateVisualization(vizId: number, payload: VisualizationUpdatePayload) {
-      const updated = await CatalogApi.updateVisualization(vizId, payload);
+    async updateVisualization(
+      vizId: number,
+      payload: VisualizationUpdatePayload,
+      opts?: { refreshLibrary?: boolean; config?: AxiosRequestConfig },
+    ) {
+      const updated = await CatalogApi.updateVisualization(vizId, payload, opts?.config);
+      // Preserve the access stamp when the response lacks one (e.g. electron mode).
+      const merge = (prev: CatalogVisualization): CatalogVisualization => ({
+        ...updated,
+        access: updated.access ?? prev.access,
+      });
       if (updated.catalog_table_id !== null) {
         const current = this.visualizationsByTable[updated.catalog_table_id] ?? [];
         this.visualizationsByTable = {
           ...this.visualizationsByTable,
-          [updated.catalog_table_id]: current.map((v) => (v.id === vizId ? updated : v)),
+          [updated.catalog_table_id]: current.map((v) => (v.id === vizId ? merge(v) : v)),
         };
       }
-      this.loadVisualizationLibrary().catch(() => undefined);
+      if (opts?.refreshLibrary === false) {
+        // Autosave ticks patch the library in place instead of re-fetching it.
+        this.visualizationLibrary = this.visualizationLibrary.map((v) =>
+          v.id === vizId ? merge(v) : v,
+        );
+      } else {
+        this.loadVisualizationLibrary().catch(() => undefined);
+      }
       return updated;
     },
 
