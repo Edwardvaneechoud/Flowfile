@@ -1076,5 +1076,59 @@ class TestCloudStorageAutoAuthImport:
         assert loaded.cloud_storage_settings.auth_mode == "auto"
 
 
+class TestSaveDoesNotRenameSamePathFlow:
+    """A save only adopts the file stem as the flow name when it RELOCATES the flow.
+
+    Regression: flows opened from disk have no save_location, so the back-fill
+    branch fired on the first save and overwrote the name with the file stem —
+    silently reverting a catalog rename.
+    """
+
+    def _opened_flow_shape(self, path: Path, name: str) -> FlowGraph:
+        """A graph shaped like open_flow leaves it: path set, save_location unset."""
+        graph = create_graph()
+        graph.flow_settings.path = str(path)
+        graph.flow_settings.save_location = None
+        graph.flow_settings.name = name
+        graph.__name__ = name
+        return graph
+
+    def test_same_path_save_backfills_save_location_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'house_price.yaml'
+            graph = self._opened_flow_shape(path, 'My renamed flow')
+            add_manual_input(graph, [{'a': 1}])
+
+            graph.save_flow(str(path))
+
+            assert graph.flow_settings.name == 'My renamed flow'
+            assert graph.__name__ == 'My renamed flow'
+            assert graph.flow_settings.save_location == str(path.absolute())
+
+    def test_relocating_save_adopts_the_new_stem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / 'house_price.yaml'
+            target = Path(tmp) / 'sales_report.yaml'
+            graph = self._opened_flow_shape(original, 'My renamed flow')
+            add_manual_input(graph, [{'a': 1}])
+
+            graph.save_flow(str(target))
+
+            assert graph.flow_settings.name == 'sales_report'
+            assert graph.__name__ == 'sales_report'
+            assert graph.flow_settings.save_location == str(target.absolute())
+
+    def test_nameless_flow_still_adopts_the_stem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'house_price.yaml'
+            graph = self._opened_flow_shape(path, '')
+            add_manual_input(graph, [{'a': 1}])
+
+            graph.save_flow(str(path))
+
+            assert graph.flow_settings.name == 'house_price'
+            assert graph.__name__ == 'house_price'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

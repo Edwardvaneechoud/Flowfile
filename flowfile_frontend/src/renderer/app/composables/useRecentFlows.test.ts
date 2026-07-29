@@ -3,11 +3,23 @@
 // localStorage payloads (the list must never crash the welcome screen).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// reconcileWithCatalog lazily imports these, so the composable itself stays
+// dependency-free; vi.mock intercepts dynamic imports too.
+const mocks = vi.hoisted(() => ({ getFlows: vi.fn(), getNamespaceTree: vi.fn() }));
+
+vi.mock("../api", () => ({
+  CatalogApi: { getFlows: mocks.getFlows, getNamespaceTree: mocks.getNamespaceTree },
+}));
+vi.mock("../types", () => ({ findNamespacePath: () => ["General", "default"] }));
+
 import {
   upsertRecent,
   removeRecent,
+  renameRecent,
   parseStored,
   basenameNoExt,
+  recentDisplayName,
   useRecentFlows,
   MAX_RECENT,
   type RecentFlow,
@@ -57,6 +69,44 @@ describe("removeRecent", () => {
   it("is a no-op when the path is absent", () => {
     const list = [entry("/flows/a.flowfile")];
     expect(removeRecent(list, "/flows/missing.flowfile")).toEqual(list);
+  });
+});
+
+describe("renameRecent", () => {
+  it("renames the matching path only", () => {
+    const list = [entry("/flows/a.yaml", 1), entry("/flows/b.yaml", 2)];
+    const result = renameRecent(list, "/flows/a.yaml", "Q3 Sales");
+    expect(result.map((f) => f.name)).toEqual(["Q3 Sales", "b"]);
+  });
+
+  it("keeps position and lastOpened — a rename is not an open", () => {
+    const list = [entry("/flows/a.yaml", 1), entry("/flows/b.yaml", 2)];
+    const result = renameRecent(list, "/flows/b.yaml", "Renamed");
+    expect(result.map((f) => f.path)).toEqual(["/flows/a.yaml", "/flows/b.yaml"]);
+    expect(result[1].lastOpened).toBe(2);
+  });
+
+  it("does not resurrect an entry for an unknown path", () => {
+    const list = [entry("/flows/a.yaml")];
+    const result = renameRecent(list, "/flows/missing.yaml", "Nope");
+    expect(result).toEqual(list);
+  });
+
+  it("returns the same entry object when the name is unchanged", () => {
+    const list = [entry("/flows/a.yaml")];
+    expect(renameRecent(list, "/flows/a.yaml", "a")[0]).toBe(list[0]);
+  });
+});
+
+describe("recentDisplayName", () => {
+  it("strips flow file extensions", () => {
+    expect(recentDisplayName({ name: "sales.yaml" })).toBe("sales");
+    expect(recentDisplayName({ name: "sales.yml" })).toBe("sales");
+    expect(recentDisplayName({ name: "sales.flowfile" })).toBe("sales");
+  });
+
+  it("leaves a catalog name containing a dot alone", () => {
+    expect(recentDisplayName({ name: "Q3 report v1.2" })).toBe("Q3 report v1.2");
   });
 });
 
@@ -189,5 +239,102 @@ describe("useRecentFlows", () => {
     recordFlow({ path: "/flows/a.yaml" });
 
     expect(recentFlows.value[0].catalogId).toBe(7);
+  });
+
+  it("renames an entry in place and persists it", () => {
+    const { recentFlows, recordFlow, renameFlow, loadRecentFlows } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", name: "Untitled flow 2026-07-28" });
+    renameFlow("/flows/a.yaml", "Q3 Sales");
+
+    expect(recentFlows.value[0].name).toBe("Q3 Sales");
+    loadRecentFlows();
+    expect(recentFlows.value[0].name).toBe("Q3 Sales");
+  });
+
+  it("ignores renames for unknown paths and empty names", () => {
+    const { recentFlows, recordFlow, renameFlow } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", name: "a" });
+    renameFlow("/flows/missing.yaml", "Ghost");
+    renameFlow("/flows/a.yaml", "");
+
+    expect(recentFlows.value.map((f) => f.name)).toEqual(["a"]);
+  });
+
+  it("prefers the catalog display name when recording from flow settings", () => {
+    const { recentFlows, recordFlowFromSettings } = useRecentFlows();
+    recordFlowFromSettings({ path: "/flows/41_house.yaml", name: "41_house", display_name: "Q3 Sales" });
+
+    expect(recentFlows.value[0].name).toBe("Q3 Sales");
+  });
+});
+
+describe("useRecentFlows.reconcileWithCatalog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    });
+    useRecentFlows().loadRecentFlows();
+    mocks.getNamespaceTree.mockResolvedValue([]);
+  });
+
+  it("refreshes a stale name and the catalog ref from the registration", async () => {
+    const { recentFlows, recordFlow, reconcileWithCatalog, loadRecentFlows } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", name: "Untitled flow 2026-07-28" });
+    mocks.getFlows.mockResolvedValue([
+      { id: 3, name: "Q3 Sales", flow_path: "/flows/a.yaml", namespace_id: 2 },
+    ]);
+
+    await reconcileWithCatalog();
+
+    expect(recentFlows.value[0].name).toBe("Q3 Sales");
+    expect(recentFlows.value[0].catalogRef).toBe("General.default.Q3 Sales");
+    expect(recentFlows.value[0].catalogId).toBe(3);
+    loadRecentFlows();
+    expect(recentFlows.value[0].name).toBe("Q3 Sales");
+  });
+
+  it("never clobbers the name of a flow with no registration", async () => {
+    const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
+    recordFlow({ path: "/flows/local.yaml", name: "local", catalogRef: "Gone.ref", catalogId: 9 });
+    mocks.getFlows.mockResolvedValue([]);
+
+    await reconcileWithCatalog();
+
+    expect(recentFlows.value[0].name).toBe("local");
+    expect(recentFlows.value[0].catalogRef).toBeUndefined();
+    expect(recentFlows.value[0].catalogId).toBeUndefined();
+  });
+
+  it("leaves entries untouched when nothing changed", async () => {
+    const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", name: "Q3 Sales", catalogRef: "General.default.Q3 Sales", catalogId: 3 });
+    const before = recentFlows.value[0];
+    mocks.getFlows.mockResolvedValue([
+      { id: 3, name: "Q3 Sales", flow_path: "/flows/a.yaml", namespace_id: 2 },
+    ]);
+
+    await reconcileWithCatalog();
+
+    expect(recentFlows.value[0]).toBe(before);
+  });
+
+  it("swallows a catalog failure and keeps the list intact", async () => {
+    const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", name: "a" });
+    mocks.getFlows.mockRejectedValue(new Error("offline"));
+
+    await reconcileWithCatalog();
+
+    expect(recentFlows.value.map((f) => f.name)).toEqual(["a"]);
+  });
+
+  it("makes no API call when there are no recents", async () => {
+    const { reconcileWithCatalog } = useRecentFlows();
+    await reconcileWithCatalog();
+    expect(mocks.getFlows).not.toHaveBeenCalled();
   });
 });
