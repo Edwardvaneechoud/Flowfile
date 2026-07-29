@@ -77,7 +77,7 @@ The store is built for that job — atomic writes, fixed key order, multi-line c
 Three design decisions worth knowing before touching this code:
 
 - **`NotebookService` owns no execution.** The cell model is mixed — `python` / `sql` / `markdown`, with per-cell `metadata` (e.g. SQL `max_rows`) — and each type routes elsewhere: SQL cells to the same `/catalog/sql/execute` worker path as the SQL editor, Python cells to the kernel's `execute_cell` with the full `flowfile_ctx` API ([Kernel Architecture](kernel-architecture.md)), Markdown rendered client-side. The shipped editor currently surfaces Python and Markdown cells (`notebook/types.ts` `CellType`); SQL cells are schema-supported ahead of the UI. The notebook service only persists.
-- **`default_kernel_id` is a plain string, no FK — by design.** It just remembers the last kernel picked for Python cells; deleting that kernel means "nothing pre-selected," never a cascade into notebook rows.
+- **`default_kernel_id` is a plain string, not a foreign key.** It just remembers the last kernel picked for Python cells; deleting that kernel means "nothing pre-selected," never a cascade into notebook rows.
 - **The integer `id` is the public handle**: it's the grant key for [sharing](#access-control) (`catalog_notebook` is namespace-scoped, so catalog grants cascade to notebooks) and the frontend derives the kernel session key from it. The `notebook_uuid` exists for the on-disk filename's stability, not for addressing.
 
 Cell editing gets Jedi-backed code intelligence from core's LSP routes (`flowfile_core/lsp/`) — completions run server-side against the kernel's environment, not in the browser.

@@ -180,7 +180,7 @@ Register data tables in the catalog for reuse across flows. Catalog tables come 
 | **Virtual** | No data on disk — executes a producer flow on demand to produce results. See [Virtual Flow Tables](virtual-tables.md) |
 
 !!! tip "Recommended: Register tables via a flow"
-    Use a [Catalog Writer](../nodes/output.md#catalog-writer) node in your flow for the best experience. It supports more source types, ensures correct data interpretation, and enables lineage tracking.
+    Use a [Catalog Writer](../nodes/output.md#catalog-writer) node in your flow: it supports more source types, ensures correct data interpretation, and enables lineage tracking.
 
 ### Registering a Physical Table
 

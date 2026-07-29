@@ -1,12 +1,12 @@
 # Your data lives somewhere else
 
-Almost nobody's data starts as a tidy local file. It's rows in Postgres or MySQL, Parquet in S3 or a data lake, events accumulating on a Kafka topic, marketing numbers behind the GA4 API, records in some SaaS tool with a REST endpoint. Whether you're the analyst who keeps asking engineering for extracts, the engineer tired of writing the same connection boilerplate, or the one person at the company who knows where everything actually lives — the job is the same: work with data *where it is*, and stop hand-carrying copies around.
+Most data doesn't start as a local file. It's rows in Postgres or MySQL, Parquet in S3 or a data lake, events accumulating on a Kafka topic, marketing numbers behind the GA4 API, records in some SaaS tool with a REST endpoint. This route covers working with all of it *where it is*, instead of moving copies around by hand.
 
 None of this route requires code: every source below is a node in the visual editor, and connections are configured in the UI. The Python calls are the equivalent for those who prefer a script — an option, not a prerequisite.
 
 ## 1. Connect once, reference everywhere
 
-The founding idea: **credentials and pipelines are separate things.** A connection — host, credentials, region, auth method — is saved once under a name, [encrypted at rest](visual-editor/catalog/secrets.md). Flows then reference the *name*. That split is what makes everything downstream safe and repeatable: a flow file never contains a secret (safe to share, safe to version), rotating a credential is one edit instead of a hunt through every pipeline, and the same name works from the canvas and from Python because both read one store.
+**Credentials and pipelines are separate things.** A connection — host, credentials, region, auth method — is saved once under a name, [encrypted at rest](visual-editor/catalog/secrets.md). Flows then reference the *name*. That split is what makes everything downstream safe and repeatable: a flow file never contains a secret (safe to share, safe to version), rotating a credential is one edit instead of a hunt through every pipeline, and the same name works from the canvas and from Python because both read one store.
 
 ![One encrypted connection store in the middle holds named connections — warehouse, data-lake, events — while flows on the canvas and Python scripts around it reference those connections by name only; rotating a credential once updates every reference.](../assets/images/concepts/connection-store.svg)
 
@@ -24,7 +24,7 @@ Each source is a drag-and-drop node on the canvas — with a matching `ff.*` cal
 | A REST endpoint | REST API Reader | `ff.read_api` |
 | Google Analytics 4 | Google Analytics Reader | — |
 
-Reading from the source is what kills the staleness problem — there's no "which extract is this?" when the flow pulls directly. This is the database path in code, tested in CI against a real PostgreSQL:
+A flow that pulls from the source has no intermediate extract to go stale. This is the database path in code, tested in CI against a real PostgreSQL:
 
 ```python
 --8<-- "docs/examples/integrations/database_read.py:example"
@@ -34,7 +34,7 @@ The [database tutorial](visual-editor/tutorials/database-connectivity.md) and [c
 
 ## 3. Transform in flight
 
-Between reading and writing it's a normal Flowfile pipeline: join the Postgres orders against the S3 product export, standardize the columns, aggregate — visually or in code, with [Polars](https://pola.rs) underneath. Two behaviors matter to this persona specifically:
+Between reading and writing it's a normal Flowfile pipeline: join the Postgres orders against the S3 product export, standardize the columns, aggregate — visually or in code, with [Polars](https://pola.rs) underneath. Two behaviors matter when reading from live systems:
 
 - **Database reads can push work to the source.** The Database Reader takes a query, not just a table name — filter and pre-aggregate in the warehouse when that's cheaper than pulling raw rows.
 - **Kafka reads are incremental by consumer group.** Each run picks up where the last one stopped (offsets commit only after a successful run), so a scheduled flow consumes exactly what arrived in between — no manual bookkeeping, and [Reset Offsets](connect/kafka.md) rewinds when you want history again.
@@ -55,8 +55,8 @@ The pattern that compounds: one small flow per source — read, normalize, land 
 
 ## 6. Working in a team
 
-In the multi-user [Docker deployment](deployment/docker.md), connections and secrets are [shareable with user groups](deployment/sharing.md) — teammates run flows against a shared connection without ever seeing the credential. One guardrail worth knowing exists on purpose: a colleague with manage rights who repoints a shared connection at a different host must re-enter the credentials, so nobody can quietly harvest yours by redirecting it.
+In the multi-user [Docker deployment](deployment/docker.md), connections and secrets are [shareable with user groups](deployment/sharing.md) — teammates run flows against a shared connection without ever seeing the credential. One guardrail: a colleague with manage rights who repoints a shared connection at a different host must re-enter the credentials.
 
 ---
 
-**Fastest first taste:** the [database tutorial](visual-editor/tutorials/database-connectivity.md) — from connection form to a read-transform-write round trip in one sitting.
+**Start here:** the [database tutorial](visual-editor/tutorials/database-connectivity.md) — from connection form to a read-transform-write round trip.

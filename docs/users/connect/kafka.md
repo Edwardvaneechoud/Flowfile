@@ -1,6 +1,6 @@
 # Kafka
 
-Consume records from a Kafka or Redpanda topic, either as a node on the canvas or with `ff.read_kafka` in Python. This page covers the saved Kafka connection, the Kafka Source node's settings, the security options, and a runnable example. It serves analysts wiring a streaming source into a flow and developers reading a topic from code.
+Consume records from a Kafka or Redpanda topic, either as a node on the canvas or with `ff.read_kafka` in Python. This page covers the saved Kafka connection, the Kafka Source node's settings, the security options, and a runnable example.
 
 Kafka support is **read-only**: Flowfile consumes from topics but does not produce to them. There is no Kafka writer node.
 

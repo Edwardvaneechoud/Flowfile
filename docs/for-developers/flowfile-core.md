@@ -1,6 +1,6 @@
 # Flowfile Core: A Developer's Guide
 
-This guide is for developers who want to understand and contribute to `flowfile-core`. It walks the architecture from the outside in — building a small pipeline in Python step by step, then explaining how the graph decides where each node runs.
+This guide walks `flowfile-core`'s architecture from the outside in — building a small pipeline in Python step by step, then explaining how the graph decides where each node runs.
 
 !!! info "Looking for something else?"
     - **[Python API Reference](../users/python-api/index.md)**: to USE Flowfile
@@ -24,7 +24,7 @@ Let's see these in action.
 
 ## 1. The FlowGraph: Your Pipeline Orchestrator
 
-Everything starts with the `FlowGraph`. Think of it as the canvas for your data pipeline.
+Everything starts with the `FlowGraph`. It is the in-memory representation of a pipeline — the same object the canvas edits.
 
 Let's create one:
 

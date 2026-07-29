@@ -1,6 +1,6 @@
 # Python API Quick Start
 
-Install the package, build a first pipeline, and tour the operations you'll reach for most. For Python developers writing Flowfile pipelines in code.
+Install the package, build a first pipeline, and tour the operations you'll reach for most.
 
 ## Installation
 

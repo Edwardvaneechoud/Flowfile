@@ -359,7 +359,7 @@ The **SQL Query** node runs a SQL `SELECT` query across one or more connected in
 - Query connected inputs as tables named `input_1`, `input_2`, … (in connection order)
 - Join, filter, group, and compute across **up to 10 inputs**
 - Chain SQL Query nodes together like any other transform
-- Read-only by design — only `SELECT` / `WITH` queries are allowed
+- Read-only — only `SELECT` / `WITH` queries are allowed
 
 ---
 

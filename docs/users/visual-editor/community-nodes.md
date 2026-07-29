@@ -2,7 +2,7 @@
 
 Custom nodes are single `.py` files — which means they travel. The **Community Nodes** registry lets you install nodes other people have published, and publish your own, without hosting anything yourself. Browsing and installing happen in the Catalog; publishing starts from the Node Designer.
 
-Every install goes through the same trust model, stated plainly: community nodes are **scanned, human-reviewed, and installed only after you consent** — but they are **not sandboxed**. An installed node runs in Flowfile's worker with the same access your own code has. Install nodes the way you'd run any code from the internet: read what it does, and install only what you need.
+Every install goes through the same trust model, stated plainly: community nodes are **scanned, human-reviewed, and installed only after you consent** — but they are **not sandboxed**. An installed node runs in Flowfile's worker with the same access your own code has.
 
 !!! info "Not in Flowfile Lite"
     Community Nodes require the full desktop/server build. They are not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition.

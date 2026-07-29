@@ -1,6 +1,6 @@
 # Expressions
 
-FlowFrame methods accept standard **Polars expressions** — `ff.col`, operators, `ff.when`, and most of the expression API you already know from Polars. Expressions are the default way to express transformations.
+FlowFrame methods accept standard **Polars expressions** — `ff.col`, operators, `ff.when`, and most of the Polars expression API. Expressions are the default way to express transformations.
 
 !!! note "Most of Polars, not all of it"
     Nearly every Polars `Expr` method is available, but a few names track the pinned Polars version (`cum_sum`, not `cumsum`; `dt.weekday`, not `day_of_week`), some helpers are selectors rather than top-level functions (`ff.all_()`, not `ff.all()`; use `ff.col("*").exclude(...)`, there is no `ff.exclude()`), and expressions without a dedicated node render as `polars_code` nodes in the visual editor. See [FlowFrame and FlowGraph](design-concepts.md).

@@ -16,7 +16,7 @@ This page covers the *why* — how the data is kept warm, where each request goe
 
 Graphic Walker fires a query at the backend **every time the user drops or removes a field**. Sum of `revenue` by `region` is one query; switching the aggregation to mean is another; adding a year filter is a third. Each individual query is small, but they arrive in rapid bursts and they all hit the same dataset.
 
-Reopening the source for every query would feel terrible — every drag would re-scan or re-load gigabytes. The data has to stay warm in memory between queries. But it also can't sit inside Flowfile's main API process: a pinned `LazyFrame` would fatten the core process, monopolise its event loop, and bring everything down with the first slow query.
+Reopening the source for every query would re-scan or re-load gigabytes on every drag. The data has to stay warm in memory between queries. But it also can't sit inside Flowfile's main API process: a pinned `LazyFrame` would fatten the core process, monopolise its event loop, and bring everything down with the first slow query.
 
 That tension drives the rest of the design.
 
@@ -76,7 +76,7 @@ Each child holds a real, live dataset, so left alone they accumulate and the wor
 
 Every one of these paths runs the child through the same shutdown sequence: send a graceful stop, wait briefly, terminate, kill if it's still alive, drop references. Nothing is kept around on the assumption it might be needed later.
 
-The actual numeric thresholds live as constants near the top of `flowfile_worker/flowfile_worker/viz_sessions.py` (`IDLE_TTL_SECONDS`, `MAX_SESSIONS`, `REAP_INTERVAL_SECONDS`, `MAX_REQUESTS_PER_CHILD`, `MAX_CHILD_LIFETIME_SECONDS`) and are tunable knobs, not load-bearing magic.
+The actual numeric thresholds live as constants near the top of `flowfile_worker/flowfile_worker/viz_sessions.py` (`IDLE_TTL_SECONDS`, `MAX_SESSIONS`, `REAP_INTERVAL_SECONDS`, `MAX_REQUESTS_PER_CHILD`, `MAX_CHILD_LIFETIME_SECONDS`) and are tunable.
 
 ---
 
@@ -94,7 +94,7 @@ The designer's **Explore Data** node is the same machinery pointed at a flow nod
 
 That leaves one problem — a flow node's result isn't a Delta table the worker can open by name. `flowfile_core/flowfile_core/flowfile/analytics/node_viz.py` solves it the way `physical` sources are solved, not the way virtual flow tables are: core serialises the node's `LazyFrame` and ships the plan itself as a `kind="plan"` source. The child deserialises it and holds it lazily, so Polars pushes each chart's projection into the node's own sources.
 
-**Nothing is materialised, deliberately.** Snapshotting the node to Arrow IPC first is the obvious alternative, and it is worse on every axis: on a 294 MB Parquet of 12.6 M rows × 24 string columns it produces a **4.9 GB** file — a 16.7× blow-up — to answer queries Polars serves straight off the Parquet in ~0.04 s. When a node's plan is already a cheap scan, the Parquet *is* the better cache.
+**Nothing is materialised.** Snapshotting the node to Arrow IPC first is the obvious alternative, and it is worse on every axis: on a 294 MB Parquet of 12.6 M rows × 24 string columns it produces a **4.9 GB** file — a 16.7× blow-up — to answer queries Polars serves straight off the Parquet in ~0.04 s. When a node's plan is already a cheap scan, the Parquet *is* the better cache.
 
 Two details are load-bearing:
 

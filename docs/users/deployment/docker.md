@@ -5,7 +5,7 @@ Run Flowfile as a multi-user stack with Docker. This is the deployment for teams
 Two Docker paths exist, for different jobs:
 
 - **Evaluating or developing** — this repo's bundled `docker-compose.yml`, which **builds the images from source** on first `up`. That's what the quick start below uses.
-- **Deploying on a real server** — the [**flowfile-hosting kit**](https://github.com/Edwardvaneechoud/flowfile-hosting), a separate repository that runs the **published Docker Hub images** pinned to a version (`image: edwardvaneechoud/flowfile-core:${FLOWFILE_VERSION}`) and handles everything this repo deliberately doesn't: HTTPS ingress (Caddy with Let's Encrypt, a Cloudflare Tunnel for no-open-ports setups, or plain LAN), a guided installer (`./install.sh`, or `make init`) that generates secrets and verifies DNS, and day-two targets for `update`, `backup`, `restore`, and `health`. If the instance will have users other than you, start there.
+- **Deploying on a real server** — the [**flowfile-hosting kit**](https://github.com/Edwardvaneechoud/flowfile-hosting), a separate repository that runs the **published Docker Hub images** pinned to a version (`image: edwardvaneechoud/flowfile-core:${FLOWFILE_VERSION}`) and handles what this repo's compose does not: HTTPS ingress (Caddy with Let's Encrypt, a Cloudflare Tunnel for no-open-ports setups, or plain LAN), a guided installer (`./install.sh`, or `make init`) that generates secrets and verifies DNS, and day-two targets for `update`, `backup`, `restore`, and `health`. If the instance will have users other than you, start there.
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ The bundled compose leaves `FLOWFILE_MASTER_KEY` empty, so the setup screen prom
 2. Click **Generate Master Key** and copy the key.
 3. Add it to your `.env`: `FLOWFILE_MASTER_KEY=<your-key>`.
 4. Restart: `docker compose restart`.
-5. Log in with the admin credentials (default `admin` / `changeme` — change these).
+5. Log in with the admin credentials (default `admin` / `changeme`; `FLOWFILE_ADMIN_USER` and `FLOWFILE_ADMIN_PASSWORD` set them).
 
 For an automated deployment, generate the key ahead of time and set it before the first boot:
 
@@ -199,7 +199,7 @@ How they work together:
 
 ### Production checklist
 
-- [ ] Replace the compose's insecure dev fallbacks for `JWT_SECRET_KEY` and `FLOWFILE_INTERNAL_TOKEN` (both effectively required in Docker mode) — generate each with `openssl rand -hex 32`
+- [ ] Replace the compose's insecure dev fallbacks for `JWT_SECRET_KEY` and `FLOWFILE_INTERNAL_TOKEN` (both are literals published in `docker-compose.yml`, and both are effectively required in Docker mode) — generate each with `openssl rand -hex 32`
 - [ ] Generate a unique `FLOWFILE_MASTER_KEY`
 - [ ] Set a strong `FLOWFILE_ADMIN_PASSWORD`
 - [ ] Never commit `.env` to version control

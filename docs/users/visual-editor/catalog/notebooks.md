@@ -1,6 +1,6 @@
 # Notebooks
 
-Notebooks are the catalog's exploration console: Jupyter-style cells that live *next to your tables* instead of in a folder on someone's laptop. Open one from the catalog tree, point it at a kernel, and analyze catalog data with any Python library — with the environment pinned by the kernel, so the notebook runs the same for everyone who opens it.
+Notebooks are the catalog's exploration console: Jupyter-style cells that live *next to your tables*, in the catalog rather than in one person's private folder. Open one from the catalog tree, point it at a kernel, and analyze catalog data with any Python library — with the environment pinned by the kernel, so the notebook runs the same for everyone who opens it.
 
 ![A catalog notebook open in the notebook panel: the catalog tree on the left with the notebook selected, cells with execution counters, the kernel picker in the toolbar, and an interactive table rendered under a cell.](../../../assets/images/guides/notebooks/notebook-panel.png)
 
@@ -15,7 +15,7 @@ Two cell types, mixable freely:
 - **Python** — executes on a [kernel](../kernels.md), which you pick in the toolbar. Any library the kernel image carries (or that you added to the kernel) is available. The notebook remembers your last-used kernel.
 - **Markdown** — renders in place, no kernel needed. Use it for the narrative between the code.
 
-Running works the way your fingers expect: **Shift+Enter** runs a cell (or renders a Markdown cell), **Cmd/Ctrl+Enter** runs it and moves to the next. In cell mode the last expression displays automatically, Jupyter-style, and the editor gives you code completions as you type.
+Keybindings match Jupyter: **Shift+Enter** runs a cell (or renders a Markdown cell), **Cmd/Ctrl+Enter** runs it and moves to the next. In cell mode the last expression displays automatically, Jupyter-style, and the editor gives you code completions as you type.
 
 ## Talking to the catalog
 
