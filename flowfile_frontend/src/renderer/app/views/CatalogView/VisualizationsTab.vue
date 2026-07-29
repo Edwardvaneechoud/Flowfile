@@ -42,6 +42,7 @@
       width="92vw"
       destroy-on-close
       append-to-body
+      :close-on-click-modal="false"
       :before-close="onEditorBeforeClose"
     >
       <VisualizationEditor
