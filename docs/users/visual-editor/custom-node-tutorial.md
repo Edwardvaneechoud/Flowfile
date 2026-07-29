@@ -2,7 +2,7 @@
 
 This tutorial builds one custom node end to end, entirely in the **[Node Designer](node-designer.md)** — the visual tool for making your own nodes. No file to write by hand, no terminal: you lay out the settings form, write one small transform, test it, and save. The node then appears in the palette next to the built-in ones.
 
-The example is an **Emoji Generator** that maps a numeric column to mood-based emojis. It is deliberately small, and it exercises everything real nodes use: a multi-section settings form, a type-filtered column picker, and a `process` method that transforms the incoming data.
+The example is an **Emoji Generator** that maps a numeric column to mood-based emojis. It is small, and it exercises everything real nodes use: a multi-section settings form, a type-filtered column picker, and a `process` method that transforms the incoming data.
 
 !!! info "What you'll build"
     An "Emoji Generator" node that:
