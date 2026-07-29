@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineProps, defineExpose, toRaw } from "vue";
+import { ref, onMounted, onUnmounted, defineProps, defineEmits, defineExpose, toRaw } from "vue";
 
 import type {
   IRow,
@@ -23,9 +23,13 @@ interface VueGWProps {
   computation?: (payload: any) => Promise<IRow[]>;
   /** Hide GW's chart-tab bar so the surface is a single chart. */
   hideChartNav?: boolean;
+  /** Opt-in: emit "specChanged" when the user edits the chart spec (default false, zero cost when off). */
+  watchSpec?: boolean;
 }
 
 const props = defineProps<VueGWProps>();
+
+const emit = defineEmits<{ (e: "specChanged"): void }>();
 
 const container = ref<HTMLElement | null>(null);
 const isLoading = ref(true);
@@ -39,6 +43,80 @@ let GraphicWalker: any = null;
 const internalStoreRef = ref<{ current: VizSpecStore | null }>({ current: null });
 
 let gwHandleRef: { current: IGWHandler | null } | null = null;
+
+const SPEC_POLL_MS = 2000;
+
+let lastEmittedSpec: string | null = null;
+let disposeRenderStatus: (() => void) | null = null;
+let specArmTimer: ReturnType<typeof setInterval> | null = null;
+let specArmBailout: ReturnType<typeof setTimeout> | null = null;
+let specPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const maybeEmitSpecChange = () => {
+  try {
+    const charts = internalStoreRef.value?.current?.exportCode();
+    if (!charts) {
+      return;
+    }
+    const spec = JSON.stringify(charts);
+    if (lastEmittedSpec === null) {
+      // First read is GW's own normalization of the imported spec; baseline only.
+      lastEmittedSpec = spec;
+      return;
+    }
+    if (spec !== lastEmittedSpec) {
+      lastEmittedSpec = spec;
+      emit("specChanged");
+    }
+  } catch {
+    // GW mid-render state; the next poll/render tick retries.
+  }
+};
+
+const stopSpecWatch = () => {
+  if (specArmTimer !== null) {
+    clearInterval(specArmTimer);
+    specArmTimer = null;
+  }
+  if (specArmBailout !== null) {
+    clearTimeout(specArmBailout);
+    specArmBailout = null;
+  }
+  if (specPollTimer !== null) {
+    clearInterval(specPollTimer);
+    specPollTimer = null;
+  }
+  if (disposeRenderStatus) {
+    disposeRenderStatus();
+    disposeRenderStatus = null;
+  }
+};
+
+const armSpecWatch = () => {
+  // The poll needs only the store, so it works even if the handle never arms.
+  specPollTimer = setInterval(maybeEmitSpecChange, SPEC_POLL_MS);
+  specArmTimer = setInterval(() => {
+    const handle = gwHandleRef?.current;
+    if (!handle || typeof handle.onRenderStatusChange !== "function") {
+      return;
+    }
+    if (specArmTimer !== null) {
+      clearInterval(specArmTimer);
+      specArmTimer = null;
+    }
+    if (specArmBailout !== null) {
+      clearTimeout(specArmBailout);
+      specArmBailout = null;
+    }
+    disposeRenderStatus = handle.onRenderStatusChange(() => maybeEmitSpecChange());
+  }, 50);
+  specArmBailout = setTimeout(() => {
+    if (specArmTimer !== null) {
+      clearInterval(specArmTimer);
+      specArmTimer = null;
+    }
+  }, 3000);
+};
 
 const dummyComputation = async (): Promise<IRow[]> => {
   console.warn(
@@ -116,6 +194,10 @@ onMounted(async () => {
       }, 50);
       setTimeout(() => clearInterval(checkStore), 3000);
     }
+
+    if (props.watchSpec) {
+      armSpecWatch();
+    }
   } catch (e) {
     console.error("[VueGW] Error mounting GraphicWalker:", e);
     loadError.value = e instanceof Error ? e.message : "Failed to load";
@@ -124,6 +206,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopSpecWatch();
   if (reactRootInstance) {
     reactRootInstance.unmount();
     reactRootInstance = null;

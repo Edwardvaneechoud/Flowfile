@@ -206,6 +206,33 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
         project_sync.close_project(OWNER)
 
 
+def test_reimport_preserves_dashboard_layout_version_monotonicity(tmp_path):
+    """The server-owned write counter (CAS token) must never rewind on a project re-import."""
+    from flowfile_core.catalog import CatalogService
+    from flowfile_core.project.importer import import_project
+    from flowfile_core.schemas.catalog_schema import DashboardUpdate
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    dash_id, duuid = _make_dashboard("mono-board", DashboardLayout(tiles=[]))
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Mono", OWNER)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            bumped = svc.update_dashboard(dash_id, DashboardUpdate(description="bump"), user_id=OWNER)
+        assert bumped.layout_version == 2
+
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert row is not None
+            assert row.layout_version > bumped.layout_version
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
 def test_prune_removes_absent_viz_and_dashboard(tmp_path):
     from flowfile_core.project.normalize import write_yaml
 

@@ -6,6 +6,7 @@ Defines a ``CatalogRepository`` :pep:`544` Protocol and provides a concrete
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy import func
@@ -280,6 +281,10 @@ class CatalogRepository(Protocol):
 
     def update_visualization(self, viz: CatalogVisualization) -> CatalogVisualization: ...
 
+    def stamp_visualization_updated_at(
+        self, viz_id: int, expected: datetime | None, stamp: datetime
+    ) -> bool: ...
+
     def delete_visualization(self, viz_id: int) -> None: ...
 
     # -- Dashboards ----------------------------------------------------------
@@ -291,6 +296,8 @@ class CatalogRepository(Protocol):
     def create_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
 
     def update_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
+
+    def bump_dashboard_layout_version(self, dashboard_id: int, expected: int | None) -> bool: ...
 
     def delete_dashboard(self, dashboard_id: int) -> None: ...
 
@@ -1177,6 +1184,30 @@ class SQLAlchemyCatalogRepository:
         self._db.refresh(viz)
         return viz
 
+    def stamp_visualization_updated_at(
+        self, viz_id: int, expected: datetime | None, stamp: datetime
+    ) -> bool:
+        """Atomic CAS guard: stamp updated_at iff it still equals ``expected``.
+
+        Runs as a conditional UPDATE so two concurrent writers cannot both pass
+        the check; rowcount 0 means the token went stale (or the row vanished).
+        Uncommitted — the caller's normal commit/rollback settles it.
+        """
+        q = self._db.query(CatalogVisualization).filter(CatalogVisualization.id == viz_id)
+        if expected is not None:
+            if expected.microsecond:
+                q = q.filter(CatalogVisualization.updated_at == expected)
+            else:
+                # Legacy CURRENT_TIMESTAMP rows store no fractional part; match the second.
+                low = expected.strftime("%Y-%m-%d %H:%M:%S")
+                high = (expected + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+                q = q.filter(
+                    CatalogVisualization.updated_at >= low,
+                    CatalogVisualization.updated_at < high,
+                )
+        rows = q.update({CatalogVisualization.updated_at: stamp}, synchronize_session=False)
+        return rows > 0
+
     def delete_visualization(self, viz_id: int) -> None:
         viz = self._db.get(CatalogVisualization, viz_id)
         if viz is not None:
@@ -1202,6 +1233,22 @@ class SQLAlchemyCatalogRepository:
         self._db.commit()
         self._db.refresh(dashboard)
         return dashboard
+
+    def bump_dashboard_layout_version(self, dashboard_id: int, expected: int | None) -> bool:
+        """Atomic CAS guard: increment the write counter iff it still equals ``expected``.
+
+        Conditional UPDATE so two concurrent writers cannot both pass; rowcount 0
+        means a stale token (or, with no token, a concurrently deleted row).
+        Uncommitted — the caller's normal commit/rollback settles it.
+        """
+        q = self._db.query(CatalogDashboard).filter(CatalogDashboard.id == dashboard_id)
+        if expected is not None:
+            q = q.filter(func.coalesce(CatalogDashboard.layout_version, 1) == expected)
+        rows = q.update(
+            {CatalogDashboard.layout_version: func.coalesce(CatalogDashboard.layout_version, 1) + 1},
+            synchronize_session=False,
+        )
+        return rows > 0
 
     def delete_dashboard(self, dashboard_id: int) -> None:
         dashboard = self._db.get(CatalogDashboard, dashboard_id)

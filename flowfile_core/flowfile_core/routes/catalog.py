@@ -45,6 +45,7 @@ from flowfile_core.catalog import (
     RunNotFoundError,
     ScheduleNotFoundError,
     SQLAlchemyCatalogRepository,
+    StaleWriteError,
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
@@ -180,6 +181,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NoSnapshotError: (422, "No flow snapshot available for this run"),
     VisualizationNotFoundError: (404, None),
     VisualizationExistsError: (409, None),
+    StaleWriteError: (409, None),
     VisualizationComputeError: (502, None),
     DashboardNotFoundError: (404, None),
     NotebookNotFoundError: (404, None),
@@ -188,6 +190,11 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
 }
 
 _HANDLED_EXCEPTIONS = tuple(_CATALOG_EXCEPTION_MAP.keys())
+
+
+def _stale_token(value):
+    """Render a StaleWriteError token JSON-safe (datetime → isoformat, ints pass through)."""
+    return value.isoformat() if isinstance(value, datetime) else value
 
 
 def handle_catalog_exceptions(**overrides: str):
@@ -221,6 +228,18 @@ def handle_catalog_exceptions(**overrides: str):
                             raise HTTPException(
                                 status_code,
                                 detail={"message": msg, "name": exc.name, "candidates": exc.candidates},
+                            ) from None
+                        if isinstance(exc, StaleWriteError):
+                            raise HTTPException(
+                                status_code,
+                                detail={
+                                    "error": "stale_write",
+                                    "resource_type": exc.resource_type,
+                                    "resource_id": exc.resource_id,
+                                    "expected": _stale_token(exc.expected),
+                                    "current": _stale_token(exc.current),
+                                    "message": msg,
+                                },
                             ) from None
                         raise HTTPException(status_code, msg) from None
                 raise  # unreachable but keeps linters happy

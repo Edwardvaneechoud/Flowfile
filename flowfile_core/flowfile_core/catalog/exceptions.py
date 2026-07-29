@@ -341,3 +341,16 @@ class DashboardNotFoundError(CatalogError):
         else:
             detail = "Dashboard not found"
         super().__init__(detail)
+
+
+class StaleWriteError(CatalogError):
+    """Raised when an optimistic-concurrency check failed: the resource was
+    modified since the client last read it, so applying the write would
+    silently clobber another session's changes."""
+
+    def __init__(self, resource_type: str, resource_id: int, expected, current):
+        self.resource_type = resource_type
+        self.resource_id = resource_id
+        self.expected = expected
+        self.current = current
+        super().__init__(f"This {resource_type} was modified in another session. Reload it or overwrite.")

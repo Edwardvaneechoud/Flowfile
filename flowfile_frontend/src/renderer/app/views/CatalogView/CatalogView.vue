@@ -350,13 +350,14 @@
       width="92vw"
       destroy-on-close
       append-to-body
+      :before-close="onVizViewerBeforeClose"
       @close="closeVizViewer"
     >
       <VisualizationViewer
         v-if="vizViewerOpen && activeVizId !== null"
+        ref="vizViewerRef"
         :viz-id="activeVizId"
         :appearance="vizViewerAppearance"
-        @close="closeVizViewer"
       />
     </el-dialog>
 
@@ -367,9 +368,11 @@
       width="92vw"
       destroy-on-close
       append-to-body
+      :before-close="onVizEditorBeforeClose"
     >
       <VisualizationEditor
         v-if="vizEditorOpen && vizEditorSource"
+        ref="vizEditorRef"
         :source="vizEditorSource"
         :viz="null"
         :appearance="vizViewerAppearance"
@@ -652,6 +655,47 @@ const preselectedFlowId = ref<number | null>(null);
 const vizViewerOpen = ref(false);
 const activeVizId = ref<number | null>(null);
 const vizViewerAppearance = useGraphicWalkerAppearance();
+const vizViewerRef = ref<InstanceType<typeof VisualizationViewer> | null>(null);
+
+// Flush while GW is still mounted; a failed flush gets a lose-changes confirm.
+const onVizViewerBeforeClose = async (done: () => void) => {
+  const clean = (await vizViewerRef.value?.flushAutosave()) ?? true;
+  if (clean) {
+    done();
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      "Some chart changes couldn't be saved. Close anyway and lose them?",
+      "Unsaved changes",
+      { confirmButtonText: "Close", cancelButtonText: "Keep editing", type: "warning" },
+    );
+    done();
+  } catch {
+    // stay open
+  }
+};
+
+const vizEditorRef = ref<InstanceType<typeof VisualizationEditor> | null>(null);
+
+const onVizEditorBeforeClose = async (done: () => void) => {
+  const editor = vizEditorRef.value;
+  if (!editor?.isDirty) {
+    done();
+    return;
+  }
+  await editor.flushDraft();
+  try {
+    await ElMessageBox.confirm(
+      "Close the chart builder? Your work is kept as a draft on this device.",
+      "Close chart builder",
+      { confirmButtonText: "Close", cancelButtonText: "Keep editing", type: "warning" },
+    );
+    done();
+  } catch {
+    // stay open
+  }
+};
 
 // New-visualization editor (opened from a table's right-click menu)
 const vizEditorOpen = ref(false);

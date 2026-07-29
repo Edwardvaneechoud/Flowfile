@@ -498,6 +498,8 @@ export interface VisualizationUpdatePayload {
   sql_query?: string | null;
   catalog_table_id?: number | null;
   thumbnail_data_url?: string | null;
+  /** CAS guard: echo of the server's updated_at; mismatch -> 409 stale_write. */
+  expected_updated_at?: string;
 }
 
 /** Source descriptor sent to the ad-hoc compute and fields endpoints. */

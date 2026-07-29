@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { CatalogApi } from "../api/catalog.api";
+import { AUTOSAVE_REQUEST_TIMEOUT_MS } from "../composables/autosaveEngine";
 import type {
   Dashboard,
   DashboardCreatePayload,
@@ -75,9 +76,13 @@ export const useDashboardsStore = defineStore("dashboards", {
       this.error = null;
       try {
         const updated = await CatalogApi.updateDashboard(id, patch);
-        if (this.current?.id === id) this.current = updated;
+        const withAccess = (prev: Dashboard): Dashboard => ({
+          ...updated,
+          access: updated.access ?? prev.access,
+        });
+        if (this.current?.id === id) this.current = withAccess(this.current);
         const idx = this.library.findIndex((d) => d.id === id);
-        if (idx >= 0) this.library[idx] = updated;
+        if (idx >= 0) this.library[idx] = withAccess(this.library[idx]);
         return updated;
       } catch (err) {
         this.error = err instanceof Error ? err.message : "Failed to save dashboard";
@@ -85,6 +90,27 @@ export const useDashboardsStore = defineStore("dashboards", {
       } finally {
         this.saving = false;
       }
+    },
+
+    // Background autosave PUT: no saving-flag toggle, metadata-only merge.
+    async autosaveDashboard(id: number, patch: DashboardUpdatePayload): Promise<Dashboard> {
+      const updated = await CatalogApi.updateDashboard(id, patch, {
+        timeout: AUTOSAVE_REQUEST_TIMEOUT_MS,
+      });
+      const merge = (prev: Dashboard): Dashboard => ({
+        ...prev,
+        name: updated.name,
+        description: updated.description,
+        updated_at: updated.updated_at,
+        layout_version: updated.layout_version,
+        namespace_id: updated.namespace_id,
+        namespace_name: updated.namespace_name,
+        access: updated.access ?? prev.access,
+      });
+      if (this.current?.id === id) this.current = merge(this.current);
+      const idx = this.library.findIndex((d) => d.id === id);
+      if (idx >= 0) this.library[idx] = merge(this.library[idx]);
+      return updated;
     },
 
     async deleteDashboard(id: number): Promise<void> {

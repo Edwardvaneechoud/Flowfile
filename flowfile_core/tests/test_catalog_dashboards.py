@@ -264,6 +264,75 @@ class TestDashboardCRUD:
         assert resp.status_code == 404
 
 
+class TestDashboardConcurrency:
+    def test_put_without_token_succeeds(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "NoToken"}).json()
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"description": "x"})
+        assert resp.status_code == 200, resp.text
+
+    def test_matching_token_chain_increments(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "Chain"}).json()
+        assert created["layout_version"] == 1
+        first = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"layout": _layout_with_two_tiles(), "expected_layout_version": 1},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["layout_version"] == 2
+        second = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"description": "again", "expected_layout_version": 2},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["layout_version"] == 3
+
+    def test_stale_token_returns_409_with_structured_detail(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "Stale"}).json()
+        bump = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"description": "bump", "expected_layout_version": 1},
+        )
+        assert bump.status_code == 200
+        resp = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"name": "clobber", "expected_layout_version": 1},
+        )
+        assert resp.status_code == 409, resp.text
+        detail = resp.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["error"] == "stale_write"
+        assert detail["resource_type"] == "dashboard"
+        assert detail["resource_id"] == created["id"]
+        assert detail["expected"] == 1
+        assert detail["current"] == 2
+        assert "modified in another session" in detail["message"]
+
+    def test_stale_write_leaves_row_unchanged(self, client):
+        created = client.post(
+            "/catalog/dashboards",
+            json={"name": "Untouched", "layout": _layout_with_two_tiles()},
+        ).json()
+        bump = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"description": "bump", "expected_layout_version": 1},
+        )
+        assert bump.status_code == 200
+        resp = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"name": "clobbered", "layout": _empty_layout(), "expected_layout_version": 1},
+        )
+        assert resp.status_code == 409
+        after = client.get(f"/catalog/dashboards/{created['id']}").json()
+        assert after["name"] == "Untouched"
+        assert len(after["layout"]["tiles"]) == 2
+
+    def test_description_only_put_increments_counter(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "DescOnly"}).json()
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"description": "note"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["layout_version"] == 2
+
+
 class TestDashboardFilterDatasource:
     def test_create_with_filter_bound_to_datasource(self, client):
         table_id = _make_table()
