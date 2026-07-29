@@ -1,6 +1,6 @@
 # Sharing resources with user groups
 
-This page is for admins and teams running Flowfile in Docker (multi-user) mode who want to share secrets, connections, and catalog resources across users. You'll learn how to create user groups, share a resource at the right access level, how Flowfile decides who can see what, and why shared secrets stay secure.
+Group-based sharing lets a Flowfile Docker (multi-user) deployment share secrets, connections, and catalog resources across users. This page covers creating user groups, sharing a resource at the right access level, how Flowfile decides who can see what, and why shared secrets stay secure.
 
 !!! info "Docker mode only"
     Group-based sharing exists only in the multi-user Docker deployment. In the desktop app and the pip-installed package there is one user, so the feature is dormant — the `/user-groups` and `/shares` endpoints return 404 and the sharing UI does not appear.
@@ -44,7 +44,7 @@ Share resources with the **Share** action on the resource in the app.
 
 Sharing covers secrets, the four connection types (database, cloud storage, Google Analytics, Kafka), and catalog content — namespaces, tables, flows, notebooks, visualizations, dashboards, and models.
 
-Sharing a **namespace** cascades: a grant on a namespace reaches the tables, flows, notebooks, visualizations, dashboards, and models inside it (and its direct child schemas). This is the efficient way to open up a whole area of the catalog to a group at once.
+Sharing a **namespace** cascades: a grant on a namespace reaches the tables, flows, notebooks, visualizations, dashboards, and models inside it (and its direct child schemas).
 
 ### Secrets are use-only
 

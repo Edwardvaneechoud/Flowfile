@@ -37,7 +37,7 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: the finished sales_pipeline flow on the canvas, with the Group by node selected and its 5-row result visible in the data preview -->
 
 !!! tip "Skip the typing"
-    The finished flow ships with Flowfile: **Create → From template → "Sales pipeline: clean, filter, aggregate"**. The sample data is provisioned automatically. You can also [download the flow](assets/flows/sales_pipeline.yaml) as a `.yaml` file. The steps below build the same thing by hand so you learn the moves.
+    The finished flow ships with Flowfile: **Create → From template → "Sales pipeline: clean, filter, aggregate"**. The sample data is provisioned automatically. You can also [download the flow](assets/flows/sales_pipeline.yaml) as a `.yaml` file. The steps below build the same thing by hand.
 
 ### 1. Create a flow
 
@@ -98,7 +98,7 @@ The walkthrough uses a committed sample: [`supermarket_sales.csv`](https://raw.g
     [quantity] > 7
     ```
 
-3. Run — 314 rows remain. The `[column]` syntax is Flowfile's [formula language](users/formulas/index.md); if you can write an Excel formula, you already know it.
+3. Run — 314 rows remain. The `[column]` syntax is Flowfile's [formula language](users/formulas/index.md), which follows spreadsheet-formula conventions.
 
 <details markdown="1">
 <summary>See it: after the filter</summary>

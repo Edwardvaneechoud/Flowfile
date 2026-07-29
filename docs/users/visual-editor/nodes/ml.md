@@ -49,8 +49,8 @@ arbitrary names.
 - One output handle per split, in the order you defined them.
 - Each row lands in exactly one split. The split is purely random — there is
   no stratification by target class.
-- Setting a seed (e.g. `42`) makes the split deterministic across runs, which
-  is what you want for reproducible model evaluation.
+- Setting a seed (e.g. `42`) makes the split deterministic across runs, so
+  evaluations are reproducible.
 
 ---
 

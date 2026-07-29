@@ -62,13 +62,13 @@ If no credential row exists for a user, Flowfile falls back to the standard prov
 
 ## Choosing models per surface
 
-Each AI feature is a *surface* (`chat`, `explain`, `agent_staged`, `agent_complex`, `cmd_k`, `ghost_node`, `settings_autocomplete`, `lineage`, `docgen`, `intent_classifier`, `cron`). Each provider class ships sensible per-surface defaults — Haiku for fast paths, Sonnet for thinking paths, etc. — so you usually don't need to override anything.
+Each AI feature is a *surface* (`chat`, `explain`, `agent_staged`, `agent_complex`, `cmd_k`, `ghost_node`, `settings_autocomplete`, `lineage`, `docgen`, `intent_classifier`, `cron`). Each provider class ships per-surface defaults — Haiku for fast paths, Sonnet for thinking paths, etc. — so you usually don't need to override anything.
 
 When you do want to override:
 
 1. **Per-credential default**. In the BYOK panel, set *Default model* on the provider row. This wins over the class-level default for every surface.
 2. **Curated model list**. Some providers (notably OpenRouter) let you pin a *list* of models you've opted into. Flowfile will use the surface's preferred model **if it's in your curated list**; otherwise it falls back to the first model in the list. Useful when you want to limit yourself to free-tier models without losing per-surface intelligence.
-3. **Per-request override**. Power users can pass an explicit `model=...` on a per-call basis through the API. This always wins.
+3. **Per-request override**. The API accepts an explicit `model=...` per call. This always wins.
 
 The full resolution order, in priority:
 
@@ -108,7 +108,7 @@ Ollama is the offline path. Quick start on macOS / Linux:
     - Optionally set *Default model* to the tag you pulled.
     - Click **Save**, then **Test**.
 
-Tool-call quality varies by model. Llama 3.1+ instruct models do tool calls correctly; older or non-instruct models sometimes return tool calls as text in the assistant content. The Agent surface compensates with Pydantic-repair on the tool-call shape, but for best results stick to the recommended models.
+Tool-call quality varies by model. Llama 3.1+ instruct models do tool calls correctly; older or non-instruct models sometimes return tool calls as text in the assistant content. The Agent surface compensates with Pydantic-repair on the tool-call shape.
 
 ---
 

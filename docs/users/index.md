@@ -1,6 +1,6 @@
 # Guides by audience
 
-Flowfile is one tool with several front doors. Pick the one that matches how you work — every path builds the same flows, and you can switch between them at any point. (Not sure Flowfile is the right shape at all? Start with [What is Flowfile](../what-is-flowfile.md).)
+Flowfile has several entry points into the same tool. Pick the one that matches how you work — every path builds the same flows, and you can switch between them at any point. (Not sure Flowfile is the right shape at all? Start with [What is Flowfile](../what-is-flowfile.md).)
 
 ## Find your starting point
 
@@ -10,7 +10,7 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 
     ---
 
-    You turn messy exports into clean tables others rely on — as visible, re-runnable pipelines.
+    Messy exports become clean tables others rely on — as visible, re-runnable pipelines.
 
     [:octicons-arrow-right-24: Build Flows Visually](build-flows-visually.md)
 
@@ -50,7 +50,7 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 
     ---
 
-    You're making it a shared tool: auth, secrets, sharing, backups, day-two operations.
+    Running it as a shared service: auth, secrets, sharing, backups, day-two operations.
 
     [:octicons-arrow-right-24: Run Flowfile for a Team](deploy-for-a-team.md)
 
@@ -58,7 +58,7 @@ Flowfile is one tool with several front doors. Pick the one that matches how you
 
     ---
 
-    The operation you need isn't built in? Make it once in the Node Designer — visually, no code file — and reuse it everywhere.
+    A custom transformation, built once in the Node Designer — visually, no code file — and reusable in every flow.
 
     [:octicons-arrow-right-24: Node Designer](visual-editor/node-designer.md)
 

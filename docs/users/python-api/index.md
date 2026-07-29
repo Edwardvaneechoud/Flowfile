@@ -1,6 +1,6 @@
 # Python API
 
-Build data pipelines programmatically with Flowfile's Polars-compatible API. For Python developers who want version-controllable, reproducible pipelines that can still be opened in the visual editor.
+Build data pipelines programmatically with Flowfile's Polars-compatible API. Pipelines built this way are version-controllable, reproducible, and open unchanged in the visual editor.
 
 !!! info "Backend required — not in Flowfile Lite"
     The Python API runs the full Flowfile engine in-process. It is **not** part of the browser-only [Flowfile Lite](../deployment/lite.md) edition, which is visual-only. Install the [Python package](../deployment/python.md) to use this API.

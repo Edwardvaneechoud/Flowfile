@@ -7,7 +7,7 @@ Flowfile Lite is the **zero-install, browser-only** edition of the visual editor
 It is also published as the embeddable npm package [`flowfile-editor`](https://www.npmjs.com/package/flowfile-editor), so you can drop the editor into your own web app.
 
 !!! info "Lite vs. the full build"
-    Flowfile Lite is a deliberately **lightweight subset** of Flowfile. It covers the most common file-based ETL work, but it has **no Python backend** — which means no databases, cloud storage, scheduler, kernels, AI assistant, or the Python API. For any of those, install the [full build](index.md) (Desktop, Python package, or Docker). See the [feature comparison](#feature-comparison) below.
+    Flowfile Lite is a **lightweight subset** of Flowfile. It covers the most common file-based ETL work, but it has **no Python backend** — which means no databases, cloud storage, scheduler, kernels, AI assistant, or the Python API. For any of those, install the [full build](index.md) (Desktop, Python package, or Docker). See the [feature comparison](#feature-comparison) below.
 
 ---
 

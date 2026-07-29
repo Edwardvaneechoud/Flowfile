@@ -1,10 +1,10 @@
 # Flowfile, in plain terms
 
-*The non-technical lens on [What is Flowfile](what-is-flowfile.md). If you build software or pipelines for a living, the [technical lens](what-is-flowfile-technical.md) will speak your language.*
+*The non-technical lens on [What is Flowfile](what-is-flowfile.md). The [technical lens](what-is-flowfile-technical.md) covers the same ground with the mechanisms behind each part.*
 
-Think about the last number you produced that mattered — a monthly total, a cleaned-up customer list, a chart in a deck. Now imagine someone asks, a week later: *"can you run that again with the new data?"* If answering that means retracing your own steps — which file, which filter, which fix you made by hand somewhere along the way — you know the problem Flowfile exists to solve.
+A week after a number is produced — a monthly total, a cleaned-up customer list, a chart in a deck — someone asks: *"can you run that again with the new data?"* Answering that means retracing the steps: which file, which filter, which fix was made by hand somewhere along the way. That is the problem Flowfile exists to solve.
 
-**Flowfile is a data platform built around one promise: what you did a week ago, you can do again with one click.** Not because you remembered, but because the work itself is saved as a visible recipe.
+**Flowfile is a data platform where the work itself is saved as a visible recipe** — so what you did a week ago runs again with one click, without anyone having to remember how.
 
 ## The recipe idea
 
@@ -20,25 +20,25 @@ None of this requires programming. Each step is a form you fill in — pick a co
 
 Building a flow solves one week's problem. The **catalog** is what makes the weeks add up.
 
-Instead of exporting results to files that scatter across mailboxes and desktops, a flow can publish its result into the catalog — Flowfile's built-in home for your **data products**. A table in the catalog is alive in ways a file never is:
+Instead of exporting results to files, a flow can publish its result into the catalog — Flowfile's built-in home for your **data products**. A table in the catalog is alive in ways a file never is:
 
 - It keeps its **history** — you can see, and go back to, what it contained in March.
 - It knows its **origin** — the flow that produced it is one click away, always.
 - It can be **queried and charted** right there — SQL and interactive visualizations, no export.
 - It can **refresh itself** — schedule the flow, and the table (and every chart on it) stays current with nobody pressing Run.
-- It can be **shared** — teammates get access to the product, not a copy that immediately starts rotting.
+- It can be **shared** — teammates get access to the table itself, not a copy of it.
 
-This is the quiet shift in how the work feels: you stop producing *files* and start maintaining *a small library of living results*. The flow is the recipe; the catalog is the kitchen where the dishes stay warm.
+The shift: you stop producing *files* and start maintaining *a small library of living results*.
 
 ![The catalog sits at the center: flows publish their tables into it, while the SQL editor, charts, and teammates all read from that one shared library — and a schedule refreshes the flows on a timer, so the whole loop keeps itself current.](assets/images/concepts/catalog-ecosystem-loop.svg)
 
 ## Never more complicated than your problem
 
-Flowfile is deliberately built so you can use a tenth of it and never feel the rest looming:
+You can use a tenth of Flowfile and never touch the rest:
 
-- **You see everything.** Every step previews its data. There is no "run it and pray" — mistakes are visible at the step that made them.
+- **You see everything.** Every step previews its data, so a mistake is visible at the step that made it.
 - **You start where you are.** If you know Excel, [the concepts transfer directly](users/coming-from-excel.md). If you've never touched a formula, the steps are forms with dropdowns.
-- **Features wait their turn.** The canvas doesn't ask you about scheduling; the catalog doesn't ask you about Python. Each part shows up when your problem does.
+- **Nothing is in the way.** The canvas doesn't ask about scheduling; the catalog doesn't ask about Python. Each part appears when you need it.
 - **One install.** `pip install flowfile` — or the desktop app, or [a browser tab with nothing installed at all](https://demo.flowfile.org) — brings the whole platform: canvas, catalog, everything.
 
 ## It grows in whatever direction you do
@@ -50,7 +50,7 @@ The same platform keeps up as the work gets more ambitious — without ever dema
 - **Colleagues who code?** Every flow is equally real as Python: [write pipelines in code](users/write-python.md) that appear on the canvas, or take any visual flow and [export it as a plain Python script](users/visual-editor/tutorials/code-generator.md) that runs on its own. Nobody is locked in — in either direction.
 - **A team?** [Run it as a shared server](users/deploy-for-a-team.md) with accounts, access control, and shared data products.
 
-The through-line never changes: whatever you build, at whatever level, is reproducible by construction. That's the product.
+The through-line never changes: whatever you build, at whatever level, is reproducible by construction.
 
 ## See it in ninety seconds
 

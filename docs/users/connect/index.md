@@ -1,6 +1,6 @@
 # Connect your data
 
-Your data lives somewhere else — a database, an object store, a Kafka topic, a REST API, or Google Analytics. This section is the map of every source Flowfile can read from and every sink it can write to, and where each one is configured. Start here to find the right connector, then follow the link to its setup page.
+Flowfile reads from and writes to databases, object stores, Kafka topics, REST APIs, and Google Analytics. This section is the map of every source Flowfile can read from and every sink it can write to, and where each one is configured. Start here to find the right connector, then follow the link to its setup page.
 
 Flowfile connects to external systems in two ways. In the visual editor you add a **reader** or **writer** node and point it at a saved connection. In the [Python API](../python-api/index.md) you call the matching `ff.*` function. Both paths go through the same stored connections, so a connection you save once in the UI is usable from code, and vice versa.
 

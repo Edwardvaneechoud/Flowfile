@@ -1,6 +1,6 @@
 # Design Philosophy: Code and Visual Are One Model
 
-This page explains the core design decision behind Flowfile: the Python API and the visual editor construct the same underlying objects. It is for contributors mapping the codebase, and for anyone curious how a drag-and-drop tool and a code API can stay in lockstep.
+This page explains the core design decision behind Flowfile: the Python API and the visual editor construct the same underlying objects. It covers how a drag-and-drop tool and a code API stay in lockstep.
 
 !!! info "Related pages"
     - [Technical Architecture](architecture.md) — the three services and execution modes
@@ -9,7 +9,7 @@ This page explains the core design decision behind Flowfile: the Python API and 
 
 ## The problem
 
-Most data tools make you choose: a visual interface (approachable but limited) or code (expressive but harder). Flowfile aims for both in one tool, which raises one hard question — how do you make a drag-and-drop interface produce the exact same pipelines as writing code?
+A visual interface and a code API are usually separate products with separate capabilities. Flowfile aims for both in one tool, which raises one hard question — how do you make a drag-and-drop interface produce the exact same pipelines as writing code?
 
 The backend was built around a settings-based model: every transformation is a declarative configuration object (a Pydantic model). That model suits a UI well, but developers think in code, not configuration objects:
 

@@ -2,7 +2,7 @@
 
 *The technical lens on [What is Flowfile](what-is-flowfile.md). Sending this to a non-technical colleague? Give them the [plain-terms lens](what-is-flowfile-plain.md).*
 
-Flowfile bundles a visual flow editor, a data catalog, a scheduler, and a Polars-based Python API into one package. Every part has a standalone equivalent you already know; the value proposition for an experienced builder is the integration work removed. Below is what you no longer build or maintain, each with the mechanism behind it.
+Flowfile bundles a visual flow editor, a data catalog, a scheduler, and a Polars-based Python API into one package. Every part has a standalone equivalent; what the bundle removes is the integration work between them. Below is what you no longer build or maintain, each with the mechanism behind it.
 
 ![System boundary: your transformation logic sits in the center, surrounded by the platform-provided services you no longer build — a secret store (Fernet, per-user keys), kernel containers (resource caps, pinned deps), a connection layer (named references), a scheduler (cron and table triggers), catalog storage (Delta, versioned), and run history and lineage.](assets/images/concepts/system-boundary.svg)
 
@@ -38,4 +38,4 @@ Flowfile bundles a visual flow editor, a data catalog, a scheduler, and a Polars
 
 The same one stated on the plain-terms page: every pipeline, table, and schedule is reproducible from its stored definition. The features above exist to make that hold without per-project effort.
 
-**Fastest first taste:** `pip install flowfile`, run the [tested first pipeline](users/write-python.md#1-first-pipeline) — or [open the sales pipeline in your browser](assets/try-sales-pipeline.html) with nothing installed. Then take the [Write Python route](users/write-python.md).
+**Start here:** `pip install flowfile`, run the [tested first pipeline](users/write-python.md#1-first-pipeline) — or [open the sales pipeline in your browser](assets/try-sales-pipeline.html) with nothing installed. Then take the [Write Python route](users/write-python.md).

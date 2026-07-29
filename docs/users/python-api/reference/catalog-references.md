@@ -161,7 +161,7 @@ The legacy `namespace_id=<int>` form still works for back-compat. New code shoul
 
 ## Validation, errors, and lifecycle
 
-- **Construction is eager.** `CatalogReference("missing")` hits the database immediately and raises `flowfile_core.catalog.NamespaceNotFoundError` if the catalog doesn't exist (and `auto_create=False`). This is by design: the whole point of these handles is to fail fast at the top of your script, not deep inside a write call.
+- **Construction is eager.** `CatalogReference("missing")` hits the database immediately and raises `flowfile_core.catalog.NamespaceNotFoundError` if the catalog doesn't exist (and `auto_create=False`). The effect is to fail at the top of your script rather than deep inside a write call.
 - **`auto_create=True` is idempotent.** If two processes race to create the same catalog, one wins and the loser refetches the existing namespace transparently.
 - **References don't re-validate on every call.** If the underlying catalog or schema is deleted *after* you constructed the reference, subsequent operations (e.g. `list_tables`) will surface the backend error. Construct a new reference if you suspect drift.
 - **Names cannot contain `.`** — the dot is reserved for fully-qualified `catalog.schema.table` references and is rejected with `ValueError` at construction time.

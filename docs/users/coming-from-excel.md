@@ -1,10 +1,10 @@
 # Coming from Excel
 
-If your working life runs through workbooks — filters and VLOOKUPs as an analyst, month-end reconciliation in finance, member lists and reports in operations, a "database" that is honestly a very large sheet — you already know the concepts Flowfile is built on. What changes is the form: every step becomes a visible, repeatable node instead of something buried in cell references, and re-running last month's work on this month's file stops being an afternoon.
+Spreadsheet work — filters and VLOOKUPs, month-end reconciliation, member lists and reports, a "database" that is a very large sheet — maps onto Flowfile almost concept for concept. What changes is the form: every step becomes a visible, repeatable node instead of something buried in cell references, and re-running last month's work on this month's file means pointing the flow at it and pressing Run.
 
 ## 1. Sheets become flows
 
-An Excel workflow usually lives in one sheet: raw data on the left, helper columns in the middle, a pivot table somewhere else — and the *order of operations* exists only in your head. In Flowfile that same work is a **flow**: a left-to-right chain of steps on a canvas, where each step shows its output data underneath. The logic isn't hidden in cells; it *is* the picture.
+An Excel workflow usually lives in one sheet: raw data on the left, helper columns in the middle, a pivot table somewhere else — and the *order of operations* isn't written down anywhere. In Flowfile that same work is a **flow**: a left-to-right chain of steps on a canvas, where each step shows its output data underneath. The logic isn't hidden in cells; it *is* the picture.
 
 ![On the left, one spreadsheet crams raw columns, helper-formula columns, and a pivot together with tangled arrows — the order of steps lives in your head. On the right, the same work is a left-to-right flow (read → formula → dedupe → group by) where every node shows its output data.](../assets/images/concepts/sheet-vs-flow.svg)
 
@@ -32,7 +32,7 @@ This is the part that transfers almost verbatim. Flowfile's [formula language](f
 | `=TODAY()` | `today()` |
 | `=DATEDIF(A2,TODAY(),"d")` | `date_diff_days(today(), [hire_date])` |
 
-Two differences worth internalizing early: a formula applies to a **whole column at once** — there is no dragging down, and no forgetting to drag down — and boolean logic is written `and` / `or` rather than `AND()` / `OR()`. When you're ready to go past translations, the [formula language guide](formulas/index.md) is your home page, the [function reference](formulas/functions.md) is the full catalog, and the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you type formulas against sample data in the browser and watch results update live.
+Two differences: a formula applies to a **whole column at once**, so there is no dragging down — and boolean logic is written `and` / `or` rather than `AND()` / `OR()`. Past the translations, the [formula language guide](formulas/index.md) covers the language, the [function reference](formulas/functions.md) is the full catalog, and the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you type formulas against sample data in the browser and watch results update live.
 
 ## 3. VLOOKUP is a Join
 
@@ -49,9 +49,9 @@ Where Excel needed the key in the first column and returned one column per formu
 
 ## 4. Pivot tables are two nodes
 
-Excel's pivot table does two jobs at once; Flowfile separates them, and most of the time you only wanted the first:
+Excel's pivot table does two jobs at once; Flowfile separates them into two nodes:
 
-- **Group By** makes summary rows — one row per group with sums, means, medians, counts. "Total sales per city" is a Group By, and it's the workhorse.
+- **Group By** makes summary rows — one row per group with sums, means, medians, counts. "Total sales per city" is a Group By.
 - **Pivot** spreads a category's values across the header — the "Columns" area of a pivot table — when a wide layout is genuinely the goal. [Unpivot](visual-editor/nodes/aggregate.md#unpivot-data) reverses it, turning wide month-columns back into tidy rows.
 
 ## 5. Where the spreadsheet runs out
@@ -59,13 +59,13 @@ Excel's pivot table does two jobs at once; Flowfile separates them, and most of 
 Excel stops at 1,048,576 rows and gets painful well before that; Flowfile runs on [Polars](https://pola.rs) and doesn't have that ceiling. But the practical wins are about *work*, not just size:
 
 - **Repeatability** — point the flow at next month's file and press Run. No redoing steps, no stale pivot caches, no "which cells did I fix by hand?"
-- **Transparency** — every transformation is a labeled node a colleague can read, not a formula hidden in column Q of a workbook only you understand.
+- **Transparency** — every transformation is a labeled node a colleague can read, not a formula tucked into a helper column.
 - **A way out of files entirely** — results can land in the [catalog](visual-editor/catalog/index.md), where they're queried, charted, and [refreshed on a schedule](visual-editor/catalog/schedules.md). The [analyst route](analyze-your-data.md) continues there.
 
 ## 6. Your first flow, in Excel terms
 
-The [Quickstart](../quickstart.md#your-first-flow-visually) is a classic spreadsheet job done as a flow — and maps one-to-one onto what you'd have done in Excel: open the file (Read data), Remove Duplicates (Drop duplicates), filter to `quantity > 7` (Filter with the formula `[quantity] > 7`), then a "pivot" of income per city (Group By with Sum and Median). Same moves, visible and re-runnable.
+The [Quickstart](../quickstart.md#your-first-flow-visually) is a classic spreadsheet job done as a flow — and maps one-to-one onto what you'd have done in Excel: open the file (Read data), Remove Duplicates (Drop duplicates), filter to `quantity > 7` (Filter with the formula `[quantity] > 7`), then a "pivot" of income per city (Group By with Sum and Median).
 
 ---
 
-**Fastest first taste:** [open the finished sales pipeline in your browser](../assets/try-sales-pipeline.html) — the whole Excel job as a flow, nothing to install — then rebuild it yourself with the [Quickstart](../quickstart.md).
+**Start here:** [open the finished sales pipeline in your browser](../assets/try-sales-pipeline.html) — the whole Excel job as a flow, nothing to install — then rebuild it yourself with the [Quickstart](../quickstart.md).
