@@ -42,9 +42,11 @@
       width="92vw"
       destroy-on-close
       append-to-body
+      :before-close="onEditorBeforeClose"
     >
       <VisualizationEditor
         v-if="editorOpen"
+        ref="editorRef"
         :source="tableSource"
         :viz="editingViz"
         :appearance="appearance"
@@ -112,6 +114,28 @@ watch(
 const openEditor = (viz?: CatalogVisualization) => {
   editingViz.value = viz ?? null;
   editorOpen.value = true;
+};
+
+const editorRef = ref<InstanceType<typeof VisualizationEditor> | null>(null);
+
+// Flush the create-mode draft while GW is still mounted (same guard as the other hosts).
+const onEditorBeforeClose = async (done: () => void) => {
+  const editor = editorRef.value;
+  if (!editor?.isDirty) {
+    done();
+    return;
+  }
+  await editor.flushDraft();
+  try {
+    await ElMessageBox.confirm(
+      "Close the chart builder? Your work is kept as a draft on this device.",
+      "Close chart builder",
+      { confirmButtonText: "Close", cancelButtonText: "Keep editing", type: "warning" },
+    );
+    done();
+  } catch {
+    // stay open
+  }
 };
 
 const onSaved = () => {

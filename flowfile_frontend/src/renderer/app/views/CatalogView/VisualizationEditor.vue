@@ -76,13 +76,14 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
+import { classifyAutosaveError } from "../../composables/autosaveEngine";
 import { vizDraftKey } from "./vizAutosave";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
@@ -116,6 +117,9 @@ const saving = ref(false);
 
 const isCreate = computed(() => !isExistingViz(props.viz));
 const initialName = name.value;
+
+// CAS token for edit mode: the updated_at of the viz whose spec was loaded.
+let expectedUpdatedAt = props.viz?.updated_at ?? null;
 
 // Create-mode crash/close protection via a localStorage draft + restore banner.
 const specDirty = ref(false);
@@ -286,7 +290,9 @@ const save = async () => {
         spec,
       };
       if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
+      if (expectedUpdatedAt) updatePayload.expected_updated_at = expectedUpdatedAt;
       saved = await store.updateVisualization(props.viz.id, updatePayload);
+      expectedUpdatedAt = saved.updated_at;
     } else {
       const createPayload: VisualizationCreatePayload = {
         name: name.value.trim(),
@@ -306,9 +312,45 @@ const save = async () => {
     ElMessage.success(`Saved "${saved.name}"`);
     emit("saved", saved);
   } catch (err: any) {
-    ElMessage.error(catalogSaveErrorMessage(err, "Failed to save visualization"));
+    if (isExistingViz(props.viz) && classifyAutosaveError(err) === "conflict") {
+      await offerOverwrite(props.viz.id, spec, thumbnail_data_url);
+    } else {
+      ElMessage.error(catalogSaveErrorMessage(err, "Failed to save visualization"));
+    }
   } finally {
     saving.value = false;
+  }
+};
+
+// Stale-write 409: let the user overwrite with a fresh token, or keep editing.
+const offerOverwrite = async (
+  vizId: number,
+  spec: Record<string, any>[],
+  thumbnail_data_url: string | null,
+) => {
+  try {
+    await ElMessageBox.confirm(
+      "This chart was changed somewhere else while you were editing — another window or another person. Overwrite it with your version?",
+      "Chart changed elsewhere",
+      { confirmButtonText: "Overwrite", cancelButtonText: "Keep editing", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  try {
+    const fresh = await CatalogApi.getVisualization(vizId);
+    const updatePayload: VisualizationUpdatePayload = {
+      name: name.value.trim(),
+      spec,
+      expected_updated_at: fresh.updated_at,
+    };
+    if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
+    const saved = await store.updateVisualization(vizId, updatePayload);
+    expectedUpdatedAt = saved.updated_at;
+    ElMessage.success(`Saved "${saved.name}"`);
+    emit("saved", saved);
+  } catch (err: any) {
+    ElMessage.error(catalogSaveErrorMessage(err, "Failed to save visualization"));
   }
 };
 </script>
