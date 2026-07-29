@@ -191,6 +191,9 @@ const catalogFlowName = ref("");
 // ``selectedNamespaceId`` using ``catalogFlowName``.
 const selectedRegistrationId = ref<number | null>(null);
 const overwriteTargetHint = ref<string>("");
+// The flow's own registration — excluded from the name-collision check so a
+// re-save under its existing name isn't reported as colliding with itself.
+const ownRegistrationId = ref<number | null>(null);
 // Flows in the currently-selected namespace — used to detect name collisions
 // before the user hits save so we can offer the overwrite shortcut.
 const namespaceFlows = ref<FlowRegistration[]>([]);
@@ -241,6 +244,7 @@ const updateInitialPath = async () => {
   // Reset picker state each open so nothing leaks between sessions.
   selectedRegistrationId.value = null;
   overwriteTargetHint.value = "";
+  ownRegistrationId.value = null;
 
   // Re-fetch the catalog listing every open — the dialog content persists
   // across open/close, so without this the picker shows the flow list as it
@@ -258,6 +262,7 @@ const updateInitialPath = async () => {
 
   try {
     const settings = await getFlowSettings(props.flowId);
+    ownRegistrationId.value = settings?.source_registration_id ?? null;
     if (settings?.path) {
       const fileName = settings.path.split(/[/\\]/).pop() ?? "";
       let stem = fileName.replace(/\.(yaml|yml|json)$/i, "");
@@ -346,7 +351,8 @@ const nameCollisionFlow = computed<FlowRegistration | null>(() => {
   if (selectedRegistrationId.value !== null) return null;
   const candidate = normalizedCatalogName.value;
   if (!candidate) return null;
-  return namespaceFlows.value.find((f) => f.name === candidate) ?? null;
+  const match = namespaceFlows.value.find((f) => f.name === candidate) ?? null;
+  return match && match.id === ownRegistrationId.value ? null : match;
 });
 
 const canSaveToCatalog = computed(() => {

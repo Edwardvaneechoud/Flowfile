@@ -289,7 +289,8 @@ export function useFlowExecution(
     state.setExecutionState(getPollingKey(), true);
 
     const executionLocationText = flowSettings.execution_location === "local" ? "Local" : "Remote";
-    const escapedFlowName = escapeHtml(flowSettings.name);
+    // display_name is the registration's name; settings.name is the file stem.
+    const escapedFlowName = escapeHtml(flowSettings.display_name?.trim() || flowSettings.name);
 
     const notificationMessage = `
       <div style="line-height: 1.4;">

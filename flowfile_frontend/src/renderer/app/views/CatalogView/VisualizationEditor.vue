@@ -48,6 +48,7 @@
           :fields="plainFields"
           :spec-list="plainInitialSpecList"
           :appearance="appearance"
+          :hide-chart-nav="true"
         />
       </template>
     </div>

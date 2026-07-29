@@ -961,7 +961,7 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     // the store falls back to ``flow ${flowId}``.
     if (flowStore.flowId <= 0) return;
     const settings = await FlowApi.getFlowSettings(flowStore.flowId);
-    const name = settings?.name?.trim() || undefined;
+    const name = settings?.display_name?.trim() || settings?.name?.trim() || undefined;
     await aiStore.generateDocumentation(flowStore.flowId, name);
   } else if (actionId === "add-descriptions-all") {
     // Bulk variant of the per-node ✨ "Add description" action. Confirms

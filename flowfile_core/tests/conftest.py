@@ -91,6 +91,35 @@ def setup_test_db():
             logger.error(f"Error during cleanup: {e}")
 
 
+@pytest.fixture(autouse=True)
+def restore_seeded_catalog_namespaces():
+    """Restore the seeded 'General' catalog if a previous module wiped it.
+
+    Several catalog test modules clean up with an unconditional
+    ``db.query(CatalogNamespace).delete()``, which also removes the session-scoped
+    seed that ``init_db()`` created. Auto-registration silently no-ops without it
+    (``CatalogService.auto_register_flow`` returns None when 'General' is missing),
+    so any later module that creates flows fails in ways that depend on collection
+    order. Both seed helpers are idempotent get-or-creates; the guard query keeps
+    the steady-state cost at one SELECT per test.
+    """
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.init_db import (
+        create_default_catalog_namespace,
+        create_default_local_user,
+    )
+    from flowfile_core.database.models import CatalogNamespace
+
+    with get_db_context() as db:
+        seed_missing = (
+            db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first() is None
+        )
+        if seed_missing:
+            create_default_local_user(db)
+            create_default_catalog_namespace(db)
+    yield
+
+
 def is_worker_running() -> bool:
     """Check if the flowfile worker service is already running."""
     try:

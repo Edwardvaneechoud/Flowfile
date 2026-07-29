@@ -117,6 +117,7 @@ async function save() {
         :data="data"
         :fields="fields"
         :spec-list="initialSpecList"
+        :hide-chart-nav="true"
       />
     </div>
   </div>

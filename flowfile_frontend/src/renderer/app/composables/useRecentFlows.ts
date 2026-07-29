@@ -8,7 +8,7 @@ export interface RecentFlow {
   // created via the catalog; shown on the welcome screen instead of the path.
   catalogRef?: string;
   // Catalog registration id (when the flow is registered) — enables the
-  // "View in catalog" context-menu action. Resolved by refreshCatalogRefs.
+  // "View in catalog" context-menu action. Resolved by reconcileWithCatalog.
   catalogId?: number;
 }
 
@@ -21,6 +21,12 @@ export function upsertRecent(list: RecentFlow[], entry: RecentFlow, max = MAX_RE
 
 export function removeRecent(list: RecentFlow[], path: string): RecentFlow[] {
   return list.filter((f) => f.path !== path);
+}
+
+// Renaming is not an open: position and lastOpened are untouched, and an unknown
+// path stays unknown so a rename can't resurrect a pruned entry.
+export function renameRecent(list: RecentFlow[], path: string, name: string): RecentFlow[] {
+  return list.map((f) => (f.path === path && f.name !== name ? { ...f, name } : f));
 }
 
 export function parseStored(raw: string | null): RecentFlow[] {
@@ -50,6 +56,14 @@ export function basenameNoExt(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? path;
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(0, dot) : base;
+}
+
+// Path-derived entries carry the filename verbatim; catalog names never have a
+// flow extension, so stripping one is always safe.
+const KNOWN_FLOW_EXTS = /\.(ya?ml|flowfile)$/i;
+
+export function recentDisplayName(flow: Pick<RecentFlow, "name">): string {
+  return flow.name.replace(KNOWN_FLOW_EXTS, "");
 }
 
 // Recents are best-effort: localStorage can be unavailable (node test env) or
@@ -100,16 +114,26 @@ export function useRecentFlows() {
     persist(recentFlows.value);
   }
 
+  // Relabel immediately rather than waiting for the next reconcileWithCatalog.
+  function renameFlow(path: string, name: string): void {
+    if (!path || !name) return;
+    const next = renameRecent(recentFlows.value, path, name);
+    if (next.some((f, i) => f !== recentFlows.value[i])) {
+      recentFlows.value = next;
+      persist(next);
+    }
+  }
+
   function loadRecentFlows(): void {
     recentFlows.value = readStored();
   }
 
-  // Best-effort: recompute every entry's catalogRef from the live catalog, so
-  // registered flows show their catalog location even when the entry was
-  // recorded without one (quick create, file-system opens, pre-existing
-  // entries) — and so refs follow re-registrations / drop on unregistration.
-  // APIs are imported lazily to keep this module dependency-free for unit tests.
-  async function refreshCatalogRefs(): Promise<void> {
+  /**
+   * Re-derive every entry's name, catalog location and id from the live catalog,
+   * which is the authority for all three. Best-effort; APIs are imported lazily to
+   * keep this module dependency-free for unit tests.
+   */
+  async function reconcileWithCatalog(): Promise<void> {
     if (!recentFlows.value.length) return;
     try {
       const [{ CatalogApi }, { findNamespacePath }] = await Promise.all([
@@ -122,18 +146,27 @@ export function useRecentFlows() {
       ]);
       // id resolves whenever the flow is registered; ref only when it also
       // sits under a namespace.
-      const byPath = new Map<string, { id: number; ref?: string }>();
+      const byPath = new Map<string, { id: number; name: string; ref?: string }>();
       for (const reg of flows) {
         const nsPath = reg.namespace_id !== null ? findNamespacePath(tree, reg.namespace_id) : [];
         byPath.set(reg.flow_path, {
           id: reg.id,
+          name: reg.name,
           ref: nsPath.length ? `${nsPath.join(".")}.${reg.name}` : undefined,
         });
       }
       recentFlows.value = recentFlows.value.map((f) => {
         const match = byPath.get(f.path);
-        if (match?.ref === f.catalogRef && match?.id === f.catalogId) return f;
-        return { ...f, catalogRef: match?.ref, catalogId: match?.id };
+        // Unregistered flows have no authoritative name — keep the local one and
+        // only drop a ref/id left over from a since-removed registration.
+        if (!match) {
+          if (f.catalogRef === undefined && f.catalogId === undefined) return f;
+          return { ...f, catalogRef: undefined, catalogId: undefined };
+        }
+        if (match.ref === f.catalogRef && match.id === f.catalogId && match.name === f.name) {
+          return f;
+        }
+        return { ...f, name: match.name, catalogRef: match.ref, catalogId: match.id };
       });
       persist(recentFlows.value);
     } catch {
@@ -146,10 +179,13 @@ export function useRecentFlows() {
   // Centralizes the path-guard + entry shape so the create-flow recorders in
   // HomeView and HeaderButtons can't drift apart.
   function recordFlowFromSettings(
-    settings: { path?: string | null; name?: string } | null | undefined,
+    settings: { path?: string | null; name?: string; display_name?: string | null } | null | undefined,
     catalogRef?: string,
   ): void {
-    if (settings?.path) recordFlow({ path: settings.path, name: settings.name, catalogRef });
+    if (!settings?.path) return;
+    // display_name is the registration's name; settings.name is the file stem.
+    const name = settings.display_name?.trim() || settings.name;
+    recordFlow({ path: settings.path, name, catalogRef });
   }
 
   return {
@@ -157,7 +193,8 @@ export function useRecentFlows() {
     recordFlow,
     recordFlowFromSettings,
     removeFlow,
+    renameFlow,
     loadRecentFlows,
-    refreshCatalogRefs,
+    reconcileWithCatalog,
   };
 }
