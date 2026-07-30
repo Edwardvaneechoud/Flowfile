@@ -28,6 +28,12 @@ export function dataTypeGroup(dataType: string | undefined | null): DataTypeGrou
   return 'Other'
 }
 
+/** Short badge text: the dtype with its params stripped. The full value belongs in a title. */
+export function dataTypeLabel(dataType: string | undefined | null): string {
+  if (!dataType) return 'unknown'
+  return dataType.split('(')[0].trim() || 'unknown'
+}
+
 export function dataTypeBadgeClass(group: DataTypeGroup): string {
   switch (group) {
     case 'Numeric':

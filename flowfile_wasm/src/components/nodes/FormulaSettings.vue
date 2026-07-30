@@ -671,36 +671,8 @@ onMounted(async () => {
   font-family: var(--font-family-mono, monospace);
 }
 
-/* Data-type badge pills — colors mirror the desktop/web app's column selector. */
-.type-badge {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.6;
-  padding: 0 6px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-.badge-numeric {
-  color: var(--color-info-hover);
-  background-color: var(--color-info-light);
-}
-
-.badge-string {
-  color: var(--color-success-hover);
-  background-color: var(--color-success-light);
-}
-
-.badge-date {
-  color: var(--color-warning-dark);
-  background-color: var(--color-warning-light);
-}
-
-.badge-other {
-  color: var(--color-text-tertiary);
-  background-color: var(--color-background-tertiary);
-}
+/* .type-badge / .badge-* now live in the global DATA TYPE BADGE section so the
+   Select node shares them; the globals are also dark-mode aware. */
 
 .item-empty {
   padding: 8px 10px;
