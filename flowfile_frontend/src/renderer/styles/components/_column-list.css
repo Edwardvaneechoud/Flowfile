@@ -1,0 +1,307 @@
+/* styles/components/_column-list.css - Shared column-picker surface
+ *
+ * Opt-in class for the interactive column pickers in node settings. Deliberately
+ * NOT folded into .listbox-wrapper or .styled-table: both are also used by
+ * read-only surfaces (code previews, error text, Catalog detail panels) where
+ * text must stay selectable and copyable.
+ */
+
+/* Shift-click on a row would otherwise paint a native text selection across the
+ * whole drawer, because the selection anchor can sit outside the clicked cell.
+ * user-select is inherited, so declaring it on the root covers headers,
+ * subtitles and every cell in one go. */
+.column-list,
+.column-list * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.column-list :is(input, textarea, [contenteditable]:not([contenteditable="false"])) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ===== Toolbar ===== */
+.column-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  /* Fixed height so swapping the kept-count for the taller selection pill does
+     not nudge the table down. */
+  height: 36px;
+  padding: 0 var(--spacing-2);
+  border-bottom: 1px solid var(--color-border-light);
+  background-color: var(--color-background-muted);
+  border-top-left-radius: var(--border-radius-md);
+  border-top-right-radius: var(--border-radius-md);
+  user-select: none;
+}
+
+.column-list-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.column-list-search {
+  flex: 1;
+  min-width: 0;
+  max-width: 180px;
+  margin-left: auto;
+}
+
+.column-list-search .search-input {
+  height: 24px;
+  padding: 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+}
+
+/* Contextual group — tinted so it reads as "acts on what you selected", distinct
+ * from the always-available controls on the right of the toolbar. */
+.column-list-selection {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--spacing-1);
+  padding: var(--spacing-0-5) var(--spacing-1);
+  border-radius: var(--border-radius-full);
+  background-color: var(--color-accent-subtle);
+}
+
+.column-list-selection-count {
+  padding-left: var(--spacing-1-5);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent-hover);
+  white-space: nowrap;
+}
+
+.column-list-selection .btn {
+  color: var(--color-accent-hover);
+}
+
+/* Separated from the move actions: this one ends the selection rather than
+   acting on it. */
+.column-list-selection .btn.column-list-clear {
+  margin-left: var(--spacing-1);
+  padding-left: var(--spacing-2);
+  border-left: 1px solid var(--color-focus-ring-accent-strong);
+  border-radius: 0;
+}
+
+.column-list-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--spacing-0-5);
+}
+
+.column-list-actions .btn {
+  height: 24px;
+  min-width: 24px;
+  padding: 0 var(--spacing-1);
+  font-size: var(--font-size-sm);
+  box-shadow: none;
+}
+
+/* ===== Header ===== */
+.column-list thead th {
+  height: 30px;
+  padding-top: var(--spacing-1);
+  padding-bottom: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.column-list thead th.is-sortable {
+  cursor: pointer;
+}
+
+.column-list thead th.is-sortable:hover {
+  background-color: var(--color-background-hover);
+}
+
+/* Keeps the sort glyph on the label's line instead of wrapping it underneath. */
+.column-list .th-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+
+.column-list .th-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-list .sort-glyph {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-2xs);
+}
+
+.column-list thead th.is-sortable:hover .sort-glyph {
+  color: var(--color-text-secondary);
+}
+
+.column-list th.is-centered,
+.column-list td.is-centered {
+  text-align: center;
+}
+
+.column-list td.is-centered :deep(.el-checkbox),
+.column-list td.is-centered .el-checkbox {
+  justify-content: center;
+}
+
+/* ===== Cells ===== */
+.column-list td,
+.column-list th {
+  padding-left: var(--spacing-2);
+  padding-right: var(--spacing-2);
+}
+
+/* table-layout: fixed already constrains the track, so ellipsis works without
+ * the usual max-width: 0 hack. */
+.column-list .column-name,
+.column-list .unavailable-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-list .column-name-cell {
+  cursor: default;
+}
+
+/* Chromeless until hover/focus: 16 always-bordered boxes is most of the visual
+ * noise in this table, but hiding the field behind a click would cost a keystroke
+ * on the node's primary task. */
+.column-list .inline-input {
+  width: 100%;
+  height: 22px;
+  padding: 0 var(--spacing-1-5);
+  border: 1px solid transparent;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  transition: border-color var(--transition-fast) var(--transition-timing);
+}
+
+.column-list .inline-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.column-list tbody tr:hover .inline-input {
+  border-color: var(--input-border);
+}
+
+.column-list .inline-input:focus {
+  border-color: var(--input-border-focus);
+  background: var(--input-bg);
+  box-shadow: 0 0 0 2px var(--color-focus-ring-accent);
+  outline: none;
+}
+
+/* ===== Drag handle ===== */
+.column-list .drag-handle-cell {
+  text-align: center;
+  color: var(--color-text-muted);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity var(--transition-fast) var(--transition-timing);
+}
+
+.column-list tbody tr:hover .drag-handle-cell,
+.column-list tbody tr.is-selected .drag-handle-cell {
+  opacity: 1;
+}
+
+.column-list .drag-handle-cell:active {
+  cursor: grabbing;
+}
+
+.column-list tbody tr:not([draggable="true"]) .drag-handle-cell {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* ===== Row state ===== */
+
+.column-list tbody tr.is-selected > td,
+.column-list li.is-selected {
+  background-color: var(--color-background-selected);
+  color: var(--color-text-selected);
+}
+
+.column-list tbody tr.is-selected > td:first-child,
+.column-list li.is-selected {
+  box-shadow: inset 2px 0 0 0 var(--color-accent);
+}
+
+.column-list tbody tr.is-dragging > td,
+.column-list li.is-dragging {
+  opacity: 0.4;
+}
+
+.column-list tbody tr.is-unavailable > td,
+.column-list li.is-unavailable {
+  opacity: 0.6;
+}
+
+/* ===== Edited-cell marker =====
+ * A column whose data type differs from the source is worth spotting at a
+ * glance — otherwise a one-cell edit is invisible in a 20-row table. */
+.column-list .cell-with-marker {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+
+.column-list .cell-with-marker > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.column-list .change-marker {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  line-height: 1;
+  color: var(--color-accent);
+  cursor: default;
+}
+
+.column-list td.is-changed {
+  box-shadow: inset 0 -2px 0 0 var(--color-accent);
+}
+
+/* ===== Drop indicator =====
+ * An inset shadow rather than a border: a 2px border would shift the row, which
+ * changes which row sits under the pointer, which recomputes the drop target —
+ * a flicker loop. */
+.column-list tbody tr.is-drop-before > td,
+.column-list li.is-drop-before {
+  box-shadow: inset 0 2px 0 0 var(--color-accent);
+}
+
+.column-list tbody tr.is-drop-after > td,
+.column-list li.is-drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--color-accent);
+}
+
+/* Selected rows keep their accent rail while also showing a drop edge. */
+.column-list tbody tr.is-selected.is-drop-before > td:first-child {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-accent),
+    inset 0 2px 0 0 var(--color-accent);
+}
+
+.column-list tbody tr.is-selected.is-drop-after > td:first-child {
+  box-shadow:
+    inset 2px 0 0 0 var(--color-accent),
+    inset 0 -2px 0 0 var(--color-accent);
+}

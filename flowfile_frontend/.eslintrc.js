@@ -9,6 +9,9 @@ module.exports = {
   globals: {
     // Injected by Vite `define` (vite.config.mjs).
     __APP_VERSION__: 'readonly',
+    // Compiler macros newer than this legacy eslint config's vue plugin.
+    defineModel: 'readonly',
+    defineSlots: 'readonly',
   },
   plugins: ['@typescript-eslint'],
   parser: 'vue-eslint-parser',

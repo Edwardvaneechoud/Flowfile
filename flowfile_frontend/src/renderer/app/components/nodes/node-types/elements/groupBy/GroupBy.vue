@@ -5,7 +5,7 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
-      <div class="listbox-wrapper">
+      <div class="listbox-wrapper column-list">
         <ul v-if="dataLoaded" class="listbox">
           <template
             v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
@@ -14,6 +14,7 @@
             <li
               :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
               draggable="true"
+              @mousedown="handleItemMouseDown"
               @click="handleItemClick(index, col_schema.name, $event)"
               @contextmenu="openContextMenu(index, col_schema.name, $event)"
               @dragstart="onDragStart(col_schema.name, $event)"
@@ -219,11 +220,20 @@ const setAggregations = (aggType: AggOption | GroupByOption, columns: string[] |
   contextMenuColumn.value = null;
 };
 
+const handleItemMouseDown = (event: MouseEvent) => {
+  // Stop the browser extending its own text selection across the drawer.
+  if (event.shiftKey) {
+    event.preventDefault();
+    window.getSelection()?.removeAllRanges();
+  }
+};
+
 const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   if (event.shiftKey && firstSelectedIndex.value !== null) {
     const range = getRange(firstSelectedIndex.value, clickedIndex);
+    // Index against table_schema — the array the template renders and onDrop reorders.
     selectedColumns.value = range
-      .map((index) => nodeData.value?.main_input?.columns[index])
+      .map((index) => nodeData.value?.main_input?.table_schema[index]?.name)
       .filter((col): col is string => col !== undefined);
   } else {
     if (firstSelectedIndex.value === clickedIndex) {
