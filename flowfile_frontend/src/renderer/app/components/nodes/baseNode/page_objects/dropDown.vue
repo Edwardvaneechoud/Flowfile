@@ -340,13 +340,13 @@ watch(
 }
 
 .select-box:focus {
-  border-color: var(--input-border-focus);
-  box-shadow: 0 0 0 3px var(--color-focus-ring-accent);
+  border-color: #3182ce;
+  box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.15);
 }
 
 .select-box.has-error {
-  border-color: var(--color-danger);
-  box-shadow: 0 0 0 3px var(--color-focus-ring-error);
+  border-color: #e53e3e;
+  box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.15);
 }
 
 .select-box:disabled {
@@ -369,7 +369,7 @@ watch(
 .dropdown-icon {
   width: 16px;
   height: 16px;
-  color: var(--color-text-tertiary);
+  color: #718096;
   transition: transform 0.2s ease;
 }
 
@@ -426,7 +426,7 @@ watch(
 .no-options {
   padding: 10px 12px;
   font-size: 14px;
-  color: var(--color-text-tertiary);
+  color: #718096;
   text-align: center;
   font-style: italic;
 }
@@ -434,8 +434,8 @@ watch(
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid var(--color-focus-ring-accent-strong);
-  border-top: 2px solid var(--color-accent);
+  border: 2px solid rgba(49, 130, 206, 0.2);
+  border-top: 2px solid #3182ce;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
