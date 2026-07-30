@@ -911,15 +911,28 @@ class TestAutoRegisterFlow:
             reg = db.query(FlowRegistration).filter_by(name="no_path").first()
             assert reg is None
 
-    def test_skips_when_no_default_namespace(self):
-        """Should silently do nothing when the default namespace doesn't exist."""
+    def test_self_heals_when_root_namespace_missing(self):
+        """A wiped catalog root is re-seeded rather than silently skipping.
+
+        The old behaviour returned None + an INFO log, leaving the flow on disk with
+        no registration while callers assumed one existed — the source of
+        collection-order flakiness that ``restore_seeded_catalog_namespaces`` guards.
+        """
         user_id = self._get_local_user_id()
+        with get_db_context() as db:
+            assert db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first() is None
 
         auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
 
         with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            assert general is not None
+            assert general.is_public is True
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_ns.yaml").first()
-            assert reg is None
+            assert reg is not None
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns is not None
+            assert ns.name == "Local Flows"
 
     def test_uses_filename_stem_when_name_is_empty(self):
         """When name is falsy, should fall back to the filename stem."""

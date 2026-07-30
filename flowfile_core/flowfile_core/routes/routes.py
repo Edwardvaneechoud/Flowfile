@@ -1107,18 +1107,19 @@ def create_flow(
     name: str = None,
     namespace_id: int = None,
     register_in_catalog: bool = True,
+    persist: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Creates a new, empty flow file at the specified path and registers a session for it.
 
-    When ``namespace_id`` is provided, the flow is registered in that catalog
-    namespace instead of the default (``General > Local Flows``).
+    Two independent switches, deliberately not fused:
 
-    Set ``register_in_catalog=False`` to create an ephemeral scratch flow that is
-    neither written into the catalog (no ``FlowRegistration`` / ``source_registration_id``)
-    nor persisted to disk (``persist=False``): it lives in-memory until an explicit save or
-    first run. Used by the designer's auto-open-blank-canvas landing so throwaway flows
-    don't accumulate in the catalog or as orphan YAML in ``unnamed_flows``.
+    - ``persist`` writes the YAML to disk. ``False`` keeps the flow in-memory until an
+      explicit save or first run, so an abandoned blank canvas leaves no orphan file.
+    - ``register_in_catalog`` creates the ``FlowRegistration`` row. ``False`` yields a
+      flow with no ``source_registration_id``: no run history, schedules or API
+      publishing until it is filed. When ``namespace_id`` is provided the flow lands
+      there; otherwise it auto-registers under ``General > {Unnamed | Local} Flows``.
     """
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
@@ -1160,7 +1161,7 @@ def create_flow(
                 status_code=409,
                 detail=f"Flow path {flow_path} is already registered in another namespace",
             )
-    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id, persist=register_in_catalog)
+    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id, persist=persist)
     flow = flow_file_handler.get_flow(flow_id)
     if register_in_catalog and flow and flow.flow_settings:
         try:
@@ -1781,7 +1782,12 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
 
 @router.get("/import_flow/", tags=["editor"], response_model=int)
 def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_user)) -> int:
-    """Imports a flow from a saved `.yaml` and registers it as a new session for the current user."""
+    """Imports a flow from a saved `.yaml` and registers it as a new session for the current user.
+
+    Opening a file is browsing, not filing: an existing registration is adopted so the
+    session gets its display name and ``source_registration_id``, but no new catalog
+    row is created. Use the Save dialog (or ``POST /catalog/flows``) to file a flow.
+    """
     validated_path = validate_path_under_cwd(flow_path)
     if not os.path.exists(validated_path):
         raise HTTPException(404, "File not found")
@@ -1789,7 +1795,6 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     flow_id = flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        auto_register_flow(validated_path, flow.flow_settings.name, user_id)
         resolve_source_registration_id(flow)
     return flow_id
 
@@ -2512,8 +2517,8 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     finally:
         temp_path.unlink(missing_ok=True)
 
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow and flow.flow_settings:
-        auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
+    # Deliberately not registered: the only path we could register is the temp file
+    # the `finally` above just unlinked, so every instantiation minted a permanently
+    # dangling row (named after the uuid-suffixed stem). Save the flow to file it.
     _tpl_logger.info("create_from_template OK: template_id=%s flow_id=%s", template_id, flow_id)
     return flow_id

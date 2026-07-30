@@ -17,7 +17,11 @@ import polars as pl
 
 from flowfile_core.catalog.constants import (
     DEFAULT_PREVIEW_LIMIT,
+    DEFAULT_SCHEMA,
     DEFAULT_SQL_MAX_ROWS,
+    LOCAL_FLOWS,
+    ROOT_CATALOG,
+    UNNAMED_FLOWS,
 )
 from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
@@ -713,25 +717,32 @@ class CatalogService:
         )
 
     def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:
-        """Auto-register a flow under ``General > {Unnamed Flows | Local Flows | default}``."""
-        general = self.repo.get_namespace_by_name("General", parent_id=None)
+        """Auto-register a flow under ``General > {Unnamed Flows | Local Flows | default}``.
+
+        Re-seeds a missing root namespace rather than skipping: a silent skip left the
+        flow on disk with no registration while callers assumed one existed.
+        """
+        general = self._flows.ensure_root_catalog(user_id)
         if general is None:
-            logger.info("Auto-registration skipped: 'General' catalog namespace not found")
+            logger.warning("Auto-registration skipped: could not resolve or create the root catalog namespace")
             return None
 
         is_unnamed = Path(flow_path).parent.name == "unnamed_flows"
         if is_unnamed:
-            target_ns = self.repo.get_namespace_by_name("Unnamed Flows", parent_id=general.id)
+            target_ns = self.repo.get_namespace_by_name(UNNAMED_FLOWS.name, parent_id=general.id)
             if target_ns is None:
                 target_ns = self.ensure_unnamed_flows_namespace()
         else:
-            target_ns = self.repo.get_namespace_by_name("Local Flows", parent_id=general.id)
+            target_ns = self.repo.get_namespace_by_name(LOCAL_FLOWS.name, parent_id=general.id)
             if target_ns is None:
                 target_ns = self.ensure_local_flows_namespace()
             if target_ns is None:
-                target_ns = self.repo.get_namespace_by_name("default", parent_id=general.id)
+                target_ns = self.repo.get_namespace_by_name(DEFAULT_SCHEMA.name, parent_id=general.id)
         if target_ns is None:
-            logger.info("Auto-registration skipped: no suitable namespace found under 'General'")
+            logger.warning(
+                "Auto-registration skipped: no suitable namespace under '%s'",
+                ROOT_CATALOG.name,
+            )
             return None
         existing = self.repo.get_flow_by_path(flow_path)
         if existing:

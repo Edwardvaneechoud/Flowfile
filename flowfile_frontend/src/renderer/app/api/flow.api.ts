@@ -77,13 +77,17 @@ export class FlowApi {
   }
 
   /**
-   * Create a new flow
+   * Create a new flow.
+   *
+   * `registerInCatalog` and `persist` are independent: the first controls the
+   * FlowRegistration row, the second whether the YAML is written immediately.
    */
   static async createFlow(
     flowPath: string | null = null,
     name: string | null = null,
     namespaceId: number | null = null,
     registerInCatalog = true,
+    persist = true,
   ): Promise<number> {
     const response = await axios.post(
       "/editor/create_flow/",
@@ -95,6 +99,7 @@ export class FlowApi {
           name: name,
           namespace_id: namespaceId,
           register_in_catalog: registerInCatalog,
+          persist: persist,
         },
       },
     );

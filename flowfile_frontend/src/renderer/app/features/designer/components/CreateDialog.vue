@@ -179,8 +179,10 @@ const handleCreateAtPath = async (flowPath: string) => {
   }
 
   try {
+    // Unchecking must actually opt out: a null namespace_id alone still routes
+    // into auto-registration on the backend.
     const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : null;
-    const newFlowId = await createFlow(flowPath, null, namespaceId);
+    const newFlowId = await createFlow(flowPath, null, namespaceId, registerInCatalog.value);
     ElMessage.success("Flow created");
     isVisible.value = false;
     const catalogRef =
