@@ -12,6 +12,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from polars.exceptions import ColumnNotFoundError
+
+from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_node.models import (
@@ -1037,6 +1041,195 @@ class TestPreviewAfterExecution:
         assert table_example is not None
         assert len(table_example.data) > 0
         assert len(table_example.data) <= 100
+
+
+class TestPreviewRowCount:
+    """The preview row count must be real or None (unknown) — never the old
+    999 sentinel — and producing it must never trigger a count collect."""
+
+    def test_preview_row_count_is_real_not_999(self, execution_location):
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        run_info = graph.run_graph()
+        assert run_info.success, f"Graph should run: {run_info}"
+
+        table_example = graph.get_node(2).get_table_example(include_data=True)
+
+        # The count arrives for free in both modes: remote via the worker's
+        # status, local via parquet metadata propagated through the select.
+        assert table_example.number_of_records != 999
+        assert table_example.number_of_records == 1000
+
+    def test_preview_row_count_exact_for_small_result(self, execution_location):
+        """A sample shorter than the sample size is the whole table — exact count."""
+        graph = create_graph_with_select(execution_location=execution_location)
+        run_info = graph.run_graph()
+        assert run_info.success, f"Graph should run: {run_info}"
+
+        table_example = graph.get_node(2).get_table_example(include_data=True)
+
+        assert table_example.number_of_records == 1
+
+    def test_preview_row_count_none_before_run(self):
+        """Before a run the count is unknown, not the misleading 0 it used to be."""
+        graph = create_graph_with_read_and_select()
+
+        table_example = graph.get_node(2).get_table_example(include_data=True)
+
+        assert table_example.number_of_records is None
+
+    def test_preview_never_triggers_record_count_collect(self, execution_location):
+        """The preview must never pay for a count: get_number_of_records on a
+        lazy engine collects the whole upstream plan to render a header."""
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        graph.run_graph()
+
+        with patch.object(FlowDataEngine, "get_number_of_records") as mock_count:
+            graph.get_node(2).get_table_example(include_data=True)
+
+        mock_count.assert_not_called()
+
+
+class TestNodeColumnStats:
+    """get_column_stats aggregates over the cached result without re-executing."""
+
+    def test_column_stats_after_run(self, execution_location):
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        run_info = graph.run_graph()
+        assert run_info.success, f"Graph should run: {run_info}"
+
+        stats = graph.get_node(2).get_column_stats("Name")
+
+        assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
+        assert stats.number_of_unique_values is not None
+        assert stats.min_value is not None
+
+    def test_column_stats_enrich_preview_schema(self, execution_location):
+        """Stats land on the result schema's FlowfileColumn — the single truth —
+        so this run's later previews carry them in table_schema too."""
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        graph.run_graph()
+        node = graph.get_node(2)
+
+        node.get_column_stats("Name")
+        preview = node.get_table_example(include_data=True)
+
+        name_column = next(c for c in preview.table_schema if c.name == "Name")
+        assert name_column.number_of_empty_values is not None
+        assert name_column.number_of_unique_values is not None
+
+    def test_column_stats_before_run_raises(self):
+        graph = create_graph_with_read_and_select()
+
+        with pytest.raises(ColumnStatsUnavailable):
+            graph.get_node(2).get_column_stats("Name")
+
+    def test_column_stats_unknown_column_raises(self, execution_location):
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        graph.run_graph()
+
+        with pytest.raises(ColumnNotFoundError):
+            graph.get_node(2).get_column_stats("does_not_exist")
+
+    def test_column_stats_never_reexecutes_node(self, execution_location):
+        """Stats must resolve the engine passively — get_output/get_resulting_data
+        can re-run the node from an HTTP request."""
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        graph.run_graph()
+        node = graph.get_node(2)
+
+        with (
+            patch.object(node, "get_resulting_data") as mock_resulting,
+            patch.object(node, "get_output") as mock_output,
+        ):
+            node.get_column_stats("Name")
+
+        mock_resulting.assert_not_called()
+        mock_output.assert_not_called()
+
+    def test_column_stats_memoizes_row_count_for_preview(self, execution_location):
+        """After one stats call the preview knows the exact total for free."""
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        graph.run_graph()
+        node = graph.get_node(2)
+
+        node.get_column_stats("Name")
+        table_example = node.get_table_example(include_data=True)
+
+        assert table_example.number_of_records == 1000
+
+
+class TestColumnStatsWorkerOffload:
+    """Local-mode results are full upstream plans: their stats collect must run
+    in the worker, never in the core process."""
+
+    def test_local_stats_offloaded_never_collect_in_process(self):
+        import requests
+
+        from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
+
+        try:
+            worker_up = requests.get("http://127.0.0.1:63579/docs", timeout=5).ok
+        except requests.exceptions.RequestException:
+            worker_up = False
+        if not worker_up:
+            pytest.skip("Worker not running")
+
+        graph = create_graph_with_read_and_select(execution_location="local")
+        run_info = graph.run_graph()
+        assert run_info.success, f"Graph should run: {run_info}"
+        node = graph.get_node(2)
+
+        with patch.object(column_stats_module, "run_stats_query") as mock_in_process:
+            stats = node.get_column_stats("Name", offload_to_worker=True)
+
+        mock_in_process.assert_not_called()
+        assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
+        assert stats.number_of_unique_values is not None
+
+    def test_offload_failure_raises_instead_of_collecting_in_core(self):
+        """A dead worker must surface as unavailable (409), never as a silent
+        in-process collect of the full upstream plan."""
+        from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
+
+        graph = create_graph_with_read_and_select(execution_location="local")
+        graph.run_graph()
+        node = graph.get_node(2)
+
+        with (
+            patch.object(
+                column_stats_module, "run_stats_query_in_worker", side_effect=Exception("worker down")
+            ) as mock_worker,
+            patch.object(column_stats_module, "run_stats_query") as mock_in_process,
+            pytest.raises(ColumnStatsUnavailable),
+        ):
+            node.get_column_stats("Name", offload_to_worker=True)
+
+        assert mock_worker.call_count == 2, "full query, then the count-only retry"
+        mock_in_process.assert_not_called()
+
+    def test_offload_query_failure_retries_counts_only_in_worker(self):
+        """A worker-side query error degrades to the count-only exprs — still
+        executed in the worker, never in core."""
+        from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
+
+        graph = create_graph_with_read_and_select(execution_location="local")
+        graph.run_graph()
+        node = graph.get_node(2)
+
+        with (
+            patch.object(
+                column_stats_module,
+                "run_stats_query_in_worker",
+                side_effect=[Exception("dtype error in worker"), {"total_rows": 1000, "null_count": 0}],
+            ) as mock_worker,
+            patch.object(column_stats_module, "run_stats_query") as mock_in_process,
+        ):
+            stats = node.get_column_stats("Name", offload_to_worker=True)
+
+        assert mock_worker.call_count == 2
+        mock_in_process.assert_not_called()
+        assert stats.number_of_filled_values == 1000
+        assert stats.number_of_unique_values is None, "degraded result carries counts only"
 
 
 class TestPreviewAfterUpstreamChange:

@@ -10,6 +10,8 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry impo
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas import input_schema
 
+MAX_STAT_VALUE_LENGTH = 200
+
 
 @dataclass
 class FlowfileColumn:
@@ -29,6 +31,7 @@ class FlowfileColumn:
     __has_values: bool | None
     average_value: str | None
     __perc_unique: float | None
+    __stats_applied: bool
 
     def __init__(self, polars_type: PlType):
         self.data_type = convert_pl_type_to_string(polars_type.pl_datatype)
@@ -46,6 +49,7 @@ class FlowfileColumn:
         self.__is_unique = None
         self.__sql_type = None
         self.__perc_unique = None
+        self.__stats_applied = False
         self.data_type_group = self.get_readable_datatype_group()
 
     def __repr__(self):
@@ -169,20 +173,74 @@ class FlowfileColumn:
     def name(self):
         return self.column_name
 
+    def apply_statistics(
+        self,
+        total_rows: int,
+        null_count: int,
+        n_unique: int | None = None,
+        min_value: Any | None = None,
+        max_value: Any | None = None,
+        average_value: Any | None = None,
+    ) -> None:
+        """Applies exactly-computed statistics onto this column.
+
+        Replaces the schema-time sentinels with real values (from the on-demand
+        column_stats pass) and resets the lazily-derived caches (is_unique,
+        perc_unique, …) so they re-derive from the new counts. Every stat field
+        is overwritten: a value not in this batch (count-only retry, an
+        unsupported dtype) becomes unknown again instead of surviving from an
+        earlier state. Values are stringified and bounded so a long-text
+        min/max can't blow up payloads.
+        """
+        self.size = total_rows - null_count
+        self.number_of_empty_values = null_count
+        self.number_of_unique_values = -1 if n_unique is None else n_unique
+        self.min_value = None if min_value is None else str(min_value)[:MAX_STAT_VALUE_LENGTH]
+        self.max_value = None if max_value is None else str(max_value)[:MAX_STAT_VALUE_LENGTH]
+        if isinstance(average_value, float):
+            average_value = round(average_value, 4)
+        self.average_value = None if average_value is None else str(average_value)[:MAX_STAT_VALUE_LENGTH]
+        self.__stats_applied = True
+        self.__is_unique = None
+        self.__perc_unique = None
+        self.__has_values = None
+        self.__nullable = None
+
+    @property
+    def stats_applied(self) -> bool:
+        """True once exact stats were written via apply_statistics."""
+        return self.__stats_applied
+
+    @staticmethod
+    def _known_count(value: int | None) -> int | None:
+        return None if value is None or value < 0 else value
+
     def get_column_repr(self):
+        # Sentinel stat values (-1 counts, "" bounds — never computed) go out as
+        # None so the wire model doesn't dress "unknown" up as data. Once exact
+        # stats were applied, an empty string is a real bound ("" is a legal min
+        # of a String column) and ships as-is.
+        null_count = self._known_count(self.number_of_empty_values)
+        empty_is_sentinel = not self.__stats_applied
+
+        def bound_repr(value):
+            if value is None or (value == "" and empty_is_sentinel):
+                return None
+            return str(value)
+
         return dict(
             name=self.name,
-            size=self.size,
+            size=None if null_count is None else self.size,
             data_type=str(self.data_type),
             data_type_group=self.data_type_group,
             has_values=self.has_values,
             is_unique=self.is_unique,
-            max_value=str(self.max_value),
-            min_value=str(self.min_value),
-            number_of_unique_values=self.number_of_unique_values,
-            number_of_filled_values=self.number_of_filled_values,
-            number_of_empty_values=self.number_of_empty_values,
-            average_size=self.average_value,
+            max_value=bound_repr(self.max_value),
+            min_value=bound_repr(self.min_value),
+            number_of_unique_values=self._known_count(self.number_of_unique_values),
+            number_of_filled_values=None if null_count is None else self.number_of_filled_values,
+            number_of_empty_values=null_count,
+            average_value=None if self.average_value in (None, "") else str(self.average_value),
         )
 
     def generic_datatype(self) -> DataTypeGroup:

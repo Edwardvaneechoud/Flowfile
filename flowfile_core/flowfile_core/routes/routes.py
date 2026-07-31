@@ -19,6 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPExcepti
 from fastapi.responses import JSONResponse, Response
 
 # External dependencies
+from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
@@ -37,7 +38,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import is_electron_mode
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -83,6 +84,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalRestApiFetcher,
@@ -1769,6 +1771,39 @@ def get_table_example(flow_id: int, node_id: int, output_handle: str = DEFAULT_O
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     return node.get_table_example(True, output_handle=output_handle)
+
+
+@router.get("/node/column_stats", response_model=output_model.FileColumn, tags=["editor"])
+def get_node_column_stats(flow_id: int, node_id: int, column_name: str, output_handle: str = DEFAULT_OUTPUT_HANDLE):
+    """Computes on-demand statistics for one column of a node's cached result.
+
+    Runs a single bounded aggregate (counts, uniques, min/max) over the result
+    the last run left behind — it never re-executes the node — and returns the
+    column's updated ``FileColumn``, the same shape ``table_schema`` ships.
+    Query parameters (not path segments): column names contain ``/`` and ``.``.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, "Could not find the node")
+    if flow.flow_settings.execution_mode == "Performance":
+        raise HTTPException(409, "Column statistics are not computed in Performance mode.")
+    # Core must not run pipeline compute: whenever offloading is on, the stats
+    # aggregate runs in the worker and core reads back only the 1-row result
+    # (a failed offload raises → 409, never an in-process collect). In-process
+    # is reserved for worker-less deployments (single-file mode).
+    offload = bool(OFFLOAD_TO_WORKER)
+    try:
+        return node.get_column_stats(column_name, output_handle=output_handle, offload_to_worker=offload)
+    except ColumnStatsUnavailable as e:
+        raise HTTPException(409, str(e)) from None
+    except ColumnNotFoundError:
+        raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
+    except Exception as e:
+        logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
+        raise HTTPException(422, "Could not compute column statistics") from e
 
 
 @router.get("/node/downstream_node_ids", response_model=list[int], tags=["editor"])

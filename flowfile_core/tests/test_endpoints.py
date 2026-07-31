@@ -2823,6 +2823,115 @@ def test_fetch_node_data():
     assert response.json()["has_run_with_current_setup"], "Node should have run"
 
 
+def test_get_table_example_row_count():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.get("/node/data", params={"flow_id": flow_id, "node_id": 2})
+    assert response.json()["number_of_records"] is None, "Count is unknown before the run"
+
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    response = client.get("/node/data", params={"flow_id": flow_id, "node_id": 2})
+    assert response.status_code == 200
+    assert response.json()["number_of_records"] == 4, "Real count, not the old 999 sentinel"
+
+
+def test_get_node_column_stats():
+    flow_id = create_flow_with_manual_input_and_select()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    params = {"flow_id": flow_id, "node_id": 2, "column_name": "name"}
+    response = client.get("/node/column_stats", params=params)
+    assert response.status_code == 409, "Stats are unavailable before the node has run"
+
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    response = client.get("/node/column_stats", params=params)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "name"
+    assert body["number_of_empty_values"] == 0
+    assert body["number_of_filled_values"] == 4
+    assert body["number_of_unique_values"] == 4
+    assert body["is_unique"] is True
+
+
+def test_get_node_column_stats_offload_decision():
+    """Whenever offloading is on the stats collect goes to the worker, whatever
+    the flow's execution location — core must not run pipeline compute.
+    In-process only when no worker exists (offloading disabled)."""
+    from unittest.mock import patch
+
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+    from flowfile_core.routes import routes as routes_module
+    from flowfile_core.schemas.output_model import FileColumn
+
+    flow_id = create_flow_with_manual_input_and_select()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
+    dummy = FileColumn(name="name", data_type="String")
+    params = {"flow_id": flow_id, "node_id": 2, "column_name": "name"}
+    offload_was_on = bool(routes_module.OFFLOAD_TO_WORKER)
+    try:
+        routes_module.OFFLOAD_TO_WORKER.set(True)
+        with patch.object(FlowNode, "get_column_stats", return_value=dummy) as mock_stats:
+            for location in ("local", "remote"):
+                flow.flow_settings.execution_location = location
+                assert client.get("/node/column_stats", params=params).status_code == 200
+                assert mock_stats.call_args.kwargs["offload_to_worker"] is True
+
+            routes_module.OFFLOAD_TO_WORKER.set(False)
+            assert client.get("/node/column_stats", params=params).status_code == 200
+            assert mock_stats.call_args.kwargs["offload_to_worker"] is False, (
+                "no worker exists when offloading is disabled"
+            )
+    finally:
+        routes_module.OFFLOAD_TO_WORKER.set(offload_was_on)
+
+
+def test_get_node_column_stats_blocked_in_performance_mode():
+    """Performance mode computes nothing extra — stats included."""
+    flow_id = create_flow_with_manual_input_and_select()
+    flow = flow_file_handler.get_flow(flow_id)
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+
+    flow.flow_settings.execution_mode = "Performance"
+    response = client.get(
+        "/node/column_stats", params={"flow_id": flow_id, "node_id": 2, "column_name": "name"}
+    )
+    assert response.status_code == 409
+    assert "Performance mode" in response.json()["detail"]
+
+
+def test_get_node_column_stats_unknown_column():
+    flow_id = create_flow_with_manual_input_and_select()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    response = client.get(
+        "/node/column_stats", params={"flow_id": flow_id, "node_id": 2, "column_name": "nope"}
+    )
+    assert response.status_code == 404
+
+
+def test_get_node_column_stats_special_character_column():
+    """Query-param transport keeps '/', '.', '%' and spaces in column names intact."""
+    flow_id = ensure_clean_flow()
+    graph = flow_file_handler.get_flow(flow_id)
+    graph.flow_settings.execution_mode = "Development"
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"a.b/c %": 1}, {"a.b/c %": None}]),
+        )
+    )
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 1})
+    response = client.get(
+        "/node/column_stats", params={"flow_id": flow_id, "node_id": 1, "column_name": "a.b/c %"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "a.b/c %"
+    assert body["number_of_empty_values"] + body["number_of_filled_values"] == 2
+
+
 def test_flow_run_status():
     flow_id = create_flow_with_manual_input_and_select()
     response = client.get("/flow/run_status", params={"flow_id": flow_id})

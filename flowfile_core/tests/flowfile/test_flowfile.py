@@ -2898,6 +2898,83 @@ def test_random_split_table_example_per_handle():
     assert big_ids.isdisjoint(small_ids)
 
 
+def test_join_result_row_count_is_unknown_not_zero():
+    """join() used to stamp number_of_records=0 as a placeholder — the preview
+    then reported '0 rows' for every local join result. Unknown must be -1/None."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i, "name": f"n{i}"} for i in range(5)], node_id=1)
+    add_manual_input(graph, [{"id": i, "city": f"c{i}"} for i in range(5)], node_id=2)
+    add_node_promise_on_type(graph, "join", 3)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    right_connection.input_connection.connection_class = "input-1"
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    graph.add_join(input_schema.NodeJoin(
+        flow_id=1,
+        node_id=3,
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col="id", right_col="id")],
+            left_select=[
+                transform_schema.SelectInput(old_name="id", new_name="id", keep=True, join_key=True),
+                transform_schema.SelectInput(old_name="name", new_name="name", keep=True),
+            ],
+            right_select=[
+                transform_schema.SelectInput(old_name="id", new_name="id", keep=False, join_key=True),
+                transform_schema.SelectInput(old_name="city", new_name="city", keep=True),
+            ],
+            how="inner",
+        ),
+        auto_generate_selection=True,
+        depending_on_ids=[1, 2],
+    ))
+    handle_run_info(graph.run_graph())
+
+    node = graph.get_node(3)
+    engine = node.results.resulting_data
+    assert engine.number_of_records != 0, "0 is a real count, not an unknown placeholder"
+
+    preview = node.get_table_example(include_data=True)
+    assert preview.number_of_records in (None, 5), "either honestly unknown or exact"
+
+    stats = node.get_column_stats("id")
+    assert stats.number_of_empty_values + stats.number_of_filled_values == 5
+
+
+def test_random_split_table_example_row_count_per_handle():
+    """Small partitions report their exact per-handle count — not the old 999."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(40)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="big", percentage=75.0),
+            input_schema.RandomSplitGroup(name="small", percentage=25.0),
+        ],
+    )
+    graph.run_graph()
+    node = graph.get_node(2)
+    assert node.get_table_example(True, output_handle="output-0").number_of_records == 30
+    assert node.get_table_example(True, output_handle="output-1").number_of_records == 10
+
+
+def test_random_split_table_example_row_count_never_sample_capped():
+    """A >100-row partition must not report the 100-row preview sample as its total."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(1000)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="train", percentage=80.0),
+            input_schema.RandomSplitGroup(name="test", percentage=20.0),
+        ],
+    )
+    graph.run_graph()
+    preview = graph.get_node(2).get_table_example(True, output_handle="output-0")
+    assert preview.number_of_records in (None, 800), "either honestly unknown or exact"
+    assert preview.number_of_records not in (100, 999)
+
+
 def test_multi_output_streamable_propagation():
     """All dict-returned outputs should inherit the node's streamable flag."""
     graph = create_graph(execution_location="local")
