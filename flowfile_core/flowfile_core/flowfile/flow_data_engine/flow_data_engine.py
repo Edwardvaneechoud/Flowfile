@@ -74,6 +74,10 @@ from shared.path_utils import is_url
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
+# Stamped by the cloud readers so __len__/get_number_of_records never query the
+# provider for a count; a placeholder, never a real total.
+CLOUD_PLACEHOLDER_RECORD_COUNT = 6_666_666
+
 
 def _handle_duplication_join_keys(
     left_df: T, right_df: T, join_manager: transform_schemas.JoinInputManager
@@ -653,7 +657,7 @@ class FlowDataEngine:
                 lf = pl.scan_parquet(**scan_kwargs)
             return cls(
                 lf,
-                number_of_records=6_666_666,  # Set so the provider is not accessed for this stat
+                number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
                 streamable=True,
                 schema=schema,
@@ -690,7 +694,7 @@ class FlowDataEngine:
 
             return cls(
                 lf,
-                number_of_records=6_666_666,  # Set so the provider is not accessed for this stat
+                number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
                 streamable=True,
             )
@@ -739,7 +743,7 @@ class FlowDataEngine:
 
             return cls(
                 lf,
-                number_of_records=6_666_666,
+                number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
                 streamable=True,
                 schema=schema,
@@ -2024,7 +2028,8 @@ class FlowDataEngine:
             right_on = [jm.right_col for jm in join_manager.join_mapping]
             right = other.data_frame.select(list(dict.fromkeys(right_on)))
             joined_df = self.data_frame.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
-            return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=0, streamable=False)
+            # -1 = unknown (not 0): a 0 here reads as a real "empty result" count.
+            return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=-1, streamable=False)
 
         if auto_generate_selection:
             join_manager.auto_rename()
@@ -2076,7 +2081,8 @@ class FlowDataEngine:
         undo_join_key_remapping = get_undo_rename_mapping_join(join_manager)
         joined_df = joined_df.rename(undo_join_key_remapping)
 
-        return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=0, streamable=False)
+        # -1 = unknown (not 0): a 0 here reads as a real "empty result" count.
+        return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=-1, streamable=False)
 
     def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> FlowDataEngine:
         """Solves a graph problem represented by 'from' and 'to' columns.
@@ -2187,6 +2193,27 @@ class FlowDataEngine:
             The total number of records.
         """
         return self.get_number_of_records(force_calculate=force_calculate)
+
+    def known_record_count(self) -> int | None:
+        """Returns the exact record count only when it is already known for free.
+
+        Sources, in order: a previously stored ``number_of_records`` (e.g. the
+        count the worker sent along with a remote run result), or the height of
+        an eager frame. Returns None otherwise — deliberately never falls back
+        to ``get_number_of_records()``, which on a lazy frame collects the whole
+        plan to count it. Stored placeholders are not counts: the cloud readers
+        stamp ``CLOUD_PLACEHOLDER_RECORD_COUNT`` and external-source engines
+        carry a schema-time 0, so both report unknown here.
+        """
+        if self._external_source is not None:
+            return None
+        if self.number_of_records is not None and self.number_of_records >= 0:
+            if self.number_of_records == CLOUD_PLACEHOLDER_RECORD_COUNT:
+                return None
+            return self.number_of_records
+        if not self.lazy:
+            return self.data_frame.height
+        return None
 
     def get_number_of_records(
         self, warn: bool = False, force_calculate: bool = False, calculate_in_worker_process: bool = False

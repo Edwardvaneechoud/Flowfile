@@ -8,6 +8,7 @@ import polars as pl
 
 from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable, compute_column_stats
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
@@ -1915,6 +1916,74 @@ class FlowNode:
         self.results.example_data_generator = None
         self.results.example_data_path = None
 
+    @staticmethod
+    def _preview_record_count(
+        engine: FlowDataEngine | None, sample_len: int | None, sample_size: int = 100
+    ) -> int | None:
+        """Best-effort exact row count for the preview header — never computed.
+
+        Uses only counts that are already free (a stored count, an eager frame's
+        height) plus the sample-shortfall rule: a sample strictly shorter than
+        the requested sample size is the whole table. Must never call
+        ``get_number_of_records()`` — on a lazy engine that collects the whole
+        upstream plan just to render a header.
+        """
+        if engine is not None:
+            count = engine.known_record_count()
+            if count is not None:
+                return count
+        if sample_len is not None and sample_len < sample_size:
+            return sample_len
+        return None
+
+    def peek_output_engine(self, output_handle: str = DEFAULT_OUTPUT_HANDLE) -> FlowDataEngine | None:
+        """Passively resolves the cached result engine for an output handle.
+
+        Never routes through ``get_output()``/``get_resulting_data()``, which
+        can re-execute the node. Identity checks only: FlowDataEngine truthiness
+        goes through ``__len__``, which can trigger a full collect.
+        """
+        engine = self._named_outputs.get(output_handle)
+        if engine is None:
+            engine = self.results.resulting_data
+        return engine
+
+    def get_column_stats(
+        self,
+        column_name: str,
+        output_handle: str = DEFAULT_OUTPUT_HANDLE,
+        offload_to_worker: bool = False,
+    ) -> FileColumn:
+        """Computes on-demand stats for one column of this node's cached result.
+
+        The stats land on the result engine's ``FlowfileColumn`` (the single
+        source of truth), so this run's later previews carry them too; the
+        return value is that column's ordinary ``FileColumn`` representation.
+        ``offload_to_worker`` ships the aggregate to the worker — used for
+        locally-run flows, whose cached engine is the full upstream plan.
+        Raises ``ColumnStatsUnavailable`` when there is no cached result to
+        aggregate over without executing or re-pulling data, and
+        ``pl.exceptions.ColumnNotFoundError`` for an unknown column.
+        """
+        if self.node_template.node_group == "output":
+            # An output node previews its upstream input; mirror get_table_example.
+            if not self.main_input:
+                raise ColumnStatsUnavailable("Output node has no input connected.")
+            return self.main_input[0].get_column_stats(column_name, offload_to_worker=offload_to_worker)
+        engine = self.peek_output_engine(output_handle)
+        if engine is None:
+            raise ColumnStatsUnavailable("Node has no cached result. Run the flow first.")
+        if engine.external_source is not None:
+            raise ColumnStatsUnavailable("Result is an external source; stats would re-pull it.")
+        if engine.is_future and not engine.is_collected:
+            raise ColumnStatsUnavailable("Result is still being computed.")
+        stats = compute_column_stats(engine, column_name, offload_to_worker=offload_to_worker)
+        # compute rebinds the engine's schema list (copy-on-write); follow it on
+        # this node so previews via self.schema carry the stats too.
+        if engine is self.results.resulting_data:
+            self.node_schema.result_schema = engine.schema
+        return stats
+
     def get_table_example(
         self, include_data: bool = False, output_handle: str = DEFAULT_OUTPUT_HANDLE
     ) -> TableExample | None:
@@ -1950,7 +2019,7 @@ class FlowNode:
                 return TableExample(
                     node_id=self.node_id,
                     name=str(self.node_id),
-                    number_of_records=999,
+                    number_of_records=self._preview_record_count(engine, len(data)),
                     number_of_columns=len(schema),
                     table_schema=schema,
                     columns=[c.name for c in schema],
@@ -1972,7 +2041,9 @@ class FlowNode:
             return TableExample(
                 node_id=self.node_id,
                 name=str(self.node_id),
-                number_of_records=999,
+                number_of_records=self._preview_record_count(
+                    self.results.resulting_data, len(data) if has_example_data else None
+                ),
                 number_of_columns=len(schema),
                 table_schema=schema,
                 columns=[c.name for c in schema],
@@ -1991,7 +2062,7 @@ class FlowNode:
             return TableExample(
                 node_id=self.node_id,
                 name=str(self.node_id),
-                number_of_records=0,
+                number_of_records=None,
                 number_of_columns=len(columns),
                 table_schema=schema,
                 columns=columns,

@@ -65,14 +65,23 @@
           :default-col-def="defaultColDef"
           :column-defs="columnDefs"
           :suppress-field-dot-notation="true"
-          class="ag-theme-balham"
+          class="ag-theme-balham dp-grid"
+          :class="{ 'dp-grid--collapsed': showFetchButton }"
           :row-data="rowData"
-          :style="{ width: '100%', height: gridHeightComputed }"
           :overlay-no-rows-template="overlayNoRowsTemplate"
           row-selection="multiple"
           :rows-multi-select-with-click="true"
+          :context="gridContext"
           @grid-ready="onGridReady"
+          @body-scroll="onBodyScroll"
+          @column-resized="closeStatsPanel"
+          @column-moved="closeStatsPanel"
         />
+
+        <div v-if="dataAvailable" class="dp-status-bar">
+          showing {{ formatCount(sampleRowCount) }} of {{ formatCount(dataLength) }} rows ·
+          {{ formatCount(columnLength) }} columns
+        </div>
 
         <div v-if="showFetchButton" class="fetch-data-section">
           <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
@@ -95,6 +104,24 @@
       />
     </template>
   </div>
+
+  <!-- Column stats popover: teleported so AG Grid header virtualization can't
+       tear it down; anchored to the rect captured at ⓘ-click time. Mounting
+       waits out a grace window so a fast reply opens it in its final state. -->
+  <Teleport to="body">
+    <ColumnStatsPanel
+      v-if="statsPanelOpen && activeStatsColumn && statsAnchorRect"
+      :column-name="activeStatsColumn"
+      :data-type="activeStatsDataType"
+      :stats="statsData"
+      :loading="statsLoading"
+      :error-kind="statsErrorKind"
+      :error-detail="statsErrorDetail"
+      :anchor-rect="statsAnchorRect"
+      @close="closeStatsPanel"
+      @retry="onStatsRetry"
+    />
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -104,12 +131,17 @@
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import ArtifactsPanel from "./ArtifactsPanel.vue";
 import debounce from "lodash/debounce";
-import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
+import { TableExample, FileColumn } from "../../components/nodes/baseNode/nodeInterfaces";
+import { NodeApi } from "../../api/node.api";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
+import ColumnStatsHeader from "./dataPreview/ColumnStatsHeader.vue";
+import ColumnStatsPanel from "./dataPreview/ColumnStatsPanel.vue";
+import { formatCount, totalRowCount } from "./dataPreview/columnQuality";
+import { classifyStatsError, statsCacheKey, type StatsVerdict } from "./dataPreview/statsRequest";
 import { AgGridVue } from "@ag-grid-community/vue3";
-import { GridApi } from "@ag-grid-community/core";
+import { GridApi, BodyScrollEvent } from "@ag-grid-community/core";
 import { ModuleRegistry } from "@ag-grid-community/core";
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model";
 import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
@@ -121,13 +153,13 @@ ModuleRegistry.registerModules([ClientSideRowModelModule]);
 const isLoading = ref(false);
 const activeTab = ref<"data" | "artifacts">("data");
 const flowStore = useFlowStore();
-const gridHeight = ref("");
 const rowData = ref<Record<string, any>[] | Record<string, never>>([]);
 const showTable = ref(false);
 const nodeStore = useNodeStore();
 const dataPreview = ref<TableExample>();
 const dataAvailable = ref(false);
-const dataLength = ref(0);
+// null ⇒ the backend doesn't know the total row count (shown as "? rows").
+const dataLength = ref<number | null>(null);
 const columnLength = ref(0);
 const gridApi = ref<GridApi | null>(null);
 // Component ref on <ag-grid-vue> — `.value.$el` gives us this grid's root DOM
@@ -163,7 +195,6 @@ async function selectOutput(handle: string) {
 }
 
 interface Props {
-  showFileStats?: boolean;
   hideTitle?: boolean;
   flowId?: number;
   // The node to preview (null ⇒ "select a step" placeholder). Reactive: the
@@ -176,7 +207,6 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  showFileStats: false,
   hideTitle: true,
   flowId: undefined,
   nodeId: null,
@@ -195,13 +225,6 @@ const { triggerNodeFetch, isPollingActive } = useFlowExecution(
     pollingKey: `table_flow_${props.flowId || nodeStore.flow_id}`,
   },
 );
-
-const gridHeightComputed = computed(() => {
-  if (showFetchButton.value) {
-    return "80px";
-  }
-  return gridHeight.value || "100%";
-});
 
 const overlayNoRowsTemplate = computed(() => {
   if (showFetchButton.value) {
@@ -239,11 +262,12 @@ watch(
   },
 );
 
+// No `filter`: the header menu (and its column filter) was deliberately dropped.
 const defaultColDef = {
   editable: true,
-  filter: true,
   sortable: true,
   resizable: true,
+  headerComponent: ColumnStatsHeader,
 };
 
 // Cells with tab/newline/carriage-return/quote chars need Excel-style quoting,
@@ -279,15 +303,157 @@ const onGridReady = (params: { api: GridApi }) => {
   }
 };
 
-const calculateGridHeight = () => {
-  const otherElementsHeight = 300;
-  const availableHeight = window.innerHeight - otherElementsHeight;
-  gridHeight.value = `${availableHeight}px`;
-};
+// --- Column statistics popover state.
+// The panel is owned here (not by the header cells — AG Grid virtualizes and
+// destroys those); the anchor rect is captured at ⓘ-click time. statsCache is
+// cleared whenever the preview reloads, since that's exactly when stats go stale.
+const statsCache = new Map<string, StatsVerdict>();
+const activeStatsColumn = ref<string | null>(null);
+const statsAnchorRect = ref<DOMRect | null>(null);
+const statsData = ref<FileColumn | null>(null);
+const statsLoading = ref(false);
+const statsErrorKind = ref<"not-run" | "error" | null>(null);
+const statsErrorDetail = ref<string | null>(null);
+let statsRequestSeq = 0;
 
-let schema_dict: any = {};
+// Grace window before the popover appears: a reply that beats it opens the panel
+// straight into its final body, so a fast 409 never flashes a skeleton.
+const STATS_OPEN_DELAY_MS = 120;
+// activeStatsColumn means "the user asked for this column" (set synchronously,
+// so toggle-off and outside-click still work); this means "the panel is mounted".
+const statsPanelOpen = ref(false);
+let statsOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearStatsOpenTimer() {
+  if (statsOpenTimer !== null) {
+    clearTimeout(statsOpenTimer);
+    statsOpenTimer = null;
+  }
+}
+
+function scheduleStatsPanelOpen() {
+  clearStatsOpenTimer();
+  statsOpenTimer = setTimeout(() => {
+    statsOpenTimer = null;
+    statsPanelOpen.value = true;
+  }, STATS_OPEN_DELAY_MS);
+}
+
+function openStatsPanelNow() {
+  clearStatsOpenTimer();
+  statsPanelOpen.value = true;
+}
+
+const activeStatsDataType = computed(
+  () => dataPreview.value?.table_schema?.find((c) => c.name === activeStatsColumn.value)?.data_type,
+);
+
+const sampleRowCount = computed(() => (Array.isArray(rowData.value) ? rowData.value.length : 0));
+
+function onRequestColumnStats(columnName: string, anchorRect: DOMRect) {
+  const wasActive = activeStatsColumn.value === columnName;
+  // Switching columns re-runs the open sequence, so the panel never shows one
+  // column's body under another's title.
+  closeStatsPanel();
+  if (wasActive) return;
+  activeStatsColumn.value = columnName;
+  statsAnchorRect.value = anchorRect;
+  void fetchColumnStats(columnName);
+}
+
+function applyStatsVerdict(verdict: StatsVerdict) {
+  if (verdict.kind === "ok") {
+    statsData.value = verdict.stats;
+    statsErrorKind.value = null;
+    statsErrorDetail.value = null;
+    // The stats pass counted the whole table — fill in an unknown footer count.
+    if (dataLength.value == null) dataLength.value = totalRowCount(verdict.stats);
+  } else {
+    statsData.value = null;
+    statsErrorKind.value = "not-run";
+    statsErrorDetail.value = verdict.detail;
+  }
+  statsLoading.value = false;
+}
+
+async function fetchColumnStats(columnName: string) {
+  const nodeId = currentNodeId.value;
+  if (nodeId == null) return;
+  const seq = ++statsRequestSeq;
+  const cacheKey = statsCacheKey(nodeId, selectedOutputHandle.value, columnName);
+  const cached = statsCache.get(cacheKey);
+  if (cached) {
+    applyStatsVerdict(cached);
+    openStatsPanelNow();
+    return;
+  }
+  statsLoading.value = true;
+  statsErrorKind.value = null;
+  statsErrorDetail.value = null;
+  statsData.value = null;
+  scheduleStatsPanelOpen();
+  try {
+    const stats = await NodeApi.getColumnStats(
+      props.flowId || nodeStore.flow_id,
+      nodeId,
+      columnName,
+      selectedOutputHandle.value,
+    );
+    if (seq !== statsRequestSeq) return;
+    const verdict: StatsVerdict = { kind: "ok", stats };
+    statsCache.set(cacheKey, verdict);
+    applyStatsVerdict(verdict);
+  } catch (error) {
+    if (seq !== statsRequestSeq) return;
+    const failure = classifyStatsError(error);
+    if (failure.kind === "not-run") {
+      const verdict: StatsVerdict = { kind: "not-run", detail: failure.detail };
+      statsCache.set(cacheKey, verdict);
+      applyStatsVerdict(verdict);
+    } else {
+      // Transient: not cached, so Retry stays meaningful.
+      statsErrorKind.value = "error";
+      statsErrorDetail.value = null;
+    }
+  } finally {
+    if (seq === statsRequestSeq) {
+      statsLoading.value = false;
+      openStatsPanelNow();
+    }
+  }
+}
+
+function onStatsRetry() {
+  if (activeStatsColumn.value) void fetchColumnStats(activeStatsColumn.value);
+}
+
+function closeStatsPanel() {
+  statsRequestSeq += 1;
+  clearStatsOpenTimer();
+  statsPanelOpen.value = false;
+  activeStatsColumn.value = null;
+  statsAnchorRect.value = null;
+  statsData.value = null;
+  statsLoading.value = false;
+  statsErrorKind.value = null;
+  statsErrorDetail.value = null;
+}
+
+function clearColumnStats() {
+  statsCache.clear();
+  closeStatsPanel();
+}
+
+// Header cells reach the panel through grid context (see ColumnStatsHeader.vue).
+const gridContext = { onRequestColumnStats };
+
+function onBodyScroll(event: BodyScrollEvent) {
+  // Horizontal scroll moves the header cells away from the captured anchor.
+  if (event.direction === "horizontal") closeStatsPanel();
+}
 
 async function downloadData(nodeId: number) {
+  clearColumnStats();
   // Spinner only when the node actually changes; a same-node refresh updates in
   // place so it doesn't blank-and-reappear (flicker).
   const isNodeSwitch = nodeId !== currentNodeId.value;
@@ -304,29 +470,12 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      const _cd: Array<{ field: string; headerName: string; resizable: boolean }> = [];
-      const _columns = dataPreview.value.table_schema;
-
-      if (props.showFileStats) {
-        _columns?.forEach((item) => {
-          _cd.push({
-            field: item.name,
-            headerName: item.name,
-            resizable: true,
-          });
-          schema_dict[item.name] = item;
-        });
-      } else {
-        _columns?.forEach((item) => {
-          _cd.push({
-            field: item.name,
-            headerName: item.name,
-            resizable: true,
-          });
-        });
-      }
-
-      columnDefs.value = _cd;
+      columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => ({
+        field: item.name,
+        headerName: item.name,
+        resizable: true,
+        headerComponentParams: { dataType: item.data_type },
+      }));
 
       if (resp.has_example_data === false) {
         showFetchButton.value = true;
@@ -388,10 +537,12 @@ async function handleFetchData() {
 }
 
 function removeData() {
+  clearColumnStats();
   isLoading.value = false;
   rowData.value = [];
   showTable.value = false;
   dataAvailable.value = false;
+  dataLength.value = null;
   columnDefs.value = [{}];
   showFetchButton.value = false;
   currentNodeId.value = null;
@@ -465,15 +616,46 @@ const windowKeyHandler = async (e: KeyboardEvent) => {
   }
 };
 
+// Dismiss the stats panel on Escape or any press outside it. Capture-phase
+// mousedown so a click that AG Grid swallows still closes the panel; clicks on
+// an ⓘ button are left to onRequestColumnStats (which toggles).
+const statsOutsideHandler = (e: MouseEvent) => {
+  if (!activeStatsColumn.value) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest(".column-stats-panel") || target?.closest(".dp-col-header__info")) return;
+  closeStatsPanel();
+};
+
+const statsKeyHandler = (e: KeyboardEvent) => {
+  if (e.key === "Escape" && activeStatsColumn.value) closeStatsPanel();
+};
+
+// A window resize reflows the grid, so the click-captured anchor rect is stale.
+const statsResizeHandler = () => {
+  if (activeStatsColumn.value) closeStatsPanel();
+};
+
+// A finished run replaces node results without reloading this preview.
+watch(
+  () => nodeStore.isRunning,
+  (running, wasRunning) => {
+    if (wasRunning && !running) clearColumnStats();
+  },
+);
+
 onMounted(() => {
-  calculateGridHeight();
-  window.addEventListener("resize", calculateGridHeight);
   window.addEventListener("keydown", windowKeyHandler);
+  window.addEventListener("keydown", statsKeyHandler);
+  window.addEventListener("mousedown", statsOutsideHandler, true);
+  window.addEventListener("resize", statsResizeHandler);
 });
 
 onUnmounted(() => {
-  window.removeEventListener("resize", calculateGridHeight);
   window.removeEventListener("keydown", windowKeyHandler);
+  window.removeEventListener("keydown", statsKeyHandler);
+  window.removeEventListener("mousedown", statsOutsideHandler, true);
+  window.removeEventListener("resize", statsResizeHandler);
+  clearStatsOpenTimer();
   debouncedDownload.cancel();
 });
 </script>
@@ -583,6 +765,27 @@ onUnmounted(() => {
   background-color: var(--color-button-secondary-light);
   cursor: not-allowed;
   opacity: 0.7;
+}
+
+/* The grid fills the dock via flex (not an absolute px height), so it tracks
+   dock resizes and leaves room for the status bar / fetch section below. */
+.dp-grid {
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.dp-grid--collapsed {
+  flex: 0 0 80px;
+}
+
+.dp-status-bar {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-top: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
+  font-size: 11px;
 }
 
 /* AG Grid Theme Customization */

@@ -1,5 +1,5 @@
 import axios from "../services/axios.config";
-import type { NodeData, TableExample, NodeDescriptionResponse } from "../types";
+import type { NodeData, FileColumn, TableExample, NodeDescriptionResponse } from "../types";
 
 export class NodeApi {
   /**
@@ -43,6 +43,31 @@ export class NodeApi {
     const params: Record<string, string | number> = { flow_id: flowId, node_id: nodeId };
     if (outputHandle) params.output_handle = outputHandle;
     const response = await axios.get<TableExample>("/node/data", {
+      params,
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Compute on-demand statistics for one column of a node's cached result.
+   * Returns the column's updated FileColumn — the same shape table_schema
+   * ships, with the stat fields now filled in. 409 means the node has not
+   * run yet — callers should surface that, not swallow it.
+   */
+  static async getColumnStats(
+    flowId: number,
+    nodeId: number,
+    columnName: string,
+    outputHandle?: string,
+  ): Promise<FileColumn> {
+    const params: Record<string, string | number> = {
+      flow_id: flowId,
+      node_id: nodeId,
+      column_name: columnName,
+    };
+    if (outputHandle) params.output_handle = outputHandle;
+    const response = await axios.get<FileColumn>("/node/column_stats", {
       params,
       headers: { accept: "application/json" },
     });
