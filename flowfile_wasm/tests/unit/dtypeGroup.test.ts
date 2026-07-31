@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dataTypeGroup, dataTypeBadgeClass } from '../../src/utils/dtypeGroup'
+import { dataTypeGroup, dataTypeBadgeClass, dataTypeLabel } from '../../src/utils/dtypeGroup'
 
 describe('dataTypeGroup', () => {
   it('maps string dtypes to String', () => {
@@ -31,6 +31,26 @@ describe('dataTypeGroup', () => {
     expect(dataTypeGroup('')).toBe('Other')
     expect(dataTypeGroup(undefined)).toBe('Other')
     expect(dataTypeGroup(null)).toBe('Other')
+  })
+})
+
+describe('dataTypeLabel', () => {
+  it('returns short dtypes unchanged', () => {
+    expect(dataTypeLabel('Int64')).toBe('Int64')
+    expect(dataTypeLabel('String')).toBe('String')
+  })
+
+  it('strips parameters so the label fits a badge', () => {
+    expect(dataTypeLabel("Datetime(time_unit='us', time_zone=None)")).toBe('Datetime')
+    expect(dataTypeLabel('Decimal(38,0)')).toBe('Decimal')
+    expect(dataTypeLabel('List(Int64)')).toBe('List')
+  })
+
+  it('falls back to "unknown" for empty input', () => {
+    expect(dataTypeLabel('')).toBe('unknown')
+    expect(dataTypeLabel('   ')).toBe('unknown')
+    expect(dataTypeLabel(undefined)).toBe('unknown')
+    expect(dataTypeLabel(null)).toBe('unknown')
   })
 })
 

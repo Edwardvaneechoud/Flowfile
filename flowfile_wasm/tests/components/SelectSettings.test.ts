@@ -161,7 +161,7 @@ describe('SelectSettings', () => {
     expect(wrapper.text()).toContain('No input connected')
   })
 
-  it('should render Select All button', () => {
+  it('should render the keep-all button', () => {
     const wrapper = mount(SelectSettings, {
       props: {
         nodeId: 1,
@@ -169,11 +169,10 @@ describe('SelectSettings', () => {
       }
     })
 
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some(b => b.text() === 'Select All')).toBe(true)
+    expect(wrapper.find('button[aria-label="Keep all columns"]').exists()).toBe(true)
   })
 
-  it('should render Deselect All button', () => {
+  it('should render the keep-none button', () => {
     const wrapper = mount(SelectSettings, {
       props: {
         nodeId: 1,
@@ -181,8 +180,7 @@ describe('SelectSettings', () => {
       }
     })
 
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some(b => b.text() === 'Deselect All')).toBe(true)
+    expect(wrapper.find('button[aria-label="Keep no columns"]').exists()).toBe(true)
   })
 
   it('should select all columns when Select All clicked', async () => {
@@ -202,8 +200,7 @@ describe('SelectSettings', () => {
       }
     })
 
-    const selectAllBtn = wrapper.findAll('button').find(b => b.text() === 'Select All')
-    await selectAllBtn!.trigger('click')
+    await wrapper.find('button[aria-label="Keep all columns"]').trigger('click')
 
     const emitted = wrapper.emitted('update:settings')
     expect(emitted).toBeTruthy()
@@ -220,8 +217,7 @@ describe('SelectSettings', () => {
       }
     })
 
-    const deselectAllBtn = wrapper.findAll('button').find(b => b.text() === 'Deselect All')
-    await deselectAllBtn!.trigger('click')
+    await wrapper.find('button[aria-label="Keep no columns"]').trigger('click')
 
     const emitted = wrapper.emitted('update:settings')
     expect(emitted).toBeTruthy()
@@ -251,7 +247,8 @@ describe('SelectSettings', () => {
     expect(rows[1].classes()).not.toContain('row-disabled')
   })
 
-  it('should support drag functionality', () => {
+  it('should put the drag affordance on the handle cell, not the row', () => {
+    // A draggable row hijacks mousedown inside the rename input.
     const wrapper = mount(SelectSettings, {
       props: {
         nodeId: 1,
@@ -260,9 +257,113 @@ describe('SelectSettings', () => {
     })
 
     const rows = wrapper.findAll('tbody tr')
+    expect(rows.length).toBe(3)
     rows.forEach(row => {
-      expect(row.attributes('draggable')).toBe('true')
+      expect(row.attributes('draggable')).toBeUndefined()
+      expect(row.find('td.drag-handle-cell').attributes('draggable')).toBe('true')
     })
+  })
+
+  it('should render a data type badge per row, with the full dtype in the title', () => {
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: {
+          ...defaultSettings,
+          select_input: [
+            {
+              old_name: 'created',
+              new_name: 'created',
+              keep: true,
+              position: 0,
+              data_type: "Datetime(time_unit='us', time_zone=None)"
+            }
+          ]
+        }
+      }
+    })
+
+    const badge = wrapper.find('.type-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('Datetime')
+    expect(badge.classes()).toContain('badge-date')
+    expect(badge.attributes('title')).toBe("Datetime(time_unit='us', time_zone=None)")
+  })
+
+  it('should narrow the rows to columns matching the filter', async () => {
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: defaultSettings
+      }
+    })
+
+    expect(wrapper.findAll('tbody tr').length).toBe(3)
+
+    await wrapper.find('.column-picker-search input').setValue('nam')
+
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows.length).toBe(1)
+    expect(rows[0].text()).toContain('name')
+  })
+
+  it('should report how many columns are kept', async () => {
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: defaultSettings
+      }
+    })
+
+    expect(wrapper.find('.column-picker-count').text()).toBe('3 of 3 kept')
+
+    await wrapper.findAll('input[type="checkbox"]')[0].setValue(false)
+
+    expect(wrapper.find('.column-picker-count').text()).toBe('2 of 3 kept')
+  })
+
+  it('should opt every free-text field out of password-manager autofill', () => {
+    // A column named name/city/email reads as a contact form to LastPass.
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: defaultSettings
+      }
+    })
+
+    const fields = [
+      ...wrapper.findAll('input.inline-input'),
+      wrapper.find('.column-picker-search input')
+    ]
+    expect(fields.length).toBe(4)
+
+    for (const field of fields) {
+      expect(field.attributes('autocomplete')).toBe('off')
+      expect(field.attributes('data-lpignore')).toBe('true')
+      expect(field.attributes('data-1p-ignore')).toBe('true')
+      expect(field.attributes('data-bwignore')).toBe('true')
+      expect(field.attributes('data-form-type')).toBe('other')
+    }
+  })
+
+  it('should mark the row under the pointer while dragging, and clear it after', async () => {
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: defaultSettings
+      }
+    })
+
+    const rows = wrapper.findAll('tbody tr')
+    await rows[0].find('td.drag-handle-cell').trigger('dragstart')
+    await rows[2].trigger('dragover')
+    expect(rows[2].classes()).toContain('is-drop-target')
+    // never on the row being dragged
+    expect(rows[0].classes()).not.toContain('is-drop-target')
+
+    // an Escape-cancelled drag must not leave the highlight behind
+    await wrapper.find('tbody').trigger('dragend')
+    expect(wrapper.find('.is-drop-target').exists()).toBe(false)
   })
 
   it('should hide unavailable columns from display', () => {

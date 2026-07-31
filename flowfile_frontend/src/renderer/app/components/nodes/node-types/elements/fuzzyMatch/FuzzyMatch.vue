@@ -5,177 +5,189 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
-      <!-- Tabs Navigation -->
-      <div class="tabs-navigation">
+      <!-- Segmented control rather than a second tab bar: the drawer already has
+           one directly above this, and two competing tab rows read as a mistake. -->
+      <div class="fuzzy-tabs" role="tablist">
         <button
-          class="tab-button"
-          :class="{ active: activeTab === 'match' }"
-          @click="activeTab = 'match'"
+          v-for="tab in tabs"
+          :key="tab.id"
+          class="fuzzy-tab"
+          :class="{ 'is-active': activeTab === tab.id }"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === tab.id"
+          @click="activeTab = tab.id"
         >
-          Match Settings
-        </button>
-        <button
-          class="tab-button"
-          :class="{ active: activeTab === 'fields' }"
-          @click="activeTab = 'fields'"
-        >
-          Select Fields
+          {{ tab.label }}
+          <span
+            v-if="tab.id === 'match' && hasInvalidFields"
+            class="fuzzy-tab-alert"
+            title="A match rule still needs attention"
+            aria-label="A match rule still needs attention"
+            >●</span
+          >
         </button>
       </div>
 
-      <!-- Match Settings Tab -->
-      <div v-if="activeTab === 'match'" class="tab-content">
-        <div class="settings-card">
-          <div class="card-header">
-            <h3 class="section-title">Fuzzy match settings</h3>
-          </div>
-          <div class="card-content">
-            <div v-if="nodeFuzzyJoin?.join_input" class="join-settings">
-              <div
-                v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping"
-                :key="index"
-                class="setting-panel"
+      <section v-if="activeTab === 'match'" class="tab-panel">
+        <p class="tab-hint">
+          Two rows are paired when their columns are similar enough to clear the threshold. A row
+          has to satisfy every rule below to match.
+        </p>
+
+        <div v-if="nodeFuzzyJoin?.join_input" class="rule-list">
+          <article
+            v-for="(fuzzyMap, index) in nodeFuzzyJoin.join_input.join_mapping"
+            :key="index"
+            class="rule-card"
+            :class="{ 'is-invalid': missingColumns(fuzzyMap).length > 0 }"
+          >
+            <header class="rule-header">
+              <span class="rule-title">Match rule {{ index + 1 }}</span>
+
+              <template v-if="missingColumns(fuzzyMap).length">
+                <unavailable-field
+                  tooltip-text="This rule points at a column that no longer exists upstream"
+                />
+                <span class="rule-alert">
+                  {{ missingColumns(fuzzyMap).join(" and ") }} no longer exists upstream
+                </span>
+              </template>
+              <span v-else-if="isRuleIncomplete(fuzzyMap)" class="rule-hint">
+                Pick a column on both sides
+              </span>
+
+              <button
+                v-if="canRemoveRule"
+                class="btn btn-sm btn-icon btn-ghost rule-remove"
+                type="button"
+                title="Remove this rule"
+                aria-label="Remove this rule"
+                @click="removeJoinCondition(index)"
               >
-                <div class="setting-header">
-                  <h4 class="setting-title">
-                    <unavailableField
-                      v-if="
-                        !(
-                          containsVal(result?.main_input?.columns ?? [], fuzzyMap.left_col) &&
-                          containsVal(result?.right_input?.columns ?? [], fuzzyMap.right_col)
-                        )
-                      "
-                      tooltip-text="Join is not valid"
-                      class="unavailable-field"
+                ✕
+              </button>
+            </header>
+
+            <div class="field-grid">
+              <div class="field">
+                <span class="form-label">Left column</span>
+                <column-selector
+                  v-model="fuzzyMap.left_col"
+                  :value="fuzzyMap.left_col"
+                  :column-options="result?.main_input?.columns"
+                  @update:value="(value: string) => handleChange(value, index, 'left')"
+                />
+              </div>
+
+              <div class="field">
+                <span class="form-label">Right column</span>
+                <column-selector
+                  v-model="fuzzyMap.right_col"
+                  :value="fuzzyMap.right_col"
+                  :column-options="result?.right_input?.columns"
+                  @update:value="(value: string) => handleChange(value, index, 'right')"
+                />
+              </div>
+            </div>
+
+            <div class="field-grid">
+              <div class="field">
+                <label :for="`threshold-score-${index}`" class="form-label">
+                  Similarity threshold
+                </label>
+                <div class="threshold-control">
+                  <input
+                    :id="`threshold-score-${index}`"
+                    v-model.number="fuzzyMap.threshold_score"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    class="range-slider"
+                    :style="{ '--range-fill': rangeFill(fuzzyMap) }"
+                  />
+                  <div class="threshold-value">
+                    <input
+                      v-model.number="fuzzyMap.threshold_score"
+                      type="number"
+                      min="0"
+                      max="100"
+                      class="threshold-input"
+                      :aria-label="`Similarity threshold for match rule ${index + 1}`"
+                      @change="clampThreshold(fuzzyMap)"
                     />
-                    Setting {{ index + 1 }}
-                  </h4>
-                  <button
-                    v-if="nodeFuzzyJoin?.join_input.join_mapping.length > 1"
-                    class="remove-button"
-                    type="button"
-                    aria-label="Remove setting"
-                    @click="removeJoinCondition(index)"
-                  >
-                    Remove setting
-                  </button>
-                </div>
-
-                <div class="columns-grid">
-                  <div class="column-field">
-                    <label>Left column</label>
-                    <column-selector
-                      v-model="fuzzyMap.left_col"
-                      :value="fuzzyMap.left_col"
-                      :column-options="result?.main_input?.columns"
-                      @update:value="(value: string) => handleChange(value, index, 'left')"
-                    />
-                  </div>
-
-                  <div class="column-field">
-                    <label>Right column</label>
-                    <column-selector
-                      v-model="fuzzyMap.right_col"
-                      :value="fuzzyMap.right_col"
-                      :column-options="result?.right_input?.columns"
-                      @update:value="(value: string) => handleChange(value, index, 'right')"
-                    />
-                  </div>
-                </div>
-
-                <div class="settings-grid">
-                  <div class="threshold-field">
-                    <label for="threshold-score">Threshold score</label>
-                    <div class="range-container">
-                      <input
-                        :id="`threshold-score-${index}`"
-                        v-model="fuzzyMap.threshold_score"
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="1"
-                        class="range-slider"
-                      />
-                      <div class="range-value">{{ fuzzyMap.threshold_score }}%</div>
-                    </div>
-                  </div>
-
-                  <div class="select-field">
-                    <label for="fuzzy-type">Match algorithm</label>
-                    <div class="select-wrapper">
-                      <select
-                        :id="`fuzzy-type-${index}`"
-                        v-model="fuzzyMap.fuzzy_type"
-                        class="select-input"
-                      >
-                        <option
-                          v-for="option in fuzzyMatchOptions"
-                          :key="option.value"
-                          :value="option.value"
-                        >
-                          {{ option.label }}
-                        </option>
-                      </select>
-                    </div>
+                    <span class="threshold-unit">%</span>
                   </div>
                 </div>
               </div>
 
-              <button class="add-button" type="button" @click="addJoinCondition()">
-                Add setting
-              </button>
+              <div class="field">
+                <label :for="`fuzzy-type-${index}`" class="form-label">Match algorithm</label>
+                <div class="native-select">
+                  <select
+                    :id="`fuzzy-type-${index}`"
+                    v-model="fuzzyMap.fuzzy_type"
+                    class="native-select__input"
+                  >
+                    <option
+                      v-for="option in fuzzyMatchOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+              </div>
             </div>
-          </div>
+          </article>
+
+          <button class="btn btn-sm add-rule" type="button" @click="addJoinCondition()">
+            + Add match rule
+          </button>
         </div>
-      </div>
+      </section>
 
-      <!-- Select Fields Tab -->
-      <div v-if="activeTab === 'fields'" class="tab-content">
-        <div class="settings-card">
-          <div class="card-header">
-            <h3 class="section-title">Select fields to include</h3>
-          </div>
+      <section v-else class="tab-panel">
+        <p class="tab-hint">
+          Pick the columns each input contributes to the result. Match keys stay available whether
+          or not you keep them.
+        </p>
 
-          <div class="card-content">
-            <select-dynamic
-              v-if="nodeFuzzyJoin?.join_input"
-              :select-inputs="nodeFuzzyJoin?.join_input.right_select.renames"
-              :show-keep-option="true"
-              :show-headers="true"
-              :show-new-columns="false"
-              :show-title="true"
-              :show-data="true"
-              title="Right data"
-              class="select-section"
-              @update-select-inputs="
-                (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, false)
-              "
-            />
+        <select-dynamic
+          v-if="nodeFuzzyJoin?.join_input"
+          :select-inputs="nodeFuzzyJoin?.join_input.left_select.renames"
+          :show-keep-option="true"
+          :show-headers="true"
+          :show-new-columns="false"
+          :show-title="true"
+          title="Left data"
+          @update-select-inputs="
+            (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
+          "
+        />
 
-            <select-dynamic
-              v-if="nodeFuzzyJoin?.join_input"
-              :select-inputs="nodeFuzzyJoin?.join_input.left_select.renames"
-              :show-keep-option="true"
-              :show-title="true"
-              :show-headers="true"
-              :show-new-columns="false"
-              :show-data="true"
-              title="Left data"
-              class="select-section"
-              @update-select-inputs="
-                (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
-              "
-            />
-          </div>
-        </div>
-      </div>
+        <select-dynamic
+          v-if="nodeFuzzyJoin?.join_input"
+          :select-inputs="nodeFuzzyJoin?.join_input.right_select.renames"
+          :show-keep-option="true"
+          :show-headers="true"
+          :show-new-columns="false"
+          :show-title="true"
+          title="Right data"
+          @update-select-inputs="
+            (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, false)
+          "
+        />
+      </section>
     </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, nextTick, computed } from "vue";
+import { ref, computed } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -186,7 +198,12 @@ import unavailableField from "../../../baseNode/selectComponents/UnavailableFiel
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CodeLoader } from "vue-content-loader";
 
-const activeTab = ref("match");
+const tabs = [
+  { id: "match", label: "Match rules" },
+  { id: "fields", label: "Output columns" },
+] as const;
+
+const activeTab = ref<"match" | "fields">("match");
 
 const containsVal = (arr: string[], val: string) => {
   return arr.includes(val);
@@ -232,16 +249,45 @@ const fuzzyMatchOptions = [
   { value: "indel", label: "Indel" },
 ];
 
+/** A configured column that has since disappeared upstream — the actionable error. */
+const missingColumns = (fuzzyMap: FuzzyMap): string[] => {
+  const missing: string[] = [];
+  if (fuzzyMap.left_col && !containsVal(result.value?.main_input?.columns ?? [], fuzzyMap.left_col))
+    missing.push(`"${fuzzyMap.left_col}"`);
+  if (
+    fuzzyMap.right_col &&
+    !containsVal(result.value?.right_input?.columns ?? [], fuzzyMap.right_col)
+  )
+    missing.push(`"${fuzzyMap.right_col}"`);
+  return missing;
+};
+
+/** A rule the user hasn't finished yet — a nudge, not an error. */
+const isRuleIncomplete = (fuzzyMap: FuzzyMap) => !fuzzyMap.left_col || !fuzzyMap.right_col;
+
 const hasInvalidFields = computed(() => {
   if (!nodeFuzzyJoin.value?.join_input || !result.value) {
     return false;
   }
-  return nodeFuzzyJoin.value.join_input.join_mapping.some((fuzzyMap) => {
-    const leftValid = containsVal(result.value?.main_input?.columns ?? [], fuzzyMap.left_col);
-    const rightValid = containsVal(result.value?.right_input?.columns ?? [], fuzzyMap.right_col);
-    return !(leftValid && rightValid);
-  });
+  return nodeFuzzyJoin.value.join_input.join_mapping.some(
+    (fuzzyMap) => isRuleIncomplete(fuzzyMap) || missingColumns(fuzzyMap).length > 0,
+  );
 });
+
+const canRemoveRule = computed(
+  () => (nodeFuzzyJoin.value?.join_input?.join_mapping.length ?? 0) > 1,
+);
+
+const rangeFill = (fuzzyMap: FuzzyMap) => {
+  const score = Number(fuzzyMap.threshold_score);
+  return `${Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 0}%`;
+};
+
+/** The number field lets you type anything; the slider only speaks 0-100. */
+const clampThreshold = (fuzzyMap: FuzzyMap) => {
+  const score = Number(fuzzyMap.threshold_score);
+  fuzzyMap.threshold_score = Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 75;
+};
 
 const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoinSettings => {
   return {
@@ -312,291 +358,293 @@ defineExpose({
   saveSettings,
   hasInvalidFields,
 });
-
-onMounted(async () => {
-  await nextTick();
-});
 </script>
 
 <style scoped>
-/* Modern styling for an AI app */
 .fuzzy-join-container {
   font-family: var(--font-family-base);
   color: var(--color-text-primary);
   max-width: 100%;
 }
 
-/* Tabs Navigation */
-.tabs-navigation {
-  display: flex;
-  border-bottom: 1px solid var(--color-border-light);
-  margin-bottom: 1.25rem;
-  background-color: var(--color-background-secondary);
-  border-radius: 8px 8px 0 0;
-  overflow: hidden;
+/* ===== Sub-navigation ===== */
+.fuzzy-tabs {
+  display: inline-flex;
+  /* The tab pane is a column flexbox, so without this the track stretches edge
+     to edge and reads as a second tab bar instead of a segmented control. */
+  align-self: flex-start;
+  gap: var(--spacing-0-5);
+  margin: var(--spacing-2) var(--spacing-1) var(--spacing-1);
+  padding: var(--spacing-0-5);
+  border-radius: var(--border-radius-lg);
+  background-color: var(--color-background-tertiary);
 }
 
-.tab-button {
-  background: none;
+.fuzzy-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1-5) var(--spacing-3);
   border: none;
-  padding: 0.75rem 1.25rem;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: #718096;
+  border-radius: var(--border-radius-md);
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
-  border-bottom: 2px solid transparent;
-  outline: none;
-  flex: 1;
-  text-align: center;
+  transition: all var(--transition-fast) var(--transition-timing);
 }
 
-.tab-button:hover {
+.fuzzy-tab:hover:not(.is-active) {
   color: var(--color-text-primary);
 }
 
-.tab-button.active {
-  border-bottom-color: var(--color-accent-subtle);
-  color: var(--color-accent);
-  background-color: var(--color-accent-subtle);
-}
-
-.tab-content {
-  min-height: 300px;
-}
-
-/* Card styling */
-.settings-card {
+.fuzzy-tab.is-active {
   background-color: var(--color-background-primary);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(125, 107, 107, 0.05);
-  margin-bottom: 1.5rem;
+  color: var(--color-accent);
+  box-shadow: var(--shadow-xs);
+}
+
+.fuzzy-tab-alert {
+  color: var(--color-warning);
+  font-size: var(--font-size-2xs);
+  line-height: 1;
+}
+
+/* ===== Panels ===== */
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-1);
+}
+
+.tab-hint {
+  margin: 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-tertiary);
+}
+
+/* ===== Match rules ===== */
+.rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.rule-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3);
   border: 1px solid var(--color-border-primary);
-  overflow: hidden;
+  border-radius: var(--border-radius-lg);
+  background-color: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--transition-fast) var(--transition-timing);
 }
 
-.card-header {
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--color-border-light);
-  background-color: var(--color-background-secondary);
+.rule-card:hover {
+  border-color: var(--color-border-secondary);
 }
 
-.section-title {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
+.rule-card.is-invalid {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-light);
+}
+
+.rule-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-height: 28px;
+}
+
+.rule-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
 }
 
-.card-content {
-  padding: 1rem 1.25rem;
+.rule-alert {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
 }
 
-/* Join Settings */
-.join-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
+.rule-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
-.setting-panel {
-  background-color: var(--color-background-secondary);
-  border-radius: 6px;
-  padding: 1rem;
-  border: 1px solid var(--color-border-secondary);
-  transition: all 0.2s ease;
-  color: var(--color-text-secondary);
+/* Always last in the header, whatever precedes it. */
+.rule-remove {
+  margin-left: auto;
+  box-shadow: none;
 }
 
-.setting-panel:hover {
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
-  border-color: var(--color-border-light);
+.rule-remove:hover:not(:disabled) {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
 }
 
-.setting-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.setting-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin: 0;
-  display: flex;
-  align-items: center;
-}
-
-.unavailable-field {
-  margin-right: 0.5rem;
-}
-
-/* Column Selection Grid */
-.columns-grid {
+/* auto-fit rather than a viewport media query: the drawer is a resizable panel,
+   so the fields have to fold on the container's width, not the window's. */
+.field-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--spacing-3);
 }
 
-.column-field {
+.field {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--spacing-1-5);
+  min-width: 0;
 }
 
-.column-field label {
-  font-size: 0.875rem;
-  font-weight: 500;
+.add-rule {
+  width: 100%;
+  border: 1px dashed var(--color-border-secondary);
+  background-color: transparent;
   color: var(--color-text-secondary);
+  box-shadow: none;
 }
 
-/* Settings Grid */
-.settings-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+.add-rule:hover {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
 }
 
-.threshold-field,
-.select-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.threshold-field label,
-.select-field label {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-}
-
-/* Range Input */
-.range-container {
+/* ===== Threshold ===== */
+.threshold-control {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: var(--spacing-3);
 }
 
 .range-slider {
   flex: 1;
-  width: 100%;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--color-background-secondary);
+  min-width: 0;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--border-radius-full);
+  /* Fill left of the thumb so the value is readable without chasing the number. */
+  background: linear-gradient(
+    to right,
+    var(--color-accent) 0 var(--range-fill, 0%),
+    var(--color-border-primary) var(--range-fill, 0%) 100%
+  );
+  appearance: none;
+  -webkit-appearance: none;
   outline: none;
+  cursor: pointer;
 }
 
 .range-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  cursor: pointer;
+  width: 14px;
+  height: 14px;
   border: 2px solid var(--color-accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  background-color: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
+  cursor: grab;
+}
+
+.range-slider::-moz-range-track {
+  background: transparent;
 }
 
 .range-slider::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-accent);
   border-radius: 50%;
-  background: var(--color-accent);
-  cursor: pointer;
-  border: 2px solid white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.range-value {
-  min-width: 3rem;
-  text-align: right;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: #4a5568;
-}
-
-/* Select Input */
-.select-wrapper {
-  position: relative;
-}
-
-.select-input {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
   background-color: var(--color-background-primary);
-  color: #4a5568;
-  appearance: none;
-  outline: none;
-  transition: all 0.2s ease;
+  box-shadow: var(--shadow-xs);
+  cursor: grab;
 }
 
-.select-input:focus {
-  border-color: #3182ce;
-  box-shadow: 0 0 0 2px rgba(49, 130, 206, 0.15);
+.range-slider:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-focus-ring-accent);
 }
 
-/* Buttons */
-.add-button,
-.remove-button {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background-color: #f7fafc;
-  color: #4a5568;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.add-button {
-  background-color: #ebf8ff;
-  color: #3182ce;
-  margin-top: 0.5rem;
-  width: 100%;
+.threshold-value {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  gap: var(--spacing-1);
+  flex-shrink: 0;
+}
+
+.threshold-input {
+  width: 52px;
+  padding: var(--spacing-1) var(--spacing-1-5);
+  border: 1px solid var(--input-border);
+  border-radius: var(--border-radius-sm);
+  background-color: var(--input-bg);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  text-align: right;
+  outline: none;
+  transition: border-color var(--transition-fast) var(--transition-timing);
+}
+
+.threshold-input:focus {
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 2px var(--color-focus-ring-accent);
+}
+
+.threshold-unit {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+/* ===== Algorithm select =====
+   Sized to match the column dropdowns next to it so the two rows line up. */
+.native-select {
+  position: relative;
+  display: flex;
   align-items: center;
 }
 
-.add-button:hover {
-  background-color: #bee3f8;
+.native-select::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--color-text-tertiary);
+  border-bottom: 1.5px solid var(--color-text-tertiary);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
 }
 
-.remove-button {
-  background-color: transparent;
-  border: 1px solid #e2e8f0;
+.native-select__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 30px 8px 12px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  line-height: 1.4;
+  box-shadow: var(--shadow-xs);
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition-fast) var(--transition-timing);
 }
 
-.remove-button:hover {
-  background-color: #fee2e2;
-  color: #e53e3e;
-  border-color: #fbd5d5;
-}
-
-.select-section {
-  margin-top: 1rem;
-}
-
-.select-section + .select-section {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #edf2f7;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .columns-grid,
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
+.native-select__input:focus {
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-accent);
 }
 </style>

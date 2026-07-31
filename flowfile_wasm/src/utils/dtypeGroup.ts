@@ -1,9 +1,5 @@
-// Maps a Polars dtype string to a coarse, display-only group used to color the
-// data-type badges in the Formula node's field list. Mirrors the desktop/web
-// backend (flowfile_core .../flow_file_column/main.py::get_readable_datatype_group)
-// so badges look identical to the main app — Boolean/Binary fold into "Numeric"
-// there, so they do here too. dtype params are stripped first (e.g.
-// "Datetime(time_unit='us')" -> "Datetime", "Decimal(38,0)" -> "Decimal").
+// Display-only dtype grouping for badge colors. Mirrors the backend's
+// get_readable_datatype_group, where Boolean/Binary fold into Numeric.
 
 export type DataTypeGroup = 'String' | 'Numeric' | 'Date' | 'Other'
 
@@ -26,6 +22,12 @@ export function dataTypeGroup(dataType: string | undefined | null): DataTypeGrou
   if (NUMERIC_TYPES.has(base)) return 'Numeric'
   if (DATE_TYPES.has(base)) return 'Date'
   return 'Other'
+}
+
+/** Badge text: the dtype with its params stripped. */
+export function dataTypeLabel(dataType: string | undefined | null): string {
+  if (!dataType) return 'unknown'
+  return dataType.split('(')[0].trim() || 'unknown'
 }
 
 export function dataTypeBadgeClass(group: DataTypeGroup): string {

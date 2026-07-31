@@ -1,6 +1,5 @@
 import { ref, Ref } from "vue";
-import { TableExample } from "../nodeInterfaces";
-import { SelectInput, NodeSelect } from "../nodeInput";
+import { FileColumn, NodeSelect, SelectInput, TableExample } from "../../../../types/node.types";
 import axios from "axios";
 
 export const createSelectInput = (
@@ -54,6 +53,35 @@ export const updateNodeSelect = (
     }
   });
 };
+/**
+ * Normalise a select node's inputs just before saving: order by the on-screen
+ * `position`, then re-stamp `position`, `original_position` and the
+ * data-type-change flags from the upstream schema.
+ *
+ * Mutates and returns the same array holding the same object references — core
+ * re-sorts `renames` by `position` on the wire, and Join/CrossJoin/FuzzyMatch
+ * never re-emit on reorder, so the in-place write is the contract.
+ */
+export const applySelectPositions = (
+  selectInputs: SelectInput[],
+  tableSchema: FileColumn[] | undefined,
+): SelectInput[] => {
+  selectInputs.sort((a, b) => a.position - b.position);
+  selectInputs.forEach((selectInput, index) => {
+    selectInput.position = index;
+    if (!tableSchema) return;
+    const originalIndex = tableSchema.findIndex((column) => column.name === selectInput.old_name);
+    if (originalIndex === -1) return;
+    selectInput.original_position = originalIndex;
+    // Mirrors the backend contract (transform_schema.SelectInput): data_type_change
+    // is type-only, is_altered also covers a rename.
+    selectInput.data_type_change = tableSchema[originalIndex].data_type !== selectInput.data_type;
+    selectInput.is_altered =
+      selectInput.data_type_change || selectInput.old_name !== selectInput.new_name;
+  });
+  return selectInputs;
+};
+
 export const createNodeSelect = (
   flowId = -1,
   nodeId = -1,
