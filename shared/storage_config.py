@@ -97,6 +97,20 @@ class FlowfileStorage:
         """Directory for Python-built flows registered via the FlowFrame API."""
         return self.flows_directory / "python_editor_flows"
 
+    def is_scratch_flow_path(self, flow_path: str | None) -> bool:
+        """Whether ``flow_path`` is an app-named throwaway flow (quick-create / python editor).
+
+        These files get machine-generated stems ("Unnamed_flow_20260730_181546_493427479"),
+        so unlike a path the user chose, the filename is not a usable display name.
+        """
+        if not flow_path:
+            return False
+        roots = (
+            str(self.unnamed_flows_directory.resolve()) + os.sep,
+            str(self.python_editor_flows_directory.resolve()) + os.sep,
+        )
+        return str(flow_path).startswith(roots)
+
     @property
     def uploads_directory(self) -> Path:
         """Directory for user uploads (user-accessible)."""

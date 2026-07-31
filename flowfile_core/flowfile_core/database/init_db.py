@@ -92,20 +92,24 @@ def create_docker_admin_user(db: Session):
 
 
 def create_default_catalog_namespace(db: Session):
-    """Create the default 'General' catalog with a 'default' schema if they don't exist."""
+    """Create the seeded 'General' catalog and its schemas if they don't exist."""
+    # Imported here, not at module level: this module runs Alembic at import time,
+    # before the catalog package (and its polars dependency chain) is importable.
+    from flowfile_core.catalog.constants import ROOT_CATALOG, SEEDED_SCHEMAS
+
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
         return
 
     # Seeded namespaces are public containers: visible to every user in multi-user
     # mode even though the catalog is otherwise private-by-default (auth/sharing.py).
-    general = db.query(db_models.CatalogNamespace).filter_by(name="General", parent_id=None).first()
+    general = db.query(db_models.CatalogNamespace).filter_by(name=ROOT_CATALOG.name, parent_id=None).first()
     if not general:
         general = db_models.CatalogNamespace(
-            name="General",
+            name=ROOT_CATALOG.name,
             parent_id=None,
             level=0,
-            description="Default catalog",
+            description=ROOT_CATALOG.description,
             owner_id=local_user.id,
             is_public=True,
         )
@@ -113,46 +117,20 @@ def create_default_catalog_namespace(db: Session):
         db.commit()
         db.refresh(general)
 
-    default_schema = db.query(db_models.CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
-    if not default_schema:
-        default_schema = db_models.CatalogNamespace(
-            name="default",
-            parent_id=general.id,
-            level=1,
-            description="Default schema for user flows",
-            owner_id=local_user.id,
-            is_public=True,
+    for schema in SEEDED_SCHEMAS:
+        existing = db.query(db_models.CatalogNamespace).filter_by(name=schema.name, parent_id=general.id).first()
+        if existing:
+            continue
+        db.add(
+            db_models.CatalogNamespace(
+                name=schema.name,
+                parent_id=general.id,
+                level=1,
+                description=schema.description,
+                owner_id=local_user.id,
+                is_public=True,
+            )
         )
-        db.add(default_schema)
-        db.commit()
-
-    # Dedicated schema for quick-created / unnamed flows so they don't clutter 'default'
-    unnamed_schema = db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
-    if not unnamed_schema:
-        unnamed_schema = db_models.CatalogNamespace(
-            name="Unnamed Flows",
-            parent_id=general.id,
-            level=1,
-            description="Quick-created flows that have not yet been named",
-            owner_id=local_user.id,
-            is_public=True,
-        )
-        db.add(unnamed_schema)
-        db.commit()
-
-    # Dedicated schema for flows saved to arbitrary disk locations, distinct from
-    # catalog-managed flows so users can tell disk-backed and catalog flows apart.
-    local_schema = db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
-    if not local_schema:
-        local_schema = db_models.CatalogNamespace(
-            name="Local Flows",
-            parent_id=general.id,
-            level=1,
-            description="Flows saved to disk at user-chosen paths",
-            owner_id=local_user.id,
-            is_public=True,
-        )
-        db.add(local_schema)
         db.commit()
 
 

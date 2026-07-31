@@ -16,9 +16,21 @@ def output_handle(index: int) -> str:
 
 
 def output_handle_index(handle: str) -> int:
+    """Return the numeric index of an ``output-N`` handle id.
+
+    Raises ValueError for anything that is not a well-formed output handle, so a
+    malformed handle degrades at the parse boundary rather than travelling on as a
+    negative index.
+    """
     if not handle.startswith(_HANDLE_PREFIX):
         raise ValueError(f"Invalid output handle: {handle!r}")
-    return int(handle[len(_HANDLE_PREFIX) :])
+    try:
+        index = int(handle[len(_HANDLE_PREFIX) :])
+    except ValueError as exc:
+        raise ValueError(f"Invalid output handle: {handle!r}") from exc
+    if index < 0:
+        raise ValueError(f"Invalid output handle: {handle!r}")
+    return index
 
 
 class NamedOutputs:

@@ -873,19 +873,34 @@ class KernelManager:
                 )
 
     def _discard_scratch_flow(self, kernel_id: str) -> None:
-        """Delete the scratch FlowRegistration row (if any) on kernel deletion."""
+        """Delete the scratch FlowRegistration row (if any) on kernel deletion.
+
+        Routed through ``CatalogService`` rather than a raw ``db.delete`` so the
+        canonical delete fan-out runs: sharing grants are dropped (SQLite reuses
+        rowids, so a stale grant would re-attach to a future flow), historical runs
+        are detached instead of left dangling, and a scratch flow whose artifacts
+        are still live is kept rather than leaving them with a missing producer.
+        """
         scratch_id = self._scratch_flow_ids.pop(kernel_id, None)
         if scratch_id is None:
             return
         try:
+            from flowfile_core.catalog import SQLAlchemyCatalogRepository
+            from flowfile_core.catalog.exceptions import FlowHasArtifactsError, FlowNotFoundError
+            from flowfile_core.catalog.service import CatalogService
             from flowfile_core.database.connection import get_db_context
-            from flowfile_core.database.models import FlowRegistration
 
             with get_db_context() as db:
-                row = db.get(FlowRegistration, scratch_id)
-                if row is not None:
-                    db.delete(row)
-                    db.commit()
+                try:
+                    CatalogService(SQLAlchemyCatalogRepository(db)).delete_flow(scratch_id, delete_file=False)
+                except FlowNotFoundError:
+                    pass
+                except FlowHasArtifactsError:
+                    logger.debug(
+                        "Kept scratch FlowRegistration id=%s for kernel '%s': artifacts still reference it",
+                        scratch_id,
+                        kernel_id,
+                    )
         except Exception as exc:
             logger.warning(
                 "Could not delete scratch FlowRegistration id=%s for kernel '%s': %s",

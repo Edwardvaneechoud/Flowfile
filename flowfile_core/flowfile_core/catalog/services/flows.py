@@ -5,6 +5,12 @@ from __future__ import annotations
 import logging
 import os
 
+from flowfile_core.catalog.constants import (
+    LOCAL_FLOWS,
+    PYTHON_EDITOR_FLOWS,
+    ROOT_CATALOG,
+    UNNAMED_FLOWS,
+)
 from flowfile_core.catalog.exceptions import (
     FlowExistsError,
     FlowHasArtifactsError,
@@ -262,11 +268,35 @@ class FlowRegistrationService:
         artifacts = self.repo.list_artifacts_for_flow(registration_id)
         return bulk_enrich_artifacts(artifacts)
 
+    def ensure_root_catalog(self, owner_id: int) -> CatalogNamespace | None:
+        """Return the ``General`` root namespace, re-creating it if it has gone missing.
+
+        A missing root used to turn auto-registration into a silent no-op: the flow
+        existed on disk with no catalog row while downstream code assumed one, and the
+        damage depended on which code path had wiped the seed. Healing here is
+        idempotent and is the only safe option — the callers that need a registration
+        run mid-flow-run and inside project import, where raising is not allowed.
+        """
+        general = self.repo.get_namespace_by_name(ROOT_CATALOG.name, parent_id=None)
+        if general is not None:
+            return general
+        logger.warning("Catalog root namespace '%s' was missing; re-creating it", ROOT_CATALOG.name)
+        return self.repo.create_namespace(
+            CatalogNamespace(
+                name=ROOT_CATALOG.name,
+                parent_id=None,
+                level=0,
+                description=ROOT_CATALOG.description,
+                owner_id=owner_id,
+                is_public=True,
+            )
+        )
+
     def _ensure_general_child(self, name: str, description: str) -> CatalogNamespace | None:
         """Ensure 'General > {name}' namespace exists, creating it if needed."""
-        general = self.repo.get_namespace_by_name("General", parent_id=None)
+        general = self.repo.get_namespace_by_name(ROOT_CATALOG.name, parent_id=None)
         if general is None:
-            logger.info(f"Cannot ensure '{name}' namespace: parent 'General' not found")
+            logger.info(f"Cannot ensure '{name}' namespace: parent '{ROOT_CATALOG.name}' not found")
             return None
         existing = self.repo.get_namespace_by_name(name, parent_id=general.id)
         if existing is not None:
@@ -281,16 +311,13 @@ class FlowRegistrationService:
         return self.repo.create_namespace(namespace)
 
     def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child("Unnamed Flows", "Quick-created flows that have not yet been named")
+        return self._ensure_general_child(UNNAMED_FLOWS.name, UNNAMED_FLOWS.description)
 
     def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child("Local Flows", "Flows saved to disk at user-chosen paths")
+        return self._ensure_general_child(LOCAL_FLOWS.name, LOCAL_FLOWS.description)
 
     def ensure_python_editor_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child(
-            "Python Editor",
-            "Flows authored programmatically via the FlowFrame Python API",
-        )
+        return self._ensure_general_child(PYTHON_EDITOR_FLOWS.name, PYTHON_EDITOR_FLOWS.description)
 
     def resolve_registration_id(self, flow_path: str) -> int | None:
         """Look up the registration ID for a flow by its file path."""
