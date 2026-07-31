@@ -248,8 +248,7 @@ describe('SelectSettings', () => {
   })
 
   it('should put the drag affordance on the handle cell, not the row', () => {
-    // The row itself must NOT be draggable: that hijacks mousedown inside the
-    // rename input, making its text unselectable with the mouse.
+    // A draggable row hijacks mousedown inside the rename input.
     const wrapper = mount(SelectSettings, {
       props: {
         nodeId: 1,
@@ -321,6 +320,30 @@ describe('SelectSettings', () => {
     await wrapper.findAll('input[type="checkbox"]')[0].setValue(false)
 
     expect(wrapper.find('.column-picker-count').text()).toBe('2 of 3 kept')
+  })
+
+  it('should opt every free-text field out of password-manager autofill', () => {
+    // A column named name/city/email reads as a contact form to LastPass.
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: defaultSettings
+      }
+    })
+
+    const fields = [
+      ...wrapper.findAll('input.inline-input'),
+      wrapper.find('.column-picker-search input')
+    ]
+    expect(fields.length).toBe(4)
+
+    for (const field of fields) {
+      expect(field.attributes('autocomplete')).toBe('off')
+      expect(field.attributes('data-lpignore')).toBe('true')
+      expect(field.attributes('data-1p-ignore')).toBe('true')
+      expect(field.attributes('data-bwignore')).toBe('true')
+      expect(field.attributes('data-form-type')).toBe('other')
+    }
   })
 
   it('should mark the row under the pointer while dragging, and clear it after', async () => {

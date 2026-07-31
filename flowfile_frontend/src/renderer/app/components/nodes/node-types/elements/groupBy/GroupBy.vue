@@ -72,7 +72,12 @@
                   </el-select>
                 </td>
                 <td>
-                  <el-input v-model="item.new_name" class="w-50 m-2" size="small" />
+                  <el-input
+                    v-model="item.new_name"
+                    class="w-50 m-2"
+                    size="small"
+                    v-bind="NO_AUTOFILL"
+                  />
                 </td>
               </tr>
             </template>
@@ -101,6 +106,7 @@ import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import { NO_AUTOFILL } from "../../../../../utils/noAutofill";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();

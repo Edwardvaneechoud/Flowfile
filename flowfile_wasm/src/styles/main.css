@@ -704,18 +704,11 @@ button, input, textarea, select {
 /* ==========================================================================
    COLUMN PICKER (from flowfile_frontend's column-list)
 
-   Opt-in surface for the interactive column pickers in node settings.
-   Deliberately layered on top of .styled-table rather than folded into it:
-   that class also backs read-only tables where text must stay selectable.
-
-   Named .column-picker, not .column-list as in flowfile_frontend: this package
-   already uses .column-list (and .column-name) for the flex div list further
-   down this file, and display:flex on a <table> silently kills table layout.
+   Named .column-picker, not .column-list: that name is already taken further
+   down by a flex div list, and display:flex on a <table> kills table layout.
    ========================================================================== */
 
-/* Dragging a row would otherwise paint a native text selection across the whole
-   panel, because the anchor can sit outside the cell under the pointer.
-   user-select inherits, so declaring it on the root covers every cell. */
+/* Otherwise a row drag paints a native text selection across the panel. */
 .column-picker,
 .column-picker * {
   -webkit-user-select: none;
@@ -803,9 +796,7 @@ button, input, textarea, select {
 }
 
 /* ----- Cell metrics -----
-   The shared .styled-table pads cells 16px a side, which is too generous once
-   there are five columns in a 400px panel: the header labels wrap and the
-   narrow columns clip. */
+   .styled-table's 16px side padding wraps headers and clips narrow columns here. */
 .column-picker th,
 .column-picker td {
   padding-left: var(--spacing-2);
@@ -827,8 +818,7 @@ button, input, textarea, select {
 }
 
 /* ----- Cells ----- */
-/* table-layout: fixed already constrains the track, so ellipsis works here
-   without the usual max-width: 0 hack. */
+/* table-layout: fixed constrains the track, so no max-width: 0 hack needed. */
 .column-picker .picker-name,
 .column-picker .type-cell {
   overflow: hidden;
@@ -836,9 +826,7 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
-/* Chromeless until hover/focus: a bordered box on every row is most of the
-   visual noise in this table, but hiding the field behind a click would cost a
-   keystroke on the node's primary task. */
+/* Chromeless until hover/focus; click-to-edit would cost a keystroke per rename. */
 .column-picker .inline-input {
   width: 100%;
   box-sizing: border-box;
@@ -891,9 +879,7 @@ button, input, textarea, select {
 }
 
 /* ----- Drop feedback -----
-   A band across the row rather than a 2px border: a border resizes the row,
-   which changes which row sits under the pointer, which recomputes the target
-   — a flicker loop. */
+   A band, not a border: a border resizes the row and the target flickers. */
 .column-picker tbody tr.is-drop-target > td {
   background-color: var(--color-background-selected);
   box-shadow:

@@ -15,9 +15,14 @@
         <span class="column-picker-count">{{ keptCount }} of {{ availableColumns.length }} kept</span>
 
         <div class="column-picker-search">
-          <!-- type="search", not "text": the rename fields are the only text
-               inputs in this panel and tests count on that. -->
-          <input v-model="filterText" type="search" placeholder="Filter columns…" aria-label="Filter columns" />
+          <!-- type="search" keeps the rename fields the only text inputs here -->
+          <input
+            v-model="filterText"
+            type="search"
+            placeholder="Filter columns…"
+            aria-label="Filter columns"
+            v-bind="NO_AUTOFILL"
+          />
         </div>
 
         <div class="column-picker-actions">
@@ -46,8 +51,7 @@
 
       <div class="table-wrapper">
         <table class="styled-table column-picker">
-          <!-- Inline widths: scoped CSS does not reach <col>, and these are the
-               single source of truth for the column tracks. -->
+          <!-- Inline because scoped CSS does not reach <col> -->
           <colgroup>
             <col style="width: 22px" />
             <col />
@@ -86,8 +90,9 @@
                   type="text"
                   :value="col.new_name"
                   :aria-label="`Output name for ${col.old_name}`"
-                  @input="updateNewName(col.old_name, ($event.target as HTMLInputElement).value)"
                   class="inline-input"
+                  v-bind="NO_AUTOFILL"
+                  @input="updateNewName(col.old_name, ($event.target as HTMLInputElement).value)"
                 />
               </td>
               <td class="type-cell">
@@ -123,6 +128,7 @@
 import { ref, computed, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import { dataTypeGroup, dataTypeBadgeClass, dataTypeLabel } from '../../utils/dtypeGroup'
+import { NO_AUTOFILL } from '../../utils/noAutofill'
 import type { SelectSettings, ColumnSchema } from '../../types'
 
 const props = defineProps<{
@@ -176,8 +182,7 @@ const visibleColumns = computed(() => {
 
 const keptCount = computed(() => availableColumns.value.filter(col => col.keep).length)
 
-// Reorder is name-keyed so a filter cannot corrupt it, but dropping between two
-// rows that aren't adjacent in the real list is ambiguous, so block it instead.
+// A drop between two non-adjacent visible rows is ambiguous, so block it.
 const dragHandleTitle = computed(() =>
   isFiltered.value ? 'Clear the filter to reorder columns' : 'Drag to reorder'
 )
@@ -327,14 +332,8 @@ function emitUpdate() {
   opacity: 0.5;
 }
 
-/* Widths live on the <colgroup> alone. Declaring them on both th and td makes
-   the header and body disagree: table-layout:fixed sizes columns from the first
-   row, and a cell that names its own width renders at that width instead,
-   shifting every cell after it.
-   The global .styled-table hardcodes 35%/30%/35% on the first, second and last
-   cell, so those are reset here — scoped rules outspecify it via the [data-v-*]
-   attribute. The global rule is left alone because Sort, Group By and the
-   catalog detail panel still depend on it. */
+/* Reset .styled-table's 35%/30%/35%; widths belong to the <colgroup> alone, or
+   the header and body disagree. Global rule stays — 3 other panels rely on it. */
 .column-picker th:first-child,
 .column-picker td:first-child,
 .column-picker th:nth-child(2),
@@ -344,7 +343,7 @@ function emitUpdate() {
   width: auto;
 }
 
-/* A 22px column is unreachable while the cell carries 16px of side padding. */
+/* 22px is unreachable while the cell carries side padding. */
 .column-picker th:first-child,
 .column-picker td.drag-handle-cell {
   padding-left: 0;

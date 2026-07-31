@@ -12,8 +12,7 @@
 
       <div class="listbox-wrapper select-dynamic-listbox">
         <div class="column-list-toolbar">
-          <!-- Contextual group: everything here acts on the current selection, so
-               it lives apart from the always-available controls on the right. -->
+          <!-- Acts on the selection, so kept apart from the global controls -->
           <div v-if="canReorderSelection" class="column-list-selection">
             <span class="column-list-selection-count">
               {{ selection.selectedIndices.length }} selected
@@ -53,6 +52,7 @@
               type="search"
               placeholder="Filter columns…"
               aria-label="Filter columns"
+              v-bind="NO_AUTOFILL"
             />
           </div>
           <div class="column-list-actions">
@@ -145,6 +145,7 @@
                     type="text"
                     :placeholder="column.old_name"
                     :aria-label="`New name for ${column.old_name}`"
+                    v-bind="NO_AUTOFILL"
                   />
                 </td>
 
@@ -202,6 +203,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { SelectInput } from "../../../../types/node.types";
 import { useNodeStore } from "../../../../stores/column-store";
+import { NO_AUTOFILL } from "../../../../utils/noAutofill";
 import UnavailableField from "./UnavailableFields.vue";
 import {
   EMPTY_SELECTION,
@@ -512,19 +514,12 @@ const hasMissingFields = computed(() =>
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
 
-  // Always close the context menu when clicking anywhere outside it. The menu
-  // floats over the table now that the table-wrapper flex-fills the pane, so
-  // tying close-behavior to "clicked outside the tbody" no longer works — the
-  // user has nowhere outside the tbody to click.
+  // The menu floats over the table, so there is no "outside the tbody" to click.
   if (showContextMenu.value && contextMenuRef.value && !contextMenuRef.value.contains(target)) {
     showContextMenu.value = false;
   }
 
-  // The selection survives only while the click lands on one of this picker's own
-  // rows, or on a control that acts on the selection. A header, the blank space
-  // under the rows, another picker's rows, or anywhere else in the drawer all
-  // clear it. Scoping to this instance's root matters because Join, CrossJoin and
-  // FuzzyMatch each mount two pickers at once.
+  // Scoped to this instance: Join/CrossJoin/FuzzyMatch mount two pickers at once.
   const insideThisPicker = rootRef.value?.contains(target) ?? false;
   const keepsSelection =
     insideThisPicker &&
@@ -546,7 +541,11 @@ onUnmounted(() => {
 const emit = defineEmits<{ (e: "updateSelectInputs", inputs: SelectInput[]): void }>();
 
 const removeMissingFields = () => {
-  const availableColumns = localSelectInputs.value.filter((column) => column.is_available);
+  // Re-stamp like commitOrder does: only Select re-stamps again on save, so the
+  // other pickers would ship the gaps left by the removed rows.
+  const availableColumns = assignPositions(
+    localSelectInputs.value.filter((column) => column.is_available),
+  );
   localSelectInputs.value = availableColumns;
   selection.value = clampSelection(selection.value, availableColumns.length);
   emit("updateSelectInputs", availableColumns);
@@ -608,26 +607,28 @@ const removeMissingFields = () => {
   pointer-events: auto;
 }
 
-/* Remove missing fields button styling */
+/* Tinted rather than a solid slab, matching FuzzyMatch's .rule-card.is-invalid.
+   The old #d9534f set no text colour at all. */
 .remove-missing-fields {
   display: flex;
   align-items: center;
-  background-color: #d9534f;
-  padding: 4px 8px;
-  margin: 10px 20px;
-  text-align: center;
+  gap: var(--spacing-1);
+  margin: var(--spacing-2-5) var(--spacing-5);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--border-radius-sm);
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  border-radius: 4px;
-  font-weight: bold;
-  font-size: 0.9em;
+  transition: all var(--transition-fast) var(--transition-timing);
 }
 
 .remove-missing-fields:hover {
-  background-color: #c9302c;
-}
-
-.remove-missing-fields > unavailable-field {
-  margin-right: 4px;
+  background-color: var(--color-danger);
+  border-color: var(--color-danger-hover);
+  color: var(--color-text-inverse);
 }
 
 /* Adjustments for el-checkbox component */

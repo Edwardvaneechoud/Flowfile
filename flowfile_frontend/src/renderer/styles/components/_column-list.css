@@ -1,15 +1,7 @@
-/* styles/components/_column-list.css - Shared column-picker surface
- *
- * Opt-in class for the interactive column pickers in node settings. Deliberately
- * NOT folded into .listbox-wrapper or .styled-table: both are also used by
- * read-only surfaces (code previews, error text, Catalog detail panels) where
- * text must stay selectable and copyable.
- */
+/* Shared column-picker surface. Kept off .listbox-wrapper / .styled-table:
+   those also back read-only surfaces where text must stay selectable. */
 
-/* Shift-click on a row would otherwise paint a native text selection across the
- * whole drawer, because the selection anchor can sit outside the clicked cell.
- * user-select is inherited, so declaring it on the root covers headers,
- * subtitles and every cell in one go. */
+/* Otherwise a shift-click paints a native text selection across the drawer. */
 .column-list,
 .column-list * {
   -webkit-user-select: none;
@@ -280,9 +272,7 @@
 }
 
 /* ===== Drop indicator =====
- * An inset shadow rather than a border: a 2px border would shift the row, which
- * changes which row sits under the pointer, which recomputes the drop target —
- * a flicker loop. */
+   Inset shadow, not a border: a border shifts the row and the target flickers. */
 .column-list tbody tr.is-drop-before > td,
 .column-list li.is-drop-before {
   box-shadow: inset 0 2px 0 0 var(--color-accent);

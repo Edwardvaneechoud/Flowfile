@@ -277,6 +277,13 @@ describe("assignPositions", () => {
     expect(result[0]).toBe(first);
     expect(items.map((i) => i.position)).toEqual([0, 1]);
   });
+
+  it("closes the gaps left by dropping rows out of the middle", () => {
+    // What removeMissingFields relies on: Join/CrossJoin/FuzzyMatch/Unique never
+    // re-stamp before save, so the gaps would go out on the wire.
+    const kept = [{ position: 0 }, { position: 1 }, { position: 3 }, { position: 4 }];
+    expect(assignPositions(kept).map((i) => i.position)).toEqual([0, 1, 2, 3]);
+  });
 });
 
 describe("nextSortDirection", () => {

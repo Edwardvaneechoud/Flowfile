@@ -256,6 +256,25 @@ test.describe("Column selector", () => {
     expect((await firstRow.boundingBox())!.y).toBe(rowY);
   });
 
+  test("the rename and filter fields opt out of password-manager autofill", async ({ page }) => {
+    // A column named name/city/email reads as a contact form to LastPass.
+    await openFlow(page, authToken, "complex-flow");
+    await openNodeSettings(page, selectNodeId);
+
+    const fields = [
+      page.locator("table.column-list tbody tr .inline-input").first(),
+      page.locator(".column-list-search .search-input").first(),
+    ];
+
+    for (const field of fields) {
+      await expect(field).toHaveAttribute("autocomplete", "off");
+      await expect(field).toHaveAttribute("data-lpignore", "true");
+      await expect(field).toHaveAttribute("data-1p-ignore", "true");
+      await expect(field).toHaveAttribute("data-bwignore", "true");
+      await expect(field).toHaveAttribute("data-form-type", "other");
+    }
+  });
+
   test("changing a data type marks that cell, and only that cell", async ({ page }) => {
     await openFlow(page, authToken, "complex-flow");
     await openNodeSettings(page, selectNodeId);
