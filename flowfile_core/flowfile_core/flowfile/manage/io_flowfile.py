@@ -286,6 +286,21 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
         raise ValueError(f"Unsupported file format: {suffix}")
 
 
+def _resolve_flow_name(flow_path: Path, stored_name: str | None) -> str:
+    """The display name for a flow being opened from disk.
+
+    App-named scratch files get machine-generated stems
+    ("Unnamed_flow_20260730_181546_493427479"), and an unregistered draft has no catalog
+    row to supply a name, so the name stored in the file is the only readable one it has.
+    For a path the user chose the stem stays authoritative, so renaming or copying a flow
+    file still renames the flow.
+    """
+    name = (stored_name or "").strip()
+    if name and storage.is_scratch_flow_path(str(flow_path)):
+        return name
+    return flow_path.stem
+
+
 def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     """
     Open a flowfile from a given path.
@@ -305,8 +320,9 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     flow_path = _validate_flow_path(flow_path)
     flow_storage_obj = _load_flow_storage(flow_path)
     flow_storage_obj.flow_settings.path = str(flow_path)
-    flow_storage_obj.flow_settings.name = str(flow_path.stem)
-    flow_storage_obj.flow_name = str(flow_path.stem)
+    resolved_name = _resolve_flow_name(flow_path, flow_storage_obj.flow_name)
+    flow_storage_obj.flow_settings.name = resolved_name
+    flow_storage_obj.flow_name = resolved_name
 
     ingestion_order = determine_insertion_order(flow_storage_obj)
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
