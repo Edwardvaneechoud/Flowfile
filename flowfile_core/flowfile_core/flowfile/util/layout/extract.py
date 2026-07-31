@@ -34,7 +34,8 @@ def _from_edge_inputs(nodes: list, node_ids: set[int]) -> list[Edge]:
     for node in nodes:
         try:
             wire_edges = list(node.get_edge_input())
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Layout: get_edge_input failed for node {_node_id(node)} ({exc})")
             continue
         for wire in wire_edges:
             try:

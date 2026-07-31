@@ -124,3 +124,11 @@ class TestCalculateLayeredLayout:
         result = calculate_layered_layout(graph)
         assert len(result) == 2
         assert result[1][0] < result[2][0]
+
+    def test_malformed_source_handle_does_not_break_layout(self):
+        """An unparseable port degrades to port 0 for that edge, not a failed layout."""
+        graph = _make_mock_graph([1, 2], [])
+        graph.nodes[1].get_edge_input.return_value = [_wire(1, 2, source_handle="output--1")]
+        result = calculate_layered_layout(graph)
+        assert len(result) == 2
+        assert result[1][0] < result[2][0]

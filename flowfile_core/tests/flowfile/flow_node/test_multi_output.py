@@ -26,6 +26,8 @@ class TestOutputHandleHelpers:
             output_handle_index("input-0")
         with pytest.raises(ValueError):
             output_handle_index("output-foo")
+        with pytest.raises(ValueError):
+            output_handle_index("output--1")
 
     def test_helpers_round_trip(self):
         for i in (0, 1, 5, 42):
