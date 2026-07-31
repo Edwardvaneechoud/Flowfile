@@ -947,6 +947,50 @@ class TestAutoRegisterFlow:
             assert reg.name == "my_pipeline"
 
 
+class TestKafkaSyncRootHeal:
+    """The kafka sync path must heal a missing root through the canonical helper.
+
+    ``create_namespace`` would mint a *private* General (invisible to other users in
+    docker mode) and snapshot env-default catalog storage onto it — a different root
+    than init_db seeds and ``ensure_root_catalog`` heals.
+    """
+
+    def test_recreated_root_is_public_with_no_storage(self):
+        from flowfile_core.routes.kafka import _ensure_sync_namespace
+
+        init_db()
+        backup_name = "General_backup_kafka_heal"
+        with get_db_context() as db:
+            owner_id = db.query(User).filter_by(username="local_user").first().id
+            db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first().name = backup_name
+            db.commit()
+
+        healed_root_id = None
+        sync_id = None
+        try:
+            with get_db_context() as db:
+                service = CatalogService(SQLAlchemyCatalogRepository(db))
+                sync_id = _ensure_sync_namespace(service, owner_id)
+                sync_ns = db.get(CatalogNamespace, sync_id)
+                assert sync_ns is not None
+                assert sync_ns.is_public is True
+                root = db.get(CatalogNamespace, sync_ns.parent_id)
+                healed_root_id = root.id
+                assert root.name == "General"
+                assert root.is_public is True, "a healed root must be public, like the init_db seed"
+                assert root.storage_uri is None, "a healed root must not snapshot env-default storage"
+        finally:
+            with get_db_context() as db:
+                for ns_id in (sync_id, healed_root_id):
+                    ns = db.get(CatalogNamespace, ns_id) if ns_id is not None else None
+                    if ns is not None:
+                        db.delete(ns)
+                backup = db.query(CatalogNamespace).filter_by(name=backup_name, parent_id=None).first()
+                if backup is not None:
+                    backup.name = "General"
+                db.commit()
+
+
 # Read link / lineage repository tests
 
 

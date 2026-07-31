@@ -1608,6 +1608,89 @@ def test_create_flow_default_persists_to_disk():
             db.commit()
 
 
+def test_save_as_register_in_catalog_false_creates_no_registration():
+    """Unchecking "Also register in catalog" on Save As must actually opt out.
+
+    A null namespace alone routes into auto-registration on the backend, which is
+    exactly the checkbox lie this flag closes. The default save-as (flag omitted)
+    must keep auto-registering under General > Local Flows.
+    """
+    from flowfile_core.database.models import CatalogNamespace, FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    path_a = str(base_dir / "save_as_optout_a.yaml")
+    path_b = str(base_dir / "save_as_optout_b.yaml")
+    path_c = str(base_dir / "save_as_optout_c.yaml")
+
+    def _drop_registrations():
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path.in_([path_a, path_b, path_c])).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+    for p in (path_a, path_b, path_c):
+        remove_flow(p)
+    _drop_registrations()
+
+    try:
+        created_id = client.post(
+            "editor/create_flow", params={"flow_path": path_a, "register_in_catalog": False}
+        ).json()
+
+        opted_out = client.post(
+            "/save_flow", params={"flow_id": created_id, "flow_path": path_b, "register_in_catalog": False}
+        )
+        assert opted_out.status_code == 200, f"Save As failed: {opted_out.text}"
+        saved_id = opted_out.json()
+        assert os.path.exists(path_b), "Opting out of registration must still write the file"
+        with get_db_context() as db:
+            assert (
+                db.query(FlowRegistration).filter(FlowRegistration.flow_path == path_b).count() == 0
+            ), "register_in_catalog=False must not mint a registration on Save As"
+
+        default_save = client.post("/save_flow", params={"flow_id": saved_id, "flow_path": path_c})
+        assert default_save.status_code == 200, f"Default Save As failed: {default_save.text}"
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == path_c).one_or_none()
+            assert reg is not None, "A default Save As must keep auto-registering"
+            assert db.get(CatalogNamespace, reg.namespace_id).name == "Local Flows"
+    finally:
+        for p in (path_a, path_b, path_c):
+            remove_flow(p)
+        _drop_registrations()
+
+
+def test_namespace_with_register_off_is_rejected():
+    """namespace_id + register_in_catalog=False is contradictory: 422, before any
+    namespace lookup (a bogus id must not turn it into a 404)."""
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_contradiction.yaml")
+    remove_flow(flow_path)
+
+    resp = client.post(
+        "editor/create_flow",
+        params={"flow_path": flow_path, "namespace_id": 999_999, "register_in_catalog": False},
+    )
+    assert resp.status_code == 422, resp.text
+    assert not os.path.exists(flow_path), "a rejected create must not leave a file behind"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False}).json()
+    try:
+        resp = client.post(
+            "/save_flow",
+            params={
+                "flow_id": flow_id,
+                "flow_path": flow_path,
+                "namespace_id": 999_999,
+                "register_in_catalog": False,
+            },
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        remove_flow(flow_path)
+
+
 def test_create_flow_name_collision_in_namespace_409():
     """A second create with the same name in the same namespace is rejected before any file is written."""
     from flowfile_core.database.models import FlowRegistration
@@ -2026,6 +2109,61 @@ def test_first_run_registers_ephemeral_scratch_flow():
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
             assert reg is not None, "First run must register the scratch flow in the catalog"
+    finally:
+        remove_flow(flow_path)
+        _drop_registration()
+
+
+def test_run_does_not_rewrite_opened_flow_file():
+    """First-run promotion registers an opened flow without rewriting its file.
+
+    With import-time registration gone, every browsed .yaml takes this path on its
+    first run — the promotion's save_flow is scoped to files that don't exist yet
+    (ephemeral flows), so a run never silently commits unsaved canvas edits to disk.
+    """
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "run_no_rewrite.yaml")
+
+    def _drop_registration():
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+    remove_flow(flow_path)
+    _drop_registration()
+
+    try:
+        created_id = client.post(
+            "editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False}
+        ).json()
+        client.post("/editor/close_flow/", params={"flow_id": created_id})
+        with open(flow_path, "rb") as f:
+            on_disk_before = f.read()
+
+        flow_id = client.get("/import_flow/", params={"flow_path": flow_path}).json()
+        add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+        manual_input = input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"name": "John"}]),
+        )
+        client.post("/update_settings/", json=manual_input.model_dump(), params={"node_type": "manual_input"})
+
+        run_resp = client.post("/flow/run/", params={"flow_id": flow_id})
+        assert run_resp.status_code in (200, 202), f"Run failed: {run_resp.text}"
+
+        with open(flow_path, "rb") as f:
+            assert f.read() == on_disk_before, "Running must not rewrite the opened flow's file"
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is not None, "First run must still register the opened flow"
     finally:
         remove_flow(flow_path)
         _drop_registration()
