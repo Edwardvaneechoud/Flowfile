@@ -334,7 +334,7 @@
 
         .approach-grid {
             display: grid;
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(0, 1fr);
             gap: 1.5rem;
             margin: 2rem 0;
             max-width: 1200px;
@@ -348,6 +348,8 @@
             border-radius: 16px;
             padding: 1.5rem;
             backdrop-filter: blur(10px);
+            min-width: 0;
+            overflow-wrap: break-word;
         }
 
         .approach-card h3 {
@@ -378,6 +380,13 @@
             padding: 1rem;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.35) transparent;
+        }
+
+        .approach-card pre:focus-visible {
+            outline: 2px solid #2DD5D3;
+            outline-offset: 2px;
         }
 
         .approach-card code {
@@ -435,6 +444,10 @@
             background: var(--md-default-bg-color);
         }
 
+        .bottom-cta pre {
+            max-width: 100%;
+        }
+
         .bottom-cta-subtitle {
             max-width: 600px;
             margin: 0 auto 2rem;
@@ -467,7 +480,7 @@
             .feature-card { padding: 2rem; }
             .persona-section { padding: 4rem 2rem; }
             .persona-grid { grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
-            .approach-grid { grid-template-columns: 1fr 1fr; gap: 2rem; margin: 3rem 0; }
+            .approach-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2rem; margin: 3rem 0; }
             .approach-card { padding: 2rem; }
             .approach-card h3 { font-size: 1.4rem; }
             .example-section { padding: 4rem 2rem; }
@@ -573,7 +586,7 @@
                 <h3 class="feature-title">Visual Pipeline Builder</h3>
                 <p class="feature-description">
                     40+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more —
-                    with a data preview at every step. Missing one? Build your own visually in the Node Designer.
+                    with a data preview at every step.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
@@ -648,6 +661,17 @@
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
+
+            <a href="users/visual-editor/node-designer.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h12a1.5 1.5 0 0 1 1.5 1.5v3.6a2.4 2.4 0 0 1 0 4.8V18a1.5 1.5 0 0 1-1.5 1.5h-3.6a2.4 2.4 0 0 0-4.8 0H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5Z"/></svg></div>
+                <h3 class="feature-title">Custom &amp; Community Nodes</h3>
+                <p class="feature-description">
+                    Build your own node visually in the Node Designer — it saves as a single .py file
+                    and appears in the palette next to the built-ins. Install nodes others have
+                    published, or publish your own to the community registry.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
         </div>
     </section>
 
@@ -676,7 +700,7 @@
                 <div class="approach-card">
                     <h3>In Python</h3>
                     <!-- Keep in sync with docs/examples/sales_pipeline.py (the tested source of truth) -->
-                    <pre><code>import flowfile as ff
+                    <pre tabindex="0" role="region" aria-label="Python example"><code>import flowfile as ff
 
 df = ff.read_csv("data/templates/supermarket_sales.csv")
 
