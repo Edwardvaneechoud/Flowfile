@@ -50,11 +50,6 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../features/designer/editor/fullEditor.vue"),
       },
       {
-        name: "documentation",
-        path: "documentation",
-        component: () => import("../views/DocumentationView/DocumentationView.vue"),
-      },
-      {
         name: "connections",
         path: "connections",
         component: () => import("../views/ConnectionsView/ConnectionsView.vue"),

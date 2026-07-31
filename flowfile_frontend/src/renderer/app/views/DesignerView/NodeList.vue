@@ -25,23 +25,63 @@
           v-for="node in group.nodes"
           :key="node.item"
           :node="node"
-          @dragstart="(event, n) => $emit('dragstart', event, n)"
+          :suppress-tooltip="nodeMenu !== null"
+          @dragstart="onDragStart"
+          @contextmenu="openNodeMenu"
         />
       </div>
     </div>
+
+    <Teleport to="body">
+      <ContextMenu
+        v-if="nodeMenu"
+        :position="{ x: nodeMenu.x, y: nodeMenu.y }"
+        :options="menuOptions"
+        @select="onMenuSelect"
+        @close="nodeMenu = null"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
 import { useNodes } from "./useNodes";
 import { usePaletteGroups } from "./usePaletteGroups";
 import NodeListItem from "./NodeListItem.vue";
+import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
+import { nodeDocsMenuOptions, nodeDocsUrl, READ_MORE_ACTION } from "./nodeDocsLinks";
+import { desktop } from "../../../lib/desktop";
+import type { NodeTemplate } from "../../types";
 
 const { nodes } = useNodes();
 const { searchQuery, filteredGroups, isGroupOpen, toggleGroup } = usePaletteGroups(nodes);
 
-defineEmits(["dragstart"]);
+const emit = defineEmits<{
+  (e: "dragstart", event: DragEvent, node: NodeTemplate): void;
+}>();
+
+// One menu for the whole palette — only one can be open, and per-row menus would
+// each register document-level listeners for all ~45 rows.
+const nodeMenu = ref<{ node: NodeTemplate; x: number; y: number } | null>(null);
+const menuOptions = nodeDocsMenuOptions();
+
+const openNodeMenu = (event: MouseEvent, node: NodeTemplate) => {
+  nodeMenu.value = { node, x: event.clientX, y: event.clientY };
+};
+
+const onDragStart = (event: DragEvent, node: NodeTemplate) => {
+  nodeMenu.value = null;
+  emit("dragstart", event, node);
+};
+
+const onMenuSelect = (action: string) => {
+  if (action !== READ_MORE_ACTION || !nodeMenu.value) return;
+  // Synchronous: in web mode this is window.open, which needs the click's
+  // user-gesture attribution to survive the popup blocker.
+  void desktop.openExternal(nodeDocsUrl(nodeMenu.value.node));
+};
 </script>
 
 <style scoped>

@@ -26,6 +26,7 @@ import {
 import NodeButton from "./baseNode/nodeButton.vue";
 import KernelBadgeIcon from "../../views/DesignerView/KernelBadgeIcon.vue";
 import { toTitleCase } from "../../views/DesignerView/utils";
+import { nodeDocsUrl } from "../../views/DesignerView/nodeDocsLinks";
 import type { NodeTemplate } from "../../types";
 
 const drawerModules = import.meta.glob("./node-types/elements/**/*.vue");
@@ -109,6 +110,7 @@ const nodeTitleInfo = computed(() => {
   return {
     title: props.nodeData?.drawer_title || "Node Configuration",
     intro: props.nodeData?.drawer_intro || "Configure node settings",
+    docsUrl: nodeDocsUrl(props.nodeData),
   };
 });
 

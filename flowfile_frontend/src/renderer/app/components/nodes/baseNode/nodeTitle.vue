@@ -7,14 +7,25 @@
         </template>
         <!-- Replace v-html with a safer alternative -->
         <div class="intro-content">{{ props.intro }}</div>
+        <button v-if="props.docsUrl" type="button" class="node-docs-link" @click="openDocs">
+          <i class="fa-solid fa-book"></i>
+          Read more
+        </button>
       </el-collapse-item>
     </el-collapse>
-    <div v-else class="title">{{ props.title }}</div>
+    <div v-else class="title-row">
+      <div class="title">{{ props.title }}</div>
+      <button v-if="props.docsUrl" type="button" class="node-docs-link" @click="openDocs">
+        <i class="fa-solid fa-book"></i>
+        Read more
+      </button>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { defineProps } from "vue";
+import { desktop } from "../../../../lib/desktop";
 
 const props = defineProps({
   title: {
@@ -26,7 +37,14 @@ const props = defineProps({
     required: false,
     default: "", // Add default value to resolve warning
   },
+  docsUrl: {
+    type: String,
+    required: false,
+    default: "",
+  },
 });
+
+const openDocs = () => void desktop.openExternal(props.docsUrl);
 </script>
 
 <style scoped>
@@ -47,6 +65,34 @@ const props = defineProps({
 .intro-content {
   white-space: pre-wrap;
   color: var(--color-text-secondary);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+}
+
+.node-docs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent, #0891b2);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.intro-content + .node-docs-link {
+  margin-top: var(--spacing-1);
+}
+
+.node-docs-link:hover {
+  text-decoration: underline;
 }
 
 .listbox-expandable {
