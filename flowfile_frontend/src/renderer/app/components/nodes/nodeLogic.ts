@@ -41,8 +41,9 @@ export async function createFlow(
   flowPath: string | null = null,
   name: string | null = null,
   namespaceId: number | null = null,
+  registerInCatalog = true,
 ): Promise<number> {
-  return FlowApi.createFlow(flowPath, name, namespaceId);
+  return FlowApi.createFlow(flowPath, name, namespaceId, registerInCatalog);
 }
 
 export async function getFlowSettings(flow_id: number): Promise<FlowSettings | null> {

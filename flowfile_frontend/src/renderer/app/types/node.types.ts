@@ -114,6 +114,9 @@ export interface NodeReferenceDictionary {
 export interface NodeTitleInfo {
   title: string;
   intro: string;
+  // Node reference section for the drawer's "Read more" link; absent for
+  // drawers opened outside the node palette.
+  docsUrl?: string;
 }
 
 // Expression Types

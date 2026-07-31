@@ -261,6 +261,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 import { desktop, isDesktop } from "../../../lib/desktop";
+import { DOCS_BASE_URL } from "../../lib/docsLinks";
 import { recentDisplayName, type RecentFlow } from "../../composables/useRecentFlows";
 import type { FlowSettings } from "../../types";
 import { useTutorialStore } from "../../stores/tutorial-store";
@@ -310,7 +311,7 @@ const goCatalog = () => router.push({ name: "catalog" });
 const goVisuals = () => router.push({ name: "catalog", query: { tab: "visuals" } });
 const goSchedules = () => router.push({ name: "catalog", query: { tab: "schedules" } });
 const goSecrets = () => router.push({ name: "connections", query: { tab: "secrets" } });
-const goDocs = () => router.push({ name: "documentation" });
+const goDocs = () => void desktop.openExternal(DOCS_BASE_URL);
 
 const viewInCatalog = (flow: RecentFlow) => {
   if (flow.catalogId === undefined) return;

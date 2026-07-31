@@ -93,10 +93,10 @@
         </CollapsibleSection>
       </div>
       <div class="modal-actions">
-        <a class="help-docs-link" :href="docsUrl" target="_blank" rel="noopener">
+        <button type="button" class="help-docs-link" @click="openDocs">
           <i class="fa-solid fa-book"></i>
           Full guide: creating custom nodes
-        </a>
+        </button>
         <button class="btn btn-primary" @click="emit('close')">Close</button>
       </div>
     </div>
@@ -107,6 +107,8 @@
 import { nextTick, ref, watch } from "vue";
 import CollapsibleSection from "../../components/common/CollapsibleSection/CollapsibleSection.vue";
 import { componentDocs, returnsChip } from "./componentDocs";
+import { docsUrl } from "../../lib/docsLinks";
+import { desktop } from "../../../lib/desktop";
 import type { ComponentType } from "./designerState";
 
 const props = withDefaults(
@@ -136,7 +138,8 @@ watch(
   },
 );
 
-const docsUrl = "https://edwardvaneechoud.github.io/Flowfile/for-developers/creating-custom-nodes/";
+const openDocs = () =>
+  void desktop.openExternal(docsUrl("users/visual-editor/creating-custom-nodes.html"));
 </script>
 
 <style scoped>
@@ -345,9 +348,14 @@ const docsUrl = "https://edwardvaneechoud.github.io/Flowfile/for-developers/crea
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
+  padding: 0;
   font-size: 0.8125rem;
+  font-family: inherit;
   color: var(--color-accent, #0891b2);
   text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 
 .help-docs-link:hover {

@@ -1079,6 +1079,78 @@ def _resolve_database_credentials(
         return ref_settings, encrypted_password, ref_settings
 
 
+class _FlowIdentity(NamedTuple):
+    """Where a flow lives on disk and what it is called.
+
+    A history snapshot cannot supply this: ``FlowfileSettings`` omits
+    name/path/save_location, and ``flowfile_name`` is whatever the graph was called when
+    the snapshot was taken rather than the current catalog display name. So undo/redo
+    captures identity from the live graph and re-stamps it over the replayed settings.
+    Letting the snapshot win reset ``path`` to ``""``, which broke display-name-by-path
+    lookup (the UI reverted to the raw stem) and path-based save relinking (422 "no save
+    path", or a new orphaned registration).
+    """
+
+    flow_id: int
+    graph_name: str
+    name: str | None
+    path: str | None
+    save_location: str | None
+    source_registration_id: int | None
+
+    @classmethod
+    def capture(cls, graph: "FlowGraph") -> "_FlowIdentity":
+        return cls(
+            flow_id=graph._flow_id,
+            graph_name=graph.__name__,
+            name=graph._flow_settings.name,
+            path=graph._flow_settings.path,
+            save_location=graph._flow_settings.save_location,
+            source_registration_id=graph._flow_settings.source_registration_id,
+        )
+
+    def restore_onto(self, graph: "FlowGraph") -> None:
+        graph._flow_id = self.flow_id
+        graph.__name__ = self.graph_name
+        settings = graph._flow_settings
+        settings.flow_id = self.flow_id
+        settings.name = self.name
+        settings.path = self.path
+        settings.save_location = self.save_location
+        if settings.source_registration_id is None:
+            # A snapshot taken after the flow was registered carries the newer id.
+            settings.source_registration_id = self.source_registration_id
+
+
+class _NodeOwners(NamedTuple):
+    """Which user each node belonged to before a snapshot restore.
+
+    History snapshots deliberately omit ``user_id`` so on-disk flows stay portable across
+    users, so a replay has to re-stamp it or connection-backed nodes come back with
+    ``user_id=None`` and fail to resolve their owner's connection at run time. Nodes the
+    snapshot reintroduces — and a graph whose nodes were all deleted before the undo —
+    fall back to the session owner, which every node in a session shares.
+    """
+
+    by_node_id: dict[int, int]
+    session_owner: int | None
+
+    @classmethod
+    def capture(cls, graph: "FlowGraph") -> "_NodeOwners":
+        by_node_id = {
+            node.node_id: uid
+            for node in graph.nodes
+            if (uid := getattr(node.setting_input, "user_id", None)) is not None
+        }
+        session_owner = next(iter(by_node_id.values()), None)
+        if session_owner is None:
+            session_owner = graph._owner_user_id
+        return cls(by_node_id=by_node_id, session_owner=session_owner)
+
+    def owner_of(self, node_id: int) -> int | None:
+        return self.by_node_id.get(node_id, self.session_owner)
+
+
 class FlowGraph:
     """A class representing a Directed Acyclic Graph (DAG) for data processing pipelines.
 
@@ -1329,39 +1401,10 @@ class FlowGraph:
             determine_insertion_order,
         )
 
-        # Preserve the live on-disk IDENTITY across the restore. Undo/redo replays
-        # graph state + editable settings ONLY; the flow's identity (where it lives on
-        # disk and what it is called) must survive because the snapshot does NOT carry
-        # it: FlowfileSettings omits name/path/save_location, and the snapshot's
-        # flowfile_name is the file STEM ("{flow_id}_test_flow"), not the catalog
-        # display name. Dropping path here previously reset it to "" after undo, which
-        # broke the display-name-by-path lookup (UI reverted to the raw stem) and
-        # path-based save relinking (422 "no save path" / a new orphaned registration).
-        original_flow_id = self._flow_id
-        original_source_registration_id = self._flow_settings.source_registration_id
-        original_name = self._flow_settings.name
-        original_path = self._flow_settings.path
-        original_save_location = self._flow_settings.save_location
-        original_graph_name = self.__name__
+        identity = _FlowIdentity.capture(self)
+        node_owners = _NodeOwners.capture(self)
 
         flow_info = _flowfile_data_to_flow_information(snapshot)
-
-        # The history snapshot intentionally omits ``user_id`` (so on-disk flows stay
-        # portable across users). Capture it from the live graph BEFORE clearing so we
-        # can re-stamp it onto the replayed settings — otherwise connection-backed
-        # nodes would be restored with ``user_id=None`` and fail to resolve their
-        # owner's connection at run time. Same idea as ``open_flow``'s re-stamp, but
-        # sourced from the prior graph state instead of the opening user. If the live
-        # graph holds no stamped nodes (e.g. undo right after deleting every node),
-        # fall back to the session owner remembered by ``with_history_capture``.
-        prior_user_ids = {
-            node.node_id: uid
-            for node in self.nodes
-            if (uid := getattr(node.setting_input, "user_id", None)) is not None
-        }
-        fallback_uid = next(iter(prior_user_ids.values()), None)
-        if fallback_uid is None:
-            fallback_uid = self._owner_user_id
 
         self._node_db.clear()
         self._node_ids.clear()
@@ -1369,17 +1412,8 @@ class FlowGraph:
         self._groups.clear()
         self._results = None
 
-        # Restore editable settings from the snapshot, then re-stamp the LIVE identity
-        # so it is never sourced from the (stem-derived, path-less) snapshot.
         self._flow_settings = flow_info.flow_settings
-        self._flow_settings.flow_id = original_flow_id
-        self._flow_id = original_flow_id
-        self._flow_settings.name = original_name
-        self._flow_settings.path = original_path
-        self._flow_settings.save_location = original_save_location
-        if self._flow_settings.source_registration_id is None:
-            self._flow_settings.source_registration_id = original_source_registration_id
-        self.__name__ = original_graph_name
+        identity.restore_onto(self)
 
         ingestion_order = determine_insertion_order(flow_info)
 
@@ -1388,7 +1422,7 @@ class FlowGraph:
             if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
                 register_missing_node_template(node_info.type)
             node_promise = input_schema.NodePromise(
-                flow_id=original_flow_id,
+                flow_id=identity.flow_id,
                 node_id=node_info.id,
                 pos_x=node_info.x_position or 0,
                 pos_y=node_info.y_position or 0,
@@ -1402,14 +1436,10 @@ class FlowGraph:
             node_info = flow_info.data[node_id]
             if node_info.is_setup and node_info.setting_input is not None:
                 if hasattr(node_info.setting_input, "flow_id"):
-                    node_info.setting_input.flow_id = original_flow_id
+                    node_info.setting_input.flow_id = identity.flow_id
 
-                # Re-stamp the owning user_id (dropped from the snapshot) so the
-                # replayed add_<type> and any deferred connection resolution run
-                # under the correct user. Prefer the node's prior id; fall back to
-                # the session owner (shared by all nodes in a session).
                 if hasattr(node_info.setting_input, "user_id"):
-                    node_info.setting_input.user_id = prior_user_ids.get(node_id, fallback_uid)
+                    node_info.setting_input.user_id = node_owners.owner_of(node_id)
 
                 if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
                     # .get() execs the node module lazily; on any failure the node
@@ -1762,9 +1792,9 @@ class FlowGraph:
         This updates their x and y positions for UI rendering.
 
         Args:
-            y_spacing: The vertical spacing between layers.
-            x_spacing: The horizontal spacing between nodes in the same layer.
-            initial_y: The initial y-position for the first layer.
+            y_spacing: The minimum vertical spacing between two nodes in a layer.
+            x_spacing: The horizontal spacing between layers.
+            initial_y: The y-position of the topmost node.
         """
         self.flow_logger.info("Applying layered layout...")
         start_time = time()
@@ -1792,7 +1822,7 @@ class FlowGraph:
                         )
                 elif node:
                     self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
-                # else: Node not found, already warned by calculate_layered_layout
+                # else: node removed between calculation and apply; skip it
 
             # Reflowed node positions invalidate group boxes — refit them.
             self._recompute_group_bounds()
@@ -1803,8 +1833,7 @@ class FlowGraph:
             )
 
         except Exception as e:
-            self.flow_logger.error(f"Error applying layout: {e}")
-            raise  # Optional: re-raise the exception
+            self.flow_logger.error(f"Layout failed, keeping current positions: {e}")
 
     @property
     def flow_id(self) -> int:

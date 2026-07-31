@@ -21,6 +21,7 @@ export const saveFlow = async (
   flowId: number,
   flowPath: string,
   namespaceId?: number | null,
+  registerInCatalog = true,
 ): Promise<number> => {
   const params: Record<string, unknown> = {
     flow_id: flowId,
@@ -28,6 +29,9 @@ export const saveFlow = async (
   };
   if (namespaceId !== undefined && namespaceId !== null) {
     params.namespace_id = namespaceId;
+  }
+  if (!registerInCatalog) {
+    params.register_in_catalog = false;
   }
   const response = await axios.post("/save_flow", null, {
     params,
