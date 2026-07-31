@@ -61,10 +61,11 @@ class FlowRegistrationSnapshot:
 
 
 def auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
-    """Register a flow in the default catalog namespace (General > default) if it exists.
+    """Register a flow under ``General > {Unnamed Flows | Local Flows}``.
 
-    Failures are logged at info level since users may wonder why some flows
-    don't appear in the catalog.
+    The target is chosen by path shape, not by the ``default`` schema. Failures are
+    logged at info level since users may wonder why some flows don't appear in the
+    catalog.
     """
     if user_id is None or flow_path is None:
         return

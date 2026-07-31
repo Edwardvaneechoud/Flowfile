@@ -315,8 +315,15 @@ const handleSaveFlow = async (flowPath: string) => {
   }
 
   try {
+    // Unchecking must actually opt out: an undefined namespace_id alone still
+    // routes into auto-registration on the backend.
     const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : undefined;
-    const newFlowId = await saveFlow(props.flowId, flowPath, namespaceId ?? undefined);
+    const newFlowId = await saveFlow(
+      props.flowId,
+      flowPath,
+      namespaceId ?? undefined,
+      registerInCatalog.value,
+    );
     ElMessage.success("Flow saved");
     isVisible.value = false;
     emit("save-complete", newFlowId || props.flowId);
