@@ -14,7 +14,6 @@
         :show-old-columns="true"
         :show-headers="true"
         :show-title="false"
-        :show-data="true"
         title="Select data"
         @update-select-inputs="updateSelectInputsHandler"
       />
@@ -26,6 +25,7 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import {
+  applySelectPositions,
   createNodeSelect,
   updateNodeSelect,
 } from "../../../baseNode/selectComponents/nodeSelectLogic";
@@ -45,25 +45,11 @@ const dataLoaded = ref(false);
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSelect,
   onBeforeSave: () => {
-    nodeSelect.value.select_input.sort((a, b) => a.position - b.position);
-    const originalData = nodeStore.getCurrentNodeData();
-    const newColumnSettings = nodeSelect.value.select_input;
     nodeSelect.value.keep_missing = keepMissing.value;
-    if (originalData) {
-      newColumnSettings.forEach((newColumnSetting, index) => {
-        let original_index = originalData.main_input?.table_schema.findIndex(
-          (column) => column.name === newColumnSetting.old_name,
-        );
-        let original_object =
-          index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
-        if (original_object) {
-          newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
-          newColumnSetting.data_type_change = newColumnSetting.is_altered;
-          newColumnSetting.position = index;
-          newColumnSetting.original_position = original_index || index;
-        }
-      });
-    }
+    applySelectPositions(
+      nodeSelect.value.select_input,
+      nodeStore.getCurrentNodeData()?.main_input?.table_schema,
+    );
     return true;
   },
 });

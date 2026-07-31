@@ -42,7 +42,7 @@
               </select>
             </td>
             <td>
-              <input type="text" :value="agg.new_name" @input="updateNewName(idx, ($event.target as HTMLInputElement).value)" class="input-sm" />
+              <input type="text" :value="agg.new_name" class="input-sm" v-bind="NO_AUTOFILL" @input="updateNewName(idx, ($event.target as HTMLInputElement).value)" />
             </td>
           </tr>
         </tbody>
@@ -82,6 +82,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
+import { NO_AUTOFILL } from '../../utils/noAutofill'
 import type { GroupBySettings, AggColumn, AggType, ColumnSchema } from '../../types'
 
 const props = defineProps<{

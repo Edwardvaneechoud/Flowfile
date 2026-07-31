@@ -278,6 +278,9 @@
   --color-text-tertiary: #94a3b8;
   --color-text-muted: #64748b;
   --color-text-inverse: #1a1a2e;
+  /* Light-mode #0c254a on the dark --color-background-selected (#0f3460) is ~1.1:1,
+     which made every .is-selected list item unreadable in dark mode. */
+  --color-text-selected: #dbeafe;
 
   --color-border-primary: #334155;
   --color-border-secondary: #475569;

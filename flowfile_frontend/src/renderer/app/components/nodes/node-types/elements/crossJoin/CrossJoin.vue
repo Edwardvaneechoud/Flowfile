@@ -11,7 +11,6 @@
           :show-keep-option="true"
           :show-title="true"
           :show-headers="true"
-          :show-data="true"
           title="Left data"
           @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
         />
@@ -20,7 +19,6 @@
           :show-keep-option="true"
           :show-headers="true"
           :show-title="true"
-          :show-data="true"
           title="Right data"
           @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
         />

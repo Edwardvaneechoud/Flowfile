@@ -1,8 +1,10 @@
+import { ElMessage } from "element-plus";
 import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
 import setupService from "../services/setup.service";
 import { useAuthStore } from "../stores/auth-store";
+import { CHUNK_RELOAD_KEY, decideChunkRecovery } from "./chunkReload";
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -150,6 +152,34 @@ const router = createRouter({
   routes,
 });
 
+router.onError((error, to) => {
+  const decision = decideChunkRecovery(
+    error,
+    to.fullPath,
+    sessionStorage.getItem(CHUNK_RELOAD_KEY),
+  );
+
+  if (decision === "not-a-chunk-error") {
+    console.error("[router] navigation failed", error);
+    return;
+  }
+
+  if (decision === "give-up") {
+    sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+    console.error("[router] chunk still unavailable after reload", error);
+    ElMessage.error(
+      import.meta.env.DEV
+        ? "Could not load this page's code. Restart the dev server (npm run dev:web) and try again."
+        : "Could not load this page. Please reload the app.",
+    );
+    return;
+  }
+
+  sessionStorage.setItem(CHUNK_RELOAD_KEY, to.fullPath);
+  window.location.hash = to.fullPath;
+  window.location.reload();
+});
+
 let setupChecked = false;
 let setupRequired = false;
 
@@ -223,6 +253,10 @@ router.beforeEach(async (to, _from, next) => {
       next();
     }
   }
+});
+
+router.afterEach(() => {
+  sessionStorage.removeItem(CHUNK_RELOAD_KEY);
 });
 
 export default router;

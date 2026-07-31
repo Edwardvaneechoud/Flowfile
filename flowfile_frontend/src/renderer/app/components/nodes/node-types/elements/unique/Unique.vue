@@ -24,7 +24,6 @@
         :show-old-columns="true"
         :show-headers="true"
         :show-title="false"
-        :show-data="true"
         title="Select data"
         original-column-header="Column"
         @update-select-inputs="calculateSelects"
