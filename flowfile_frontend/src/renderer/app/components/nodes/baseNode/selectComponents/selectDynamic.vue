@@ -1,5 +1,5 @@
 <template>
-  <div class="select-dynamic-root">
+  <div ref="rootRef" class="select-dynamic-root">
     <div v-if="dataLoaded" class="select-dynamic-content">
       <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
         <UnavailableField tooltip-text="Field not available click for removing them for memory" />
@@ -11,78 +11,166 @@
       </div>
 
       <div class="listbox-wrapper select-dynamic-listbox">
+        <div class="column-list-toolbar">
+          <!-- Acts on the selection, so kept apart from the global controls -->
+          <div v-if="canReorderSelection" class="column-list-selection">
+            <span class="column-list-selection-count">
+              {{ selection.selectedIndices.length }} selected
+            </span>
+            <button
+              v-for="action in reorderActions"
+              :key="action.command"
+              class="btn btn-sm btn-ghost"
+              type="button"
+              :title="action.title"
+              :aria-label="action.title"
+              :disabled="!canMove(action.command)"
+              @mousedown.prevent
+              @click="moveSelectedTo(action.command)"
+            >
+              {{ action.glyph }}
+            </button>
+            <button
+              class="btn btn-sm btn-ghost column-list-clear"
+              type="button"
+              title="Clear selection"
+              aria-label="Clear selection"
+              @mousedown.prevent
+              @click="clearSelection"
+            >
+              ✕
+            </button>
+          </div>
+          <span v-else class="column-list-count">
+            {{ keptCount }} of {{ localSelectInputs.length }} kept
+          </span>
+
+          <div class="search-container column-list-search">
+            <input
+              v-model="filterText"
+              class="search-input"
+              type="search"
+              placeholder="Filter columns…"
+              aria-label="Filter columns"
+              v-bind="NO_AUTOFILL"
+            />
+          </div>
+          <div class="column-list-actions">
+            <template v-if="props.showKeepOption">
+              <button
+                class="btn btn-sm btn-ghost"
+                type="button"
+                title="Keep all columns"
+                @mousedown.prevent
+                @click="setKeepForAll(true)"
+              >
+                ☑
+              </button>
+              <button
+                class="btn btn-sm btn-ghost"
+                type="button"
+                title="Keep no columns"
+                @mousedown.prevent
+                @click="setKeepForAll(false)"
+              >
+                ☐
+              </button>
+            </template>
+          </div>
+        </div>
+
         <div class="table-wrapper">
-          <table class="styled-table">
+          <table class="styled-table column-list">
+            <colgroup>
+              <col style="width: 22px" />
+              <col v-if="props.showOldColumns" />
+              <col v-if="props.showNewColumns" />
+              <col v-if="props.showDataType" style="width: 130px" />
+              <col v-if="props.showKeepOption" style="width: 52px" />
+            </colgroup>
             <thead>
               <tr v-if="props.showHeaders">
+                <th aria-label="Reorder" />
                 <th
                   v-if="props.showOldColumns"
-                  :style="{ width: standardColumnWidth }"
+                  class="is-sortable"
+                  :title="sortHint"
+                  :aria-sort="ariaSort"
                   @click="toggleSort"
                 >
-                  {{ originalColumnHeader }}
-                  <span v-if="props.sortedBy === 'asc'">▲</span>
-                  <span v-else-if="props.sortedBy === 'desc'">▼</span>
+                  <span class="th-inner">
+                    <span class="th-label">{{ originalColumnHeader }}</span>
+                    <span class="sort-glyph">{{
+                      sortDirection === "asc" ? "▲" : sortDirection === "desc" ? "▼" : "⇅"
+                    }}</span>
+                  </span>
                 </th>
-                <th v-if="props.showNewColumns" :style="{ width: standardColumnWidth }">
-                  New column name
-                </th>
-                <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">Data type</th>
-                <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
+                <th v-if="props.showNewColumns">New column name</th>
+                <th v-if="props.showDataType">Data type</th>
+                <th v-if="props.showKeepOption" class="is-centered">Keep</th>
               </tr>
             </thead>
-            <tbody ref="selectableContainerRef">
+            <tbody ref="selectableContainerRef" @dragend="handleDragEnd">
               <tr
-                v-for="(column, index) in localSelectInputs"
+                v-for="{ column, index } in visibleRows"
                 :key="column.old_name"
-                :class="{ 'drag-over': dragOverIndex === index }"
-                :style="{ opacity: column.is_available ? 1 : 0.6 }"
-                draggable="true"
+                :class="rowClasses(index, column)"
+                :draggable="!isFiltered"
                 @dragstart="handleDragStart(index, $event)"
-                @dragover.prevent="handleDragOver(index)"
-                @drop="handleDrop(index)"
+                @dragover.prevent="handleDragOver(index, $event)"
+                @drop="handleDrop"
               >
+                <td class="drag-handle-cell" :title="dragHandleTitle">⠿</td>
                 <td
                   v-if="props.showOldColumns"
-                  :class="{ 'highlight-row': isSelected(column.old_name) }"
-                  @click="handleItemClick(index, column.old_name, $event)"
-                  @contextmenu.prevent="openContextMenu(index, column.old_name, $event)"
+                  class="column-name-cell"
+                  :title="column.old_name"
+                  @mousedown="handleItemMouseDown($event)"
+                  @click="handleItemClick(index, $event)"
+                  @contextmenu.prevent="openContextMenu(index, $event)"
                 >
                   <div v-if="!column.is_available" class="unavailable-field">
                     <UnavailableField />
-                    <span style="margin-left: 20px">{{ column.old_name }}</span>
+                    <span class="unavailable-name">{{ column.old_name }}</span>
                   </div>
-                  <div v-else>
+                  <div v-else class="column-name">
                     {{ column.old_name }}
                   </div>
                 </td>
 
-                <td
-                  v-if="props.showNewColumns"
-                  :class="{ 'highlight-row': isSelected(column.old_name) }"
-                >
-                  <el-input v-model="column.new_name" size="small" class="smaller-el-input" />
+                <td v-if="props.showNewColumns">
+                  <input
+                    v-model="column.new_name"
+                    class="inline-input"
+                    type="text"
+                    :placeholder="column.old_name"
+                    :aria-label="`New name for ${column.old_name}`"
+                    v-bind="NO_AUTOFILL"
+                  />
                 </td>
 
-                <td
-                  v-if="props.showDataType"
-                  :class="{ 'highlight-row': isSelected(column.old_name) }"
-                >
-                  <el-select v-model="column.data_type" size="small">
-                    <el-option
-                      v-for="dataType in dataTypes"
-                      :key="dataType"
-                      :label="dataType"
-                      :value="dataType"
-                    />
-                  </el-select>
+                <td v-if="props.showDataType" :class="{ 'is-changed': isTypeChanged(column) }">
+                  <div class="cell-with-marker">
+                    <el-select v-model="column.data_type" size="small">
+                      <el-option
+                        v-for="dataType in dataTypes"
+                        :key="dataType"
+                        :label="dataType"
+                        :value="dataType"
+                      />
+                    </el-select>
+                    <span
+                      v-if="isTypeChanged(column)"
+                      class="change-marker"
+                      :title="`Data type changed from ${originalTypeOf(column) ?? 'the source type'}`"
+                      aria-label="Data type changed"
+                      >●</span
+                    >
+                  </div>
                 </td>
 
-                <td
-                  v-if="props.showKeepOption"
-                  :class="{ 'highlight-row': isSelected(column.old_name) }"
-                >
-                  <el-checkbox v-model="column.keep" />
+                <td v-if="props.showKeepOption" class="is-centered">
+                  <el-checkbox v-model="column.keep" :aria-label="`Keep ${column.old_name}`" />
                 </td>
               </tr>
             </tbody>
@@ -96,172 +184,327 @@
       ref="contextMenuRef"
       class="context-menu"
       :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
+      @click.stop
     >
-      <button @click="selectAllSelected">Select</button>
-      <button @click="deselectAllSelected">Deselect</button>
+      <button @click="setKeepForSelected(true)">Select</button>
+      <button @click="setKeepForSelected(false)">Deselect</button>
+      <div class="context-menu-divider" />
+      <button :disabled="!canMove('top')" @click="moveSelectedTo('top')">Move to top</button>
+      <button :disabled="!canMove('up')" @click="moveSelectedTo('up')">Move up</button>
+      <button :disabled="!canMove('down')" @click="moveSelectedTo('down')">Move down</button>
+      <button :disabled="!canMove('bottom')" @click="moveSelectedTo('bottom')">
+        Move to bottom
+      </button>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted, watchEffect } from "vue";
-import { SelectInput } from "../nodeInput";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { SelectInput } from "../../../../types/node.types";
 import { useNodeStore } from "../../../../stores/column-store";
+import { NO_AUTOFILL } from "../../../../utils/noAutofill";
 import UnavailableField from "./UnavailableFields.vue";
+import {
+  EMPTY_SELECTION,
+  applyClick,
+  applyReorder,
+  assignPositions,
+  clampSelection,
+  ensureSelected,
+  insertIndexFromPointer,
+  isMacPlatform,
+  moveItems,
+  nextSortDirection,
+  partitionAvailable,
+  readModifiers,
+  reconcileOrder,
+  reorderInsertIndex,
+  sortForDirection,
+  type ReorderCommand,
+  type SelectionState,
+  type SortDirection,
+} from "./columnSelection";
 
-const sortState = ref<"none" | "asc" | "desc">("none");
+const props = withDefaults(
+  defineProps<{
+    selectInputs?: SelectInput[];
+    showOldColumns?: boolean;
+    showNewColumns?: boolean;
+    showKeepOption?: boolean;
+    showDataType?: boolean;
+    title?: string;
+    showHeaders?: boolean;
+    showTitle?: boolean;
+    originalColumnHeader?: string;
+  }>(),
+  {
+    selectInputs: () => [],
+    showOldColumns: true,
+    showNewColumns: true,
+    showKeepOption: false,
+    showDataType: false,
+    title: "Select columns",
+    showHeaders: true,
+    showTitle: true,
+    originalColumnHeader: "Original column name",
+  },
+);
 
-const initializeOrder = () => {
-  const sortedInputs = [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
-  );
-  if (sortState.value === "none") {
-    localSelectInputs.value = [...sortedInputs];
-  }
+/**
+ * defineModel rather than a prop+emit pair: only the Select node binds
+ * v-model:sortedBy, so every other instance used to be stuck on a permanently
+ * "none" prop and its header re-sorted ascending on every click. The local
+ * fallback gives those instances a working three-state toggle.
+ */
+const sortedBy = defineModel<SortDirection>("sortedBy", { default: "none" });
+
+/** NodeSelect.sorted_by is optional, so the model can legitimately arrive undefined. */
+const sortDirection = computed<SortDirection>(() => sortedBy.value ?? "none");
+
+/**
+ * Only the Select node populates original_position; Join/CrossJoin/FuzzyMatch/
+ * Unique leave it null, so "restore original order" falls back to the order the
+ * parent still holds — which the component never reorders, only re-stamps.
+ */
+const originalPositionOf = (input: SelectInput): number => {
+  if (Number.isFinite(input.original_position)) return input.original_position;
+  const index = props.selectInputs.findIndex((s) => s.old_name === input.old_name);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 };
 
 const toggleSort = () => {
-  if (props.sortedBy === "none") {
-    emit("update:sortedBy", "asc");
-    localSelectInputs.value.sort((a, b) => a.old_name.localeCompare(b.old_name));
-  } else if (props.sortedBy === "asc") {
-    emit("update:sortedBy", "desc");
-    localSelectInputs.value.sort((a, b) => b.old_name.localeCompare(a.old_name));
-  } else {
-    emit("update:sortedBy", "none");
-    localSelectInputs.value.sort((a, b) => a.original_position - b.original_position);
-  }
-  localSelectInputs.value.forEach((input, i) => (input.position = i));
+  sortedBy.value = nextSortDirection(sortDirection.value);
+  localSelectInputs.value = sortForDirection(
+    localSelectInputs.value,
+    sortDirection.value,
+    (input) => input.old_name,
+    originalPositionOf,
+  );
+  assignPositions(localSelectInputs.value);
+  // Row indices no longer mean what the selection recorded.
+  clearSelection();
 };
 
-const props = defineProps({
-  selectInputs: {
-    type: Array as () => SelectInput[],
-    default: () => [],
-  },
-  showOldColumns: { type: Boolean, default: true },
-  showNewColumns: { type: Boolean, default: true },
-  showKeepOption: { type: Boolean, default: false },
-  showDataType: { type: Boolean, default: false },
-  title: { type: String, default: "Select columns" },
-  showOptionKeepUnseen: { type: Boolean, default: false },
-  showHeaders: { type: Boolean, default: true },
-  showData: { type: Boolean, default: true },
-  showTitle: { type: Boolean, default: true },
-  draggable: { type: Boolean, default: false },
-  showMissing: { type: Boolean, default: true },
-  originalColumnHeader: { type: String, default: "Original column name" },
-  sortedBy: { type: String, default: "none" },
-});
+/**
+ * Source data type per column, captured the first time the component sees it, so
+ * an unsaved edit shows up immediately. A column that arrives already carrying a
+ * saved type change has no recoverable source type here — `data_type_change` is
+ * the persisted signal for those. (`is_altered` is not: the backend also sets it
+ * for a plain rename.)
+ */
+const sourceDataTypes = new Map<string, string | undefined>();
+
+const rememberSourceTypes = (inputs: readonly SelectInput[]) => {
+  inputs.forEach((input) => {
+    if (!sourceDataTypes.has(input.old_name) && !input.data_type_change) {
+      sourceDataTypes.set(input.old_name, input.data_type);
+    }
+  });
+};
+
+const originalTypeOf = (column: SelectInput) => sourceDataTypes.get(column.old_name);
+
+const isTypeChanged = (column: SelectInput) => {
+  const source = sourceDataTypes.get(column.old_name);
+  return source === undefined ? Boolean(column.data_type_change) : source !== column.data_type;
+};
 
 // State and Store
 const dataLoaded = ref(true);
-const selectedColumns = ref<string[]>([]);
-const firstSelectedIndex = ref<number | null>(null);
+const selection = ref<SelectionState>({ ...EMPTY_SELECTION, selectedIndices: [] });
+
+const clearSelection = () => {
+  selection.value = { anchorIndex: null, selectedIndices: [] };
+};
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const showContextMenu = ref(false);
-const draggingIndex = ref<number>(-1);
-const dragOverIndex = ref<number>(-1);
+/** Indices captured at dragstart — the block that will move on drop. */
+const draggingIndices = ref<number[]>([]);
+/** Insertion gap in 0..n, or null when no drag is in flight. */
+const dropIndex = ref<number | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
+const rootRef = ref<HTMLElement | null>(null);
+const isMac = isMacPlatform();
 // Ref on the <tbody> instead of a global id — avoids collisions if more than
 // one selectDynamic instance is mounted at the same time.
 const selectableContainerRef = ref<HTMLElement | null>(null);
 const nodeStore = useNodeStore();
 const dataTypes = nodeStore.getDataTypes();
 
+rememberSourceTypes(props.selectInputs);
+
 const localSelectInputs = ref<SelectInput[]>(
-  [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
-  ),
+  partitionAvailable(props.selectInputs, (input) => input.is_available),
 );
 
-watchEffect(() => {
-  localSelectInputs.value = [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
-  );
+/**
+ * Merge rather than replace. The previous watchEffect re-derived the list from
+ * props on any tracked change — including a parent handing back an equivalent
+ * array — which silently threw away whatever order the user had dragged into
+ * place. Skipped while a drag is in flight.
+ */
+watch(
+  () => props.selectInputs,
+  (incoming) => {
+    rememberSourceTypes(incoming);
+    if (dropIndex.value !== null) return;
+    const merged = reconcileOrder(localSelectInputs.value, incoming, (input) => input.old_name);
+    localSelectInputs.value =
+      sortDirection.value === "none"
+        ? partitionAvailable(merged, (input) => input.is_available)
+        : merged;
+    selection.value = clampSelection(selection.value, localSelectInputs.value.length);
+  },
+  { deep: true },
+);
+
+const filterText = ref("");
+
+const isFiltered = computed(() => filterText.value.trim().length > 0);
+
+/**
+ * Rows carry their index in the unfiltered list, because every selection and
+ * reorder operation is expressed against that list. Reordering is disabled while
+ * a filter is active — a drop position between two visible rows is ambiguous.
+ */
+const visibleRows = computed(() => {
+  const query = filterText.value.trim().toLowerCase();
+  return localSelectInputs.value
+    .map((column, index) => ({ column, index }))
+    .filter(
+      ({ column }) =>
+        !query ||
+        column.old_name.toLowerCase().includes(query) ||
+        (column.new_name ?? "").toLowerCase().includes(query),
+    );
 });
 
-// Computed properties for column widths
-const standardColumnCount = computed(
-  () => [props.showOldColumns, props.showNewColumns, props.showDataType].filter(Boolean).length,
+const keptCount = computed(() => localSelectInputs.value.filter((c) => c.keep).length);
+
+const canReorderSelection = computed(
+  () => !isFiltered.value && selection.value.selectedIndices.length > 0,
 );
 
-const standardColumnWidth = computed(() => {
-  const totalColumns = standardColumnCount.value + 0.5;
-  return totalColumns > 0 ? 100 / totalColumns + "%" : "0%";
-});
+const reorderActions: { command: ReorderCommand; glyph: string; title: string }[] = [
+  { command: "top", glyph: "⤒", title: "Move selected to top" },
+  { command: "up", glyph: "↑", title: "Move selected up" },
+  { command: "down", glyph: "↓", title: "Move selected down" },
+  { command: "bottom", glyph: "⤓", title: "Move selected to bottom" },
+];
 
-const selectColumnWidth = computed(() =>
-  standardColumnCount.value > 0 ? 50 / (standardColumnCount.value + 0.5) + "%" : "0%",
+const dragHandleTitle = computed(() =>
+  isFiltered.value ? "Clear the filter to reorder columns" : "Drag to reorder",
 );
+
+const sortHint = computed(() =>
+  sortDirection.value === "none"
+    ? "Sort A→Z"
+    : sortDirection.value === "asc"
+      ? "Sort Z→A"
+      : "Restore original order",
+);
+
+const ariaSort = computed(() =>
+  sortDirection.value === "asc"
+    ? "ascending"
+    : sortDirection.value === "desc"
+      ? "descending"
+      : "none",
+);
+
+const setKeepForAll = (keep: boolean) => {
+  localSelectInputs.value.forEach((column) => {
+    column.keep = keep;
+  });
+};
 
 // Helper Methods
-const isSelected = (columnName: string) => selectedColumns.value.includes(columnName);
+const isSelected = (index: number) => selection.value.selectedIndices.includes(index);
 
-const getRange = (start: number, end: number) =>
-  start < end
-    ? Array.from({ length: end - start + 1 }, (_, i) => i + start)
-    : Array.from({ length: start - end + 1 }, (_, i) => i + end);
+const rowClasses = (index: number, column: SelectInput) => ({
+  "is-selected": isSelected(index),
+  "is-unavailable": !column.is_available,
+  "is-dragging": draggingIndices.value.includes(index),
+  "is-drop-before": dropIndex.value === index,
+  "is-drop-after":
+    dropIndex.value === localSelectInputs.value.length &&
+    index === localSelectInputs.value.length - 1,
+});
+
+/** Commit a reordered array, keeping object identity so `position` reaches the parent. */
+const commitOrder = (items: SelectInput[], selectedIndices: number[]) => {
+  localSelectInputs.value = assignPositions(items);
+  selection.value = { anchorIndex: selectedIndices[0] ?? null, selectedIndices };
+};
 
 // Drag & Drop Handlers
 const handleDragStart = (index: number, event: DragEvent) => {
-  draggingIndex.value = index;
+  // Dragging a row outside the selection collapses onto it first, so the block
+  // that moves is always the block the user can see highlighted.
+  selection.value = ensureSelected(selection.value, index);
+  draggingIndices.value = [...selection.value.selectedIndices];
   event.dataTransfer?.setData("text", "");
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
 };
 
-const handleDragOver = (index: number) => {
-  dragOverIndex.value = index;
+const handleDragOver = (index: number, event: DragEvent) => {
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  dropIndex.value = insertIndexFromPointer(rect.top, rect.height, event.clientY, index);
 };
 
-const handleDrop = (index: number) => {
-  const itemToMove = localSelectInputs.value.splice(draggingIndex.value, 1)[0];
-  localSelectInputs.value.splice(index, 0, itemToMove);
-  draggingIndex.value = -1;
-  dragOverIndex.value = -1;
-  localSelectInputs.value.forEach((input, i) => (input.position = i));
+const handleDrop = () => {
+  if (dropIndex.value !== null && draggingIndices.value.length > 0) {
+    const result = moveItems(localSelectInputs.value, draggingIndices.value, dropIndex.value);
+    if (result.changed) commitOrder(result.items, result.selectedIndices);
+  }
+  handleDragEnd();
+};
+
+const handleDragEnd = () => {
+  draggingIndices.value = [];
+  dropIndex.value = null;
 };
 
 // Item Selection and Context Menu
-const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent) => {
-  if (event.shiftKey && firstSelectedIndex.value !== null) {
-    const range = getRange(firstSelectedIndex.value, clickedIndex);
-    selectedColumns.value = range
-      .map((index) => localSelectInputs.value[index].old_name)
-      .filter(Boolean);
-  } else {
-    firstSelectedIndex.value = clickedIndex;
-    selectedColumns.value = [localSelectInputs.value[clickedIndex].old_name];
+const handleItemMouseDown = (event: MouseEvent) => {
+  // Without this the browser extends its own text selection from wherever the
+  // caret happens to sit, painting the whole drawer blue.
+  if (event.shiftKey) {
+    event.preventDefault();
+    window.getSelection()?.removeAllRanges();
   }
 };
 
-const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
-  showContextMenu.value = true;
+const handleItemClick = (clickedIndex: number, event: MouseEvent) => {
+  selection.value = applyClick(selection.value, clickedIndex, readModifiers(event, isMac));
+};
+
+const openContextMenu = (clickedIndex: number, event: MouseEvent) => {
   event.stopPropagation();
-  if (!selectedColumns.value.includes(columnName)) {
-    handleItemClick(clickedIndex, columnName, event);
-  }
+  selection.value = ensureSelected(selection.value, clickedIndex);
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
+  showContextMenu.value = true;
 };
 
-const selectAllSelected = () => {
-  localSelectInputs.value.forEach((column) => {
-    if (selectedColumns.value.includes(column.old_name)) {
-      column.keep = true;
-    }
+const setKeepForSelected = (keep: boolean) => {
+  selection.value.selectedIndices.forEach((index) => {
+    const column = localSelectInputs.value[index];
+    if (column) column.keep = keep;
   });
   showContextMenu.value = false;
-  selectedColumns.value = [];
+  clearSelection();
 };
 
-const deselectAllSelected = () => {
-  localSelectInputs.value.forEach((column) => {
-    if (selectedColumns.value.includes(column.old_name)) {
-      column.keep = false;
-    }
-  });
+const canMove = (command: ReorderCommand) =>
+  reorderInsertIndex(selection.value.selectedIndices, localSelectInputs.value.length, command) !==
+  null;
+
+const moveSelectedTo = (command: ReorderCommand) => {
+  const result = applyReorder(localSelectInputs.value, selection.value.selectedIndices, command);
+  if (result.changed) commitOrder(result.items, result.selectedIndices);
   showContextMenu.value = false;
-  selectedColumns.value = [];
 };
 
 const hasMissingFields = computed(() =>
@@ -269,26 +512,25 @@ const hasMissingFields = computed(() =>
 );
 
 const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as Node;
-  const container = selectableContainerRef.value;
+  const target = event.target as HTMLElement;
 
-  // Always close the context menu when clicking anywhere outside it. The menu
-  // floats over the table now that the table-wrapper flex-fills the pane, so
-  // tying close-behavior to "clicked outside the tbody" no longer works — the
-  // user has nowhere outside the tbody to click.
+  // The menu floats over the table, so there is no "outside the tbody" to click.
   if (showContextMenu.value && contextMenuRef.value && !contextMenuRef.value.contains(target)) {
     showContextMenu.value = false;
   }
 
-  if (container && !container.contains(target)) {
-    selectedColumns.value = [];
+  // Scoped to this instance: Join/CrossJoin/FuzzyMatch mount two pickers at once.
+  const insideThisPicker = rootRef.value?.contains(target) ?? false;
+  const keepsSelection =
+    insideThisPicker &&
+    Boolean(target.closest?.("tbody tr") || target.closest?.(".column-list-selection"));
+  if (!keepsSelection) {
+    clearSelection();
   }
 };
 
 onMounted(() => {
   window.addEventListener("click", handleClickOutside);
-
-  initializeOrder();
 });
 
 onUnmounted(() => {
@@ -296,15 +538,18 @@ onUnmounted(() => {
 });
 
 // Emit and Expose
-const emit = defineEmits(["updateSelectInputs", "update:sortedBy"]);
+const emit = defineEmits<{ (e: "updateSelectInputs", inputs: SelectInput[]): void }>();
 
 const removeMissingFields = () => {
-  const availableColumns = localSelectInputs.value.filter((column) => column.is_available);
+  // Re-stamp like commitOrder does: only Select re-stamps again on save, so the
+  // other pickers would ship the gaps left by the removed rows.
+  const availableColumns = assignPositions(
+    localSelectInputs.value.filter((column) => column.is_available),
+  );
   localSelectInputs.value = availableColumns;
+  selection.value = clampSelection(selection.value, availableColumns.length);
   emit("updateSelectInputs", availableColumns);
 };
-
-defineExpose({ localSelectInputs });
 </script>
 
 <style scoped>
@@ -335,13 +580,9 @@ defineExpose({ localSelectInputs });
   background-color: var(--color-background-hover);
 }
 
-/* Table wrapper for scrolling */
+/* Overrides only — shadow/radius/margin come from the shared .table-wrapper */
 .table-wrapper {
   max-height: 700px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border-radius: 8px;
-  overflow: auto;
-  margin: 5px;
 }
 
 /* Adjusted font size for input fields */
@@ -356,17 +597,7 @@ defineExpose({ localSelectInputs });
   line-height: 20px;
 }
 
-/* Highlight selected rows */
-.highlight-row {
-  background-color: #e7e6e6 !important;
-}
-
-/* Greyed out styling for unavailable fields */
-.greyed-out {
-  background-color: #dcdcdc !important;
-  color: #888 !important;
-  z-index: 1;
-}
+/* Row selection / drag / unavailable states live in styles/components/_column-list.css */
 
 /* Unavailable field styling */
 .unavailable-field {
@@ -376,26 +607,28 @@ defineExpose({ localSelectInputs });
   pointer-events: auto;
 }
 
-/* Remove missing fields button styling */
+/* Tinted rather than a solid slab, matching FuzzyMatch's .rule-card.is-invalid.
+   The old #d9534f set no text colour at all. */
 .remove-missing-fields {
   display: flex;
   align-items: center;
-  background-color: #d9534f;
-  padding: 4px 8px;
-  margin: 10px 20px;
-  text-align: center;
+  gap: var(--spacing-1);
+  margin: var(--spacing-2-5) var(--spacing-5);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--border-radius-sm);
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  border-radius: 4px;
-  font-weight: bold;
-  font-size: 0.9em;
+  transition: all var(--transition-fast) var(--transition-timing);
 }
 
 .remove-missing-fields:hover {
-  background-color: #c9302c;
-}
-
-.remove-missing-fields > unavailable-field {
-  margin-right: 4px;
+  background-color: var(--color-danger);
+  border-color: var(--color-danger-hover);
+  color: var(--color-text-inverse);
 }
 
 /* Adjustments for el-checkbox component */

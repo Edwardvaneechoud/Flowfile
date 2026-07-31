@@ -70,14 +70,13 @@ export default defineConfig({
         emptyOutDir: true,
         minify: false,
     },
-    optimizeDeps: {
-        // Browser sees "504 (Outdated Optimize Dep)" when Vite's pre-bundled
-        // deps go stale relative to a previously loaded page. The webview
-        // caches the import URL with the old hash; rebuilding the cache from
-        // scratch on each `vite` start avoids the mismatch entirely. Costs
-        // ~5–15s of cold-start time; cheap relative to a manual `rm -rf`.
-        force: true,
-    },
+    // Dep pre-bundling is left on Vite's own hash-based invalidation (it keys the
+    // cache on lockfile + config, so a branch switch rebuilds it). `force: true`
+    // used to live here, but it deletes the shared deps cache on every `vite`
+    // start — including a start that then dies on strictPort — which leaves a
+    // still-running server serving "504 (Outdated Optimize Dep)" forever. The
+    // router's onError guard now recovers from a stale cache; to rebuild it by
+    // hand use `npm run dev:web:force`.
     plugins: [
         vuePlugin()
     ],

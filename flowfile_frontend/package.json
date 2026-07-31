@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tauri dev",
     "dev:web": "vite --config vite.config.mjs",
+    "dev:web:force": "vite --config vite.config.mjs --force",
     "build": "npm run lint && vue-tsc --noEmit && tauri build",
     "build:web": "npm run lint && vue-tsc --noEmit && vite build --config vite.config.mjs",
     "build:renderer-only": "vite build --config vite.config.mjs",
