@@ -358,19 +358,19 @@
             font-size: 1.2rem;
         }
 
-        .approach-card ol {
-            padding-left: 1.25rem;
-            margin: 0;
+        .approach-canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
         }
 
-        .approach-card li {
-            padding: 0.4rem 0;
-            color: rgba(255,255,255,0.9);
-            font-size: 0.95rem;
-        }
-
-        .approach-card li strong {
-            color: white;
+        .approach-caption {
+            margin: 1rem 0 0;
+            color: rgba(255,255,255,0.75);
+            font-size: 0.9rem;
         }
 
         .approach-card pre {
@@ -491,7 +491,7 @@
             .interface-preview { margin: 3rem auto; padding: 0 2rem; }
             .bottom-cta { padding: 4rem 2rem; }
             .approach-card code { font-size: 0.875rem; }
-            .approach-card li { font-size: 1rem; }
+            .approach-caption { font-size: 0.95rem; }
             pre { font-size: 0.9rem; }
         }
 
@@ -684,17 +684,15 @@
                 Both produce the same flow; switch whenever you like.
             </p>
 
-            <!-- IMAGE-PLACEHOLDER-TO-CHANGE: the sales_pipeline flow on the canvas — Read Data → Drop Duplicates → Filter → Group By, with the result preview open on the Group By node -->
-
             <div class="approach-grid">
                 <div class="approach-card">
                     <h3>On the canvas</h3>
-                    <ol>
-                        <li><strong>Read</strong> — load <code>supermarket_sales.csv</code></li>
-                        <li><strong>Drop Duplicates</strong> — remove repeated invoice rows</li>
-                        <li><strong>Filter</strong> — keep bulk orders: <code>[quantity] &gt; 7</code></li>
-                        <li><strong>Group By</strong> — per city, the sum and median of gross income</li>
-                    </ol>
+                    <img src="assets/images/ui/sales-pipeline-canvas.png" width="599" height="368" loading="lazy"
+                         class="approach-canvas"
+                         alt="The sales pipeline on the Flowfile canvas: Read data from supermarket_sales.csv, then Drop duplicates, then Filter on quantity &gt; 7, then Group by city.">
+                    <p class="approach-caption">
+                        Read data → Drop duplicates → Filter data → Group by, you can preview data at each step.
+                    </p>
                 </div>
 
                 <div class="approach-card">
