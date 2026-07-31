@@ -1762,9 +1762,9 @@ class FlowGraph:
         This updates their x and y positions for UI rendering.
 
         Args:
-            y_spacing: The vertical spacing between layers.
-            x_spacing: The horizontal spacing between nodes in the same layer.
-            initial_y: The initial y-position for the first layer.
+            y_spacing: The minimum vertical spacing between two nodes in a layer.
+            x_spacing: The horizontal spacing between layers.
+            initial_y: The y-position of the topmost node.
         """
         self.flow_logger.info("Applying layered layout...")
         start_time = time()
@@ -1792,7 +1792,7 @@ class FlowGraph:
                         )
                 elif node:
                     self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
-                # else: Node not found, already warned by calculate_layered_layout
+                # else: node removed between calculation and apply; skip it
 
             # Reflowed node positions invalidate group boxes — refit them.
             self._recompute_group_bounds()
@@ -1803,8 +1803,7 @@ class FlowGraph:
             )
 
         except Exception as e:
-            self.flow_logger.error(f"Error applying layout: {e}")
-            raise  # Optional: re-raise the exception
+            self.flow_logger.error(f"Layout failed, keeping current positions: {e}")
 
     @property
     def flow_id(self) -> int:
