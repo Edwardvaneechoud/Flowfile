@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog.access import AccessResolver
-from flowfile_core.catalog.constants import KAFKA_SYNC, ROOT_CATALOG
+from flowfile_core.catalog.constants import KAFKA_SYNC
 from flowfile_core.catalog.exceptions import NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import CatalogService
@@ -236,9 +236,9 @@ def _ensure_sync_namespace(service: CatalogService, owner_id: int) -> int:
     older private row is healed to public for the same reason.
     """
     repo = service.repo
-    general = repo.get_namespace_by_name(ROOT_CATALOG.name, parent_id=None)
-    if general is None:
-        general = service.create_namespace(ROOT_CATALOG.name, owner_id=owner_id)
+    # Canonical heal: public root with no storage snapshot, same as init_db's seed —
+    # create_namespace would mint a private General and bind env-default storage to it.
+    general = service.ensure_root_catalog(owner_id)
     sync_ns = repo.get_namespace_by_name(KAFKA_SYNC.name, parent_id=general.id)
     if sync_ns is None:
         sync_ns = repo.create_namespace(

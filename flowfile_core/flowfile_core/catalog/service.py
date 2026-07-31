@@ -755,6 +755,10 @@ class CatalogService:
         )
         return self.repo.create_flow(reg)
 
+    def ensure_root_catalog(self, owner_id: int) -> CatalogNamespace | None:
+        """Ensure the ``General`` root namespace exists (public, no storage), re-creating it if missing."""
+        return self._flows.ensure_root_catalog(owner_id)
+
     def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
         """Ensure the ``General > Unnamed Flows`` namespace exists, creating it if missing."""
         return self._flows.ensure_unnamed_flows_namespace()

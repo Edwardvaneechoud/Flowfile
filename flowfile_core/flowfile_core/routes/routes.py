@@ -400,7 +400,11 @@ def _run_and_track(flow, user_id: int | None):
         reg_path = flow.flow_settings.path or flow.flow_settings.save_location
         if reg_path:
             try:
-                flow.save_flow(flow_path=reg_path)
+                # Only materialise a file that doesn't exist yet (ephemeral flows).
+                # An opened file must never be rewritten as a side effect of running —
+                # that would silently commit unsaved canvas edits to disk.
+                if not os.path.exists(reg_path):
+                    flow.save_flow(flow_path=reg_path)
                 auto_register_flow(reg_path, flow.flow_settings.name, user_id)
                 resolve_source_registration_id(flow)
             except Exception:
@@ -1135,6 +1139,8 @@ def create_flow(
         if not flow_path_ref.parent.exists():
             raise HTTPException(422, "The directory does not exist")
     user_id = current_user.id if current_user else None
+    if namespace_id is not None and not register_in_catalog:
+        raise HTTPException(422, "namespace_id requires register_in_catalog=True")
     if namespace_id is not None and not namespace_exists(namespace_id):
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
@@ -1827,6 +1833,7 @@ def _save_flow_impl(
     flow_path: str | None,
     namespace_id: int | None,
     current_user,
+    register_in_catalog: bool = True,
 ):
     """Shared implementation for GET and POST ``/save_flow``.
 
@@ -1839,7 +1846,14 @@ def _save_flow_impl(
 
     When ``namespace_id`` is provided, the flow is registered in that catalog
     namespace (instead of the default namespace).
+
+    ``register_in_catalog=False`` writes the file without minting a registration —
+    the Save dialog's "Also register in catalog" checkbox unchecked. An existing
+    registration is left untouched: the opt-out means "don't file this copy", not
+    "unfile the flow".
     """
+    if namespace_id is not None and not register_in_catalog:
+        raise HTTPException(422, "namespace_id requires register_in_catalog=True")
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
@@ -1871,7 +1885,7 @@ def _save_flow_impl(
                 flow_id=flow_id,
                 new_path=flow_path,
                 user_id=user_id,
-                on_catalog_register=_register,
+                on_catalog_register=_register if register_in_catalog else None,
                 on_resolve_registration=resolve_source_registration_id,
             )
         except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
@@ -1918,6 +1932,7 @@ def save_flow(
     flow_id: int,
     flow_path: str = None,
     namespace_id: int = None,
+    register_in_catalog: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Deprecated GET variant of ``/save_flow``.  Prefer POST.
@@ -1927,7 +1942,7 @@ def save_flow(
     """
     logger.warning("GET /save_flow is deprecated; use POST /save_flow instead")
     response.headers["Deprecation"] = "true"
-    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user, register_in_catalog)
 
 
 @router.post("/save_flow", tags=["editor"])
@@ -1935,13 +1950,14 @@ def save_flow_post(
     flow_id: int,
     flow_path: str = None,
     namespace_id: int = None,
+    register_in_catalog: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Saves the current state of a flow to a ``.yaml``.
 
     See :func:`_save_flow_impl` for semantics.
     """
-    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user, register_in_catalog)
 
 
 @router.post("/save_flow_to_catalog", tags=["editor"])
