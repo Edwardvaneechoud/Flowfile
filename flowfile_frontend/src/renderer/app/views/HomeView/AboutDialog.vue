@@ -40,7 +40,8 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { desktop } from "../../../lib/desktop";
+import { DOCS_BASE_URL } from "../../lib/docsLinks";
 
 const props = defineProps<{ visible: boolean; version?: string }>();
 
@@ -48,7 +49,6 @@ const emit = defineEmits<{
   (e: "update:visible", value: boolean): void;
 }>();
 
-const router = useRouter();
 const isVisible = ref(props.visible);
 
 watch(
@@ -64,7 +64,7 @@ watch(isVisible, (v) => {
 
 function openDocs() {
   isVisible.value = false;
-  router.push({ name: "documentation" });
+  void desktop.openExternal(DOCS_BASE_URL);
 }
 </script>
 

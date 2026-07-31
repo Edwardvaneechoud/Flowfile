@@ -69,6 +69,8 @@ import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
 import { PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
+import { desktop } from "../../../../lib/desktop";
+import { DOCS_BASE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useMultiUser } from "../../../composables/useMultiUser";
 import { useProjectStore } from "../../../stores/project-store";
@@ -157,7 +159,7 @@ const handleOpenTemplates = () => {
 };
 
 const handleOpenDocumentation = () => {
-  router.push({ name: "documentation" });
+  void desktop.openExternal(DOCS_BASE_URL);
 };
 
 const handleLogout = () => {

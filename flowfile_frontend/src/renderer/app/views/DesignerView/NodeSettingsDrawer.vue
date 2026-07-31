@@ -1,6 +1,10 @@
 <template>
   <div class="node-settings-drawer">
-    <NodeTitle :title="nodeStore.drawerProps.title" :intro="nodeStore.drawerProps.intro" />
+    <NodeTitle
+      :title="nodeStore.drawerProps.title"
+      :intro="nodeStore.drawerProps.intro"
+      :docs-url="nodeStore.drawerProps.docsUrl"
+    />
     <div class="node-settings-body">
       <component
         :is="nodeStore.activeDrawerComponent"

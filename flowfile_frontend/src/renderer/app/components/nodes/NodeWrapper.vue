@@ -172,6 +172,25 @@
             </svg>
             <span>Suggest next node…</span>
           </div>
+          <div class="context-menu-item" @click="openNodeDocs">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <path d="M14 2v6h6"></path>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <line x1="10" y1="9" x2="8" y2="9"></line>
+            </svg>
+            <span>Read more</span>
+          </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg
@@ -264,6 +283,8 @@ import { toSnakeCase } from "../../views/DesignerView/utils";
 import { snapshotClipboard } from "../../utils/clipboardUtils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import { CatalogApi } from "../../api/catalog.api";
+import { nodeDocsUrl } from "../../views/DesignerView/nodeDocsLinks";
+import { desktop } from "../../../lib/desktop";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
 import type { NodeTemplate, NodeHandle, RunFlowReference } from "../../types";
@@ -425,6 +446,13 @@ const suggestNextNode = () => {
     },
     flowId,
   );
+};
+
+// nodeTemplate is optional (a stale copy/paste blob can lack it); nodeDocsUrl
+// falls back to the node reference index rather than failing.
+const openNodeDocs = () => {
+  closeContextMenu();
+  void desktop.openExternal(nodeDocsUrl(props.data.nodeTemplate));
 };
 
 const openTargetFlow = async () => {

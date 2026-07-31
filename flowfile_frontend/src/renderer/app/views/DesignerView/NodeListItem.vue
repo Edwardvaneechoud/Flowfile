@@ -3,8 +3,8 @@
     placement="right"
     :width="260"
     trigger="hover"
-    :open-delay="350"
-    :disabled="!hasTooltip"
+    :show-after="350"
+    :disabled="!hasTooltip || !!suppressTooltip"
     popper-class="node-list-item-popover"
   >
     <template #reference>
@@ -13,6 +13,7 @@
         :data-tutorial-node="node.item"
         draggable="true"
         @dragstart="emit('dragstart', $event, node)"
+        @contextmenu.prevent.stop="emit('contextmenu', $event, node)"
       >
         <img :src="iconUrl" :alt="node.name" class="node-image" />
         <span class="node-name">{{ node.name }}</span>
@@ -40,9 +41,14 @@ import { useNodeIconUrl } from "../../composables/useCustomNodeIcon";
 import { renderSafeMarkdown } from "../../lib/markdown";
 import KernelBadgeIcon from "./KernelBadgeIcon.vue";
 
-const props = defineProps<{ node: NodeTemplate }>();
+const props = defineProps<{ node: NodeTemplate; suppressTooltip?: boolean }>();
 
-const emit = defineEmits<{ dragstart: [event: DragEvent, node: NodeTemplate] }>();
+// Both must be declared: el-popover is the root and does not forward $attrs to
+// its trigger, so an undeclared native-named listener is silently dropped.
+const emit = defineEmits<{
+  dragstart: [event: DragEvent, node: NodeTemplate];
+  contextmenu: [event: MouseEvent, node: NodeTemplate];
+}>();
 
 // Custom-node icons come from a JWT-gated endpoint; built-in glyphs resolve
 // directly. useNodeIconUrl routes both correctly (authed blob vs bundled asset).
