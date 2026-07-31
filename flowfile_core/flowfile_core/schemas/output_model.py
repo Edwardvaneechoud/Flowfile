@@ -54,25 +54,35 @@ class BaseItem(BaseModel):
 
 
 class FileColumn(BaseModel):
-    """Represents detailed schema and statistics for a single column (field)."""
+    """Represents detailed schema and statistics for a single column (field).
+
+    The statistics fields are None until they are actually computed — either
+    never (plain schema previews) or exactly, on demand, via the column-stats
+    endpoint writing into the node's ``FlowfileColumn``.
+    """
 
     name: str
     data_type: str
     data_type_group: ReadableDataTypeGroup = "Other"
-    is_unique: bool
-    max_value: str
-    min_value: str
-    number_of_empty_values: int
-    number_of_filled_values: int
-    number_of_unique_values: int
-    size: int
+    is_unique: bool = False
+    max_value: str | None = None
+    min_value: str | None = None
+    average_value: str | None = None
+    number_of_empty_values: int | None = None
+    number_of_filled_values: int | None = None
+    number_of_unique_values: int | None = None
+    size: int | None = None
 
 
 class TableExample(BaseModel):
-    """Represents a preview of a table, including schema and sample data."""
+    """Represents a preview of a table, including schema and sample data.
+
+    ``number_of_records`` is None when the total is unknown (e.g. a lazy result
+    whose count was never computed); 0 always means a genuinely empty result.
+    """
 
     node_id: int
-    number_of_records: int
+    number_of_records: int | None = None
     number_of_columns: int
     name: str
     table_schema: list[FileColumn]

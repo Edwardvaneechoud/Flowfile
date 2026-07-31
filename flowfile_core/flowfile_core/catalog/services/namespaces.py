@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from flowfile_core.catalog.constants import DEFAULT_SCHEMA, ROOT_CATALOG
 from flowfile_core.catalog.exceptions import (
     InvalidNamespaceStorageError,
     NamespaceExistsError,
@@ -417,10 +418,10 @@ class NamespaceService:
 
     def get_default_namespace_id(self) -> int | None:
         """Return the ID of the default 'default' schema under 'General'."""
-        general = self.repo.get_namespace_by_name("General", parent_id=None)
+        general = self.repo.get_namespace_by_name(ROOT_CATALOG.name, parent_id=None)
         if general is None:
             return None
-        default_schema = self.repo.get_namespace_by_name("default", parent_id=general.id)
+        default_schema = self.repo.get_namespace_by_name(DEFAULT_SCHEMA.name, parent_id=general.id)
         if default_schema is None:
             return None
         return default_schema.id

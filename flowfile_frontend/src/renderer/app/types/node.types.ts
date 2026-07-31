@@ -11,22 +11,27 @@ type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Bina
 
 // Column and Table Types
 
+// The statistics fields are null until actually computed — either never
+// (plain schema previews) or exactly, on demand, via GET /node/column_stats
+// (which returns the column's updated FileColumn).
 export interface FileColumn {
   name: string;
   data_type: string;
   is_unique: boolean;
-  max_value: string;
-  min_value: string;
-  number_of_empty_values: number;
-  number_of_filled_values: number;
-  number_of_unique_values: number;
-  size: number;
+  max_value: string | null;
+  min_value: string | null;
+  average_value: string | null;
+  number_of_empty_values: number | null;
+  number_of_filled_values: number | null;
+  number_of_unique_values: number | null;
+  size: number | null;
   data_type_group: DataTypeGroup;
 }
 
 export interface TableExample {
   node_id: string | number;
-  number_of_records: number;
+  // null when the backend doesn't know the total (never fabricated).
+  number_of_records: number | null;
   number_of_columns: number;
   name: string;
   table_schema: FileColumn[];

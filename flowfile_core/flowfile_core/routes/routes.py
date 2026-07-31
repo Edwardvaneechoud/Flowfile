@@ -19,6 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPExcepti
 from fastapi.responses import JSONResponse, Response
 
 # External dependencies
+from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
@@ -37,7 +38,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import is_electron_mode
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -83,6 +84,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalRestApiFetcher,
@@ -340,11 +342,7 @@ def _resolve_catalog_save_path(flow_id: int, safe_stem: str, own_registration) -
 
 def _is_scratch_flow_path(flow_path: str) -> bool:
     """Whether ``flow_path`` is a throwaway flow (quick-create / python editor)."""
-    scratch_roots = (
-        str(Path(storage.unnamed_flows_directory).resolve()) + os.sep,
-        str(Path(storage.python_editor_flows_directory).resolve()) + os.sep,
-    )
-    return flow_path.startswith(scratch_roots)
+    return storage.is_scratch_flow_path(flow_path)
 
 
 def _discard_relocated_scratch_file(previous_path: str | None, new_path: str) -> None:
@@ -404,7 +402,11 @@ def _run_and_track(flow, user_id: int | None):
         reg_path = flow.flow_settings.path or flow.flow_settings.save_location
         if reg_path:
             try:
-                flow.save_flow(flow_path=reg_path)
+                # Only materialise a file that doesn't exist yet (ephemeral flows).
+                # An opened file must never be rewritten as a side effect of running —
+                # that would silently commit unsaved canvas edits to disk.
+                if not os.path.exists(reg_path):
+                    flow.save_flow(flow_path=reg_path)
                 auto_register_flow(reg_path, flow.flow_settings.name, user_id)
                 resolve_source_registration_id(flow)
             except Exception:
@@ -1107,18 +1109,19 @@ def create_flow(
     name: str = None,
     namespace_id: int = None,
     register_in_catalog: bool = True,
+    persist: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Creates a new, empty flow file at the specified path and registers a session for it.
 
-    When ``namespace_id`` is provided, the flow is registered in that catalog
-    namespace instead of the default (``General > Local Flows``).
+    Two independent switches, deliberately not fused:
 
-    Set ``register_in_catalog=False`` to create an ephemeral scratch flow that is
-    neither written into the catalog (no ``FlowRegistration`` / ``source_registration_id``)
-    nor persisted to disk (``persist=False``): it lives in-memory until an explicit save or
-    first run. Used by the designer's auto-open-blank-canvas landing so throwaway flows
-    don't accumulate in the catalog or as orphan YAML in ``unnamed_flows``.
+    - ``persist`` writes the YAML to disk. ``False`` keeps the flow in-memory until an
+      explicit save or first run, so an abandoned blank canvas leaves no orphan file.
+    - ``register_in_catalog`` creates the ``FlowRegistration`` row. ``False`` yields a
+      flow with no ``source_registration_id``: no run history, schedules or API
+      publishing until it is filed. When ``namespace_id`` is provided the flow lands
+      there; otherwise it auto-registers under ``General > {Unnamed | Local} Flows``.
     """
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
@@ -1138,6 +1141,8 @@ def create_flow(
         if not flow_path_ref.parent.exists():
             raise HTTPException(422, "The directory does not exist")
     user_id = current_user.id if current_user else None
+    if namespace_id is not None and not register_in_catalog:
+        raise HTTPException(422, "namespace_id requires register_in_catalog=True")
     if namespace_id is not None and not namespace_exists(namespace_id):
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
@@ -1160,7 +1165,7 @@ def create_flow(
                 status_code=409,
                 detail=f"Flow path {flow_path} is already registered in another namespace",
             )
-    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id, persist=register_in_catalog)
+    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id, persist=persist)
     flow = flow_file_handler.get_flow(flow_id)
     if register_in_catalog and flow and flow.flow_settings:
         try:
@@ -1196,10 +1201,32 @@ class RenameFlowInput(BaseModel):
     name: str
 
 
+def _persist_rename_of_unregistered_flow(flow) -> None:
+    """Write an unregistered flow's new name straight to its YAML.
+
+    Only when the flow is otherwise clean: a rename must not silently commit the
+    user's unsaved canvas edits. With pending edits the new ``__name__`` simply rides
+    along with their next save. Best-effort — a rename must never 500 on a read-only
+    or missing file.
+    """
+    flow_path = flow.flow_settings.path
+    if not flow_path or not os.path.exists(flow_path) or flow.has_unsaved_changes():
+        return
+    try:
+        flow.save_flow(flow_path)
+    except Exception:
+        logger.info(f"Could not persist rename for unregistered flow '{flow_path}' (non-critical)", exc_info=True)
+
+
 @router.post("/editor/rename_flow/", tags=["editor"], response_model=schemas.FlowSettingsResponse)
 def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_user)) -> schemas.FlowSettingsResponse:
     """Renames a flow's display name: the catalog registration (when one exists) plus the
-    in-memory session name. Metadata-only — the YAML file and its path are never touched."""
+    in-memory session name. The file *path* is never touched.
+
+    For an unregistered flow the name is written back into its YAML, because there is no
+    registration to hold it and ``open_flow`` would otherwise have nothing to read: the
+    rename would silently vanish when the tab is closed.
+    """
     user_id = current_user.id if current_user else None
     flow = flow_file_handler.get_flow(body.flow_id, user_id)
     if flow is None:
@@ -1225,6 +1252,11 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
                 pass
     # Only after catalog success, so a 403/409 leaves the session name untouched.
     flow.flow_settings.name = name
+    # __name__ is what gets serialised as ``flowfile_name``; without this the next
+    # same-path save would write the stale name back over the rename.
+    flow.__name__ = name
+    if reg_id is None:
+        _persist_rename_of_unregistered_flow(flow)
     response = _with_display_name(flow_file_handler.get_flow_info_with_runtime(body.flow_id))
     if renamed_registration:
         # Prefer the write we just made: a by-path lookup misses when the
@@ -1771,6 +1803,39 @@ def get_table_example(flow_id: int, node_id: int, output_handle: str = DEFAULT_O
     return node.get_table_example(True, output_handle=output_handle)
 
 
+@router.get("/node/column_stats", response_model=output_model.FileColumn, tags=["editor"])
+def get_node_column_stats(flow_id: int, node_id: int, column_name: str, output_handle: str = DEFAULT_OUTPUT_HANDLE):
+    """Computes on-demand statistics for one column of a node's cached result.
+
+    Runs a single bounded aggregate (counts, uniques, min/max) over the result
+    the last run left behind — it never re-executes the node — and returns the
+    column's updated ``FileColumn``, the same shape ``table_schema`` ships.
+    Query parameters (not path segments): column names contain ``/`` and ``.``.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, "Could not find the node")
+    if flow.flow_settings.execution_mode == "Performance":
+        raise HTTPException(409, "Column statistics are not computed in Performance mode.")
+    # Core must not run pipeline compute: whenever offloading is on, the stats
+    # aggregate runs in the worker and core reads back only the 1-row result
+    # (a failed offload raises → 409, never an in-process collect). In-process
+    # is reserved for worker-less deployments (single-file mode).
+    offload = bool(OFFLOAD_TO_WORKER)
+    try:
+        return node.get_column_stats(column_name, output_handle=output_handle, offload_to_worker=offload)
+    except ColumnStatsUnavailable as e:
+        raise HTTPException(409, str(e)) from None
+    except ColumnNotFoundError:
+        raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
+    except Exception as e:
+        logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
+        raise HTTPException(422, "Could not compute column statistics") from e
+
+
 @router.get("/node/downstream_node_ids", response_model=list[int], tags=["editor"])
 async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
     """Gets a list of all node IDs that are downstream dependencies of a given node."""
@@ -1781,7 +1846,12 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
 
 @router.get("/import_flow/", tags=["editor"], response_model=int)
 def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_user)) -> int:
-    """Imports a flow from a saved `.yaml` and registers it as a new session for the current user."""
+    """Imports a flow from a saved `.yaml` and registers it as a new session for the current user.
+
+    Opening a file is browsing, not filing: an existing registration is adopted so the
+    session gets its display name and ``source_registration_id``, but no new catalog
+    row is created. Use the Save dialog (or ``POST /catalog/flows``) to file a flow.
+    """
     validated_path = validate_path_under_cwd(flow_path)
     if not os.path.exists(validated_path):
         raise HTTPException(404, "File not found")
@@ -1789,7 +1859,6 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     flow_id = flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        auto_register_flow(validated_path, flow.flow_settings.name, user_id)
         resolve_source_registration_id(flow)
     return flow_id
 
@@ -1799,6 +1868,7 @@ def _save_flow_impl(
     flow_path: str | None,
     namespace_id: int | None,
     current_user,
+    register_in_catalog: bool = True,
 ):
     """Shared implementation for GET and POST ``/save_flow``.
 
@@ -1811,7 +1881,14 @@ def _save_flow_impl(
 
     When ``namespace_id`` is provided, the flow is registered in that catalog
     namespace (instead of the default namespace).
+
+    ``register_in_catalog=False`` writes the file without minting a registration —
+    the Save dialog's "Also register in catalog" checkbox unchecked. An existing
+    registration is left untouched: the opt-out means "don't file this copy", not
+    "unfile the flow".
     """
+    if namespace_id is not None and not register_in_catalog:
+        raise HTTPException(422, "namespace_id requires register_in_catalog=True")
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
@@ -1843,7 +1920,7 @@ def _save_flow_impl(
                 flow_id=flow_id,
                 new_path=flow_path,
                 user_id=user_id,
-                on_catalog_register=_register,
+                on_catalog_register=_register if register_in_catalog else None,
                 on_resolve_registration=resolve_source_registration_id,
             )
         except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
@@ -1890,6 +1967,7 @@ def save_flow(
     flow_id: int,
     flow_path: str = None,
     namespace_id: int = None,
+    register_in_catalog: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Deprecated GET variant of ``/save_flow``.  Prefer POST.
@@ -1899,7 +1977,7 @@ def save_flow(
     """
     logger.warning("GET /save_flow is deprecated; use POST /save_flow instead")
     response.headers["Deprecation"] = "true"
-    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user, register_in_catalog)
 
 
 @router.post("/save_flow", tags=["editor"])
@@ -1907,13 +1985,14 @@ def save_flow_post(
     flow_id: int,
     flow_path: str = None,
     namespace_id: int = None,
+    register_in_catalog: bool = True,
     current_user=Depends(get_current_active_user),
 ):
     """Saves the current state of a flow to a ``.yaml``.
 
     See :func:`_save_flow_impl` for semantics.
     """
-    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user, register_in_catalog)
 
 
 @router.post("/save_flow_to_catalog", tags=["editor"])
@@ -2440,6 +2519,10 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
 
     Downloads required CSV data files from GitHub if not already cached locally,
     then creates a flow from the template definition.
+
+    The new flow is not registered in the catalog: the only path available to register is
+    the temp file this route unlinks on the way out, so doing so minted a permanently
+    dangling row. Saving the flow files it.
     """
     import logging as _logging
 
@@ -2512,8 +2595,5 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     finally:
         temp_path.unlink(missing_ok=True)
 
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow and flow.flow_settings:
-        auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
     _tpl_logger.info("create_from_template OK: template_id=%s flow_id=%s", template_id, flow_id)
     return flow_id

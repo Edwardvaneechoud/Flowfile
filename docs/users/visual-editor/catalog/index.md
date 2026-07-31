@@ -118,8 +118,10 @@ Register a flow to enable run tracking, artifact lineage, catalog table producti
 
 *Registering a flow file under a catalog schema*
 
-!!! tip "Auto-registration"
-    When you open or import a flow in the designer, it is automatically registered in the default namespace (`General > default`) if it isn't already. You don't need to manually register every flow — just the ones you want to organize into specific namespaces.
+!!! tip "When a flow joins the catalog"
+    A flow appears in the catalog when you **save it into a schema** — via the Save dialog's catalog tab, or **Register Flow** above. Simply opening a `.yaml` in the designer, or starting a flow from a template, leaves it out of the catalog: browsing is read-only.
+
+    Quick-created flows saved to disk still land under `General > Local Flows` or `General > Unnamed Flows` on first save or first run. Uncheck **Also register in catalog** in the Save dialog to keep a disk save out of the catalog. Registering is what unlocks run history, schedules and API publishing.
 
 ### Flow Detail Panel
 

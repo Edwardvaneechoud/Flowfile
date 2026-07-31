@@ -340,10 +340,16 @@ def test_rename_flow_updates_catalog_registration_and_display_name():
 
 def test_rename_flow_scratch_flow_in_memory_only():
     """Renaming an unregistered scratch flow updates only the in-memory session:
-    no catalog registration appears and nothing is written to disk."""
+    no catalog registration appears and nothing is written to disk.
+
+    An ephemeral flow now needs both switches off — ``register_in_catalog`` no longer
+    doubles as "don't touch the disk".
+    """
     from flowfile_core.database.models import FlowRegistration
 
-    flow_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    flow_id = client.post(
+        "editor/create_flow", params={"register_in_catalog": False, "persist": False}
+    ).json()
     try:
         r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "My scratch name"})
         assert r.status_code == 200, r.text
@@ -359,6 +365,75 @@ def test_rename_flow_scratch_flow_in_memory_only():
             assert count == 0, "Rename must not register a scratch flow in the catalog"
     finally:
         client.post("/editor/close_flow/", params={"flow_id": flow_id})
+
+
+def test_rename_of_unregistered_draft_survives_reopen():
+    """A draft's name lives in its YAML, because it has no registration to hold it.
+
+    ``open_flow`` stamped the filename stem over whatever the file said, so renaming a
+    quick-created flow was silently lost the moment the tab was closed — and its stem is
+    machine-generated ("Unnamed_flow_20260730_181546_493427479"), so there was nothing
+    readable to fall back to.
+    """
+    created_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    flow_path = flow_file_handler.get_flow(created_id).flow_settings.path
+    assert storage.is_scratch_flow_path(flow_path), "Precondition: quick-create lands in a scratch dir"
+    try:
+        r = client.post("/editor/rename_flow/", json={"flow_id": created_id, "name": "My analysis"})
+        assert r.status_code == 200, r.text
+        client.post("/editor/close_flow/", params={"flow_id": created_id})
+
+        reopened_id = client.get("/import_flow/", params={"flow_path": flow_path}).json()
+        reopened = flow_file_handler.get_flow(reopened_id)
+        assert reopened.flow_settings.name == "My analysis", "Reopen reverted the name to the file stem"
+        assert reopened.__name__ == "My analysis"
+    finally:
+        remove_flow(flow_path)
+
+
+def test_user_chosen_filename_still_wins_over_the_stored_name():
+    """Outside the scratch dirs the stem stays authoritative.
+
+    A path the user picked is a good name, and renaming or copying a flow file must keep
+    renaming the flow — the durable-name rule is scoped to app-generated filenames.
+    """
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "user_named_flow.yaml")
+    renamed_path = str(base_dir / "user_renamed_flow.yaml")
+    remove_flow(flow_path)
+    remove_flow(renamed_path)
+
+    created_id = client.post(
+        "editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False}
+    ).json()
+    try:
+        client.post("/editor/close_flow/", params={"flow_id": created_id})
+        os.rename(flow_path, renamed_path)
+
+        reopened_id = client.get("/import_flow/", params={"flow_path": renamed_path}).json()
+        assert flow_file_handler.get_flow(reopened_id).flow_settings.name == "user_renamed_flow"
+    finally:
+        remove_flow(flow_path)
+        remove_flow(renamed_path)
+
+
+def test_rename_does_not_commit_unsaved_canvas_edits():
+    """The rename write-back is scoped to clean flows: it must not silently save edits."""
+    flow_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    flow_path = flow_file_handler.get_flow(flow_id).flow_settings.path
+    try:
+        add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow.has_unsaved_changes(), "Precondition: adding a node leaves the flow dirty"
+
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "Dirty rename"})
+        assert r.status_code == 200, r.text
+        assert flow.has_unsaved_changes(), "Rename must not have saved the flow"
+
+        reopened_id = client.get("/import_flow/", params={"flow_path": flow_path}).json()
+        assert len(flow_file_handler.get_flow(reopened_id).nodes) == 0, "The unsaved node must not be on disk"
+    finally:
+        remove_flow(flow_path)
 
 
 def test_rename_flow_unknown_flow_404():
@@ -496,7 +571,7 @@ def test_silent_save_of_opened_flow_preserves_rename():
     Uses /import_flow/ rather than create_flow because only an opened flow has an
     unset save_location, which is what makes save_flow reach its back-fill branch.
     Display-name exposure is covered separately, by a test that owns its own catalog
-    registration — auto-registration on import depends on the default namespace.
+    registration — opening a flow deliberately creates none.
     """
     base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
     src_path = str(base_dir / "reopen_rename_src.yaml")
@@ -817,6 +892,112 @@ def test_import_flow():
     flow_id = response.json()
     assert flow_file_handler.get_flow(flow_id).flow_id == flow_id, "Flow not set"
     assert flow_file_handler.get_flow(flow_id).flow_settings.path == flow_path, "Flow path not set"
+
+
+def test_import_flow_does_not_register():
+    """Opening a .yaml is browsing: it must not mint a catalog row."""
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "import_no_register.yaml")
+    remove_flow(flow_path)
+    with get_db_context() as db:
+        db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(synchronize_session=False)
+        db.commit()
+
+    # Build the file through create_flow with registration off, so only the open is measured.
+    resp = client.post("editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False})
+    assert resp.status_code == 200, f"Create failed: {resp.text}"
+    flow_file_handler.get_flow(resp.json()).save_flow(flow_path)
+    assert os.path.exists(flow_path), "Fixture flow file should exist before the import"
+
+    try:
+        response = client.get("/import_flow", params={"flow_path": flow_path})
+        assert response.status_code == 200, f"Import failed: {response.text}"
+
+        with get_db_context() as db:
+            assert (
+                db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).count() == 0
+            ), "Opening a flow must not create a catalog registration"
+    finally:
+        remove_flow(flow_path)
+
+
+def test_create_from_template_does_not_register():
+    """Instantiating a template creates a session, not a catalog row.
+
+    It used to register ``flows_dir/{stem}.yaml`` — a path the route's own ``finally``
+    had just unlinked — so every instantiation minted a permanently dangling row.
+    """
+    from shared.storage_config import storage
+
+    from flowfile_core.database.models import FlowRegistration
+
+    templates = client.get("/templates/")
+    assert templates.status_code == 200, f"Template listing failed: {templates.text}"
+    metas = templates.json()
+    if not metas:
+        pytest.skip("No template flow YAMLs available in this checkout")
+    template_id = metas[0]["template_id"]
+
+    before = _registration_paths()
+    resp = client.post(f"/templates/{template_id}/create")
+    if resp.status_code == 502:
+        pytest.skip(f"Template data unavailable offline: {resp.text}")
+    assert resp.status_code == 200, f"Template instantiation failed: {resp.text}"
+    flow_id = resp.json()
+
+    try:
+        assert _registration_paths() == before, "Instantiating a template must not create a registration"
+        stem = flow_file_handler.get_flow(flow_id).flow_settings.name
+        with get_db_context() as db:
+            dangling = (
+                db.query(FlowRegistration)
+                .filter(FlowRegistration.flow_path.like(f"{storage.flows_directory}%"))
+                .filter(FlowRegistration.name == stem)
+                .count()
+            )
+            assert dangling == 0, "No dangling registration should be left behind"
+    finally:
+        flow_file_handler.delete_flow(flow_id)
+
+
+def _registration_paths() -> set[str]:
+    """Snapshot of every registered flow_path, for before/after comparisons."""
+    from flowfile_core.database.models import FlowRegistration
+
+    with get_db_context() as db:
+        return {row[0] for row in db.query(FlowRegistration.flow_path).all()}
+
+
+def test_import_flow_of_registered_flow_still_resolves_registration():
+    """Guards the surviving half of the import path: an existing row is still adopted."""
+    from flowfile_core.database.models import FlowRegistration
+
+    ns = client.post("/catalog/namespaces", json={"name": "ImportAdoptRegistration"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    create = client.post("editor/create_flow", params={"name": "adopt_me", "namespace_id": ns["id"]})
+    assert create.status_code == 200, f"Create failed: {create.text}"
+    original_id = create.json()
+    flow_path = flow_file_handler.get_flow(original_id).flow_settings.path
+    flow_file_handler.delete_flow(original_id)
+
+    try:
+        with get_db_context() as db:
+            reg_id = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one().id
+
+        response = client.get("/import_flow", params={"flow_path": flow_path})
+        assert response.status_code == 200, f"Import failed: {response.text}"
+        reopened = flow_file_handler.get_flow(response.json())
+        assert reopened.flow_settings.source_registration_id == reg_id
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
 
 
 def test_delete_connection():
@@ -1314,8 +1495,12 @@ def test_create_flow_without_namespace_auto_registers_local_flows():
 
 
 def test_create_flow_skip_catalog_registration():
-    """create_flow with register_in_catalog=False opens a session but writes no catalog registration
-    and no YAML on disk — the ephemeral scratch flow lives in-memory until an explicit save/run."""
+    """``register_in_catalog=False`` opens a session and still writes the YAML.
+
+    The two switches are deliberately independent: fusing them is what made the
+    designer's "Also register in catalog" checkbox unable to express "on disk, not
+    in the catalog". Registration off must not silently also mean "no file".
+    """
     from flowfile_core.database.init_db import init_db
     from flowfile_core.database.models import FlowRegistration
 
@@ -1324,7 +1509,7 @@ def test_create_flow_skip_catalog_registration():
     init_db()
 
     base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
-    flow_path = str(base_dir / "ns_create_ephemeral.yaml")
+    flow_path = str(base_dir / "ns_create_unregistered.yaml")
     remove_flow(flow_path)
 
     try:
@@ -1336,11 +1521,11 @@ def test_create_flow_skip_catalog_registration():
         flow_id = resp.json()
         assert isinstance(flow_id, int), "create_flow should still return a session flow_id"
 
-        assert not os.path.exists(flow_path), "register_in_catalog=False must not write the scratch YAML to disk"
+        assert os.path.exists(flow_path), "register_in_catalog=False must still persist the flow file"
 
         flow = flow_file_handler.get_flow(flow_id)
-        assert flow is not None, "the ephemeral scratch flow should still be a live in-memory session"
-        assert flow.has_unsaved_changes() is False, "a fresh scratch flow should have a clean dirty baseline"
+        assert flow is not None, "the unregistered flow should still be a live in-memory session"
+        assert flow.flow_settings.source_registration_id is None
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
@@ -1354,9 +1539,53 @@ def test_create_flow_skip_catalog_registration():
             db.commit()
 
 
+def test_create_flow_persist_false_writes_no_yaml():
+    """``persist=False`` defers the YAML write to the first explicit save or run.
+
+    Registration is unaffected — it is the other switch — so this create still lands
+    a catalog row, just one whose file does not exist yet.
+    """
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_ephemeral.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post(
+            "editor/create_flow",
+            params={"flow_path": flow_path, "persist": False},
+        )
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        flow_id = resp.json()
+
+        assert not os.path.exists(flow_path), "persist=False must not write the YAML to disk"
+
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow is not None, "the deferred flow should still be a live in-memory session"
+        assert flow.has_unsaved_changes() is False, "a fresh deferred flow should have a clean dirty baseline"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is not None, "persist only controls the file, never the registration"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
 def test_create_flow_default_persists_to_disk():
-    """A default create (register_in_catalog omitted) still writes the flow YAML to disk — the
-    deferral is scoped to ephemeral scratch flows and must not regress normal creates."""
+    """A default create still writes the flow YAML to disk.
+
+    Guards the split between ``persist`` and ``register_in_catalog``: neither flag's
+    default may drift, and neither may start implying the other.
+    """
     from flowfile_core.database.init_db import init_db
     from flowfile_core.database.models import FlowRegistration
 
@@ -1377,6 +1606,89 @@ def test_create_flow_default_persists_to_disk():
                 synchronize_session=False
             )
             db.commit()
+
+
+def test_save_as_register_in_catalog_false_creates_no_registration():
+    """Unchecking "Also register in catalog" on Save As must actually opt out.
+
+    A null namespace alone routes into auto-registration on the backend, which is
+    exactly the checkbox lie this flag closes. The default save-as (flag omitted)
+    must keep auto-registering under General > Local Flows.
+    """
+    from flowfile_core.database.models import CatalogNamespace, FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    path_a = str(base_dir / "save_as_optout_a.yaml")
+    path_b = str(base_dir / "save_as_optout_b.yaml")
+    path_c = str(base_dir / "save_as_optout_c.yaml")
+
+    def _drop_registrations():
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path.in_([path_a, path_b, path_c])).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+    for p in (path_a, path_b, path_c):
+        remove_flow(p)
+    _drop_registrations()
+
+    try:
+        created_id = client.post(
+            "editor/create_flow", params={"flow_path": path_a, "register_in_catalog": False}
+        ).json()
+
+        opted_out = client.post(
+            "/save_flow", params={"flow_id": created_id, "flow_path": path_b, "register_in_catalog": False}
+        )
+        assert opted_out.status_code == 200, f"Save As failed: {opted_out.text}"
+        saved_id = opted_out.json()
+        assert os.path.exists(path_b), "Opting out of registration must still write the file"
+        with get_db_context() as db:
+            assert (
+                db.query(FlowRegistration).filter(FlowRegistration.flow_path == path_b).count() == 0
+            ), "register_in_catalog=False must not mint a registration on Save As"
+
+        default_save = client.post("/save_flow", params={"flow_id": saved_id, "flow_path": path_c})
+        assert default_save.status_code == 200, f"Default Save As failed: {default_save.text}"
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == path_c).one_or_none()
+            assert reg is not None, "A default Save As must keep auto-registering"
+            assert db.get(CatalogNamespace, reg.namespace_id).name == "Local Flows"
+    finally:
+        for p in (path_a, path_b, path_c):
+            remove_flow(p)
+        _drop_registrations()
+
+
+def test_namespace_with_register_off_is_rejected():
+    """namespace_id + register_in_catalog=False is contradictory: 422, before any
+    namespace lookup (a bogus id must not turn it into a 404)."""
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_contradiction.yaml")
+    remove_flow(flow_path)
+
+    resp = client.post(
+        "editor/create_flow",
+        params={"flow_path": flow_path, "namespace_id": 999_999, "register_in_catalog": False},
+    )
+    assert resp.status_code == 422, resp.text
+    assert not os.path.exists(flow_path), "a rejected create must not leave a file behind"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False}).json()
+    try:
+        resp = client.post(
+            "/save_flow",
+            params={
+                "flow_id": flow_id,
+                "flow_path": flow_path,
+                "namespace_id": 999_999,
+                "register_in_catalog": False,
+            },
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        remove_flow(flow_path)
 
 
 def test_create_flow_name_collision_in_namespace_409():
@@ -1766,9 +2078,10 @@ def test_first_run_registers_ephemeral_scratch_flow():
     _drop_registration()
 
     try:
+        # Both switches off: ephemeral means neither a catalog row nor a file yet.
         resp = client.post(
             "editor/create_flow",
-            params={"flow_path": flow_path, "register_in_catalog": False},
+            params={"flow_path": flow_path, "register_in_catalog": False, "persist": False},
         )
         assert resp.status_code == 200, f"Create failed: {resp.text}"
         flow_id = resp.json()
@@ -1796,6 +2109,61 @@ def test_first_run_registers_ephemeral_scratch_flow():
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
             assert reg is not None, "First run must register the scratch flow in the catalog"
+    finally:
+        remove_flow(flow_path)
+        _drop_registration()
+
+
+def test_run_does_not_rewrite_opened_flow_file():
+    """First-run promotion registers an opened flow without rewriting its file.
+
+    With import-time registration gone, every browsed .yaml takes this path on its
+    first run — the promotion's save_flow is scoped to files that don't exist yet
+    (ephemeral flows), so a run never silently commits unsaved canvas edits to disk.
+    """
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import FlowRegistration
+
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "run_no_rewrite.yaml")
+
+    def _drop_registration():
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+    remove_flow(flow_path)
+    _drop_registration()
+
+    try:
+        created_id = client.post(
+            "editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False}
+        ).json()
+        client.post("/editor/close_flow/", params={"flow_id": created_id})
+        with open(flow_path, "rb") as f:
+            on_disk_before = f.read()
+
+        flow_id = client.get("/import_flow/", params={"flow_path": flow_path}).json()
+        add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+        manual_input = input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"name": "John"}]),
+        )
+        client.post("/update_settings/", json=manual_input.model_dump(), params={"node_type": "manual_input"})
+
+        run_resp = client.post("/flow/run/", params={"flow_id": flow_id})
+        assert run_resp.status_code in (200, 202), f"Run failed: {run_resp.text}"
+
+        with open(flow_path, "rb") as f:
+            assert f.read() == on_disk_before, "Running must not rewrite the opened flow's file"
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one_or_none()
+            assert reg is not None, "First run must still register the opened flow"
     finally:
         remove_flow(flow_path)
         _drop_registration()
@@ -2821,6 +3189,115 @@ def test_fetch_node_data():
     assert response.status_code == 200, "Node data not retrieved"
     assert len(response.json()["data"]) > 0, "Data should not be empty"
     assert response.json()["has_run_with_current_setup"], "Node should have run"
+
+
+def test_get_table_example_row_count():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.get("/node/data", params={"flow_id": flow_id, "node_id": 2})
+    assert response.json()["number_of_records"] is None, "Count is unknown before the run"
+
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    response = client.get("/node/data", params={"flow_id": flow_id, "node_id": 2})
+    assert response.status_code == 200
+    assert response.json()["number_of_records"] == 4, "Real count, not the old 999 sentinel"
+
+
+def test_get_node_column_stats():
+    flow_id = create_flow_with_manual_input_and_select()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    params = {"flow_id": flow_id, "node_id": 2, "column_name": "name"}
+    response = client.get("/node/column_stats", params=params)
+    assert response.status_code == 409, "Stats are unavailable before the node has run"
+
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    response = client.get("/node/column_stats", params=params)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "name"
+    assert body["number_of_empty_values"] == 0
+    assert body["number_of_filled_values"] == 4
+    assert body["number_of_unique_values"] == 4
+    assert body["is_unique"] is True
+
+
+def test_get_node_column_stats_offload_decision():
+    """Whenever offloading is on the stats collect goes to the worker, whatever
+    the flow's execution location — core must not run pipeline compute.
+    In-process only when no worker exists (offloading disabled)."""
+    from unittest.mock import patch
+
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+    from flowfile_core.routes import routes as routes_module
+    from flowfile_core.schemas.output_model import FileColumn
+
+    flow_id = create_flow_with_manual_input_and_select()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
+    dummy = FileColumn(name="name", data_type="String")
+    params = {"flow_id": flow_id, "node_id": 2, "column_name": "name"}
+    offload_was_on = bool(routes_module.OFFLOAD_TO_WORKER)
+    try:
+        routes_module.OFFLOAD_TO_WORKER.set(True)
+        with patch.object(FlowNode, "get_column_stats", return_value=dummy) as mock_stats:
+            for location in ("local", "remote"):
+                flow.flow_settings.execution_location = location
+                assert client.get("/node/column_stats", params=params).status_code == 200
+                assert mock_stats.call_args.kwargs["offload_to_worker"] is True
+
+            routes_module.OFFLOAD_TO_WORKER.set(False)
+            assert client.get("/node/column_stats", params=params).status_code == 200
+            assert mock_stats.call_args.kwargs["offload_to_worker"] is False, (
+                "no worker exists when offloading is disabled"
+            )
+    finally:
+        routes_module.OFFLOAD_TO_WORKER.set(offload_was_on)
+
+
+def test_get_node_column_stats_blocked_in_performance_mode():
+    """Performance mode computes nothing extra — stats included."""
+    flow_id = create_flow_with_manual_input_and_select()
+    flow = flow_file_handler.get_flow(flow_id)
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+
+    flow.flow_settings.execution_mode = "Performance"
+    response = client.get(
+        "/node/column_stats", params={"flow_id": flow_id, "node_id": 2, "column_name": "name"}
+    )
+    assert response.status_code == 409
+    assert "Performance mode" in response.json()["detail"]
+
+
+def test_get_node_column_stats_unknown_column():
+    flow_id = create_flow_with_manual_input_and_select()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    response = client.get(
+        "/node/column_stats", params={"flow_id": flow_id, "node_id": 2, "column_name": "nope"}
+    )
+    assert response.status_code == 404
+
+
+def test_get_node_column_stats_special_character_column():
+    """Query-param transport keeps '/', '.', '%' and spaces in column names intact."""
+    flow_id = ensure_clean_flow()
+    graph = flow_file_handler.get_flow(flow_id)
+    graph.flow_settings.execution_mode = "Development"
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"a.b/c %": 1}, {"a.b/c %": None}]),
+        )
+    )
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 1})
+    response = client.get(
+        "/node/column_stats", params={"flow_id": flow_id, "node_id": 1, "column_name": "a.b/c %"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "a.b/c %"
+    assert body["number_of_empty_values"] + body["number_of_filled_values"] == 2
 
 
 def test_flow_run_status():
