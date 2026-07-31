@@ -173,6 +173,103 @@ class TestDiscardScratchFlow:
         # No row to remove; must not raise.
         mgr._discard_scratch_flow("never-existed")
 
+    def test_discard_drops_sharing_grants_and_detaches_runs(self):
+        """The delete must run the canonical fan-out, not a raw db.delete.
+
+        SQLite reuses rowids, so a surviving ResourceGrant would silently attach
+        to whatever flow is created next; a surviving FlowRun.registration_id
+        would pull that flow's history into the new registration.
+        """
+        from datetime import datetime, timezone
+
+        from flowfile_core.database.models import FlowRun, ResourceGrant, UserGroup
+
+        mgr = _bare_manager()
+        _seed_kernel_row("k-fanout", user_id=1)
+        mgr._kernel_owners["k-fanout"] = 1
+        mgr._provision_scratch_flow("k-fanout", user_id=1)
+        scratch_id = mgr._scratch_flow_ids["k-fanout"]
+
+        with get_db_context() as db:
+            group = UserGroup(name="scratch-fanout-group", created_by=1)
+            db.add(group)
+            db.flush()
+            db.add(
+                ResourceGrant(
+                    resource_type="flow",
+                    resource_id=scratch_id,
+                    group_id=group.id,
+                    permission="use",
+                    granted_by=1,
+                )
+            )
+            db.add(
+                FlowRun(
+                    registration_id=scratch_id,
+                    flow_name="_kernel_scratch_k-fanout",
+                    user_id=1,
+                    started_at=datetime.now(timezone.utc),
+                    number_of_nodes=0,
+                    run_type="in_designer_run",
+                )
+            )
+            db.commit()
+            group_id = group.id
+
+        try:
+            mgr._discard_scratch_flow("k-fanout")
+
+            with get_db_context() as db:
+                assert db.get(FlowRegistration, scratch_id) is None
+                assert (
+                    db.query(ResourceGrant)
+                    .filter_by(resource_type="flow", resource_id=scratch_id)
+                    .count()
+                    == 0
+                )
+                run = db.query(FlowRun).filter_by(flow_name="_kernel_scratch_k-fanout").one()
+                assert run.registration_id is None
+        finally:
+            with get_db_context() as db:
+                db.query(FlowRun).filter_by(flow_name="_kernel_scratch_k-fanout").delete()
+                db.query(ResourceGrant).filter_by(resource_id=scratch_id).delete()
+                db.query(UserGroup).filter_by(id=group_id).delete()
+                db.commit()
+
+    def test_discard_keeps_scratch_flow_that_still_has_artifacts(self):
+        """A live artifact's source_registration_id is NOT NULL — dropping the row
+        would dangle it, so the scratch registration is deliberately retained."""
+        from flowfile_core.database.models import GlobalArtifact
+
+        mgr = _bare_manager()
+        _seed_kernel_row("k-artifact", user_id=1)
+        mgr._kernel_owners["k-artifact"] = 1
+        mgr._provision_scratch_flow("k-artifact", user_id=1)
+        scratch_id = mgr._scratch_flow_ids["k-artifact"]
+
+        with get_db_context() as db:
+            db.add(
+                GlobalArtifact(
+                    name="scratch-artifact",
+                    source_registration_id=scratch_id,
+                    owner_id=1,
+                    status="active",
+                    serialization_format="joblib",
+                )
+            )
+            db.commit()
+
+        try:
+            mgr._discard_scratch_flow("k-artifact")
+            assert "k-artifact" not in mgr._scratch_flow_ids
+            with get_db_context() as db:
+                assert db.get(FlowRegistration, scratch_id) is not None
+        finally:
+            with get_db_context() as db:
+                db.query(GlobalArtifact).filter_by(source_registration_id=scratch_id).delete()
+                db.query(FlowRegistration).filter_by(id=scratch_id).delete()
+                db.commit()
+
 
 # get_scratch_flow_id — cache + lazy upgrade
 
