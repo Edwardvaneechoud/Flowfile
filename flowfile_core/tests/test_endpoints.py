@@ -367,6 +367,75 @@ def test_rename_flow_scratch_flow_in_memory_only():
         client.post("/editor/close_flow/", params={"flow_id": flow_id})
 
 
+def test_rename_of_unregistered_draft_survives_reopen():
+    """A draft's name lives in its YAML, because it has no registration to hold it.
+
+    ``open_flow`` stamped the filename stem over whatever the file said, so renaming a
+    quick-created flow was silently lost the moment the tab was closed — and its stem is
+    machine-generated ("Unnamed_flow_20260730_181546_493427479"), so there was nothing
+    readable to fall back to.
+    """
+    created_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    flow_path = flow_file_handler.get_flow(created_id).flow_settings.path
+    assert storage.is_scratch_flow_path(flow_path), "Precondition: quick-create lands in a scratch dir"
+    try:
+        r = client.post("/editor/rename_flow/", json={"flow_id": created_id, "name": "My analysis"})
+        assert r.status_code == 200, r.text
+        client.post("/editor/close_flow/", params={"flow_id": created_id})
+
+        reopened_id = client.get("/import_flow/", params={"flow_path": flow_path}).json()
+        reopened = flow_file_handler.get_flow(reopened_id)
+        assert reopened.flow_settings.name == "My analysis", "Reopen reverted the name to the file stem"
+        assert reopened.__name__ == "My analysis"
+    finally:
+        remove_flow(flow_path)
+
+
+def test_user_chosen_filename_still_wins_over_the_stored_name():
+    """Outside the scratch dirs the stem stays authoritative.
+
+    A path the user picked is a good name, and renaming or copying a flow file must keep
+    renaming the flow — the durable-name rule is scoped to app-generated filenames.
+    """
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "user_named_flow.yaml")
+    renamed_path = str(base_dir / "user_renamed_flow.yaml")
+    remove_flow(flow_path)
+    remove_flow(renamed_path)
+
+    created_id = client.post(
+        "editor/create_flow", params={"flow_path": flow_path, "register_in_catalog": False}
+    ).json()
+    try:
+        client.post("/editor/close_flow/", params={"flow_id": created_id})
+        os.rename(flow_path, renamed_path)
+
+        reopened_id = client.get("/import_flow/", params={"flow_path": renamed_path}).json()
+        assert flow_file_handler.get_flow(reopened_id).flow_settings.name == "user_renamed_flow"
+    finally:
+        remove_flow(flow_path)
+        remove_flow(renamed_path)
+
+
+def test_rename_does_not_commit_unsaved_canvas_edits():
+    """The rename write-back is scoped to clean flows: it must not silently save edits."""
+    flow_id = client.post("editor/create_flow", params={"register_in_catalog": False}).json()
+    flow_path = flow_file_handler.get_flow(flow_id).flow_settings.path
+    try:
+        add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+        flow = flow_file_handler.get_flow(flow_id)
+        assert flow.has_unsaved_changes(), "Precondition: adding a node leaves the flow dirty"
+
+        r = client.post("/editor/rename_flow/", json={"flow_id": flow_id, "name": "Dirty rename"})
+        assert r.status_code == 200, r.text
+        assert flow.has_unsaved_changes(), "Rename must not have saved the flow"
+
+        reopened_id = client.get("/import_flow/", params={"flow_path": flow_path}).json()
+        assert len(flow_file_handler.get_flow(reopened_id).nodes) == 0, "The unsaved node must not be on disk"
+    finally:
+        remove_flow(flow_path)
+
+
 def test_rename_flow_unknown_flow_404():
     r = client.post("/editor/rename_flow/", json={"flow_id": 999999999, "name": "x"})
     assert r.status_code == 404

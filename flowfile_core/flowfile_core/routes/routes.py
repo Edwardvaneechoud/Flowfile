@@ -340,11 +340,7 @@ def _resolve_catalog_save_path(flow_id: int, safe_stem: str, own_registration) -
 
 def _is_scratch_flow_path(flow_path: str) -> bool:
     """Whether ``flow_path`` is a throwaway flow (quick-create / python editor)."""
-    scratch_roots = (
-        str(Path(storage.unnamed_flows_directory).resolve()) + os.sep,
-        str(Path(storage.python_editor_flows_directory).resolve()) + os.sep,
-    )
-    return flow_path.startswith(scratch_roots)
+    return storage.is_scratch_flow_path(flow_path)
 
 
 def _discard_relocated_scratch_file(previous_path: str | None, new_path: str) -> None:
@@ -1197,10 +1193,32 @@ class RenameFlowInput(BaseModel):
     name: str
 
 
+def _persist_rename_of_unregistered_flow(flow) -> None:
+    """Write an unregistered flow's new name straight to its YAML.
+
+    Only when the flow is otherwise clean: a rename must not silently commit the
+    user's unsaved canvas edits. With pending edits the new ``__name__`` simply rides
+    along with their next save. Best-effort — a rename must never 500 on a read-only
+    or missing file.
+    """
+    flow_path = flow.flow_settings.path
+    if not flow_path or not os.path.exists(flow_path) or flow.has_unsaved_changes():
+        return
+    try:
+        flow.save_flow(flow_path)
+    except Exception:
+        logger.info(f"Could not persist rename for unregistered flow '{flow_path}' (non-critical)", exc_info=True)
+
+
 @router.post("/editor/rename_flow/", tags=["editor"], response_model=schemas.FlowSettingsResponse)
 def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_user)) -> schemas.FlowSettingsResponse:
     """Renames a flow's display name: the catalog registration (when one exists) plus the
-    in-memory session name. Metadata-only — the YAML file and its path are never touched."""
+    in-memory session name. The file *path* is never touched.
+
+    For an unregistered flow the name is written back into its YAML, because there is no
+    registration to hold it and ``open_flow`` would otherwise have nothing to read: the
+    rename would silently vanish when the tab is closed.
+    """
     user_id = current_user.id if current_user else None
     flow = flow_file_handler.get_flow(body.flow_id, user_id)
     if flow is None:
@@ -1226,6 +1244,11 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
                 pass
     # Only after catalog success, so a 403/409 leaves the session name untouched.
     flow.flow_settings.name = name
+    # __name__ is what gets serialised as ``flowfile_name``; without this the next
+    # same-path save would write the stale name back over the rename.
+    flow.__name__ = name
+    if reg_id is None:
+        _persist_rename_of_unregistered_flow(flow)
     response = _with_display_name(flow_file_handler.get_flow_info_with_runtime(body.flow_id))
     if renamed_registration:
         # Prefer the write we just made: a by-path lookup misses when the
@@ -2445,6 +2468,10 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
 
     Downloads required CSV data files from GitHub if not already cached locally,
     then creates a flow from the template definition.
+
+    The new flow is not registered in the catalog: the only path available to register is
+    the temp file this route unlinks on the way out, so doing so minted a permanently
+    dangling row. Saving the flow files it.
     """
     import logging as _logging
 
@@ -2517,8 +2544,5 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     finally:
         temp_path.unlink(missing_ok=True)
 
-    # Deliberately not registered: the only path we could register is the temp file
-    # the `finally` above just unlinked, so every instantiation minted a permanently
-    # dangling row (named after the uuid-suffixed stem). Save the flow to file it.
     _tpl_logger.info("create_from_template OK: template_id=%s flow_id=%s", template_id, flow_id)
     return flow_id
