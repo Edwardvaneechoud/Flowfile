@@ -334,7 +334,7 @@
 
         .approach-grid {
             display: grid;
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(0, 1fr);
             gap: 1.5rem;
             margin: 2rem 0;
             max-width: 1200px;
@@ -348,6 +348,8 @@
             border-radius: 16px;
             padding: 1.5rem;
             backdrop-filter: blur(10px);
+            min-width: 0;
+            overflow-wrap: break-word;
         }
 
         .approach-card h3 {
@@ -356,19 +358,19 @@
             font-size: 1.2rem;
         }
 
-        .approach-card ol {
-            padding-left: 1.25rem;
-            margin: 0;
+        .approach-canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
         }
 
-        .approach-card li {
-            padding: 0.4rem 0;
-            color: rgba(255,255,255,0.9);
-            font-size: 0.95rem;
-        }
-
-        .approach-card li strong {
-            color: white;
+        .approach-caption {
+            margin: 1rem 0 0;
+            color: rgba(255,255,255,0.75);
+            font-size: 0.9rem;
         }
 
         .approach-card pre {
@@ -378,6 +380,13 @@
             padding: 1rem;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.35) transparent;
+        }
+
+        .approach-card pre:focus-visible {
+            outline: 2px solid #2DD5D3;
+            outline-offset: 2px;
         }
 
         .approach-card code {
@@ -435,6 +444,10 @@
             background: var(--md-default-bg-color);
         }
 
+        .bottom-cta pre {
+            max-width: 100%;
+        }
+
         .bottom-cta-subtitle {
             max-width: 600px;
             margin: 0 auto 2rem;
@@ -467,7 +480,7 @@
             .feature-card { padding: 2rem; }
             .persona-section { padding: 4rem 2rem; }
             .persona-grid { grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
-            .approach-grid { grid-template-columns: 1fr 1fr; gap: 2rem; margin: 3rem 0; }
+            .approach-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2rem; margin: 3rem 0; }
             .approach-card { padding: 2rem; }
             .approach-card h3 { font-size: 1.4rem; }
             .example-section { padding: 4rem 2rem; }
@@ -478,7 +491,7 @@
             .interface-preview { margin: 3rem auto; padding: 0 2rem; }
             .bottom-cta { padding: 4rem 2rem; }
             .approach-card code { font-size: 0.875rem; }
-            .approach-card li { font-size: 1rem; }
+            .approach-caption { font-size: 0.95rem; }
             pre { font-size: 0.9rem; }
         }
 
@@ -573,7 +586,7 @@
                 <h3 class="feature-title">Visual Pipeline Builder</h3>
                 <p class="feature-description">
                     40+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more —
-                    with a data preview at every step. Missing one? Build your own visually in the Node Designer.
+                    with a data preview at every step.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
@@ -648,6 +661,17 @@
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
+
+            <a href="users/visual-editor/node-designer.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h12a1.5 1.5 0 0 1 1.5 1.5v3.6a2.4 2.4 0 0 1 0 4.8V18a1.5 1.5 0 0 1-1.5 1.5h-3.6a2.4 2.4 0 0 0-4.8 0H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5Z"/></svg></div>
+                <h3 class="feature-title">Custom &amp; Community Nodes</h3>
+                <p class="feature-description">
+                    Build your own node visually in the Node Designer — it saves as a single .py file
+                    and appears in the palette next to the built-ins. Install nodes others have
+                    published, or publish your own to the community registry.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
         </div>
     </section>
 
@@ -660,23 +684,21 @@
                 Both produce the same flow; switch whenever you like.
             </p>
 
-            <!-- IMAGE-PLACEHOLDER-TO-CHANGE: the sales_pipeline flow on the canvas — Read Data → Drop Duplicates → Filter → Group By, with the result preview open on the Group By node -->
-
             <div class="approach-grid">
                 <div class="approach-card">
                     <h3>On the canvas</h3>
-                    <ol>
-                        <li><strong>Read</strong> — load <code>supermarket_sales.csv</code></li>
-                        <li><strong>Drop Duplicates</strong> — remove repeated invoice rows</li>
-                        <li><strong>Filter</strong> — keep bulk orders: <code>[quantity] &gt; 7</code></li>
-                        <li><strong>Group By</strong> — per city, the sum and median of gross income</li>
-                    </ol>
+                    <img src="assets/images/ui/sales-pipeline-canvas.png" width="599" height="368" loading="lazy"
+                         class="approach-canvas"
+                         alt="The sales pipeline on the Flowfile canvas: Read data from supermarket_sales.csv, then Drop duplicates, then Filter on quantity &gt; 7, then Group by city.">
+                    <p class="approach-caption">
+                        Read data → Drop duplicates → Filter data → Group by, you can preview data at each step.
+                    </p>
                 </div>
 
                 <div class="approach-card">
                     <h3>In Python</h3>
                     <!-- Keep in sync with docs/examples/sales_pipeline.py (the tested source of truth) -->
-                    <pre><code>import flowfile as ff
+                    <pre tabindex="0" role="region" aria-label="Python example"><code>import flowfile as ff
 
 df = ff.read_csv("data/templates/supermarket_sales.csv")
 
