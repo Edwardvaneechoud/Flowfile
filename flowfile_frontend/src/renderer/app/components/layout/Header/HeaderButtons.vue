@@ -312,13 +312,14 @@ const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0)
 const flowSettings = ref<FlowSettings | null>(null);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 
-// Main "Create" click: instant quick-create — flow lands in
-// ~/.flowfile/flows/unnamed_flows/ via the backend's auto-naming, auto-
-// registered in the default catalog namespace. Users who want to pick a
-// location or namespace use the chevron → "Create at specific location…".
+// Main "Create" click: instant quick-create — an unregistered draft. The YAML
+// lands in ~/.flowfile/flows/unnamed_flows/ (crash-safe), but no catalog row is
+// minted: the flow joins the catalog on first run or an explicit save into a
+// schema. Users who want a location or namespace up front use the chevron →
+// "Create at specific location…".
 const handleQuickCreate = async () => {
   try {
-    const createdFlowId = await createFlow(null, null);
+    const createdFlowId = await createFlow(null, null, null, false);
     nodeStore.setFlowId(createdFlowId);
     await recordCurrentFlowAsRecent();
     emit("refreshFlow");

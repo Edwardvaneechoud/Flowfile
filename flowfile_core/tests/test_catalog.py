@@ -4,6 +4,7 @@ Covers namespace CRUD, flow registration, favorites, follows,
 run history, stats, and the default namespace seeding.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -989,6 +990,137 @@ class TestKafkaSyncRootHeal:
                 if backup is not None:
                     backup.name = "General"
                 db.commit()
+
+
+class TestScratchNamespaceCleanup:
+    """POST /catalog/namespaces/{id}/cleanup_flows — the bulk drop for scratch schemas."""
+
+    @staticmethod
+    def _namespace_id(name: str) -> int:
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            ns = db.query(CatalogNamespace).filter_by(name=name, parent_id=general.id).first()
+            assert ns is not None, f"seeded namespace '{name}' missing"
+            return ns.id
+
+    def test_cleanup_drops_rows_and_scratch_files_but_keeps_artifact_flows(self):
+        from flowfile_core.database.models import GlobalArtifact, User
+
+        init_db()
+        ns_id = self._namespace_id("Unnamed Flows")
+        with get_db_context() as db:
+            user_id = db.query(User).filter_by(username="local_user").first().id
+
+        scratch_dir = storage.unnamed_flows_directory
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        path_a = str(scratch_dir / "cleanup_test_a.yaml")
+        path_b = str(scratch_dir / "cleanup_test_b.yaml")
+        for p in (path_a, path_b):
+            Path(p).write_text("flowfile_name: cleanup_test\n")
+            auto_register_flow(p, Path(p).stem, user_id)
+
+        artifact_flow_path = str(scratch_dir / "cleanup_test_kept.yaml")
+        with get_db_context() as db:
+            kept_flow = FlowRegistration(
+                name="cleanup_test_kept", flow_path=artifact_flow_path, namespace_id=ns_id, owner_id=user_id
+            )
+            db.add(kept_flow)
+            db.commit()
+            db.refresh(kept_flow)
+            kept_id = kept_flow.id
+            db.add(
+                GlobalArtifact(
+                    name="cleanup-test-artifact",
+                    source_registration_id=kept_id,
+                    owner_id=user_id,
+                    status="active",
+                    serialization_format="joblib",
+                )
+            )
+            db.commit()
+
+        try:
+            resp = client.post(f"/catalog/namespaces/{ns_id}/cleanup_flows")
+            assert resp.status_code == 200, resp.text
+            result = resp.json()
+            assert result["deleted"] >= 2
+            assert result["kept"] >= 1
+
+            with get_db_context() as db:
+                for p in (path_a, path_b):
+                    assert (
+                        db.query(FlowRegistration).filter_by(flow_path=p).first() is None
+                    ), "scratch registration must be dropped"
+                assert db.get(FlowRegistration, kept_id) is not None, "a flow with live artifacts must be kept"
+            assert not os.path.exists(path_a) and not os.path.exists(path_b), "scratch files must be removed"
+        finally:
+            for p in (path_a, path_b):
+                Path(p).unlink(missing_ok=True)
+            with get_db_context() as db:
+                db.query(GlobalArtifact).filter_by(source_registration_id=kept_id).delete()
+                db.query(FlowRegistration).filter(
+                    FlowRegistration.flow_path.in_([path_a, path_b, artifact_flow_path])
+                ).delete(synchronize_session=False)
+                db.commit()
+
+    def test_cleanup_tolerates_rows_a_concurrent_sweep_already_deleted(self, monkeypatch):
+        """A double-fired cleanup must skip rows the other sweep removed, not 500.
+
+        The loop works from an (id, path) snapshot; a row deleted between the
+        snapshot and its turn surfaces as FlowNotFoundError (or ObjectDeletedError
+        via the session identity map) and is skipped.
+        """
+        from flowfile_core.catalog.exceptions import FlowNotFoundError
+        from flowfile_core.catalog.service import CatalogService as ServiceClass
+        from flowfile_core.database.models import User
+
+        init_db()
+        ns_id = self._namespace_id("Unnamed Flows")
+        with get_db_context() as db:
+            user_id = db.query(User).filter_by(username="local_user").first().id
+
+        scratch_dir = storage.unnamed_flows_directory
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        path_gone = str(scratch_dir / "cleanup_race_gone.yaml")
+        path_live = str(scratch_dir / "cleanup_race_live.yaml")
+        for p in (path_gone, path_live):
+            Path(p).write_text("flowfile_name: cleanup_race\n")
+            auto_register_flow(p, Path(p).stem, user_id)
+        with get_db_context() as db:
+            gone_id = db.query(FlowRegistration).filter_by(flow_path=path_gone).one().id
+
+        real_delete = ServiceClass.delete_flow
+
+        def racing_delete(self, registration_id, delete_file=False):
+            if registration_id == gone_id:
+                raise FlowNotFoundError(registration_id=registration_id)
+            return real_delete(self, registration_id, delete_file)
+
+        monkeypatch.setattr(ServiceClass, "delete_flow", racing_delete)
+        try:
+            resp = client.post(f"/catalog/namespaces/{ns_id}/cleanup_flows")
+            assert resp.status_code == 200, resp.text
+            with get_db_context() as db:
+                assert (
+                    db.query(FlowRegistration).filter_by(flow_path=path_live).first() is None
+                ), "rows after the raced one must still be swept"
+        finally:
+            for p in (path_gone, path_live):
+                Path(p).unlink(missing_ok=True)
+            with get_db_context() as db:
+                db.query(FlowRegistration).filter(
+                    FlowRegistration.flow_path.in_([path_gone, path_live])
+                ).delete(synchronize_session=False)
+                db.commit()
+
+    def test_cleanup_rejected_outside_scratch_schemas(self):
+        init_db()
+        local_flows_id = self._namespace_id("Local Flows")
+        resp = client.post(f"/catalog/namespaces/{local_flows_id}/cleanup_flows")
+        assert resp.status_code == 403, resp.text
+
+        resp = client.post("/catalog/namespaces/999999/cleanup_flows")
+        assert resp.status_code == 404, resp.text
 
 
 # Read link / lineage repository tests

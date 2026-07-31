@@ -264,6 +264,8 @@ interface Props {
   context?: FileBrowserContext;
   /** When set, browsing is locked to this directory (start dir + no navigating above it). */
   rootPath?: string;
+  /** Prefill for the "Create New File" dialog (e.g. the current flow's name on Save As). */
+  defaultNewFileName?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -276,6 +278,7 @@ const props = withDefaults(defineProps<Props>(), {
   isVisible: true,
   context: "flows",
   rootPath: undefined,
+  defaultNewFileName: "",
 });
 
 // Emits
@@ -300,6 +303,14 @@ const showCreateDialog = ref(false);
 const newFileName = ref("");
 const fileNameError = ref("");
 const selectedFile = ref<FileInfo | null>(null);
+
+// Seed the filename from the caller's default (e.g. the flow's name on Save As);
+// handleDialogClosed resets it, so a reopen re-seeds.
+watch(showCreateDialog, (open) => {
+  if (open && !newFileName.value && props.defaultNewFileName) {
+    newFileName.value = props.defaultNewFileName;
+  }
+});
 
 const normalizeForCompare = (p: string): string => {
   const n = path.normalize(p);
@@ -770,7 +781,7 @@ onMounted(async () => {
 .browser-main {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 8px 16px;
 }
 
 .file-item {
@@ -806,23 +817,23 @@ onMounted(async () => {
 }
 
 .file-item-content {
-  padding: 12px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .file-icon-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
 }
 
 .file-icon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   color: var(--color-text-tertiary);
 }
 
@@ -833,15 +844,16 @@ onMounted(async () => {
 
 .file-name {
   font-weight: 500;
+  font-size: 13px;
   color: var(--color-text-primary);
-  margin-bottom: 4px;
+  margin-bottom: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .file-info {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text-secondary);
 }
 
@@ -950,21 +962,21 @@ onMounted(async () => {
 .browser-main {
   flex: 1;
   overflow-y: auto; /* Make this section scrollable */
-  padding: 16px;
+  padding: 8px 16px;
   min-height: 0; /* Enable proper flex child scrolling */
 }
 
 .grid-container {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
-  gap: 16px;
-  padding: 8px;
+  gap: 8px;
+  padding: 4px;
 }
 
 /* Optional: if you want to maintain icon size consistency */
 .file-icon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
 }
 

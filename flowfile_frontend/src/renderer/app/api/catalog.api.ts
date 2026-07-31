@@ -104,6 +104,15 @@ export class CatalogApi {
     await axios.delete(`/catalog/flows/${id}`, { params: { delete_file: deleteFile } });
   }
 
+  static async cleanupNamespaceFlows(
+    namespaceId: number,
+  ): Promise<{ deleted: number; kept: number }> {
+    const response = await axios.post<{ deleted: number; kept: number }>(
+      `/catalog/namespaces/${namespaceId}/cleanup_flows`,
+    );
+    return response.data;
+  }
+
   static async runFlow(flowId: number): Promise<FlowRun> {
     const response = await axios.post<FlowRun>(`/catalog/flows/${flowId}/run`);
     return response.data;

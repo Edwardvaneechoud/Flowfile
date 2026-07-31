@@ -55,6 +55,14 @@
         >
           <i class="fa-solid fa-file-circle-plus"></i>
         </button>
+        <button
+          v-if="isScratchSchema"
+          class="action-btn"
+          title="Clean up all flows in this schema"
+          @click="$emit('cleanupNamespace', node)"
+        >
+          <i class="fa-solid fa-broom"></i>
+        </button>
       </div>
     </div>
 
@@ -86,6 +94,7 @@
           @delete-table="$emit('deleteTable', $event)"
           @delete-flow="$emit('deleteFlow', $event)"
           @namespace-share="$emit('namespaceShare', $event)"
+          @cleanup-namespace="$emit('cleanupNamespace', $event)"
         />
       </div>
 
@@ -309,7 +318,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from "vue";
-import { SYSTEM_NAMESPACE_NAMES } from "../../types";
+import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
@@ -374,6 +383,7 @@ const emit = defineEmits([
   "deleteTable",
   "deleteFlow",
   "namespaceShare",
+  "cleanupNamespace",
 ]);
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
@@ -443,6 +453,10 @@ const onRowClick = () => {
 // Sections inside system namespaces stay collapsed by default; the default
 // schema and user-created namespaces open fully uncollapsed.
 const sectionsDefaultExpanded = computed(() => !SYSTEM_NAMESPACE_NAMES.has(props.node.name));
+
+const isScratchSchema = computed(
+  () => props.node.level === 1 && SCRATCH_NAMESPACE_NAMES.has(props.node.name),
+);
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
 const showModelsSection = computed(

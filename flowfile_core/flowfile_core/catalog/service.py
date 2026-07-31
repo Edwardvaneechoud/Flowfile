@@ -14,17 +14,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import polars as pl
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from flowfile_core.catalog.constants import (
     DEFAULT_PREVIEW_LIMIT,
     DEFAULT_SCHEMA,
     DEFAULT_SQL_MAX_ROWS,
     LOCAL_FLOWS,
+    PYTHON_EDITOR_FLOWS,
     ROOT_CATALOG,
     UNNAMED_FLOWS,
 )
 from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
+    FlowHasArtifactsError,
+    FlowNotFoundError,
+    NamespaceNotFoundError,
     NotAuthorizedError,
     NotebookNotFoundError,
     VisualizationNotFoundError,
@@ -123,6 +128,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.schemas.sharing_schema import AccessInfo
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -605,6 +611,51 @@ class CatalogService:
         """Delete a flow and its related favourites/follows (optionally its file)."""
         self._require_manage("flow", registration_id)
         self._flows.delete_flow(registration_id, delete_file)
+
+    def cleanup_scratch_namespace(self, namespace_id: int) -> tuple[int, int]:
+        """Bulk-delete the auto-accreted flow registrations in a scratch schema.
+
+        Only the app-managed scratch schemas (``General > Unnamed Flows`` and
+        ``General > Python Editor``) can be swept — their rows accumulate as a side
+        effect of quick-create and the FlowFrame API, never by deliberate filing.
+        Each row goes through the canonical gated delete, so flows with live
+        artifacts and rows the caller may not manage are kept, and machine-named
+        files inside the scratch dirs are removed along with their rows.
+
+        The delete loop works from a plain ``(id, path)`` snapshot, never live ORM
+        instances: each delete commits, which expires every instance in the session,
+        and a concurrent sweep (double-fired button) can remove a row between the
+        listing and its turn — touching an expired, deleted instance raises
+        ``ObjectDeletedError``. Rows another sweep already removed are skipped.
+
+        Returns ``(deleted, kept)``.
+        """
+        ns = self.repo.get_namespace(namespace_id)
+        if ns is None:
+            raise NamespaceNotFoundError(namespace_id=namespace_id)
+        parent = self.repo.get_namespace(ns.parent_id) if ns.parent_id is not None else None
+        is_scratch_schema = (
+            ns.name in (UNNAMED_FLOWS.name, PYTHON_EDITOR_FLOWS.name)
+            and parent is not None
+            and parent.parent_id is None
+            and parent.name == ROOT_CATALOG.name
+        )
+        if not is_scratch_schema:
+            raise NotAuthorizedError(
+                f"Bulk cleanup is only available for the '{UNNAMED_FLOWS.name}' and "
+                f"'{PYTHON_EDITOR_FLOWS.name}' scratch schemas"
+            )
+        targets = [(f.id, f.flow_path) for f in self.repo.list_flows(namespace_id=namespace_id)]
+        deleted = kept = 0
+        for reg_id, flow_path in targets:
+            try:
+                self.delete_flow(reg_id, delete_file=storage.is_scratch_flow_path(flow_path))
+                deleted += 1
+            except (FlowNotFoundError, ObjectDeletedError):
+                continue
+            except (FlowHasArtifactsError, NotAuthorizedError):
+                kept += 1
+        return deleted, kept
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""

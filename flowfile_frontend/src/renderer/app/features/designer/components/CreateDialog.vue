@@ -301,6 +301,12 @@ defineExpose({
   gap: var(--spacing-4);
 }
 
+/* Cap the browser (default 70vh) so the register/namespace section below it
+   stays visible without scrolling the dialog. */
+.create-panel :deep(.file-browser) {
+  height: 46vh;
+}
+
 .catalog-options {
   padding: var(--spacing-3);
   border: 1px solid var(--color-border-light);

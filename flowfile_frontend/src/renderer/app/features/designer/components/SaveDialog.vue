@@ -44,6 +44,7 @@
             context="flows"
             :initial-file-path="initialPath"
             :is-visible="isVisible && saveMode === 'file'"
+            :default-new-file-name="defaultSaveFileName"
             @create-file="handleSaveFlow"
             @overwrite-file="handleSaveFlow"
           />
@@ -186,6 +187,14 @@ const registerInCatalog = ref(true);
 const selectedNamespaceId = ref<number | null>(null);
 const selectedNamespaceName = ref<string | null>(null);
 const catalogFlowName = ref("");
+
+// Prefill for the file browser's "Create New File" input. Machine-generated
+// draft stems ("Unnamed_flow_2026...") are noise, not a name — skip those.
+const defaultSaveFileName = computed(() => {
+  const raw = catalogFlowName.value.trim();
+  if (!raw || /^Unnamed_flow_\d/.test(raw)) return "";
+  return raw.replace(/[^a-zA-Z0-9-_. ]+/g, "_");
+});
 // Picker-driven catalog state: if ``selectedRegistrationId`` is set, saving
 // overwrites that existing flow; otherwise we create a new registration in
 // ``selectedNamespaceId`` using ``catalogFlowName``.
@@ -513,6 +522,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: var(--spacing-4);
+}
+
+/* Cap the browser (default 70vh) so the register/namespace section below it
+   stays visible without scrolling the dialog. */
+.save-panel :deep(.file-browser) {
+  height: 46vh;
 }
 
 .catalog-options {

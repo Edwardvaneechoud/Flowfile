@@ -38,6 +38,10 @@ export const SYSTEM_NAMESPACE_NAMES = new Set([
   "sync",
 ]);
 
+// The subset whose rows accrete automatically (quick-create / FlowFrame API) and
+// get a bulk "clean up" action; the cleanup route enforces the same set server-side.
+export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"]);
+
 // Shallow copy of the tree with system schemas removed from the "General" root.
 // Scoped to "General" so a user-created schema sharing a name elsewhere is kept.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {

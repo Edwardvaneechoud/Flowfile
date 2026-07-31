@@ -115,6 +115,7 @@
               @delete-table="handleDeleteTable($event)"
               @delete-flow="handleDeleteFlow($event)"
               @namespace-share="openNamespaceShare($event)"
+              @cleanup-namespace="handleCleanupNamespace($event)"
             />
           </div>
         </div>
@@ -938,7 +939,7 @@ function onFlowMenuSelect(action: string) {
 // CatalogReader node persists for a configured table (is_setup: true).
 async function createReadInFlow(table: CatalogTable) {
   try {
-    const flowId = await FlowApi.createFlow(null, null);
+    const flowId = await FlowApi.createFlow(null, null, null, false);
     const nodeId = 1;
     const posX = 200;
     const posY = 200;
@@ -970,7 +971,7 @@ async function createReadInFlow(table: CatalogTable) {
 // (tables) but targets the kernel-backed python_script node where flowfile_ctx lives.
 async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
   try {
-    const flowId = await FlowApi.createFlow(null, null);
+    const flowId = await FlowApi.createFlow(null, null, null, false);
     const nodeId = 1;
     const posX = 200;
     const posY = 200;
@@ -1199,6 +1200,51 @@ async function handleDeleteFlow(flowId: number) {
     ]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to delete flow");
+  }
+}
+
+const cleanupInProgress = ref(false);
+
+async function handleCleanupNamespace(node: NamespaceTree) {
+  if (cleanupInProgress.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `Delete all ${node.flows.length} flow registrations in "${node.name}" and their scratch files? ` +
+        "Flows with published artifacts are kept. This cannot be undone.",
+      "Clean up flows",
+      { confirmButtonText: "Delete all", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  cleanupInProgress.value = true;
+  // Full-screen lock: the sweep deletes row-by-row and can take seconds on a big
+  // backlog; leaving the tree clickable invites a second, racing sweep.
+  const loading = ElLoading.service({
+    lock: true,
+    text: `Cleaning up "${node.name}"…`,
+  });
+  try {
+    const result = await CatalogApi.cleanupNamespaceFlows(node.id);
+    ElMessage.success(
+      result.kept > 0
+        ? `Removed ${result.deleted} flows (${result.kept} kept)`
+        : `Removed ${result.deleted} flows`,
+    );
+    projectStore.onSourceChanged();
+    catalogStore.selectedFlowId = null;
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllFlows(),
+      catalogStore.loadFavorites(),
+      catalogStore.loadFollowing(),
+      catalogStore.loadStats(),
+    ]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Cleanup failed");
+  } finally {
+    loading.close();
+    cleanupInProgress.value = false;
   }
 }
 
