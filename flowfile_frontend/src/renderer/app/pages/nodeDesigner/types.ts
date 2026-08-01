@@ -44,6 +44,7 @@ export interface CustomNodeInfo {
   node_key?: string;
   environment?: "local" | "kernel";
   source_hash?: string;
+  tags?: string[];
   error?: string | null;
 }
 

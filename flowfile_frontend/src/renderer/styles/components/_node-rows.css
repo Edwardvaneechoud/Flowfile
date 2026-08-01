@@ -1,0 +1,91 @@
+/* styles/components/_node-rows.css - Custom-node list rows (designer browser + catalog tab) */
+
+.node-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-bottom: 1px solid var(--color-border-light);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  /* Keeps a scrollIntoView'd row clear of the sticky group header. */
+  scroll-margin-top: 40px;
+}
+
+.node-row:hover {
+  background: var(--color-background-secondary);
+}
+
+.node-row--current {
+  border-left-color: var(--color-accent);
+}
+
+.node-row__icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.node-row__name {
+  flex-shrink: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+/* min-width:0 is load-bearing — without it the flex item refuses to shrink
+   below its content width and the ellipsis never appears. */
+.node-row__intro {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.node-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  flex-shrink: 0;
+}
+
+.node-row__broken {
+  color: var(--color-warning);
+}
+
+/* Offset lets a host with its own sticky toolbar push headers below it. */
+.node-group__header {
+  position: sticky;
+  top: var(--node-group-sticky-top, 0);
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+/* Chips that link out (community source) still read as badges, not buttons. */
+.node-row .community-chip {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.node-row .community-chip i {
+  font-size: var(--font-size-2xs);
+}

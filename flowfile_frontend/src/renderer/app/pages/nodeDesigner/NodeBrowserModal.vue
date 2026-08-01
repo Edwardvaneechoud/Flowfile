@@ -1,16 +1,34 @@
 <template>
   <div v-if="show" class="modal-overlay" @click="emit('close')">
-    <div class="modal-container modal-large" @click.stop>
+    <div class="modal-container modal-xl" @click.stop>
       <div class="modal-header">
         <h3 class="modal-title">
           <i class="fa-solid fa-folder-open"></i>
           {{ viewingNodeCode ? viewingNodeName : "Browse Custom Nodes" }}
+          <span v-if="!viewingNodeCode && countLabel" class="modal-title-count">
+            {{ countLabel }}
+          </span>
         </h3>
         <button class="modal-close" @click="emit('close')">
           <i class="fa-solid fa-times"></i>
         </button>
       </div>
-      <div class="modal-content">
+
+      <!-- Sibling of .modal-content so the search box never scrolls away. -->
+      <div v-if="!viewingNodeCode && nodes.length" class="browser-toolbar">
+        <el-input
+          v-model="search"
+          placeholder="Search nodes"
+          clearable
+          size="small"
+          class="node-search"
+          data-testid="node-browser-search"
+        >
+          <template #prefix><i class="fa-solid fa-magnifying-glass" /></template>
+        </el-input>
+      </div>
+
+      <div class="modal-content" :class="{ 'modal-content--flush': !viewingNodeCode }">
         <template v-if="viewingNodeCode">
           <div class="node-code-view">
             <Codemirror
@@ -35,57 +53,35 @@
             title="No custom nodes found"
             description="Save a node to see it here."
           />
-          <div v-else class="nodes-grid">
-            <div
-              v-for="node in nodes"
-              :key="node.file_name"
-              class="node-card"
-              :data-testid="`node-card-${node.file_name}`"
-            >
-              <div class="node-card-header">
-                <i class="fa-solid fa-puzzle-piece"></i>
-                <span class="node-name">{{ node.node_name || node.file_name }}</span>
-                <span v-if="node.error" class="node-broken" title="Failed to load">
-                  <i class="fa-solid fa-triangle-exclamation"></i>
-                </span>
+          <EmptyState
+            v-else-if="visibleNodes.length === 0"
+            icon="fa-solid fa-magnifying-glass"
+            title="No nodes match your search"
+            :description="`Nothing found for “${search.trim()}”.`"
+          >
+            <template #actions>
+              <button class="btn btn-secondary btn-sm" @click="search = ''">Clear search</button>
+            </template>
+          </EmptyState>
+          <template v-else>
+            <section v-for="group in groups" :key="group.key">
+              <div class="node-group__header">
+                <span>{{ group.label }}</span>
+                <span>{{ group.nodes.length }}</span>
               </div>
-              <div class="node-card-body">
-                <span class="node-category">{{ node.node_category }}</span>
-                <p class="node-description">{{ node.intro || "No description" }}</p>
-              </div>
-              <div class="node-card-actions">
-                <button
-                  class="btn btn-sm"
-                  title="Edit"
-                  :data-testid="`node-edit-${node.file_name}`"
-                  @click="emit('edit', node.file_name)"
-                >
-                  <i class="fa-solid fa-pen"></i> Edit
-                </button>
-                <button
-                  class="btn btn-sm"
-                  title="Duplicate"
-                  @click="emit('duplicate', node.file_name)"
-                >
-                  <i class="fa-solid fa-copy"></i> Duplicate
-                </button>
-                <button
-                  class="btn btn-sm"
-                  title="View code"
-                  @click="emit('viewNode', node.file_name)"
-                >
-                  <i class="fa-solid fa-code"></i> Code
-                </button>
-                <button
-                  class="btn btn-sm btn-icon btn-danger card-action-danger"
-                  title="Delete"
-                  @click="askDelete(node.file_name, node.node_name || node.file_name)"
-                >
-                  <i class="fa-solid fa-trash"></i>
-                </button>
-              </div>
-            </div>
-          </div>
+              <NodeBrowserRow
+                v-for="node in group.nodes"
+                :key="node.file_name"
+                :node="node"
+                :is-current="node.file_name === currentFile"
+                :community="communityNodes?.[node.file_name] ?? null"
+                @edit="emit('edit', $event)"
+                @duplicate="emit('duplicate', $event)"
+                @view="emit('viewNode', $event)"
+                @delete="askDelete(node.file_name, node.node_name || node.file_name)"
+              />
+            </section>
+          </template>
         </template>
       </div>
       <div class="modal-actions">
@@ -135,22 +131,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Codemirror } from "vue-codemirror";
+import { ElInput } from "element-plus";
 import type { Extension } from "@codemirror/state";
+import type { InstallReceipt } from "../../api/communityNodes";
 import type { CustomNodeInfo } from "./types";
+import { filterNodes, groupByCategory } from "./customNodeFilter";
+import NodeBrowserRow from "./NodeBrowserRow.vue";
 import EmptyState from "../../components/common/EmptyState/EmptyState.vue";
 
 const router = useRouter();
 
-defineProps<{
+const props = defineProps<{
   show: boolean;
   nodes: CustomNodeInfo[];
   loading: boolean;
   viewingNodeCode: string;
   viewingNodeName: string;
   readOnlyExtensions: Extension[];
+  currentFile?: string | null;
+  communityNodes?: Record<string, InstallReceipt>;
 }>();
 
 const emit = defineEmits<{
@@ -161,6 +163,27 @@ const emit = defineEmits<{
   (e: "back"): void;
   (e: "delete", fileName: string): void;
 }>();
+
+const search = ref("");
+
+const visibleNodes = computed(() => filterNodes(props.nodes, search.value));
+const groups = computed(() => groupByCategory(visibleNodes.value));
+
+const countLabel = computed(() => {
+  const total = props.nodes.length;
+  if (!total) return "";
+  const shown = visibleNodes.value.length;
+  return shown === total ? `${total}` : `${shown} of ${total}`;
+});
+
+// The component never unmounts (v-if lives on the inner overlay), so a stale
+// query would silently hide nodes on the next visit.
+watch(
+  () => props.show,
+  (open) => {
+    if (open) search.value = "";
+  },
+);
 
 const pendingDelete = ref<{ fileName: string; name: string } | null>(null);
 
@@ -193,80 +216,27 @@ function browseCommunity() {
   font-size: 1.25rem;
 }
 
-.nodes-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 1rem;
+.modal-title-count {
+  margin-left: var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-tertiary);
 }
 
-.node-card {
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-lg);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.node-card-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  background: var(--color-background-secondary);
+.browser-toolbar {
+  flex-shrink: 0;
+  padding: var(--spacing-2) var(--spacing-4);
   border-bottom: 1px solid var(--color-border-primary);
 }
 
-.node-card-header i {
-  color: var(--color-accent);
+/* Not `.search-input` — _forms.css defines a global one whose own border and
+   background would double up on the el-input root. */
+.node-search {
+  max-width: 320px;
 }
 
-.node-broken {
-  margin-left: auto;
-  color: var(--color-warning);
-}
-
-.node-name {
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-base);
-}
-
-.node-card-body {
-  padding: 0.75rem 1rem;
-  flex: 1;
-}
-
-.node-category {
-  display: inline-block;
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-medium);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 0.125rem 0.5rem;
-  background: var(--color-accent-subtle);
-  color: var(--color-accent);
-  border-radius: var(--border-radius-full);
-  margin-bottom: 0.5rem;
-}
-
-.node-description {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-}
-
-.node-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  border-top: 1px solid var(--color-border-primary);
-  background: var(--color-background-secondary);
-}
-
-.card-action-danger {
-  margin-left: auto;
+.modal-content--flush {
+  padding: 0;
 }
 
 .node-code-view {

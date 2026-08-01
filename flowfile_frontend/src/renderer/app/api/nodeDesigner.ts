@@ -183,6 +183,10 @@ export interface CatalogCustomNode {
   node_name: string;
   node_category: string;
   file_name: string;
+  title: string;
+  intro: string;
+  tags: string[];
+  node_icon: string;
   environment: "local" | "kernel";
   error: string | null;
   source: string; // "default" | absolute mount path
