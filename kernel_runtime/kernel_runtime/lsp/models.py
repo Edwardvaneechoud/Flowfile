@@ -30,7 +30,10 @@ class CompleteResponse(BaseModel):
 
 
 class HoverResponse(BaseModel):
-    contents: str | None = None  # markdown-ish: full name + signature + docstring
+    contents: str | None = None  # docstring body, RST cleaned
+    kind: str = ""  # display kind: function / method / class / variable / module / ...
+    name: str = ""
+    signature: str = ""
 
 
 class SignatureInfo(BaseModel):

@@ -157,15 +157,23 @@ class TableService:
         default_namespace_id: int | None = None,
         strict: bool = False,
     ) -> CatalogTable:
-        """Resolve a ``"ns.table"`` or bare ``"table"`` reference to a single CatalogTable."""
+        """Resolve a ``"catalog.schema.table"``, ``"ns.table"`` or bare ``"table"`` reference.
+
+        Splitting on every dot is unambiguous because ``reject_dot_in_name`` forbids
+        dots in namespace and table names.
+        """
         if not reference:
             raise TableNotFoundError(name=reference)
 
         if "." in reference:
-            ns_name, _, table_name = reference.partition(".")
-            if not ns_name or not table_name:
+            parts = reference.split(".")
+            if not all(parts):
                 raise TableNotFoundError(name=reference)
-            return self._resolve_qualified(ns_name, table_name, strict=strict)
+            if len(parts) == 2:
+                return self._resolve_qualified(parts[0], parts[1], strict=strict)
+            if len(parts) == 3:
+                return self._resolve_fully_qualified(parts[0], parts[1], parts[2])
+            raise TableNotFoundError(name=reference)
 
         return self._resolve_bare(reference, default_namespace_id, strict=strict)
 
@@ -191,6 +199,16 @@ class TableService:
         if len(tables) == 1:
             return tables[0]
         return self._disambiguate(f"{ns_name}.{table_name}", tables, strict=strict)
+
+    def _resolve_fully_qualified(self, catalog_name: str, schema_name: str, table_name: str) -> CatalogTable:
+        """Resolve ``catalog.schema.table``; unambiguous, so no disambiguation pass."""
+        namespace_id = self._namespaces.resolve_namespace_id_by_path(catalog_name, schema_name)
+        if namespace_id is None:
+            raise NamespaceNotFoundError(name=f"{catalog_name}.{schema_name}")
+        table = self.repo.get_table_by_name(table_name, namespace_id)
+        if table is None:
+            raise TableNotFoundError(name=f"{catalog_name}.{schema_name}.{table_name}")
+        return table
 
     def _resolve_bare(self, name: str, default_namespace_id: int | None, *, strict: bool) -> CatalogTable:
         if default_namespace_id is not None:

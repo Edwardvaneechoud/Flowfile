@@ -94,7 +94,33 @@ def test_complete_dedupes_repeated_name_type_pairs(client, monkeypatch):
 def test_hover(client):
     resp = client.post("/lsp/hover", json={"code": "pl.col", "line": 1, "column": 6, "flow_id": 1})
     assert resp.status_code == 200
-    assert resp.json()["contents"]
+    body = resp.json()
+    assert body["name"] == "col"
+    assert body["signature"]
+
+
+def test_hover_titles_a_method_with_kind_name_and_signature(client):
+    code = "import polars as pl\npl.LazyFrame.collect"
+    body = client.post("/lsp/hover", json={"code": code, "line": 2, "column": 20, "flow_id": 1}).json()
+    assert body["kind"] == "method"
+    assert body["name"] == "collect"
+    assert body["signature"].startswith("collect(")
+    # contents is the docstring alone — the signature no longer rides inside it
+    assert body["contents"].startswith("Materialize this")
+
+
+def test_hover_kind_for_class_and_variable(client):
+    cls = client.post(
+        "/lsp/hover",
+        json={"code": "import polars as pl\npl.LazyFrame", "line": 2, "column": 12, "flow_id": 1},
+    ).json()
+    assert cls["kind"] == "class" and cls["name"] == "LazyFrame"
+
+    var = client.post(
+        "/lsp/hover",
+        json={"code": "import polars as pl\ndf = pl.DataFrame()\ndf", "line": 3, "column": 2, "flow_id": 1},
+    ).json()
+    assert var["kind"] == "variable" and var["name"] == "df"
 
 
 def test_signature(client):
@@ -117,3 +143,73 @@ def test_diagnostics_clean_code(client):
         json={"code": "x = 1\ny = x + 1", "line": 1, "column": 0, "flow_id": 1},
     )
     assert resp.json()["diagnostics"] == []
+
+
+class TestCleanDoc:
+    """Docstring text handed to the tooltips is prose, not raw reStructuredText."""
+
+    def test_drops_directive_blocks_and_keeps_following_content(self):
+        from kernel_runtime.lsp.analysis import _clean_doc
+
+        out = _clean_doc(
+            "Summary line.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "type_coercion\n"
+            "    Do type coercion.\n"
+            "\n"
+            "    .. deprecated:: 1.30.0\n"
+            "        Use the ``optimizations`` parameter.\n"
+            "predicate_pushdown\n"
+            "    Do predicate pushdown.\n"
+        )
+        assert "deprecated" not in out
+        assert "optimizations` parameter" not in out
+        assert "Parameters" in out
+        assert "----------" not in out
+        assert "predicate_pushdown" in out
+        assert "    Do predicate pushdown." in out
+
+    def test_normalises_rst_markup(self):
+        from kernel_runtime.lsp.analysis import _clean_doc
+
+        out = _clean_doc("    Read a ``LazyFrame``.\n\n    See :meth:`DataFrame.head` and :class:`Foo`.")
+        assert out.startswith("Read a `LazyFrame`.")
+        assert "``" not in out
+        assert ":meth:" not in out and ":class:" not in out
+        assert "`DataFrame.head`" in out
+
+    def test_collapses_blank_runs_and_trims(self):
+        from kernel_runtime.lsp.analysis import _clean_doc
+
+        assert _clean_doc("\n\nA.\n\n\n\nB.\n\n") == "A.\n\nB."
+
+    def test_hover_returns_cleaned_text(self, client):
+        resp = client.post(
+            "/lsp/hover",
+            json={"code": "import polars as pl\npl.LazyFrame.collect", "line": 2, "column": 20, "flow_id": 1},
+        )
+        contents = resp.json()["contents"]
+        assert contents
+        assert ".. deprecated::" not in contents
+        assert "``" not in contents
+
+    def test_uncapped_by_default_capped_only_for_completions(self):
+        from kernel_runtime.lsp import analysis
+
+        long_doc = "x" * 20000
+        assert analysis._truncate(long_doc) == long_doc
+        assert len(analysis._truncate(long_doc, analysis._MAX_COMPLETION_DOC_CHARS)) == (
+            analysis._MAX_COMPLETION_DOC_CHARS + 1
+        )
+
+    def test_hover_and_signature_carry_the_whole_docstring(self, client):
+        code = "import polars as pl\npl.LazyFrame.collect"
+        hover = client.post("/lsp/hover", json={"code": code, "line": 2, "column": 20, "flow_id": 1}).json()
+        assert len(hover["contents"]) > 3000 and not hover["contents"].endswith("…")
+
+        sig_code = "import polars as pl\npl.LazyFrame().collect("
+        sig = client.post("/lsp/signature", json={"code": sig_code, "line": 2, "column": 42, "flow_id": 1}).json()
+        docs = [s["documentation"] for s in sig["signatures"]]
+        assert docs and not any(d.endswith("…") for d in docs)

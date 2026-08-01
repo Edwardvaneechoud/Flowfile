@@ -7,7 +7,9 @@ any cell has run. Every Jedi call is wrapped — a stray completion request must
 degrade to an empty result, never raise.
 """
 
+import inspect
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -28,7 +30,7 @@ from kernel_runtime.lsp.models import (
 logger = logging.getLogger(__name__)
 
 _MAX_COMPLETIONS = 100
-_MAX_DOC_CHARS = 800
+_MAX_COMPLETION_DOC_CHARS = 400
 _FEATURES = ["complete", "hover", "signature", "diagnostics"]
 
 
@@ -40,10 +42,48 @@ def _safe(fn: Callable[[], Any], default: Any = None) -> Any:
         return default
 
 
-def _truncate(text: str | None) -> str:
+_RST_DIRECTIVE = re.compile(r"^\s*\.\.\s+[\w-]+::")
+_SECTION_UNDERLINE = re.compile(r"^\s*[-=~^]{3,}\s*$")
+_RST_ROLE = re.compile(r":[\w:+-]+:(`+)")
+
+
+def _clean_doc(text: str) -> str:
+    """Dedent and strip the reStructuredText Jedi hands back verbatim.
+
+    Removes ``.. directive::`` blocks together with their indented bodies, the numpydoc
+    section underlines, ``:role:`x``` markup and the double-backtick spelling, so the
+    tooltip reads as prose. Section titles survive; the client styles them.
+    """
+    body = _RST_ROLE.sub(r"\1", inspect.cleandoc(text)).replace("``", "`")
+    lines: list[str] = []
+    skip_indent: int | None = None
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if skip_indent is not None:
+            if not stripped or indent > skip_indent:
+                continue
+            skip_indent = None
+        if _RST_DIRECTIVE.match(line):
+            skip_indent = indent
+            continue
+        if _SECTION_UNDERLINE.match(line) and lines and lines[-1].strip():
+            continue
+        if not stripped and (not lines or not lines[-1].strip()):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _truncate(text: str | None, limit: int | None = None) -> str:
+    """Clean a docstring, capping it only when *limit* is given."""
     if not text:
         return ""
-    return text if len(text) <= _MAX_DOC_CHARS else text[:_MAX_DOC_CHARS] + "…"
+    cleaned = _clean_doc(text)
+    if limit is None or len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit].rstrip() + "…"
 
 
 def _seed_namespace(live: dict | None) -> dict:
@@ -99,10 +139,24 @@ def complete(code: str, line: int, column: int, live: dict | None) -> CompleteRe
                 label=comp.name,
                 type=comp_type,
                 detail=_safe(lambda c=comp: c.description) or "",
-                documentation=_truncate(_safe(lambda c=comp: c.docstring(raw=True))),
+                documentation=_truncate(_safe(lambda c=comp: c.docstring(raw=True)), _MAX_COMPLETION_DOC_CHARS),
             )
         )
     return CompleteResponse(items=items)
+
+
+_KIND_LABELS = {"instance": "variable", "statement": "variable", "param": "parameter", "path": "path"}
+
+
+def _display_kind(name: Any) -> str:
+    """Map a Jedi name's type onto the label shown in the hover title.
+
+    Jedi reports methods as plain ``function``; a class parent promotes them.
+    """
+    kind = _safe(lambda: name.type) or ""
+    if kind == "function" and _safe(lambda: name.parent().type) == "class":
+        return "method"
+    return _KIND_LABELS.get(kind, kind)
 
 
 def hover(code: str, line: int, column: int, live: dict | None) -> HoverResponse:
@@ -115,14 +169,17 @@ def hover(code: str, line: int, column: int, live: dict | None) -> HoverResponse
     if not names:
         return HoverResponse(contents=None)
     name = names[0]
-    header = _safe(lambda: name.full_name) or _safe(lambda: name.name) or ""
     sig = ""
     sigs = _safe(lambda: name.get_signatures(), []) or []
     if sigs:
         sig = _safe(lambda: sigs[0].to_string()) or ""
     doc = _truncate(_safe(lambda: name.docstring(raw=True)))
-    parts = [p for p in (f"`{sig}`" if sig else header, doc) if p]
-    return HoverResponse(contents="\n\n".join(parts) or None)
+    return HoverResponse(
+        contents=doc or None,
+        kind=_display_kind(name),
+        name=_safe(lambda: name.name) or _safe(lambda: name.full_name) or "",
+        signature=sig,
+    )
 
 
 def signature(code: str, line: int, column: int, live: dict | None) -> SignatureResponse:

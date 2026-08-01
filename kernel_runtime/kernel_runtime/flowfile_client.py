@@ -1177,18 +1177,19 @@ def _catalog_post(client: httpx.Client, path: str, json: dict[str, Any]) -> http
 def _resolve_schema_namespace_id(client: httpx.Client, schema_name: str) -> int:
     """Resolve a schema name to its namespace_id.
 
-    Searches across all level-1 namespaces (schemas live one level below
-    top-level catalog namespaces) and returns the first exact-name match.
+    Accepts either a bare schema name or a qualified ``"catalog.schema"`` — the
+    qualified form is how you disambiguate a schema name reused across catalogs.
     Raises :class:`LookupError` if no schema with that name exists.
     """
-    # Get the list of top-level (catalog) namespaces, then for each list its
-    # children and look for a schema with the requested name.
+    catalog_name, _, bare_name = schema_name.rpartition(".")
     catalogs = _catalog_get(client, "/catalog/namespaces", params={"parent_id": None}).json()
     candidates: list[dict[str, Any]] = []
     for cat in catalogs:
+        if catalog_name and cat["name"] != catalog_name:
+            continue
         schemas = _catalog_get(client, "/catalog/namespaces", params={"parent_id": cat["id"]}).json()
         for sch in schemas:
-            if sch["name"] == schema_name:
+            if sch["name"] == bare_name:
                 candidates.append(sch)
     if not candidates:
         raise LookupError(f"Schema '{schema_name}' not found in any catalog")
@@ -1196,7 +1197,7 @@ def _resolve_schema_namespace_id(client: httpx.Client, schema_name: str) -> int:
         names = [f"{c.get('parent_name') or '?'}.{c['name']} (id={c['id']})" for c in candidates]
         raise LookupError(
             f"Schema '{schema_name}' is ambiguous — found in multiple catalogs: {names}. "
-            "Pass namespace_id= directly to disambiguate."
+            "Qualify it as 'catalog.schema', or pass namespace_id= directly."
         )
     return candidates[0]["id"]
 
@@ -1731,10 +1732,12 @@ def read_catalog_table(
 
     Args:
         table: Either a :class:`TableRef` (returned from :func:`list_catalog_tables`
-            or :meth:`SchemaRef.get_table_ref`) **or** a string table name.
-            When a string, ``schema``/``namespace_id`` disambiguate.
-        schema: Only used when ``table`` is a string. Schema name; resolved
-            via Core. Mutually exclusive with ``namespace_id``.
+            or :meth:`SchemaRef.get_table_ref`) **or** a string reference —
+            ``"table"``, ``"schema.table"`` or ``"catalog.schema.table"``.
+            For a bare name, ``schema``/``namespace_id`` disambiguate.
+        schema: Only used when ``table`` is a string. Schema name, optionally
+            qualified as ``"catalog.schema"``; resolved via Core. Mutually
+            exclusive with ``namespace_id``.
         namespace_id: Only used when ``table`` is a string. Explicit namespace ID.
         delta_version: If provided, opens that specific Delta commit (time
             travel). Physical tables only — views reject it.
@@ -1846,10 +1849,13 @@ def write_catalog_table(
 
     Args:
         df: Polars ``DataFrame`` or ``LazyFrame`` to write.
-        table: Either a :class:`TableRef` (skips the resolution dance) **or**
-            a string table name (combined with ``schema``/``namespace_id``).
-        schema: Only used when ``table`` is a string. Schema name; resolved via Core.
-            Mutually exclusive with ``namespace_id``.
+        table: Either a :class:`TableRef` (skips the resolution dance) **or** a string
+            reference — ``"table"``, ``"schema.table"`` or ``"catalog.schema.table"``.
+            A qualified name names its own namespace, so ``schema``/``namespace_id``
+            must then be omitted.
+        schema: Only used when ``table`` is a string. Schema name, optionally qualified
+            as ``"catalog.schema"``; resolved via Core. Mutually exclusive with
+            ``namespace_id``.
         namespace_id: Only used when ``table`` is a string. Explicit namespace ID.
         write_mode: One of ``"overwrite"``, ``"append"``, ``"upsert"``,
             ``"update"``, ``"delete"``, ``"error"``.
@@ -1864,9 +1870,9 @@ def write_catalog_table(
 
     Raises:
         ValueError: Unknown ``write_mode`` or missing ``merge_keys`` for merge modes,
-            ``schema``/``namespace_id`` were passed alongside a ``TableRef``, the
-            target table is a view (virtual tables cannot be written to), or an
-            incremental mode was aimed at an SCD2-tracked table.
+            ``schema``/``namespace_id`` were passed alongside a ``TableRef`` or a
+            qualified name, the target table is a view (virtual tables cannot be
+            written to), or an incremental mode was aimed at an SCD2-tracked table.
         FileExistsError: ``write_mode="error"`` and the table already exists.
     """
     if write_mode not in _CATALOG_VALID_WRITE_MODES:
@@ -1888,6 +1894,13 @@ def write_catalog_table(
     else:
         ref_input = None
         table_name = table
+        if "." in table:
+            if schema is not None or namespace_id is not None:
+                raise ValueError(
+                    "When 'table' is a qualified name, 'schema' and 'namespace_id' must be omitted "
+                    "(the reference already names the namespace)."
+                )
+            schema, _, table_name = table.rpartition(".")
 
     eager_df = df.collect() if isinstance(df, pl.LazyFrame) else df
 

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.configs import settings
+from flowfile_core.lsp.models import HoverResponse
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +66,7 @@ def test_bridge_complete_degrades_for_unknown_kernel(client: TestClient):
 def test_bridge_hover_and_signature_degrade(client: TestClient):
     settings.FLOWFILE_LSP_ENABLED.set(True)
     hov = client.post("/kernels/no-such-kernel/lsp/hover", json=_complete_payload())
-    assert hov.status_code == 200 and hov.json() == {"contents": None}
+    assert hov.status_code == 200 and hov.json() == HoverResponse().model_dump()
     sig = client.post("/kernels/no-such-kernel/lsp/signature", json=_complete_payload())
     assert sig.status_code == 200 and sig.json() == {"signatures": [], "active_signature": 0}
 
