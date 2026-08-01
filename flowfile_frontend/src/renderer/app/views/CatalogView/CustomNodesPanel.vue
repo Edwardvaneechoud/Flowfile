@@ -1,23 +1,40 @@
 <template>
   <div class="custom-nodes-panel">
-    <div class="panel-header">
-      <h2>Custom Nodes</h2>
-      <div class="header-actions">
-        <el-button size="small" type="primary" @click="openDesigner()">
-          <i class="fa-solid fa-plus" /> New node
-        </el-button>
-        <el-button size="small" @click="openManageFolders">
-          <i class="fa-solid fa-folder-tree" /> Manage folders
-        </el-button>
-        <el-button size="small" :loading="rescanning" @click="rescan">
-          <i class="fa-solid fa-arrows-rotate" /> Rescan
-        </el-button>
+    <div class="panel-top">
+      <div class="panel-header">
+        <h2>
+          Custom Nodes
+          <span v-if="countLabel" class="panel-count">{{ countLabel }}</span>
+        </h2>
+        <div class="header-actions">
+          <el-button size="small" type="primary" @click="openDesigner()">
+            <i class="fa-solid fa-plus" /> New node
+          </el-button>
+          <el-button size="small" @click="openManageFolders">
+            <i class="fa-solid fa-folder-tree" /> Manage folders
+          </el-button>
+          <el-button size="small" :loading="rescanning" @click="rescan">
+            <i class="fa-solid fa-arrows-rotate" /> Rescan
+          </el-button>
+        </div>
       </div>
+      <p class="panel-hint">
+        Custom nodes discovered in the default directory and any mounted folders. Broken files stay
+        listed with their error so nothing silently disappears.
+      </p>
+
+      <el-input
+        v-if="nodes.length"
+        v-model="search"
+        placeholder="Search nodes"
+        clearable
+        size="small"
+        class="node-search"
+        data-testid="catalog-node-search"
+      >
+        <template #prefix><i class="fa-solid fa-magnifying-glass" /></template>
+      </el-input>
     </div>
-    <p class="panel-hint">
-      Custom nodes discovered in the default directory and any mounted folders. Broken files stay
-      listed with their error so nothing silently disappears.
-    </p>
 
     <EmptyState
       v-if="!loading && nodes.length === 0"
@@ -35,53 +52,32 @@
       </template>
     </EmptyState>
 
-    <el-table v-else v-loading="loading" :data="nodes" size="small">
-      <el-table-column label="Name" min-width="180">
-        <template #default="{ row }">
-          <div class="node-name-cell">
-            <span class="node-name">{{ row.node_name || row.file_name }}</span>
-            <el-tooltip v-if="row.error" :content="row.error" placement="top">
-              <i class="fa-solid fa-triangle-exclamation node-error-icon" />
-            </el-tooltip>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="Category" width="150">
-        <template #default="{ row }">
-          <span v-if="row.node_category" class="chip chip-category">{{ row.node_category }}</span>
-          <span v-else class="chip chip-muted">Custom</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Environment" width="130">
-        <template #default="{ row }">
-          <span :class="['chip', row.environment === 'kernel' ? 'chip-kernel' : 'chip-local']">
-            {{ row.environment === "kernel" ? "Kernel" : "Local" }}
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Source" min-width="140">
-        <template #default="{ row }">
-          <el-tooltip
-            v-if="row.source !== 'default'"
-            :content="row.source"
-            placement="top"
-            :show-after="300"
-          >
-            <span class="chip chip-source"
-              ><i class="fa-solid fa-folder" /> {{ row.source_label }}</span
-            >
-          </el-tooltip>
-          <span v-else class="chip chip-muted">Default</span>
-        </template>
-      </el-table-column>
-      <el-table-column width="120" align="right">
-        <template #default="{ row }">
-          <el-button size="small" text type="primary" @click="openDesigner(row.file_name)">
-            Open
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <EmptyState
+      v-else-if="!loading && visibleNodes.length === 0"
+      icon="fa-solid fa-magnifying-glass"
+      title="No nodes match your search"
+      :description="`Nothing found for “${search.trim()}”.`"
+    >
+      <template #actions>
+        <el-button size="small" @click="search = ''">Clear search</el-button>
+      </template>
+    </EmptyState>
+
+    <div v-else v-loading="loading" class="nodes-list">
+      <section v-for="group in groups" :key="group.key">
+        <div class="node-group__header">
+          <span>{{ group.label }}</span>
+          <span>{{ group.nodes.length }}</span>
+        </div>
+        <CustomNodeRow
+          v-for="node in group.nodes"
+          :key="node.file_name"
+          :node="node"
+          :community="communityByFile[node.file_name] ?? null"
+          @open="openDesigner(node.file_name)"
+        />
+      </section>
+    </div>
 
     <!-- Manage folders dialog -->
     <el-dialog v-model="foldersOpen" title="Custom-node folders" width="620px" align-center>
@@ -178,7 +174,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import {
@@ -190,14 +186,35 @@ import {
   type CatalogCustomNode,
   type MountInfo,
 } from "../../api/nodeDesigner";
+import {
+  fetchInstalled,
+  type InstalledCommunityNode,
+  type InstallReceipt,
+} from "../../api/communityNodes";
+import { filterNodes, groupByCategory } from "../../pages/nodeDesigner/customNodeFilter";
 import { EmptyState } from "../../components/common";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
+import CustomNodeRow from "./CustomNodeRow.vue";
 
 const router = useRouter();
 
 const nodes = ref<CatalogCustomNode[]>([]);
 const loading = ref(false);
 const rescanning = ref(false);
+const search = ref("");
+// Keyed by receipt.file_name: the receipt is the only marker that a local node
+// came from the registry, and file_name is what both surfaces carry on disk.
+const communityByFile = ref<Record<string, InstallReceipt>>({});
+
+const visibleNodes = computed(() => filterNodes(nodes.value, search.value));
+const groups = computed(() => groupByCategory(visibleNodes.value));
+
+const countLabel = computed(() => {
+  const total = nodes.value.length;
+  if (!total) return "";
+  const shown = visibleNodes.value.length;
+  return shown === total ? `${total}` : `${shown} of ${total}`;
+});
 
 const foldersOpen = ref(false);
 const browseOpen = ref(false);
@@ -210,7 +227,16 @@ const mountError = ref<string | null>(null);
 async function loadNodes() {
   loading.value = true;
   try {
-    nodes.value = await listCatalogCustomNodes();
+    // /community_nodes/installed is JWT-only and reads a local sidecar, so it
+    // works offline; a failure just means no Community chips.
+    const [rows, installed] = await Promise.all([
+      listCatalogCustomNodes(),
+      fetchInstalled().catch(() => [] as InstalledCommunityNode[]),
+    ]);
+    nodes.value = rows;
+    communityByFile.value = Object.fromEntries(
+      installed.map((entry) => [entry.receipt.file_name, entry.receipt]),
+    );
   } catch {
     ElMessage.error("Failed to load custom nodes");
   } finally {
@@ -307,8 +333,17 @@ onMounted(loadNodes);
 </script>
 
 <style scoped>
+/* Fills .catalog-detail so the list is the only scroll surface and the header
+   + search stay put; sticky group headers then pin at the list's own top. */
 .custom-nodes-panel {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.panel-top {
+  flex-shrink: 0;
+  padding: 16px 16px 12px;
 }
 .panel-header {
   display: flex;
@@ -318,6 +353,12 @@ onMounted(loadNodes);
 .panel-header h2 {
   font-size: 18px;
   margin: 0;
+}
+.panel-count {
+  margin-left: var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-tertiary);
 }
 .header-actions {
   display: flex;
@@ -329,18 +370,18 @@ onMounted(loadNodes);
 .panel-hint {
   font-size: 13px;
   color: var(--color-text-secondary);
-  margin: 4px 0 16px;
+  margin: 4px 0 12px;
 }
-.node-name-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* Not `.search-input` — _forms.css defines a global one whose own border and
+   background would double up on the el-input root. */
+.node-search {
+  max-width: 320px;
 }
-.node-name {
-  font-weight: 500;
-}
-.node-error-icon {
-  color: var(--color-danger, #e53e3e);
+.nodes-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border-light);
 }
 .chip {
   display: inline-flex;
@@ -350,24 +391,6 @@ onMounted(loadNodes);
   padding: 1px 8px;
   border-radius: 10px;
   background-color: var(--color-background-secondary);
-  color: var(--color-text-secondary);
-}
-.chip-category {
-  background-color: var(--color-primary-bg, #ebf3fe);
-  color: var(--color-primary, #3b6fd4);
-}
-.chip-kernel {
-  background-color: var(--color-warning-bg, #fdf0e6);
-  color: var(--color-warning, #b7791f);
-}
-.chip-local {
-  background-color: var(--color-success-bg, #e6f4ea);
-  color: var(--color-success, #1e7e34);
-}
-.chip-source {
-  cursor: default;
-}
-.chip-muted {
   color: var(--color-text-secondary);
 }
 .chip-missing {

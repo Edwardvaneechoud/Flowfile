@@ -43,6 +43,8 @@
       :viewing-node-code="browser.viewingNodeCode.value"
       :viewing-node-name="browser.viewingNodeName.value"
       :read-only-extensions="autocompletion.readOnlyExtensions"
+      :current-file="store.sourceFile"
+      :community-nodes="browser.communityByFile.value"
       @close="browser.closeNodeBrowser()"
       @view-node="browser.viewCustomNode($event)"
       @back="browser.backToNodeList()"

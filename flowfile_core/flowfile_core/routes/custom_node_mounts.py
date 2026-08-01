@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.flowfile.community_nodes.receipts import community_icon_override
 from flowfile_core.flowfile.user_defined.mounts import (
     MountValidationError,
     add_mount,
@@ -53,6 +54,10 @@ class CatalogCustomNode(BaseModel):
     node_name: str
     node_category: str = ""
     file_name: str
+    title: str = ""
+    intro: str = ""
+    tags: list[str] = []
+    node_icon: str = "user-defined-icon.png"
     environment: Literal["local", "kernel"] = "local"
     error: str | None = None
     source: str = "default"  # "default" | absolute mount path
@@ -96,7 +101,13 @@ def _catalog_node_from_entry(entry: LoadedNode) -> CatalogCustomNode:
         if entry.manifest.node_name:
             row.node_name = entry.manifest.node_name
         row.node_category = entry.manifest.node_category
+        row.title = entry.manifest.title
+        row.intro = entry.manifest.intro
+        row.tags = list(entry.manifest.tags)
         row.environment = entry.manifest.environment.kind
+        # Installed community icons live namespaced on disk while node_icon keeps the original name.
+        icon_override = community_icon_override(Path(entry.file_name).stem)
+        row.node_icon = icon_override or entry.manifest.node_icon
     return row
 
 

@@ -4,12 +4,21 @@
  */
 import { ref } from "vue";
 import { getCustomNode, listCustomNodes } from "../../../api/nodeDesigner";
+import {
+  fetchInstalled,
+  type InstallReceipt,
+  type InstalledCommunityNode,
+} from "../../../api/communityNodes";
 import type { CustomNodeInfo } from "../types";
 
 export function useNodeBrowser() {
   const showNodeBrowser = ref(false);
   const customNodes = ref<CustomNodeInfo[]>([]);
   const loadingNodes = ref(false);
+  // Keyed by receipt.file_name: the receipt is the only marker that a local
+  // node came from the registry, and file_name is what both surfaces carry
+  // on disk (node_key can diverge from node_id).
+  const communityByFile = ref<Record<string, InstallReceipt>>({});
 
   const viewingNodeCode = ref("");
   const viewingNodeName = ref("");
@@ -18,10 +27,20 @@ export function useNodeBrowser() {
   async function fetchCustomNodes() {
     loadingNodes.value = true;
     try {
-      customNodes.value = (await listCustomNodes()) as unknown as CustomNodeInfo[];
+      // /community_nodes/installed is JWT-only and reads a local sidecar, so it
+      // works offline; a failure just means no Community chips.
+      const [nodes, installed] = await Promise.all([
+        listCustomNodes(),
+        fetchInstalled().catch(() => [] as InstalledCommunityNode[]),
+      ]);
+      customNodes.value = nodes as unknown as CustomNodeInfo[];
+      communityByFile.value = Object.fromEntries(
+        installed.map((entry) => [entry.receipt.file_name, entry.receipt]),
+      );
     } catch (error) {
       console.error("Failed to fetch custom nodes:", error);
       customNodes.value = [];
+      communityByFile.value = {};
     } finally {
       loadingNodes.value = false;
     }
@@ -59,6 +78,7 @@ export function useNodeBrowser() {
   return {
     showNodeBrowser,
     customNodes,
+    communityByFile,
     loadingNodes,
     viewingNodeCode,
     viewingNodeName,
