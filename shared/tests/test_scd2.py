@@ -7,13 +7,17 @@ the documented payload encoding, so a change in Polars' or hashlib's behaviour b
 instead of silently minting different keys for rows that already exist in users' tables.
 """
 
+import concurrent.futures
 import hashlib
+import threading
 from datetime import date, datetime, timezone
 
 import polars as pl
 import pytest
 from deltalake import DeltaTable
+from deltalake.exceptions import CommitFailedError
 
+from shared import delta_utils
 from shared.delta_utils import (
     SCD2_SK_ALGORITHM,
     Scd2Result,
@@ -25,6 +29,7 @@ VF1 = "2026-01-01T00:00:00+00:00"
 VF2 = "2026-02-01T00:00:00+00:00"
 VF3 = "2026-03-01T00:00:00+00:00"
 VF4 = "2026-04-01T00:00:00+00:00"
+VF2_MID = "2026-02-15T00:00:00+00:00"  # strictly between VF2 and VF3
 
 
 def _scd2(df, path, *, keys=("cust_id",), valid_from=VF1, compare=None, snapshot=False, **kwargs) -> Scd2Result:
@@ -55,6 +60,25 @@ def _base_frame() -> pl.DataFrame:
             "tier": ["gold", "silver", None],
         }
     )
+
+
+def _overlapping_versions(path, key: str = "cust_id") -> list:
+    """Every (key, span, span) whose half-open validity intervals overlap — must always be empty.
+
+    The invariant the whole SCD2 recipe exists to hold: one business key is active at most once at
+    any instant. Asserted directly rather than through ``active_at``, so a violation is reported
+    where it was written instead of where it is later observed.
+    """
+    spans_by_key: dict = {}
+    for row in _read(path).sort(key, "valid_from").iter_rows(named=True):
+        spans_by_key.setdefault(row[key], []).append((row["valid_from"], row["valid_to"]))
+    overlaps = []
+    for k, spans in spans_by_key.items():
+        for i, (a_from, a_to) in enumerate(spans):
+            for b_from, b_to in spans[i + 1 :]:
+                if (a_to is None or b_from < a_to) and (b_to is None or a_from < b_to):
+                    overlaps.append((k, (a_from, a_to), (b_from, b_to)))
+    return overlaps
 
 
 # ---- Surrogate key: frozen golden vectors ---------------------------------- #
@@ -576,6 +600,30 @@ class TestSchemaEvolution:
         assert _scd2(widened, path, valid_from=VF2, compare=["city", "tier"]).skipped is True
         assert "score" not in _read(path).columns
 
+    def test_an_untracked_column_rides_along_and_widens_the_target(self, tmp_path):
+        """An effective write carries every input column, not just the tracked ones."""
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path, compare=["city"])
+
+        batch = pl.DataFrame(
+            {
+                "cust_id": [1, 2, 3],
+                "city": ["ROT", "BER", "PAR"],
+                "tier": ["gold", "silver", None],
+                "notes": ["fresh", "fresh", "fresh"],
+            }
+        )
+        result = _scd2(batch, path, valid_from=VF2, compare=["city"])
+
+        assert (result.rows_inserted, result.rows_closed) == (1, 1)
+        table = _read(path)
+        assert "notes" in table.columns
+        # Only the row this write inserted carries it; history is back-filled with NULL.
+        assert table.filter(pl.col("valid_from") == datetime(2026, 2, 1, tzinfo=timezone.utc))["notes"].to_list() == [
+            "fresh"
+        ]
+        assert table.filter(pl.col("valid_from") == datetime(2026, 1, 1, tzinfo=timezone.utc))["notes"].null_count() == 3
+
 
 # ---- Resurrection ---------------------------------------------------------- #
 
@@ -601,6 +649,27 @@ class TestResurrection:
         assert versions["valid_from"].to_list()[1] == datetime(2026, 4, 1, tzinfo=timezone.utc)
         # A gap, not a continuous timeline: the key genuinely did not exist between Feb and Apr.
         assert versions["sk"].n_unique() == 2
+
+    def test_a_key_cannot_be_resurrected_inside_its_own_closed_interval(self, tmp_path):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        # Key 2 leaves the snapshot and nothing else changes, so this write closes it at VF3 and
+        # inserts nothing — VF3 exists only as a valid_to.
+        _scd2(
+            pl.DataFrame({"cust_id": [1, 3], "city": ["AMS", "PAR"], "tier": ["gold", None]}),
+            path,
+            valid_from=VF3,
+            snapshot=True,
+        )
+        before = _version(path)
+
+        # VF2 sits inside key 2's closed [VF1, VF3): reopening it there would make the key active
+        # twice over [VF2, VF3), which is what an active_at read would then return.
+        with pytest.raises(ValueError, match="not later than the table's newest version"):
+            _scd2(pl.DataFrame({"cust_id": [2], "city": ["BER"], "tier": ["silver"]}), path, valid_from=VF2)
+
+        assert _version(path) == before
+        assert _overlapping_versions(path) == []
 
 
 # ---- Identifier quoting ---------------------------------------------------- #
@@ -657,3 +726,124 @@ class TestClockMonotonicity:
         path = tmp_path / "dim"
         _scd2(_base_frame(), path)
         assert _scd2(_base_frame(), path).skipped
+
+    def test_a_close_only_snapshot_still_advances_the_watermark(self, tmp_path):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        _scd2(pl.DataFrame({"cust_id": [1], "city": ["ROT"], "tier": ["gold"]}), path, valid_from=VF2)
+
+        closing = _scd2(
+            pl.DataFrame({"cust_id": [1, 3], "city": ["ROT", "PAR"], "tier": ["gold", None]}),
+            path,
+            valid_from=VF3,
+            snapshot=True,
+        )
+        # The premise: VF3 is recorded only in valid_to, so the current slice still tops out at VF2.
+        assert (closing.rows_inserted, closing.rows_closed) == (0, 1)
+        before = _version(path)
+
+        with pytest.raises(ValueError, match="not later than the table's newest version"):
+            _scd2(pl.DataFrame({"cust_id": [2], "city": ["BER"], "tier": ["silver"]}), path, valid_from=VF2_MID)
+
+        assert _version(path) == before
+
+    def test_a_later_instant_after_a_close_only_snapshot_still_writes(self, tmp_path):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        _scd2(
+            pl.DataFrame({"cust_id": [1, 3], "city": ["AMS", "PAR"], "tier": ["gold", None]}),
+            path,
+            valid_from=VF3,
+            snapshot=True,
+        )
+
+        result = _scd2(pl.DataFrame({"cust_id": [2], "city": ["BER"], "tier": ["silver"]}), path, valid_from=VF4)
+
+        assert (result.rows_inserted, result.rows_closed) == (1, 0)
+        assert _overlapping_versions(path) == []
+
+
+# ---- Commit conflicts ------------------------------------------------------ #
+
+
+class TestCommitRetry:
+    """The retry shell around ``_scd2_once``.
+
+    Real contention (below) proves the outcome is safe but cannot deterministically drive
+    attempt-count or re-raise behaviour, so those are exercised at the ``_scd2_once`` seam.
+    """
+
+    def test_a_conflict_is_retried_against_a_re_read_table(self, tmp_path, monkeypatch):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        real = delta_utils._scd2_once
+        attempts = []
+
+        def conflict_once(*args, **kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise CommitFailedError("simulated concurrent writer")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(delta_utils, "_scd2_once", conflict_once)
+        result = _scd2(pl.DataFrame({"cust_id": [1], "city": ["ROT"], "tier": ["gold"]}), path, valid_from=VF2)
+
+        assert len(attempts) == 2
+        assert (result.rows_inserted, result.rows_closed) == (1, 1)
+
+    def test_a_non_conflict_error_is_not_retried(self, tmp_path, monkeypatch):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        attempts = []
+
+        def boom(*args, **kwargs):
+            attempts.append(1)
+            raise ValueError("not a commit conflict")
+
+        monkeypatch.setattr(delta_utils, "_scd2_once", boom)
+        with pytest.raises(ValueError, match="not a commit conflict"):
+            _scd2(_base_frame(), path, valid_from=VF2)
+
+        assert len(attempts) == 1
+
+    def test_exhausting_the_attempts_reraises_the_conflict(self, tmp_path, monkeypatch):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        attempts = []
+
+        def always_conflict(*args, **kwargs):
+            attempts.append(1)
+            raise CommitFailedError("simulated concurrent writer")
+
+        monkeypatch.setattr(delta_utils, "_scd2_once", always_conflict)
+        with pytest.raises(CommitFailedError):
+            _scd2(_base_frame(), path, valid_from=VF2, max_commit_attempts=3)
+
+        assert len(attempts) == 3
+
+    def test_racing_writers_never_leave_overlapping_history(self, tmp_path):
+        """Losing the race to a later instant is a refusal, not corruption — and never a torn table."""
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        start = threading.Barrier(2)
+
+        def write(cust_id: int, city: str, valid_from: str):
+            start.wait(timeout=30)
+            return _scd2(
+                pl.DataFrame({"cust_id": [cust_id], "city": [city], "tier": ["gold"]}),
+                path,
+                valid_from=valid_from,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(write, 1, "ROT", VF2), pool.submit(write, 2, "HAM", VF3)]
+            landed = []
+            for future in futures:
+                try:
+                    landed.append(future.result(timeout=60))
+                except ValueError as exc:
+                    # The clock guard's deliberate refusal when the winner stamped a later instant.
+                    assert "not later than the table's newest version" in str(exc)
+
+        assert landed, "both writers were refused; at least one must commit"
+        assert _overlapping_versions(path) == []

@@ -335,6 +335,28 @@ class Scd2TableConfig(BaseModel):
     full_snapshot: bool = False
 
 
+def scd2_system_columns_missing(cfg: dict, schema_columns: list[dict]) -> bool:
+    """True when *cfg* names a generated column that *schema_columns* no longer has.
+
+    Enforced at two points that own opposite halves of the decoding, so the predicate lives here
+    rather than in either caller.
+
+    Args:
+        cfg: A decoded ``Scd2TableConfig`` payload.
+        schema_columns: Decoded schema entries, each a ``{"name": ..., "dtype": ...}`` dict.
+    """
+    present = {c.get("name") for c in schema_columns if isinstance(c, dict)}
+    return any(
+        name and name not in present
+        for name in (
+            cfg.get("surrogate_key_column"),
+            cfg.get("valid_from_column"),
+            cfg.get("valid_to_column"),
+            cfg.get("is_current_column"),
+        )
+    )
+
+
 class CatalogTableOut(BaseModel):
     id: int
     name: str

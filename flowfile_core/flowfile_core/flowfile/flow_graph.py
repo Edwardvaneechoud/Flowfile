@@ -132,7 +132,7 @@ from flowfile_core.kernel.execution import (
     write_inputs_to_parquet,
 )
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.catalog_schema import TableWriteMetadata
+from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageAuthMode,
     CloudStorageReadSettingsInternal,
@@ -561,14 +561,7 @@ def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
         return False
     if not columns:
         return False
-    present = {c.get("name") for c in columns if isinstance(c, dict)}
-    configured = [
-        cfg.get("surrogate_key_column"),
-        cfg.get("valid_from_column"),
-        cfg.get("valid_to_column"),
-        cfg.get("is_current_column"),
-    ]
-    return any(c and c not in present for c in configured)
+    return scd2_system_columns_missing(cfg, columns)
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:

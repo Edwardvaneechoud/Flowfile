@@ -89,6 +89,7 @@
             placeholder="Pick a date and time"
             show-seconds
           />
+          <p v-if="scd2AsOfError" class="field-error">{{ scd2AsOfError }}</p>
         </div>
         <!-- On SCD2 tables, Delta time travel is an escape hatch, not the history mechanism -->
         <CollapsibleSection
@@ -181,6 +182,7 @@
 
 <script lang="ts" setup>
 import { ref, computed, onMounted, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { sql } from "@codemirror/lang-sql";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { Codemirror } from "vue-codemirror";
@@ -213,6 +215,12 @@ const cachedSqlCode = ref<string | null>(null);
 
 const { saveSettings, pushNodeData } = useNodeSettings({
   nodeRef: nodeData,
+  onBeforeSave: () => {
+    if (scd2AsOfError.value) {
+      ElMessage.error(scd2AsOfError.value);
+      return false;
+    }
+  },
 });
 
 const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
@@ -274,6 +282,14 @@ const scd2View = computed({
     nodeData.value.scd2_view = v === "all" ? null : v;
   },
 });
+
+// The picker is clearable and selecting "active at" seeds nothing, so the empty state is easy to
+// reach and the backend only rejects it with a message that never names the field.
+const scd2AsOfError = computed(() =>
+  selectedScd2.value && scd2View.value === "active_at" && !nodeData.value?.scd2_as_of
+    ? "Pick the date and time to read the table as of"
+    : null,
+);
 
 watch(sqlCode, (newCode) => {
   if (nodeData.value) {
@@ -632,6 +648,12 @@ defineExpose({
   margin: 0;
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.field-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--el-color-danger);
 }
 
 .editor-container {

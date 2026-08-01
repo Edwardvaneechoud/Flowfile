@@ -95,8 +95,9 @@
                 filterable
                 placeholder="Select key columns"
               >
-                <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+                <el-option v-for="col in keyColumnOptions" :key="col" :label="col" :value="col" />
               </el-select>
+              <p v-if="scd2KeyClashError" class="field-error">{{ scd2KeyClashError }}</p>
             </div>
 
             <div v-if="canPartition" class="catalog-field">
@@ -291,6 +292,10 @@ const { saveSettings, pushNodeData } = useNodeSettings({
         ElMessage.error(`Generated columns: ${firstError}`);
         return false;
       }
+      if (scd2KeyClashError.value) {
+        ElMessage.error(`${keyColumnsLabel.value}: ${scd2KeyClashError.value}`);
+        return false;
+      }
     }
   },
 });
@@ -366,14 +371,32 @@ const scd2ColumnFields: { key: keyof Scd2Settings; label: string; def: string }[
   { key: "is_current_column", label: "Is current column", def: "is_current" },
 ];
 
+// The live names, not the defaults — renaming a generated column re-opens the one it vacated.
+const scd2GeneratedNames = computed(() => {
+  const scd2 = nodeData.value?.catalog_write_settings.scd2;
+  if (physicalWriteMode.value !== "scd2" || !scd2) return new Set<string>();
+  return new Set(scd2ColumnFields.map((f) => scd2[f.key] as string));
+});
+
+const keyColumnOptions = computed(() =>
+  availableColumns.value.filter((col) => !scd2GeneratedNames.value.has(col)),
+);
+
 const comparableColumns = computed(() => {
   const s = nodeData.value?.catalog_write_settings;
   if (!s) return [];
   const excluded = new Set(s.merge_keys);
-  if (s.scd2) {
-    for (const f of scd2ColumnFields) excluded.add(s.scd2[f.key] as string);
-  }
-  return availableColumns.value.filter((col) => !excluded.has(col));
+  return availableColumns.value.filter(
+    (col) => !excluded.has(col) && !scd2GeneratedNames.value.has(col),
+  );
+});
+
+// Filtering the picker can't catch a key that was legal when picked and became a generated column
+// afterwards. The backend rejects that; say so at the field instead.
+const scd2KeyClashError = computed(() => {
+  const keys = nodeData.value?.catalog_write_settings.merge_keys ?? [];
+  const clash = keys.filter((k) => scd2GeneratedNames.value.has(k));
+  return clash.length ? `Cannot also be a generated column: ${clash.join(", ")}` : null;
 });
 
 const scd2ColumnErrors = computed<Record<string, string | null>>(() => {

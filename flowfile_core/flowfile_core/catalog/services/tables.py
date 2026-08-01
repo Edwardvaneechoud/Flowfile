@@ -53,6 +53,7 @@ from flowfile_core.schemas.catalog_schema import (
     OptimizeTableResponse,
     Scd2TableConfig,
     VacuumTableResponse,
+    scd2_system_columns_missing,
 )
 from shared.storage_config import storage
 
@@ -78,14 +79,7 @@ def _scd2_columns_missing_from_schema(raw_scd2_config: str | None, schema_list: 
         cfg = json.loads(raw_scd2_config)
     except (TypeError, ValueError):
         return False
-    system_columns = [
-        cfg.get("surrogate_key_column"),
-        cfg.get("valid_from_column"),
-        cfg.get("valid_to_column"),
-        cfg.get("is_current_column"),
-    ]
-    present = {c.get("name") for c in schema_list if isinstance(c, dict)}
-    return any(c and c not in present for c in system_columns)
+    return scd2_system_columns_missing(cfg, schema_list)
 
 
 def _is_managed_table_path(file_path: str) -> bool:

@@ -26,8 +26,19 @@ describe("isoDateTime", () => {
     expect(localDateToIso(new Date("not-a-date"))).toBeNull();
   });
 
+  it("truncates sub-second precision rather than rounding or keeping it", () => {
+    expect(localDateToIso(new Date("2026-07-31T12:34:56.789Z"))).toBe("2026-07-31T12:34:56Z");
+    expect(localDateToIso(new Date("2026-07-31T12:34:56.001Z"))).toBe("2026-07-31T12:34:56Z");
+  });
+
+  it("normalizes an offset-bearing instant onto Z", () => {
+    const back = localDateToIso(isoToLocalDate("2026-07-31T14:34:56+02:00"));
+    expect(back).toBe("2026-07-31T12:34:56Z");
+  });
+
   it("formats the UTC hint independent of the local timezone", () => {
     expect(formatUtcHint("2026-07-31T12:34:56Z")).toBe("2026-07-31 12:34 UTC");
+    expect(formatUtcHint("2026-07-31T14:34:56+02:00")).toBe("2026-07-31 12:34 UTC");
     expect(formatUtcHint(null)).toBe("");
     expect(formatUtcHint("not-a-date")).toBe("");
   });
