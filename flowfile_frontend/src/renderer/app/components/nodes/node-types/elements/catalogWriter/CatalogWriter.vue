@@ -35,12 +35,25 @@
         v-if="nodeData.catalog_write_settings.table_name && tableLookupDone"
         class="table-status"
       >
+        <div v-if="scd2TargetWarning" class="status-line status-warn">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>{{ scd2TargetWarning }}</span>
+        </div>
         <template v-if="existingTable">
           <div class="status-line status-exists">
             <i class="fa-solid fa-circle-info"></i>
             <span
               >Table exists — {{ (existingTable.row_count ?? 0).toLocaleString() }} rows. Writing
               here {{ existingModeVerb }}.</span
+            >
+          </div>
+          <div
+            v-if="existingTable.scd2 && physicalWriteMode === 'scd2'"
+            class="status-line status-exists"
+          >
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <span
+              >SCD2 table - versioned by {{ existingTable.scd2.business_keys.join(", ") }}.</span
             >
           </div>
           <div v-if="existingPartitionColumns.length" class="status-line status-partitions">
@@ -69,11 +82,12 @@
                 <el-option label="Upsert" value="upsert" />
                 <el-option label="Update" value="update" />
                 <el-option label="Delete" value="delete" />
+                <el-option label="SCD2 (slowly changing dimension)" value="scd2" />
               </el-select>
             </div>
 
             <div v-if="needsMergeKeys" class="catalog-field">
-              <label class="catalog-label">Key columns</label>
+              <label class="catalog-label">{{ keyColumnsLabel }}</label>
               <el-select
                 v-model="nodeData.catalog_write_settings.merge_keys"
                 size="small"
@@ -81,8 +95,9 @@
                 filterable
                 placeholder="Select key columns"
               >
-                <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+                <el-option v-for="col in keyColumnOptions" :key="col" :label="col" :value="col" />
               </el-select>
+              <p v-if="scd2KeyClashError" class="field-error">{{ scd2KeyClashError }}</p>
             </div>
 
             <div v-if="canPartition" class="catalog-field">
@@ -94,7 +109,12 @@
                 filterable
                 placeholder="Select partition columns"
               >
-                <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+                <el-option
+                  v-for="col in partitionColumnOptions"
+                  :key="col"
+                  :label="col"
+                  :value="col"
+                />
               </el-select>
               <p v-if="existingPartitionColumns.length" class="partition-hint">
                 This table is partitioned by {{ existingPartitionColumns.join(", ") }} — leave empty
@@ -105,6 +125,70 @@
                 low-cardinality columns.
               </p>
             </div>
+
+            <template v-if="physicalWriteMode === 'scd2' && nodeData.catalog_write_settings.scd2">
+              <div class="catalog-field catalog-field-inline">
+                <el-switch
+                  v-model="nodeData.catalog_write_settings.scd2.partition_on_current"
+                  size="small"
+                />
+                <label class="catalog-label">
+                  Partition on {{ nodeData.catalog_write_settings.scd2.is_current_column }}
+                </label>
+                <p class="partition-hint">
+                  Speeds up "Active records" reads. Applied at table creation.
+                </p>
+              </div>
+              <div class="catalog-field">
+                <label class="catalog-label">Compare columns</label>
+                <el-select
+                  v-model="nodeData.catalog_write_settings.scd2.compare_columns"
+                  size="small"
+                  multiple
+                  filterable
+                  clearable
+                  placeholder="All non-key columns"
+                >
+                  <el-option
+                    v-for="col in comparableColumns"
+                    :key="col"
+                    :label="col"
+                    :value="col"
+                  />
+                </el-select>
+                <p class="partition-hint">
+                  Leave empty to detect a change on every non-key column.
+                </p>
+              </div>
+              <div class="catalog-field catalog-field-inline">
+                <el-switch
+                  v-model="nodeData.catalog_write_settings.scd2.full_snapshot"
+                  size="small"
+                />
+                <label class="catalog-label">Input is a full snapshot</label>
+                <p class="partition-hint">
+                  End-date current rows whose business key is absent from this run's input.
+                </p>
+              </div>
+              <CollapsibleSection
+                title="Generated columns"
+                :default-open="false"
+                nested
+                persist-key="catalogWriter.scd2.columns"
+              >
+                <div v-for="f in scd2ColumnFields" :key="f.key" class="catalog-field">
+                  <label class="catalog-label">{{ f.label }}</label>
+                  <el-input
+                    v-model="nodeData.catalog_write_settings.scd2[f.key]"
+                    size="small"
+                    :placeholder="f.def"
+                  />
+                  <p v-if="scd2ColumnErrors[f.key]" class="field-error">
+                    {{ scd2ColumnErrors[f.key] }}
+                  </p>
+                </div>
+              </CollapsibleSection>
+            </template>
 
             <div v-if="physicalModeDescription" class="mode-description">
               {{ physicalModeDescription }}
@@ -176,11 +260,14 @@ import { validateCatalogName } from "../../../../../composables/catalogNameValid
 import { CatalogApi } from "../../../../../api/catalog.api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
+import { CollapsibleSection } from "../../../../common";
 import type { CatalogTable } from "../../../../../types/catalog.types";
-import type {
-  CatalogWriteMode,
-  NodeCatalogWriter,
-  NodeData,
+import {
+  DEFAULT_SCD2_SETTINGS,
+  type CatalogWriteMode,
+  type NodeCatalogWriter,
+  type NodeData,
+  type Scd2Settings,
 } from "../../../../../types/node.types";
 
 const nodeStore = useNodeStore();
@@ -198,6 +285,17 @@ const { saveSettings, pushNodeData } = useNodeSettings({
     if (tableNameError.value) {
       ElMessage.error(tableNameError.value);
       return false;
+    }
+    if (physicalWriteMode.value === "scd2") {
+      const firstError = Object.values(scd2ColumnErrors.value).find((e) => e != null);
+      if (firstError) {
+        ElMessage.error(`Generated columns: ${firstError}`);
+        return false;
+      }
+      if (scd2KeyClashError.value) {
+        ElMessage.error(`${keyColumnsLabel.value}: ${scd2KeyClashError.value}`);
+        return false;
+      }
     }
   },
 });
@@ -251,12 +349,75 @@ const lazinessLoading = ref(false);
 
 const needsMergeKeys = computed(() => {
   const mode = physicalWriteMode.value;
-  return mode === "upsert" || mode === "update" || mode === "delete";
+  return mode === "upsert" || mode === "update" || mode === "delete" || mode === "scd2";
 });
+
+const keyColumnsLabel = computed(() =>
+  physicalWriteMode.value === "scd2" ? "Business key columns" : "Key columns",
+);
 
 const canPartition = computed(() => {
   const mode = physicalWriteMode.value;
-  return mode === "overwrite" || mode === "error" || mode === "append";
+  return mode === "overwrite" || mode === "error" || mode === "append" || mode === "scd2";
+});
+
+// The generated is-current column is offered by its own toggle, never here.
+const partitionColumnOptions = computed(() => availableColumns.value);
+
+const scd2ColumnFields: { key: keyof Scd2Settings; label: string; def: string }[] = [
+  { key: "surrogate_key_column", label: "Surrogate key column", def: "sk" },
+  { key: "valid_from_column", label: "Valid from column", def: "valid_from" },
+  { key: "valid_to_column", label: "Valid to column", def: "valid_to" },
+  { key: "is_current_column", label: "Is current column", def: "is_current" },
+];
+
+// The live names, not the defaults — renaming a generated column re-opens the one it vacated.
+const scd2GeneratedNames = computed(() => {
+  const scd2 = nodeData.value?.catalog_write_settings.scd2;
+  if (physicalWriteMode.value !== "scd2" || !scd2) return new Set<string>();
+  return new Set(scd2ColumnFields.map((f) => scd2[f.key] as string));
+});
+
+const keyColumnOptions = computed(() =>
+  availableColumns.value.filter((col) => !scd2GeneratedNames.value.has(col)),
+);
+
+const comparableColumns = computed(() => {
+  const s = nodeData.value?.catalog_write_settings;
+  if (!s) return [];
+  const excluded = new Set(s.merge_keys);
+  return availableColumns.value.filter(
+    (col) => !excluded.has(col) && !scd2GeneratedNames.value.has(col),
+  );
+});
+
+// Filtering the picker can't catch a key that was legal when picked and became a generated column
+// afterwards. The backend rejects that; say so at the field instead.
+const scd2KeyClashError = computed(() => {
+  const keys = nodeData.value?.catalog_write_settings.merge_keys ?? [];
+  const clash = keys.filter((k) => scd2GeneratedNames.value.has(k));
+  return clash.length ? `Cannot also be a generated column: ${clash.join(", ")}` : null;
+});
+
+const scd2ColumnErrors = computed<Record<string, string | null>>(() => {
+  const scd2Settings = nodeData.value?.catalog_write_settings.scd2;
+  const errors: Record<string, string | null> = {};
+  if (!scd2Settings) return errors;
+  const values = scd2ColumnFields.map((f) => scd2Settings[f.key] as string);
+  for (const f of scd2ColumnFields) {
+    const value = scd2Settings[f.key] as string;
+    if (!value.trim()) {
+      errors[f.key] = "Required";
+      continue;
+    }
+    const nameError = validateCatalogName(value, "Column");
+    if (nameError) {
+      errors[f.key] = nameError;
+      continue;
+    }
+    errors[f.key] = values.filter((v) => v === value).length > 1 ? "Must be unique" : null;
+  }
+  return errors;
 });
 
 // Target-table existence lookup (resolved by name + namespace)
@@ -273,11 +434,28 @@ const MODE_VERBS: Record<string, string> = {
   upsert: "updates matched rows and inserts the rest",
   update: "updates matched rows",
   delete: "deletes matched rows",
+  scd2: "closes changed rows and inserts new versions",
 };
 
 const existingModeVerb = computed(() => {
   if (activeTab.value === "virtual") return "re-registers it as a virtual table";
   return MODE_VERBS[physicalWriteMode.value] ?? "modifies it";
+});
+
+const scd2TargetWarning = computed(() => {
+  const t = existingTable.value;
+  if (!t || activeTab.value === "virtual") return null;
+  const mode = physicalWriteMode.value;
+  if (mode === "scd2" && !t.scd2) {
+    return "This table exists and is not SCD2-tracked. The write will fail - pick a new table name, or delete the existing table first.";
+  }
+  if (mode !== "scd2" && t.scd2) {
+    if (mode === "overwrite") {
+      return "This is an SCD2 table. Overwrite rebuilds it as a normal table and clears SCD2 tracking.";
+    }
+    return `This is an SCD2 table - a ${mode} write will fail. Use scd2 mode, or overwrite to rebuild it as a normal table.`;
+  }
+  return null;
 });
 
 async function lookupExistingTable() {
@@ -328,18 +506,24 @@ const physicalModeDescription = computed(() => {
     upsert: "Update rows that match the key columns, insert rows that don't match.",
     update: "Update only rows that match the key columns. No new rows are inserted.",
     delete: "Remove rows from the target table that match the key columns in the source data.",
+    scd2: "Track history: rows whose compared columns changed are end-dated and re-inserted as a new version. New keys are inserted as current.",
   };
   return descriptions[physicalWriteMode.value] ?? null;
 });
 
 watch(physicalWriteMode, (newMode) => {
   if (nodeData.value && activeTab.value === "physical") {
-    nodeData.value.catalog_write_settings.write_mode = newMode;
-    if (!["upsert", "update", "delete"].includes(newMode)) {
-      nodeData.value.catalog_write_settings.merge_keys = [];
+    const s = nodeData.value.catalog_write_settings;
+    s.write_mode = newMode;
+    if (!["upsert", "update", "delete", "scd2"].includes(newMode)) {
+      s.merge_keys = [];
     }
-    if (!["overwrite", "error", "append"].includes(newMode)) {
-      nodeData.value.catalog_write_settings.partition_by = [];
+    if (!["overwrite", "error", "append", "scd2"].includes(newMode)) {
+      s.partition_by = [];
+    }
+    // Dangling scd2 block on other physical modes is kept (not nulled) so toggling back restores it.
+    if (newMode === "scd2" && !s.scd2) {
+      s.scd2 = { ...DEFAULT_SCD2_SETTINGS };
     }
   }
 });
@@ -350,6 +534,8 @@ function handleTabChange(tab: string) {
     nodeData.value.catalog_write_settings.write_mode = "virtual";
     nodeData.value.catalog_write_settings.merge_keys = [];
     nodeData.value.catalog_write_settings.partition_by = [];
+    // The backend rejects a dangling scd2 block on virtual (Scd2Settings is physical-mode-only).
+    nodeData.value.catalog_write_settings.scd2 = null;
     fetchLazinessCheck();
   } else {
     nodeData.value.catalog_write_settings.write_mode = physicalWriteMode.value;
@@ -415,6 +601,15 @@ async function loadNodeData(nodeId: number) {
     if (!nodeData.value!.catalog_write_settings.partition_by) {
       nodeData.value!.catalog_write_settings.partition_by = [];
     }
+    if (nodeData.value!.catalog_write_settings.scd2 === undefined) {
+      nodeData.value!.catalog_write_settings.scd2 = null;
+    }
+    if (
+      nodeData.value!.catalog_write_settings.scd2 &&
+      nodeData.value!.catalog_write_settings.scd2.partition_on_current === undefined
+    ) {
+      nodeData.value!.catalog_write_settings.scd2.partition_on_current = true;
+    }
   } else {
     nodeData.value = {
       catalog_write_settings: {
@@ -425,6 +620,7 @@ async function loadNodeData(nodeId: number) {
         write_mode: "overwrite",
         merge_keys: [],
         partition_by: [],
+        scd2: null,
       },
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
@@ -475,6 +671,17 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.catalog-field-inline {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.catalog-field-inline .partition-hint {
+  flex-basis: 100%;
 }
 
 .catalog-label {
@@ -545,6 +752,18 @@ defineExpose({
 
 .status-new i {
   color: var(--color-success, #22c55e);
+}
+
+.status-warn {
+  color: var(--color-text-secondary);
+  padding: 6px 8px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+}
+
+.status-warn i {
+  color: var(--color-warning, #f59e0b);
 }
 
 .status-partitions-label {

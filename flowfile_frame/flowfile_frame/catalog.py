@@ -6,7 +6,8 @@ catalog, similar to how database/frame_helpers.py handles database operations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal
 
 from flowfile_frame.catalog_reference import WriteMode, _resolve_namespace_id
 
@@ -32,9 +33,17 @@ def add_write_to_catalog(
     table_name: str,
     schema: SchemaReference | None = None,
     namespace_id: int | None = None,
+    namespace_full_name: str | None = None,
     write_mode: str = "overwrite",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
+    scd2_compare_columns: list[str] | None = None,
+    scd2_full_snapshot: bool = False,
+    scd2_surrogate_key_column: str = "sk",
+    scd2_valid_from_column: str = "valid_from",
+    scd2_valid_to_column: str = "valid_to",
+    scd2_is_current_column: str = "is_current",
+    scd2_partition_on_current: bool = True,
     description: str | None = None,
 ) -> int:
     """Add a catalog writer node to the flow graph.
@@ -45,9 +54,21 @@ def add_write_to_catalog(
         table_name: Name of the catalog table to write to.
         schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
         namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
+        namespace_full_name: Portable ``"catalog.schema"`` name, resolved at run time.
+            Survives recreation of the catalog on another machine, unlike ``namespace_id``.
         write_mode: How to handle existing data.
-        merge_keys: Column names for merge operations.
+        merge_keys: Column names for merge operations. Also the SCD2 business key.
         partition_by: Delta partition columns (applied at table creation).
+        scd2_compare_columns: Columns compared for change detection when ``write_mode="scd2"``.
+            Empty means every non-key, non-system column.
+        scd2_full_snapshot: When ``write_mode="scd2"``, end-date current rows whose business
+            key is absent from this run's input.
+        scd2_surrogate_key_column: Name of the generated surrogate-key column (``write_mode="scd2"``).
+        scd2_valid_from_column: Name of the generated valid-from column (``write_mode="scd2"``).
+        scd2_valid_to_column: Name of the generated valid-to column (``write_mode="scd2"``).
+        scd2_is_current_column: Name of the generated is-current column (``write_mode="scd2"``).
+        scd2_partition_on_current: Partition new SCD2 tables by the is-current column
+            (creation-time only; explicit ``partition_by`` columns nest above it).
         description: Optional description for the node.
 
     Returns:
@@ -60,6 +81,37 @@ def add_write_to_catalog(
     node_id = generate_node_id()
     flow_id = flow_graph.flow_id
 
+    if write_mode != "scd2":
+        ignored = [
+            name
+            for name, value, default in (
+                ("scd2_compare_columns", scd2_compare_columns or [], []),
+                ("scd2_full_snapshot", scd2_full_snapshot, False),
+                ("scd2_partition_on_current", scd2_partition_on_current, True),
+                ("scd2_surrogate_key_column", scd2_surrogate_key_column, "sk"),
+                ("scd2_valid_from_column", scd2_valid_from_column, "valid_from"),
+                ("scd2_valid_to_column", scd2_valid_to_column, "valid_to"),
+                ("scd2_is_current_column", scd2_is_current_column, "is_current"),
+            )
+            if value != default
+        ]
+        if ignored:
+            raise ValueError(
+                f"{', '.join(ignored)} only apply when write_mode='scd2', but write_mode is '{write_mode}'"
+            )
+
+    scd2 = None
+    if write_mode == "scd2":
+        scd2 = input_schema.Scd2Settings(
+            compare_columns=scd2_compare_columns or [],
+            full_snapshot=scd2_full_snapshot,
+            surrogate_key_column=scd2_surrogate_key_column,
+            valid_from_column=scd2_valid_from_column,
+            valid_to_column=scd2_valid_to_column,
+            is_current_column=scd2_is_current_column,
+            partition_on_current=scd2_partition_on_current,
+        )
+
     settings = input_schema.NodeCatalogWriter(
         flow_id=flow_id,
         node_id=node_id,
@@ -69,9 +121,11 @@ def add_write_to_catalog(
         catalog_write_settings=input_schema.CatalogWriteSettings(
             table_name=table_name,
             namespace_id=resolved_namespace_id,
+            namespace_full_name=namespace_full_name,
             write_mode=write_mode,
             merge_keys=merge_keys or [],
             partition_by=partition_by or [],
+            scd2=scd2,
         ),
     )
 
@@ -85,6 +139,8 @@ def read_catalog_table(
     schema: SchemaReference | None = None,
     namespace_id: int | None = None,
     delta_version: int | None = None,
+    scd2_view: Literal["active", "all", "active_at"] | None = None,
+    scd2_as_of: str | datetime | None = None,
     flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Read a table from the Flowfile catalog.
@@ -97,6 +153,12 @@ def read_catalog_table(
         schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
         namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
         delta_version: Optional Delta version to read (for time-travel queries).
+        scd2_view: History view for an SCD2-tracked table: ``"active"`` (current rows
+            only), ``"all"`` (every version), or ``"active_at"`` (rows valid at
+            ``scd2_as_of``). ``None`` (the default) means no filter — every version is
+            returned, and the setting is ignored for non-SCD2 tables.
+        scd2_as_of: Required when ``scd2_view="active_at"``. Accepts an ISO-8601 string
+            or a ``datetime`` (converted via ``.isoformat()``).
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -124,6 +186,8 @@ def read_catalog_table(
         catalog_table_name=table_name,
         catalog_namespace_id=resolved_namespace_id,
         delta_version=delta_version,
+        scd2_view=scd2_view,
+        scd2_as_of=scd2_as_of.isoformat() if isinstance(scd2_as_of, datetime) else scd2_as_of,
     )
     flow_graph.add_catalog_reader(settings)
     return FlowFrame(
@@ -239,9 +303,17 @@ def write_catalog_table(
     *,
     schema: SchemaReference | None = None,
     namespace_id: int | None = None,
+    namespace_full_name: str | None = None,
     write_mode: WriteMode = "overwrite",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
+    scd2_compare_columns: list[str] | None = None,
+    scd2_full_snapshot: bool = False,
+    scd2_surrogate_key_column: str = "sk",
+    scd2_valid_from_column: str = "valid_from",
+    scd2_valid_to_column: str = "valid_to",
+    scd2_is_current_column: str = "is_current",
+    scd2_partition_on_current: bool = True,
     description: str | None = None,
 ) -> None:
     """Write a LazyFrame to the Flowfile catalog as a Delta table.
@@ -251,6 +323,7 @@ def write_catalog_table(
         table_name: Name of the catalog table to write to.
         schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
         namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
+        namespace_full_name: Portable ``"catalog.schema"`` name, resolved at run time.
         write_mode: How to handle existing data:
             - 'overwrite': Replace the entire table
             - 'error': Fail if the table already exists
@@ -258,11 +331,23 @@ def write_catalog_table(
             - 'upsert': Insert new rows or update existing by merge_keys
             - 'update': Update only existing rows by merge_keys
             - 'delete': Delete rows matching merge_keys
+            - 'scd2': Slowly-changing-dimension type 2 write. Changed rows are end-dated
+              and re-inserted as a new version; see the ``scd2_*`` arguments.
             - 'virtual': Register a virtual table backed by this flow
               (requires the flow to be registered with the catalog first;
               see :func:`flowfile_frame.register_flow_with_catalog`).
-        merge_keys: Column names to use as merge keys (required for upsert/update/delete).
+        merge_keys: Column names to use as merge keys (required for upsert/update/delete/scd2;
+            also the SCD2 business key).
         partition_by: Delta partition columns (applied at table creation).
+        scd2_compare_columns: Columns compared for change detection when ``write_mode="scd2"``.
+            Empty means every non-key, non-system column.
+        scd2_full_snapshot: When ``write_mode="scd2"``, end-date current rows whose business
+            key is absent from this run's input.
+        scd2_surrogate_key_column: Name of the generated surrogate-key column (``write_mode="scd2"``).
+        scd2_valid_from_column: Name of the generated valid-from column (``write_mode="scd2"``).
+        scd2_valid_to_column: Name of the generated valid-to column (``write_mode="scd2"``).
+        scd2_is_current_column: Name of the generated is-current column (``write_mode="scd2"``).
+        scd2_partition_on_current: Partition new SCD2 tables by the is-current column.
         description: Optional description for the table.
 
     Raises:
@@ -273,8 +358,16 @@ def write_catalog_table(
         table_name=table_name,
         schema=schema,
         namespace_id=namespace_id,
+        namespace_full_name=namespace_full_name,
         write_mode=write_mode,
         merge_keys=merge_keys,
         partition_by=partition_by,
+        scd2_compare_columns=scd2_compare_columns,
+        scd2_full_snapshot=scd2_full_snapshot,
+        scd2_surrogate_key_column=scd2_surrogate_key_column,
+        scd2_valid_from_column=scd2_valid_from_column,
+        scd2_valid_to_column=scd2_valid_to_column,
+        scd2_is_current_column=scd2_is_current_column,
+        scd2_partition_on_current=scd2_partition_on_current,
         description=description,
     )

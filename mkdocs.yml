@@ -153,6 +153,7 @@ nav:
   - Catalog & Automation:
     - Overview: users/visual-editor/catalog/index.md
     - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
+    - Slowly Changing Dimensions: users/visual-editor/catalog/slowly-changing-dimensions.md
     - SQL Editor: users/visual-editor/catalog/sql-editor.md
     - Notebooks: users/visual-editor/catalog/notebooks.md
     - Visualizations: users/visual-editor/catalog/visualizations.md

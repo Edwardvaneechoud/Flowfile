@@ -4819,6 +4819,35 @@ def test_catalog_reader_with_namespace_and_version():
     )
 
 
+def test_catalog_reader_scd2_view():
+    """Test catalog reader code generation with an SCD2 history view."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_reader = input_schema.NodeCatalogReader(
+        flow_id=1,
+        node_id=1,
+        catalog_table_name="dim_customer",
+        scd2_view="active_at",
+        scd2_as_of="2024-01-01T00:00:00+00:00",
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output,
+        "ff.read_catalog_table(",
+        '"dim_customer"',
+        'scd2_view="active_at"',
+        'scd2_as_of="2024-01-01T00:00:00+00:00"',
+    )
+
+
 def test_catalog_reader_missing_table_name_adds_to_unsupported():
     """Test that catalog reader with no table name or ID is added to unsupported nodes."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
@@ -4898,6 +4927,112 @@ def test_catalog_writer_upsert_with_merge_keys():
         code_output, "ff.write_catalog_table(", '"target_table"', "namespace_id=3",
         'write_mode="upsert"', "merge_keys=[", 'description="My upsert table"',
     )
+
+
+def test_catalog_writer_partition_by_is_emitted():
+    """Regression test: partition_by was silently dropped from generated catalog-writer code."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="partitioned_table",
+            write_mode="overwrite",
+            partition_by=["region", "year"],
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.write_catalog_table(", "partition_by=[")
+
+
+def test_catalog_writer_scd2_emits_all_settings():
+    """SCD2 kwargs are emitted only when they differ from their default."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="dim_customer",
+            namespace_full_name="catalog.schema",
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2=input_schema.Scd2Settings(
+                compare_columns=["name", "city"],
+                full_snapshot=True,
+                surrogate_key_column="row_key",
+                valid_from_column="effective_from",
+                valid_to_column="effective_to",
+                is_current_column="current_flag",
+            ),
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output,
+        "ff.write_catalog_table(",
+        '"dim_customer"',
+        'namespace_full_name="catalog.schema"',
+        'write_mode="scd2"',
+        "merge_keys=[",
+        "scd2_compare_columns=[",
+        "scd2_full_snapshot=True",
+        'scd2_surrogate_key_column="row_key"',
+        'scd2_valid_from_column="effective_from"',
+        'scd2_valid_to_column="effective_to"',
+        'scd2_is_current_column="current_flag"',
+    )
+
+
+def test_catalog_writer_scd2_defaults_are_not_emitted():
+    """SCD2 kwargs at their default value stay out of the generated code."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="dim_customer_defaults",
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2=input_schema.Scd2Settings(),
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    assert "scd2_compare_columns" not in code_output
+    assert "scd2_full_snapshot" not in code_output
+    assert "scd2_surrogate_key_column" not in code_output
+    assert "scd2_valid_from_column" not in code_output
+    assert "scd2_valid_to_column" not in code_output
+    assert "scd2_is_current_column" not in code_output
 
 
 def test_catalog_writer_missing_table_name_adds_to_unsupported():
@@ -5069,6 +5204,92 @@ def test_catalog_writer_code_executes():
         assert tables[0].row_count == 5
 
     _catalog_cleanup()
+
+
+def _add_manual_input_from_rows(flow: FlowGraph, data: list[dict], node_id: int) -> None:
+    """Add a manual input node from a list of row dicts (flexible shape, unlike
+    ``create_sample_dataframe_node``)."""
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=node_id,
+        raw_data_format=input_schema.RawData.from_pylist(data),
+    )
+    flow.add_manual_input(manual_input)
+
+
+def test_catalog_writer_scd2_code_executes():
+    """Integration test: export two SCD2 writes to code, execute both, verify history shape.
+
+    Modeled on ``test_catalog_writer_code_executes``. V1 has one row; V2 changes that row and
+    adds a new one, so the catalog table ends up with 3 rows total (1 closed + 2 current).
+    """
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.service import CatalogService
+    from flowfile_core.database.connection import get_db_context
+
+    _catalog_cleanup()
+    ns_id = _create_catalog_namespace()
+
+    scd2_v1 = [{"id": 1, "name": "Alice", "city": "Amsterdam"}]
+    scd2_v2 = [
+        {"id": 1, "name": "Alice", "city": "Antwerp"},  # changed
+        {"id": 2, "name": "Bob", "city": "Berlin"},  # new
+    ]
+
+    def _build_and_run(data: list[dict], flow_id: int) -> None:
+        flow = create_basic_flow(flow_id=flow_id, name=f"scd2_export_{flow_id}")
+        _add_manual_input_from_rows(flow, data, node_id=1)
+
+        promise = input_schema.NodePromise(flow_id=flow.flow_id, node_id=2, node_type="catalog_writer")
+        flow.add_node_promise(promise)
+        writer = input_schema.NodeCatalogWriter(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="scd2_written_from_code",
+                namespace_id=ns_id,
+                write_mode="scd2",
+                merge_keys=["id"],
+                scd2=input_schema.Scd2Settings(),
+            ),
+            user_id=1,
+        )
+        flow.add_catalog_writer(writer)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_flowframe(flow)
+        verify_if_execute(code)
+
+    _build_and_run(scd2_v1, flow_id=1)
+    _build_and_run(scd2_v2, flow_id=2)
+
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        svc = CatalogService(repo)
+        tables = svc.list_tables(namespace_id=ns_id)
+        assert len(tables) == 1
+        table = tables[0]
+        assert table.name == "scd2_written_from_code"
+        assert table.row_count == 3
+        assert table.scd2 is not None
+        assert table.scd2.business_keys == ["id"]
+
+    result_df = pl.read_delta(_table_file_path(ns_id, "scd2_written_from_code"))
+    assert result_df.height == 3
+    assert result_df.filter(pl.col("is_current")).height == 2
+
+    _catalog_cleanup()
+
+
+def _table_file_path(ns_id: int, name: str) -> str:
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        table = next(t for t in repo.list_tables(namespace_id=ns_id) if t.name == name)
+        return table.file_path
 
 
 def test_catalog_round_trip_code_generation():

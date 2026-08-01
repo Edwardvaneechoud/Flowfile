@@ -5,6 +5,7 @@ maintenance (C2), the catalog-writer node (C3, save-time route gate + run-time
 and the ghost-registration name reclaim (C6).
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -213,6 +214,29 @@ def alice_delta_table(users, alice_ns, resource_factory, tmp_path):
     )
 
 
+@pytest.fixture
+def alice_scd2_table(users, alice_ns, resource_factory, tmp_path):
+    """An SCD2-tracked table row of alice's; no data on disk — the tests stop at the auth gate."""
+    return resource_factory(
+        db_models.CatalogTable,
+        name="alice_scd2",
+        namespace_id=alice_ns["schema"],
+        owner_id=users["alice"].id,
+        file_path=str(tmp_path / "alice_scd2"),
+        scd2_config=json.dumps(
+            {
+                "business_keys": ["id"],
+                "surrogate_key_column": "sk",
+                "valid_from_column": "valid_from",
+                "valid_to_column": "valid_to",
+                "is_current_column": "is_current",
+                "compare_columns": ["val"],
+                "full_snapshot": False,
+            }
+        ),
+    )
+
+
 def test_optimize_and_vacuum_denied_for_reader(users, client_for, alice_delta_table, team, grant_factory):
     bob = client_for("bob")
     grant_factory("catalog_table", alice_delta_table, team, permission="use", granted_by=users["alice"].id)
@@ -273,6 +297,30 @@ def test_catalog_writer_settings_denied_for_reader(
         json=_writer_payload(flow_id, alice_ns["schema"]),
         params={"node_type": "catalog_writer"},
     )
+    assert resp.status_code == 403, resp.text
+
+
+def test_catalog_writer_scd2_settings_denied_for_reader(
+    users, client_for, alice_ns, team, grant_factory, registration_cleanup, flow_session_cleanup, tmp_flow_path
+):
+    """The save-time gate keys on the write *target*, so an SCD2-mode payload is refused
+    for a use-grantee exactly like any other physical mode."""
+    bob = client_for("bob")
+    grant_factory("catalog_namespace", alice_ns["schema"], team, permission="use", granted_by=users["alice"].id)
+    flow_id = _own_flow(bob, tmp_flow_path, "bob_scd2_flow")
+    bob.post(
+        "/editor/add_node",
+        params={"flow_id": flow_id, "node_id": 1, "node_type": "catalog_writer", "pos_x": 0, "pos_y": 0},
+    )
+    payload = _writer_payload(flow_id, alice_ns["schema"], table_name="bob_scd2_target")
+    payload["catalog_write_settings"].update(
+        {
+            "write_mode": "scd2",
+            "merge_keys": ["id"],
+            "scd2": {"compare_columns": [], "full_snapshot": False},
+        }
+    )
+    resp = bob.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"})
     assert resp.status_code == 403, resp.text
 
 
@@ -395,6 +443,24 @@ def test_runtime_overwrite_existing_table_needs_manage(users, alice_ns, alice_de
             _authorize_catalog_write(db, users["bob"].id, existing=existing, namespace_id=alice_ns["schema"])
         db.query(db_models.ResourceGrant).filter_by(
             resource_type="catalog_table", resource_id=alice_delta_table
+        ).update({"permission": "manage"})
+        db.commit()
+        _authorize_catalog_write(db, users["bob"].id, existing=existing, namespace_id=alice_ns["schema"])
+
+
+def test_runtime_overwrite_existing_scd2_table_needs_manage(
+    users, alice_ns, alice_scd2_table, team, grant_factory
+):
+    """An SCD2-tracked table is still just a catalog table to the authorization gate:
+    a use-grantee may not rewrite its history, a manage-grantee may."""
+    grant_factory("catalog_table", alice_scd2_table, team, permission="use", granted_by=users["alice"].id)
+    with get_db_context() as db:
+        existing = db.get(db_models.CatalogTable, alice_scd2_table)
+        assert existing.scd2_config
+        with pytest.raises(PermissionError):
+            _authorize_catalog_write(db, users["bob"].id, existing=existing, namespace_id=alice_ns["schema"])
+        db.query(db_models.ResourceGrant).filter_by(
+            resource_type="catalog_table", resource_id=alice_scd2_table
         ).update({"permission": "manage"})
         db.commit()
         _authorize_catalog_write(db, users["bob"].id, existing=existing, namespace_id=alice_ns["schema"])

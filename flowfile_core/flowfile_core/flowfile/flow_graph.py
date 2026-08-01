@@ -132,7 +132,7 @@ from flowfile_core.kernel.execution import (
     write_inputs_to_parquet,
 )
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.catalog_schema import TableWriteMetadata
+from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageAuthMode,
     CloudStorageReadSettingsInternal,
@@ -150,7 +150,7 @@ from flowfile_core.secret_manager.secret_manager import (
 )
 from shared._version import get_version
 from shared.db_dialects import get_dialect_or_generic
-from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta
+from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta, scd2_into_delta
 from shared.delta_utils import write_delta as _write_delta
 from shared.google_analytics.models import (
     GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
@@ -539,6 +539,29 @@ class CatalogTableInfo(NamedTuple):
     table_id: int | None = None
     namespace_id: int | None = None
     table_name: str | None = None
+    # SCD2 shape of the table, straight off the catalog record — the single source of truth for
+    # generated column names. ``None`` => not an SCD2 table.
+    scd2_config: dict | None = None
+
+
+def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
+    """True when a table's persisted SCD2 config names columns its stored schema no longer has.
+
+    Defence in depth for a record that outlived its data (a kernel or ``/refresh`` write that
+    replaced an SCD2 table wholesale). Degrading to an unfiltered read is far better than a
+    ``ColumnNotFoundError`` at collect time; an unreadable or absent schema is left alone rather
+    than guessed at.
+    """
+    raw_schema = getattr(table_record, "schema_json", None)
+    if not raw_schema:
+        return False
+    try:
+        columns = json.loads(raw_schema)
+    except (TypeError, ValueError):
+        return False
+    if not columns:
+        return False
+    return scd2_system_columns_missing(cfg, columns)
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
@@ -551,6 +574,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     resolved_table_id: int | None = None
     resolved_namespace_id: int | None = None
     resolved_table_name: str | None = None
+    resolved_scd2_config: dict | None = None
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -599,6 +623,19 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                     source_table_versions = table_record.source_table_versions
                 else:
                     file_path = table_record.file_path
+                    raw_scd2_config = getattr(table_record, "scd2_config", None)
+                    if raw_scd2_config:
+                        try:
+                            resolved_scd2_config = json.loads(raw_scd2_config)
+                        except (TypeError, ValueError):
+                            logger.warning("Unreadable scd2_config on catalog table %s", table_record.id)
+                    if resolved_scd2_config and _scd2_config_is_stale(resolved_scd2_config, table_record):
+                        logger.warning(
+                            "Catalog table %s claims to be SCD2 but its schema no longer carries the "
+                            "configured system columns; reading it unfiltered",
+                            table_record.id,
+                        )
+                        resolved_scd2_config = None
             else:
                 resolved_namespace_id = node_catalog_reader.catalog_namespace_id
                 file_path = svc.resolve_table_file_path(
@@ -617,7 +654,63 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         table_id=resolved_table_id,
         namespace_id=resolved_namespace_id,
         table_name=resolved_table_name,
+        scd2_config=resolved_scd2_config,
     )
+
+
+def _scd2_primitive_kwargs(scd2_config: dict, run_timestamp: str) -> dict:
+    """Map a resolved SCD2 catalog config onto ``scd2_into_delta``'s keyword names.
+
+    Both branches of a write are built from this one mapping — the local writer forwards it to the
+    primitive verbatim, the worker branch re-spells only ``valid_from_iso`` as ``run_timestamp``
+    (the worker's parameter name for the same instant) and adds the transport fields. So the local
+    and remote branches of the same write cannot disagree about what was compared or how the
+    generated columns are named.
+    """
+    return {
+        "business_keys": scd2_config["business_keys"],
+        "valid_from_iso": run_timestamp,
+        "compare_columns": scd2_config["compare_columns"],
+        "full_snapshot": scd2_config["full_snapshot"],
+        "surrogate_key_column": scd2_config["surrogate_key_column"],
+        "valid_from_column": scd2_config["valid_from_column"],
+        "valid_to_column": scd2_config["valid_to_column"],
+        "is_current_column": scd2_config["is_current_column"],
+        # .get: persisted-shape configs never carry the creation-time knob.
+        "partition_on_current": scd2_config.get("partition_on_current", True),
+    }
+
+
+def _scd2_row_filter(
+    cfg: dict | None,
+    view: str | None,
+    as_of: str | None,
+    *,
+    node_logger: NodeLogger,
+) -> pl.Expr | None:
+    """Build the lazy row filter for an SCD2 history view, or ``None`` for an unfiltered scan.
+
+    Column names come from *cfg* — the catalog table's own persisted SCD2 record — never from the
+    reader node's settings. Per the product decision, ``None``/``"all"`` mean no implicit filter
+    (every version, the reader default); ``"active"`` filters to current rows; ``"active_at"``
+    applies a half-open validity interval. A view requested against a table with no SCD2 record is
+    ignored with a warning rather than raised: retargeting a reader to a plain table, or predicting
+    its schema, must never fail the flow.
+    """
+    if cfg is None:
+        if view is not None:
+            node_logger.warning(f"Ignoring scd2_view={view!r}: the target catalog table is not an SCD2 table")
+        return None
+    if view in (None, "all"):
+        return None
+    valid_from = cfg["valid_from_column"]
+    valid_to = cfg["valid_to_column"]
+    if view == "active":
+        return pl.col(valid_to).is_null()
+    # "active_at": half-open [valid_from, valid_to) — a row closed exactly at ts is superseded.
+    # "Z" is normalized for Python 3.10's fromisoformat; a naive instant is interpreted as UTC.
+    ts = pl.lit(datetime.datetime.fromisoformat(as_of.replace("Z", "+00:00"))).cast(pl.Datetime("us", time_zone="UTC"))
+    return (pl.col(valid_from) <= ts) & (pl.col(valid_to).is_null() | (pl.col(valid_to) > ts))
 
 
 def _write_catalog_delta_local(
@@ -627,6 +720,7 @@ def _write_catalog_delta_local(
     merge_keys: list[str] | None,
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
+    scd2_kwargs: dict | None = None,
 ) -> TableWriteMetadata | None:
     """Write a Delta table in-process. Returns metadata dict, or ``None`` when the write was skipped.
 
@@ -634,8 +728,39 @@ def _write_catalog_delta_local(
     storage so standalone CLI/scheduler runs — which have no worker to offload to — can still write
     cloud catalog tables. An empty dict means ambient credentials, so it must reach the delta calls
     as-is (the downstream helpers branch on ``is None``, not truthiness).
+
+    *scd2_kwargs* carries the resolved SCD2 configuration (see ``_scd2_primitive_kwargs``) and is
+    required when *delta_mode* is ``"scd2"``.
     """
     dest = str(dest_path)
+    if delta_mode == "scd2":
+        # The sanctioned local-execution collect: SCD2 classification needs materialized rows,
+        # and a standalone CLI/scheduler run has no worker to offload to.
+        result = scd2_into_delta(
+            df.data_frame.collect(),
+            dest,
+            partition_by=partition_by,
+            storage_options=storage_options,
+            **(scd2_kwargs or {}),
+        )
+        if result.skipped:
+            return None
+        # An SCD2 table's row count is its whole history, so the post-write scan is the only truth.
+        after = pl.scan_delta(dest, **({} if storage_options is None else {"storage_options": storage_options}))
+        after_schema = after.collect_schema()
+        return {
+            "schema": [{"name": n, "dtype": str(d)} for n, d in after_schema.items()],
+            "row_count": result.rows_total,
+            "column_count": len(after_schema),
+            "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
+            "scd2_metrics": {
+                "rows_inserted": result.rows_inserted,
+                "rows_closed": result.rows_closed,
+                "rows_total": result.rows_total,
+                "rows_current": result.rows_current,
+                "created": result.created,
+            },
+        }
     if delta_mode in ("upsert", "update", "delete"):
         wrote = merge_into_delta(
             df.data_frame.collect(),
@@ -685,7 +810,11 @@ def _write_catalog_delta_remote(
         return None
     meta: TableWriteMetadata = {}
     if isinstance(result, dict):
+        # The whitelist stays four keys wide: everything here reaches the catalog service
+        # methods as **meta_kwargs, and they take explicit keyword arguments only.
         meta = {k: result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
+        if result.get("scd2_metrics"):
+            meta["scd2_metrics"] = result["scd2_metrics"]
     return meta
 
 
@@ -697,6 +826,97 @@ def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
     return resolved if resolved is not None else settings.namespace_id
 
 
+_SCD2_DRIFT_FIELDS = (
+    "business_keys",
+    "surrogate_key_column",
+    "valid_from_column",
+    "valid_to_column",
+    "is_current_column",
+)
+
+
+def _resolve_scd2_config(
+    settings: input_schema.CatalogWriteSettings,
+    df: FlowDataEngine,
+    existing,
+) -> dict:
+    """Resolve the SCD2 config for this write and refuse a target it cannot maintain.
+
+    ``compare_columns`` is resolved here — in core, from the node's *schema*, never its data — so
+    core, the worker and the persisted catalog record can never disagree about what was compared.
+    An existing target must already be SCD2-tracked with the same business key and generated column
+    names: converting a plain table in place would fabricate history that was never recorded, and
+    renaming a key or a generated column mid-stream would silently orphan every prior version.
+    """
+    cfg = settings.scd2 or input_schema.Scd2Settings()
+    system = set(cfg.system_columns)
+    keys = list(settings.merge_keys)
+    frame_cols = [c.column_name for c in df.schema]
+    compare = list(cfg.compare_columns) or [c for c in frame_cols if c not in set(keys) and c not in system]
+    if not compare:
+        raise ValueError(
+            "SCD2 write has no columns to compare: every input column is a business key. "
+            "Add at least one non-key column, or narrow the business key."
+        )
+    missing = [c for c in (*keys, *compare) if c not in frame_cols]
+    if missing:
+        raise ValueError(f"SCD2 write references columns absent from the input: {missing}")
+
+    resolved = {
+        "business_keys": keys,
+        "surrogate_key_column": cfg.surrogate_key_column,
+        "valid_from_column": cfg.valid_from_column,
+        "valid_to_column": cfg.valid_to_column,
+        "is_current_column": cfg.is_current_column,
+        "compare_columns": compare,
+        "full_snapshot": cfg.full_snapshot,
+        # Creation-time only — threaded to the primitive, filtered out of the persisted record.
+        "partition_on_current": cfg.partition_on_current,
+    }
+    if existing is None:
+        return resolved
+
+    raw = getattr(existing, "scd2_config", None)
+    if not raw:
+        raise ValueError(
+            f"Catalog table '{existing.name}' already exists and is not an SCD2 table. "
+            f"Flowfile will not convert it in place — write to a new table name, or delete the "
+            f"existing table first."
+        )
+    try:
+        prior = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Catalog table '{existing.name}' has an unreadable SCD2 configuration; "
+            f"delete the table and recreate it with an SCD2 write."
+        ) from exc
+    drifted = {k: (prior.get(k), resolved[k]) for k in _SCD2_DRIFT_FIELDS if prior.get(k) != resolved[k]}
+    if drifted:
+        raise ValueError(
+            f"SCD2 settings do not match the existing table '{existing.name}': {drifted}. "
+            f"Changing the business key or a generated column name would corrupt the history."
+        )
+    return resolved
+
+
+def _reject_non_scd2_write_to_scd2_table(settings: input_schema.CatalogWriteSettings, existing) -> None:
+    """Refuse an incremental write onto an SCD2-tracked table.
+
+    ``append``/``upsert``/``update``/``delete`` would leave rows in the table that carry no
+    surrogate key and no validity window, so every history read would silently be wrong. A plain
+    ``overwrite`` is allowed: it replaces the data wholesale and clears the SCD2 flag.
+    """
+    if settings.write_mode not in ("append", "upsert", "update", "delete"):
+        return
+    if existing is None or not getattr(existing, "scd2_config", None):
+        return
+    raise ValueError(
+        f"Catalog table '{existing.name}' is SCD2-tracked: a '{settings.write_mode}' write would "
+        f"break its history. Use the 'scd2' write mode, or overwrite the table to rebuild it as a "
+        f"normal table."
+    )
+
+
 def _register_catalog_table(
     existing,
     dest_path: str | Path,
@@ -706,6 +926,7 @@ def _register_catalog_table(
     meta_kwargs: TableWriteMetadata,
     storage_options: dict[str, str] | None = None,
     is_cloud: bool = False,
+    scd2_config: dict | None = None,
 ) -> None:
     """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables.
 
@@ -716,6 +937,9 @@ def _register_catalog_table(
         partition_columns = get_delta_partition_columns(dest_path, storage_options=storage_options)
     else:
         partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
+    if scd2_config is not None:
+        # Creation-time knobs stay out of the persisted record; readers only need the shape.
+        scd2_config = {k: v for k, v in scd2_config.items() if k != "partition_on_current"}
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -728,6 +952,7 @@ def _register_catalog_table(
                     description=settings.description,
                     storage_format="delta",
                     partition_columns=partition_columns,
+                    scd2_config=scd2_config,
                     **meta_kwargs,
                 )
             else:
@@ -740,6 +965,7 @@ def _register_catalog_table(
                     source_registration_id=source_registration_id,
                     storage_format="delta",
                     partition_columns=partition_columns,
+                    scd2_config=scd2_config,
                     **meta_kwargs,
                 )
     except Exception:
@@ -749,6 +975,15 @@ def _register_catalog_table(
             except OSError:
                 logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
         raise
+
+    old_path = getattr(existing, "file_path", None) if existing is not None else None
+    if old_path and str(old_path) != str(dest_path) and not _is_cloud_uri(str(old_path)) and is_delta_table(old_path):
+        # The write landed in a fresh directory (SCD2 rebuild); the superseded local Delta dir is
+        # unreferenced now. Cloud objects are left behind, mirroring the delete posture.
+        try:
+            delete_table_storage(Path(old_path))
+        except OSError:
+            logger.warning("Failed to remove replaced table directory %s", old_path, exc_info=True)
 
 
 def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
@@ -980,6 +1215,10 @@ def _handle_physical_table_write(
         # Before any dispatch: neither the worker nor the local writer may
         # receive a destination the executing principal cannot write.
         _authorize_catalog_write(db, node_catalog_writer.user_id, existing=existing, namespace_id=namespace_id)
+        # Both SCD2 gates read the persisted catalog record, so they run inside the session and
+        # before any dispatch: neither writer branch may be handed a doomed destination.
+        scd2_config = _resolve_scd2_config(settings, df, existing) if settings.write_mode == "scd2" else None
+        _reject_non_scd2_write_to_scd2_table(settings, existing)
 
     # Forward-only: an existing table keeps its own location; the catalog config only steers new tables.
     dest_is_cloud = _is_cloud_uri(dest_path)
@@ -996,7 +1235,21 @@ def _handle_physical_table_write(
         storage_payload = None
         storage_options = None
 
-    if delta_mode in ("upsert", "update", "delete"):
+    # One processing instant for the whole write, generated before the local/remote fork: the
+    # surrogate key is a function of (business key, valid_from), so a second clock read would mint
+    # different keys on the two branches of the same write.
+    run_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    scd2_kwargs = _scd2_primitive_kwargs(scd2_config, run_timestamp) if delta_mode == "scd2" else None
+    if delta_mode == "scd2":
+        op_type = "scd2_delta"
+        # The worker's scd2_delta takes the same fields; only the instant is spelled differently
+        # (``run_timestamp`` there, ``valid_from_iso`` on the primitive it calls).
+        op_kwargs = {k: v for k, v in scd2_kwargs.items() if k != "valid_from_iso"}
+        op_kwargs["run_timestamp"] = scd2_kwargs["valid_from_iso"]
+        op_kwargs["output_path"] = dest_path
+        op_kwargs["partition_by"] = settings.partition_by
+    elif delta_mode in ("upsert", "update", "delete"):
         op_type = "merge_delta"
         op_kwargs = {
             "output_path": dest_path,
@@ -1023,11 +1276,26 @@ def _handle_physical_table_write(
         )
     else:
         meta_kwargs = _write_catalog_delta_local(
-            df, dest_path, delta_mode, settings.merge_keys, settings.partition_by, storage_options=storage_options
+            df,
+            dest_path,
+            delta_mode,
+            settings.merge_keys,
+            settings.partition_by,
+            storage_options=storage_options,
+            scd2_kwargs=scd2_kwargs,
         )
 
     if meta_kwargs is None:
         return df
+
+    # Transport-only: the catalog service methods take explicit keyword arguments.
+    scd2_metrics = meta_kwargs.pop("scd2_metrics", None)
+    if scd2_metrics:
+        graph.flow_logger.get_node_logger(node_catalog_writer.node_id).info(
+            f"SCD2 write to '{settings.table_name}': +{scd2_metrics.get('rows_inserted')} inserted, "
+            f"{scd2_metrics.get('rows_closed')} closed "
+            f"({scd2_metrics.get('rows_current')} current of {scd2_metrics.get('rows_total')} total rows)"
+        )
 
     _register_catalog_table(
         existing=existing,
@@ -1038,6 +1306,7 @@ def _handle_physical_table_write(
         meta_kwargs=meta_kwargs,
         storage_options=storage_options,
         is_cloud=dest_is_cloud,
+        scd2_config=scd2_config,
     )
     return df
 
@@ -4188,6 +4457,16 @@ class FlowGraph:
             _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id
             _reader_storage_options = resolve_for_namespace(_reader_namespace_id).storage_options or None
 
+        _scd2_filter = _scd2_row_filter(
+            info.scd2_config,
+            node_catalog_reader.scd2_view,
+            node_catalog_reader.scd2_as_of,
+            node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
+        )
+
+        def _apply_scd2_filter(lf: pl.LazyFrame) -> FlowDataEngine:
+            return FlowDataEngine(lf if _scd2_filter is None else lf.filter(_scd2_filter))
+
         def _func() -> FlowDataEngine:
             if not _authorized:
                 raise PermissionError(
@@ -4213,12 +4492,12 @@ class FlowGraph:
                 scan_kwargs["version"] = delta_version
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
-                return FlowDataEngine(
+                return _apply_scd2_filter(
                     pl.scan_delta(resolved_path, storage_options=_reader_storage_options, **scan_kwargs)
                 )
             if is_delta_table(resolved_path):
-                return FlowDataEngine(pl.scan_delta(resolved_path, **scan_kwargs))
-            return FlowDataEngine(pl.scan_parquet(resolved_path))
+                return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
+            return _apply_scd2_filter(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
             node_id=node_catalog_reader.node_id,

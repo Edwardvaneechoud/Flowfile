@@ -113,26 +113,31 @@ def _offload_forbidden(*args, **kwargs):
 
 
 def _add_upsert_writer(graph, node_id, depending_on_id, table_name, namespace_id, merge_keys, user_id=1):
-    """A catalog writer in upsert mode (the conftest helper exposes no merge_keys)."""
-    graph.add_node_promise(
-        input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_writer")
+    """A catalog writer in upsert mode."""
+    _add_catalog_writer(
+        graph,
+        node_id=node_id,
+        depending_on_id=depending_on_id,
+        table_name=table_name,
+        namespace_id=namespace_id,
+        write_mode="upsert",
+        user_id=user_id,
+        merge_keys=merge_keys,
     )
-    graph.add_catalog_writer(
-        input_schema.NodeCatalogWriter(
-            flow_id=graph.flow_id,
-            node_id=node_id,
-            depending_on_id=depending_on_id,
-            catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name=table_name,
-                namespace_id=namespace_id,
-                write_mode="upsert",
-                merge_keys=merge_keys,
-            ),
-            user_id=user_id,
-        )
-    )
-    fg.add_connection(
-        graph, input_schema.NodeConnection.create_from_simple_input(from_id=depending_on_id, to_id=node_id)
+
+
+def _add_scd2_writer(graph, node_id, depending_on_id, table_name, namespace_id, merge_keys, user_id=1):
+    """A catalog writer in scd2 mode, comparing every non-key column."""
+    _add_catalog_writer(
+        graph,
+        node_id=node_id,
+        depending_on_id=depending_on_id,
+        table_name=table_name,
+        namespace_id=namespace_id,
+        write_mode="scd2",
+        user_id=user_id,
+        merge_keys=merge_keys,
+        scd2=input_schema.Scd2Settings(),
     )
 
 
@@ -373,3 +378,60 @@ class TestCloudCatalogCliRunE2E:
         assert df.height == 4
         assert set(df["name"].to_list()) == {"Alice", "Bob", "Charlie", "Dave"}
         assert df.filter(pl.col("name") == "Alice")["age"].item() == 99
+
+    def test_cloud_scd2_runs_in_core_for_local_execution(self, monkeypatch):
+        """The SCD2 branch of the in-core path: initial load then a change-detecting merge
+        against an S3-backed catalog, both with resolved storage_options and no worker."""
+        _ensure_connection()
+        try:
+            get_minio_client().create_bucket(Bucket=_BUCKET)
+        except Exception:
+            pass
+
+        uri = f"s3://{_BUCKET}/scd2_{uuid.uuid4().hex[:8]}"
+        schema_id = _create_cloud_schema(uri)
+        target = resolve_for_namespace(schema_id)
+        assert target.is_cloud is True
+
+        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+
+        seed = _create_graph(execution_location="local")
+        _add_manual_input(seed, SAMPLE_DATA, node_id=1)
+        _add_scd2_writer(
+            seed, node_id=2, depending_on_id=1, table_name="scd2_table", namespace_id=schema_id, merge_keys=["name"]
+        )
+        _run_graph(seed)
+
+        with get_db_context() as db:
+            table = next(
+                t for t in SQLAlchemyCatalogRepository(db).list_tables(namespace_id=schema_id) if t.name == "scd2_table"
+            )
+            table_file_path = table.file_path
+            assert table.scd2_config is not None
+
+        _assert_delta_objects_in_s3(table_file_path)
+        df = pl.scan_delta(table_file_path, storage_options=target.storage_options).collect()
+        assert df.height == 3
+        assert df["is_current"].to_list() == [True, True, True]
+
+        changed = [
+            {"name": "Alice", "age": 99, "city": "Amsterdam"},  # age changed
+            {"name": "Bob", "age": 25, "city": "Berlin"},  # unchanged
+            {"name": "Charlie", "age": 35, "city": "Copenhagen"},  # unchanged
+        ]
+        second = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(second, changed, node_id=1)
+        _add_scd2_writer(
+            second, node_id=2, depending_on_id=1, table_name="scd2_table", namespace_id=schema_id, merge_keys=["name"]
+        )
+        _run_graph(second)
+
+        df = pl.scan_delta(table_file_path, storage_options=target.storage_options).collect()
+        assert df.height == 4
+        current = df.filter(pl.col("is_current"))
+        assert current.height == 3
+        assert current.filter(pl.col("name") == "Alice")["age"].item() == 99
+        closed = df.filter(~pl.col("is_current"))
+        assert closed["name"].to_list() == ["Alice"]
+        assert closed["age"].to_list() == [30]
+        assert closed["valid_to"].null_count() == 0

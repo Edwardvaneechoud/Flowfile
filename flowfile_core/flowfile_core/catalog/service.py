@@ -47,7 +47,7 @@ from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.stats import StatsService
-from flowfile_core.catalog.services.tables import CatalogMaterializationResult, TableService
+from flowfile_core.catalog.services.tables import _KEEP_SCD2, CatalogMaterializationResult, TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
 
@@ -860,6 +860,7 @@ class CatalogService:
         column_count: int | None = None,
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) without copying its data."""
         self._require_namespace_writable(namespace_id)
@@ -877,6 +878,7 @@ class CatalogService:
             column_count,
             size_bytes,
             partition_columns,
+            scd2_config,
         )
 
     def register_table_from_parquet(
@@ -918,6 +920,7 @@ class CatalogService:
         column_count: int | None = None,
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None | object = _KEEP_SCD2,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -934,6 +937,7 @@ class CatalogService:
             column_count,
             size_bytes,
             partition_columns,
+            scd2_config,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:

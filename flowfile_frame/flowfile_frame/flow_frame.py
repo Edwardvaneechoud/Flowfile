@@ -2283,9 +2283,19 @@ class FlowFrame:
         *,
         schema: SchemaReference | None = None,
         namespace_id: int | None = None,
-        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
+        namespace_full_name: str | None = None,
+        write_mode: Literal[
+            "overwrite", "error", "append", "upsert", "update", "delete", "scd2", "virtual"
+        ] = "overwrite",
         merge_keys: list[str] | None = None,
         partition_by: list[str] | None = None,
+        scd2_compare_columns: list[str] | None = None,
+        scd2_full_snapshot: bool = False,
+        scd2_surrogate_key_column: str = "sk",
+        scd2_valid_from_column: str = "valid_from",
+        scd2_valid_to_column: str = "valid_to",
+        scd2_is_current_column: str = "is_current",
+        scd2_partition_on_current: bool = True,
         description: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to the Flowfile catalog.
@@ -2294,13 +2304,26 @@ class FlowFrame:
             table_name: Name of the catalog table to write to.
             schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
             namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
-            write_mode: How to handle existing data. ``"virtual"`` registers
-                the result as a virtual catalog table backed by this flow
-                (requires the flow to be registered with the catalog first;
-                see :func:`flowfile_frame.register_flow_with_catalog`).
-            merge_keys: Column names for merge operations (required for upsert/update/delete).
+            namespace_full_name: Portable ``"catalog.schema"`` name, resolved at run time.
+            write_mode: How to handle existing data. ``"scd2"`` tracks history: changed
+                rows are end-dated and re-inserted as a new version (see the ``scd2_*``
+                arguments). ``"virtual"`` registers the result as a virtual catalog table
+                backed by this flow (requires the flow to be registered with the catalog
+                first; see :func:`flowfile_frame.register_flow_with_catalog`).
+            merge_keys: Column names for merge operations (required for upsert/update/delete/scd2;
+                also the SCD2 business key).
             partition_by: Delta partition columns (applied at table creation; appends
                 must match the existing partitioning).
+            scd2_compare_columns: Columns compared for change detection when ``write_mode="scd2"``.
+                Empty means every non-key, non-system column.
+            scd2_full_snapshot: When ``write_mode="scd2"``, end-date current rows whose business
+                key is absent from this run's input.
+            scd2_surrogate_key_column: Name of the generated surrogate-key column
+                (``write_mode="scd2"``).
+            scd2_valid_from_column: Name of the generated valid-from column (``write_mode="scd2"``).
+            scd2_valid_to_column: Name of the generated valid-to column (``write_mode="scd2"``).
+            scd2_is_current_column: Name of the generated is-current column (``write_mode="scd2"``).
+            scd2_partition_on_current: Partition new SCD2 tables by the is-current column.
             description: Optional description for this operation.
 
         Returns:
@@ -2317,9 +2340,17 @@ class FlowFrame:
             table_name=table_name,
             schema=schema,
             namespace_id=namespace_id,
+            namespace_full_name=namespace_full_name,
             write_mode=write_mode,
             merge_keys=merge_keys,
             partition_by=partition_by,
+            scd2_compare_columns=scd2_compare_columns,
+            scd2_full_snapshot=scd2_full_snapshot,
+            scd2_surrogate_key_column=scd2_surrogate_key_column,
+            scd2_valid_from_column=scd2_valid_from_column,
+            scd2_valid_to_column=scd2_valid_to_column,
+            scd2_is_current_column=scd2_is_current_column,
+            scd2_partition_on_current=scd2_partition_on_current,
             description=description,
         )
         return self._create_child_frame(new_node_id)

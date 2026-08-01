@@ -1864,8 +1864,9 @@ def write_catalog_table(
 
     Raises:
         ValueError: Unknown ``write_mode`` or missing ``merge_keys`` for merge modes,
-            ``schema``/``namespace_id`` were passed alongside a ``TableRef``, or the
-            target table is a view (virtual tables cannot be written to).
+            ``schema``/``namespace_id`` were passed alongside a ``TableRef``, the
+            target table is a view (virtual tables cannot be written to), or an
+            incremental mode was aimed at an SCD2-tracked table.
         FileExistsError: ``write_mode="error"`` and the table already exists.
     """
     if write_mode not in _CATALOG_VALID_WRITE_MODES:
@@ -1902,6 +1903,15 @@ def write_catalog_table(
 
         if existing is not None and existing.get("table_type") == "virtual":
             raise ValueError(f"Catalog table '{table_name}' is a view (virtual table); views cannot be written to.")
+
+        if existing is not None and write_mode in ("append", "upsert", "update", "delete"):
+            # ``.get`` throughout: an older Core has no 'scd2' key and must keep working.
+            if existing.get("scd2"):
+                raise ValueError(
+                    f"Catalog table '{table_name}' is SCD2-tracked (managed by an SCD2 catalog writer). "
+                    f"Kernel writes would corrupt its history: use the catalog-writer node's scd2 mode, "
+                    f"or overwrite to rebuild it as a normal table."
+                )
 
         if write_mode == "error" and existing is not None:
             raise FileExistsError(

@@ -277,8 +277,8 @@ flowfile_ctx.write_catalog_table(new_data, "customers", write_mode="overwrite")
 | `delete`     | Remove rows matching merge keys. | Yes |
 | `error`      | Fail if the table already exists. | No |
 
-!!! note "No `virtual` mode in the kernel"
-    `flowfile_frame.write_catalog_table` also supports a `"virtual"` mode that backs a table by a registered flow. The kernel intentionally does not expose flow registration or virtual writes — author those flows from the visual editor or `flowfile_frame` instead.
+!!! note "No `virtual` or `scd2` mode in the kernel"
+    `flowfile_frame.write_catalog_table` also supports `"virtual"` (backs a table by a registered flow) and `"scd2"` (see [Slowly Changing Dimensions](catalog/slowly-changing-dimensions.md)) write modes. The kernel intentionally does not expose either — flow registration and version-history writes stay in the visual editor or `flowfile_frame`.
 
 ---
 

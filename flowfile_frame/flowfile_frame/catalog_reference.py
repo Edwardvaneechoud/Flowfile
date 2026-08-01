@@ -22,6 +22,7 @@ Example
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from flowfile_core.catalog import (
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from flowfile_core.schemas.catalog_schema import CatalogTableOut
     from flowfile_frame.flow_frame import FlowFrame
 
-WriteMode: TypeAlias = Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"]
+WriteMode: TypeAlias = Literal["overwrite", "error", "append", "upsert", "update", "delete", "scd2", "virtual"]
 
 
 def _get_current_user_id() -> int:
@@ -287,6 +288,8 @@ class SchemaReference:
         name: str,
         *,
         delta_version: int | None = None,
+        scd2_view: Literal["active", "all", "active_at"] | None = None,
+        scd2_as_of: str | datetime | None = None,
         flow_graph: FlowGraph | None = None,
     ) -> FlowFrame:
         """Read a table from this schema as a :class:`FlowFrame`.
@@ -300,6 +303,8 @@ class SchemaReference:
             name,
             schema=self,
             delta_version=delta_version,
+            scd2_view=scd2_view,
+            scd2_as_of=scd2_as_of,
             flow_graph=flow_graph,
         )
 
@@ -311,6 +316,13 @@ class SchemaReference:
         write_mode: WriteMode = "overwrite",
         merge_keys: list[str] | None = None,
         partition_by: list[str] | None = None,
+        scd2_compare_columns: list[str] | None = None,
+        scd2_full_snapshot: bool = False,
+        scd2_surrogate_key_column: str = "sk",
+        scd2_valid_from_column: str = "valid_from",
+        scd2_valid_to_column: str = "valid_to",
+        scd2_is_current_column: str = "is_current",
+        scd2_partition_on_current: bool = True,
         description: str | None = None,
     ) -> None:
         """Write a :class:`FlowFrame` to a table in this schema."""
@@ -320,6 +332,13 @@ class SchemaReference:
             write_mode=write_mode,
             merge_keys=merge_keys,
             partition_by=partition_by,
+            scd2_compare_columns=scd2_compare_columns,
+            scd2_full_snapshot=scd2_full_snapshot,
+            scd2_surrogate_key_column=scd2_surrogate_key_column,
+            scd2_valid_from_column=scd2_valid_from_column,
+            scd2_valid_to_column=scd2_valid_to_column,
+            scd2_is_current_column=scd2_is_current_column,
+            scd2_partition_on_current=scd2_partition_on_current,
             description=description,
         )
 

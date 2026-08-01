@@ -204,6 +204,16 @@ export interface FlowSummary {
   name: string;
 }
 
+export interface Scd2TableConfig {
+  business_keys: string[];
+  surrogate_key_column: string;
+  valid_from_column: string;
+  valid_to_column: string;
+  is_current_column: string;
+  compare_columns: string[];
+  full_snapshot: boolean;
+}
+
 export interface CatalogTable {
   id: number;
   name: string;
@@ -235,6 +245,8 @@ export interface CatalogTable {
   polars_plan: string | null;
   source_table_versions: string | null;
   partition_columns: string[] | null;
+  // Set only for tables maintained by an SCD2 write; null for every other table.
+  scd2: Scd2TableConfig | null;
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;

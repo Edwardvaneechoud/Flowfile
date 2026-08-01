@@ -567,6 +567,50 @@ class TestResolveWriteDestination:
         assert dest_path == str(delta_dir)
         assert delta_mode == "upsert"
 
+    def test_scd2_mode_echoes_through_unchanged(self, tmp_path):
+        """``resolve_write_destination`` is mode-agnostic: "scd2" must reach the dispatch verbatim."""
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="new_scd2",
+                namespace_id=schema_id,
+                write_mode="scd2",
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
+            )
+        assert existing is None
+        assert delta_mode == "scd2"
+        assert str(dest_path).startswith(str(tmp_path))
+
+    def test_existing_table_scd2_mode_reuses_path(self, tmp_path):
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "scd2_existing"
+        delta_dir.mkdir()
+        (delta_dir / "_delta_log").mkdir()
+        with get_db_context() as db:
+            db.add(
+                CatalogTable(
+                    name="scd2_existing_tbl",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path=str(delta_dir),
+                    storage_format="delta",
+                )
+            )
+            db.commit()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="scd2_existing_tbl",
+                namespace_id=schema_id,
+                write_mode="scd2",
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
+            )
+        assert existing is not None
+        assert dest_path == str(delta_dir)
+        assert delta_mode == "scd2"
+
     def test_new_table_with_merge_mode(self, tmp_path):
         _, schema_id = _make_namespace()
         with get_db_context() as db:
@@ -1213,6 +1257,213 @@ class TestPartitionColumnsPersistence:
                 size_bytes=100,
             )
         assert out.partition_columns is None
+
+
+# SCD2 config persistence
+
+
+_SCD2_CONFIG = {
+    "business_keys": ["cust_id"],
+    "surrogate_key_column": "sk",
+    "valid_from_column": "valid_from",
+    "valid_to_column": "valid_to",
+    "is_current_column": "is_current",
+    "compare_columns": ["city", "tier"],
+    "full_snapshot": True,
+}
+
+# A schema that still carries every generated column of _SCD2_CONFIG.
+_SCD2_SHAPED_SCHEMA = [
+    {"name": "cust_id", "dtype": "Int64"},
+    {"name": "city", "dtype": "String"},
+    {"name": "sk", "dtype": "String"},
+    {"name": "valid_from", "dtype": "Datetime"},
+    {"name": "valid_to", "dtype": "Datetime"},
+    {"name": "is_current", "dtype": "Boolean"},
+]
+
+
+class TestScd2ConfigPersistence:
+    @staticmethod
+    def _register(svc, schema_id, tmp_path, name, scd2_config):
+        return svc.register_table_from_data(
+            name=name,
+            table_path=str(tmp_path / name),
+            owner_id=1,
+            namespace_id=schema_id,
+            storage_format="delta",
+            schema=[{"name": "cust_id", "dtype": "Int64"}, {"name": "city", "dtype": "String"}],
+            row_count=3,
+            column_count=2,
+            size_bytes=512,
+            scd2_config=scd2_config,
+        )
+
+    def test_register_persists_scd2_config(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = self._register(svc, schema_id, tmp_path, "scd2_dim", _SCD2_CONFIG)
+            table_id = out.id
+
+        assert out.scd2 is not None
+        assert out.scd2.business_keys == ["cust_id"]
+        assert out.scd2.compare_columns == ["city", "tier"]
+        assert out.scd2.full_snapshot is True
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            refetched = svc.get_table(table_id)
+        assert refetched.scd2 is not None
+        assert refetched.scd2.valid_to_column == "valid_to"
+
+    def test_bulk_enrich_tables_carries_scd2(self, tmp_path):
+        """The namespace tree serializes through ``bulk_enrich_tables`` — the flag must ride along."""
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            self._register(svc, schema_id, tmp_path, "scd2_bulk", _SCD2_CONFIG)
+            self._register(svc, schema_id, tmp_path, "plain_bulk", None)
+
+            records = db.query(CatalogTable).order_by(CatalogTable.name).all()
+            enriched = svc._bulk_enrich_tables(records, user_id=1)
+
+        by_name = {t.name: t for t in enriched}
+        assert by_name["plain_bulk"].scd2 is None
+        assert by_name["scd2_bulk"].scd2 is not None
+        assert by_name["scd2_bulk"].scd2.surrogate_key_column == "sk"
+
+    def test_no_scd2_config_is_none(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = self._register(svc, schema_id, tmp_path, "plain_dim", None)
+        assert out.scd2 is None
+
+    def test_overwrite_default_preserves_the_flag(self, tmp_path):
+        """``/refresh`` and the kernel paths call overwrite without the kwarg; the flag must survive."""
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_id = self._register(svc, schema_id, tmp_path, "scd2_keep", _SCD2_CONFIG).id
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.overwrite_table_data(
+                table_id=table_id,
+                table_path=str(tmp_path / "scd2_keep"),
+                storage_format="delta",
+                schema=_SCD2_SHAPED_SCHEMA,
+                row_count=5,
+                column_count=len(_SCD2_SHAPED_SCHEMA),
+                size_bytes=99,
+            )
+        assert out.scd2 is not None
+        assert out.scd2.business_keys == ["cust_id"]
+
+    def test_overwrite_default_clears_a_flag_whose_columns_are_gone(self, tmp_path):
+        """A kernel/refresh overwrite that dropped the system columns must self-heal the record."""
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_id = self._register(svc, schema_id, tmp_path, "scd2_stale", _SCD2_CONFIG).id
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.overwrite_table_data(
+                table_id=table_id,
+                table_path=str(tmp_path / "scd2_stale"),
+                storage_format="delta",
+                schema=[{"name": "cust_id", "dtype": "Int64"}, {"name": "city", "dtype": "String"}],
+                row_count=5,
+                column_count=2,
+                size_bytes=99,
+            )
+        assert out.scd2 is None
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            assert svc.get_table(table_id).scd2 is None
+
+    def test_overwrite_default_clears_the_flag_when_one_system_column_is_gone(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_id = self._register(svc, schema_id, tmp_path, "scd2_partial", _SCD2_CONFIG).id
+
+        partial = [c for c in _SCD2_SHAPED_SCHEMA if c["name"] != "valid_to"]
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.overwrite_table_data(
+                table_id=table_id,
+                table_path=str(tmp_path / "scd2_partial"),
+                storage_format="delta",
+                schema=partial,
+                row_count=5,
+                column_count=len(partial),
+                size_bytes=99,
+            )
+        assert out.scd2 is None
+
+    def test_overwrite_with_explicit_none_clears_the_flag(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_id = self._register(svc, schema_id, tmp_path, "scd2_clear", _SCD2_CONFIG).id
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.overwrite_table_data(
+                table_id=table_id,
+                table_path=str(tmp_path / "scd2_clear"),
+                storage_format="delta",
+                schema=[{"name": "cust_id", "dtype": "Int64"}],
+                row_count=5,
+                column_count=1,
+                size_bytes=99,
+                scd2_config=None,
+            )
+        assert out.scd2 is None
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            assert svc.get_table(table_id).scd2 is None
+
+    def test_overwrite_can_set_the_flag_on_a_previously_plain_table(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_id = self._register(svc, schema_id, tmp_path, "becomes_scd2", None).id
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.overwrite_table_data(
+                table_id=table_id,
+                table_path=str(tmp_path / "becomes_scd2"),
+                storage_format="delta",
+                schema=[{"name": "cust_id", "dtype": "Int64"}],
+                row_count=1,
+                column_count=1,
+                size_bytes=10,
+                scd2_config=_SCD2_CONFIG,
+            )
+        assert out.scd2 is not None
+        assert out.scd2.compare_columns == ["city", "tier"]
+
+    def test_unreadable_scd2_config_degrades_to_none(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_id = self._register(svc, schema_id, tmp_path, "broken_scd2", _SCD2_CONFIG).id
+
+        with get_db_context() as db:
+            record = db.query(CatalogTable).filter(CatalogTable.id == table_id).one()
+            record.scd2_config = "{not json"
+            db.commit()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            assert svc.get_table(table_id).scd2 is None
 
 
 # optimize / vacuum service (local execution)
