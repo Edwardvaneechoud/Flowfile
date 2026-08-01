@@ -219,6 +219,7 @@
             title="Virtual Flow Table"
             >virtual</span
           >
+          <span v-if="table.scd2" class="table-scd2-badge" title="SCD2 table">scd2</span>
           <el-tooltip
             v-if="table.table_type !== 'virtual' && table.file_exists === false"
             content="Table data file not found on disk"
@@ -789,6 +790,17 @@ const totalFlows = computed(() => {
   font-size: 10px;
   color: var(--el-color-primary, var(--color-primary));
   background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 16px;
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+.table-scd2-badge {
+  font-size: 10px;
+  color: var(--el-color-warning, #e6a23c);
+  background: var(--el-color-warning-light-9, rgba(230, 162, 60, 0.1));
   padding: 0 5px;
   border-radius: var(--border-radius-sm);
   line-height: 16px;

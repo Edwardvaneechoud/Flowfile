@@ -58,7 +58,7 @@
           </el-select>
         </div>
 
-        <div v-if="versionOptions.length > 0" class="catalog-field">
+        <div v-if="versionOptions.length > 0 && !selectedScd2" class="catalog-field">
           <label class="catalog-label">Version</label>
           <el-select v-model="nodeData.delta_version" size="small" placeholder="Latest" clearable>
             <el-option
@@ -69,6 +69,50 @@
             />
           </el-select>
         </div>
+
+        <div v-if="selectedScd2" class="catalog-field">
+          <label class="catalog-label">History</label>
+          <el-select v-model="scd2View" size="small">
+            <el-option label="Active records" value="active" />
+            <el-option label="All records (default)" value="all" />
+            <el-option label="Active at a point in time" value="active_at" />
+          </el-select>
+          <p class="section-hint">
+            SCD2 table — versioned by {{ selectedScd2.business_keys.join(", ") }}, using
+            {{ selectedScd2.valid_from_column }} / {{ selectedScd2.valid_to_column }}.
+          </p>
+        </div>
+        <div v-if="selectedScd2 && scd2View === 'active_at'" class="catalog-field">
+          <label class="catalog-label">Active at</label>
+          <DateTimePicker
+            v-model="nodeData.scd2_as_of"
+            placeholder="Pick a date and time"
+            show-seconds
+          />
+        </div>
+        <!-- On SCD2 tables, Delta time travel is an escape hatch, not the history mechanism -->
+        <CollapsibleSection
+          v-if="selectedScd2 && versionOptions.length > 0"
+          title="Table version (time travel)"
+          :default-open="false"
+          nested
+          persist-key="catalogReader.deltaVersion"
+        >
+          <div class="catalog-field">
+            <el-select v-model="nodeData.delta_version" size="small" placeholder="Latest" clearable>
+              <el-option
+                v-for="v in versionOptions"
+                :key="v.version"
+                :label="v.label"
+                :value="v.version"
+              />
+            </el-select>
+            <p class="section-hint">
+              Snapshots the whole table at a past Delta commit — unrelated to the SCD2 row history
+              above.
+            </p>
+          </div>
+        </CollapsibleSection>
 
         <div v-if="selectedTableMeta" class="table-meta">
           Latest stats:
@@ -143,6 +187,7 @@ import { Codemirror } from "vue-codemirror";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CatalogApi } from "../../../../../api/catalog.api";
+import { CollapsibleSection, DateTimePicker } from "../../../../common";
 import type { CatalogTable, NamespaceTree, DeltaVersionCommit } from "../../../../../types";
 import type { NodeCatalogReader } from "../../../../../types/node.types";
 
@@ -159,6 +204,8 @@ const cachedTableState = ref<{
   catalog_full_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;
+  scd2_view: "active" | "all" | "active_at" | null;
+  scd2_as_of: string | null;
   selectedTableMeta: CatalogTable | null;
   deltaVersions: DeltaVersionCommit[];
 } | null>(null);
@@ -216,6 +263,18 @@ const versionOptions = computed(() => {
   }));
 });
 
+const selectedScd2 = computed(() => selectedTableMeta.value?.scd2 ?? null);
+// null on the wire means "all records" (no filter) — surface it explicitly so the
+// control is never blank. Choosing "All" writes null back (not the string "all"),
+// keeping the wire value the same as an unconfigured reader.
+const scd2View = computed({
+  get: () => nodeData.value?.scd2_view ?? "all",
+  set: (v: "active" | "all" | "active_at") => {
+    if (!nodeData.value) return;
+    nodeData.value.scd2_view = v === "all" ? null : v;
+  },
+});
+
 watch(sqlCode, (newCode) => {
   if (nodeData.value) {
     nodeData.value.sql_query = newCode || null;
@@ -233,6 +292,8 @@ function switchMode(newMode: "table" | "sql") {
       catalog_full_table_name: nodeData.value.catalog_full_table_name,
       catalog_namespace_id: nodeData.value.catalog_namespace_id,
       delta_version: nodeData.value.delta_version,
+      scd2_view: nodeData.value.scd2_view,
+      scd2_as_of: nodeData.value.scd2_as_of,
       selectedTableMeta: selectedTableMeta.value,
       deltaVersions: [...deltaVersions.value],
     };
@@ -240,6 +301,8 @@ function switchMode(newMode: "table" | "sql") {
     nodeData.value.catalog_table_name = null;
     nodeData.value.catalog_full_table_name = null;
     nodeData.value.delta_version = null;
+    nodeData.value.scd2_view = null;
+    nodeData.value.scd2_as_of = null;
     selectedTableMeta.value = null;
     deltaVersions.value = [];
 
@@ -258,6 +321,8 @@ function switchMode(newMode: "table" | "sql") {
       nodeData.value.catalog_full_table_name = cachedTableState.value.catalog_full_table_name;
       nodeData.value.catalog_namespace_id = cachedTableState.value.catalog_namespace_id;
       nodeData.value.delta_version = cachedTableState.value.delta_version;
+      nodeData.value.scd2_view = cachedTableState.value.scd2_view;
+      nodeData.value.scd2_as_of = cachedTableState.value.scd2_as_of;
       selectedTableMeta.value = cachedTableState.value.selectedTableMeta;
       deltaVersions.value = cachedTableState.value.deltaVersions;
     }
@@ -283,6 +348,8 @@ function handleNamespaceChange() {
     nodeData.value.catalog_table_name = null;
     nodeData.value.catalog_full_table_name = null;
     nodeData.value.delta_version = null;
+    nodeData.value.scd2_view = null;
+    nodeData.value.scd2_as_of = null;
   }
   selectedTableMeta.value = null;
   deltaVersions.value = [];
@@ -299,10 +366,17 @@ async function handleTableChange(tableId: number | null) {
     nodeData.value.catalog_namespace_id = table.namespace_id;
     nodeData.value.catalog_full_table_name = table.full_table_name ?? null;
     selectedTableMeta.value = table;
+    // The newly selected table may not be SCD2-tracked — drop a stale view/timestamp.
+    if (!table.scd2) {
+      nodeData.value.scd2_view = null;
+      nodeData.value.scd2_as_of = null;
+    }
     await loadTableHistory(table.id);
   } else {
     nodeData.value.catalog_table_name = null;
     nodeData.value.catalog_full_table_name = null;
+    nodeData.value.scd2_view = null;
+    nodeData.value.scd2_as_of = null;
     selectedTableMeta.value = null;
   }
 }
@@ -366,6 +440,12 @@ async function loadNodeData(nodeId: number) {
     if (nodeData.value!.catalog_full_table_name === undefined) {
       nodeData.value!.catalog_full_table_name = null;
     }
+    if (nodeData.value!.scd2_view === undefined) {
+      nodeData.value!.scd2_view = null;
+    }
+    if (nodeData.value!.scd2_as_of === undefined) {
+      nodeData.value!.scd2_as_of = null;
+    }
   } else {
     nodeData.value = {
       catalog_table_id: null,
@@ -373,6 +453,8 @@ async function loadNodeData(nodeId: number) {
       catalog_table_name: null,
       catalog_namespace_id: null,
       delta_version: null,
+      scd2_view: null,
+      scd2_as_of: null,
       sql_query: null,
       flow_id: nodeStore.flow_id,
       node_id: nodeId,

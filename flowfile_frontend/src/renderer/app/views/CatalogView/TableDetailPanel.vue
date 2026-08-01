@@ -21,6 +21,9 @@
             >SQL Virtual</span
           >
           <span v-else-if="table.table_type === 'virtual'" class="virtual-badge">Virtual</span>
+          <span v-if="table.scd2" class="scd2-badge" title="Slowly changing dimension (type 2)"
+            >SCD2</span
+          >
           <SharedBadge :access="table.access" />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
@@ -113,6 +116,35 @@
             {{ col }}
           </span>
         </span>
+      </div>
+      <div v-if="table.scd2" class="meta-card">
+        <span class="meta-label">SCD2 tracked by</span>
+        <el-popover placement="top-start" :width="320" trigger="hover" popper-class="scd2-popover">
+          <template #reference>
+            <span class="partition-chips scd2-summary">
+              <span v-for="key in table.scd2.business_keys" :key="key" class="partition-chip">
+                {{ key }}
+              </span>
+            </span>
+          </template>
+          <div class="scd2-popover-body">
+            <div class="scd2-popover-row">
+              <span class="scd2-popover-key">History columns</span>
+              <span class="scd2-popover-value">
+                {{ table.scd2.surrogate_key_column }} / {{ table.scd2.valid_from_column }} /
+                {{ table.scd2.valid_to_column }} / {{ table.scd2.is_current_column }}
+              </span>
+            </div>
+            <div class="scd2-popover-row">
+              <span class="scd2-popover-key">Full snapshot</span>
+              <span class="scd2-popover-value">{{ table.scd2.full_snapshot ? "Yes" : "No" }}</span>
+            </div>
+            <div class="scd2-popover-row">
+              <span class="scd2-popover-key">Compared columns</span>
+              <span class="scd2-popover-value">{{ table.scd2.compare_columns.join(", ") }}</span>
+            </div>
+          </div>
+        </el-popover>
       </div>
       <div class="meta-card">
         <span class="meta-label">Created</span>
@@ -476,6 +508,34 @@ function formatCell(value: any): string {
 }
 </script>
 
+<style>
+/* Non-scoped: Element Plus teleports popover content outside the component tree. */
+.scd2-popover .scd2-popover-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-1);
+}
+
+.scd2-popover .scd2-popover-row:first-child {
+  margin-top: 0;
+}
+
+.scd2-popover .scd2-popover-key {
+  flex: 0 0 auto;
+  min-width: 120px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.scd2-popover .scd2-popover-value {
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+</style>
+
 <style scoped>
 .table-detail {
   max-width: 1000px;
@@ -518,6 +578,21 @@ function formatCell(value: any): string {
 .sql-virtual-badge {
   color: var(--el-color-success, #67c23a);
   background: var(--el-color-success-light-9, rgba(103, 194, 58, 0.1));
+}
+
+.scd2-badge {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--el-color-warning, #e6a23c);
+  background: var(--el-color-warning-light-9, rgba(230, 162, 60, 0.1));
+  padding: 2px 8px;
+  border-radius: var(--border-radius-sm, 4px);
+  line-height: 1.4;
+}
+
+.scd2-summary {
+  cursor: default;
+  user-select: none;
 }
 
 .optimized-badge {

@@ -10,7 +10,8 @@ import inspect
 import os
 import re
 import sys
-from typing import get_type_hints
+import types
+from typing import get_args, get_origin, get_type_hints
 
 PASSTHROUGH_METHODS = {
     "collect",
@@ -62,6 +63,43 @@ def format_default_value(param: inspect.Parameter) -> str | None:
     return "..."
 
 
+def format_subscripted_generic(alias) -> str:
+    """
+    Render a PEP 585 subscripted generic (``list[str]``, ``dict[str, int]``) with its arguments.
+
+    Needed because ``isinstance(list[str], type)`` is True on Python 3.10 (it only
+    became False in 3.11), so without this the plain-class branch of
+    ``format_type_annotation`` collapses the alias to its bare ``__name__`` and
+    silently drops the parameters. Properties are the visible casualty: their
+    annotations are resolved through ``get_type_hints``, which turns the
+    ``from __future__ import annotations`` string back into a real alias object,
+    whereas parameter annotations stay strings and pass through untouched.
+
+    Parameters
+    ----------
+    alias : types.GenericAlias
+        The subscripted generic to format.
+
+    Returns
+    -------
+    str
+        The origin rendered with its formatted arguments, e.g. ``"list[str]"``.
+    """
+    origin_str = format_type_annotation(get_origin(alias))
+    args = get_args(alias)
+    if not args:
+        return origin_str
+
+    rendered = []
+    for arg in args:
+        if isinstance(arg, list):
+            # Callable[[int, str], bool] hands back its parameters as a list.
+            rendered.append("[" + ", ".join(format_type_annotation(a) for a in arg) + "]")
+        else:
+            rendered.append(format_type_annotation(arg))
+    return f"{origin_str}[{', '.join(rendered)}]"
+
+
 def format_type_annotation(annotation_obj) -> str:
     """
     Properly format a type annotation object to a string representation.
@@ -78,6 +116,12 @@ def format_type_annotation(annotation_obj) -> str:
     """
     if annotation_obj is None or annotation_obj is type(None):
         return "None"
+
+    if annotation_obj is Ellipsis:
+        return "..."
+
+    if isinstance(annotation_obj, types.GenericAlias):
+        return format_subscripted_generic(annotation_obj)
 
     if isinstance(annotation_obj, type):
         module = annotation_obj.__module__

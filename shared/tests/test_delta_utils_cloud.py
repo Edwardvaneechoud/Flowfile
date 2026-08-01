@@ -14,6 +14,7 @@ from shared.cloud_storage.storage_options import build_storage_options
 from shared.delta_utils import (
     get_delta_size_bytes,
     merge_into_delta,
+    scd2_into_delta,
     validate_catalog_uri,
     write_delta,
 )
@@ -62,6 +63,15 @@ def _ensure_bucket() -> None:
         client.create_bucket(Bucket=_BUCKET)
     except Exception:
         pass  # already exists
+
+
+def _purge_prefix(prefix: str) -> None:
+    """Drop a table prefix left by an earlier run — the MinIO mock's bucket outlives the test job."""
+    client = get_minio_client()
+    listed = client.list_objects_v2(Bucket=_BUCKET, Prefix=f"{prefix}/")
+    keys = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
+    if keys:
+        client.delete_objects(Bucket=_BUCKET, Delete={"Objects": keys})
 
 
 # ---- Docker-free guards / regression --------------------------------------- #
@@ -128,3 +138,53 @@ def test_merge_upsert_update_delete_s3():
     )
     remaining = pl.scan_delta(uri, storage_options=opts).collect()
     assert sorted(remaining["id"].to_list()) == [2, 3]
+
+
+@requires_minio
+def test_scd2_initial_load_and_merge_s3():
+    _ensure_bucket()
+    # SCD2 is read-modify-write: a table left behind by an earlier run would make the initial
+    # load a no-op skip, so this one starts from a guaranteed-absent prefix.
+    _purge_prefix("du_cloud_scd2")
+    opts = _minio_storage_options()
+    uri = f"s3://{_BUCKET}/du_cloud_scd2"
+    first = pl.DataFrame({"id": [1, 2], "v": ["a", "b"]})
+    created = scd2_into_delta(
+        first,
+        uri,
+        business_keys=["id"],
+        valid_from_iso="2026-01-01T00:00:00+00:00",
+        compare_columns=None,
+        full_snapshot=False,
+        storage_options=opts,
+    )
+    assert (created.created, created.rows_total, created.rows_current) == (True, 2, 2)
+
+    changed = scd2_into_delta(
+        pl.DataFrame({"id": [2, 3], "v": ["B", "c"]}),
+        uri,
+        business_keys=["id"],
+        valid_from_iso="2026-02-01T00:00:00+00:00",
+        compare_columns=None,
+        full_snapshot=False,
+        storage_options=opts,
+    )
+    assert (changed.rows_inserted, changed.rows_closed) == (2, 1)
+
+    table = pl.scan_delta(uri, storage_options=opts).collect()
+    assert table.height == 4
+    current = table.filter(pl.col("is_current")).sort("id")
+    assert current["v"].to_list() == ["a", "B", "c"]
+    assert table.filter(~pl.col("is_current"))["id"].to_list() == [2]
+
+    # Re-running the identical batch must be a true no-op on object storage too.
+    rerun = scd2_into_delta(
+        pl.DataFrame({"id": [2, 3], "v": ["B", "c"]}),
+        uri,
+        business_keys=["id"],
+        valid_from_iso="2026-03-01T00:00:00+00:00",
+        compare_columns=None,
+        full_snapshot=False,
+        storage_options=opts,
+    )
+    assert rerun.skipped is True

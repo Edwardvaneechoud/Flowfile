@@ -1,5 +1,6 @@
 """Tests for flowfile/manage/compatibility_enhancements module."""
 
+import pickle
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock
 
@@ -13,6 +14,8 @@ from flowfile_core.flowfile.manage.compatibility_enhancements import (
     ensure_description,
     ensure_compatibility_node_read,
     ensure_compatibility_node_output,
+    ensure_compatibility_node_catalog_reader,
+    ensure_compatibility_node_catalog_writer,
     ensure_compatibility_node_cloud_storage_writer,
     ensure_flow_settings,
 )
@@ -264,6 +267,72 @@ class TestEnsureCompatibilityNodeCloudStorageWriter:
         node = MagicMock()
         node.cloud_storage_settings = None
         ensure_compatibility_node_cloud_storage_writer(node)
+
+
+class TestEnsureCompatibilityNodeCatalogWriter:
+    """Test ensure_compatibility_node_catalog_writer function."""
+
+    @staticmethod
+    def _make_node():
+        settings = input_schema.CatalogWriteSettings(table_name="dim_customer", write_mode="overwrite")
+        return input_schema.NodeCatalogWriter(flow_id=1, node_id=1, user_id=1, catalog_write_settings=settings)
+
+    def test_adds_missing_scd2(self):
+        node = self._make_node()
+        # Simulate a pickle written before the scd2 block existed: the field is absent from __dict__
+        del node.catalog_write_settings.__dict__["scd2"]
+        with pytest.raises(AttributeError):
+            _ = node.catalog_write_settings.scd2
+
+        ensure_compatibility_node_catalog_writer(node)
+        assert node.catalog_write_settings.scd2 is None
+
+    def test_preserves_existing_scd2(self):
+        node = self._make_node()
+        node.catalog_write_settings.scd2 = input_schema.Scd2Settings(compare_columns=["city"])
+        ensure_compatibility_node_catalog_writer(node)
+        assert node.catalog_write_settings.scd2.compare_columns == ["city"]
+
+    def test_handles_missing_settings(self):
+        node = MagicMock()
+        node.catalog_write_settings = None
+        ensure_compatibility_node_catalog_writer(node)
+
+
+class TestEnsureCompatibilityNodeCatalogReader:
+    """Test ensure_compatibility_node_catalog_reader function."""
+
+    @staticmethod
+    def _make_node():
+        return input_schema.NodeCatalogReader(flow_id=1, node_id=1, user_id=1, catalog_table_name="dim_customer")
+
+    def test_adds_missing_scd2_view_fields(self):
+        node = self._make_node()
+        # Simulate a pickle written before the SCD2 history view existed.
+        del node.__dict__["scd2_view"]
+        del node.__dict__["scd2_as_of"]
+        with pytest.raises(AttributeError):
+            _ = node.scd2_view
+
+        ensure_compatibility_node_catalog_reader(node)
+        assert node.scd2_view is None
+        assert node.scd2_as_of is None
+
+    def test_survives_a_pickle_round_trip(self):
+        node = self._make_node()
+        del node.__dict__["scd2_view"]
+        del node.__dict__["scd2_as_of"]
+        revived = pickle.loads(pickle.dumps(node))
+
+        ensure_compatibility_node_catalog_reader(revived)
+        assert (revived.scd2_view, revived.scd2_as_of) == (None, None)
+
+    def test_preserves_existing_values(self):
+        node = self._make_node()
+        node.scd2_view = "active_at"
+        node.scd2_as_of = "2026-01-01T00:00:00+00:00"
+        ensure_compatibility_node_catalog_reader(node)
+        assert (node.scd2_view, node.scd2_as_of) == ("active_at", "2026-01-01T00:00:00+00:00")
 
 
 class TestEnsureFlowSettings:

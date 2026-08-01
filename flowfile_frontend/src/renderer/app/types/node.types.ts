@@ -832,7 +832,28 @@ export type CatalogWriteMode =
   | "upsert"
   | "update"
   | "delete"
+  | "scd2"
   | "virtual";
+
+export interface Scd2Settings {
+  compare_columns: string[];
+  full_snapshot: boolean;
+  surrogate_key_column: string;
+  valid_from_column: string;
+  valid_to_column: string;
+  is_current_column: string;
+  partition_on_current: boolean;
+}
+
+export const DEFAULT_SCD2_SETTINGS: Scd2Settings = {
+  compare_columns: [],
+  full_snapshot: false,
+  surrogate_key_column: "sk",
+  valid_from_column: "valid_from",
+  valid_to_column: "valid_to",
+  is_current_column: "is_current",
+  partition_on_current: true,
+};
 
 export interface CatalogWriteSettings {
   table_name: string;
@@ -842,6 +863,7 @@ export interface CatalogWriteSettings {
   write_mode: CatalogWriteMode;
   merge_keys: string[];
   partition_by: string[];
+  scd2: Scd2Settings | null;
 }
 
 export interface NodeCatalogWriter extends NodeBase {
@@ -854,6 +876,8 @@ export interface NodeCatalogReader extends NodeBase {
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;
+  scd2_view: "active" | "all" | "active_at" | null;
+  scd2_as_of: string | null;
   sql_query: string | null;
 }
 

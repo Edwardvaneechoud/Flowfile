@@ -398,6 +398,58 @@ class TestWriteCatalogTableValidation:
                 flowfile_client.write_catalog_table(df, ref, schema="default")
 
 
+class TestWriteCatalogTableScd2Guard:
+    """The kernel has no SCD2 support; it must refuse to corrupt an SCD2-tracked table."""
+
+    _SCD2 = {
+        "business_keys": ["id"],
+        "surrogate_key_column": "sk",
+        "valid_from_column": "valid_from",
+        "valid_to_column": "valid_to",
+        "is_current_column": "is_current",
+        "compare_columns": ["v"],
+        "full_snapshot": False,
+    }
+
+    def _seed_scd2(self, mock_core: _MockCore) -> str:
+        df = _df([{"id": 1, "v": "a"}])
+        with _patch_core_client(mock_core):
+            flowfile_client.write_catalog_table(df, "dim", write_mode="overwrite")
+        mock_core.tables[100]["scd2"] = self._SCD2
+        mock_core.refresh_calls.clear()
+        return mock_core.tables[100]["file_path"]
+
+    @pytest.mark.parametrize("write_mode", ["append", "upsert", "update", "delete"])
+    def test_incremental_writes_are_refused(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path, write_mode: str
+    ):
+        path = self._seed_scd2(mock_core)
+        df = _df([{"id": 2, "v": "b"}])
+        with _patch_core_client(mock_core):
+            with pytest.raises(ValueError, match="SCD2-tracked"):
+                flowfile_client.write_catalog_table(df, "dim", write_mode=write_mode, merge_keys=["id"])
+        assert mock_core.refresh_calls == []
+        assert pl.scan_delta(path).collect()["id"].to_list() == [1]
+
+    def test_overwrite_is_still_allowed(self, mock_core: _MockCore, kernel_catalog_dir: Path):
+        path = self._seed_scd2(mock_core)
+        df = _df([{"id": 9, "v": "z"}])
+        with _patch_core_client(mock_core):
+            flowfile_client.write_catalog_table(df, "dim", write_mode="overwrite")
+        assert len(mock_core.refresh_calls) == 1
+        assert pl.scan_delta(path).collect()["id"].to_list() == [9]
+
+    def test_a_core_without_the_scd2_field_is_tolerated(
+        self, mock_core: _MockCore, kernel_catalog_dir: Path
+    ):
+        df = _df([{"id": 1, "v": "a"}])
+        with _patch_core_client(mock_core):
+            flowfile_client.write_catalog_table(df, "plain", write_mode="overwrite")
+            assert "scd2" not in mock_core.tables[100]
+            flowfile_client.write_catalog_table(_df([{"id": 2, "v": "b"}]), "plain", write_mode="append")
+        assert len(mock_core.refresh_calls) == 1
+
+
 # Discovery / typed navigation
 
 

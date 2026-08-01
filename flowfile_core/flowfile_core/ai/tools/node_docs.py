@@ -475,13 +475,20 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "catalog connection. Use to pull governed data without managing object "
         "paths directly. Don't use 'cloud_storage_reader' when a catalog binding "
         "exists — the catalog reader handles schema, partitioning, and time-travel "
-        "on the user's behalf. Often the first step in a governed pipeline."
+        "on the user's behalf. Often the first step in a governed pipeline. "
+        "If the table is SCD2-tracked, a History selector chooses active / all / "
+        "active at a given time; the default is all records — add an explicit "
+        "'active' filter when only the current version is wanted."
     ),
     "catalog_writer": (
         "Write the upstream output to a catalog table. Use as a terminal step "
         "for governed datasets. Append / overwrite / merge semantics depending "
         "on the catalog binding. Don't use 'cloud_storage_writer' when the target "
-        "is a catalog table — the catalog writer maintains the metadata correctly."
+        "is a catalog table — the catalog writer maintains the metadata correctly. "
+        "An 'scd2' mode keeps a slowly-changing dimension: it end-dates the rows "
+        "whose compared columns changed and inserts new versions, keying on the "
+        "merge/business key. Use it for dimensions where history matters; don't "
+        "use it for fact tables or append-only event streams."
     ),
     "kafka_source": (
         "Stream-read from a Kafka topic. Use when the data source is a Kafka "
@@ -962,7 +969,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "use this rather than 'Read from cloud provider' when the "
         "destination is a *catalog table* (managed metadata) instead "
         "of bare files — the catalog handles partitioning and schema "
-        "evolution."
+        "evolution. When the selected table is SCD2-tracked, a "
+        "'History' selector appears with active / all / active-at "
+        "options; the default is all records, so a downstream join "
+        "expecting one row per key needs 'active' set explicitly."
     ),
     "catalog_writer": (
         "Settings panel: a 'Catalog' dropdown, a target table, and a "
@@ -971,7 +981,9 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "from Output Operations, pick the catalog, table=db.clean_customers, "
         "mode=overwrite. Pitfall: 'merge' needs a key — define it via "
         "the upstream schema; without a key, only append / overwrite "
-        "are valid."
+        "are valid. SCD2 requires key columns too (the business key); "
+        "the target table must be new or already SCD2 — Flowfile "
+        "refuses to convert an existing plain table in place."
     ),
     "kafka_source": (
         "Settings panel: a Kafka connection / broker URL, a 'Topic' "

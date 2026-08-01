@@ -513,6 +513,10 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Delta partitioning: JSON array of partition column names (NULL = unpartitioned)
     partition_columns = Column(Text, nullable=True)
 
+    # SCD2 shape (JSON ``Scd2TableConfig``) when the table is maintained by an SCD2 write;
+    # NULL for every other table. Single source of truth for readers — a non-SCD2 write clears it.
+    scd2_config = Column(Text, nullable=True)
+
     # Lineage: which flow produced this table
     source_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     source_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)

@@ -103,22 +103,28 @@ Like `CatalogReference`, schema references are immutable, hashable, and picklabl
 
 Return tables registered in this schema.
 
-#### `read_table(name, *, delta_version=None, flow_graph=None) -> FlowFrame`
+#### `read_table(name, *, delta_version=None, scd2_view=None, scd2_as_of=None, flow_graph=None) -> FlowFrame`
 
 Convenience for [`ff.read_catalog_table(name, schema=self, ...)`](reading-data.md#catalog-reading).
 
 ```python
 df = schema.read_table("orders")
 df_v5 = schema.read_table("orders", delta_version=5)
+active = schema.read_table("customers", scd2_view="active")  # SCD2 tables only
 ```
 
-#### `write_table(df, name, *, write_mode="overwrite", merge_keys=None, description=None) -> None`
+`scd2_view` (`"active"` / `"all"` / `"active_at"`, default `None` — every version, no filter) and `scd2_as_of` (required with `"active_at"`) select a history view on an [SCD2-tracked](../../visual-editor/catalog/slowly-changing-dimensions.md) table; both are ignored on a plain table.
+
+#### `write_table(df, name, *, write_mode="overwrite", merge_keys=None, partition_by=None, scd2_compare_columns=None, scd2_full_snapshot=False, scd2_surrogate_key_column="sk", scd2_valid_from_column="valid_from", scd2_valid_to_column="valid_to", scd2_is_current_column="is_current", scd2_partition_on_current=True, description=None) -> None`
 
 Convenience for [`df.write_catalog_table(name, schema=self, ...)`](writing-data.md#catalog-writing).
 
 ```python
 schema.write_table(df, "orders", write_mode="upsert", merge_keys=["id"])
+schema.write_table(df, "customers", write_mode="scd2", merge_keys=["customer_id"])
 ```
+
+The `scd2_*` keywords configure a `write_mode="scd2"` write (see [Slowly Changing Dimensions](../../visual-editor/catalog/slowly-changing-dimensions.md)) and raise if passed with any other `write_mode`.
 
 ## Module-level helpers
 
