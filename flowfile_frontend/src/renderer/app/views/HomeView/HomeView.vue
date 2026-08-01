@@ -104,7 +104,8 @@ const recordCreatedFlow = async (flowId: number, catalogRef?: string) => {
 
 const handleQuickCreate = async () => {
   try {
-    const flowId = await createFlow(null, null);
+    // Unregistered draft: same semantics as the header quick-create.
+    const flowId = await createFlow(null, null, null, false);
     nodeStore.setFlowId(flowId);
     await recordCreatedFlow(flowId);
     ElMessage.success("Flow created");

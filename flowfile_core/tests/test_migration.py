@@ -820,3 +820,96 @@ class TestPreMigrationSnapshot:
             ver = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         engine.dispose()
         assert ver == head
+
+
+# Migration 029: catalog_tables.scd2_config
+
+
+class TestScd2ConfigMigration:
+    @staticmethod
+    def _columns(db_path: Path, table: str) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns(table)}
+        engine.dispose()
+        return names
+
+    def test_fresh_install_has_the_column(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        assert "scd2_config" in self._columns(db_path, "catalog_tables")
+
+    def test_upgrade_from_028_adds_the_column(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "028")
+        assert "scd2_config" not in self._columns(db_path, "catalog_tables")
+
+        _run_migration(db_path, monkeypatch)
+        assert "scd2_config" in self._columns(db_path, "catalog_tables")
+
+    def test_existing_rows_read_back_null(self, tmp_path, monkeypatch):
+        """Forward-only: pre-029 tables become non-SCD2 tables, never a half-populated flag."""
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "028")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO catalog_tables (name, owner_id, file_path, storage_format, table_type) "
+                    "VALUES ('legacy_tbl', 1, '/tmp/legacy', 'delta', 'physical')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            value = conn.execute(text("SELECT scd2_config FROM catalog_tables WHERE name = 'legacy_tbl'")).scalar()
+        engine.dispose()
+        assert value is None
+
+    def test_downgrade_then_upgrade_round_trips(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "028")
+        assert "scd2_config" not in self._columns(db_path, "catalog_tables")
+
+        command.upgrade(cfg, "029")
+        assert "scd2_config" in self._columns(db_path, "catalog_tables")
+
+    def test_upgrade_is_guarded_when_the_column_already_exists(self, tmp_path, monkeypatch):
+        """Dev DBs that added the column out of band must not fail the startup upgrade."""
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "028")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN scd2_config TEXT"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert "scd2_config" in self._columns(db_path, "catalog_tables")

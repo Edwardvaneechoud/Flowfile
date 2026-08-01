@@ -121,7 +121,9 @@ Register a flow to enable run tracking, artifact lineage, catalog table producti
 !!! tip "When a flow joins the catalog"
     A flow appears in the catalog when you **save it into a schema** — via the Save dialog's catalog tab, or **Register Flow** above. Simply opening a `.yaml` in the designer, or starting a flow from a template, leaves it out of the catalog: browsing is read-only.
 
-    Quick-created flows saved to disk still land under `General > Local Flows` or `General > Unnamed Flows` on first save or first run. Uncheck **Also register in catalog** in the Save dialog to keep a disk save out of the catalog. Registering is what unlocks run history, schedules and API publishing.
+    Quick-created flows start as unregistered drafts — the file is written to the app's internal folder, but no catalog entry is made. A draft joins the catalog when you run it, or when you save it with **Also register in catalog** checked. Registering is what unlocks run history, schedules and API publishing.
+
+    Accumulated entries under `Unnamed Flows` or `Python Editor` can be cleared in one go: hover the schema in the catalog tree and use the broom action. Flows with published artifacts are kept.
 
 ### Flow Detail Panel
 
@@ -274,6 +276,11 @@ When you register a table or write via a [Catalog Writer](../nodes/output.md#cat
 
 !!! info "Flat storage"
     Namespaces (catalogs and schemas) are a **logical hierarchy** stored in the database — not filesystem directories. All Delta table directories live in a single flat storage directory. Table name uniqueness is enforced per namespace, so two schemas can each have a table called `customers` without conflict.
+
+**SCD2-tracked tables** are Delta tables like any other, plus four generated columns holding the row-level version history: `sk` (surrogate key), `valid_from`, `valid_to`, and `is_current`. See [Slowly Changing Dimensions](slowly-changing-dimensions.md) for what each column means and how history is written and read.
+
+!!! warning "Vacuum reaps Delta versions, never SCD2 rows"
+    Delta *table* version history (above) and SCD2 *row* version history are unrelated mechanisms. `vacuum` removes old Delta commit versions no longer needed for time travel, but every row an SCD2 write has ever inserted stays in the table's current data — vacuum never removes an SCD2 row version, because each one is live data, not a superseded table snapshot.
 
 ### Virtual Tables — No Storage
 

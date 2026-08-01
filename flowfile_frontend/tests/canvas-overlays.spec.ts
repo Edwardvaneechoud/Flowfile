@@ -186,7 +186,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_Transient_Shrink_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -247,7 +247,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_Self_Heal_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -302,7 +302,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_Resize_Persist_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -360,7 +360,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_Dock_Policy_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -413,7 +413,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_Fullscreen_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -504,7 +504,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_Dialog_Test_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -572,7 +572,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Overlay_CM_Tooltip_Test_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -639,7 +639,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Drag_Image_Test_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);
@@ -691,7 +691,7 @@ test.describe("Canvas Overlay Behaviour", () => {
     const flowName = `Stale_Shift_Test_${Date.now()}`;
     const createResponse = await authPost(
       request,
-      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      `${API_URL}/editor/create_flow/?name=${flowName}&register_in_catalog=false`,
       authToken,
     );
     expect(createResponse.ok()).toBe(true);

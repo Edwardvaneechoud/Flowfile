@@ -196,7 +196,7 @@ Materializes data as a Delta table with full schema metadata, row count, and lin
 | Parameter | Description |
 |-----------|-------------|
 | **Write Mode** | How to handle existing data (see table below) |
-| **Key Columns** | Required for Upsert, Update, and Delete modes — columns used to match rows |
+| **Key Columns** | Required for Upsert, Update, Delete, and SCD2 modes — columns used to match rows |
 
 **Write modes:**
 
@@ -208,6 +208,7 @@ Materializes data as a Delta table with full schema metadata, row count, and lin
 | **Upsert** | Insert new rows or update existing rows matching the key columns |
 | **Update** | Update only existing rows matching the key columns (no inserts) |
 | **Delete** | Remove rows from the target that match the key columns in the source |
+| **SCD2** | Track history: end-date changed rows and insert new versions, keyed on the key columns. See [Slowly Changing Dimensions](../catalog/slowly-changing-dimensions.md). |
 
 #### **Usage:**
 
@@ -221,6 +222,20 @@ Materializes data as a Delta table with full schema metadata, row count, and lin
 ![Catalog Writer settings](../../../assets/images/guides/nodes/catalog-writer-settings.png)
 
 *Catalog Writer configured to write a table to the default schema*
+
+#### **Slowly Changing Dimensions (SCD2)**
+
+The **SCD2** write mode tracks row history instead of overwriting it: each write adds four generated columns to the table (`sk`, `valid_from`, `valid_to`, `is_current`), end-dates the rows whose tracked columns changed, and inserts the new versions alongside the unchanged rows.
+
+| Parameter | Description |
+|-----------|-------------|
+| **Business key columns** | The business key — the same underlying field as **Key Columns** in the shared write modes (the UI relabels it for SCD2), required for `scd2` |
+| **Compare Columns** | Columns checked for changes. Empty (the default) compares every column that is not a key column and not one of the four generated columns |
+| **Full Snapshot** | Off by default. When on, business keys present in an earlier write but absent from the current input are end-dated as no-longer-current; when off, absent keys stay current |
+
+A table that is already SCD2-tracked accepts only further `scd2` writes or a plain `overwrite`. An `overwrite` rebuilds the table and clears SCD2 tracking; **append**, **upsert**, **update**, and **delete** against an SCD2-tracked table fail at run time with an error, since they would corrupt the version history. Writing `scd2` onto an existing table that isn't already SCD2-tracked also fails — pick a new table name, or delete the existing table first.
+
+See [Slowly Changing Dimensions](../catalog/slowly-changing-dimensions.md) for the generated columns, change detection, and reading history.
 
 #### **Virtual Table Mode**
 

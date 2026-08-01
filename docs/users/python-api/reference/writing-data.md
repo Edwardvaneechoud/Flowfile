@@ -321,6 +321,7 @@ The catalog supports these write modes:
 | `upsert` | Insert new rows or update existing rows matched by `merge_keys` |
 | `update` | Update only existing rows matched by `merge_keys` |
 | `delete` | Delete rows matching `merge_keys` |
+| `scd2` | Track history: end-date changed rows and insert new versions, keyed on `merge_keys`. See [Slowly Changing Dimensions](../../visual-editor/catalog/slowly-changing-dimensions.md) |
 | `virtual` | Create a [virtual table](../../visual-editor/catalog/virtual-tables.md) — no data written to disk |
 
 ```python
@@ -332,8 +333,17 @@ ff.write_catalog_table(
 )
 ```
 
+The tested example writes an SCD2-tracked dimension in two runs and reads back both the active rows and the full history:
+
+```python
+--8<-- "docs/examples/catalog_scd2.py:example"
+```
+
 !!! warning "Merge Keys Required"
-    The `upsert`, `update`, and `delete` modes require `merge_keys` to be specified.
+    The `upsert`, `update`, `delete`, and `scd2` modes require `merge_keys` to be specified.
+
+!!! info "scd2 keyword arguments require write_mode='scd2'"
+    `write_catalog_table` and `write_table` accept `scd2_compare_columns`, `scd2_full_snapshot`, `scd2_partition_on_current`, and the four `scd2_*_column` name overrides. Passing any of them with a `write_mode` other than `"scd2"` raises an error.
 
 !!! info "Virtual Mode"
     The `virtual` write mode creates a catalog entry without materializing data to disk. When the virtual table is read, the producer flow is re-executed on demand. This requires the flow to be registered in the catalog. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.

@@ -14,17 +14,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import polars as pl
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from flowfile_core.catalog.constants import (
     DEFAULT_PREVIEW_LIMIT,
     DEFAULT_SCHEMA,
     DEFAULT_SQL_MAX_ROWS,
     LOCAL_FLOWS,
+    PYTHON_EDITOR_FLOWS,
     ROOT_CATALOG,
     UNNAMED_FLOWS,
 )
 from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
+    FlowHasArtifactsError,
+    FlowNotFoundError,
+    NamespaceNotFoundError,
     NotAuthorizedError,
     NotebookNotFoundError,
     VisualizationNotFoundError,
@@ -47,7 +52,7 @@ from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.stats import StatsService
-from flowfile_core.catalog.services.tables import CatalogMaterializationResult, TableService
+from flowfile_core.catalog.services.tables import _KEEP_SCD2, CatalogMaterializationResult, TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
 
@@ -123,6 +128,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.schemas.sharing_schema import AccessInfo
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -200,6 +206,10 @@ class CatalogService:
     @property
     def _restricted(self) -> bool:
         return self.access is not None and self.access.restricted
+
+    def _access_user_id(self) -> int:
+        """Caller id for ``NotAuthorizedError`` telemetry; ``-1`` when there is no resolver."""
+        return (self.access.user_id if self.access is not None else None) or -1
 
     def _require_use(self, resource_type: str, resource_id: int) -> None:
         if self._restricted:
@@ -606,6 +616,58 @@ class CatalogService:
         self._require_manage("flow", registration_id)
         self._flows.delete_flow(registration_id, delete_file)
 
+    def cleanup_scratch_namespace(self, namespace_id: int) -> tuple[int, int]:
+        """Bulk-delete the auto-accreted flow registrations in a scratch schema.
+
+        Only the app-managed scratch schemas (``General > Unnamed Flows`` and
+        ``General > Python Editor``) can be swept — their rows accumulate as a side
+        effect of quick-create and the FlowFrame API, never by deliberate filing.
+        The sweep enumerates through the access filter, so in multi-user mode a
+        caller never learns about (nor counts) rows another user accreted in these
+        shared scratch schemas. Each remaining row goes through the canonical gated
+        delete, so flows with live artifacts and rows the caller may not manage are
+        kept, and machine-named files inside the scratch dirs are removed with them.
+
+        The delete loop works from a plain ``(id, path)`` snapshot, never live ORM
+        instances: each delete commits, which expires every instance in the session,
+        and a concurrent sweep (double-fired button) can remove a row between the
+        listing and its turn — touching an expired, deleted instance raises
+        ``ObjectDeletedError``. Rows another sweep already removed are skipped.
+
+        Returns ``(deleted, kept)``.
+        """
+        ns = self.repo.get_namespace(namespace_id)
+        if ns is None:
+            raise NamespaceNotFoundError(namespace_id=namespace_id)
+        parent = self.repo.get_namespace(ns.parent_id) if ns.parent_id is not None else None
+        is_scratch_schema = (
+            ns.name in (UNNAMED_FLOWS.name, PYTHON_EDITOR_FLOWS.name)
+            and parent is not None
+            and parent.parent_id is None
+            and parent.name == ROOT_CATALOG.name
+        )
+        if not is_scratch_schema:
+            raise NotAuthorizedError(
+                self._access_user_id(),
+                f"bulk-clean flows outside the '{UNNAMED_FLOWS.name}' and "
+                f"'{PYTHON_EDITOR_FLOWS.name}' scratch schemas",
+            )
+        if self._restricted and namespace_id not in self.access.visible_namespace_ids():
+            raise NotAuthorizedError(self._access_user_id(), "clean up this namespace")
+        targets = [
+            (f.id, f.flow_path) for f in self._filter_by_access(self.repo.list_flows(namespace_id=namespace_id), "flow")
+        ]
+        deleted = kept = 0
+        for reg_id, flow_path in targets:
+            try:
+                self.delete_flow(reg_id, delete_file=storage.is_scratch_flow_path(flow_path))
+                deleted += 1
+            except (FlowNotFoundError, ObjectDeletedError):
+                continue
+            except (FlowHasArtifactsError, NotAuthorizedError):
+                kept += 1
+        return deleted, kept
+
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""
         self._require_use("flow", registration_id)
@@ -860,6 +922,7 @@ class CatalogService:
         column_count: int | None = None,
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) without copying its data."""
         self._require_namespace_writable(namespace_id)
@@ -877,6 +940,7 @@ class CatalogService:
             column_count,
             size_bytes,
             partition_columns,
+            scd2_config,
         )
 
     def register_table_from_parquet(
@@ -918,6 +982,7 @@ class CatalogService:
         column_count: int | None = None,
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None | object = _KEEP_SCD2,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -934,6 +999,7 @@ class CatalogService:
             column_count,
             size_bytes,
             partition_columns,
+            scd2_config,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:

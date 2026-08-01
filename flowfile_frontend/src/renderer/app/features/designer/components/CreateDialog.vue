@@ -36,6 +36,7 @@
             mode="create"
             context="flows"
             :is-visible="isVisible && createMode === 'file'"
+            dense
             @create-file="handleCreateAtPath"
             @overwrite-file="handleCreateAtPath"
           />
@@ -299,6 +300,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: var(--spacing-4);
+}
+
+/* Cap the browser (default 70vh) so the register/namespace section below it
+   stays visible without scrolling the dialog. */
+.create-panel :deep(.file-browser) {
+  height: 46vh;
 }
 
 .catalog-options {

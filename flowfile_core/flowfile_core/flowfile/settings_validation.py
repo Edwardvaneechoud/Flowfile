@@ -242,7 +242,14 @@ def _evaluate_model(settings: input_schema.NodeEvaluateModel) -> ColumnReference
 @_extractor("catalog_writer")
 def _catalog_writer(settings: input_schema.NodeCatalogWriter) -> ColumnReferences:
     c = settings.catalog_write_settings
-    return ColumnReferences(main=[*c.merge_keys, *c.partition_by])
+    refs = [*c.merge_keys, *c.partition_by]
+    if c.write_mode == "scd2":
+        cfg = c.scd2 or input_schema.Scd2Settings()
+        # is_current is a legal SCD2 partition column but is generated, not an input column.
+        system = set(cfg.system_columns)
+        refs = [r for r in refs if r not in system]
+        refs.extend(cfg.compare_columns)
+    return ColumnReferences(main=refs)
 
 
 @dataclass(frozen=True)

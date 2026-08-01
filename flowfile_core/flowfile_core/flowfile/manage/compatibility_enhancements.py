@@ -411,6 +411,26 @@ def ensure_compatibility_node_cloud_storage_writer(node_writer: input_schema.Nod
         object.__setattr__(settings, "__dict__", {**settings.__dict__, "partition_by": None})
 
 
+def ensure_compatibility_node_catalog_writer(node_writer: input_schema.NodeCatalogWriter):
+    """Ensure CatalogWriteSettings pickled before the scd2 block existed has the field."""
+    settings = getattr(node_writer, "catalog_write_settings", None)
+    if settings is None:
+        return
+    if "scd2" not in settings.__dict__:
+        object.__setattr__(settings, "__dict__", {**settings.__dict__, "scd2": None})
+
+
+def ensure_compatibility_node_catalog_reader(node_reader: input_schema.NodeCatalogReader):
+    """Ensure a NodeCatalogReader pickled before the SCD2 history view existed has both fields.
+
+    ``_add_catalog_table_reader`` reads them on every wiring, including a plain flow-open, so a
+    legacy flow would raise ``AttributeError`` before it ever ran.
+    """
+    for name in ("scd2_view", "scd2_as_of"):
+        if name not in node_reader.__dict__:
+            object.__setattr__(node_reader, "__dict__", {**node_reader.__dict__, name: None})
+
+
 def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: str):
     """Ensure flow_settings exists and has all required fields."""
     if not hasattr(flow_storage_obj, "flow_settings") or flow_storage_obj.flow_settings is None:
@@ -492,6 +512,10 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_groupby(setting_input)
         elif class_name == "NodeCloudStorageWriter":
             ensure_compatibility_node_cloud_storage_writer(setting_input)
+        elif class_name == "NodeCatalogWriter":
+            ensure_compatibility_node_catalog_writer(setting_input)
+        elif class_name == "NodeCatalogReader":
+            ensure_compatibility_node_catalog_reader(setting_input)
         ensure_description(setting_input)
 
     return flow_storage_obj

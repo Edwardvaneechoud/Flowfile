@@ -13,6 +13,7 @@ OperationType = Literal[
     "write_parquet",
     "write_delta",
     "merge_delta",
+    "scd2_delta",
 ]
 
 

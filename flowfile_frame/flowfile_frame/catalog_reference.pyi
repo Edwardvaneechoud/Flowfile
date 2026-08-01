@@ -2,12 +2,13 @@
 # Run `make stubs` to regenerate from the Python source.
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, TypeAlias
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.catalog_schema import CatalogTableOut
 from flowfile_frame.flow_frame import FlowFrame
 
-WriteMode: TypeAlias = Literal['overwrite', 'error', 'append', 'upsert', 'update', 'delete', 'virtual']
+WriteMode: TypeAlias = Literal['overwrite', 'error', 'append', 'upsert', 'update', 'delete', 'scd2', 'virtual']
 
 class CatalogReference:
     name: str
@@ -23,8 +24,8 @@ class SchemaReference:
     id: int
     def __init__(self, catalog: CatalogReference, name: str, *, auto_create: bool=False, description: str | None=None) -> None: ...
     def list_tables(self) -> list[CatalogTableOut]: ...
-    def read_table(self, name: str, *, delta_version: int | None=None, flow_graph: FlowGraph | None=None) -> FlowFrame: ...
-    def write_table(self, df: FlowFrame, name: str, *, write_mode: WriteMode='overwrite', merge_keys: list[str] | None=None, partition_by: list[str] | None=None, description: str | None=None) -> None: ...
+    def read_table(self, name: str, *, delta_version: int | None=None, scd2_view: Literal['active', 'all', 'active_at'] | None=None, scd2_as_of: str | datetime | None=None, flow_graph: FlowGraph | None=None) -> FlowFrame: ...
+    def write_table(self, df: FlowFrame, name: str, *, write_mode: WriteMode='overwrite', merge_keys: list[str] | None=None, partition_by: list[str] | None=None, scd2_compare_columns: list[str] | None=None, scd2_full_snapshot: bool=False, scd2_surrogate_key_column: str='sk', scd2_valid_from_column: str='valid_from', scd2_valid_to_column: str='valid_to', scd2_is_current_column: str='is_current', scd2_partition_on_current: bool=True, description: str | None=None) -> None: ...
 
 
 def list_catalogs() -> list[CatalogReference]: ...

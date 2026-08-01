@@ -55,6 +55,14 @@
         >
           <i class="fa-solid fa-file-circle-plus"></i>
         </button>
+        <button
+          v-if="isScratchSchema && node.flows.length > 0"
+          class="action-btn"
+          title="Clean up all flows in this schema"
+          @click="$emit('cleanupNamespace', node)"
+        >
+          <i class="fa-solid fa-broom"></i>
+        </button>
       </div>
     </div>
 
@@ -86,6 +94,7 @@
           @delete-table="$emit('deleteTable', $event)"
           @delete-flow="$emit('deleteFlow', $event)"
           @namespace-share="$emit('namespaceShare', $event)"
+          @cleanup-namespace="$emit('cleanupNamespace', $event)"
         />
       </div>
 
@@ -219,6 +228,7 @@
             title="Virtual Flow Table"
             >virtual</span
           >
+          <span v-if="table.scd2" class="table-scd2-badge" title="SCD2 table">scd2</span>
           <el-tooltip
             v-if="table.table_type !== 'virtual' && table.file_exists === false"
             content="Table data file not found on disk"
@@ -309,7 +319,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from "vue";
-import { SYSTEM_NAMESPACE_NAMES } from "../../types";
+import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
@@ -374,6 +384,7 @@ const emit = defineEmits([
   "deleteTable",
   "deleteFlow",
   "namespaceShare",
+  "cleanupNamespace",
 ]);
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
@@ -410,7 +421,7 @@ const visibleArtifacts = computed(() => filterArtifacts(props.node, filter.value
 
 // System namespaces holding disk-backed/quick-created flows — they accumulate a
 // lot of entries, so collapse them by default to keep the tree tidy.
-const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows"]);
+const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows", "Python Editor"]);
 // Expansion state is shared + persisted to localStorage; user toggles and
 // selection-driven expands both stick, so the tree reopens as left. Search
 // expansion is derived from the matches instead, and never persists.
@@ -443,6 +454,10 @@ const onRowClick = () => {
 // Sections inside system namespaces stay collapsed by default; the default
 // schema and user-created namespaces open fully uncollapsed.
 const sectionsDefaultExpanded = computed(() => !SYSTEM_NAMESPACE_NAMES.has(props.node.name));
+
+const isScratchSchema = computed(
+  () => props.node.level === 1 && SCRATCH_NAMESPACE_NAMES.has(props.node.name),
+);
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
 const showModelsSection = computed(
@@ -789,6 +804,17 @@ const totalFlows = computed(() => {
   font-size: 10px;
   color: var(--el-color-primary, var(--color-primary));
   background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 16px;
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+.table-scd2-badge {
+  font-size: 10px;
+  color: var(--el-color-warning, #e6a23c);
+  background: var(--el-color-warning-light-9, rgba(230, 162, 60, 0.1));
   padding: 0 5px;
   border-radius: var(--border-radius-sm);
   line-height: 16px;

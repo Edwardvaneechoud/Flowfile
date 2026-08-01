@@ -51,6 +51,13 @@ class NamespaceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ScratchCleanupOut(BaseModel):
+    """Result of a bulk cleanup of a scratch schema's flow registrations."""
+
+    deleted: int
+    kept: int
+
+
 class NamespaceTree(NamespaceOut):
     """Recursive tree node – children are nested schemas of the same hierarchy."""
 
@@ -312,6 +319,49 @@ class TableWriteMetadata(TypedDict, total=False):
     row_count: int
     column_count: int
     size_bytes: int
+    # Transport-only: popped by ``_handle_physical_table_write`` before ``**meta_kwargs`` reaches
+    # the (explicit-kwarg) catalog service methods, which would raise on an unexpected key.
+    scd2_metrics: dict[str, int]
+
+
+class Scd2TableConfig(BaseModel):
+    """SCD2 shape of a catalog table, persisted as JSON on ``CatalogTable.scd2_config``.
+
+    Written by the SCD2 writer, consumed by the catalog reader, the code generator and the UI.
+    This is the single source of truth for a table's SCD2 column names; no reader may take them
+    from a writer node's settings.
+    """
+
+    business_keys: list[str]
+    surrogate_key_column: str
+    valid_from_column: str
+    valid_to_column: str
+    is_current_column: str
+    # Resolved at write time: the columns actually compared for change detection.
+    compare_columns: list[str] = Field(default_factory=list)
+    full_snapshot: bool = False
+
+
+def scd2_system_columns_missing(cfg: dict, schema_columns: list[dict]) -> bool:
+    """True when *cfg* names a generated column that *schema_columns* no longer has.
+
+    Enforced at two points that own opposite halves of the decoding, so the predicate lives here
+    rather than in either caller.
+
+    Args:
+        cfg: A decoded ``Scd2TableConfig`` payload.
+        schema_columns: Decoded schema entries, each a ``{"name": ..., "dtype": ...}`` dict.
+    """
+    present = {c.get("name") for c in schema_columns if isinstance(c, dict)}
+    return any(
+        name and name not in present
+        for name in (
+            cfg.get("surrogate_key_column"),
+            cfg.get("valid_from_column"),
+            cfg.get("valid_to_column"),
+            cfg.get("is_current_column"),
+        )
+    )
 
 
 class CatalogTableOut(BaseModel):
@@ -350,6 +400,8 @@ class CatalogTableOut(BaseModel):
     polars_plan: str | None = None
     source_table_versions: str | None = None
     partition_columns: list[str] | None = None
+    # Set only for tables maintained by an SCD2 write; NULL for every other table.
+    scd2: Scd2TableConfig | None = None
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None

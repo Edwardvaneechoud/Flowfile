@@ -38,6 +38,10 @@ export const SYSTEM_NAMESPACE_NAMES = new Set([
   "sync",
 ]);
 
+// The subset whose rows accrete automatically (quick-create / FlowFrame API) and
+// get a bulk "clean up" action; the cleanup route enforces the same set server-side.
+export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"]);
+
 // Shallow copy of the tree with system schemas removed from the "General" root.
 // Scoped to "General" so a user-created schema sharing a name elsewhere is kept.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
@@ -204,6 +208,16 @@ export interface FlowSummary {
   name: string;
 }
 
+export interface Scd2TableConfig {
+  business_keys: string[];
+  surrogate_key_column: string;
+  valid_from_column: string;
+  valid_to_column: string;
+  is_current_column: string;
+  compare_columns: string[];
+  full_snapshot: boolean;
+}
+
 export interface CatalogTable {
   id: number;
   name: string;
@@ -235,6 +249,8 @@ export interface CatalogTable {
   polars_plan: string | null;
   source_table_versions: string | null;
   partition_columns: string[] | null;
+  // Set only for tables maintained by an SCD2 write; null for every other table.
+  scd2: Scd2TableConfig | null;
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;

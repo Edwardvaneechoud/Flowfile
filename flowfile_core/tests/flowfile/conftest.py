@@ -212,8 +212,15 @@ def add_test_catalog_writer(
     namespace_id: int,
     write_mode: str = "overwrite",
     user_id: int = 1,
+    merge_keys: list[str] | None = None,
+    partition_by: list[str] | None = None,
+    scd2: "input_schema.Scd2Settings | None" = None,
 ):
-    """Add a catalog writer node and connect it to its input."""
+    """Add a catalog writer node and connect it to its input.
+
+    ``merge_keys``/``partition_by``/``scd2`` default to the pre-SCD2 shape, so every existing
+    caller keeps its exact settings.
+    """
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_writer")
     graph.add_node_promise(promise)
     writer = input_schema.NodeCatalogWriter(
@@ -224,6 +231,9 @@ def add_test_catalog_writer(
             table_name=table_name,
             namespace_id=namespace_id,
             write_mode=write_mode,
+            merge_keys=merge_keys or [],
+            partition_by=partition_by or [],
+            scd2=scd2,
         ),
         user_id=user_id,
     )

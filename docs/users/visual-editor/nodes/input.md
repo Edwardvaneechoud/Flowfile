@@ -284,6 +284,16 @@ The **Catalog Reader** node reads a table registered in the [Catalog](../catalog
 
 The table dropdown shows both physical and virtual tables. Virtual tables are marked with a **bolt icon** to distinguish them from physical tables.
 
+When the selected table is tracked with [SCD2](../catalog/slowly-changing-dimensions.md), a **History** selector appears:
+
+| Option | Description |
+|--------|-------------|
+| **All records (default)** | No filter — every version of every row |
+| **Active records** | Only the current version of each row (`valid_to` is empty) |
+| **Active at a point in time** | The version that was current at a given point in time |
+
+The default is **all records**: reading an SCD2 table without setting History returns full history, not just the current snapshot. Set History to **Active records** when the downstream flow expects one row per business key.
+
 Once a table is selected, the node displays metadata:
 - **Rows** — total row count
 - **Columns** — total column count

@@ -294,6 +294,10 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")
+        if settings.scd2_view is not None:
+            self._add_code(f"    scd2_view={self._py_str(settings.scd2_view)},")
+        if settings.scd2_as_of is not None:
+            self._add_code(f"    scd2_as_of={self._py_str(settings.scd2_as_of)},")
         self._add_code(f"){suffix}")
         self._add_code("")
 
@@ -326,9 +330,29 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"    {self._py_str(ws.table_name)},")
         if ws.namespace_id is not None:
             self._add_code(f"    namespace_id={ws.namespace_id},")
+        if ws.namespace_full_name is not None:
+            self._add_code(f"    namespace_full_name={self._py_str(ws.namespace_full_name)},")
         self._add_code(f"    write_mode={self._py_str(ws.write_mode)},")
         if ws.merge_keys:
             self._add_code(f"    merge_keys={ws.merge_keys},")
+        if ws.partition_by:
+            self._add_code(f"    partition_by={ws.partition_by},")
+        if ws.write_mode == "scd2" and ws.scd2 is not None:
+            s = ws.scd2
+            if s.compare_columns:
+                self._add_code(f"    scd2_compare_columns={s.compare_columns},")
+            if s.full_snapshot:
+                self._add_code("    scd2_full_snapshot=True,")
+            if s.surrogate_key_column != "sk":
+                self._add_code(f"    scd2_surrogate_key_column={self._py_str(s.surrogate_key_column)},")
+            if s.valid_from_column != "valid_from":
+                self._add_code(f"    scd2_valid_from_column={self._py_str(s.valid_from_column)},")
+            if s.valid_to_column != "valid_to":
+                self._add_code(f"    scd2_valid_to_column={self._py_str(s.valid_to_column)},")
+            if s.is_current_column != "is_current":
+                self._add_code(f"    scd2_is_current_column={self._py_str(s.is_current_column)},")
+            if not s.partition_on_current:
+                self._add_code("    scd2_partition_on_current=False,")
         if ws.description:
             self._add_code(f"    description={self._py_str(ws.description)},")
         self._add_code(")")

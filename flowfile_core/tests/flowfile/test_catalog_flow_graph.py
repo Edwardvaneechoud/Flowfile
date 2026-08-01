@@ -8,8 +8,10 @@ Covers:
 """
 
 import io as _io
+import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -28,12 +30,16 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_graph import (
     _register_catalog_table,
     _resolve_virtual_table,
+    _scd2_primitive_kwargs,
     _write_catalog_delta_local,
     add_connection,
 )
 from flowfile_core.schemas import input_schema
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
+)
+from tests.flowfile.conftest import (
+    add_test_catalog_writer as _add_catalog_writer,
 )
 from tests.flowfile.conftest import (
     add_test_manual_input as _add_manual_input,
@@ -60,6 +66,18 @@ def clean_state():
     _cleanup()
     yield
     _cleanup()
+
+
+# A resolved SCD2 catalog config, the shape _resolve_scd2_config produces.
+_SCD2_CFG = {
+    "business_keys": ["id"],
+    "surrogate_key_column": "sk",
+    "valid_from_column": "valid_from",
+    "valid_to_column": "valid_to",
+    "is_current_column": "is_current",
+    "compare_columns": ["val"],
+    "full_snapshot": False,
+}
 
 
 # Catalog writer tests
@@ -946,6 +964,78 @@ class TestWriteCatalogDeltaLocal:
         assert result is not None
         assert result["row_count"] == 2  # metadata reflects the appended batch
 
+    def test_scd2_initial_load_reports_post_write_shape(self, tmp_path):
+        """The scd2 branch reports the table's own shape, not the input frame's."""
+        df = FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]}))
+        dest_path = tmp_path / "scd2_local"
+
+        result = _write_catalog_delta_local(
+            df,
+            dest_path,
+            delta_mode="scd2",
+            merge_keys=["id"],
+            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
+        )
+
+        assert result is not None
+        assert result["row_count"] == 2
+        # 2 data columns + the 4 generated ones.
+        assert result["column_count"] == 6
+        assert {c["name"] for c in result["schema"]} == {"id", "val", "sk", "valid_from", "valid_to", "is_current"}
+        assert result["size_bytes"] > 0
+        assert result["scd2_metrics"]["rows_inserted"] == 2
+        assert result["scd2_metrics"]["created"] is True
+
+    def test_scd2_change_closes_and_inserts(self, tmp_path):
+        dest_path = tmp_path / "scd2_local_change"
+        _write_catalog_delta_local(
+            FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]})),
+            dest_path,
+            delta_mode="scd2",
+            merge_keys=["id"],
+            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
+        )
+
+        result = _write_catalog_delta_local(
+            FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["A", "b"]})),
+            dest_path,
+            delta_mode="scd2",
+            merge_keys=["id"],
+            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-02-01T00:00:00+00:00"),
+        )
+
+        assert result is not None
+        assert result["row_count"] == 3
+        assert result["scd2_metrics"] == {
+            "rows_inserted": 1,
+            "rows_closed": 1,
+            "rows_total": 3,
+            "rows_current": 2,
+            "created": False,
+        }
+
+    def test_scd2_unchanged_returns_none(self, tmp_path):
+        """The skip protocol: an unchanged batch returns None so nothing is re-registered."""
+        dest_path = tmp_path / "scd2_local_skip"
+        frame = pl.LazyFrame({"id": [1], "val": ["a"]})
+        _write_catalog_delta_local(
+            FlowDataEngine(frame),
+            dest_path,
+            delta_mode="scd2",
+            merge_keys=["id"],
+            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
+        )
+
+        result = _write_catalog_delta_local(
+            FlowDataEngine(frame),
+            dest_path,
+            delta_mode="scd2",
+            merge_keys=["id"],
+            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-02-01T00:00:00+00:00"),
+        )
+
+        assert result is None
+
 
 class TestRegisterCatalogTable:
     """Test _register_catalog_table helper."""
@@ -1180,3 +1270,283 @@ class TestHandleVirtualTableWrite:
             assert len(tables) == 1
             assert tables[0].name == "auto_registered_vt"
             assert tables[0].table_type == "virtual"
+
+
+SCD2_V1 = [
+    {"id": 1, "name": "Alice", "city": "Amsterdam"},
+    {"id": 2, "name": "Bob", "city": "Berlin"},
+]
+SCD2_V2 = [
+    {"id": 1, "name": "Alice", "city": "Antwerp"},  # changed
+    {"id": 2, "name": "Bob", "city": "Berlin"},  # unchanged
+    {"id": 3, "name": "Carol", "city": "Copenhagen"},  # new
+]
+
+
+def _add_scd2_writer(graph, node_id, depending_on_id, table_name, namespace_id, **scd2_kwargs):
+    """Attach an SCD2 catalog writer keyed on ``id``."""
+    _add_catalog_writer(
+        graph,
+        node_id=node_id,
+        depending_on_id=depending_on_id,
+        table_name=table_name,
+        namespace_id=namespace_id,
+        write_mode="scd2",
+        merge_keys=["id"],
+        scd2=input_schema.Scd2Settings(**scd2_kwargs),
+    )
+
+
+def _table_row(namespace_id: int, name: str):
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        return next(t for t in repo.list_tables(namespace_id=namespace_id) if t.name == name)
+
+
+class TestCatalogScd2Writer:
+    """SCD2 catalog writes through the full graph, on both execution locations."""
+
+    def test_scd2_writer_initial_load_and_change(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "dim_customer", ns_id)
+        _run_graph(first)
+
+        table = _table_row(ns_id, "dim_customer")
+        assert table.row_count == 2
+        assert table.column_count == 7  # 3 data columns + 4 generated
+        cfg = json.loads(table.scd2_config)
+        assert cfg["business_keys"] == ["id"]
+        assert sorted(cfg["compare_columns"]) == ["city", "name"]
+        assert cfg["full_snapshot"] is False
+        assert cfg["surrogate_key_column"] == "sk"
+
+        df = pl.read_delta(table.file_path)
+        assert df.height == 2
+        assert df["is_current"].to_list() == [True, True]
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, SCD2_V2, node_id=1)
+        _add_scd2_writer(second, 2, 1, "dim_customer", ns_id)
+        _run_graph(second)
+
+        table = _table_row(ns_id, "dim_customer")
+        assert table.row_count == 4  # 2 original + closed-row rewrite is in place + 2 inserted
+
+        df = pl.read_delta(table.file_path)
+        assert df.height == 4
+        current = df.filter(pl.col("is_current")).sort("id")
+        assert current["id"].to_list() == [1, 2, 3]
+        assert current["city"].to_list() == ["Antwerp", "Berlin", "Copenhagen"]
+        assert current["valid_to"].null_count() == 3
+        closed = df.filter(~pl.col("is_current"))
+        assert closed["id"].to_list() == [1]
+        assert closed["city"].to_list() == ["Amsterdam"]
+        assert closed["valid_to"].null_count() == 0
+        # Surrogate keys are unique per version.
+        assert df["sk"].n_unique() == 4
+
+        # The DTO the reader/UI consume carries the same config.
+        with get_db_context() as db:
+            out = CatalogService(SQLAlchemyCatalogRepository(db)).get_table(table.id)
+        assert out.scd2 is not None
+        assert out.scd2.business_keys == ["id"]
+        assert sorted(out.scd2.compare_columns) == ["city", "name"]
+
+    def test_scd2_writer_skips_when_nothing_changed(self, execution_location):
+        """An unchanged re-run must not commit and must not bump the catalog record."""
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "dim_stable", ns_id)
+        _run_graph(first)
+
+        before = _table_row(ns_id, "dim_stable")
+        updated_at_before = before.updated_at
+        # SQLite datetime granularity is coarse; make a real bump observable.
+        time.sleep(1.05)
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, SCD2_V1, node_id=1)
+        _add_scd2_writer(second, 2, 1, "dim_stable", ns_id)
+        _run_graph(second)
+
+        after = _table_row(ns_id, "dim_stable")
+        assert after.updated_at == updated_at_before
+        assert pl.read_delta(after.file_path).height == 2
+
+    def test_scd2_full_snapshot_end_dates_absent_keys(self):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "dim_snapshot", ns_id, full_snapshot=True)
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(second, [SCD2_V1[0]], node_id=1)
+        _add_scd2_writer(second, 2, 1, "dim_snapshot", ns_id, full_snapshot=True)
+        _run_graph(second)
+
+        table = _table_row(ns_id, "dim_snapshot")
+        df = pl.read_delta(table.file_path)
+        assert df.filter(pl.col("is_current"))["id"].to_list() == [1]
+        assert df.filter(~pl.col("is_current"))["id"].to_list() == [2]
+        assert json.loads(table.scd2_config)["full_snapshot"] is True
+
+    def test_scd2_compare_columns_pin_change_detection(self):
+        """A column outside the compare set changes without opening a new version."""
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "dim_pinned", ns_id, compare_columns=["city"])
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(second, [{"id": 1, "name": "ALICE", "city": "Amsterdam"}, SCD2_V1[1]], node_id=1)
+        _add_scd2_writer(second, 2, 1, "dim_pinned", ns_id, compare_columns=["city"])
+        _run_graph(second)
+
+        table = _table_row(ns_id, "dim_pinned")
+        assert json.loads(table.scd2_config)["compare_columns"] == ["city"]
+        assert pl.read_delta(table.file_path).height == 2
+
+
+class TestScd2SettingsValidation:
+    """Server-side name allowlist: these four names are generated, and they reach Delta merge SQL."""
+
+    @pytest.mark.parametrize("field", ["surrogate_key_column", "valid_from_column", "valid_to_column",
+                                       "is_current_column"])
+    @pytest.mark.parametrize("bad", ['valid"x', "a b", "a;b", "col)"])
+    def test_illegal_characters_are_rejected(self, field, bad):
+        with pytest.raises(ValueError, match="may only contain letters"):
+            input_schema.Scd2Settings(**{field: bad})
+
+    def test_ordinary_names_are_accepted(self):
+        cfg = input_schema.Scd2Settings(
+            surrogate_key_column="row_key-1",
+            valid_from_column="From2",
+            valid_to_column="to_2",
+            is_current_column="IS_CURRENT",
+        )
+        assert cfg.system_columns == ["row_key-1", "From2", "to_2", "IS_CURRENT"]
+
+
+class TestCatalogScd2Guards:
+    """The write-side refusals that keep an SCD2 table's history honest."""
+
+    def _seed_plain_table(self, ns_id: int, name: str):
+        graph = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_catalog_writer(graph, node_id=2, depending_on_id=1, table_name=name, namespace_id=ns_id)
+        _run_graph(graph)
+
+    def _seed_scd2_table(self, ns_id: int, name: str):
+        graph = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, name, ns_id)
+        _run_graph(graph)
+
+    def _run_expecting_error(self, graph, fragment: str):
+        run_info = graph.run_graph()
+        assert not run_info.success
+        errors = " ".join(str(step.error) for step in run_info.node_step_result if not step.success)
+        assert fragment in errors, errors
+
+    def test_scd2_over_existing_plain_table_raises(self):
+        ns_id = _create_namespace()
+        self._seed_plain_table(ns_id, "plain_first")
+
+        graph = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "plain_first", ns_id)
+        self._run_expecting_error(graph, "is not an SCD2 table")
+
+        assert _table_row(ns_id, "plain_first").scd2_config is None
+
+    def test_append_over_scd2_table_raises(self):
+        ns_id = _create_namespace()
+        self._seed_scd2_table(ns_id, "dim_protected")
+
+        graph = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(graph, SCD2_V2, node_id=1)
+        _add_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="dim_protected", namespace_id=ns_id, write_mode="append"
+        )
+        self._run_expecting_error(graph, "is SCD2-tracked")
+
+        table = _table_row(ns_id, "dim_protected")
+        assert table.scd2_config is not None
+        assert pl.read_delta(table.file_path).height == 2
+
+    def test_upsert_over_scd2_table_raises(self):
+        ns_id = _create_namespace()
+        self._seed_scd2_table(ns_id, "dim_protected_upsert")
+
+        graph = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(graph, SCD2_V2, node_id=1)
+        _add_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name="dim_protected_upsert",
+            namespace_id=ns_id,
+            write_mode="upsert",
+            merge_keys=["id"],
+        )
+        self._run_expecting_error(graph, "is SCD2-tracked")
+
+    def test_overwrite_over_scd2_table_clears_the_flag(self):
+        ns_id = _create_namespace()
+        self._seed_scd2_table(ns_id, "dim_rebuilt")
+
+        graph = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(graph, SCD2_V2, node_id=1)
+        _add_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="dim_rebuilt", namespace_id=ns_id, write_mode="overwrite"
+        )
+        _run_graph(graph)
+
+        table = _table_row(ns_id, "dim_rebuilt")
+        assert table.scd2_config is None
+        df = pl.read_delta(table.file_path)
+        assert df.height == 3
+        assert "is_current" not in df.columns
+
+    def test_business_key_drift_raises(self):
+        ns_id = _create_namespace()
+        self._seed_scd2_table(ns_id, "dim_drift")
+
+        graph = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(graph, SCD2_V2, node_id=1)
+        _add_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name="dim_drift",
+            namespace_id=ns_id,
+            write_mode="scd2",
+            merge_keys=["name"],
+            scd2=input_schema.Scd2Settings(),
+        )
+        self._run_expecting_error(graph, "do not match the existing table")
+
+    def test_generated_column_rename_raises(self):
+        ns_id = _create_namespace()
+        self._seed_scd2_table(ns_id, "dim_rename")
+
+        graph = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(graph, SCD2_V2, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "dim_rename", ns_id, surrogate_key_column="row_key")
+        self._run_expecting_error(graph, "do not match the existing table")
+
+    def test_all_columns_are_keys_raises(self):
+        ns_id = _create_namespace()
+        graph = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(graph, [{"id": 1}, {"id": 2}], node_id=1)
+        _add_scd2_writer(graph, 2, 1, "dim_keys_only", ns_id)
+        self._run_expecting_error(graph, "no columns to compare")

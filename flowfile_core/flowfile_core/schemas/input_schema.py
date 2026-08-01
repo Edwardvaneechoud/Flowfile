@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -1603,6 +1604,59 @@ class NodeRunFlow(NodeBase):
         return f"Run flow {Path(name).stem if self.flow_reference.flow_path else name} ({mode})"
 
 
+_SCD2_COLUMN_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+class Scd2Settings(BaseModel):
+    """Slowly-changing-dimension type 2 configuration for a catalog write.
+
+    The business key is ``CatalogWriteSettings.merge_keys`` — this block only carries the
+    change-detection scope and the names of the four generated columns. It is persisted verbatim
+    onto the catalog table record (``CatalogTable.scd2_config``) so a reader can filter history
+    without ever reading a writer node's settings.
+    """
+
+    compare_columns: list[str] = Field(default_factory=list)  # empty => every non-key, non-system column
+    full_snapshot: bool = False  # True => current keys absent from the input get end-dated
+    partition_on_current: bool = True  # partition new tables by the is-current column (creation-time)
+    surrogate_key_column: str = "sk"
+    valid_from_column: str = "valid_from"
+    valid_to_column: str = "valid_to"
+    is_current_column: str = "is_current"
+
+    @property
+    def system_columns(self) -> list[str]:
+        """The four generated column names, in the primitive's canonical order."""
+        return [
+            self.surrogate_key_column,
+            self.valid_from_column,
+            self.valid_to_column,
+            self.is_current_column,
+        ]
+
+    @model_validator(mode="after")
+    def _validate_scd2_columns(self) -> "Scd2Settings":
+        cols = self.system_columns
+        if any((not c) or c != c.strip() for c in cols):
+            raise ValueError("SCD2 column names must be non-empty and free of surrounding whitespace")
+        # Server-side mirror of the writer form's CATALOG_NAME_PATTERN: these four names are
+        # generated, not data, and they are spliced into the Delta merge's SQL identifiers.
+        illegal = [c for c in cols if not _SCD2_COLUMN_NAME_RE.match(c)]
+        if illegal:
+            raise ValueError(
+                f"SCD2 column name(s) {illegal} may only contain letters, digits, '_' and '-'. "
+                f"Rename the generated column(s) in the catalog writer settings."
+            )
+        if len(set(cols)) != len(cols):
+            raise ValueError(f"SCD2 column names must be unique, got {cols}")
+        if len(set(self.compare_columns)) != len(self.compare_columns):
+            raise ValueError("compare_columns must not contain duplicates")
+        overlap = sorted(set(self.compare_columns) & set(cols))
+        if overlap:
+            raise ValueError(f"compare_columns may not name SCD2 system columns: {overlap}")
+        return self
+
+
 class CatalogWriteSettings(BaseModel):
     """Settings for writing data to the catalog.
 
@@ -1615,16 +1669,30 @@ class CatalogWriteSettings(BaseModel):
     namespace_id: int | None = None
     namespace_full_name: str | None = None
     description: str | None = None
-    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite"
+    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "scd2", "virtual"] = "overwrite"
     merge_keys: list[str] = Field(default_factory=list)
     partition_by: list[str] = Field(default_factory=list)
+    # A dangling block on a non-scd2 physical mode is tolerated: the UI keeps it while toggling modes.
+    scd2: Scd2Settings | None = None
 
     @model_validator(mode="after")
     def _validate_merge_keys(self) -> "CatalogWriteSettings":
-        if self.write_mode in ("upsert", "update", "delete") and not self.merge_keys:
+        if self.write_mode in ("upsert", "update", "delete", "scd2") and not self.merge_keys:
             raise ValueError(f"merge_keys must be non-empty when write_mode is '{self.write_mode}'")
         if self.partition_by and self.write_mode == "virtual":
             raise ValueError("partition_by is not allowed for virtual tables")
+        if self.write_mode == "virtual" and self.scd2 is not None:
+            raise ValueError("scd2 settings are not allowed for virtual tables")
+        if self.write_mode == "scd2":
+            cfg = self.scd2 or Scd2Settings()
+            if len(set(self.merge_keys)) != len(self.merge_keys):
+                raise ValueError("merge_keys must not contain duplicates when write_mode is 'scd2'")
+            clash = sorted(set(self.merge_keys) & set(cfg.system_columns))
+            if clash:
+                raise ValueError(f"merge_keys may not name SCD2 system columns: {clash}")
+            hot = sorted(set(self.partition_by) & {cfg.surrogate_key_column, cfg.valid_from_column})
+            if hot:
+                raise ValueError(f"partition_by may not use high-cardinality SCD2 columns: {hot}")
         return self
 
 
@@ -1652,8 +1720,24 @@ class NodeCatalogReader(NodeBase):
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
+    # SCD2 history view. Only honoured when the resolved table carries an ``scd2_config`` record;
+    # ``None`` means no filter (every version) and is ignored for non-SCD2 tables.
+    scd2_view: Literal["active", "all", "active_at"] | None = None
+    scd2_as_of: str | None = None  # ISO-8601 instant, required when scd2_view == "active_at"
     sql_query: str | None = None
     is_virtual_optimized: bool | None = None
+
+    @model_validator(mode="after")
+    def _validate_scd2_view(self) -> "NodeCatalogReader":
+        if self.scd2_view == "active_at" and not self.scd2_as_of:
+            raise ValueError("scd2_as_of is required when scd2_view is 'active_at'")
+        if self.scd2_as_of:
+            try:
+                # Python 3.10's fromisoformat rejects the trailing "Z" the UI's DateTimePicker emits.
+                datetime.fromisoformat(self.scd2_as_of.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"scd2_as_of must be an ISO-8601 datetime: {self.scd2_as_of!r}") from exc
+        return self
 
     def get_default_description(self) -> str:
         if self.sql_query:
@@ -1664,6 +1748,10 @@ class NodeCatalogReader(NodeBase):
         display = self.catalog_full_table_name or self.catalog_table_name
         if display:
             suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
+            if self.scd2_view == "active":
+                suffix += " [active]"
+            elif self.scd2_view == "active_at" and self.scd2_as_of:
+                suffix += f" [as of {self.scd2_as_of}]"
             return f"Catalog: {display}{suffix}"
         return "Read from Catalog"
 

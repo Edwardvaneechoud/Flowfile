@@ -51,11 +51,35 @@ from flowfile_core.schemas.catalog_schema import (
     ColumnSchema,
     FlowSummary,
     OptimizeTableResponse,
+    Scd2TableConfig,
     VacuumTableResponse,
+    scd2_system_columns_missing,
 )
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
+
+# Sentinel: the caller did not speak about scd2_config, so leave whatever is stored untouched.
+# ``/refresh`` and the kernel write paths must preserve the flag; only the flow writer is
+# authoritative and always passes an explicit dict (SCD2) or ``None`` (any other mode, which
+# destroyed the history and therefore clears the flag).
+_KEEP_SCD2 = object()
+
+
+def _scd2_columns_missing_from_schema(raw_scd2_config: str | None, schema_list: list[dict[str, str]] | None) -> bool:
+    """True when a persisted SCD2 config names columns the schema about to be stored no longer has.
+
+    The catalog record is the single source of truth for a table's SCD2 shape, so it must not
+    outlive the columns it describes. An unreadable config is left alone — the writer path reports
+    that far more usefully than a silent clear here would.
+    """
+    if not raw_scd2_config or not schema_list:
+        return False
+    try:
+        cfg = json.loads(raw_scd2_config)
+    except (TypeError, ValueError):
+        return False
+    return scd2_system_columns_missing(cfg, schema_list)
 
 
 def _is_managed_table_path(file_path: str) -> bool:
@@ -284,6 +308,18 @@ class TableService:
         except (json.JSONDecodeError, TypeError):
             return None
 
+    @staticmethod
+    def _parse_scd2_config(table: CatalogTable) -> Scd2TableConfig | None:
+        """Parse the JSON-encoded SCD2 shape from a catalog table, or ``None`` if not SCD2."""
+        raw = getattr(table, "scd2_config", None)
+        if not raw:
+            return None
+        try:
+            return Scd2TableConfig.model_validate(json.loads(raw))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning("Unreadable scd2_config on catalog table %s", table.id)
+            return None
+
     def _resolve_flow_name(self, registration_id: int | None) -> str | None:
         """Look up a flow registration name by id, returning None when absent."""
         if not registration_id:
@@ -428,6 +464,7 @@ class TableService:
             polars_plan=getattr(table, "polars_plan", None),
             source_table_versions=getattr(table, "source_table_versions", None),
             partition_columns=self._parse_partition_columns(table),
+            scd2=self._parse_scd2_config(table),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -493,6 +530,7 @@ class TableService:
                     polars_plan=getattr(table, "polars_plan", None),
                     source_table_versions=getattr(table, "source_table_versions", None),
                     partition_columns=self._parse_partition_columns(table),
+                    scd2=self._parse_scd2_config(table),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -599,6 +637,7 @@ class TableService:
         column_count: int | None = None,
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) in the catalog."""
         self.validate_table_registration(name, namespace_id)
@@ -627,6 +666,7 @@ class TableService:
             source_run_id=source_run_id,
             storage_format=storage_format,
             partition_columns=partition_columns,
+            scd2_config=scd2_config,
         )
 
     def register_table_from_parquet(
@@ -665,6 +705,7 @@ class TableService:
         column_count: int | None = None,
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None | object = _KEEP_SCD2,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table **in-place**."""
         table = self.repo.get_table(table_id)
@@ -705,6 +746,19 @@ class TableService:
         table.size_bytes = size_bytes
         if partition_columns is not None:
             table.partition_columns = json.dumps(partition_columns) if partition_columns else None
+        if scd2_config is not _KEEP_SCD2:
+            # Explicit ``None`` clears the flag: a plain overwrite/append over an SCD2 table
+            # destroys the version history, so the table stops being SCD2.
+            table.scd2_config = json.dumps(scd2_config) if scd2_config else None
+        elif _scd2_columns_missing_from_schema(table.scd2_config, schema_list):
+            # An unaware caller (kernel write, /refresh) replaced the data with something that no
+            # longer carries the SCD2 system columns. Keeping the flag would leave readers filtering
+            # on columns that do not exist, so the record self-heals into a plain table.
+            logger.warning(
+                "Catalog table %s: clearing stale SCD2 tracking: table data no longer carries its SCD2 columns",
+                table.id,
+            )
+            table.scd2_config = None
         if source_registration_id is not None:
             table.source_registration_id = source_registration_id
         if source_run_id is not None:
@@ -734,6 +788,7 @@ class TableService:
         source_run_id: int | None,
         storage_format: str = "delta",
         partition_columns: list[str] | None = None,
+        scd2_config: dict | None = None,
     ) -> CatalogTableOut:
         table = CatalogTable(
             name=name,
@@ -747,6 +802,7 @@ class TableService:
             column_count=column_count,
             size_bytes=size_bytes,
             partition_columns=json.dumps(partition_columns) if partition_columns else None,
+            scd2_config=json.dumps(scd2_config) if scd2_config else None,
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,
         )
@@ -886,6 +942,14 @@ class TableService:
         if existing is not None:
             if write_mode == "error":
                 raise TableExistsError(name=table_name, namespace_id=namespace_id)
+
+            if write_mode == "overwrite" and getattr(existing, "scd2_config", None):
+                # Rebuilding an SCD2 table as a normal one needs a fresh Delta log: the old table
+                # is partitioned by its is-current column and Delta cannot drop partition columns
+                # on overwrite. The record is repointed at registration; the old directory is
+                # cleaned up afterwards (local only, mirroring the delete posture for cloud).
+                dir_name = f"{table_name}_{uuid4().hex[:8]}"
+                return existing, join_catalog_uri(target.base, dir_name), write_mode
 
             old_path = existing.file_path
             if _is_cloud_uri(old_path):

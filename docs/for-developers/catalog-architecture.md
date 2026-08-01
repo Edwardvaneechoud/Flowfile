@@ -16,6 +16,10 @@ Architecturally the catalog is **two substrates and a service layer**. Metadata 
 
 **The S3 backend is per-catalog, not global.** A level-0 namespace's `storage_uri` + `storage_connection_name` make *new* tables under that catalog write to object storage; existing local tables never move, and the metadata DB stays local. `storage_backend.resolve_for_namespace` returns a `CatalogStorageTarget` with two credential forms: decrypted `storage_options` for core's own bounded reads, and an **owner-encrypted** `worker_interface` for the worker hand-off — secrets never cross the wire in plaintext, and credentials always resolve as the *catalog owner*, never the calling user. `FLOWFILE_CATALOG_STORAGE_URI`/`_CONNECTION` are snapshotted onto a catalog once at creation, not read live.
 
+## Write modes and SCD2
+
+`CatalogTable.scd2_config` (JSON, `Scd2TableConfig` in `catalog_schema.py`) is the **single source of truth** for whether a table is SCD2-tracked and what its four generated columns are named. It is written by an `scd2` write (`_resolve_scd2_config` in `flow_graph.py`), preserved across a `/refresh`, and cleared by any other physical write mode. Every read-side consumer — the catalog reader's history filter, the reader's codegen, `flowfile_frame`'s read path, and the reader UI and browser badges — reads this column and never a writer node's settings. The writer path (its own codegen and settings UI) supplies its own SCD2 settings, which core validates against the persisted config on every subsequent write (`_SCD2_DRIFT_FIELDS`), so write and read side can't disagree about column names. See [Slowly Changing Dimensions](../users/visual-editor/catalog/slowly-changing-dimensions.md) for the user-facing mechanics.
+
 ## The service layer
 
 `CatalogService` (`catalog/service.py`) is a **facade over composed sub-services**, one per domain under `catalog/services/`: namespaces, flows, runs, engagement, schedules, tables, virtual_tables, sql, previews, visualizations, notebooks, stats. Composition is constructor injection with two deliberate quirks:
