@@ -1,5 +1,5 @@
 <template>
-  <div class="file-browser">
+  <div class="file-browser" :class="{ dense }">
     <!-- Title Section -->
     <div class="browser-header">
       <div class="browser-title">
@@ -264,6 +264,10 @@ interface Props {
   context?: FileBrowserContext;
   /** When set, browsing is locked to this directory (start dir + no navigating above it). */
   rootPath?: string;
+  /** Prefill for the "Create New File" dialog (e.g. the current flow's name on Save As). */
+  defaultNewFileName?: string;
+  /** Compact row rhythm for height-capped hosts (the Save/Create dialogs). */
+  dense?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -276,6 +280,8 @@ const props = withDefaults(defineProps<Props>(), {
   isVisible: true,
   context: "flows",
   rootPath: undefined,
+  defaultNewFileName: "",
+  dense: false,
 });
 
 // Emits
@@ -300,6 +306,14 @@ const showCreateDialog = ref(false);
 const newFileName = ref("");
 const fileNameError = ref("");
 const selectedFile = ref<FileInfo | null>(null);
+
+// Seed the filename from the caller's default (e.g. the flow's name on Save As);
+// handleDialogClosed resets it, so a reopen re-seeds.
+watch(showCreateDialog, (open) => {
+  if (open && !newFileName.value && props.defaultNewFileName) {
+    newFileName.value = props.defaultNewFileName;
+  }
+});
 
 const normalizeForCompare = (p: string): string => {
   const n = path.normalize(p);
@@ -966,6 +980,42 @@ onMounted(async () => {
   width: 24px;
   height: 24px;
   object-fit: contain;
+}
+
+/* Opt-in compact mode: the Save/Create dialogs cap the browser's height so the
+   catalog options below stay visible, which leaves too little room for the
+   default row rhythm. Every other consumer keeps the roomier default. */
+.file-browser.dense .browser-main {
+  padding: 8px 16px;
+}
+
+.file-browser.dense .grid-container {
+  gap: 8px;
+  padding: 4px;
+}
+
+.file-browser.dense .file-item-content {
+  padding: 6px 10px;
+  gap: 10px;
+}
+
+.file-browser.dense .file-icon-wrapper {
+  width: 24px;
+  height: 24px;
+}
+
+.file-browser.dense .file-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.file-browser.dense .file-name {
+  font-size: 13px;
+  margin-bottom: 1px;
+}
+
+.file-browser.dense .file-info {
+  font-size: 11px;
 }
 
 /* Add new styles for sort controls */

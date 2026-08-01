@@ -29,7 +29,7 @@ async function getAuthToken(request: APIRequestContext): Promise<string> {
 // backend state from earlier runs can't satisfy tutorial steps prematurely.
 async function createFreshFlow(request: APIRequestContext, token: string): Promise<number> {
   const response = await request.post(
-    `${API_URL}/editor/create_flow/?name=Tutorial_E2E_${Date.now()}`,
+    `${API_URL}/editor/create_flow/?name=Tutorial_E2E_${Date.now()}&register_in_catalog=false`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!response.ok()) throw new Error(`create_flow failed: ${response.status()}`);

@@ -121,7 +121,9 @@ Register a flow to enable run tracking, artifact lineage, catalog table producti
 !!! tip "When a flow joins the catalog"
     A flow appears in the catalog when you **save it into a schema** — via the Save dialog's catalog tab, or **Register Flow** above. Simply opening a `.yaml` in the designer, or starting a flow from a template, leaves it out of the catalog: browsing is read-only.
 
-    Quick-created flows saved to disk still land under `General > Local Flows` or `General > Unnamed Flows` on first save or first run. Uncheck **Also register in catalog** in the Save dialog to keep a disk save out of the catalog. Registering is what unlocks run history, schedules and API publishing.
+    Quick-created flows start as unregistered drafts — the file is written to the app's internal folder, but no catalog entry is made. A draft joins the catalog when you run it, or when you save it with **Also register in catalog** checked. Registering is what unlocks run history, schedules and API publishing.
+
+    Accumulated entries under `Unnamed Flows` or `Python Editor` can be cleared in one go: hover the schema in the catalog tree and use the broom action. Flows with published artifacts are kept.
 
 ### Flow Detail Panel
 

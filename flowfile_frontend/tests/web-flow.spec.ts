@@ -132,7 +132,7 @@ test.describe('Web Flow E2E Tests', () => {
   });
 
   test('should create a new flow via API', async ({ request }) => {
-    const createResponse = await authPost(request, `${API_URL}/editor/create_flow/?name=E2E_Test_Flow`, authToken);
+    const createResponse = await authPost(request, `${API_URL}/editor/create_flow/?name=E2E_Test_Flow&register_in_catalog=false`, authToken);
 
     expect(createResponse.ok()).toBe(true);
 
@@ -145,7 +145,7 @@ test.describe('Web Flow E2E Tests', () => {
   });
 
   test('should add nodes to a flow via API', async ({ request }) => {
-    const createResponse = await authPost(request, `${API_URL}/editor/create_flow/?name=Node_Test_Flow`, authToken);
+    const createResponse = await authPost(request, `${API_URL}/editor/create_flow/?name=Node_Test_Flow&register_in_catalog=false`, authToken);
     const flowId = await createResponse.json();
 
     const addNodeResponse = await authPost(
@@ -190,7 +190,7 @@ test.describe('Web Flow E2E Tests', () => {
       }
     });
 
-    const createResponse = await authPost(request, `${API_URL}/editor/create_flow/?name=Designer_Test_Flow`, authToken);
+    const createResponse = await authPost(request, `${API_URL}/editor/create_flow/?name=Designer_Test_Flow&register_in_catalog=false`, authToken);
     const flowId = await createResponse.json();
 
     await authPost(request, `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=1&node_type=manual_input&pos_x=100&pos_y=100`, authToken);

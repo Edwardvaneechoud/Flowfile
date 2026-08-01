@@ -108,6 +108,7 @@ from flowfile_core.schemas.catalog_schema import (
     ResolveTableResult,
     SaveQueryAsFlowRequest,
     SchedulerStatusOut,
+    ScratchCleanupOut,
     SqlQueryRequest,
     SqlQueryResult,
     TableFavoriteOut,
@@ -325,6 +326,22 @@ def delete_namespace(
     service: CatalogService = Depends(get_catalog_service),
 ):
     service.delete_namespace(namespace_id)
+
+
+@router.post("/namespaces/{namespace_id}/cleanup_flows", response_model=ScratchCleanupOut)
+@handle_catalog_exceptions()
+def cleanup_namespace_flows(
+    namespace_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Bulk-delete the auto-accreted flow registrations in a scratch schema.
+
+    Restricted server-side to ``General > Unnamed Flows`` and ``General > Python
+    Editor``. Flows with live artifacts, and rows the caller may not manage, are
+    kept; scratch files on disk are removed with their rows.
+    """
+    deleted, kept = service.cleanup_scratch_namespace(namespace_id)
+    return ScratchCleanupOut(deleted=deleted, kept=kept)
 
 
 @router.get("/namespaces/tree", response_model=list[NamespaceTree])

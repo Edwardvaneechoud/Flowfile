@@ -55,6 +55,14 @@
         >
           <i class="fa-solid fa-file-circle-plus"></i>
         </button>
+        <button
+          v-if="isScratchSchema && node.flows.length > 0"
+          class="action-btn"
+          title="Clean up all flows in this schema"
+          @click="$emit('cleanupNamespace', node)"
+        >
+          <i class="fa-solid fa-broom"></i>
+        </button>
       </div>
     </div>
 
@@ -86,6 +94,7 @@
           @delete-table="$emit('deleteTable', $event)"
           @delete-flow="$emit('deleteFlow', $event)"
           @namespace-share="$emit('namespaceShare', $event)"
+          @cleanup-namespace="$emit('cleanupNamespace', $event)"
         />
       </div>
 
@@ -310,7 +319,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from "vue";
-import { SYSTEM_NAMESPACE_NAMES } from "../../types";
+import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
@@ -375,6 +384,7 @@ const emit = defineEmits([
   "deleteTable",
   "deleteFlow",
   "namespaceShare",
+  "cleanupNamespace",
 ]);
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
@@ -411,7 +421,7 @@ const visibleArtifacts = computed(() => filterArtifacts(props.node, filter.value
 
 // System namespaces holding disk-backed/quick-created flows — they accumulate a
 // lot of entries, so collapse them by default to keep the tree tidy.
-const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows"]);
+const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows", "Python Editor"]);
 // Expansion state is shared + persisted to localStorage; user toggles and
 // selection-driven expands both stick, so the tree reopens as left. Search
 // expansion is derived from the matches instead, and never persists.
@@ -444,6 +454,10 @@ const onRowClick = () => {
 // Sections inside system namespaces stay collapsed by default; the default
 // schema and user-created namespaces open fully uncollapsed.
 const sectionsDefaultExpanded = computed(() => !SYSTEM_NAMESPACE_NAMES.has(props.node.name));
+
+const isScratchSchema = computed(
+  () => props.node.level === 1 && SCRATCH_NAMESPACE_NAMES.has(props.node.name),
+);
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
 const showModelsSection = computed(

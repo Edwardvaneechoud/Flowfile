@@ -51,6 +51,13 @@ class NamespaceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ScratchCleanupOut(BaseModel):
+    """Result of a bulk cleanup of a scratch schema's flow registrations."""
+
+    deleted: int
+    kept: int
+
+
 class NamespaceTree(NamespaceOut):
     """Recursive tree node – children are nested schemas of the same hierarchy."""
 

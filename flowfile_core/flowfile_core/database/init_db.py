@@ -95,7 +95,7 @@ def create_default_catalog_namespace(db: Session):
     """Create the seeded 'General' catalog and its schemas if they don't exist."""
     # Imported here, not at module level: this module runs Alembic at import time,
     # before the catalog package (and its polars dependency chain) is importable.
-    from flowfile_core.catalog.constants import ROOT_CATALOG, SEEDED_SCHEMAS
+    from flowfile_core.catalog.constants import ROOT_CATALOG, SEEDED_SCHEMAS, SYSTEM_SCHEMA_NAMES
 
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
@@ -132,6 +132,22 @@ def create_default_catalog_namespace(db: Session):
             )
         )
         db.commit()
+
+    # Repair app-managed schemas created outside the seed path (Python Editor is
+    # made on demand by ensure_python_editor_flows_namespace): before this they
+    # inherited is_public=False and were invisible to everyone but General's owner.
+    repaired = (
+        db.query(db_models.CatalogNamespace)
+        .filter(
+            db_models.CatalogNamespace.parent_id == general.id,
+            db_models.CatalogNamespace.name.in_(SYSTEM_SCHEMA_NAMES),
+            db_models.CatalogNamespace.is_public.is_(False),
+        )
+        .update({db_models.CatalogNamespace.is_public: True}, synchronize_session=False)
+    )
+    if repaired:
+        db.commit()
+        logger.info(f"Marked {repaired} app-managed catalog schema(s) public")
 
 
 def update_db_info(db: Session):
