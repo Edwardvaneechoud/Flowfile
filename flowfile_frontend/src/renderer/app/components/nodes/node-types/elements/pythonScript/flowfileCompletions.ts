@@ -389,7 +389,7 @@ export function createScopeCompletions(getPriorCellCodes: () => string[]): Compl
       options: symbols.map((s) => ({
         label: s.name,
         type: s.type,
-        info: "Defined in earlier cell",
+        detail: "earlier cell",
       })),
       validFor: /^\w*$/,
     };

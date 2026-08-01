@@ -1546,6 +1546,48 @@ class TestCrossNamespaceResolution:
             assert a.namespace_id == schema_a_id
             assert b.namespace_id == schema_b_id
 
+    def test_resolve_fully_qualified_catalog_schema_table(self):
+        _, schema_a_id, schema_b_id, _ = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            assert svc.resolve_table("cat.ns_a.foo").namespace_id == schema_a_id
+            assert svc.resolve_table("cat.ns_b.foo").namespace_id == schema_b_id
+
+    def test_resolve_fully_qualified_unknown_namespace_raises(self):
+        from flowfile_core.catalog.exceptions import NamespaceNotFoundError
+
+        self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(NamespaceNotFoundError):
+                svc.resolve_table("nope.ns_a.foo")
+            with pytest.raises(NamespaceNotFoundError):
+                svc.resolve_table("cat.nope.foo")
+
+    def test_resolve_fully_qualified_unknown_table_raises(self):
+        from flowfile_core.catalog.exceptions import TableNotFoundError
+
+        self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(TableNotFoundError):
+                svc.resolve_table("cat.ns_a.nope")
+
+    def test_resolve_too_many_parts_raises(self):
+        from flowfile_core.catalog.exceptions import TableNotFoundError
+
+        self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(TableNotFoundError):
+                svc.resolve_table("extra.cat.ns_a.foo")
+            with pytest.raises(TableNotFoundError):
+                svc.resolve_table("cat..foo")
+
     def test_resolve_bare_with_default_namespace(self):
         _, schema_a_id, _, _ = self._seed_two_foo_tables()
         with get_db_context() as db:
@@ -1638,6 +1680,14 @@ class TestCrossNamespaceResolution:
     def test_resolve_endpoint_qualified(self):
         _, schema_a_id, _, _ = self._seed_two_foo_tables()
         response = client.get("/catalog/tables/resolve", params={"q": "ns_a.foo"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["table"]["namespace_id"] == schema_a_id
+        assert body["warnings"] == []
+
+    def test_resolve_endpoint_fully_qualified(self):
+        _, schema_a_id, _, _ = self._seed_two_foo_tables()
+        response = client.get("/catalog/tables/resolve", params={"q": "cat.ns_a.foo"})
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["table"]["namespace_id"] == schema_a_id

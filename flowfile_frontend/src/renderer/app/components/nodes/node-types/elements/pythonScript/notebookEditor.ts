@@ -4,11 +4,7 @@ import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { globalCompletion, localCompletionSource, python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
-import {
-  acceptCompletion,
-  autocompletion,
-  type CompletionSource,
-} from "@codemirror/autocomplete";
+import { acceptCompletion, autocompletion, type CompletionSource } from "@codemirror/autocomplete";
 import { indentLess, indentMore } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import {
@@ -60,6 +56,38 @@ const cellEditorTheme = EditorView.theme({
   // Completion dropdown height (default is ~10em): a moderate cap so a useful number of
   // suggestions show without the list dominating the cell.
   ".cm-tooltip-autocomplete > ul": { maxHeight: "14rem" },
+  // Hover + signature tooltips: scrollable so a long docstring can't fill the screen.
+  ".cm-lsp-doc": {
+    maxWidth: "560px",
+    maxHeight: "24rem",
+    overflow: "auto",
+    padding: "6px 10px",
+    fontSize: "0.78rem",
+    lineHeight: "1.45",
+    whiteSpace: "pre-wrap",
+  },
+  ".cm-lsp-doc code": {
+    fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
+    fontSize: "0.95em",
+    background: "rgba(127, 127, 127, 0.14)",
+    borderRadius: "3px",
+    padding: "0 3px",
+  },
+  ".cm-lsp-doc-title": { marginBottom: "4px" },
+  ".cm-lsp-doc-kind": { opacity: "0.6", fontStyle: "italic", marginRight: "6px" },
+  ".cm-lsp-doc-name": { fontWeight: "600" },
+  ".cm-lsp-doc-signature": {
+    fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
+    fontSize: "0.95em",
+    opacity: "0.85",
+    marginBottom: "6px",
+    paddingBottom: "6px",
+    borderBottom: "1px solid rgba(127, 127, 127, 0.25)",
+  },
+  ".cm-lsp-doc-label": { fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace" },
+  ".cm-lsp-doc-body": { opacity: "0.8", marginTop: "4px" },
+  ".cm-lsp-doc-section": { fontWeight: "600", marginTop: "6px" },
+  ".cm-lsp-doc-gap": { height: "0.5em" },
   // Quiet, dismissible "no kernel" FYI panel (see lspNoKernelHint.ts).
   ".cm-lsp-no-kernel-hint": {
     display: "flex",
@@ -94,38 +122,41 @@ function lspCtxGetter(opts: NotebookEditorOptions): () => LspContext {
   });
 }
 
+// No docs panel while typing (PyCharm / VS Code behaviour); docs live on hover.
+function withoutInfo(source: CompletionSource): CompletionSource {
+  return async (context) => {
+    const result = await source(context);
+    if (!result) return result;
+    return { ...result, options: result.options.map((o) => ({ ...o, info: undefined })) };
+  };
+}
+
 // The full source list for autocompletion({override}) — exported so it unit-tests headlessly.
-// override keeps python()'s bundled language-data sources inert; the two lang-python sources
-// are re-added explicitly below, gated to fallback-only like the other Jedi-subsumed statics.
 export function buildNotebookCompletionSources(opts: NotebookEditorOptions): CompletionSource[] {
   const getInputNames = opts.getInputNames ?? (() => []);
   const getUpstreamColumns = opts.getUpstreamColumns ?? (() => []);
   const getPrior = opts.getPriorCellCodes ?? (() => []);
   const getLspCtx = lspCtxGetter(opts);
-  // Static sources that Jedi subsumes run only as a fallback (no kernel / LSP off),
-  // so there's no overlap once Jedi is active.
   const isLspActive = lspActiveFor(getLspCtx);
   const fb = (s: CompletionSource) => fallbackWhenNoLsp(s, isLspActive);
   const na = notInAsBinding; // identifier sources skip the `as <name>` binding position
 
   return [
-    // Jedi (kernel-backed) merged with prior-cell scope symbols, deduped by label.
     na(createIdentifierCompletionSource(getLspCtx, getPrior)),
-    // Custom completions Jedi can't derive from introspection — always on: catalog
-    // ref-chain snippets and ref-typed variable members.
+    // Custom completions Jedi can't derive from introspection — always on.
     na(catalogRefChainCompletions),
     na(createRefVariableCompletions(getPrior)),
-    // String-literal content sources Jedi can't provide — always on (no overlap):
+    // String-literal content sources Jedi can't provide — always on.
     createNamedInputCompletions(getInputNames),
     createUpstreamColumnCompletions(getUpstreamColumns),
-    // Sources Jedi genuinely subsumes via live-namespace introspection: fallback only.
+    // Sources Jedi subsumes via live-namespace introspection: fallback only.
     na(fb(flowfileApiCompletions)),
     na(fb(globalIdentifierCompletions)),
     na(fb(polarsModuleCompletions)),
     na(fb(createPolarsExprCompletions(getPrior))),
     na(fb(localCompletionSource)),
     na(fb(globalCompletion)),
-  ];
+  ].map(withoutInfo);
 }
 
 export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Extension[] {
@@ -154,7 +185,6 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
     autocompletion({
       override: buildNotebookCompletionSources(opts),
       defaultKeymap: true,
-      closeOnBlur: false,
     }),
     bodyTooltips(),
     Prec.highest(runKeymap),

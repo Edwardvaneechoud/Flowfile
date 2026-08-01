@@ -1,8 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState, Text } from "@codemirror/state";
 import { CompletionContext } from "@codemirror/autocomplete";
+import type { Tooltip } from "@codemirror/view";
+
+// The hover/signature modules reach the API layer, which boots axios + auth on import.
+vi.mock("@/api/lsp.api", () => ({ LspApi: { capabilities: vi.fn(), hover: vi.fn() } }));
 
 import { insideCall, lspDiagnosticToRange, notInAsBinding } from "./lspPositions";
+import { signatureCoversHover } from "./lspHover";
+import { setSigTooltip, sigTooltipField } from "./lspSignature";
 import type { LspDiagnostic } from "@/api/lsp.api";
 
 function stateFor(code: string): EditorState {
@@ -122,5 +128,31 @@ describe("notInAsBinding (suppress completion in `as <name>` binding)", () => {
     const inner = vi.fn().mockReturnValue(sentinel);
     expect(notInAsBinding(inner)(ctxFor("pl.cast", 7))).toBe(sentinel);
     expect(notInAsBinding(inner)(ctxFor("as_of", 5))).toBe(sentinel);
+  });
+});
+
+describe("signatureCoversHover (one hint, not two)", () => {
+  const DOC = 'import polars as pl\ncat.get_schema("default")';
+  const CALLEE = DOC.indexOf("get_schema");
+
+  function stateWithSignatureAt(pos: number | null): EditorState {
+    const base = EditorState.create({ doc: DOC, extensions: [sigTooltipField] });
+    if (pos === null) return base;
+    const tooltip = { pos, above: true, create: () => ({ dom: null }) } as unknown as Tooltip;
+    return base.update({ effects: setSigTooltip.of(tooltip) }).state;
+  }
+
+  it("suppresses the hover on the line the signature tooltip is anchored to", () => {
+    const state = stateWithSignatureAt(DOC.indexOf('"default"'));
+    expect(signatureCoversHover(state, CALLEE)).toBe(true);
+  });
+
+  it("leaves hovers on other lines alone", () => {
+    const state = stateWithSignatureAt(DOC.indexOf('"default"'));
+    expect(signatureCoversHover(state, 7)).toBe(false); // "polars" on line 1
+  });
+
+  it("does nothing when no signature tooltip is showing", () => {
+    expect(signatureCoversHover(stateWithSignatureAt(null), CALLEE)).toBe(false);
   });
 });

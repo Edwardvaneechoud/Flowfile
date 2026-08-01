@@ -4,10 +4,11 @@
 // resulting Tooltip into a StateField that feeds the showTooltip facet. Renders through
 // the editor's bodyTooltips() (mounted on <body>) like the hover tooltip. Degrades to no
 // tooltip when LSP is off / no kernel / not inside a call.
-import { StateEffect, StateField, type Extension } from "@codemirror/state";
+import { Prec, StateEffect, StateField, type EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
   ViewPlugin,
+  keymap,
   showTooltip,
   type Tooltip,
   type ViewUpdate,
@@ -16,13 +17,14 @@ import {
 import { LspApi } from "@/api/lsp.api";
 import type { LspSignatureResponse } from "@/api/lsp.api";
 import type { LspContext } from "./lspCompletionSource";
+import { renderDocText } from "./lspDocRender";
 import { insideCall } from "./lspPositions";
 
 const QUERY_DEBOUNCE_MS = 150;
 
-const setSigTooltip = StateEffect.define<Tooltip | null>();
+export const setSigTooltip = StateEffect.define<Tooltip | null>();
 
-const sigTooltipField = StateField.define<Tooltip | null>({
+export const sigTooltipField = StateField.define<Tooltip | null>({
   create: () => null,
   update(value, tr) {
     for (const e of tr.effects) if (e.is(setSigTooltip)) return e.value;
@@ -33,6 +35,11 @@ const sigTooltipField = StateField.define<Tooltip | null>({
   provide: (f) => showTooltip.from(f),
 });
 
+/** Document position the signature tooltip is currently anchored at, or null when hidden. */
+export function signatureTooltipShownAt(state: EditorState): number | null {
+  return state.field(sigTooltipField, false)?.pos ?? null;
+}
+
 function buildTooltip(res: LspSignatureResponse, pos: number): Tooltip {
   const sig = res.signatures[res.active_signature] ?? res.signatures[0];
   const active = sig.parameters[sig.active_parameter];
@@ -42,12 +49,9 @@ function buildTooltip(res: LspSignatureResponse, pos: number): Tooltip {
     above: true,
     create() {
       const dom = document.createElement("div");
-      dom.className = "cm-lsp-signature";
-      dom.style.whiteSpace = "pre-wrap";
-      dom.style.maxWidth = "480px";
-      dom.style.padding = "4px 8px";
-      dom.style.fontSize = "0.78rem";
+      dom.className = "cm-lsp-doc cm-lsp-signature";
       const label = document.createElement("div");
+      label.className = "cm-lsp-doc-label";
       const idx = active ? sig.label.indexOf(active) : -1;
       if (idx >= 0 && active) {
         label.appendChild(document.createTextNode(sig.label.slice(0, idx)));
@@ -61,12 +65,11 @@ function buildTooltip(res: LspSignatureResponse, pos: number): Tooltip {
       dom.appendChild(label);
       if (doc) {
         const docEl = document.createElement("div");
-        docEl.style.opacity = "0.75";
-        docEl.style.marginTop = "2px";
-        docEl.textContent = doc.length > 240 ? doc.slice(0, 240) + "…" : doc;
+        docEl.className = "cm-lsp-doc-body";
+        docEl.appendChild(renderDocText(doc));
         dom.appendChild(docEl);
       }
-      return { dom };
+      return { dom, resize: false };
     },
   };
 }
@@ -79,6 +82,16 @@ function signaturePlugin(getCtx: () => LspContext) {
       constructor(private readonly view: EditorView) {}
 
       update(u: ViewUpdate) {
+        // Blur means the user moved on — drop the tooltip instead of leaving it pinned.
+        // Deferred: a view plugin may not dispatch from inside update().
+        if (u.focusChanged && !u.view.hasFocus) {
+          window.clearTimeout(this.timer);
+          this.seq++; // invalidate any in-flight response
+          this.timer = window.setTimeout(() => {
+            if (!this.view.hasFocus) this.hide();
+          }, 0);
+          return;
+        }
         if (u.docChanged || u.selectionSet) this.schedule();
       }
 
@@ -130,6 +143,20 @@ function signaturePlugin(getCtx: () => LspContext) {
   );
 }
 
+// Escape dismisses the signature tooltip, falling through to closeCompletion when none is up.
+const dismissKeymap = Prec.high(
+  keymap.of([
+    {
+      key: "Escape",
+      run: (view) => {
+        if (!view.state.field(sigTooltipField, false)) return false;
+        view.dispatch({ effects: setSigTooltip.of(null) });
+        return true;
+      },
+    },
+  ]),
+);
+
 export function createLspSignature(getCtx: () => LspContext): Extension {
-  return [sigTooltipField, signaturePlugin(getCtx)];
+  return [sigTooltipField, signaturePlugin(getCtx), dismissKeymap];
 }

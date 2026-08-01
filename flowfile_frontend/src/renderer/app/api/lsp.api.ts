@@ -22,7 +22,10 @@ export interface LspCompleteResponse {
   items: LspCompletionItem[];
 }
 export interface LspHoverResponse {
-  contents: string | null;
+  contents: string | null; // docstring body
+  kind?: string; // function / method / class / variable / module / ...
+  name?: string;
+  signature?: string;
 }
 export interface LspSignatureInfo {
   label: string;

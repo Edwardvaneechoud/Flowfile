@@ -28,6 +28,9 @@ class CompleteResponse(BaseModel):
 
 class HoverResponse(BaseModel):
     contents: str | None = None
+    kind: str = ""
+    name: str = ""
+    signature: str = ""
 
 
 class SignatureInfo(BaseModel):

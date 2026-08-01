@@ -92,4 +92,36 @@ describe("buildNotebookCompletionSources", () => {
     const labels = (await allOptions(opts, code, code.length)).map((o) => o.label);
     expect(labels).toContain("main");
   });
+
+  it("drops `info` so the docs panel never opens while typing, but keeps `detail`", async () => {
+    mockComplete.mockResolvedValue({
+      items: [
+        {
+          label: "read_catalog_table",
+          type: "function",
+          detail: "def read_catalog_table",
+          documentation: "Read a catalog table as a Polars LazyFrame.",
+        },
+      ],
+    });
+    const opts = optsFor({
+      getKernelId: () => "k1",
+      getFlowId: () => 1,
+      getInputNames: () => ["main"],
+      getUpstreamColumns: () => [{ name: "city", data_type: "String", source_input: "main" }],
+    });
+    for (const [code, pos] of [
+      ["read_catalog_ta", 15],
+      ['flowfile_ctx.read_input("', 25],
+      ['pl.col("', 8],
+    ] as const) {
+      const options = await allOptions(opts, code, pos);
+      expect(options.length).toBeGreaterThan(0);
+      expect(options.every((o) => o.info === undefined)).toBe(true);
+    }
+    const jedi = (await allOptions(opts, "read_catalog_ta", 15)).find(
+      (o) => o.label === "read_catalog_table",
+    );
+    expect(jedi?.detail).toBe("def read_catalog_table");
+  });
 });
