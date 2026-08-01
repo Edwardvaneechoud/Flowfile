@@ -1118,9 +1118,46 @@ class TestScratchNamespaceCleanup:
         local_flows_id = self._namespace_id("Local Flows")
         resp = client.post(f"/catalog/namespaces/{local_flows_id}/cleanup_flows")
         assert resp.status_code == 403, resp.text
+        detail = resp.json()["detail"]
+        assert "Unnamed Flows" in detail and "Python Editor" in detail, (
+            f"the 403 must name the sweepable schemas, got: {detail!r}"
+        )
 
         resp = client.post("/catalog/namespaces/999999/cleanup_flows")
         assert resp.status_code == 404, resp.text
+
+    def test_lazily_created_scratch_schema_is_public(self):
+        """'Python Editor' is made on demand, not seeded. A private one is invisible
+        to everyone but General's owner in multi-user mode, so neither the tree nor
+        the sweep would ever reach it."""
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            existing = db.query(CatalogNamespace).filter_by(name="Python Editor", parent_id=general.id).first()
+            if existing is not None:
+                db.query(FlowRegistration).filter_by(namespace_id=existing.id).delete(synchronize_session=False)
+                db.delete(existing)
+                db.commit()
+
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            namespace = service.ensure_python_editor_flows_namespace()
+            assert namespace is not None
+            assert namespace.is_public is True, "app-managed schemas must be public containers"
+
+    def test_init_db_repairs_a_private_app_managed_schema(self):
+        """Installs created before the fix carry a private 'Python Editor' row."""
+        init_db()
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            namespace_id = service.ensure_python_editor_flows_namespace().id
+            db.query(CatalogNamespace).filter_by(id=namespace_id).update({CatalogNamespace.is_public: False})
+            db.commit()
+
+        init_db()
+
+        with get_db_context() as db:
+            assert db.get(CatalogNamespace, namespace_id).is_public is True
 
 
 # Read link / lineage repository tests

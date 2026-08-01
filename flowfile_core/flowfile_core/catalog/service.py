@@ -207,6 +207,10 @@ class CatalogService:
     def _restricted(self) -> bool:
         return self.access is not None and self.access.restricted
 
+    def _access_user_id(self) -> int:
+        """Caller id for ``NotAuthorizedError`` telemetry; ``-1`` when there is no resolver."""
+        return (self.access.user_id if self.access is not None else None) or -1
+
     def _require_use(self, resource_type: str, resource_id: int) -> None:
         if self._restricted:
             self.access.require_use(resource_type, resource_id)
@@ -618,9 +622,11 @@ class CatalogService:
         Only the app-managed scratch schemas (``General > Unnamed Flows`` and
         ``General > Python Editor``) can be swept — their rows accumulate as a side
         effect of quick-create and the FlowFrame API, never by deliberate filing.
-        Each row goes through the canonical gated delete, so flows with live
-        artifacts and rows the caller may not manage are kept, and machine-named
-        files inside the scratch dirs are removed along with their rows.
+        The sweep enumerates through the access filter, so in multi-user mode a
+        caller never learns about (nor counts) rows another user accreted in these
+        shared scratch schemas. Each remaining row goes through the canonical gated
+        delete, so flows with live artifacts and rows the caller may not manage are
+        kept, and machine-named files inside the scratch dirs are removed with them.
 
         The delete loop works from a plain ``(id, path)`` snapshot, never live ORM
         instances: each delete commits, which expires every instance in the session,
@@ -642,10 +648,15 @@ class CatalogService:
         )
         if not is_scratch_schema:
             raise NotAuthorizedError(
-                f"Bulk cleanup is only available for the '{UNNAMED_FLOWS.name}' and "
-                f"'{PYTHON_EDITOR_FLOWS.name}' scratch schemas"
+                self._access_user_id(),
+                f"bulk-clean flows outside the '{UNNAMED_FLOWS.name}' and "
+                f"'{PYTHON_EDITOR_FLOWS.name}' scratch schemas",
             )
-        targets = [(f.id, f.flow_path) for f in self.repo.list_flows(namespace_id=namespace_id)]
+        if self._restricted and namespace_id not in self.access.visible_namespace_ids():
+            raise NotAuthorizedError(self._access_user_id(), "clean up this namespace")
+        targets = [
+            (f.id, f.flow_path) for f in self._filter_by_access(self.repo.list_flows(namespace_id=namespace_id), "flow")
+        ]
         deleted = kept = 0
         for reg_id, flow_path in targets:
             try:

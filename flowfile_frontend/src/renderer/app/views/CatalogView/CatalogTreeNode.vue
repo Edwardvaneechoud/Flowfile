@@ -56,7 +56,7 @@
           <i class="fa-solid fa-file-circle-plus"></i>
         </button>
         <button
-          v-if="isScratchSchema"
+          v-if="isScratchSchema && node.flows.length > 0"
           class="action-btn"
           title="Clean up all flows in this schema"
           @click="$emit('cleanupNamespace', node)"
@@ -420,7 +420,7 @@ const visibleArtifacts = computed(() => filterArtifacts(props.node, filter.value
 
 // System namespaces holding disk-backed/quick-created flows — they accumulate a
 // lot of entries, so collapse them by default to keep the tree tidy.
-const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows"]);
+const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows", "Python Editor"]);
 // Expansion state is shared + persisted to localStorage; user toggles and
 // selection-driven expands both stick, so the tree reopens as left. Search
 // expansion is derived from the matches instead, and never persists.

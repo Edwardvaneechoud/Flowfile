@@ -45,6 +45,7 @@
             :initial-file-path="initialPath"
             :is-visible="isVisible && saveMode === 'file'"
             :default-new-file-name="defaultSaveFileName"
+            dense
             @create-file="handleSaveFlow"
             @overwrite-file="handleSaveFlow"
           />

@@ -1210,7 +1210,8 @@ async function handleCleanupNamespace(node: NamespaceTree) {
   try {
     await ElMessageBox.confirm(
       `Delete all ${node.flows.length} flow registrations in "${node.name}" and their scratch files? ` +
-        "Flows with published artifacts are kept. This cannot be undone.",
+        "Flows with published artifacts are kept. Deleted files cannot be recovered, and a draft " +
+        "that is still open re-registers here if you run it again.",
       "Clean up flows",
       { confirmButtonText: "Delete all", cancelButtonText: "Cancel", type: "warning" },
     );

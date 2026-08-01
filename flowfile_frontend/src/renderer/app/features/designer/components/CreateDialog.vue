@@ -36,6 +36,7 @@
             mode="create"
             context="flows"
             :is-visible="isVisible && createMode === 'file'"
+            dense
             @create-file="handleCreateAtPath"
             @overwrite-file="handleCreateAtPath"
           />

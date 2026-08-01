@@ -307,6 +307,10 @@ class FlowRegistrationService:
             level=1,
             description=description,
             owner_id=general.owner_id,
+            # App-managed containers are public like their seeded siblings in
+            # init_db: without this a lazily-created schema (Python Editor) is
+            # invisible to every user but General's owner in multi-user mode.
+            is_public=True,
         )
         return self.repo.create_namespace(namespace)
 

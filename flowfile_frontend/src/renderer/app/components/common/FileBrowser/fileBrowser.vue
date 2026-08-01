@@ -1,5 +1,5 @@
 <template>
-  <div class="file-browser">
+  <div class="file-browser" :class="{ dense }">
     <!-- Title Section -->
     <div class="browser-header">
       <div class="browser-title">
@@ -266,6 +266,8 @@ interface Props {
   rootPath?: string;
   /** Prefill for the "Create New File" dialog (e.g. the current flow's name on Save As). */
   defaultNewFileName?: string;
+  /** Compact row rhythm for height-capped hosts (the Save/Create dialogs). */
+  dense?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -279,6 +281,7 @@ const props = withDefaults(defineProps<Props>(), {
   context: "flows",
   rootPath: undefined,
   defaultNewFileName: "",
+  dense: false,
 });
 
 // Emits
@@ -781,7 +784,7 @@ onMounted(async () => {
 .browser-main {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 16px;
+  padding: 16px;
 }
 
 .file-item {
@@ -817,23 +820,23 @@ onMounted(async () => {
 }
 
 .file-item-content {
-  padding: 6px 10px;
+  padding: 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .file-icon-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
 }
 
 .file-icon {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   color: var(--color-text-tertiary);
 }
 
@@ -844,16 +847,15 @@ onMounted(async () => {
 
 .file-name {
   font-weight: 500;
-  font-size: 13px;
   color: var(--color-text-primary);
-  margin-bottom: 1px;
+  margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .file-info {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--color-text-secondary);
 }
 
@@ -962,22 +964,58 @@ onMounted(async () => {
 .browser-main {
   flex: 1;
   overflow-y: auto; /* Make this section scrollable */
-  padding: 8px 16px;
+  padding: 16px;
   min-height: 0; /* Enable proper flex child scrolling */
 }
 
 .grid-container {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
-  gap: 8px;
-  padding: 4px;
+  gap: 16px;
+  padding: 8px;
 }
 
 /* Optional: if you want to maintain icon size consistency */
 .file-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+/* Opt-in compact mode: the Save/Create dialogs cap the browser's height so the
+   catalog options below stay visible, which leaves too little room for the
+   default row rhythm. Every other consumer keeps the roomier default. */
+.file-browser.dense .browser-main {
+  padding: 8px 16px;
+}
+
+.file-browser.dense .grid-container {
+  gap: 8px;
+  padding: 4px;
+}
+
+.file-browser.dense .file-item-content {
+  padding: 6px 10px;
+  gap: 10px;
+}
+
+.file-browser.dense .file-icon-wrapper {
+  width: 24px;
+  height: 24px;
+}
+
+.file-browser.dense .file-icon {
   width: 20px;
   height: 20px;
-  object-fit: contain;
+}
+
+.file-browser.dense .file-name {
+  font-size: 13px;
+  margin-bottom: 1px;
+}
+
+.file-browser.dense .file-info {
+  font-size: 11px;
 }
 
 /* Add new styles for sort controls */
