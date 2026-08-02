@@ -40,18 +40,11 @@
             @create-file="handleCreateAtPath"
             @overwrite-file="handleCreateAtPath"
           />
-          <div class="catalog-options">
-            <el-checkbox v-model="registerInCatalog"> Also register in catalog </el-checkbox>
-            <div v-if="registerInCatalog" class="namespace-section">
-              <label class="namespace-label">Namespace</label>
-              <catalog-namespace-picker
-                ref="filePicker"
-                v-model="selectedNamespaceId"
-                :hide-system-namespaces="true"
-                :writable-only="true"
-              />
-            </div>
-          </div>
+          <catalog-register-row
+            ref="filePicker"
+            v-model="registerInCatalog"
+            v-model:namespace-id="selectedNamespaceId"
+          />
         </div>
 
         <!-- Catalog tab -->
@@ -106,6 +99,7 @@ import { getCatalogFlowsDirectory } from "../../../api/file.api";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 import { basenameNoExt } from "../../../composables/useRecentFlows";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
+import CatalogRegisterRow from "./CatalogRegisterRow.vue";
 
 const props = defineProps({
   visible: {
@@ -125,7 +119,7 @@ const registerInCatalog = ref(true);
 const selectedNamespaceId = ref<number | null>(null);
 const catalogFlowName = ref("");
 const catalogFlowsDir = ref("");
-const filePicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
+const filePicker = ref<InstanceType<typeof CatalogRegisterRow> | null>(null);
 const catalogPicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
 
 // Dotted catalog reference ("General.default.my_flow") for the recents list;
@@ -302,32 +296,10 @@ defineExpose({
   gap: var(--spacing-4);
 }
 
-/* Cap the browser (default 70vh) so the register/namespace section below it
-   stays visible without scrolling the dialog. */
+/* Cap the browser (default 70vh) so the one-line register row below it stays
+   visible without scrolling the dialog. */
 .create-panel :deep(.file-browser) {
-  height: 46vh;
-}
-
-.catalog-options {
-  padding: var(--spacing-3);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background-color: var(--color-background-muted, #f9f9fb);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-3);
-}
-
-.namespace-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-}
-
-.namespace-label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
+  height: 52vh;
 }
 
 .catalog-create-form {
