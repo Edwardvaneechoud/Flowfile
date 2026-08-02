@@ -41,7 +41,7 @@ CI is 15 workflow files under `.github/workflows/` as of 2026-07-03 (v0.12.7) �
 
 ### 2a. Never force-push `main`
 
-`CONTRIBUTING.md`: "**Don't force-push to `main`.** Releases build from it." `docker-publish.yml` triggers on every push to `main` (paths-filtered) and rebuilds 6 Docker images; `test.yaml` runs full CI from `main`. Live branch protection additionally sets `allow_force_pushes: false`, and repo ruleset id `2660650` ("Only admin commits") adds `non_fast_forward` + `required_linear_history` blocks (verified live via `gh api repos/.../branches/main/protection` and `gh api repos/.../rulesets`). A force-push to `main` would desync in-flight release/Docker pipelines that key off a specific commit.
+`CONTRIBUTING.md`: "**Don't force-push to `main`.** Releases build from it." `docker-publish.yml` publishes kernel Docker images from `main` (kernel-path-filtered, only when the kernel version is unpublished; app images publish from `v*` tags); `test.yaml` runs full CI from `main`. Live branch protection additionally sets `allow_force_pushes: false`, and repo ruleset id `2660650` ("Only admin commits") adds `non_fast_forward` + `required_linear_history` blocks (verified live via `gh api repos/.../branches/main/protection` and `gh api repos/.../rulesets`). A force-push to `main` would desync in-flight release/Docker pipelines that key off a specific commit.
 
 ### 2b. Version bumps move in lockstep — never hand-edit a manifest
 
@@ -129,24 +129,24 @@ The codebase has a set of intentional, by-design refusals — places where a fea
 3. `make check-version` — must print "All versions in sync"
 4. Open a PR (branch protection blocks direct pushes to `main`), get it merged
 5. Tag the merge commit **lowercase** `vX.Y.Z` and push the tag
-6. This fires `pypi-release.yml` **and** `release.yaml` simultaneously (§3b)
-7. `release.yaml` publishing the GitHub Release fires `docker-publish.yml` again via its `release: published` trigger (§3c)
-8. **Manual, and historically never done:** assemble and attach `latest.json` to the release per the schema in `flowfile_frontend/src-tauri/SIGNING.md` (§3d)
+6. This fires `pypi-release.yml`, `release.yaml`, **and** `docker-publish.yml` (app Docker images) simultaneously (§3b)
+7. **Manual, and historically never done:** assemble and attach `latest.json` to the release per the schema in `flowfile_frontend/src-tauri/SIGNING.md` (§3d)
 
-### 3b. One `v*` tag push → two workflows
+### 3b. One `v*` tag push → three workflows
 
 | Workflow | What it does | Hard gate |
 |---|---|---|
 | `pypi-release.yml` | Builds web frontend into `flowfile/flowfile/web/static/`, `poetry build`, publishes to PyPI via **Trusted Publishing (OIDC)** — no API token | `python3 tools/check_version_sync.py --expect "${GITHUB_REF#refs/tags/v}"` — dies instantly if tag ≠ manifest version |
 | `release.yaml` | Builds Tauri desktop installers on a 4-platform matrix (macOS arm64/x86_64, Windows, Linux), signs/notarizes macOS, publishes the GitHub Release | Same `check_version_sync.py --expect` gate, run per-platform before the Rust/PyInstaller build starts |
+| `docker-publish.yml` | Publishes app Docker images (`flowfile-core`/`-worker`/`-frontend`) as `:<version>` + `:latest` (no `latest` for `-`-suffixed prerelease tags); self-heals any unpublished kernel image version in the same run | Same `check_version_sync.py --expect` gate, plus `tools/check_kernel_version_sync.py` (manager.py kernel pins must match `kernel_runtime/pyproject.toml`) |
 
-Both gates mean: **tag before bumping = both release pipelines fail fast**, which is the intended failure mode (better than shipping a mismatched artifact).
+The shared gate means: **tag before bumping = all release pipelines fail fast**, which is the intended failure mode (better than shipping a mismatched artifact).
 
 `wasm-v*` tags separately fire `npm-publish-wasm.yml` (publishes `flowfile-editor` to npm with provenance). As of 2026-07-03 no `wasm-v*` tag has ever been pushed to this repo — all historical runs of that workflow were manual `workflow_dispatch`, and most failed. Treat the npm publish channel as stalled/experimental, not a proven path.
 
-### 3c. `docker-publish.yml` fires twice per release cycle
+### 3c. `docker-publish.yml` fires once per release, plus kernel-only runs from `main`
 
-Once on the `main`-push that merges the version-bump PR (paths-filtered on backend/frontend/worker/kernel dirs), and again on the `release: published` event once `release.yaml` cuts the GitHub Release. Docker image tags come from `poetry version -s` (root and `kernel_runtime/`) — **from the manifest, not from the git tag** — so this is consistent as long as §2b held.
+App images publish once per release, from the `v*` tag (the old `release: published` re-fire and per-main-push publishing were removed — the `GH_TOKEN` PAT on `release.yaml`'s release step no longer serves that re-fire purpose). Kernel images (`flowfile-kernel-base/ml/lite`) publish from `main` pushes touching kernel paths, and **only when `flowfile-kernel-*:<kernel_version>` is absent from Docker Hub** (`tools/docker_publish_matrix.py` checks; `workflow_dispatch` `force_kernel` overrides, `publish_app` republishes app images at the manifest version). Published version tags are therefore immutable in practice. Versions come from the manifests (root and `kernel_runtime/` `pyproject.toml`), with the `--expect` gate tying app tags to the git tag per §2b.
 
 ### 3d. The auto-updater gap (verified live, still true)
 
@@ -267,7 +267,7 @@ git tag | grep -viE "^v?[0-9]"                                    # expect stray
 
 # v*/wasm-v* release triggers
 grep -n "check_version_sync" .github/workflows/pypi-release.yml .github/workflows/release.yaml
-grep -n "on:" -A6 .github/workflows/docker-publish.yml            # confirm push(paths) + release:published + dispatch
+grep -n "on:" -A24 .github/workflows/docker-publish.yml           # confirm push(main kernel paths + v* tags) + dispatch(publish_app/force_kernel)
 git tag | grep -i "^wasm-v"                                       # expect empty (no wasm-v* tag ever pushed)
 
 # latest.json auto-updater gap

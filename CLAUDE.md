@@ -341,7 +341,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `test-kernel-integration.yml` | Push/PR to `main` (kernel_runtime, kernel/artifacts code + tests) | Kernel integration tests |
 | `test-kafka-integration.yml` | Push/PR to `main` (kafka code + tests) | Kafka integration tests |
 | `flowfile-wasm-build.yml` | Push/PR to `main` (`flowfile_wasm/**`) | Build WASM version and run its test suite |
-| `docker-publish.yml` | Push to `main` (backend/frontend/worker/kernel/shared/tools paths), `release` published | Multi-arch Docker builds (amd64/arm64) → Docker Hub |
+| `docker-publish.yml` | Git tags `v*` (app images, version-gated) + push to `main` touching kernel paths (kernel images, only unpublished versions) + dispatch (`publish_app`/`force_kernel`) | Multi-arch Docker builds (amd64/arm64) → Docker Hub |
 | `documentation.yml` | Push/PR to `main` (`docs/**`, `mkdocs.yml`, `flowfile_frame/**/*.py`) | Build and deploy MkDocs site |
 | `pypi-release.yml` | Git tags `v*` | Build frontend into static, Poetry build, publish to PyPI |
 | `release.yaml` | Git tags `v*` | Build & sign Tauri desktop installers (macOS arm64/intel, Windows, Linux), publish GitHub release |
@@ -350,7 +350,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `claude-pr-review.yml` | PR opened/synchronize/ready/reopened (skips drafts) | Automated Claude PR review |
 | `codeql.yaml` | Weekly cron + manual | Legacy advanced CodeQL scan (broken config reference — see note above) |
 
-> Release tags: pushing a `v*` tag fires **both** `pypi-release.yml` (PyPI) and `release.yaml` (desktop installers); a `wasm-v*` tag fires the npm WASM publish.
+> Release tags: pushing a `v*` tag fires `pypi-release.yml` (PyPI), `release.yaml` (desktop installers), **and** `docker-publish.yml` (app Docker images); a `wasm-v*` tag fires the npm WASM publish.
 
 ## Environment Variables
 
@@ -467,4 +467,4 @@ that's what you're debugging). Both flags default off; production runs stay sile
 - Tests and test_utils are excluded from Ruff linting (except specific per-file rules)
 - The `kernel`, `docker_integration`, and `kafka` pytest markers all require Docker
 - Do not "fix" the SHA-256 API-key hash (`flowfile_core/auth/api_key.py`) — it is deliberate for 256-bit tokens; the CodeQL weak-hash alert is a false positive
-- Never force-push to `main`; CI builds Docker images from it (`docker-publish.yml` on push) and the test pipeline runs from it. PyPI/desktop releases run from `v*` tags
+- Never force-push to `main`; CI publishes kernel Docker images from it (`docker-publish.yml` on kernel-path pushes) and the test pipeline runs from it. PyPI/desktop/app-Docker releases run from `v*` tags
