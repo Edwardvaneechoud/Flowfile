@@ -433,8 +433,9 @@ class CustomNodeBase(BaseModel):
     number_of_outputs: int = 1
 
     # Execution environment: "local" runs in the Flowfile process/worker,
-    # "kernel" runs in an isolated Docker kernel. dependencies are pip specs
-    # (auto-installed only for kernel environments).
+    # "kernel" runs in an isolated Docker kernel. dependencies are pip specs —
+    # a requirement the chosen kernel must satisfy, never an install step;
+    # Flowfile matches them against kernels and pre-checks them at run time.
     environment: Literal["local", "kernel"] = "local"
     dependencies: list[str] = Field(default_factory=list)
 

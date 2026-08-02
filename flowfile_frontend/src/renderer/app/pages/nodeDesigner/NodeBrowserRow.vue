@@ -29,7 +29,7 @@
 
     <div class="node-row__actions" @click.stop>
       <button
-        class="btn btn-sm"
+        class="btn btn-sm btn-secondary"
         title="Edit"
         :data-testid="`node-edit-${node.file_name}`"
         @click="emit('edit', node.file_name)"
@@ -37,17 +37,20 @@
         <i class="fa-solid fa-pen" /> Edit
       </button>
       <el-tooltip content="Duplicate" placement="top">
-        <button class="btn btn-sm btn-icon" @click="emit('duplicate', node.file_name)">
+        <button class="btn btn-sm btn-icon btn-ghost" @click="emit('duplicate', node.file_name)">
           <i class="fa-solid fa-copy" />
         </button>
       </el-tooltip>
       <el-tooltip content="View code" placement="top">
-        <button class="btn btn-sm btn-icon" @click="emit('view', node.file_name)">
+        <button class="btn btn-sm btn-icon btn-ghost" @click="emit('view', node.file_name)">
           <i class="fa-solid fa-code" />
         </button>
       </el-tooltip>
       <el-tooltip content="Delete" placement="top">
-        <button class="btn btn-sm btn-icon btn-danger" @click="emit('delete', node.file_name)">
+        <button
+          class="btn btn-sm btn-icon btn-ghost btn-danger"
+          @click="emit('delete', node.file_name)"
+        >
           <i class="fa-solid fa-trash" />
         </button>
       </el-tooltip>

@@ -60,28 +60,78 @@
         <template v-if="isKernelEnv">
           <!-- Kernels hydrate in the background; never flash the empty state while loading. -->
           <div v-if="kernelsLoading" class="kernel-loading-state">Loading kernels…</div>
-          <div v-else-if="availableKernels.length" class="kernel-select-row">
-            <label class="kernel-label" for="kernel-select">Kernel instance</label>
-            <select id="kernel-select" v-model="selectedKernelId" class="kernel-select">
-              <option :value="null">Select a kernel…</option>
-              <option v-for="k in availableKernels" :key="k.id" :value="k.id">
-                {{ k.name }}
-                <template v-if="k.packages.length">
-                  ({{ k.packages.slice(0, 3).join(", ")
-                  }}<template v-if="k.packages.length > 3">...</template>)
-                </template>
-              </option>
-            </select>
-          </div>
+          <template v-else-if="availableKernels.length">
+            <div class="kernel-select-row">
+              <label class="kernel-label">Kernel instance</label>
+              <el-select
+                v-model="selectedKernelModel"
+                placeholder="Select a kernel…"
+                clearable
+                class="kernel-select-el"
+              >
+                <el-option v-for="k in sortedKernels" :key="k.id" :value="k.id" :label="k.name">
+                  <span class="kernel-option">
+                    <span class="kernel-state-dot" :class="`kernel-state-dot--${k.state}`"></span>
+                    <span class="kernel-option-name">{{ k.name }}</span>
+                    <span
+                      v-if="badgeFor(k.id).label"
+                      class="match-badge"
+                      :class="`match-badge--${badgeFor(k.id).tone}`"
+                      :title="badgeFor(k.id).title"
+                    >
+                      {{ badgeFor(k.id).label }}
+                    </span>
+                  </span>
+                </el-option>
+              </el-select>
+            </div>
+            <div
+              v-if="matchUnavailable && hasDeps"
+              class="kernel-match-hint kernel-match-hint--muted"
+            >
+              Package matching unavailable — showing all kernels.
+            </div>
+            <template v-else-if="hasDeps && !matchLoading">
+              <div
+                v-if="selectedMatch && selectedMatch.level !== 'full'"
+                class="kernel-match-hint kernel-match-hint--warn"
+              >
+                <span :title="selectedMatch.missing.join(', ')">
+                  Selected kernel is missing: {{ selectedMatch.missing.join(", ") }}
+                </span>
+                <button
+                  class="kernel-action-btn"
+                  :disabled="upgradePhase !== null"
+                  @click="onAddMissingPackages"
+                >
+                  {{ upgradeLabel }}
+                </button>
+              </div>
+              <div v-else-if="!hasFullMatch" class="kernel-match-hint">
+                <span>No kernel has all required packages.</span>
+                <button class="kernel-action-btn" @click="createDialogOpen = true">
+                  Create kernel for this node
+                </button>
+              </div>
+            </template>
+          </template>
           <!-- No kernels available: actionable state instead of an empty dropdown. -->
           <div v-else class="kernel-empty-state">
             <p class="kernel-empty-message">
-              This node runs in an isolated kernel, but no kernels are available. Start one (Docker
+              This node runs in an isolated kernel, but no kernels are available. Create one (Docker
               required) to configure and run it.
             </p>
-            <router-link :to="{ name: 'kernelManager' }" class="kernel-manager-link">
-              Open Kernel Manager
-            </router-link>
+            <div class="kernel-empty-actions">
+              <button
+                class="kernel-action-btn kernel-action-btn--primary"
+                @click="createDialogOpen = true"
+              >
+                Create kernel for this node
+              </button>
+              <router-link :to="{ name: 'kernelManager' }" class="kernel-manager-link">
+                Open Kernel Manager
+              </router-link>
+            </div>
           </div>
           <div v-if="kernelRequiredError" class="kernel-error">
             Kernel execution is required for this node. Select a kernel to enable it.
@@ -100,12 +150,30 @@
         :artifacts-loading="artifactsLoading"
       />
     </generic-node-settings>
+
+    <CreateKernelDialog
+      v-model="createDialogOpen"
+      :suggestion="createSeed"
+      @created="onKernelCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import axios from "axios";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { KernelApi } from "@/api/kernel.api";
+import type { KernelInfo } from "@/types";
+import CreateKernelDialog from "@/components/kernel/CreateKernelDialog.vue";
+import { addPackagesToKernel, type UpgradePhase } from "@/components/kernel/kernelActions";
+import {
+  describeMatch,
+  fallbackSuggestion,
+  pickAutoSelect,
+  sortKernelsByMatch,
+} from "@/components/kernel/kernelMatch";
+import { useKernelMatch } from "@/composables/useKernelMatch";
 import { CustomNodeSchema } from "./interface";
 import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
@@ -117,14 +185,6 @@ import { NodeData, FileColumn } from "../../../baseNode/nodeInterfaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import CustomNodeForm from "./CustomNodeForm.vue";
 import { renderSafeMarkdown } from "../../../../../lib/markdown";
-
-// Kernel info type (matches backend KernelInfo)
-interface KernelInfo {
-  id: string;
-  name: string;
-  state: string;
-  packages: string[];
-}
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
@@ -158,6 +218,17 @@ let loadSeq = 0;
 // Kernel state
 const availableKernels = ref<KernelInfo[]>([]);
 const selectedKernelId = ref<string | null>(null);
+// el-select's clear button writes "" — normalise back to null so unselecting works.
+const selectedKernelModel = computed<string | null>({
+  get: () => selectedKernelId.value,
+  set: (value) => {
+    selectedKernelId.value = value || null;
+  },
+});
+const { matches, suggestion, matchLoading, matchUnavailable, matchFor, refreshMatch } =
+  useKernelMatch();
+const createDialogOpen = ref(false);
+const upgradePhase = ref<UpgradePhase | null>(null);
 
 // Isolated-kernel node when environment=="kernel" (or a legacy requires_kernel flag).
 const isKernelEnv = computed(
@@ -169,6 +240,36 @@ const isKernelEnv = computed(
 const kernelRequiredError = computed(
   () => isKernelEnv.value && !selectedKernelId.value && !kernelsLoading.value,
 );
+
+const nodeDeps = computed(() => (isKernelEnv.value ? (schema.value?.dependencies ?? []) : []));
+const hasDeps = computed(() => nodeDeps.value.length > 0);
+const sortedKernels = computed(() => sortKernelsByMatch(availableKernels.value, matches.value));
+const selectedMatch = computed(() => matchFor(selectedKernelId.value));
+const hasFullMatch = computed(() => matches.value.some((m) => m.level === "full"));
+const nodeDisplayName = computed(() => schema.value?.node_name || "custom-node");
+const createSeed = computed(
+  () =>
+    suggestion.value ??
+    fallbackSuggestion(
+      nodeDisplayName.value,
+      nodeDeps.value,
+      availableKernels.value.map((k) => k.id),
+    ),
+);
+const badgeFor = (kernelId: string) => describeMatch(matchFor(kernelId), nodeDeps.value.length);
+
+const upgradeLabel = computed(() => {
+  switch (upgradePhase.value) {
+    case "stopping":
+      return "Stopping…";
+    case "rebuilding":
+      return "Rebuilding…";
+    case "starting":
+      return "Starting…";
+    default:
+      return "Add missing packages";
+  }
+});
 
 const introHtml = computed(() =>
   schema.value?.intro ? renderSafeMarkdown(schema.value.intro) : "",
@@ -183,12 +284,59 @@ const driftFields = computed(() => {
 
 async function fetchKernels() {
   try {
-    const response = await axios.get("/kernels/");
-    availableKernels.value = response.data || [];
+    availableKernels.value = await KernelApi.getAll();
   } catch {
     // Kernels endpoint may not be available (no Docker), silently ignore
     availableKernels.value = [];
   }
+}
+
+function onKernelCreated(kernel: KernelInfo) {
+  if (!availableKernels.value.some((k) => k.id === kernel.id)) {
+    availableKernels.value = [...availableKernels.value, kernel];
+  }
+  selectedKernelId.value = kernel.id; // the watcher below refetches artifacts
+  void fetchKernels();
+  void refreshMatch(nodeDeps.value, nodeDisplayName.value);
+  const running =
+    kernel.state === "idle" || kernel.state === "starting" || kernel.state === "executing";
+  ElMessage.success(
+    running
+      ? `Kernel "${kernel.name}" is ready and selected.`
+      : `Kernel "${kernel.name}" selected. Start it from the Kernel Manager when you're ready.`,
+  );
+}
+
+async function onAddMissingPackages() {
+  const match = selectedMatch.value;
+  const kernel = availableKernels.value.find((k) => k.id === match?.kernel_id);
+  if (!match || !kernel) return;
+  try {
+    await ElMessageBox.confirm(
+      `This adds ${match.missing.join(", ")} to the kernel. The kernel will be stopped, ` +
+        "its image rebuilt with the new packages (~30 s), and started again. " +
+        "Any in-memory kernel state is lost.",
+      `Add packages to "${kernel.name}"?`,
+      { confirmButtonText: "Add packages", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  try {
+    const updated = await addPackagesToKernel(kernel, match.missing, (phase) => {
+      upgradePhase.value = phase;
+    });
+    ElMessage.success(`Kernel "${updated.name}" now has all required packages.`);
+  } catch (error) {
+    ElMessage.error(
+      `Rebuild failed — kernel "${kernel.name}" is stopped. ` +
+        `${(error as Error).message ?? ""} Retry or edit it in the Kernel Manager.`,
+    );
+  } finally {
+    upgradePhase.value = null;
+  }
+  await fetchKernels();
+  await refreshMatch(nodeDeps.value, nodeDisplayName.value);
 }
 
 async function fetchAvailableArtifacts(nodeId: number, kernelId: string | null) {
@@ -345,6 +493,17 @@ async function hydrateKernels(seq: number) {
     await fetchKernels();
   } finally {
     if (seq === loadSeq) kernelsLoading.value = false;
+  }
+  if (seq !== loadSeq) return;
+  if (hasDeps.value) {
+    await refreshMatch(nodeDeps.value, nodeDisplayName.value);
+    if (seq !== loadSeq) return;
+  }
+  // Auto-preselect a full match, but only when nothing was ever persisted —
+  // selectedKernelId is seeded from the saved binding before stage 2 runs.
+  if (selectedKernelId.value === null) {
+    const auto = pickAutoSelect(matches.value, availableKernels.value);
+    if (auto) selectedKernelId.value = auto;
   }
 }
 
@@ -607,5 +766,127 @@ defineExpose({
   padding: var(--spacing-2, 8px) var(--spacing-4, 16px) 0;
   font-size: var(--font-size-xs, 12px);
   color: var(--color-text-danger, #dc2626);
+}
+
+.kernel-select-el {
+  flex: 1;
+}
+
+.kernel-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kernel-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kernel-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kernel-state-dot--idle {
+  background-color: #67c23a;
+}
+
+.kernel-state-dot--executing {
+  background-color: #e6a23c;
+}
+
+.kernel-state-dot--starting {
+  background-color: #409eff;
+}
+
+.kernel-state-dot--stopped {
+  background-color: #909399;
+}
+
+.kernel-state-dot--error {
+  background-color: #f56c6c;
+}
+
+.match-badge {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs, 12px);
+  white-space: nowrap;
+}
+
+.match-badge--full {
+  color: #3f9c35;
+  background: rgba(103, 194, 58, 0.12);
+}
+
+.match-badge--partial {
+  color: #b7791f;
+  background: rgba(230, 162, 60, 0.12);
+}
+
+.match-badge--none {
+  color: var(--color-text-secondary, #909399);
+  background: rgba(144, 147, 153, 0.12);
+}
+
+.kernel-match-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3, 12px);
+  padding: var(--spacing-2, 8px) var(--spacing-4, 16px) 0;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-secondary);
+}
+
+.kernel-match-hint--warn {
+  color: #b7791f;
+}
+
+.kernel-match-hint--muted {
+  color: var(--color-text-secondary, #909399);
+}
+
+.kernel-action-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-primary, #d1d5db);
+  border-radius: var(--border-radius-md, 6px);
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs, 12px);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kernel-action-btn:hover:not(:disabled) {
+  border-color: var(--color-accent, #0891b2);
+  color: var(--color-accent, #0891b2);
+}
+
+.kernel-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.kernel-action-btn--primary {
+  border-color: var(--color-accent, #0891b2);
+  background: var(--color-accent, #0891b2);
+  color: #fff;
+}
+
+.kernel-action-btn--primary:hover:not(:disabled) {
+  color: #fff;
+  opacity: 0.9;
+}
+
+.kernel-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3, 12px);
+  margin-top: var(--spacing-2, 8px);
 }
 </style>

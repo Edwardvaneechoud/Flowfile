@@ -21,6 +21,7 @@ export interface CustomNodeInfoResponse {
   node_icon?: string;
   node_key?: string;
   environment?: "local" | "kernel";
+  dependencies?: string[];
   source_hash?: string;
   error?: string | null;
 }

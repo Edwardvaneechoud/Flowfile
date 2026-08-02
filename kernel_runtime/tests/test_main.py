@@ -69,6 +69,39 @@ class TestExecuteEndpoint:
         assert data["success"] is False
         assert "ZeroDivisionError" in data["error"]
 
+    def test_broken_matplotlib_does_not_abort_cell(self, client: TestClient, monkeypatch):
+        """A present-but-broken matplotlib must not fail the user's code.
+
+        Seen in the wild as ``AttributeError: module 'matplotlib' has no attribute
+        '_docstring'`` while pip was mid-install in the kernel: the plt.show() hook
+        raised something other than ImportError and took the whole cell with it.
+        """
+        import sys
+        import types
+
+        broken = types.ModuleType("matplotlib")
+
+        def _use(*args, **kwargs):
+            raise AttributeError("module 'matplotlib' has no attribute '_docstring'")
+
+        broken.use = _use
+        monkeypatch.setitem(sys.modules, "matplotlib", broken)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 4,
+                "code": 'print("ran anyway")',
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert "ran anyway" in data["stdout"]
+        assert data["error"] is None
+
     def test_stderr_captured(self, client: TestClient):
         resp = client.post(
             "/execute",

@@ -113,7 +113,11 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 )
 from flowfile_core.flowfile.user_defined.dispatch import resolve_secret_payload
 from flowfile_core.flowfile.user_defined.kernel_codegen import generate_kernel_script
-from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, missing_custom_node_error
+from flowfile_core.flowfile.user_defined.registry import (
+    KernelDependencyError,
+    KernelRequiredError,
+    missing_custom_node_error,
+)
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
@@ -131,6 +135,7 @@ from flowfile_core.kernel.execution import (
     read_kernel_outputs,
     write_inputs_to_parquet,
 )
+from flowfile_core.kernel.matching import verify_kernel_for_node
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -2557,6 +2562,8 @@ class FlowGraph:
         output_names: list[str],
         flow_data_engine: tuple[FlowDataEngine, ...],
         declared_publishes: list[str] | None = None,
+        required_dependencies: list[str] | None = None,
+        node_type: str | None = None,
     ) -> FlowDataEngine | None:
         """Execute code on a kernel container and return the primary output.
 
@@ -2565,6 +2572,15 @@ class FlowGraph:
         log forwarding, artifact recording, and output reading.
         """
         manager = get_kernel_manager()
+        if required_dependencies:
+            # Fail fast with a clear message instead of a ModuleNotFoundError
+            # from inside process(). Only provable mismatches block; an unknown
+            # kernel id falls through to execute_sync's own error path.
+            kernel_info = manager.get_kernel_sync(kernel_id)
+            if kernel_info is not None:
+                missing = verify_kernel_for_node(kernel_info, required_dependencies)
+                if missing:
+                    raise KernelDependencyError(node_type or "", kernel_id, kernel_info.name, missing)
         flow_id = self.flow_id
         node_logger = self.flow_logger.get_node_logger(node_id)
 
@@ -2677,6 +2693,9 @@ class FlowGraph:
         if registry_entry is not None and registry_entry.manifest is not None:
             declared_publishes = [d.name for d in registry_entry.manifest.publishes]
 
+        required_dependencies = list(custom_node.dependencies or [])
+        node_type = custom_node.item
+
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             return self._execute_on_kernel(
                 node_id=user_defined_node_settings.node_id,
@@ -2685,6 +2704,8 @@ class FlowGraph:
                 output_names=output_names,
                 flow_data_engine=flow_data_engine,
                 declared_publishes=declared_publishes,
+                required_dependencies=required_dependencies,
+                node_type=node_type,
             )
 
         return _func

@@ -8,6 +8,8 @@ import type {
   ImageFlavour,
   KernelConfig,
   KernelInfo,
+  KernelMatchBatchResponse,
+  KernelMatchResponse,
   KernelMemoryInfo,
 } from "../types";
 
@@ -103,6 +105,29 @@ export class KernelApi {
       console.error("API Error: Failed to get artifacts:", error);
       return {};
     }
+  }
+
+  // Errors deliberately throw raw: callers fall back to the plain kernel list
+  // when matching is unavailable.
+  static async matchKernels(
+    dependencies: string[],
+    nodeName?: string,
+  ): Promise<KernelMatchResponse> {
+    const response = await axios.post<KernelMatchResponse>(`${API_BASE_URL}/match`, {
+      dependencies,
+      node_name: nodeName ?? null,
+    });
+    return response.data;
+  }
+
+  // Errors throw raw — readiness badges simply don't render when unavailable.
+  static async matchKernelsBatch(
+    items: Record<string, string[]>,
+  ): Promise<KernelMatchBatchResponse> {
+    const response = await axios.post<KernelMatchBatchResponse>(`${API_BASE_URL}/match/batch`, {
+      items,
+    });
+    return response.data;
   }
 
   static async listFlavours(): Promise<FlavourInfo[]> {

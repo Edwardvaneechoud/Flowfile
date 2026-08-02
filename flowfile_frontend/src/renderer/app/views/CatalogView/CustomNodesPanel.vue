@@ -74,6 +74,7 @@
           :key="node.file_name"
           :node="node"
           :community="communityByFile[node.file_name] ?? null"
+          :readiness="readinessFor(node)"
           @open="openDesigner(node.file_name)"
         />
       </section>
@@ -181,9 +182,11 @@ import {
   addCustomNodeMount,
   listCatalogCustomNodes,
   listCustomNodeMounts,
+  listCustomNodes,
   removeCustomNodeMount,
   rescanCustomNodes,
   type CatalogCustomNode,
+  type CustomNodeInfoResponse,
   type MountInfo,
 } from "../../api/nodeDesigner";
 import {
@@ -192,6 +195,8 @@ import {
   type InstallReceipt,
 } from "../../api/communityNodes";
 import { filterNodes, groupByCategory } from "../../pages/nodeDesigner/customNodeFilter";
+import { readinessKey, useKernelReadiness } from "../../composables/useKernelReadiness";
+import type { KernelMatchBatchSummary } from "../../types";
 import { EmptyState } from "../../components/common";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
 import CustomNodeRow from "./CustomNodeRow.vue";
@@ -205,6 +210,10 @@ const search = ref("");
 // Keyed by receipt.file_name: the receipt is the only marker that a local node
 // came from the registry, and file_name is what both surfaces carry on disk.
 const communityByFile = ref<Record<string, InstallReceipt>>({});
+// /custom-node-mounts/nodes doesn't carry dependencies; join them in from
+// /list-custom-nodes by node_key (both routes enumerate the same registry).
+const depsByNodeKey = ref<Record<string, string[]>>({});
+const { readiness, unavailable, ensureReadiness } = useKernelReadiness();
 
 const visibleNodes = computed(() => filterNodes(nodes.value, search.value));
 const groups = computed(() => groupByCategory(visibleNodes.value));
@@ -229,19 +238,44 @@ async function loadNodes() {
   try {
     // /community_nodes/installed is JWT-only and reads a local sidecar, so it
     // works offline; a failure just means no Community chips.
-    const [rows, installed] = await Promise.all([
+    const [rows, installed, infos] = await Promise.all([
       listCatalogCustomNodes(),
       fetchInstalled().catch(() => [] as InstalledCommunityNode[]),
+      listCustomNodes().catch(() => [] as CustomNodeInfoResponse[]),
     ]);
     nodes.value = rows;
     communityByFile.value = Object.fromEntries(
       installed.map((entry) => [entry.receipt.file_name, entry.receipt]),
     );
+    depsByNodeKey.value = Object.fromEntries(
+      infos
+        .filter(
+          (info) => info.node_key && info.environment === "kernel" && info.dependencies?.length,
+        )
+        .map((info) => [info.node_key as string, info.dependencies as string[]]),
+    );
+    void fetchReadiness();
   } catch {
     ElMessage.error("Failed to load custom nodes");
   } finally {
     loading.value = false;
   }
+}
+
+// One batch call covering every visible kernel node's dependency set.
+async function fetchReadiness() {
+  const items: Record<string, string[]> = {};
+  for (const deps of Object.values(depsByNodeKey.value)) {
+    items[readinessKey(deps)] = deps;
+  }
+  if (Object.keys(items).length) await ensureReadiness(items);
+}
+
+function readinessFor(node: CatalogCustomNode): KernelMatchBatchSummary | null {
+  if (unavailable.value || node.environment !== "kernel") return null;
+  const deps = depsByNodeKey.value[node.node_key];
+  if (!deps?.length) return null;
+  return readiness.value[readinessKey(deps)] ?? null;
 }
 
 async function rescan() {

@@ -41,6 +41,24 @@ class KernelRequiredError(ValueError):
         super().__init__(f"Custom node '{node_type}' runs in an isolated kernel environment — select a kernel first.")
 
 
+class KernelDependencyError(ValueError):
+    """The bound kernel provably lacks packages a kernel-environment node declared.
+
+    ``missing`` entries arrive preformatted (e.g. ``"numpy>=2 (installed 1.26.4)"``)
+    so this module stays free of matching imports.
+    """
+
+    def __init__(self, node_type: str, kernel_id: str, kernel_name: str, missing: list[str]):
+        self.node_type = node_type
+        self.kernel_id = kernel_id
+        self.missing = missing
+        super().__init__(
+            f"Kernel '{kernel_name}' is missing packages required by node '{node_type}': "
+            f"{', '.join(missing)}. Add them to the kernel's packages (kernel settings) "
+            "or select a kernel that has them."
+        )
+
+
 class CustomNodeExecError(Exception):
     """A node file failed to exec/instantiate at placement time (``ensure_class``)."""
 

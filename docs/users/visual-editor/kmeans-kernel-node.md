@@ -18,7 +18,7 @@ The two are interchangeable: a node built in the designer's visual subset saves 
 
 ## Before you start: a kernel with scikit-learn
 
-This node runs its Python in a **kernel** — a Docker container managed from the [Kernel Manager](kernels.md). The kernel you run it on must already have scikit-learn: Flowfile does not install a node's dependencies at run time. Of the standard kernel images, **only the ML flavour ships scikit-learn** (along with XGBoost, LightGBM, and statsmodels) — on a Base or Lite kernel this tutorial fails with a `ModuleNotFoundError`.
+This node runs its Python in a **kernel** — a Docker container managed from the [Kernel Manager](kernels.md). The kernel you run it on must already have scikit-learn: Flowfile does not install a node's dependencies at run time, but it does check them — the node's kernel picker marks which of your kernels satisfy the requirement and can pre-fill a suitable kernel via **Create kernel for this node**, and a run on a kernel without scikit-learn fails fast with a clear "missing packages" error. Of the standard kernel images, **only the ML flavour ships scikit-learn** (along with XGBoost, LightGBM, and statsmodels).
 
 Set the kernel up once (Docker must be running):
 

@@ -2151,6 +2151,10 @@ class KernelManager:
     async def get_kernel(self, kernel_id: str) -> KernelInfo | None:
         return self._kernels.get(kernel_id)
 
+    def get_kernel_sync(self, kernel_id: str) -> KernelInfo | None:
+        """Sync lookup for callers outside the event loop (run-time dependency pre-check)."""
+        return self._kernels.get(kernel_id)
+
     def get_kernel_owner(self, kernel_id: str) -> int | None:
         return self._kernel_owners.get(kernel_id)
 

@@ -17,10 +17,15 @@ import { dryRunCustomNode, type DryRunBody } from "../../../api/nodeDesigner";
 import type { ExampleInput } from "../designerState";
 import { KernelApi } from "@/api/kernel.api";
 import type { KernelInfo } from "@/types";
+import { useKernelMatch } from "@/composables/useKernelMatch";
+import { pickAutoSelect, sortKernelsByMatch } from "@/components/kernel/kernelMatch";
+import type { UpgradePhase } from "@/components/kernel/kernelActions";
 
 type DryRunTest = ReturnType<typeof create>;
 
 let singleton: DryRunTest | null = null;
+
+const MATCH_DEBOUNCE_MS = 500;
 
 function create() {
   const store = useNodeDesignerStore();
@@ -43,17 +48,26 @@ function create() {
   const kernelsAvailable = computed(() => !dockerError.value);
   const selectedKernelId = ref<string | null>(store.environment.default_kernel_id ?? null);
 
+  // Live-designer dependency matching: ranks kernels against the pip deps the
+  // author is editing right now (not a saved snapshot of the node).
+  const { matches, suggestion, matchLoading, matchUnavailable, matchFor, refreshMatch } =
+    useKernelMatch();
+  const upgradePhase = ref<UpgradePhase | null>(null);
+  const deps = computed(() => (isKernelEnv.value ? store.environment.dependencies : []));
+  const hasDeps = computed(() => deps.value.length > 0);
+  const nodeDisplayName = computed(() => store.designerState.node_name.trim() || "custom-node");
+  const sortedKernels = computed(() => sortKernelsByMatch(kernels.value, matches.value));
+  const selectedMatch = computed(() => matchFor(selectedKernelId.value));
+  const hasFullMatch = computed(() => matches.value.some((m) => m.level === "full"));
+
   async function loadKernels() {
     kernelsLoading.value = true;
     try {
       kernels.value = await KernelApi.getAll();
       dockerError.value = false;
-      // Keep a valid selection: drop a stale id, default to the first kernel.
+      // Drop a stale selection so ensureSelection can re-pick a valid kernel.
       if (selectedKernelId.value && !kernels.value.some((k) => k.id === selectedKernelId.value)) {
         selectedKernelId.value = null;
-      }
-      if (!selectedKernelId.value && kernels.value.length) {
-        selectedKernelId.value = kernels.value[0].id;
       }
     } catch {
       kernels.value = [];
@@ -61,6 +75,17 @@ function create() {
     } finally {
       kernelsLoading.value = false;
     }
+  }
+
+  // Prefer a full dependency match when nothing is selected; first kernel otherwise.
+  function ensureSelection() {
+    if (selectedKernelId.value || !kernels.value.length) return;
+    selectedKernelId.value = pickAutoSelect(matches.value, kernels.value) ?? kernels.value[0].id;
+  }
+
+  async function refreshKernels() {
+    await Promise.all([loadKernels(), refreshMatch(deps.value, nodeDisplayName.value)]);
+    ensureSelection();
   }
 
   // Column-driven controls (ColumnSelector, IncomingColumns selects) preview against
@@ -129,7 +154,7 @@ function create() {
       store.dryRun.running = false;
       // The run may have started/warmed the kernel, so refresh the list — otherwise
       // the picker keeps showing the stale state from the initial load.
-      if (isKernelEnv.value) loadKernels();
+      if (isKernelEnv.value) void refreshKernels();
     }
   }
 
@@ -144,21 +169,39 @@ function create() {
       () => {
         saveWithNode.value = store.designerState.example_inputs !== null;
         seedTables();
+        if (isKernelEnv.value) {
+          const seed = store.environment.default_kernel_id;
+          if (seed) selectedKernelId.value = seed;
+          void refreshKernels();
+        }
       },
     );
     watch(inputCount, seedTables);
     watch(saveWithNode, persistExampleInputs);
-    // Load kernels once a node needs one; re-seed the selection from the node's id.
+    // Load kernels + match once a node needs one; re-seed the selection from the node's id.
     watch(
       isKernelEnv,
       (needsKernel) => {
         if (needsKernel) {
           const seed = store.environment.default_kernel_id;
           if (seed) selectedKernelId.value = seed;
-          if (!kernels.value.length) loadKernels();
+          void refreshKernels();
         }
       },
       { immediate: true },
+    );
+    // Re-match while the author edits the dependency chips; debounced so
+    // mid-typing keystrokes don't spam the endpoint. Stale replies are dropped
+    // by useKernelMatch's own sequence guard.
+    let matchDebounce: ReturnType<typeof setTimeout> | null = null;
+    watch(
+      () => deps.value.join("\n"),
+      () => {
+        if (matchDebounce) clearTimeout(matchDebounce);
+        matchDebounce = setTimeout(() => {
+          void refreshMatch(deps.value, nodeDisplayName.value);
+        }, MATCH_DEBOUNCE_MS);
+      },
     );
   });
 
@@ -177,7 +220,18 @@ function create() {
     kernelsLoading,
     kernelsAvailable,
     selectedKernelId,
-    loadKernels,
+    refreshKernels,
+    deps,
+    hasDeps,
+    nodeDisplayName,
+    suggestion,
+    matchLoading,
+    matchUnavailable,
+    matchFor,
+    sortedKernels,
+    selectedMatch,
+    hasFullMatch,
+    upgradePhase,
   };
 }
 

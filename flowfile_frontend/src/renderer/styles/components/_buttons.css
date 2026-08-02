@@ -11,11 +11,21 @@
   cursor: pointer;
   transition: all var(--transition-fast) var(--transition-timing);
   padding: var(--spacing-2) var(--spacing-4);
-  border: 1px solid transparent;
+  border: 1px solid var(--color-border-secondary);
   white-space: nowrap;
   height: 34px;
   line-height: 1;
   box-shadow: var(--shadow-xs);
+  /* Token-driven default (mirrors .btn-secondary) so a variant-less .btn never
+     falls back to the browser's buttonface look; variants override below. */
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+
+/* :where() keeps this at class specificity so any variant or component
+   hover rule (e.g. a scoped .foo:hover) still outranks it. */
+.btn:where(:hover):where(:not(:disabled)) {
+  background-color: var(--color-background-tertiary);
 }
 
 .btn:disabled {
@@ -128,6 +138,17 @@
 .btn-ghost:hover:not(:disabled) {
   background-color: var(--color-background-tertiary);
   color: var(--color-text-primary);
+}
+
+/* Quiet destructive action: ghost shape, danger color, tinted hover. */
+.btn-ghost.btn-danger {
+  color: var(--color-danger);
+}
+
+.btn-ghost.btn-danger:hover:not(:disabled) {
+  background-color: var(--color-danger-light);
+  border-color: transparent;
+  color: var(--color-danger);
 }
 
 /* Icon-only button */
