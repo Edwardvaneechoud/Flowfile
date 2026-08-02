@@ -69,28 +69,51 @@ class TestExecuteEndpoint:
         assert data["success"] is False
         assert "ZeroDivisionError" in data["error"]
 
-    def test_broken_matplotlib_does_not_abort_cell(self, client: TestClient, monkeypatch):
-        """A present-but-broken matplotlib must not fail the user's code.
+    def test_non_plotting_cell_does_not_import_matplotlib(self, client: TestClient, monkeypatch):
+        """A cell that never plots must not drag matplotlib into the process.
 
-        Seen in the wild as ``AttributeError: module 'matplotlib' has no attribute
-        '_docstring'`` while pip was mid-install in the kernel: the plt.show() hook
-        raised something other than ImportError and took the whole cell with it.
+        The kernel used to eagerly import it before every cell to hook plt.show(),
+        so a broken install (seen in the wild as ``AttributeError: module
+        'matplotlib' has no attribute '_docstring'`` mid pip-install) failed nodes
+        that never touched matplotlib.
         """
         import sys
-        import types
 
-        broken = types.ModuleType("matplotlib")
-
-        def _use(*args, **kwargs):
-            raise AttributeError("module 'matplotlib' has no attribute '_docstring'")
-
-        broken.use = _use
-        monkeypatch.setitem(sys.modules, "matplotlib", broken)
+        monkeypatch.delitem(sys.modules, "matplotlib", raising=False)
+        monkeypatch.delitem(sys.modules, "matplotlib.pyplot", raising=False)
 
         resp = client.post(
             "/execute",
             json={
                 "node_id": 4,
+                "code": 'print("no plots here")',
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert "no plots here" in data["stdout"]
+        assert "matplotlib" not in sys.modules
+
+    def test_broken_matplotlib_does_not_abort_cell(self, client: TestClient, monkeypatch):
+        """Figure capture is best-effort: a broken pyplot must not fail user code."""
+        import sys
+        import types
+
+        broken = types.ModuleType("matplotlib.pyplot")
+
+        def _get_fignums():
+            raise AttributeError("module 'matplotlib' has no attribute '_docstring'")
+
+        broken.get_fignums = _get_fignums
+        monkeypatch.setitem(sys.modules, "matplotlib.pyplot", broken)
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 5,
                 "code": 'print("ran anyway")',
                 "flow_id": 1,
                 "input_paths": {},
@@ -101,6 +124,32 @@ class TestExecuteEndpoint:
         assert data["success"] is True
         assert "ran anyway" in data["stdout"]
         assert data["error"] is None
+
+    def test_open_figures_are_captured_as_displays(self, client: TestClient):
+        """A cell that leaves a figure open gets it rendered, without calling show()."""
+        # Kernel containers set MPLBACKEND=Agg; select it explicitly so the test
+        # does not depend on the ambient backend or on test ordering.
+        code = (
+            "import matplotlib\n"
+            'matplotlib.use("Agg")\n'
+            "import matplotlib.pyplot as plt\n"
+            "fig, ax = plt.subplots()\n"
+            "ax.plot([1, 2, 3])\n"
+        )
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 6,
+                "code": code,
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert [d["mime_type"] for d in data["display_outputs"]] == ["image/png"]
+        assert data["display_outputs"][0]["data"]
 
     def test_stderr_captured(self, client: TestClient):
         resp = client.post(
