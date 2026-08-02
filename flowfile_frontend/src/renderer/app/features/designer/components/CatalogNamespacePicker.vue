@@ -26,7 +26,11 @@
 import { ref, onMounted, watch } from "vue";
 import NamespaceTreeItem from "./NamespaceTreeItem.vue";
 import { CatalogApi } from "../../../api";
-import { filterSelectableNamespaces, findNamespacePath } from "../../../types";
+import {
+  filterSelectableNamespaces,
+  findDefaultSaveNamespace,
+  findNamespacePath,
+} from "../../../types";
 import type { NamespaceTree } from "../../../types";
 import { useWritableNamespaces } from "../../../composables/useWritableNamespaces";
 
@@ -67,7 +71,10 @@ const loadTree = async () => {
     tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     // Auto-select the most appropriate "General" child when nothing is selected.
     if (selectedId.value === null) {
-      const defaultNs = findDefaultNamespace(tree.value);
+      const defaultNs = findDefaultSaveNamespace(
+        tree.value,
+        (c) => !props.writableOnly || isWritableNamespace(c),
+      );
       if (defaultNs) {
         selectedId.value = defaultNs.id;
         emit("update:modelValue", defaultNs.id);
@@ -80,25 +87,6 @@ const loadTree = async () => {
   } finally {
     loading.value = false;
   }
-};
-
-/**
- * Pick a sensible default namespace: prefer ``General > Local Flows``
- * (the home for disk-backed flows introduced alongside the save UX rework),
- * and fall back to ``General > default`` for older catalogs where the
- * Local Flows namespace hasn't been seeded yet.
- */
-const findDefaultNamespace = (nodes: NamespaceTree[]): NamespaceTree | null => {
-  const selectable = (c: NamespaceTree) => !props.writableOnly || isWritableNamespace(c);
-  for (const node of nodes) {
-    if (node.name === "General" && node.parent_id === null) {
-      const local = node.children.find((c) => c.name === "Local Flows");
-      if (local && selectable(local)) return local;
-      const defaultChild = node.children.find((c) => c.name === "default");
-      if (defaultChild && selectable(defaultChild)) return defaultChild;
-    }
-  }
-  return null;
 };
 
 const handleSelect = (namespaceId: number) => {

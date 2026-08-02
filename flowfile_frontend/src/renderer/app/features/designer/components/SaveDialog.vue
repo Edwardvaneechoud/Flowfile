@@ -1,11 +1,7 @@
 <template>
   <!-- TODO(ux): move the file-browser Save trigger into the dialog footer
        too, so both tabs share a single primary-action location. Requires
-       changing the file-browser to a pure-selection mode.
-       TODO(ux): surface the catalog-registration namespace more prominently
-       on re-save — keep the default-on behavior (users get free run history
-       that way), but make the target namespace visible at a glance so users
-       understand where their flow is being tracked. -->
+       changing the file-browser to a pure-selection mode. -->
   <el-dialog
     v-model="isVisible"
     title="Save Flow"
@@ -49,17 +45,10 @@
             @create-file="handleSaveFlow"
             @overwrite-file="handleSaveFlow"
           />
-          <div class="catalog-options">
-            <el-checkbox v-model="registerInCatalog"> Also register in catalog </el-checkbox>
-            <div v-if="registerInCatalog" class="namespace-section">
-              <label class="namespace-label">Namespace</label>
-              <catalog-namespace-picker
-                v-model="selectedNamespaceId"
-                :hide-system-namespaces="true"
-                :writable-only="true"
-              />
-            </div>
-          </div>
+          <catalog-register-row
+            v-model="registerInCatalog"
+            v-model:namespace-id="selectedNamespaceId"
+          />
         </div>
 
         <!-- Catalog tab -->
@@ -142,7 +131,7 @@ import {
 import { getCatalogFlowsDirectory } from "../../../api/file.api";
 import { getFlowSettings } from "../../../components/nodes/nodeLogic";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
-import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
+import CatalogRegisterRow from "./CatalogRegisterRow.vue";
 import CatalogFlowPicker from "./CatalogFlowPicker.vue";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import type { FlowRegistration } from "../../../types";
@@ -283,7 +272,10 @@ const updateInitialPath = async () => {
       if (isInternalFlowfilePath(settings.path)) {
         stem = stem.replace(/^\d+_/, "");
       }
-      catalogFlowName.value = settings.display_name?.trim() || stem;
+      // display_name is the catalog registration's name; an unregistered flow
+      // that was renamed only carries the rename in the session name, so fall
+      // back to it before the (possibly machine-generated) file stem.
+      catalogFlowName.value = settings.display_name?.trim() || settings.name?.trim() || stem;
 
       // Only seed the file-browser initial path from the current flow path
       // when that path lives in a real user directory.  Quick-created flows
@@ -525,32 +517,10 @@ defineExpose({
   gap: var(--spacing-4);
 }
 
-/* Cap the browser (default 70vh) so the register/namespace section below it
-   stays visible without scrolling the dialog. */
+/* Cap the browser (default 70vh) so the one-line register row below it stays
+   visible without scrolling the dialog. */
 .save-panel :deep(.file-browser) {
-  height: 46vh;
-}
-
-.catalog-options {
-  padding: var(--spacing-3);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background-color: var(--color-background-muted, #f9f9fb);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-3);
-}
-
-.namespace-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-}
-
-.namespace-label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
+  height: 52vh;
 }
 
 .catalog-save-form {

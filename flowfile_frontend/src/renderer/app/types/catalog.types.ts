@@ -63,6 +63,29 @@ export function findNamespacePath(nodes: NamespaceTree[], id: number): string[] 
   return [];
 }
 
+/**
+ * Default save-target namespace for catalog registration pickers: prefer
+ * ``General > Local Flows`` (the home for disk-backed flows), falling back to
+ * ``General > default``. Note that trees passed through
+ * ``filterSelectableNamespaces`` no longer contain "Local Flows", so those
+ * callers land on "default". ``isSelectable`` lets save-target pickers skip
+ * read-only namespaces.
+ */
+export function findDefaultSaveNamespace(
+  nodes: NamespaceTree[],
+  isSelectable: (node: NamespaceTree) => boolean = () => true,
+): NamespaceTree | null {
+  for (const node of nodes) {
+    if (node.name === "General" && node.parent_id === null) {
+      const local = node.children.find((c) => c.name === "Local Flows");
+      if (local && isSelectable(local)) return local;
+      const fallback = node.children.find((c) => c.name === "default");
+      if (fallback && isSelectable(fallback)) return fallback;
+    }
+  }
+  return null;
+}
+
 export interface NamespaceCreate {
   name: string;
   parent_id?: number | null;
