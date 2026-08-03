@@ -1,6 +1,10 @@
 import axios from "../services/axios.config";
 import type { FileInfo, DirectoryContentsParams } from "../types";
-import path from "path-browserify";
+import {
+  isRootPath as isStorageRootPath,
+  joinPath as joinStoragePath,
+  parentPath as storageParentPath,
+} from "../utils/storagePath";
 
 const handleApiError = (error: any): never => {
   throw {
@@ -69,24 +73,15 @@ export class FileApi {
   }
 
   static getParentPath(currentPath: string): string {
-    if (!currentPath) return "";
-    const parent = path.dirname(currentPath);
-    if (parent === currentPath || parent === ".") {
-      return currentPath;
-    }
-    return parent;
+    return currentPath ? storageParentPath(currentPath) : "";
   }
 
   static joinPath(currentPath: string, subdir: string): string {
-    if (!currentPath) return subdir;
-    return path.join(currentPath, subdir);
+    return joinStoragePath(currentPath, subdir);
   }
 
   static isRootPath(pathStr: string): boolean {
-    if (!pathStr) return true;
-    if (pathStr === "/" || pathStr === "~") return true;
-    if (/^[A-Za-z]:[/\\]?$/.test(pathStr)) return true;
-    return false;
+    return isStorageRootPath(pathStr);
   }
 }
 

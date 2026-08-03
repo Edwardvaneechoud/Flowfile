@@ -16,11 +16,21 @@
 
         <div v-if="!parentId" class="storage-section">
           <label class="storage-label">Object storage (optional)</label>
-          <input
-            v-model="storageUri"
-            class="input-field"
-            placeholder="s3://bucket/catalog (leave blank for local storage)"
-          />
+          <div class="storage-uri-row">
+            <input
+              v-model="storageUri"
+              class="input-field"
+              placeholder="s3://bucket/catalog (leave blank for local storage)"
+            />
+            <el-button
+              size="small"
+              :disabled="!!browseDisabledReason"
+              :title="browseDisabledReason ?? 'Browse cloud storage'"
+              @click="showBrowser = true"
+            >
+              Browse
+            </el-button>
+          </div>
           <CloudConnectionPicker
             v-model="selectedConnection"
             :connections="connections"
@@ -30,6 +40,15 @@
             helper-text="Leave unset to store this catalog's tables on local storage."
           />
           <p v-if="storageError" class="field-error">{{ storageError }}</p>
+          <CloudPathPicker
+            v-model="showBrowser"
+            :connection="selectedConnection"
+            :initial-file-path="storageUri"
+            context="cloudWrite"
+            allow-directory-selection
+            title="Select a folder for this catalog's tables"
+            @select="onStoragePathSelected"
+          />
         </div>
       </div>
       <div class="modal-actions">
@@ -57,16 +76,9 @@ import { CloudConnectionPicker } from "../../components/common";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import type { FullCloudStorageConnectionInterface } from "../CloudConnectionView/CloudConnectionTypes";
 
-const CLOUD_URI_SCHEMES = [
-  "s3://",
-  "s3a://",
-  "az://",
-  "abfs://",
-  "abfss://",
-  "adl://",
-  "gs://",
-  "gcs://",
-];
+import CloudPathPicker from "../../components/common/FileBrowser/CloudPathPicker.vue";
+import { browseUnsupportedReason } from "../../components/common/FileBrowser/browseSupport";
+import { CLOUD_URI_SCHEMES } from "../../utils/storagePath";
 
 const props = defineProps<{
   visible: boolean;
@@ -83,6 +95,20 @@ const storageUri = ref("");
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
 const connections = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsLoading = ref(false);
+const showBrowser = ref(false);
+
+const browseDisabledReason = computed<string | null>(() => {
+  if (connectionsLoading.value) return "Loading connections…";
+  if (!selectedConnection.value) return "Select a storage connection to browse.";
+  return browseUnsupportedReason(
+    selectedConnection.value.storageType,
+    selectedConnection.value.authMethod,
+  );
+});
+
+const onStoragePathSelected = (selectedPath: string) => {
+  storageUri.value = selectedPath;
+};
 
 const nameError = computed(() =>
   validateCatalogName(name.value, props.parentId ? "Schema" : "Catalog"),
@@ -175,6 +201,17 @@ async function submit() {
   margin-top: var(--spacing-2);
   padding-top: var(--spacing-3);
   border-top: 1px solid var(--color-border-primary);
+}
+
+.storage-uri-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.storage-uri-row .input-field {
+  flex: 1;
+  min-width: 0;
 }
 
 .storage-label {

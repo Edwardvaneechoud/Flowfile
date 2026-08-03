@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { isInternalFlowfilePath } from "../components/layout/Header/utils";
+import { isCloudUri } from "../utils/storagePath";
 
 export type SortByType = "name" | "size" | "last_modified" | "created_date";
 export type SortDirectionType = "asc" | "desc";
@@ -7,8 +8,12 @@ export type SortDirectionType = "asc" | "desc";
 /**
  * Context types for different file browser use cases.
  * Each context maintains its own independent path state.
+ *
+ * Cloud contexts are keyed by node role rather than by connection, so the number of
+ * localStorage entries stays fixed however many connections a user cycles through.
+ * Which connection a remembered path belongs to is tracked separately as its scope.
  */
-export type FileBrowserContext = "flows" | "dataFiles" | "output";
+export type FileBrowserContext = "flows" | "dataFiles" | "output" | "cloudRead" | "cloudWrite";
 
 /**
  * State for a single file browser context
@@ -16,6 +21,8 @@ export type FileBrowserContext = "flows" | "dataFiles" | "output";
 interface ContextState {
   currentPath: string;
   lastUsedPath: string;
+  /** Which storage the remembered path belongs to; null for the local filesystem. */
+  scope: string | null;
 }
 
 /**
@@ -34,20 +41,31 @@ function getDefaultPath(): string {
  */
 function loadContextState(context: FileBrowserContext): ContextState {
   const storedPath = localStorage.getItem(`fileBrowser_${context}_lastPath`);
-  const safePath = storedPath && !isInternalFlowfilePath(storedPath) ? storedPath : "";
+  const safePath = storedPath && !isDiscardedPath(storedPath) ? storedPath : "";
   return {
     currentPath: safePath || getDefaultPath(),
     lastUsedPath: safePath || getDefaultPath(),
+    scope: localStorage.getItem(`fileBrowser_${context}_lastScope`),
   };
+}
+
+/** Internal Flowfile paths are local-only; the check must not run on object-store URIs. */
+function isDiscardedPath(path: string): boolean {
+  return !isCloudUri(path) && isInternalFlowfilePath(path);
 }
 
 /**
  * Save context state to localStorage.  Internal Flowfile paths are not
  * persisted so they don't become the starting point next session.
  */
-function saveContextPath(context: FileBrowserContext, path: string): void {
-  if (!path || isInternalFlowfilePath(path)) return;
+function saveContextPath(context: FileBrowserContext, path: string, scope: string | null): void {
+  if (!path || isDiscardedPath(path)) return;
   localStorage.setItem(`fileBrowser_${context}_lastPath`, path);
+  if (scope) {
+    localStorage.setItem(`fileBrowser_${context}_lastScope`, scope);
+  } else {
+    localStorage.removeItem(`fileBrowser_${context}_lastScope`);
+  }
 }
 
 export const useFileBrowserStore = defineStore("fileBrowser", {
@@ -64,6 +82,8 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
       // Output nodes keep their own remembered directory, independent from the
       // read-file browser, so "where I last wrote" doesn't follow "where I last read".
       output: loadContextState("output"),
+      cloudRead: loadContextState("cloudRead"),
+      cloudWrite: loadContextState("cloudWrite"),
     } as Record<FileBrowserContext, ContextState>,
   }),
 
@@ -84,6 +104,16 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
       (state) =>
       (context: FileBrowserContext): string => {
         return state.contexts[context]?.lastUsedPath || "";
+      },
+
+    /**
+     * Which storage the remembered path belongs to.
+     * A caller whose scope differs must not reuse the path.
+     */
+    getScope:
+      (state) =>
+      (context: FileBrowserContext): string | null => {
+        return state.contexts[context]?.scope ?? null;
       },
   },
 
@@ -106,13 +136,14 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
     /**
      * Set the current path for a specific context
      */
-    setCurrentPath(context: FileBrowserContext, path: string) {
+    setCurrentPath(context: FileBrowserContext, path: string, scope: string | null = null) {
       if (!this.contexts[context]) {
-        this.contexts[context] = { currentPath: "", lastUsedPath: "" };
+        this.contexts[context] = { currentPath: "", lastUsedPath: "", scope: null };
       }
       this.contexts[context].currentPath = path;
       this.contexts[context].lastUsedPath = path;
-      saveContextPath(context, path);
+      this.contexts[context].scope = scope;
+      saveContextPath(context, path, scope);
     },
 
     /**
@@ -120,7 +151,7 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
      */
     initializeContext(context: FileBrowserContext, defaultPath: string) {
       if (!this.contexts[context]) {
-        this.contexts[context] = { currentPath: "", lastUsedPath: "" };
+        this.contexts[context] = { currentPath: "", lastUsedPath: "", scope: null };
       }
       if (!this.contexts[context].currentPath && defaultPath) {
         this.contexts[context].currentPath = defaultPath;
@@ -135,8 +166,10 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
       this.contexts[context] = {
         currentPath: defaultPath,
         lastUsedPath: defaultPath,
+        scope: null,
       };
       localStorage.removeItem(`fileBrowser_${context}_lastPath`);
+      localStorage.removeItem(`fileBrowser_${context}_lastScope`);
     },
   },
 });

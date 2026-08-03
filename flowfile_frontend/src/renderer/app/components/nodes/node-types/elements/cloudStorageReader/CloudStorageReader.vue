@@ -22,14 +22,30 @@
         <!-- File Path -->
         <div class="form-group">
           <label for="file-path">File Path</label>
-          <input
-            id="file-path"
-            v-model="nodeCloudStorageReader.cloud_storage_settings.resource_path"
-            type="text"
-            class="form-control"
-            placeholder="e.g., bucket-name/folder/file.csv or bucket-name/folder/"
-            @input="resetFields"
-          />
+          <div class="path-row">
+            <input
+              id="file-path"
+              v-model="nodeCloudStorageReader.cloud_storage_settings.resource_path"
+              type="text"
+              class="form-control"
+              placeholder="s3://bucket/folder/file.parquet"
+              @input="resetFields"
+            />
+            <el-button
+              size="small"
+              :disabled="!!browseDisabledReason"
+              :title="browseDisabledReason ?? 'Browse cloud storage'"
+              @click="showBrowser = true"
+            >
+              Browse
+            </el-button>
+          </div>
+          <p class="field-hint">
+            Full URI including the scheme &mdash; <code>s3://</code>, <code>az://</code> or
+            <code>gs://</code>.
+          </p>
+          <p v-if="browseDisabledReason" class="field-hint">{{ browseDisabledReason }}</p>
+          <p v-if="formatWarning" class="field-warning">{{ formatWarning }}</p>
         </div>
 
         <!-- File Format -->
@@ -144,13 +160,24 @@
         </div>
       </div>
     </generic-node-settings>
+
+    <CloudPathPicker
+      v-model="showBrowser"
+      :connection="selectedConnection"
+      :allowed-file-types="browseFileTypes"
+      :initial-file-path="nodeCloudStorageReader.cloud_storage_settings.resource_path"
+      context="cloudRead"
+      allow-directory-selection
+      title="Select a cloud file or folder to read"
+      @select="applyBrowsedPath"
+    />
   </div>
   <code-loader v-else />
 </template>
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { NodeCloudStorageReader } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -164,6 +191,14 @@ import {
   resolveConnection,
   unavailableConnectionName,
 } from "../../../../common/CloudConnectionPicker/connectionOptions";
+import CloudPathPicker from "../../../../common/FileBrowser/CloudPathPicker.vue";
+import { browseUnsupportedReason } from "../../../../common/FileBrowser/browseSupport";
+import {
+  browseFileTypesForFormat,
+  formatMismatchWarning,
+  scanModeForSelection,
+} from "../../../../common/FileBrowser/cloudPathMapping";
+import { storageTypeForUri } from "../../../../../utils/storagePath";
 
 interface Props {
   nodeId: number;
@@ -181,6 +216,46 @@ const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
 const unavailableConnection = ref<string | null>(null);
+const showBrowser = ref(false);
+
+// Must be a computed: fileBrowser.vue watches this prop by identity, so an inline
+// array literal would re-list on every parent render — a paid request per render.
+const browseFileTypes = computed(() =>
+  browseFileTypesForFormat(nodeCloudStorageReader.value?.cloud_storage_settings.file_format),
+);
+
+const formatWarning = computed(() =>
+  formatMismatchWarning(
+    nodeCloudStorageReader.value?.cloud_storage_settings.file_format,
+    nodeCloudStorageReader.value?.cloud_storage_settings.resource_path,
+  ),
+);
+
+/** Browsing needs to know which storage to root at, and that the auth method supports it. */
+const browseDisabledReason = computed<string | null>(() => {
+  if (connectionsAreLoading.value) return "Loading connections…";
+  if (selectedConnection.value) {
+    return browseUnsupportedReason(
+      selectedConnection.value.storageType,
+      selectedConnection.value.authMethod,
+    );
+  }
+  const currentPath = nodeCloudStorageReader.value?.cloud_storage_settings.resource_path ?? "";
+  if (storageTypeForUri(currentPath)) return null;
+  return "Pick a connection, or type a path starting with s3://, az:// or gs:// to browse.";
+});
+
+const applyBrowsedPath = (selectedPath: string, isDirectory: boolean) => {
+  const settings = nodeCloudStorageReader.value?.cloud_storage_settings;
+  if (!settings) return;
+  settings.resource_path = selectedPath;
+  // Only an explicit pick is authoritative about file-vs-prefix; the scan-mode
+  // select stays visible below so the value is always shown and overridable.
+  if (settings.file_format !== "delta") {
+    settings.scan_mode = scanModeForSelection(isDirectory);
+  }
+  resetFields();
+};
 
 const handleFileFormatChange = () => {
   resetFields();
@@ -337,6 +412,35 @@ defineExpose({
 .form-group {
   margin-bottom: 0.75rem;
   width: 100%;
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.path-row .form-control {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-hint {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: #718096;
+}
+
+.field-hint code {
+  background-color: #edf2f7;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+}
+
+.field-warning {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: #b7791f;
 }
 
 label {

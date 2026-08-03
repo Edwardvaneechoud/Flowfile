@@ -114,7 +114,7 @@ The **Cloud Storage Writer** node saves your processed data directly to cloud ob
 
 | Parameter          | Description                                                                                              |
 |--------------------|----------------------------------------------------------------------------------------------------------|
-| **File Path**      | Full path including bucket/container and file name (e.g., `bucket-name/folder/output.parquet`)          |
+| **File Path**      | Full URI including the scheme, bucket/container and file name (e.g., `s3://bucket/folder/output.parquet`). Click **Browse** to pick a folder and name the file. |
 | **File Format**    | Supported formats: CSV, Parquet, JSON, Delta Lake                                                       |
 | **Write Mode**     | `overwrite` (replace existing) or `append` (Delta Lake only)                                            |
 
