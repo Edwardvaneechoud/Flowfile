@@ -8,6 +8,8 @@ import json
 import math
 import os
 import re
+import sys
+import weakref
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
@@ -84,6 +86,14 @@ _deleted_artifacts: contextvars.ContextVar[list[str] | None] = contextvars.Conte
     "flowfile_deleted_artifacts", default=None
 )
 
+# Matplotlib figures already rendered this execution (displayed, auto-displayed,
+# or handed to publish_artifact); the end-of-cell sweep skips these so a figure
+# never shows up twice. WeakSet so a closed-and-collected figure can't shadow a
+# new one allocated at the same address.
+_rendered_figures: contextvars.ContextVar[weakref.WeakSet | None] = contextvars.ContextVar(
+    "flowfile_rendered_figures", default=None
+)
+
 
 def _set_context(
     node_id: int,
@@ -131,6 +141,7 @@ def _clear_context() -> None:
     _displays.set([])
     _artifact_previews.set({})
     _deleted_artifacts.set([])
+    _rendered_figures.set(None)
 
 
 def _get_context_value(key: str) -> Any:
@@ -223,6 +234,10 @@ def publish_artifact(name: str, obj: Any, preview: bool = False) -> None:
     allow: dict[str, int] | None = _get_context_value("available_artifacts")
     if allow is not None:
         allow[name] = node_id
+    # Publishing consumes the figure: the end-of-cell sweep must not also
+    # render it inline (the preview stays reachable from the Artifacts tab).
+    if _is_matplotlib_figure(obj):
+        _mark_figure_rendered(obj)
     if not preview:
         return
     try:
@@ -727,34 +742,39 @@ def log_error(message: str) -> None:
 # ===== Display APIs =====
 
 
-def _is_matplotlib_figure(obj: Any) -> bool:
-    """Check if obj is a matplotlib Figure (without requiring matplotlib)."""
-    try:
-        import matplotlib.figure
+def _class_from_loaded_module(module_name: str, class_name: str) -> type | None:
+    """Look up ``module_name.class_name`` via ``sys.modules``, never importing.
 
-        return isinstance(obj, matplotlib.figure.Figure)
-    except ImportError:
-        return False
+    An object can only be an instance of a class whose defining module has
+    already been imported by someone, so checking ``sys.modules`` is both
+    sufficient and side-effect free: a broken half-installed package (which can
+    raise non-ImportError exceptions at import time) can never fail a cell that
+    merely displays an unrelated object.
+    """
+    mod = sys.modules.get(module_name)
+    cls = getattr(mod, class_name, None) if mod is not None else None
+    return cls if isinstance(cls, type) else None
+
+
+def _is_matplotlib_figure(obj: Any) -> bool:
+    """Check if obj is a matplotlib Figure (without importing matplotlib)."""
+    cls = _class_from_loaded_module("matplotlib.figure", "Figure")
+    return cls is not None and isinstance(obj, cls)
 
 
 def _is_plotly_figure(obj: Any) -> bool:
-    """Check if obj is a plotly Figure (without requiring plotly)."""
-    try:
-        import plotly.graph_objects as go
-
-        return isinstance(obj, go.Figure)
-    except ImportError:
-        return False
+    """Check if obj is a plotly Figure (without importing plotly)."""
+    # Figure is defined in plotly.graph_objs; plotly.graph_objects re-exports it.
+    cls = _class_from_loaded_module("plotly.graph_objs", "Figure") or _class_from_loaded_module(
+        "plotly.graph_objects", "Figure"
+    )
+    return cls is not None and isinstance(obj, cls)
 
 
 def _is_pil_image(obj: Any) -> bool:
-    """Check if obj is a PIL Image (without requiring PIL)."""
-    try:
-        from PIL import Image
-
-        return isinstance(obj, Image.Image)
-    except ImportError:
-        return False
+    """Check if obj is a PIL Image (without importing PIL)."""
+    cls = _class_from_loaded_module("PIL.Image", "Image")
+    return cls is not None and isinstance(obj, cls)
 
 
 # Regex to detect HTML tags: <tag>, </tag>, <tag attr="val">, <br/>, etc.
@@ -923,6 +943,25 @@ def _reset_deleted_artifacts() -> None:
     _deleted_artifacts.set([])
 
 
+def _mark_figure_rendered(fig: Any) -> None:
+    """Record that *fig* was rendered or published during this execution."""
+    rendered = _rendered_figures.get()
+    if rendered is None:
+        rendered = weakref.WeakSet()
+        _rendered_figures.set(rendered)
+    rendered.add(fig)
+
+
+def _get_rendered_figures() -> weakref.WeakSet:
+    """Figures the end-of-cell sweep must not render again."""
+    return _rendered_figures.get() or weakref.WeakSet()
+
+
+def _reset_rendered_figures() -> None:
+    """Clear the rendered-figure tracker. Called at start of each execution."""
+    _rendered_figures.set(None)
+
+
 def _get_deleted_artifacts() -> list[str]:
     """Return names deleted via delete_artifact() during this execution."""
     return _deleted_artifacts.get([]) or []
@@ -936,6 +975,7 @@ def _render_display_payload(obj: Any) -> dict[str, str] | None:
     left to ``display`` so its fallbacks stay in one place.
     """
     if _is_matplotlib_figure(obj):
+        _mark_figure_rendered(obj)
         buf = io.BytesIO()
         obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
         buf.seek(0)

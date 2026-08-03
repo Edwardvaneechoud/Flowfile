@@ -151,6 +151,99 @@ class TestExecuteEndpoint:
         assert [d["mime_type"] for d in data["display_outputs"]] == ["image/png"]
         assert data["display_outputs"][0]["data"]
 
+    _MPL_SETUP = 'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n'
+
+    def _execute(self, client: TestClient, code: str, node_id: int, flow_id: int, **extra):
+        resp = client.post(
+            "/execute",
+            json={"node_id": node_id, "code": code, "flow_id": flow_id, "input_paths": {}, "output_dir": "", **extra},
+        )
+        return resp.json()
+
+    def test_error_cell_still_returns_open_figures(self, client: TestClient):
+        """Figures drawn before the cell raised ride along in the error response."""
+        code = self._MPL_SETUP + "fig, ax = plt.subplots()\nax.plot([1, 2, 3])\n1 / 0\n"
+        data = self._execute(client, code, node_id=7, flow_id=71)
+        assert data["success"] is False
+        assert "ZeroDivisionError" in data["error"]
+        assert [d["mime_type"] for d in data["display_outputs"]] == ["image/png"]
+
+    def test_failed_cell_figures_do_not_leak_into_other_flows(self, client: TestClient):
+        """pyplot's figure registry is process-global; a failed cell must not strand figures."""
+        code = self._MPL_SETUP + "fig, ax = plt.subplots()\nax.plot([1, 2, 3])\n1 / 0\n"
+        self._execute(client, code, node_id=7, flow_id=72)
+        data = self._execute(client, "x = 1", node_id=8, flow_id=73)
+        assert data["success"] is True
+        assert data["display_outputs"] == []
+
+    def test_displayed_figure_is_not_rendered_twice(self, client: TestClient):
+        """The end-of-cell sweep skips figures the cell already displayed."""
+        code = self._MPL_SETUP + "fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nflowfile_ctx.display(fig)\n"
+        data = self._execute(client, code, node_id=9, flow_id=74)
+        assert data["success"] is True
+        assert [d["mime_type"] for d in data["display_outputs"]] == ["image/png"]
+
+        bare = self._MPL_SETUP + "fig, ax = plt.subplots()\nax.plot([1])\nfig\n"
+        data = self._execute(client, bare, node_id=9, flow_id=74, interactive=True)
+        assert data["success"] is True
+        assert [d["mime_type"] for d in data["display_outputs"]] == ["image/png"]
+
+    def test_published_figure_is_not_rendered_inline(self, client: TestClient):
+        """Publishing consumes the figure; the preview lives in the Artifacts tab only."""
+        for node_id, flow_id, preview in ((10, 75, True), (11, 76, False)):
+            code = (
+                self._MPL_SETUP
+                + "fig, ax = plt.subplots()\nax.plot([1, 2])\n"
+                + f'flowfile_ctx.publish_artifact("chart", fig, preview={preview})\n'
+            )
+            data = self._execute(client, code, node_id=node_id, flow_id=flow_id)
+            assert data["success"] is True
+            assert data["artifacts_published"][0]["has_preview"] is preview
+            assert data["display_outputs"] == []
+
+    def test_agg_show_warning_is_suppressed(self, client: TestClient):
+        """plt.show() under Agg must not spam the cell's warnings/stderr."""
+        code = (
+            self._MPL_SETUP
+            + "import warnings\n"
+            + "hits = []\n"
+            + "warnings.showwarning = lambda *a, **k: hits.append(1)\n"
+            + "plt.plot([1, 2, 3])\n"
+            + "plt.show()\n"
+            + 'print("SHOWWARN_HITS", len(hits))\n'
+        )
+        data = self._execute(client, code, node_id=12, flow_id=77)
+        assert data["success"] is True
+        assert "SHOWWARN_HITS 0" in data["stdout"]
+        assert "non-interactive" not in data["stderr"]
+        assert [d["mime_type"] for d in data["display_outputs"]] == ["image/png"]
+
+    def test_broken_matplotlib_does_not_abort_display_path(self, client: TestClient, monkeypatch):
+        """A half-installed matplotlib must not fail a cell displaying unrelated objects."""
+        import sys
+        import types
+
+        broken = types.ModuleType("matplotlib")
+        broken.__path__ = []
+        monkeypatch.setitem(sys.modules, "matplotlib", broken)
+        monkeypatch.delitem(sys.modules, "matplotlib.figure", raising=False)
+        monkeypatch.delitem(sys.modules, "matplotlib.pyplot", raising=False)
+
+        class ExplodingFinder:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname.startswith("matplotlib"):
+                    raise AttributeError("module 'matplotlib' has no attribute '_docstring'")
+                return None
+
+        finder = ExplodingFinder()
+        sys.meta_path.insert(0, finder)
+        try:
+            data = self._execute(client, 'flowfile_ctx.display({"a": 1})', node_id=13, flow_id=78)
+        finally:
+            sys.meta_path.remove(finder)
+        assert data["success"] is True
+        assert [d["mime_type"] for d in data["display_outputs"]] == ["text/plain"]
+
     def test_stderr_captured(self, client: TestClient):
         resp = client.post(
             "/execute",

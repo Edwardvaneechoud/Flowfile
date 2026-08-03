@@ -335,8 +335,11 @@ def _capture_open_figures() -> None:
     if plt is None:
         return
     try:
+        rendered = flowfile_client._get_rendered_figures()
         for fig_num in plt.get_fignums():
-            flowfile_client.display(plt.figure(fig_num))
+            fig = plt.figure(fig_num)
+            if fig not in rendered:
+                flowfile_client.display(fig)
         plt.close("all")
     except Exception:
         logger.debug("Could not capture matplotlib figures", exc_info=True)
@@ -519,6 +522,7 @@ def _run_user_code(
         flowfile_client._reset_displays()
         flowfile_client._reset_artifact_previews()
         flowfile_client._reset_deleted_artifacts()
+        flowfile_client._reset_rendered_figures()
 
         exec_globals = _get_namespace(request.flow_id)
 
@@ -544,14 +548,17 @@ def _run_user_code(
             # frame attribution is fragile. Scoped to user-code execution so the
             # process-wide filter state is not mutated.
             warnings.simplefilter("default", DeprecationWarning)
+            # plt.show() is a harmless no-op under Agg; hide its warning.
+            warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive", category=UserWarning)
 
             user_code = request.code
             if request.interactive:
                 user_code = _maybe_wrap_last_expression(user_code)
 
-            exec(user_code, exec_globals)  # noqa: S102
-
-            _capture_open_figures()
+            try:
+                exec(user_code, exec_globals)  # noqa: S102
+            finally:
+                _capture_open_figures()
 
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
