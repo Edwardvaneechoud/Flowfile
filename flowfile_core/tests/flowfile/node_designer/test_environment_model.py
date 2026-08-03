@@ -4,18 +4,23 @@ Tests for the execution-environment model:
 - legacy requires_kernel / kernel_id shims map onto environment
 - environment + dependencies surface in the frontend schema
 - kernel-required nodes raise KernelRequiredError (HTTP 422 KERNEL_REQUIRED)
+- the run-time dependency pre-check (KernelDependencyError) blocks only provable mismatches
 - UserDefinedNode v2 accepts legacy payload shapes unchanged
 """
+from unittest.mock import MagicMock
+
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import flow_file_handler, main
 from flowfile_core.configs import node_store
+from flowfile_core.flowfile import flow_graph as flow_graph_module
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
-from flowfile_core.flowfile.user_defined.registry import KernelRequiredError
+from flowfile_core.flowfile.user_defined.registry import KernelDependencyError, KernelRequiredError
+from flowfile_core.kernel.models import ImageFlavour, KernelInfo
 from flowfile_core.schemas import input_schema, schemas
 
 
@@ -167,6 +172,96 @@ class TestKernelRequiredGate:
         assert detail["node_type"] == "env_kernel_node"
 
 
+class TestKernelDependencyPrecheck:
+    """The run-time gate in _execute_on_kernel: only provable mismatches block.
+
+    Only the gate is under test — the mocked manager makes everything after it
+    fail on unrelated types, which the pass-through cases deliberately swallow.
+    """
+
+    def _manager(self, kernel: KernelInfo | None) -> MagicMock:
+        manager = MagicMock()
+        manager.get_kernel_sync.return_value = kernel
+        return manager
+
+    def test_missing_dependency_blocks_before_execute(self, monkeypatch):
+        graph = _make_graph(4806)
+        bare = KernelInfo(id="k1", name="Bare kernel", image_flavour=ImageFlavour.BASE)
+        manager = self._manager(bare)
+        monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
+
+        with pytest.raises(KernelDependencyError) as exc_info:
+            graph._execute_on_kernel(
+                node_id=1,
+                kernel_id="k1",
+                code="",
+                output_names=["main"],
+                flow_data_engine=(),
+                required_dependencies=["scikit-learn>=1.4"],
+                node_type="env_kernel_node",
+            )
+        message = str(exc_info.value)
+        assert "is missing packages" in message
+        assert "scikit-learn>=1.4" in message
+        assert "Bare kernel" in message
+        assert isinstance(exc_info.value, ValueError)  # existing except clauses keep working
+        manager.execute_sync.assert_not_called()
+
+    def test_unverified_version_does_not_block(self, monkeypatch):
+        graph = _make_graph(4807)
+        legacy = KernelInfo(id="k1", name="Legacy", packages=["scikit-learn"])  # no resolved versions
+        manager = self._manager(legacy)
+        monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
+
+        try:
+            graph._execute_on_kernel(
+                node_id=1,
+                kernel_id="k1",
+                code="",
+                output_names=["main"],
+                flow_data_engine=(),
+                required_dependencies=["scikit-learn>=1.4"],
+                node_type="env_kernel_node",
+            )
+        except KernelDependencyError:
+            pytest.fail("pre-check blocked an unverifiable dependency")
+        except Exception:
+            pass
+
+    def test_unknown_kernel_does_not_block(self, monkeypatch):
+        graph = _make_graph(4808)
+        manager = self._manager(None)  # id not in the manager: execute_sync owns that error
+        monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
+
+        try:
+            graph._execute_on_kernel(
+                node_id=1,
+                kernel_id="gone",
+                code="",
+                output_names=["main"],
+                flow_data_engine=(),
+                required_dependencies=["scikit-learn>=1.4"],
+                node_type="env_kernel_node",
+            )
+        except KernelDependencyError:
+            pytest.fail("pre-check must not block for an unknown kernel id")
+        except Exception:
+            pass
+
+    def test_no_dependencies_skips_lookup(self, monkeypatch):
+        graph = _make_graph(4809)
+        manager = self._manager(None)
+        monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
+
+        try:
+            graph._execute_on_kernel(
+                node_id=1, kernel_id="k1", code="", output_names=["main"], flow_data_engine=()
+            )
+        except Exception:
+            pass
+        manager.get_kernel_sync.assert_not_called()
+
+
 class TestUserDefinedNodeV2:
     def test_none_settings_coerced_to_empty_dict(self):
         node = input_schema.UserDefinedNode(flow_id=1, node_id=1, settings=None)
@@ -206,6 +301,49 @@ class TestUserDefinedNodeV2:
         assert dumped["node_source_hash"] == "ab" * 32
         assert dumped["settings_format_version"] == 1
         assert input_schema.UserDefinedNode.model_validate(dumped).settings == {"s": {"c": 1}}
+
+
+class TestCustomNodeInfoDependencies:
+    def test_node_info_exposes_dependencies(self, tmp_path):
+        from flowfile_core.flowfile.user_defined.registry import CustomNodeRegistry
+        from flowfile_core.routes.user_defined_components import _node_info_from_entry
+
+        nodes_dir = tmp_path / "nodes"
+        nodes_dir.mkdir()
+        (nodes_dir / "dep_node.py").write_text(
+            "import polars as pl\n"
+            "from flowfile_core.flowfile.node_designer import CustomNodeBase\n\n\n"
+            "class DepNode(CustomNodeBase):\n"
+            '    node_name: str = "Dep Node"\n'
+            '    environment: str = "kernel"\n'
+            '    dependencies: list = ["scikit-learn>=1.4", "numpy"]\n\n'
+            "    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n"
+            "        return inputs[0]\n"
+        )
+        registry = CustomNodeRegistry(directory=nodes_dir)
+        entry = registry.load_file(nodes_dir / "dep_node.py")
+        info = _node_info_from_entry(entry)
+        assert info.environment == "kernel"
+        assert info.dependencies == ["scikit-learn>=1.4", "numpy"]
+
+    def test_local_node_defaults_to_no_dependencies(self, tmp_path):
+        from flowfile_core.flowfile.user_defined.registry import CustomNodeRegistry
+        from flowfile_core.routes.user_defined_components import _node_info_from_entry
+
+        nodes_dir = tmp_path / "nodes"
+        nodes_dir.mkdir()
+        (nodes_dir / "plain_node.py").write_text(
+            "import polars as pl\n"
+            "from flowfile_core.flowfile.node_designer import CustomNodeBase\n\n\n"
+            "class PlainDepNode(CustomNodeBase):\n"
+            '    node_name: str = "Plain Dep Node"\n\n'
+            "    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:\n"
+            "        return inputs[0]\n"
+        )
+        registry = CustomNodeRegistry(directory=nodes_dir)
+        entry = registry.load_file(nodes_dir / "plain_node.py")
+        info = _node_info_from_entry(entry)
+        assert info.dependencies == []
 
 
 class TestNodeSourceHashStamp:

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -107,6 +108,61 @@ class FlavourInfo(BaseModel):
     flavour: ImageFlavour
     image: str | None = None  # registry tag for built flavours; None for "custom"
     packages: list[FlavourPackage] = Field(default_factory=list)
+
+
+class KernelMatchRequest(BaseModel):
+    """Dependency specs (from a custom node) to match against the user's kernels."""
+
+    dependencies: list[str] = Field(default_factory=list)
+    node_name: str | None = None  # seeds the suggestion's generated id/name
+
+
+class KernelMatchEntry(BaseModel):
+    """How well one kernel satisfies a dependency spec list."""
+
+    kernel_id: str
+    kernel_name: str
+    state: KernelState
+    image_flavour: ImageFlavour
+    satisfied: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    unverified: list[str] = Field(default_factory=list)
+    invalid: list[str] = Field(default_factory=list)
+    details: dict[str, str] = Field(default_factory=dict)  # spec -> human-readable reason
+    level: Literal["full", "partial", "none"]
+
+
+class KernelSuggestion(BaseModel):
+    """Ready-to-POST create seed derived from a node's dependency specs."""
+
+    config: KernelConfig
+    covered_by_flavour: list[str] = Field(default_factory=list)
+    flavour_image_available: bool | None = None  # None = Docker down / unknown
+
+
+class KernelMatchResponse(BaseModel):
+    matches: list[KernelMatchEntry] = Field(default_factory=list)  # sorted best-first
+    suggestion: KernelSuggestion
+    docker_available: bool
+
+
+class KernelMatchBatchRequest(BaseModel):
+    """Many dependency lists at once (e.g. every kernel node in a palette)."""
+
+    items: dict[str, list[str]] = Field(default_factory=dict)  # arbitrary key -> pip specs
+
+
+class KernelMatchBatchSummary(BaseModel):
+    """Best-match digest for one dependency list."""
+
+    level: Literal["full", "partial", "none"]
+    best_kernel_id: str | None = None  # None when nothing useful matches
+    best_kernel_name: str | None = None
+
+
+class KernelMatchBatchResponse(BaseModel):
+    results: dict[str, KernelMatchBatchSummary] = Field(default_factory=dict)
+    docker_available: bool
 
 
 class DockerStatus(BaseModel):

@@ -45,10 +45,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
 import { useNodes } from "./useNodes";
 import { usePaletteGroups } from "./usePaletteGroups";
+import { readinessKey, useKernelReadiness } from "../../composables/useKernelReadiness";
 import NodeListItem from "./NodeListItem.vue";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import { nodeDocsMenuOptions, nodeDocsUrl, READ_MORE_ACTION } from "./nodeDocsLinks";
@@ -57,6 +58,19 @@ import type { NodeTemplate } from "../../types";
 
 const { nodes } = useNodes();
 const { searchQuery, filteredGroups, isGroupOpen, toggleGroup } = usePaletteGroups(nodes);
+
+// One batch readiness fetch for every kernel-env template with deps; the rows
+// (NodeListItem) read the shared cache keyed by their own dependency set.
+const { ensureReadiness } = useKernelReadiness();
+watch(nodes, (all) => {
+  const items: Record<string, string[]> = {};
+  for (const node of all) {
+    if (node.execution_environment === "kernel" && node.dependencies?.length) {
+      items[readinessKey(node.dependencies)] = node.dependencies;
+    }
+  }
+  if (Object.keys(items).length) void ensureReadiness(items);
+});
 
 const emit = defineEmits<{
   (e: "dragstart", event: DragEvent, node: NodeTemplate): void;

@@ -18,7 +18,13 @@ from flowfile_core.kernel.models import (
     KernelConfig,
     KernelImageStatus,
     KernelInfo,
+    KernelMatchBatchRequest,
+    KernelMatchBatchResponse,
+    KernelMatchBatchSummary,
+    KernelMatchRequest,
+    KernelMatchResponse,
     KernelMemoryInfo,
+    KernelSuggestion,
     KernelUpdate,
     RecoveryStatus,
 )
@@ -151,6 +157,87 @@ async def docker_status():
         image_available=base_available,
         images=images,
     )
+
+
+async def _matchable_kernels(user_id: int):
+    """``(kernels, all_kernel_ids, docker_available, manager | None)`` for matching.
+
+    Degrades without Docker: when no manager exists (daemon down or still
+    warming) the DB-persisted kernels are matched instead, so the picker and
+    the create-from-spec dialog keep working — only live state is lost.
+    """
+    from flowfile_core.kernel import get_kernel_manager_if_initialized
+
+    manager = get_kernel_manager_if_initialized()
+    if manager is not None:
+        kernels = await manager.list_kernels(user_id=user_id)
+        # Suggestion ids must dodge every kernel id, not just the caller's —
+        # create_kernel enforces global uniqueness.
+        existing_ids = {kernel.id for kernel in await manager.list_kernels()}
+        return kernels, existing_ids, True, manager
+
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.kernel import persistence
+
+    with get_db_context() as db:
+        rows = persistence.get_all_kernels(db)
+    kernels = [
+        KernelInfo(**config.model_dump(), resolved_packages=resolved)
+        for config, resolved, owner_id in rows
+        if owner_id == user_id
+    ]
+    existing_ids = {config.id for config, _, _ in rows}
+    return kernels, existing_ids, False, None
+
+
+@router.post("/match", response_model=KernelMatchResponse)
+async def match_kernels_for_spec(request: KernelMatchRequest, current_user=Depends(get_current_active_user)):
+    """Rank the caller's kernels against a node's dependency specs."""
+    from flowfile_core.kernel import matching
+
+    kernels, existing_ids, docker_available, manager = await _matchable_kernels(current_user.id)
+    matches = matching.match_kernels(request.dependencies, kernels)
+    config, covered = matching.suggest_kernel_config(request.dependencies, existing_ids, request.node_name)
+
+    flavour_image_available: bool | None = None
+    if manager is not None:
+        try:
+            flavour_image_available = manager.resolve_local_image(config.image_flavour) is not None
+        except Exception:
+            flavour_image_available = None
+
+    return KernelMatchResponse(
+        matches=matches,
+        suggestion=KernelSuggestion(
+            config=config,
+            covered_by_flavour=covered,
+            flavour_image_available=flavour_image_available,
+        ),
+        docker_available=docker_available,
+    )
+
+
+@router.post("/match/batch", response_model=KernelMatchBatchResponse)
+async def match_kernels_batch(request: KernelMatchBatchRequest, current_user=Depends(get_current_active_user)):
+    """Best-match digest for many dependency lists at once.
+
+    Powers readiness badges on node lists: one call per palette/catalog view
+    instead of one per node. Same Docker degradation as /match.
+    """
+    from flowfile_core.kernel import matching
+
+    kernels, _existing_ids, docker_available, _manager = await _matchable_kernels(current_user.id)
+    results: dict[str, KernelMatchBatchSummary] = {}
+    for key, dependencies in request.items.items():
+        entries = matching.match_kernels(dependencies, kernels)
+        best = entries[0] if entries else None
+        useful = best is not None and best.level != "none"
+        results[key] = KernelMatchBatchSummary(
+            level=best.level if best is not None else "none",
+            best_kernel_id=best.kernel_id if useful else None,
+            best_kernel_name=best.kernel_name if useful else None,
+        )
+    return KernelMatchBatchResponse(results=results, docker_available=docker_available)
 
 
 @router.post("/images/{flavour}/pull", status_code=202)

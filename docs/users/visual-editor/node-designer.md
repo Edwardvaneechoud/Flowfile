@@ -169,7 +169,7 @@ The **Test** tab runs the node against sample data without adding it to a flow �
 2. Click **Run test**.
 3. The results show a **per-output preview grid**, the output schema, row count, run duration, and which environment ran it. **Logs** and any **error** (with a collapsible traceback) appear alongside.
 
-The settings used are your Form-tab preview values. For an isolated-kernel node, the Test tab also has a **Kernel** selector: the dry run executes on that kernel, so pick one whose image has the node's [dependencies](#execution-environment).
+The settings used are your Form-tab preview values. For an isolated-kernel node, the Test tab also has a **Kernel** selector: the dry run executes on that kernel. The selector ranks your kernels against the node's live [dependencies](#execution-environment) (same badges as the node's settings drawer), can add missing packages to a near-miss kernel, and offers **Create kernel for this node** when nothing matches.
 
 ### Save the test setup with the node
 
@@ -185,7 +185,7 @@ Every node declares where its `process` runs. The Execution group offers two car
 - **Isolated kernel** — `process` runs inside a Docker kernel. Use it when the node needs third-party libraries or stronger isolation. A **Dependencies (pip)** tag editor on this card records the packages the node needs — they show on the node's kernel badge and tell users which kernel to pick. Kernel nodes can declare multiple named outputs. Secrets are not available here.
 
 !!! warning "Dependencies are a requirement, not an install step"
-    Flowfile does not pip-install a node's dependencies at run time. The kernel you run the node on must already provide them — through its image flavour (the standard **ML** image ships scikit-learn, XGBoost, LightGBM, and statsmodels) or through packages added to the kernel itself in the [Kernel Manager](kernels.md#creating-a-kernel). Running a scikit-learn node on a Base kernel fails with a `ModuleNotFoundError`.
+    Flowfile does not pip-install a node's dependencies at run time. The kernel you run the node on must already provide them — through its image flavour (the standard **ML** image ships scikit-learn, XGBoost, LightGBM, and statsmodels) or through packages added to the kernel itself in the [Kernel Manager](kernels.md#creating-a-kernel). Flowfile checks the requirement for you: the node's kernel picker marks matching kernels, can add the missing packages to an existing kernel, or pre-fills a new kernel from the list — and running a scikit-learn node on a Base kernel fails fast with a clear "missing packages" error rather than a `ModuleNotFoundError`.
 
 The picker shows live Docker status. When Docker is unavailable, the Isolated-kernel card explains why and offers **Open Kernel Manager** and **Retry** — never a silent, dead dropdown. Create and start kernels in the [Kernel Manager](kernels.md) first.
 
@@ -217,7 +217,7 @@ For the full `flowfile_ctx` API (artifacts, display, logging, catalog access) av
 
 ### Kernel selector in a flow
 
-When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it. Pick one whose image provides the node's dependencies — the drawer shows the required packages next to the picker. The same applies in the designer's Test tab, which has its own Kernel selector.
+When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it. The picker marks which kernels satisfy the node's required packages, and node lists (the palette and Catalog → Custom Nodes) carry a readiness badge so you can see before placing a node whether a suitable kernel already exists. The same applies in the designer's Test tab, which has its own Kernel selector.
 
 ---
 

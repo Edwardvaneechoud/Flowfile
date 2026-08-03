@@ -6,6 +6,7 @@ import io
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 import warnings
@@ -321,25 +322,27 @@ app = FastAPI(title="FlowFile Kernel Runtime", version=__version__, lifespan=_li
 
 # Request / Response models
 
-# Matplotlib setup code to auto-capture plt.show() calls.
-# Captures ``flowfile_ctx`` into a dunder-prefixed name so the hook keeps
-# working even if user code later rebinds ``flowfile_ctx``.
-_MATPLOTLIB_SETUP = """\
-__flowfile_ctx = flowfile_ctx
-try:
-    import matplotlib as _mpl
-    _mpl.use('Agg')
-    import matplotlib.pyplot as _plt
-    _original_show = _plt.show
-    def _flowfile_show(*args, **kwargs):
-        import matplotlib.pyplot as __plt
-        for _fig_num in __plt.get_fignums():
-            __flowfile_ctx.display(__plt.figure(_fig_num))
-        __plt.close('all')
-    _plt.show = _flowfile_show
-except ImportError:
-    pass
-"""
+
+def _capture_open_figures() -> None:
+    """Send any figures the cell left open to the UI, like Jupyter's inline backend.
+
+    Looks matplotlib up in ``sys.modules`` rather than importing it, so a cell
+    that never plots never pays for the import and a broken matplotlib install
+    cannot surface as an error inside unrelated user code. The container sets
+    ``MPLBACKEND=Agg``, so no ``matplotlib.use()`` call is needed here.
+    """
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return
+    try:
+        rendered = flowfile_client._get_rendered_figures()
+        for fig_num in plt.get_fignums():
+            fig = plt.figure(fig_num)
+            if fig not in rendered:
+                flowfile_client.display(fig)
+        plt.close("all")
+    except Exception:
+        logger.debug("Could not capture matplotlib figures", exc_info=True)
 
 
 def _maybe_wrap_last_expression(code: str) -> str:
@@ -519,6 +522,7 @@ def _run_user_code(
         flowfile_client._reset_displays()
         flowfile_client._reset_artifact_previews()
         flowfile_client._reset_deleted_artifacts()
+        flowfile_client._reset_rendered_figures()
 
         exec_globals = _get_namespace(request.flow_id)
 
@@ -544,14 +548,17 @@ def _run_user_code(
             # frame attribution is fragile. Scoped to user-code execution so the
             # process-wide filter state is not mutated.
             warnings.simplefilter("default", DeprecationWarning)
-
-            exec(_MATPLOTLIB_SETUP, exec_globals)  # noqa: S102
+            # plt.show() is a harmless no-op under Agg; hide its warning.
+            warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive", category=UserWarning)
 
             user_code = request.code
             if request.interactive:
                 user_code = _maybe_wrap_last_expression(user_code)
 
-            exec(user_code, exec_globals)  # noqa: S102
+            try:
+                exec(user_code, exec_globals)  # noqa: S102
+            finally:
+                _capture_open_figures()
 
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 

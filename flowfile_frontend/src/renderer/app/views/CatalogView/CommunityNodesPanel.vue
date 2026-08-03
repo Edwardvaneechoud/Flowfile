@@ -231,6 +231,12 @@
       @install="onDetailInstall"
       @uninstall="onDetailUninstall"
     />
+
+    <NodeKernelSetupDialog
+      v-model="setupOpen"
+      :node-name="setupNode?.node_name ?? ''"
+      :dependencies="setupNode?.dependencies ?? []"
+    />
   </div>
 </template>
 
@@ -254,6 +260,8 @@ import {
 import { describeError, useCommunityNodesStore } from "../../stores/community-nodes-store";
 import { fetchMediaObjectUrl } from "../../composables/useCommunityMedia";
 import { getDefaultIconUrl } from "../../features/designer/utils";
+import { KernelApi } from "../../api/kernel.api";
+import NodeKernelSetupDialog from "../../components/kernel/NodeKernelSetupDialog.vue";
 import CommunityConsentDialog from "./CommunityConsentDialog.vue";
 import CommunityNodeDetailModal from "./CommunityNodeDetailModal.vue";
 import { desktop } from "../../../lib/desktop";
@@ -268,6 +276,8 @@ const consentOpen = ref(false);
 const consentNode = ref<CommunityNodeSummary | null>(null);
 const detailOpen = ref(false);
 const detailNodeId = ref<string | null>(null);
+const setupOpen = ref(false);
+const setupNode = ref<CommunityNodeSummary | null>(null);
 
 const errorMessage = computed(() => (store.error ? describeError(store.error) : ""));
 
@@ -323,12 +333,34 @@ async function onConsentConfirm(acknowledgedCapabilities: string[]) {
     await loadMedia();
     if (res.load_error) {
       ElMessage.warning(`Installed ${node.node_name}, but it failed to load: ${res.load_error}`);
+    } else if (node.environment === "kernel" && node.dependencies?.length) {
+      await offerKernelSetup(node);
     } else {
       ElMessage.success(`Installed ${node.node_name}. It's now available in the flow editor.`);
     }
   } catch (e) {
     ElMessage.error(describeError(e));
   }
+}
+
+// Best-effort: kernel matching being unavailable must never make the install look failed.
+async function offerKernelSetup(node: CommunityNodeSummary) {
+  let fullKernelName: string | null = null;
+  try {
+    const match = await KernelApi.matchKernels(node.dependencies, node.node_name);
+    fullKernelName = match.matches.find((m) => m.level === "full")?.kernel_name ?? null;
+  } catch {
+    // fall through to the setup dialog, which handles matching being down itself
+  }
+  if (fullKernelName) {
+    ElMessage.success(
+      `Installed ${node.node_name}. Kernel "${fullKernelName}" already has its packages.`,
+    );
+    return;
+  }
+  ElMessage.success(`Installed ${node.node_name}. It's now available in the flow editor.`);
+  setupNode.value = node;
+  setupOpen.value = true;
 }
 
 function onDetailInstall(node: CommunityNodeSummary) {

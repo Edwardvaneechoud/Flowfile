@@ -20,7 +20,8 @@
         <span
           v-if="node.execution_environment === 'kernel'"
           class="kernel-badge"
-          title="Runs in isolated kernel"
+          :class="kernelBadgeClass"
+          :title="kernelBadgeTitle"
         >
           <KernelBadgeIcon />
         </span>
@@ -38,6 +39,7 @@
 import { computed } from "vue";
 import type { NodeTemplate } from "../../types";
 import { useNodeIconUrl } from "../../composables/useCustomNodeIcon";
+import { readinessKey, useKernelReadiness } from "../../composables/useKernelReadiness";
 import { renderSafeMarkdown } from "../../lib/markdown";
 import KernelBadgeIcon from "./KernelBadgeIcon.vue";
 
@@ -59,6 +61,31 @@ const introHtml = computed(() =>
 );
 
 const hasTooltip = computed(() => !!(props.node.drawer_title || introHtml.value));
+
+// Reads the shared readiness cache (batch-fetched once by NodeList) — no HTTP here.
+const { readiness, unavailable } = useKernelReadiness();
+
+const kernelReadiness = computed(() => {
+  if (unavailable.value || props.node.execution_environment !== "kernel") return null;
+  const deps = props.node.dependencies;
+  if (!deps?.length) return null;
+  return readiness.value[readinessKey(deps)] ?? null;
+});
+
+const kernelBadgeClass = computed(() =>
+  kernelReadiness.value ? `kernel-badge--${kernelReadiness.value.level}` : "",
+);
+
+const kernelBadgeTitle = computed(() => {
+  const base = "Runs in isolated kernel";
+  const summary = kernelReadiness.value;
+  if (!summary) return base;
+  if (summary.level === "full")
+    return `${base} — kernel "${summary.best_kernel_name}" has all required packages`;
+  if (summary.level === "partial")
+    return `${base} — kernel "${summary.best_kernel_name}" is missing some required packages`;
+  return `${base} — no kernel has the required packages yet`;
+});
 </script>
 
 <style scoped>
@@ -94,6 +121,21 @@ const hasTooltip = computed(() => !!(props.node.drawer_title || introHtml.value)
   margin-left: auto;
   color: var(--color-text-secondary);
   opacity: 0.7;
+}
+
+/* Readiness tint only — no layout change when the summary is missing. */
+.kernel-badge--full {
+  color: var(--color-success);
+  opacity: 0.9;
+}
+
+.kernel-badge--partial {
+  color: var(--color-warning);
+  opacity: 0.9;
+}
+
+.kernel-badge--none {
+  color: var(--color-text-secondary);
 }
 
 .node-tooltip-title {

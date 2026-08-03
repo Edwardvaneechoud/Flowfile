@@ -106,6 +106,46 @@ export interface KernelInfo {
   kernel_version: string | null;
 }
 
+export type KernelMatchLevel = "full" | "partial" | "none";
+
+export interface KernelMatch {
+  kernel_id: string;
+  kernel_name: string;
+  state: KernelState;
+  image_flavour: ImageFlavour;
+  satisfied: string[];
+  missing: string[];
+  unverified: string[];
+  invalid: string[];
+  // spec -> human-readable reason ("installed 1.4.2", "version unknown", ...)
+  details: Record<string, string>;
+  level: KernelMatchLevel;
+}
+
+// Prefill seed for kernel creation, derived by the backend from a node's deps.
+export interface KernelSuggestion {
+  config: KernelConfig;
+  covered_by_flavour: string[];
+  flavour_image_available: boolean | null; // null = Docker down / unknown
+}
+
+export interface KernelMatchResponse {
+  matches: KernelMatch[]; // sorted best-first by the backend
+  suggestion: KernelSuggestion;
+  docker_available: boolean;
+}
+
+export interface KernelMatchBatchSummary {
+  level: KernelMatchLevel;
+  best_kernel_id: string | null;
+  best_kernel_name: string | null;
+}
+
+export interface KernelMatchBatchResponse {
+  results: Record<string, KernelMatchBatchSummary>;
+  docker_available: boolean;
+}
+
 export interface DisplayOutput {
   mime_type: string;
   data: string;

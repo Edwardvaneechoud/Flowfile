@@ -80,6 +80,7 @@ RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    MPLBACKEND=Agg \
     KERNEL_PACKAGES="" \
     KERNEL_CONSTRAINTS_FILE=/opt/constraints.txt
 

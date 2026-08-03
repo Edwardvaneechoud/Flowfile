@@ -40,6 +40,20 @@
         {{ envNote }}
       </p>
 
+      <!-- Kernel dependencies -->
+      <section
+        v-if="node.environment === 'kernel' && node.dependencies?.length"
+        class="consent-section"
+      >
+        <h4>Python packages this node needs</h4>
+        <div class="dep-chips">
+          <span v-for="dep in node.dependencies" :key="dep" class="chip dep-chip">{{ dep }}</span>
+        </div>
+        <p class="dep-note">
+          After installing, Flowfile will help you pick or create a kernel with these packages.
+        </p>
+      </section>
+
       <!-- Risk statement -->
       <p class="risk-copy">
         Community nodes are reviewed and scanned before they are published, but they are code
@@ -185,6 +199,21 @@ function confirm() {
   background: var(--color-warning-light);
   color: var(--color-warning);
   font-weight: var(--font-weight-medium);
+}
+.dep-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+.dep-chip {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+}
+.dep-note {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 .cap-desc {
   font-size: var(--font-size-sm);

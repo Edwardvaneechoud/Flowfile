@@ -51,7 +51,7 @@ Every kernel is created from an **image flavour** that decides which packages ar
 | **Lite** | Same packages as Base, but only Polars and the kernel runtime are version-pinned | Installing large extra libraries whose own dependency trees need room to resolve |
 | **Custom image** | Whatever you put in it | Your own published Docker image URI |
 
-A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](node-designer.md#execution-environment) declares the packages it needs, and those are **not installed automatically** — the node must run on a kernel whose image provides them. For scikit-learn and friends, that means an ML kernel (or a kernel with the package added — see below).
+A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](node-designer.md#execution-environment) declares the packages it needs, and those are **not installed automatically** — the node must run on a kernel whose image provides them. Flowfile does compare the two for you: the node's kernel picker marks kernels that have all the declared packages, offers **Add missing packages** on a near-miss (the kernel is stopped, rebuilt with the additions, and started again), and **Create kernel for this node** pre-fills a new kernel from the node's requirements. For scikit-learn and friends, that means an ML kernel (or a kernel with the package added — see below).
 
 ---
 

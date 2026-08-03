@@ -45,6 +45,7 @@ class CustomNodeInfo(BaseModel):
     node_icon: str = "user-defined-icon.png"
     node_key: str = ""
     environment: Literal["local", "kernel"] = "local"
+    dependencies: list[str] = []
     source_hash: str = ""
     error: str | None = None
 
@@ -106,6 +107,7 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
     info.tags = list(manifest.tags)
     info.node_icon = manifest.node_icon
     info.environment = manifest.environment.kind
+    info.dependencies = list(manifest.environment.dependencies)
     return info
 
 
@@ -132,6 +134,7 @@ def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
         node_icon=icon_override or manifest.node_icon,
         node_key=entry.node_key,
         environment=manifest.environment.kind,
+        dependencies=list(manifest.environment.dependencies),
         source_hash=entry.source_hash,
         error=entry.load_error,
     )
