@@ -130,7 +130,8 @@ The codebase has a set of intentional, by-design refusals — places where a fea
 4. Open a PR (branch protection blocks direct pushes to `main`), get it merged
 5. Tag the merge commit **lowercase** `vX.Y.Z` and push the tag
 6. This fires `pypi-release.yml`, `release.yaml`, **and** `docker-publish.yml` (app Docker images) simultaneously (§3b)
-7. **Manual, and historically never done:** assemble and attach `latest.json` to the release per the schema in `flowfile_frontend/src-tauri/SIGNING.md` (§3d)
+7. **First release on the tag-triggered path:** confirm `docker-publish.yml` actually fired on the tag (tag pushes ignore the `paths:` filter — documented GH behavior, but unexercised here). If it didn't, `workflow_dispatch` with `publish_app: true` publishes the app images at the manifest version — the intended escape hatch, safe because the new version's tags don't exist on Docker Hub yet.
+8. **Manual, and historically never done:** assemble and attach `latest.json` to the release per the schema in `flowfile_frontend/src-tauri/SIGNING.md` (§3d)
 
 ### 3b. One `v*` tag push → three workflows
 

@@ -125,6 +125,7 @@ jobs:
   merge:
     name: Create multi-arch manifest for ${{ matrix.image }}
     runs-on: ubuntu-latest
+    # No has_work guard needed: when build is skipped, the skip cascades through needs.
     needs: [prepare, build]
     strategy:
       matrix: ${{ fromJSON(needs.prepare.outputs.merge_matrix) }}
