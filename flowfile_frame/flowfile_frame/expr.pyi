@@ -2,13 +2,15 @@
 # DO NOT MODIFY THIS FILE MANUALLY
 from __future__ import annotations
 
-from typing import Any, List, Union,  TypeVar, TYPE_CHECKING
+from typing import Any, List, Optional, Union,  TypeVar, TYPE_CHECKING
 import polars as pl
+from polars.expr.expr import Expr as PolarsExpr
+from polars.expr.string import ExprStringNameSpace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from io import IOBase
-    from polars import Series
+    from polars import DataFrame, LazyFrame, Series
     from polars._typing import *
 
     if sys.version_info >= (3, 11):
@@ -18,6 +20,7 @@ if TYPE_CHECKING:
     T = TypeVar('T')
     P = ParamSpec('P')
     from flowfile_core.schemas import transform_schema
+import flowfile_frame
 from flowfile_frame.selectors import Selector
 
 # Define NoneType to handle type hints with None
@@ -486,6 +489,12 @@ class Expr:
     # Compute exponentially-weighted moving standard deviation.
     def ewm_std(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
 
+    # Compute exponentially-weighted moving sum.
+    def ewm_sum(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
+
+    # Compute time-based exponentially-weighted moving sum.
+    def ewm_sum_by(self, by: str_ | IntoExpr, half_life: str_ | timedelta) -> Expr: ...
+
     # Compute exponentially-weighted moving variance.
     def ewm_var(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
 
@@ -831,7 +840,7 @@ class Expr:
     def round_sig_figs(self, digits: int) -> Expr: ...
 
     # Sample from this expression.
-    def sample(self, n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool=False, seed: int | None=None) -> Expr: ...
+    def sample(self, n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool | None=None, seed: int | None=None) -> Expr: ...
 
     # Find indices where elements should be inserted to maintain order.
     def search_sorted(self, element: IntoExpr | np.ndarray[Any, Any], side: SearchSortedSide='any', descending: bool=False) -> Expr: ...
@@ -1235,6 +1244,12 @@ class Column(Expr):
     # Compute exponentially-weighted moving standard deviation.
     def ewm_std(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
 
+    # Compute exponentially-weighted moving sum.
+    def ewm_sum(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
+
+    # Compute time-based exponentially-weighted moving sum.
+    def ewm_sum_by(self, by: str_ | IntoExpr, half_life: str_ | timedelta) -> Expr: ...
+
     # Compute exponentially-weighted moving variance.
     def ewm_var(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
 
@@ -1580,7 +1595,7 @@ class Column(Expr):
     def round_sig_figs(self, digits: int) -> Expr: ...
 
     # Sample from this expression.
-    def sample(self, n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool=False, seed: int | None=None) -> Expr: ...
+    def sample(self, n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool | None=None, seed: int | None=None) -> Expr: ...
 
     # Find indices where elements should be inserted to maintain order.
     def search_sorted(self, element: IntoExpr | np.ndarray[Any, Any], side: SearchSortedSide='any', descending: bool=False) -> Expr: ...
@@ -1933,6 +1948,12 @@ class When(Expr):
     # Compute exponentially-weighted moving standard deviation.
     def ewm_std(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
 
+    # Compute exponentially-weighted moving sum.
+    def ewm_sum(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
+
+    # Compute time-based exponentially-weighted moving sum.
+    def ewm_sum_by(self, by: str_ | IntoExpr, half_life: str_ | timedelta) -> Expr: ...
+
     # Compute exponentially-weighted moving variance.
     def ewm_var(self, com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr: ...
 
@@ -2281,7 +2302,7 @@ class When(Expr):
     def round_sig_figs(self, digits: int) -> Expr: ...
 
     # Sample from this expression.
-    def sample(self, n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool=False, seed: int | None=None) -> Expr: ...
+    def sample(self, n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool | None=None, seed: int | None=None) -> Expr: ...
 
     # Find indices where elements should be inserted to maintain order.
     def search_sorted(self, element: IntoExpr | np.ndarray[Any, Any], side: SearchSortedSide='any', descending: bool=False) -> Expr: ...
