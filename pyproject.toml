@@ -34,7 +34,7 @@ websockets = ">=12.0"
 pydantic = "^2.10.0"
 databases = "~0.9.0"
 passlib = "~1.7.4"
-pyarrow = "^25.0.0"
+pyarrow = "^18.0.0"
 python-multipart = "~0.0.12"
 polars = ">=1.8.2, <1.43"  # 1.43.0 deadlocks SQLContext.execute over scan_delta frames (catalog SQL readers/views)
 methodtools = "~0.4.7"
