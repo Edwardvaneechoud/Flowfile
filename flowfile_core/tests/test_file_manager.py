@@ -281,6 +281,37 @@ class TestUploadSizeLimit:
         assert "too large" in resp.json()["detail"].lower()
         assert not (_docker_mode_with_tmp_uploads / "test_big.csv").exists()
 
+    def test_oversized_upload_preserves_existing_file(self, monkeypatch, _docker_mode_with_tmp_uploads):
+        """A rejected overwrite must leave the pre-existing file untouched (no truncate/delete)."""
+        uploads_dir = _docker_mode_with_tmp_uploads
+        _upload_test_file("keep.csv", b"precious")
+        monkeypatch.setattr(fm_module, "MAX_FILE_SIZE", 4)
+        resp = client.post(
+            f"{PREFIX}/upload",
+            files={"file": ("keep.csv", io.BytesIO(b"x" * 1024), "text/csv")},
+        )
+        assert resp.status_code == 400
+        assert (uploads_dir / "keep.csv").read_bytes() == b"precious"
+        assert [p.name for p in uploads_dir.iterdir()] == ["keep.csv"]
+
+    def test_failed_write_preserves_existing_file(self, monkeypatch, _docker_mode_with_tmp_uploads):
+        """An OS-level write failure mid-stream must also leave the existing file intact."""
+        uploads_dir = _docker_mode_with_tmp_uploads
+        _upload_test_file("keep.csv", b"precious")
+
+        async def _boom(file, fd):
+            os.close(fd)
+            raise OSError("disk full")
+
+        monkeypatch.setattr(fm_module, "_write_upload", _boom)
+        with pytest.raises(OSError):
+            client.post(
+                f"{PREFIX}/upload",
+                files={"file": ("keep.csv", io.BytesIO(b"new bytes"), "text/csv")},
+            )
+        assert (uploads_dir / "keep.csv").read_bytes() == b"precious"
+        assert [p.name for p in uploads_dir.iterdir()] == ["keep.csv"]
+
 
 # Delete
 

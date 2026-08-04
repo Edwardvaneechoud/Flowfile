@@ -24,6 +24,20 @@ describe("detectFileType", () => {
     expect(detectFileType("${data_dir}/x.parquet")).toBe("parquet");
   });
 
+  it("detects the type when a ${...} parameter is the whole stem", () => {
+    expect(detectFileType("${date}.csv")).toBe("csv");
+    expect(detectFileType("/data/${date}.parquet")).toBe("parquet");
+    expect(detectFileType("C:\\data\\${run_id}.xlsx")).toBe("excel");
+  });
+
+  it("returns null when the extension itself is a parameter", () => {
+    expect(detectFileType("file.${ext}")).toBeNull();
+  });
+
+  it("returns null for a dotfile", () => {
+    expect(detectFileType("/data/.csv")).toBeNull();
+  });
+
   it("returns null for an extensionless basename", () => {
     expect(detectFileType("/data/README")).toBeNull();
   });
@@ -48,6 +62,10 @@ describe("extensionOf", () => {
 
   it("returns null when the basename has no extension", () => {
     expect(extensionOf("/data/README")).toBeNull();
+  });
+
+  it("returns null for a dotfile", () => {
+    expect(extensionOf(".env")).toBeNull();
   });
 });
 

@@ -49,7 +49,8 @@ export function extensionOf(nameOrPath: string): string | null {
 }
 
 export function detectFileType(path: string): ReadFileType | null {
-  const ext = extensionOf(path.replace(/\$\{[^}]*\}/g, ""));
+  // ${...} collapses to a stand-in, not to nothing: "${date}.csv" must keep its extension.
+  const ext = extensionOf(path.replace(/\$\{[^}]*\}/g, "_"));
   return ext ? (READ_EXTENSION_MAP[ext] ?? null) : null;
 }
 

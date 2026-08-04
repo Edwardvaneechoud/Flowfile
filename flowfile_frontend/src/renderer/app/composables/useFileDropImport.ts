@@ -392,18 +392,25 @@ export function useFileDropImport() {
   async function confirmUpload(): Promise<void> {
     if (phase.value !== "confirm") return;
     phase.value = "uploading";
-    for (const entry of entries.value) {
-      if (entry.status === "pending") await uploadEntry(entry);
+    let linkFailed = false;
+    try {
+      for (const entry of entries.value) {
+        if (entry.status === "pending") await uploadEntry(entry);
+      }
+      const uploaded = entries.value
+        .filter((e) => e.status === "done")
+        .map((e) => ({ name: e.name, path: e.serverPath, fileType: e.fileType, ext: e.ext }));
+      await createReadNodes(uploaded, dropPoint);
+    } catch (error) {
+      // A throw here must not strand the dialog in the un-closable uploading phase.
+      linkFailed = true;
+      console.error("Failed to turn uploaded files into Read nodes", error);
+      ElMessage.error("The files were uploaded but adding Read nodes failed.");
+    } finally {
+      activeController = null;
+      phase.value = linkFailed || countByStatus("error") > 0 ? "error" : "idle";
+      notifyUploadSummary();
     }
-    activeController = null;
-
-    const uploaded = entries.value
-      .filter((e) => e.status === "done")
-      .map((e) => ({ name: e.name, path: e.serverPath, fileType: e.fileType, ext: e.ext }));
-    await createReadNodes(uploaded, dropPoint);
-
-    phase.value = countByStatus("error") > 0 ? "error" : "idle";
-    notifyUploadSummary();
   }
 
   function cancelUpload() {
