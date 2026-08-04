@@ -53,7 +53,11 @@
           :disabled="!isFlavourAvailable(flavour.value)"
         >
           {{ flavour.label
-          }}{{ isFlavourAvailable(flavour.value) ? "" : " — not installed (install it in the Kernel Manager)" }}
+          }}{{
+            isFlavourAvailable(flavour.value)
+              ? ""
+              : " — not installed (install it in the Kernel Manager)"
+          }}
         </option>
       </select>
       <p class="form-help">

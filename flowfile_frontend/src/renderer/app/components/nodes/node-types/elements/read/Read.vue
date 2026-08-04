@@ -70,8 +70,10 @@
           :allowed-file-types="[
             'csv',
             'txt',
+            'tsv',
             'parquet',
             'xlsx',
+            'xls',
             'ipc',
             'arrow',
             'feather',
@@ -108,13 +110,12 @@ import {
   isInputIpcTable,
   isInputNdjsonTable,
   isInputAvroTable,
-  InputCsvTable,
-  InputExcelTable,
-  InputParquetTable,
-  InputIpcTable,
-  InputNdjsonTable,
-  InputAvroTable,
 } from "../../../baseNode/nodeInput";
+import {
+  createDefaultSettings,
+  detectFileType,
+  extensionOf,
+} from "../../../../../utils/readFileTypes";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
@@ -153,37 +154,6 @@ watch(
   },
 );
 
-type ReadFileType = "csv" | "excel" | "parquet" | "ipc" | "ndjson" | "avro";
-type ReadTableSettings =
-  | InputCsvTable
-  | InputExcelTable
-  | InputParquetTable
-  | InputIpcTable
-  | InputNdjsonTable
-  | InputAvroTable;
-
-function detectFileType(path: string): ReadFileType | null {
-  // Strip ${...} references so we can read the real extension
-  const cleaned = path.replace(/\$\{[^}]*\}/g, "");
-  const ext = cleaned.split(".").pop()?.toLowerCase();
-  if (ext === "xlsx") return "excel";
-  if (ext === "csv" || ext === "txt") return "csv";
-  if (ext === "parquet") return "parquet";
-  if (ext === "ipc" || ext === "arrow" || ext === "feather") return "ipc";
-  if (ext === "ndjson" || ext === "jsonl") return "ndjson";
-  if (ext === "avro") return "avro";
-  return null;
-}
-
-function createDefaultSettings(fileType: ReadFileType): ReadTableSettings {
-  if (fileType === "excel") return createDefaultExcelSettings();
-  if (fileType === "parquet") return createDefaultParquetSettings();
-  if (fileType === "ipc") return { file_type: "ipc" };
-  if (fileType === "ndjson") return { file_type: "ndjson" };
-  if (fileType === "avro") return { file_type: "avro" };
-  return createDefaultCsvSettings();
-}
-
 function handleManualPathChange(path: string) {
   const detectedType = detectFileType(path);
   const fileName = path.split(/[/\\]/).pop() || path;
@@ -194,7 +164,7 @@ function handleManualPathChange(path: string) {
     // Swap settings when file type changes (e.g. user edits .csv → .parquet)
     if (detectedType && detectedType !== receivedTable.value.file_type) {
       receivedTable.value.file_type = detectedType;
-      receivedTable.value.table_settings = createDefaultSettings(detectedType);
+      receivedTable.value.table_settings = createDefaultSettings(detectedType, extensionOf(path));
     }
   } else if (detectedType) {
     // Bootstrap a new receivedTable from a typed path
@@ -202,45 +172,9 @@ function handleManualPathChange(path: string) {
       name: fileName,
       path,
       file_type: detectedType,
-      table_settings: createDefaultSettings(detectedType),
+      table_settings: createDefaultSettings(detectedType, extensionOf(path)),
     };
   }
-}
-
-function createDefaultCsvSettings(): InputCsvTable {
-  return {
-    file_type: "csv",
-    reference: "",
-    starting_from_line: 0,
-    delimiter: ",",
-    has_headers: true,
-    encoding: "utf-8",
-    row_delimiter: "\n",
-    quote_char: '"',
-    infer_schema_length: 10000,
-    infer_schema: true,
-    truncate_ragged_lines: false,
-    ignore_errors: false,
-  };
-}
-
-function createDefaultExcelSettings(): InputExcelTable {
-  return {
-    file_type: "excel",
-    sheet_name: "",
-    start_row: 0,
-    start_column: 0,
-    end_row: 0,
-    end_column: 0,
-    has_headers: true,
-    type_inference: false,
-  };
-}
-
-function createDefaultParquetSettings(): InputParquetTable {
-  return {
-    file_type: "parquet",
-  };
 }
 
 const handleFileChange = (fileInfo: FileInfo) => {
@@ -250,40 +184,10 @@ const handleFileChange = (fileInfo: FileInfo) => {
       return;
     }
 
-    const ext = fileInfo.name.split(".").pop()?.toLowerCase();
-    if (!ext) {
-      console.warn("No file type detected");
+    const fileType = detectFileType(fileInfo.name);
+    if (!fileType) {
+      console.warn("Unsupported file type:", fileInfo.name);
       return;
-    }
-
-    let fileType: ReadFileType;
-
-    switch (ext) {
-      case "xlsx":
-        fileType = "excel";
-        break;
-      case "csv":
-      case "txt":
-        fileType = "csv";
-        break;
-      case "parquet":
-        fileType = "parquet";
-        break;
-      case "ipc":
-      case "arrow":
-      case "feather":
-        fileType = "ipc";
-        break;
-      case "ndjson":
-      case "jsonl":
-        fileType = "ndjson";
-        break;
-      case "avro":
-        fileType = "avro";
-        break;
-      default:
-        console.warn("Unsupported file type:", ext);
-        return;
     }
 
     // Preserve the user's table_settings when re-selecting a file of the same type;
@@ -291,7 +195,7 @@ const handleFileChange = (fileInfo: FileInfo) => {
     const tableSettings =
       receivedTable.value && receivedTable.value.file_type === fileType
         ? receivedTable.value.table_settings
-        : createDefaultSettings(fileType);
+        : createDefaultSettings(fileType, extensionOf(fileInfo.name));
 
     receivedTable.value = {
       name: fileInfo.name,

@@ -3382,47 +3382,6 @@ def test_get_local_files_path_traversal_with_dots():
     assert response.status_code == 403, "Path traversal with .. should be blocked"
 
 
-def test_upload_file_sanitizes_filename():
-    """Test that upload_file sanitizes filenames to prevent path traversal."""
-    import io
-
-    malicious_filename = "../../../etc/cron.d/evil"
-    file_content = b"malicious content"
-
-    files = {"file": (malicious_filename, io.BytesIO(file_content), "application/octet-stream")}
-    response = client.post("/upload/", files=files)
-
-    assert response.status_code == 200, "Upload should succeed with sanitized filename"
-    result = response.json()
-    assert result["filename"] == "evil", f"Filename should be sanitized to 'evil', got: {result['filename']}"
-    assert "../" not in result["filepath"], "Filepath should not contain path traversal sequences"
-    # Normalize path separators for cross-platform comparison
-    normalized_filepath = result["filepath"].replace("\\", "/")
-    assert normalized_filepath == "uploads/evil", f"Filepath should be 'uploads/evil', got: {result['filepath']}"
-
-    if os.path.exists(result["filepath"]):
-        os.remove(result["filepath"])
-
-
-def test_upload_file_sanitizes_filename_with_multiple_traversals():
-    """Test that upload_file handles multiple path traversal attempts."""
-    import io
-
-    malicious_filename = "..%2F..%2F..%2Fetc/passwd"
-    file_content = b"test content"
-
-    files = {"file": (malicious_filename, io.BytesIO(file_content), "application/octet-stream")}
-    response = client.post("/upload/", files=files)
-
-    assert response.status_code == 200, "Upload should succeed with sanitized filename"
-    result = response.json()
-    assert "../" not in result["filename"], "Filename should not contain path traversal"
-    assert "/" not in result["filename"], "Filename should not contain directory separators"
-
-    if os.path.exists(result["filepath"]):
-        os.remove(result["filepath"])
-
-
 def test_import_flow_path_traversal_blocked(monkeypatch):
     """Test that import_flow blocks access to files outside sandbox in Docker mode."""
     # This is needed because FLOWFILE_MODE is cached at module load time

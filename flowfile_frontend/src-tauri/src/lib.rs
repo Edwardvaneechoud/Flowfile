@@ -173,11 +173,11 @@ fn create_main_window(
         .resizable(true)
         .center()
         .visible(false)
-        // Tauri intercepts native drag-drop by default (to fire tauri://drag-drop
-        // for files dragged onto the window), which also swallows HTML5 drag
-        // events the renderer needs — VueFlow's node-palette drag, AG Grid
-        // column reorder, etc. We're not handling file drops in this app, so
-        // disable the native capture and let the webview see the events.
+        // tauri-runtime-wry's native drag handler returns true unconditionally on every
+        // platform, swallowing internal HTML5 drags too (VueFlow palette, AG Grid), so it
+        // stays off. OS file drops arrive as plain HTML5 drops in the renderer
+        // (app/composables/useFileDropImport.ts), which recovers real paths from
+        // text/uri-list on WebKit and falls back to uploading to core elsewhere.
         .disable_drag_drop_handler()
         // macOS delivers the first click on an unfocused window to focus only;
         // opt in so that click also reaches the page (no-op on other platforms).

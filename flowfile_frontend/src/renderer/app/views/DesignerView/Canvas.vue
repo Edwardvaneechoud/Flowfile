@@ -70,6 +70,9 @@ import TabbedDrawer from "./TabbedDrawer.vue";
 import { drawers } from "./drawerRegistry";
 import type { DrawerDef } from "../../types/drawer.types";
 import ContextMenu from "./ContextMenu.vue";
+import FileDropOverlay from "./FileDropOverlay.vue";
+import FileDropUploadDialog from "./FileDropUploadDialog.vue";
+import { useFileDropImport } from "../../composables/useFileDropImport";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
@@ -254,6 +257,7 @@ const {
   createManualInputFromClipboard,
   insertNodeOnEdge,
 } = useDragAndDrop();
+const fileDrop = useFileDropImport();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
 // Default drawer sizing. The bottom dock takes ~25% of the canvas height; the
 // right-side drawers span from the canvas top down to the dock, so the two
@@ -722,13 +726,20 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
   }
 };
 
+// OS file drops are consumed synchronously by fileDrop; anything else is a palette drag.
 const handleDrop = async (event: DragEvent) => {
+  if (fileDrop.handleDrop(event)) return;
   if (!nodeStore.isRunning) {
     const response = await onDrop(event, flowStore.flowId);
     if (response?.history) {
       flowStore.updateHistoryState(response.history);
     }
   }
+};
+
+const handleDragOver = (event: DragEvent) => {
+  if (fileDrop.handleDragOver(event)) return;
+  onDragOver(event);
 };
 
 const toSnakeCase = (str: string): string => {
@@ -1352,7 +1363,10 @@ defineExpose({
     <main
       ref="mainContainerRef"
       @drop="handleDrop"
-      @dragover="onDragOver"
+      @dragover="handleDragOver"
+      @dragenter="fileDrop.handleDragEnter"
+      @dragleave="fileDrop.handleDragLeave"
+      @dragend="fileDrop.handleDragEnd"
       @dblclick="handleMainDblClick"
     >
       <VueFlow
@@ -1391,6 +1405,8 @@ defineExpose({
         <MiniMap />
       </VueFlow>
       <AiGhostNode :composable="ghostNode" @accepted="reloadCurrentFlow" />
+      <FileDropOverlay :controller="fileDrop" />
+      <FileDropUploadDialog :controller="fileDrop" />
       <context-menu
         v-if="showContextMenu"
         :x="clickedPosition.x"

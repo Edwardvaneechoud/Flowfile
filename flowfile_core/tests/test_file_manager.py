@@ -1,10 +1,12 @@
 """Tests for the File Manager API endpoints.
 
-Covers file listing, upload (with extension/size validation), deletion,
-Docker-mode gating, and path traversal prevention.
+Covers file listing, upload (with extension/size validation, unique-name
+collision handling and streaming size limits), deletion, Docker-mode gating,
+and path traversal prevention.
 """
 
 import io
+import os
 from unittest.mock import patch
 
 import pytest
@@ -38,11 +40,12 @@ client = _get_test_client()
 PREFIX = "/file_manager"
 
 
-def _upload_test_file(name: str = "test.csv", content: bytes = b"a,b\n1,2\n") -> dict:
+def _upload_test_file(name: str = "test.csv", content: bytes = b"a,b\n1,2\n", **params) -> dict:
     """Helper to upload a file and return the JSON response."""
     resp = client.post(
         f"{PREFIX}/upload",
         files={"file": (name, io.BytesIO(content), "application/octet-stream")},
+        params=params,
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -80,7 +83,7 @@ def _docker_mode_with_tmp_uploads(tmp_path):
 
 
 class TestDockerModeGating:
-    """Endpoints must return 403 when not in Docker mode."""
+    """Listing and deletion are Docker-only; upload and limits are not."""
 
     @pytest.fixture(autouse=True)
     def _restore_real_check(self, monkeypatch):
@@ -94,16 +97,36 @@ class TestDockerModeGating:
         assert resp.status_code == 403
         assert "Docker mode" in resp.json()["detail"]
 
-    def test_upload_blocked_in_electron_mode(self):
+    def test_upload_allowed_in_electron_mode(self):
         resp = client.post(
             f"{PREFIX}/upload",
-            files={"file": ("test.csv", io.BytesIO(b"data"), "text/csv")},
+            files={"file": ("test_electron_upload.csv", io.BytesIO(b"data"), "text/csv")},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["filename"] == "test_electron_upload.csv"
+
+    def test_limits_allowed_in_electron_mode(self):
+        resp = client.get(f"{PREFIX}/limits")
+        assert resp.status_code == 200
+        assert resp.json()["max_file_size_bytes"] == fm_module.MAX_FILE_SIZE
 
     def test_delete_blocked_in_electron_mode(self):
         resp = client.delete(f"{PREFIX}/files/test.csv")
         assert resp.status_code == 403
+
+
+# Upload limits
+
+
+class TestLimits:
+    def test_limits_reports_max_size_and_extensions(self):
+        resp = client.get(f"{PREFIX}/limits")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["max_file_size_bytes"] == fm_module.MAX_FILE_SIZE
+        expected = {"csv", "tsv", "txt", "parquet", "xlsx", "xls", "ipc", "arrow", "feather", "ndjson", "jsonl", "avro"}
+        assert expected <= set(data["allowed_extensions"])
+        assert data["allowed_extensions"] == sorted(data["allowed_extensions"])
 
 
 # List files
@@ -218,6 +241,45 @@ class TestUpload:
         content = b"a,b,c\n1,2,3\n4,5,6\n"
         data = _upload_test_file("test_size.csv", content)
         assert data["size"] == len(content)
+
+    @pytest.mark.parametrize("ext", ["ipc", "arrow", "feather", "ndjson", "jsonl", "avro", "tsv"])
+    def test_upload_accepts_data_extension(self, ext):
+        data = _upload_test_file(f"test_ext.{ext}", b"\x00" * 32)
+        assert data["filename"] == f"test_ext.{ext}"
+
+    def test_upload_returns_absolute_filepath(self):
+        data = _upload_test_file("test_abs.csv")
+        assert os.path.isabs(data["filepath"])
+        assert os.path.basename(data["filepath"]) == data["filename"]
+
+
+class TestUniqueUpload:
+    def test_unique_suffixes_collisions(self, _docker_mode_with_tmp_uploads):
+        uploads_dir = _docker_mode_with_tmp_uploads
+        names = [_upload_test_file("u.csv", f"body-{i}".encode(), unique=True)["filename"] for i in range(3)]
+        assert names == ["u.csv", "u (1).csv", "u (2).csv"]
+        for i, name in enumerate(names):
+            assert (uploads_dir / name).read_bytes() == f"body-{i}".encode()
+
+    def test_without_unique_overwrites(self, _docker_mode_with_tmp_uploads):
+        uploads_dir = _docker_mode_with_tmp_uploads
+        _upload_test_file("o.csv", b"old")
+        data = _upload_test_file("o.csv", b"new")
+        assert data["filename"] == "o.csv"
+        assert (uploads_dir / "o.csv").read_bytes() == b"new"
+        assert not (uploads_dir / "o (1).csv").exists()
+
+
+class TestUploadSizeLimit:
+    def test_oversized_upload_rejected_and_leaves_no_file(self, monkeypatch, _docker_mode_with_tmp_uploads):
+        monkeypatch.setattr(fm_module, "MAX_FILE_SIZE", 16)
+        resp = client.post(
+            f"{PREFIX}/upload",
+            files={"file": ("test_big.csv", io.BytesIO(b"x" * 1024), "text/csv")},
+        )
+        assert resp.status_code == 400
+        assert "too large" in resp.json()["detail"].lower()
+        assert not (_docker_mode_with_tmp_uploads / "test_big.csv").exists()
 
 
 # Delete
