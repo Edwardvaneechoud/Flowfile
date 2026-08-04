@@ -8,7 +8,6 @@ in every mode because the canvas file-drop relies on it.
 """
 
 import os
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -138,10 +137,8 @@ async def upload_file(file: UploadFile = File(...), unique: bool = False) -> JSO
         # Stream into a hidden temp file and rename over the destination only on
         # success, so a rejected or failed upload never destroys an existing file.
         file_location = uploads_dir / safe_name
-        name_hint = safe_name.encode("utf-8")[:40].decode("utf-8", "ignore")
-        fd, tmp_name = tempfile.mkstemp(dir=uploads_dir, prefix=f".{name_hint}.", suffix=".part")
-        write_target = Path(tmp_name)
-        os.chmod(write_target, 0o644)
+        write_target = uploads_dir / f".{safe_name[:40]}.{os.urandom(6).hex()}.part"
+        fd = os.open(write_target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
 
     try:
         size = await _write_upload(file, fd)

@@ -392,7 +392,6 @@ export function useFileDropImport() {
   async function confirmUpload(): Promise<void> {
     if (phase.value !== "confirm") return;
     phase.value = "uploading";
-    let linkFailed = false;
     try {
       for (const entry of entries.value) {
         if (entry.status === "pending") await uploadEntry(entry);
@@ -401,14 +400,14 @@ export function useFileDropImport() {
         .filter((e) => e.status === "done")
         .map((e) => ({ name: e.name, path: e.serverPath, fileType: e.fileType, ext: e.ext }));
       await createReadNodes(uploaded, dropPoint);
+      phase.value = countByStatus("error") > 0 ? "error" : "idle";
     } catch (error) {
       // A throw here must not strand the dialog in the un-closable uploading phase.
-      linkFailed = true;
       console.error("Failed to turn uploaded files into Read nodes", error);
       ElMessage.error("The files were uploaded but adding Read nodes failed.");
+      phase.value = "error";
     } finally {
       activeController = null;
-      phase.value = linkFailed || countByStatus("error") > 0 ? "error" : "idle";
       notifyUploadSummary();
     }
   }
@@ -435,7 +434,14 @@ export function useFileDropImport() {
       ElMessage.error("The Read node is not available.");
       return 0;
     }
-    const component = await getComponent(nodeTemplate);
+    let component: Awaited<ReturnType<typeof getComponent>>;
+    try {
+      component = await getComponent(nodeTemplate);
+    } catch (error) {
+      console.error("Failed to load the Read node component", error);
+      ElMessage.error("The Read node is not available.");
+      return 0;
+    }
 
     let added = 0;
     let lastResponse: OperationResponse | undefined;
