@@ -1,4 +1,5 @@
 mod commands;
+mod drag_paths;
 mod env;
 mod menu;
 mod oauth;
@@ -46,6 +47,7 @@ pub fn run() {
             commands::quit_app,
             commands::app_refresh,
             commands::open_oauth,
+            commands::read_drag_paths,
         ])
         .menu(|app_handle| menu::build(app_handle))
         .on_menu_event(|app, event| menu::on_menu_event(app, event.id().as_ref()))
@@ -175,9 +177,10 @@ fn create_main_window(
         .visible(false)
         // tauri-runtime-wry's native drag handler returns true unconditionally on every
         // platform, swallowing internal HTML5 drags too (VueFlow palette, AG Grid), so it
-        // stays off. OS file drops arrive as plain HTML5 drops in the renderer
-        // (app/composables/useFileDropImport.ts), which recovers real paths from
-        // text/uri-list on WebKit and falls back to uploading to core elsewhere.
+        // stays off. OS file drops then arrive as plain HTML5 drops in the renderer
+        // (app/composables/useFileDropImport.ts), but WKWebView blanks file:// URLs out of
+        // DataTransfer — so on macOS the renderer recovers real paths via the
+        // read_drag_paths command (drag pasteboard); other platforms upload to core.
         .disable_drag_drop_handler()
         // macOS delivers the first click on an unfocused window to focus only;
         // opt in so that click also reaches the page (no-op on other platforms).

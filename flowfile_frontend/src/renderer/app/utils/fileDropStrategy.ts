@@ -1,6 +1,6 @@
-// Decides what a dropped OS file becomes: a linked filesystem path (desktop,
-// when the webview exposes text/uri-list) or an upload to core. Pure and
-// DOM-free — drop handlers pass in the already-extracted DataTransfer values.
+// Decides what a dropped OS file becomes: a linked filesystem path (desktop, when
+// either the webview or the shell can name the paths) or an upload to core. Pure
+// and DOM-free — drop handlers pass in the already-extracted drop values.
 import { baseNameOf } from "./readFileTypes";
 
 export interface DragSummary {
@@ -43,6 +43,9 @@ function fileUriToPath(uri: string): string | null {
   return /^\/[a-zA-Z]:/.test(rest) ? rest.slice(1) : rest;
 }
 
+// Spike 2026-08-04: on macOS WKWebView getData("text/uri-list") is "" for OS file
+// drops — WebKit exposes only http/https/data/blob schemes. Kept for browsers and
+// webviews that do expose it; desktop linking uses desktop.readDragPaths().
 export function parseFileUriList(text: string): string[] {
   return text
     .split(/\r?\n/)
@@ -61,22 +64,50 @@ export interface DropContext {
   isDesktop: boolean;
   uriList: string;
   fileNames: readonly string[];
+  /** Paths the desktop shell read off the OS drag pasteboard (see desktop.readDragPaths). */
+  nativePaths?: readonly string[];
 }
 
 /**
- * Links only when the uri-list pairs up unambiguously with the dropped files:
- * equal counts and matching basenames in order. Anything else uploads rather
- * than guessing which path belongs to which file.
+ * Pairs paths with the dropped files by basename, in `fileNames` order. Returns
+ * null when the counts differ, when a name has no match, or when basenames repeat
+ * — a repeated basename makes the mapping ambiguous and we never guess.
  */
-export function resolveDropStrategy({ isDesktop, uriList, fileNames }: DropContext): DropStrategy {
+export function pairPaths(paths: readonly string[], fileNames: readonly string[]): string[] | null {
+  if (paths.length !== fileNames.length || paths.length === 0) return null;
+  const names = paths.map(baseNameOf);
+  // Repeats on either side make the mapping ambiguous — never guess.
+  if (new Set(names).size !== names.length) return null;
+  if (new Set(fileNames).size !== fileNames.length) return null;
+  if (names.every((name, i) => name === fileNames[i])) return [...paths];
+
+  const byName = new Map(names.map((name, i) => [name, paths[i]]));
+  const reordered: string[] = [];
+  for (const name of fileNames) {
+    const path = byName.get(name);
+    if (path === undefined) return null;
+    reordered.push(path);
+  }
+  return reordered;
+}
+
+/**
+ * Links only when a path source pairs up unambiguously with the dropped files.
+ * The uri-list is tried first (browsers and non-WebKit webviews), then the paths
+ * the desktop shell read natively. Anything else uploads to core instead.
+ */
+export function resolveDropStrategy({
+  isDesktop,
+  uriList,
+  fileNames,
+  nativePaths = [],
+}: DropContext): DropStrategy {
   if (fileNames.length === 0) return { kind: "none" };
   if (!isDesktop) return { kind: "upload" };
 
-  const paths = parseFileUriList(uriList);
-  const pairsUp =
-    paths.length === fileNames.length &&
-    paths.every((path, i) => baseNameOf(path) === fileNames[i]);
-  return pairsUp ? { kind: "link", paths } : { kind: "upload" };
+  const paths =
+    pairPaths(parseFileUriList(uriList), fileNames) ?? pairPaths(nativePaths, fileNames);
+  return paths ? { kind: "link", paths } : { kind: "upload" };
 }
 
 export function shouldBlockStrayDrop(types: readonly string[]): boolean {

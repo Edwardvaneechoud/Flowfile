@@ -42,6 +42,14 @@ declare global {
 /** True when the renderer is running inside the Tauri desktop shell. */
 export const isDesktop: boolean = typeof window !== "undefined" && !!window.__TAURI_INTERNALS__;
 
+/**
+ * True on the macOS desktop shell — the only platform where dropped files can be
+ * linked in place (via the drag pasteboard, see readDragPaths). Other webviews
+ * never expose dropped-file paths, so those platforms import a copy instead.
+ */
+export const isMacDesktop: boolean =
+  isDesktop && typeof navigator !== "undefined" && navigator.platform.toUpperCase().includes("MAC");
+
 function runtime(): TauriRuntime | null {
   if (typeof window === "undefined") return null;
   return window.__TAURI__ ?? null;
@@ -133,6 +141,22 @@ export const desktop = {
     if (!isDesktop) return navigator.clipboard.readText();
     const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
     return (await readText()) ?? "";
+  },
+
+  /**
+   * Filesystem paths of the drag currently over the window. WebKit blanks file://
+   * URLs out of DataTransfer, so during a drop the renderer asks the shell to read
+   * the macOS drag pasteboard instead. Empty in web mode and on platforms with no
+   * native path source (Windows/Linux webviews), where callers upload instead.
+   */
+  async readDragPaths(): Promise<string[]> {
+    if (!isDesktop) return [];
+    try {
+      return await invoke<string[]>("read_drag_paths");
+    } catch (error) {
+      console.warn("[file-drop] read_drag_paths failed:", error);
+      return [];
+    }
   },
 
   onServicesStatus(handler: (status: ServicesStatus) => void): Promise<() => void> {

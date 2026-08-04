@@ -34,6 +34,11 @@ dirs = "5"
 thiserror = "1"
 url = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# default-features off: the defaults compile all of AppKit's generated bindings.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString"] }
+
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
 

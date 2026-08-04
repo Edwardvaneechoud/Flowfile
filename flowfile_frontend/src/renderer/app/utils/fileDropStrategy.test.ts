@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  pairPaths,
   parseFileUriList,
   resolveDropStrategy,
   shouldBlockStrayDrop,
@@ -94,6 +95,89 @@ describe("resolveDropStrategy", () => {
         fileNames: ["x.csv", "y.csv"],
       }),
     ).toEqual({ kind: "upload" });
+  });
+
+  it("links from nativePaths when the webview exposes no uri-list", () => {
+    expect(
+      resolveDropStrategy({
+        isDesktop: true,
+        uriList: "",
+        fileNames: ["x.csv", "y.csv"],
+        nativePaths: ["/a/x.csv", "/a/y.csv"],
+      }),
+    ).toEqual({ kind: "link", paths: ["/a/x.csv", "/a/y.csv"] });
+  });
+
+  it("prefers the uri-list when both sources pair up", () => {
+    expect(
+      resolveDropStrategy({
+        isDesktop: true,
+        uriList: "file:///uri/x.csv",
+        fileNames: ["x.csv"],
+        nativePaths: ["/native/x.csv"],
+      }),
+    ).toEqual({ kind: "link", paths: ["/uri/x.csv"] });
+  });
+
+  it("reorders nativePaths to the dropped file order", () => {
+    expect(
+      resolveDropStrategy({
+        isDesktop: true,
+        uriList: "",
+        fileNames: ["y.csv", "x.csv"],
+        nativePaths: ["/a/x.csv", "/a/y.csv"],
+      }),
+    ).toEqual({ kind: "link", paths: ["/a/y.csv", "/a/x.csv"] });
+  });
+
+  it("uploads when nativePaths repeat a basename", () => {
+    expect(
+      resolveDropStrategy({
+        isDesktop: true,
+        uriList: "",
+        fileNames: ["x.csv", "x.csv"],
+        nativePaths: ["/a/x.csv", "/b/x.csv"],
+      }),
+    ).toEqual({ kind: "upload" });
+  });
+
+  it("uploads when the nativePaths count does not match the file count", () => {
+    expect(
+      resolveDropStrategy({
+        isDesktop: true,
+        uriList: "",
+        fileNames: ["x.csv", "y.csv"],
+        nativePaths: ["/a/x.csv"],
+      }),
+    ).toEqual({ kind: "upload" });
+  });
+});
+
+describe("pairPaths", () => {
+  it("keeps an already-aligned list as-is", () => {
+    expect(pairPaths(["/a/x.csv", "/a/y.csv"], ["x.csv", "y.csv"])).toEqual([
+      "/a/x.csv",
+      "/a/y.csv",
+    ]);
+  });
+
+  it("returns null when a name has no matching path", () => {
+    expect(pairPaths(["/a/x.csv", "/a/z.csv"], ["x.csv", "y.csv"])).toBeNull();
+  });
+
+  it("returns null on empty input", () => {
+    expect(pairPaths([], [])).toBeNull();
+  });
+
+  it("refuses duplicate dropped names even when path basenames are unique", () => {
+    expect(pairPaths(["/x/a.csv", "/x/b.csv"], ["a.csv", "a.csv"])).toBeNull();
+  });
+
+  it("reorders by basename when both sides are unique", () => {
+    expect(pairPaths(["/a/y.csv", "/a/x.csv"], ["x.csv", "y.csv"])).toEqual([
+      "/a/x.csv",
+      "/a/y.csv",
+    ]);
   });
 });
 

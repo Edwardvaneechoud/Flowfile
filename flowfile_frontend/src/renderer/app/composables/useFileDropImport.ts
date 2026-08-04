@@ -25,7 +25,7 @@ import {
   type ReadFileType,
 } from "../utils/readFileTypes";
 import { getComponent, getId, getNodeTemplateByItem } from "./useDragAndDrop";
-import { isDesktop } from "../../lib/desktop";
+import { desktop, isDesktop, isMacDesktop } from "../../lib/desktop";
 
 const MAX_FILES_PER_DROP = 10;
 const STAGGER_X = 40;
@@ -163,12 +163,15 @@ export function useFileDropImport() {
   let dragDepth = 0;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let limitsRequested = false;
+  let dragPathsPrefetch: Promise<string[]> | null = null;
+  let resolving = false;
 
   function resetDrag() {
     dragDepth = 0;
     isDragActive.value = false;
     if (watchdog) clearTimeout(watchdog);
     watchdog = null;
+    dragPathsPrefetch = null;
   }
 
   function armWatchdog() {
@@ -185,6 +188,8 @@ export function useFileDropImport() {
   function markDragActive() {
     isDragActive.value = true;
     void ensureLimits();
+    // Read the pasteboard while the drag session is provably live, not after the drop.
+    if (isMacDesktop && !dragPathsPrefetch) dragPathsPrefetch = desktop.readDragPaths();
   }
 
   function handleDragEnter(event: DragEvent) {
@@ -197,7 +202,7 @@ export function useFileDropImport() {
     const dt = event.dataTransfer;
     if (!dt || !hasFiles(event)) return false;
     event.preventDefault();
-    dt.dropEffect = isDesktop ? "link" : "copy";
+    dt.dropEffect = isMacDesktop ? "link" : "copy";
     dragSummary.value = summarizeDragTypes(fileItemTypes(dt));
     if (!isDragActive.value) {
       dragDepth = 1;
@@ -253,6 +258,7 @@ export function useFileDropImport() {
     if (!dt || !hasFiles(event)) return false;
     event.preventDefault();
     event.stopPropagation();
+    const prefetchedPaths = dragPathsPrefetch;
     resetDrag();
 
     const { files, directories, uriList } = snapshotDrop(dt);
@@ -286,33 +292,58 @@ export function useFileDropImport() {
     if (skipped.length > 0) {
       ElMessage.warning(`Skipped ${skipped.join(", ")} — unsupported file type.`);
     }
-    if (phase.value !== "idle") {
+    if (phase.value !== "idle" || resolving) {
       ElMessage.info("Finish the current file import first.");
       return true;
     }
 
-    const strategy = resolveDropStrategy({
-      isDesktop,
-      uriList,
-      fileNames: files.map((f) => f.name),
-    });
-    if (strategy.kind === "link") {
-      const items = supported.map((c) => ({
-        name: c.file.name,
-        path: strategy.paths[c.index],
-        fileType: c.fileType,
-        ext: c.ext,
-      }));
-      void createReadNodes(items, point).then((added) => {
-        if (added > 0) ElMessage.success(`Added ${plural(added, "Read node")}.`);
-      });
-      return true;
-    }
-
-    entries.value = supported.map(buildEntry);
-    dropPoint = point;
-    phase.value = "confirm";
+    resolving = true;
+    void resolveDrop(files, supported, uriList, point, prefetchedPaths);
     return true;
+  }
+
+  /** Async tail of handleDrop: awaits the drag-pasteboard paths prefetched at drag-enter. */
+  async function resolveDrop(
+    files: File[],
+    supported: ClassifiedFile[],
+    uriList: string,
+    point: XYPosition,
+    prefetchedPaths: Promise<string[]> | null,
+  ): Promise<void> {
+    try {
+      const nativePaths = isMacDesktop ? await (prefetchedPaths ?? desktop.readDragPaths()) : [];
+      const strategy = resolveDropStrategy({
+        isDesktop,
+        uriList,
+        fileNames: files.map((f) => f.name),
+        nativePaths,
+      });
+      console.info(
+        `[file-drop] ${files.length} file(s), uri-list ${uriList ? "present" : "empty"}, ` +
+          `pasteboard ${nativePaths.length} path(s) → ${strategy.kind}`,
+      );
+      if (strategy.kind === "link") {
+        const items = supported.map((c) => ({
+          name: c.file.name,
+          path: strategy.paths[c.index],
+          fileType: c.fileType,
+          ext: c.ext,
+        }));
+        console.debug(
+          "[file-drop] linking",
+          items.map((i) => i.path),
+        );
+        const added = await createReadNodes(items, point);
+        if (added > 0) ElMessage.success(`Added ${plural(added, "Read node")}.`);
+        return;
+      }
+
+      entries.value = supported.map(buildEntry);
+      dropPoint = point;
+      phase.value = "confirm";
+    } finally {
+      resolving = false;
+    }
   }
 
   async function uploadEntry(entry: DroppedFileEntry): Promise<void> {
@@ -333,6 +364,7 @@ export function useFileDropImport() {
       entry.serverPath = response.filepath;
       entry.status = "done";
       entry.progress = 100;
+      console.debug("[file-drop] uploaded", entry.name, "→", entry.serverPath);
     } catch (error) {
       if (controller.signal.aborted) {
         entry.status = "skipped";

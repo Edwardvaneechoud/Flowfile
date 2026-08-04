@@ -37,3 +37,9 @@ pub async fn app_refresh(app: AppHandle) -> Result<(), String> {
 pub async fn open_oauth(app: AppHandle, url: String) -> Result<Option<String>, String> {
     oauth::open_oauth_window(app, url).await
 }
+
+// Sync on purpose: sync commands run on the main thread, which the AppKit read requires.
+#[tauri::command]
+pub fn read_drag_paths() -> Vec<String> {
+    crate::drag_paths::read()
+}
