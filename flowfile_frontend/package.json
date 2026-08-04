@@ -86,7 +86,7 @@
     "cronstrue": "^2.59.0",
     "date-fns": "^3.6.0",
     "depcheck": "^1.4.7",
-    "dompurify": "^3.2.4",
+    "dompurify": "^3.4.12",
     "element-plus": "^2.13.0",
     "eslint-plugin-prettier": "^5.1.3",
     "grid-layout-plus": "^1.1.1",
