@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kernel-runtime"
-version = "0.5.2"
+version = "0.5.3"
 description = "FlowFile kernel runtime - executes Python code in isolated Docker containers"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 readme = "README.md"
@@ -10,8 +10,8 @@ packages = [{include = "kernel_runtime"}]
 python = ">=3.10,<3.14"
 fastapi = "~0.115.2"
 uvicorn = "~0.32.0"
-polars = ">=1.8.2,<1.43"  # keep in lockstep with the root pin; 1.43.0 SQLContext-over-delta deadlock
-pyarrow = "^18.0.0"
+polars = ">=1.8.2,!=1.43.0,!=1.43.1,<1.44"  # keep in lockstep with the root pin; 1.43.0/.1 SQLContext-over-delta deadlock
+pyarrow = "^25.0.0"
 numpy = "1.26.4"
 httpx = "^0.28.1"
 cloudpickle = "^3.0.0"
