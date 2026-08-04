@@ -43,9 +43,9 @@ function fileUriToPath(uri: string): string | null {
   return /^\/[a-zA-Z]:/.test(rest) ? rest.slice(1) : rest;
 }
 
-// Spike 2026-08-04: on macOS WKWebView getData("text/uri-list") is "" for OS file
-// drops — WebKit exposes only http/https/data/blob schemes. Kept for browsers and
-// webviews that do expose it; desktop linking uses desktop.readDragPaths().
+// Webviews blank file:// URLs out of drag DataTransfer (only http/https/data/blob
+// survive), so this is empty for OS drops everywhere we have tested; it stays as the
+// standards-based first chance before the shell's native path sources.
 export function parseFileUriList(text: string): string[] {
   return text
     .split(/\r?\n/)

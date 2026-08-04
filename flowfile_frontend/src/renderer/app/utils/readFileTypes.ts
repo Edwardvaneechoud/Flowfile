@@ -53,7 +53,7 @@ export function detectFileType(path: string): ReadFileType | null {
   return ext ? (READ_EXTENSION_MAP[ext] ?? null) : null;
 }
 
-export function createDefaultCsvSettings(delimiter = ","): InputCsvTable {
+function createDefaultCsvSettings(delimiter = ","): InputCsvTable {
   return {
     file_type: "csv",
     reference: "",
@@ -70,7 +70,7 @@ export function createDefaultCsvSettings(delimiter = ","): InputCsvTable {
   };
 }
 
-export function createDefaultExcelSettings(): InputExcelTable {
+function createDefaultExcelSettings(): InputExcelTable {
   return {
     file_type: "excel",
     sheet_name: "",
@@ -83,7 +83,7 @@ export function createDefaultExcelSettings(): InputExcelTable {
   };
 }
 
-export function createDefaultParquetSettings(): InputParquetTable {
+function createDefaultParquetSettings(): InputParquetTable {
   return { file_type: "parquet" };
 }
 

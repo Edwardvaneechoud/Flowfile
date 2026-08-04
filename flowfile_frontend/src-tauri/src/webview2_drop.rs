@@ -70,8 +70,6 @@ fn on_web_message(window: &tauri::WebviewWindow, args: &ICoreWebView2WebMessageR
         return;
     }
     let paths = collect_paths(args);
-    log::info!("webview2 drop {token}: {} file path(s)", paths.len());
-    log::debug!("webview2 drop {token}: {paths:?}");
     let payload = serde_json::json!({ "token": token, "paths": paths });
     if let Err(err) = window.emit(DROP_PATHS_EVENT, payload) {
         log::warn!("webview2 drop paths: emit failed: {err}");

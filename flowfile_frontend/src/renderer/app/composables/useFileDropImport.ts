@@ -320,7 +320,7 @@ export function useFileDropImport() {
         fileNames: files.map((f) => f.name),
         nativePaths,
       });
-      console.info(
+      console.debug(
         `[file-drop] ${files.length} file(s), uri-list ${uriList ? "present" : "empty"}, ` +
           `native ${nativePaths.length} path(s) → ${strategy.kind}`,
       );
@@ -331,10 +331,6 @@ export function useFileDropImport() {
           fileType: c.fileType,
           ext: c.ext,
         }));
-        console.debug(
-          "[file-drop] linking",
-          items.map((i) => i.path),
-        );
         const added = await createReadNodes(items, point);
         if (added > 0) ElMessage.success(`Added ${plural(added, "Read node")}.`);
         return;
@@ -366,7 +362,6 @@ export function useFileDropImport() {
       entry.serverPath = response.filepath;
       entry.status = "done";
       entry.progress = 100;
-      console.debug("[file-drop] uploaded", entry.name, "→", entry.serverPath);
     } catch (error) {
       if (controller.signal.aborted) {
         entry.status = "skipped";

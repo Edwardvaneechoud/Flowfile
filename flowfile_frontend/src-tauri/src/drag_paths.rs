@@ -9,18 +9,10 @@
 
 /// Absolute paths on the drag pasteboard, or an empty vec when there are none.
 #[cfg(target_os = "macos")]
-pub fn read() -> Vec<String> {
-    let paths = read_pasteboard();
-    log::info!("drag pasteboard: {} file path(s)", paths.len());
-    log::debug!("drag pasteboard paths: {paths:?}");
-    paths
-}
-
-#[cfg(target_os = "macos")]
 // NSFilenamesPboardType is soft-deprecated but AppKit still fills it on every drag; it is the
 // same type wry reads (from the live drag delegate), and it hands back plain paths, not URLs.
 #[allow(deprecated)]
-fn read_pasteboard() -> Vec<String> {
+pub fn read() -> Vec<String> {
     use objc2_app_kit::{NSFilenamesPboardType, NSPasteboard, NSPasteboardNameDrag};
     use objc2_foundation::{NSArray, NSString};
 
