@@ -19,13 +19,28 @@
         <h4 class="section-subtitle">File Settings</h4>
         <div class="form-group">
           <label for="file-path">File Path</label>
-          <input
-            id="file-path"
-            v-model="nodeCloudStorageWriter.cloud_storage_settings.resource_path"
-            type="text"
-            class="form-control"
-            placeholder="e.g., bucket-name/folder/file.parquet"
-          />
+          <div class="path-row">
+            <input
+              id="file-path"
+              v-model="nodeCloudStorageWriter.cloud_storage_settings.resource_path"
+              type="text"
+              class="form-control"
+              placeholder="s3://bucket/folder/output.parquet"
+            />
+            <el-button
+              size="small"
+              :disabled="!!browseDisabledReason"
+              :title="browseDisabledReason ?? 'Browse cloud storage'"
+              @click="showBrowser = true"
+            >
+              Browse
+            </el-button>
+          </div>
+          <p class="field-hint">
+            Full URI including the scheme &mdash; <code>s3://</code>, <code>az://</code> or
+            <code>gs://</code>.
+          </p>
+          <p v-if="browseDisabledReason" class="field-hint">{{ browseDisabledReason }}</p>
         </div>
 
         <div class="form-group">
@@ -162,13 +177,26 @@
         </div>
       </div>
     </generic-node-settings>
+
+    <CloudPathPicker
+      v-model="showBrowser"
+      :connection="selectedConnection"
+      :mode="writeTargetsDirectory ? 'open' : 'create'"
+      :allowed-file-types="writeFileTypes"
+      :allow-directory-selection="writeTargetsDirectory"
+      :initial-file-path="nodeCloudStorageWriter.cloud_storage_settings.resource_path"
+      :default-new-file-name="defaultWriteFileName"
+      context="cloudWrite"
+      :title="writeTargetsDirectory ? 'Select a table directory' : 'Choose where to write'"
+      @select="applyBrowsedPath"
+    />
   </div>
   <code-loader v-else />
 </template>
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { NodeCloudStorageWriter } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageWriter } from "./utils";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -182,6 +210,14 @@ import {
   resolveConnection,
   unavailableConnectionName,
 } from "../../../../common/CloudConnectionPicker/connectionOptions";
+import CloudPathPicker from "../../../../common/FileBrowser/CloudPathPicker.vue";
+import { browseUnsupportedReason } from "../../../../common/FileBrowser/browseSupport";
+import {
+  extensionForFormat,
+  suggestedWriteFileName,
+  targetsDirectory,
+} from "../../../../common/FileBrowser/cloudPathMapping";
+import { storageTypeForUri } from "../../../../../utils/storagePath";
 
 interface Props {
   nodeId: number;
@@ -200,6 +236,44 @@ const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
 const unavailableConnection = ref<string | null>(null);
+const showBrowser = ref(false);
+
+/** Delta and Iceberg write to the directory itself, so no filename is chosen. */
+const writeTargetsDirectory = computed(() =>
+  targetsDirectory(nodeCloudStorageWriter.value?.cloud_storage_settings.file_format),
+);
+
+// A computed, not an inline literal: fileBrowser.vue watches this prop by identity.
+const writeFileTypes = computed(() =>
+  writeTargetsDirectory.value
+    ? []
+    : [extensionForFormat(nodeCloudStorageWriter.value?.cloud_storage_settings.file_format)],
+);
+
+const defaultWriteFileName = computed(() =>
+  suggestedWriteFileName(
+    nodeCloudStorageWriter.value?.cloud_storage_settings.file_format,
+    nodeCloudStorageWriter.value?.cloud_storage_settings.resource_path,
+  ),
+);
+
+const browseDisabledReason = computed<string | null>(() => {
+  if (connectionsAreLoading.value) return "Loading connections…";
+  if (selectedConnection.value) {
+    return browseUnsupportedReason(
+      selectedConnection.value.storageType,
+      selectedConnection.value.authMethod,
+    );
+  }
+  const currentPath = nodeCloudStorageWriter.value?.cloud_storage_settings.resource_path ?? "";
+  if (storageTypeForUri(currentPath)) return null;
+  return "Pick a connection, or type a path starting with s3://, az:// or gs:// to browse.";
+});
+
+const applyBrowsedPath = (selectedPath: string) => {
+  const settings = nodeCloudStorageWriter.value?.cloud_storage_settings;
+  if (settings) settings.resource_path = selectedPath;
+};
 
 const handleFileFormatChange = () => {
   if (nodeCloudStorageWriter.value) {
@@ -362,6 +436,23 @@ defineExpose({
 .form-group {
   margin-bottom: 0.75rem;
   width: 100%;
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.path-row .form-control {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-hint code {
+  background-color: #edf2f7;
+  padding: 0 0.25rem;
+  border-radius: 3px;
 }
 
 label {

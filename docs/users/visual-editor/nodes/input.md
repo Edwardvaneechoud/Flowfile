@@ -90,7 +90,7 @@ The **Cloud Storage Reader** node reads data directly from cloud object storage.
 
 | Parameter          | Description                                                                                              |
 |--------------------|----------------------------------------------------------------------------------------------------------|
-| **File Path**      | Path to the file or directory (e.g., `bucket-name/folder/file.csv`)                                    |
+| **File Path**      | Full URI of the file or directory, including the scheme (e.g., `s3://bucket/folder/file.csv`). Click **Browse** to navigate the connection and pick one. |
 | **File Format**    | Supported formats: CSV, Parquet, JSON, Delta Lake, Iceberg                                              |
 | **Scan Mode**      | Single file or directory scan (reads all matching files in a directory)                                 |
 

@@ -54,9 +54,14 @@ Once created, your S3 connection will appear in the Cloud Storage Reader and Wri
 
 1. Add a **Cloud Storage Reader** node to your workflow
 2. Select your connection from the dropdown
-3. Enter the S3 path (e.g., `s3://my-bucket/data/file.csv`)
+3. Click **Browse** to navigate the bucket and pick a file or folder, or type the S3 path
+   yourself (e.g., `s3://my-bucket/data/file.csv`) — always the full URI, including `s3://`
 4. Configure file format options
 5. Run your workflow
+
+Picking a file sets the scan mode to *Single File*; picking a folder sets it to *Directory*.
+If the connection's credentials aren't allowed to list buckets, the browser asks for a bucket
+name instead — everything below it still browses normally.
 
 ## In Python
 

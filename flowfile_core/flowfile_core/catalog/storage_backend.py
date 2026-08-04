@@ -17,9 +17,9 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
+from shared.cloud_storage.uri import CLOUD_URI_SCHEMES as _CLOUD_URI_SCHEMES
 from shared.storage_config import storage
 
-_CLOUD_URI_SCHEMES = ("s3://", "s3a://", "az://", "abfs://", "abfss://", "adl://", "gs://", "gcs://")
 _CLOUD_URI_SCHEME_BYTES = tuple(s.encode() for s in _CLOUD_URI_SCHEMES)
 
 
