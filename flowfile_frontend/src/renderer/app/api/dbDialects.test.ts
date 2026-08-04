@@ -79,6 +79,7 @@ describe("getDbDialects", () => {
       "mysql",
       "sqlite",
       "duckdb",
+      "mssql",
     ]);
   });
 });

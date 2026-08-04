@@ -34,6 +34,7 @@ if 'FLOWFILE_SHARED_DIR' not in os.environ:
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 
+from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
 from tests.flowfile_core_test_utils import is_docker_available
@@ -309,6 +310,30 @@ def mysql_db():
     with mysql_fixtures.managed_mysql() as db_info:
         if not db_info:
             print("MySQL container could not be started, MySQL tests will be skipped")
+            yield
+            return
+        yield db_info
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mssql_db():
+    """
+    Pytest fixture that ensures SQL Server container is running for the test session.
+    Automatically starts and stops a SQL Server container with sample data.
+    """
+    if is_port_in_use(1434) or mssql_fixtures.can_connect_to_db():
+        print("SQL Server is already running on port 1434, skipping container creation")
+        yield
+        return
+
+    elif not is_docker_available():
+        print("Docker is not available, skipping SQL Server container creation")
+        yield
+        return
+
+    with mssql_fixtures.managed_mssql() as db_info:
+        if not db_info:
+            print("SQL Server container could not be started, SQL Server tests will be skipped")
             yield
             return
         yield db_info

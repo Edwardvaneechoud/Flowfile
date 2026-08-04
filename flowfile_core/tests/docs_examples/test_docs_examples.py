@@ -77,9 +77,16 @@ def _kafka_available() -> bool:
     return kafka_fixtures.start_redpanda_container()
 
 
+def _mssql_available() -> bool:
+    from test_utils.mssql import fixtures as mssql_fixtures
+
+    return mssql_fixtures.can_connect_to_db()
+
+
 INTEGRATION_GATES = {
     "database_read": _postgres_available,
     "database_read_duckdb": lambda: True,  # in-process, no backing service
+    "database_read_mssql": _mssql_available,
     "database_transform_write": _postgres_available,
     "cloud_storage_s3": _minio_available,
     "kafka_read": _kafka_available,

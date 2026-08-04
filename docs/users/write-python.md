@@ -26,7 +26,7 @@ The pipeline opens in the visual editor as nodes — your colleague walks it ste
 
 ## 3. Connections instead of boilerplate
 
-Credential plumbing, retry-prone connection setup, and path handling are replaced by [named connections](python-api/reference/cloud-connections.md): create one once (in code or in the UI; both share a single encrypted store) and reference it by name in reads and writes against Postgres/MySQL/SQLite, S3/ADLS/GCS, Kafka, and REST endpoints. The [reading](python-api/reference/reading-data.md) and [writing](python-api/reference/writing-data.md) references cover every entry point, and the database and cloud examples execute against real services in CI.
+Credential plumbing, retry-prone connection setup, and path handling are replaced by [named connections](python-api/reference/cloud-connections.md): create one once (in code or in the UI; both share a single encrypted store) and reference it by name in reads and writes against Postgres/MySQL/SQLite/DuckDB/SQL Server, S3/ADLS/GCS, Kafka, and REST endpoints. The [reading](python-api/reference/reading-data.md) and [writing](python-api/reference/writing-data.md) references cover every entry point, and the database and cloud examples execute against real services in CI.
 
 ## 4. The catalog from code
 

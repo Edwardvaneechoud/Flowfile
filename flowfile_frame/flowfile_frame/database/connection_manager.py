@@ -46,7 +46,7 @@ def create_database_connection(
     Args:
         connection_name: Unique name for this connection.
         database_type: Type of database (one of shared.db_dialects.KNOWN_DIALECT_NAMES,
-            e.g. postgresql, mysql, sqlite).
+            e.g. postgresql, mysql, sqlite, duckdb, mssql).
         host: Database server hostname.
         port: Database server port.
         database: Database name.
@@ -111,7 +111,7 @@ def create_database_connection_if_not_exists(
     Args:
         connection_name: Unique name for this connection.
         database_type: Type of database (one of shared.db_dialects.KNOWN_DIALECT_NAMES,
-            e.g. postgresql, mysql, sqlite).
+            e.g. postgresql, mysql, sqlite, duckdb, mssql).
         host: Database server hostname.
         port: Database server port.
         database: Database name.

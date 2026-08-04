@@ -44,6 +44,13 @@ class TestSqlSourceDialectInference:
         source = SqlSource(connection_string="mysql+pymysql://u@h/d", table_name="t")
         assert source.dialect.name == "mysql"
 
+    def test_mssql_scheme_resolves_to_top_based_limits(self):
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
+
+        source = SqlSource(connection_string="mssql+pymssql://u@h/d", table_name="t")
+        assert source.dialect.name == "mssql"
+        assert source.get_sample_query() == "SELECT TOP 1 * FROM t"
+
     def test_explicit_database_type_wins_over_scheme(self):
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
 

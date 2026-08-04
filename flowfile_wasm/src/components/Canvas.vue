@@ -584,7 +584,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.svg', inputs: 0, outputs: 1, keywords: ['paste', 'type', 'create', 'test data'] },
       { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1, keywords: ['url', 'http', 'fetch', 'remote', 'web', 'api'] },
       { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1, keywords: ['catalog', 'table', 'dataset', 'saved'] },
-      { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'], docsAnchor: 'database-reader' },
+      { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'mssql', 'sqlserver', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'], docsAnchor: 'database-reader' },
       { type: 'cloud_storage_reader', name: 'Read from Cloud', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud', 'object storage'], docsAnchor: 'cloud-storage-reader' },
       { type: 'rest_api_reader', name: 'REST API', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['rest', 'api', 'http', 'json', 'endpoint', 'pagination', 'auth'], docsAnchor: 'rest-api-reader' },
       { type: 'kafka_source', name: 'Kafka Source', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['kafka', 'redpanda', 'stream', 'streaming', 'topic', 'events'], docsAnchor: 'kafka-source' },

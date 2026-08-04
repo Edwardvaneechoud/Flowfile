@@ -64,14 +64,36 @@ def _read_connectorx(query: str, uri: str) -> pl.DataFrame:
     return pl.read_database_uri(query, uri)
 
 
-def _read_sqlalchemy(query: str, uri: str) -> pl.DataFrame:
+def _read_sqlalchemy(query: str, uri: str, schema_overrides: dict | None = None) -> pl.DataFrame:
     from sqlalchemy import create_engine
 
     engine = create_engine(get_sqlalchemy_uri(uri))
     try:
-        return pl.read_database(query, connection=engine)
+        return pl.read_database(query, connection=engine, schema_overrides=schema_overrides)
     finally:
         engine.dispose()
+
+
+def read_sql_sqlalchemy(
+    query: str,
+    uri: str,
+    logger: logging.Logger,
+    cancel_check: Callable[[], bool] | None = None,
+    schema_overrides: dict | None = None,
+) -> pl.DataFrame:
+    """SQLAlchemy-only read for dialects whose connectorx backend is unsafe.
+
+    Same abandonable-attempt/cancel semantics as ``read_sql_with_fallback``,
+    without the connectorx leg (e.g. connectorx's mssql backend segfaults when
+    successive reads run on fresh threads — the attempt-per-read model here).
+    """
+    attempt = _Attempt("sqlalchemy", lambda: _read_sqlalchemy(query, uri, schema_overrides)).start()
+    while not attempt.done.wait(_POLL_INTERVAL_SECONDS):
+        if cancel_check is not None and cancel_check():
+            raise DatabaseReadCancelledError("Database read cancelled")
+    if attempt.error is not None:
+        raise attempt.error
+    return attempt.result
 
 
 def _uri_key(uri: str) -> str:

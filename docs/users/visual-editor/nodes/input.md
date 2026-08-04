@@ -114,7 +114,7 @@ The **Manual Input** node allows you to create data directly within Flowfile or 
 
 ### ![Database Reader](../../../assets/images/nodes/database_reader.svg){ width="50" height="50" } Database Reader
 
-The **Database Reader** node loads data from database tables or custom SQL queries. It supports **PostgreSQL**, **MySQL**, **SQLite**, and **DuckDB**.
+The **Database Reader** node loads data from database tables or custom SQL queries. It supports **PostgreSQL**, **MySQL**, **SQLite**, **DuckDB**, and **SQL Server**.
 
 #### **Connection Modes:**
 

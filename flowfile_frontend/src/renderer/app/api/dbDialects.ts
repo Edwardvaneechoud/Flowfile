@@ -44,6 +44,14 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     supports_ssl: false,
     available: true,
   },
+  {
+    name: "mssql",
+    display_name: "SQL Server",
+    file_based: false,
+    default_port: 1433,
+    supports_ssl: false,
+    available: true,
+  },
 ];
 
 let dialectsPromise: Promise<DbDialectInfo[]> | null = null;
