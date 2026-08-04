@@ -104,7 +104,7 @@ function isValidNodeTemplate(data: unknown): data is NodeTemplate {
 
 let id = 0;
 
-function getId(): number {
+export function getId(): number {
   return ++id;
 }
 
@@ -175,7 +175,7 @@ function missingNodeTemplate(node: NodeInput): NodeTemplate {
 /**
  * Gets a Vue component for a node
  */
-async function getComponent(node: NodeTemplate | string): Promise<any> {
+export async function getComponent(node: NodeTemplate | string): Promise<any> {
   const nodeItem = typeof node === "string" ? node : node.item;
 
   if (componentCache.has(nodeItem)) {

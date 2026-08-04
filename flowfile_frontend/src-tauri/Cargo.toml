@@ -34,6 +34,17 @@ dirs = "5"
 thiserror = "1"
 url = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# default-features off: the defaults compile all of AppKit's generated bindings.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Same versions tauri 2.11 already resolves, so with_webview's handles interop directly.
+webview2-com = "0.38"
+# Interface::cast + PWSTR, which webview2-com takes in its API but does not re-export.
+windows-core = "0.61"
+
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
 

@@ -1219,11 +1219,13 @@ dependencies = [
 
 [[package]]
 name = "flowfile"
-version = "0.13.2"
+version = "0.15.1"
 dependencies = [
  "dirs 5.0.1",
  "log",
  "nix 0.29.0",
+ "objc2-app-kit",
+ "objc2-foundation",
  "parking_lot",
  "reqwest 0.12.28",
  "serde",
@@ -1240,6 +1242,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

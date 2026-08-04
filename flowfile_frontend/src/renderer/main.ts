@@ -19,6 +19,7 @@ import setupService from "./app/services/setup.service";
 import "./app/services/axios.config";
 import { useThemeStore } from "./app/stores/theme-store";
 import { checkForUpdatesOnStartup } from "./app/composables/useDesktopUpdater";
+import { shouldBlockStrayDrop } from "./app/utils/fileDropStrategy";
 
 const app = createApp(App);
 
@@ -36,6 +37,15 @@ Object.assign(messageConfig, { placement: "bottom-right", showClose: true, group
 
 const themeStore = useThemeStore();
 themeStore.initialize();
+
+// A stray OS-file drop otherwise navigates the webview and destroys canvas state.
+const blockStrayFileDrop = (event: DragEvent) => {
+  if (shouldBlockStrayDrop(Array.from(event.dataTransfer?.types ?? []))) {
+    event.preventDefault();
+  }
+};
+window.addEventListener("dragover", blockStrayFileDrop);
+window.addEventListener("drop", blockStrayFileDrop);
 
 setupService
   .getSetupStatus()

@@ -174,7 +174,8 @@ async function upgrade(match: KernelMatch): Promise<void> {
 }
 
 function onCreated(kernel: KernelInfo): void {
-  const running = kernel.state === "idle" || kernel.state === "starting" || kernel.state === "executing";
+  const running =
+    kernel.state === "idle" || kernel.state === "starting" || kernel.state === "executing";
   ElMessage.success(
     running
       ? `Kernel "${kernel.name}" is ready for ${props.nodeName}.`

@@ -1,9 +1,11 @@
 mod commands;
+mod drag_paths;
 mod env;
 mod menu;
 mod oauth;
 mod sidecar;
 mod state;
+mod webview2_drop;
 mod window;
 
 use std::sync::Arc;
@@ -46,6 +48,7 @@ pub fn run() {
             commands::quit_app,
             commands::app_refresh,
             commands::open_oauth,
+            commands::read_drag_paths,
         ])
         .menu(|app_handle| menu::build(app_handle))
         .on_menu_event(|app, event| menu::on_menu_event(app, event.id().as_ref()))
@@ -71,15 +74,21 @@ pub fn run() {
 
                 match sidecar::start_services(handle.clone()).await {
                     Ok(ports) => {
-                        if let Err(err) = create_main_window(&handle, ports) {
-                            log::error!("failed to create main window: {}", err);
-                            // Services came up (readiness passed) but we have no window to
-                            // host them. They're healthy and listening on the allocated
-                            // ports, so reap them gracefully (HTTP /shutdown → signal)
-                            // rather than leaving them dangling.
-                            sidecar::shutdown::shutdown_all(&handle).await;
-                            window::show_error(&handle, format!("Failed to create main window: {err}"));
-                            return;
+                        match create_main_window(&handle, ports) {
+                            Ok(window) => webview2_drop::attach(&window),
+                            Err(err) => {
+                                log::error!("failed to create main window: {}", err);
+                                // Services came up (readiness passed) but we have no window to
+                                // host them. They're healthy and listening on the allocated
+                                // ports, so reap them gracefully (HTTP /shutdown → signal)
+                                // rather than leaving them dangling.
+                                sidecar::shutdown::shutdown_all(&handle).await;
+                                window::show_error(
+                                    &handle,
+                                    format!("Failed to create main window: {err}"),
+                                );
+                                return;
+                            }
                         }
                         let _ = handle.emit("startup-success", ());
                         window::show_main(&handle);
@@ -173,11 +182,13 @@ fn create_main_window(
         .resizable(true)
         .center()
         .visible(false)
-        // Tauri intercepts native drag-drop by default (to fire tauri://drag-drop
-        // for files dragged onto the window), which also swallows HTML5 drag
-        // events the renderer needs — VueFlow's node-palette drag, AG Grid
-        // column reorder, etc. We're not handling file drops in this app, so
-        // disable the native capture and let the webview see the events.
+        // tauri-runtime-wry's native drag handler returns true unconditionally on every
+        // platform, swallowing internal HTML5 drags too (VueFlow palette, AG Grid), so it
+        // stays off. OS file drops then arrive as plain HTML5 drops in the renderer
+        // (app/composables/useFileDropImport.ts), but WKWebView blanks file:// URLs out of
+        // DataTransfer — so on macOS the renderer recovers real paths via the
+        // read_drag_paths command (drag pasteboard), on Windows via webview2_drop
+        // (postMessageWithAdditionalObjects); other platforms upload to core.
         .disable_drag_drop_handler()
         // macOS delivers the first click on an unfocused window to focus only;
         // opt in so that click also reaches the page (no-op on other platforms).

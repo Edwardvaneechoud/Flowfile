@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 
 # External dependencies
@@ -136,27 +136,6 @@ def get_node_model(setting_name_ref: str):
             return ref
     logger.error(f"Could not find node model for: {setting_name_ref}")
     return None
-
-
-@router.post("/upload/")
-async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
-    """Uploads a file to the server's 'uploads' directory.
-
-    Args:
-        file: The file to be uploaded.
-
-    Returns:
-        A JSON response containing the filename and the path where it was saved.
-    """
-    safe_name = Path(file.filename).name.replace("..", "")
-    if not safe_name:
-        raise HTTPException(400, "Invalid filename")
-    uploads_dir = Path("uploads")
-    uploads_dir.mkdir(exist_ok=True)
-    file_location = uploads_dir / safe_name
-    with open(file_location, "wb+") as file_object:
-        file_object.write(file.file.read())
-    return JSONResponse(content={"filename": safe_name, "filepath": str(file_location)})
 
 
 @router.get("/files/files_in_local_directory/", response_model=list[FileInfo], tags=["file manager"])
