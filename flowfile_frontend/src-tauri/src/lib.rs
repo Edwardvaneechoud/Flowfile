@@ -5,6 +5,7 @@ mod menu;
 mod oauth;
 mod sidecar;
 mod state;
+mod webview2_drop;
 mod window;
 
 use std::sync::Arc;
@@ -73,15 +74,21 @@ pub fn run() {
 
                 match sidecar::start_services(handle.clone()).await {
                     Ok(ports) => {
-                        if let Err(err) = create_main_window(&handle, ports) {
-                            log::error!("failed to create main window: {}", err);
-                            // Services came up (readiness passed) but we have no window to
-                            // host them. They're healthy and listening on the allocated
-                            // ports, so reap them gracefully (HTTP /shutdown → signal)
-                            // rather than leaving them dangling.
-                            sidecar::shutdown::shutdown_all(&handle).await;
-                            window::show_error(&handle, format!("Failed to create main window: {err}"));
-                            return;
+                        match create_main_window(&handle, ports) {
+                            Ok(window) => webview2_drop::attach(&window),
+                            Err(err) => {
+                                log::error!("failed to create main window: {}", err);
+                                // Services came up (readiness passed) but we have no window to
+                                // host them. They're healthy and listening on the allocated
+                                // ports, so reap them gracefully (HTTP /shutdown → signal)
+                                // rather than leaving them dangling.
+                                sidecar::shutdown::shutdown_all(&handle).await;
+                                window::show_error(
+                                    &handle,
+                                    format!("Failed to create main window: {err}"),
+                                );
+                                return;
+                            }
                         }
                         let _ = handle.emit("startup-success", ());
                         window::show_main(&handle);
@@ -180,7 +187,8 @@ fn create_main_window(
         // stays off. OS file drops then arrive as plain HTML5 drops in the renderer
         // (app/composables/useFileDropImport.ts), but WKWebView blanks file:// URLs out of
         // DataTransfer — so on macOS the renderer recovers real paths via the
-        // read_drag_paths command (drag pasteboard); other platforms upload to core.
+        // read_drag_paths command (drag pasteboard), on Windows via webview2_drop
+        // (postMessageWithAdditionalObjects); other platforms upload to core.
         .disable_drag_drop_handler()
         // macOS delivers the first click on an unfocused window to focus only;
         // opt in so that click also reaches the page (no-op on other platforms).

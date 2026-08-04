@@ -50,6 +50,26 @@ export const isDesktop: boolean = typeof window !== "undefined" && !!window.__TA
 export const isMacDesktop: boolean =
   isDesktop && typeof navigator !== "undefined" && navigator.platform.toUpperCase().includes("MAC");
 
+interface WebView2Bridge {
+  postMessageWithAdditionalObjects?: (message: string, objects: readonly unknown[]) => void;
+}
+
+function webview2(): WebView2Bridge | null {
+  if (typeof window === "undefined") return null;
+  const chrome = (window as { chrome?: { webview?: WebView2Bridge } }).chrome;
+  return chrome?.webview ?? null;
+}
+
+/**
+ * The desktop platforms where a dropped file's real path is recoverable: macOS via
+ * the drag pasteboard, Windows via WebView2's additional-objects message. Elsewhere
+ * the webview only ever hands over the file's bytes, so callers import a copy.
+ */
+export const canLinkDroppedFiles: boolean =
+  isMacDesktop || (isDesktop && typeof webview2()?.postMessageWithAdditionalObjects === "function");
+
+let dropTokenSeq = 0;
+
 function runtime(): TauriRuntime | null {
   if (typeof window === "undefined") return null;
   return window.__TAURI__ ?? null;
@@ -157,6 +177,49 @@ export const desktop = {
       console.warn("[file-drop] read_drag_paths failed:", error);
       return [];
     }
+  },
+
+  /**
+   * Filesystem paths of files just dropped into a WebView2 webview. Handing the DOM
+   * File objects to the host is the only documented way to recover them (WebView2
+   * strips the paths from DataTransfer); the shell reads each one and answers on the
+   * `file-drop-paths` event. Empty everywhere else, and empty if the shell stays
+   * silent — callers then upload a copy instead of linking.
+   */
+  async requestDroppedFilePaths(files: readonly File[], timeoutMs = 800): Promise<string[]> {
+    const bridge = webview2();
+    if (typeof bridge?.postMessageWithAdditionalObjects !== "function") return [];
+    dropTokenSeq += 1;
+    const token = `ff-drop-${dropTokenSeq}`;
+
+    return new Promise<string[]>((resolve) => {
+      let settled = false;
+      let unlisten: (() => void) | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const settle = (paths: string[]) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        unlisten?.();
+        resolve(paths);
+      };
+
+      void listen<{ token?: string; paths?: string[] }>("file-drop-paths", (payload) => {
+        if (payload?.token === token) settle(payload.paths ?? []);
+      })
+        .then((off) => {
+          unlisten = off;
+          if (settled) off();
+          else bridge.postMessageWithAdditionalObjects?.(token, files);
+        })
+        .catch((error) => {
+          console.warn("[file-drop] webview2 path request failed:", error);
+          settle([]);
+        });
+
+      timer = setTimeout(() => settle([]), timeoutMs);
+    });
   },
 
   onServicesStatus(handler: (status: ServicesStatus) => void): Promise<() => void> {

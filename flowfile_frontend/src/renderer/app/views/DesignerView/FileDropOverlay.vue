@@ -15,7 +15,7 @@
 import { computed } from "vue";
 
 import type { FileDropImport } from "../../composables/useFileDropImport";
-import { isDesktop, isMacDesktop } from "../../../lib/desktop";
+import { canLinkDroppedFiles, isDesktop } from "../../../lib/desktop";
 
 const props = defineProps<{ controller: FileDropImport }>();
 
@@ -30,7 +30,7 @@ const chips = computed(() =>
     : summary.value.typeLabels,
 );
 const hint = computed(() => {
-  if (isMacDesktop) return "Files are linked when possible, otherwise copied locally";
+  if (canLinkDroppedFiles) return "Files are linked when possible, otherwise copied locally";
   if (isDesktop) return "You will be asked before files are copied locally";
   return "You will be asked before anything is uploaded";
 });

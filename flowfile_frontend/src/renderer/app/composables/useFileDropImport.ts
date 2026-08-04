@@ -25,7 +25,7 @@ import {
   type ReadFileType,
 } from "../utils/readFileTypes";
 import { getComponent, getId, getNodeTemplateByItem } from "./useDragAndDrop";
-import { desktop, isDesktop, isMacDesktop } from "../../lib/desktop";
+import { canLinkDroppedFiles, desktop, isDesktop, isMacDesktop } from "../../lib/desktop";
 
 const MAX_FILES_PER_DROP = 10;
 const STAGGER_X = 40;
@@ -202,7 +202,7 @@ export function useFileDropImport() {
     const dt = event.dataTransfer;
     if (!dt || !hasFiles(event)) return false;
     event.preventDefault();
-    dt.dropEffect = isMacDesktop ? "link" : "copy";
+    dt.dropEffect = canLinkDroppedFiles ? "link" : "copy";
     dragSummary.value = summarizeDragTypes(fileItemTypes(dt));
     if (!isDragActive.value) {
       dragDepth = 1;
@@ -302,7 +302,7 @@ export function useFileDropImport() {
     return true;
   }
 
-  /** Async tail of handleDrop: awaits the drag-pasteboard paths prefetched at drag-enter. */
+  /** Async tail of handleDrop: awaits whichever native path source this platform has. */
   async function resolveDrop(
     files: File[],
     supported: ClassifiedFile[],
@@ -311,7 +311,9 @@ export function useFileDropImport() {
     prefetchedPaths: Promise<string[]> | null,
   ): Promise<void> {
     try {
-      const nativePaths = isMacDesktop ? await (prefetchedPaths ?? desktop.readDragPaths()) : [];
+      let nativePaths: string[] = [];
+      if (isMacDesktop) nativePaths = await (prefetchedPaths ?? desktop.readDragPaths());
+      else if (isDesktop) nativePaths = await desktop.requestDroppedFilePaths(files);
       const strategy = resolveDropStrategy({
         isDesktop,
         uriList,
@@ -320,7 +322,7 @@ export function useFileDropImport() {
       });
       console.info(
         `[file-drop] ${files.length} file(s), uri-list ${uriList ? "present" : "empty"}, ` +
-          `pasteboard ${nativePaths.length} path(s) → ${strategy.kind}`,
+          `native ${nativePaths.length} path(s) → ${strategy.kind}`,
       );
       if (strategy.kind === "link") {
         const items = supported.map((c) => ({

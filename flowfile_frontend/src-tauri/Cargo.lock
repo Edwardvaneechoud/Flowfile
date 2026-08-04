@@ -1242,6 +1242,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
