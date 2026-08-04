@@ -42,6 +42,12 @@ def create_storage_options_from_boto_credentials(
     """
     import boto3
 
+    # AuthSettingsInput.connection_name defaults to the *string* "None", so an
+    # unnamed aws-cli connection would otherwise ask boto3 for a profile called
+    # "None" and raise ProfileNotFound instead of using the default profile.
+    if profile_name in (None, "", "None"):
+        profile_name = None
+
     session = boto3.Session(profile_name=profile_name, region_name=region_name)
     credentials = session.get_credentials()
     frozen_creds = credentials.get_frozen_credentials()
