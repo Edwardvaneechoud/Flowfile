@@ -458,6 +458,71 @@ class TestGcsCredentials:
         assert original["token"] == '{"type": "service_account"}'
 
 
+class FakeGcsFileSystem:
+    """Stands in for gcsfs.GCSFileSystem; replays one canned full listing."""
+
+    def __init__(self, items):
+        self.items = items
+
+    def invalidate_cache(self, path):
+        pass
+
+    def ls(self, path, detail=False):
+        return self.items
+
+
+@pytest.fixture
+def use_fake_gcs(monkeypatch):
+    def _install(items):
+        import gcsfs
+
+        monkeypatch.setattr(gcsfs, "GCSFileSystem", lambda **_options: FakeGcsFileSystem(items))
+
+    return _install
+
+
+class TestListGcsPrefix:
+    def test_maps_prefixes_and_objects(self, use_fake_gcs):
+        use_fake_gcs(
+            [
+                {"name": "bucket/data/sales/", "type": "directory"},
+                {"name": "bucket/data/customers.parquet", "type": "file", "size": 1024, "updated": NOW},
+            ]
+        )
+        result = list_cloud_uri("gcs", "gs://bucket/data", {})
+        assert [(e.name, e.is_directory, e.entry_kind) for e in result.entries] == [
+            ("sales", True, "prefix"),
+            ("customers.parquet", False, "object"),
+        ]
+        assert result.entries[1].uri == "gs://bucket/data/customers.parquet"
+        assert result.truncated is False
+        assert result.next_token is None
+
+    def test_hitting_the_materialisation_cap_still_reports_truncated(self, use_fake_gcs, monkeypatch):
+        # gcsfs.ls materialises the whole listing; anything past the cap is unreachable,
+        # so the final page must not present the capped listing as complete.
+        monkeypatch.setattr(browse, "_GCS_MAX_ENTRIES", 5)
+        use_fake_gcs([{"name": f"bucket/data/file-{index:03d}.csv", "type": "file"} for index in range(8)])
+
+        first = list_cloud_uri("gcs", "gs://bucket/data", {}, page_size=3)
+        assert [e.name for e in first.entries] == ["file-000.csv", "file-001.csv", "file-002.csv"]
+        assert first.truncated is True
+        assert first.next_token
+
+        last = list_cloud_uri("gcs", "gs://bucket/data", {}, page_size=3, page_token=first.next_token)
+        assert [e.name for e in last.entries] == ["file-003.csv", "file-004.csv"]
+        assert last.truncated is True
+        assert last.next_token is None
+
+    def test_a_listing_at_the_cap_boundary_ends_cleanly(self, use_fake_gcs, monkeypatch):
+        monkeypatch.setattr(browse, "_GCS_MAX_ENTRIES", 5)
+        use_fake_gcs([{"name": f"bucket/data/file-{index}.csv", "type": "file"} for index in range(5)])
+        result = list_cloud_uri("gcs", "gs://bucket/data", {}, page_size=10)
+        assert len(result.entries) == 5
+        assert result.truncated is False
+        assert result.next_token is None
+
+
 class TestUnsupportedStorageType:
     def test_unknown_type_raises_before_touching_a_provider(self):
         with pytest.raises(ValueError, match="Unsupported storage type"):

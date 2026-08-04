@@ -6,7 +6,7 @@ can click their way to a path. Providers are reached through the dependencies
 already in the tree (boto3, azure-storage-blob, gcsfs) and every heavy import
 stays function-local, matching ``directory.py``.
 
-Two behaviours are worth knowing before consuming a :class:`BrowseResult`:
+Three behaviours are worth knowing before consuming a :class:`BrowseResult`:
 
 * Being refused permission to enumerate buckets/containers is **not** an error.
   It is reported as ``root_listing_denied`` so the caller can offer a
@@ -15,6 +15,10 @@ Two behaviours are worth knowing before consuming a :class:`BrowseResult`:
 * Entries are sorted within the returned page only. S3 and ADLS hand back
   prefixes and objects as separate per-page arrays, so a later page can contain
   directories that sort before an earlier page's files.
+* gcsfs has no prefix-level pagination, so GCS listings are materialised in
+  full and capped at ``_GCS_MAX_ENTRIES``. Past the cap no further page token
+  can exist, but the final page still reports ``truncated`` so the caller
+  never presents a capped listing as complete.
 """
 
 from __future__ import annotations
@@ -211,8 +215,14 @@ def _slice_page(
     provider: str,
     *,
     current_is_delta_table: bool = False,
+    hard_capped: bool = False,
 ) -> BrowseResult:
-    """Offset-paginate a fully materialised listing (bucket lists, gcsfs)."""
+    """Offset-paginate a fully materialised listing (bucket lists, gcsfs).
+
+    ``hard_capped`` marks *entries* as an incomplete prefix of the real listing
+    (``_GCS_MAX_ENTRIES`` was hit); the final page then still reports
+    ``truncated`` — with no token, since nothing past the cap was fetched.
+    """
     raw = _decode_token(provider, page_token)
     try:
         offset = int(raw) if raw is not None else 0
@@ -223,12 +233,12 @@ def _slice_page(
     ordered = _sort_entries(entries)
     window = ordered[offset : offset + page_size]
     next_offset = offset + page_size
-    truncated = next_offset < len(ordered)
+    has_more = next_offset < len(ordered)
     return BrowseResult(
         path=path,
         entries=window,
-        truncated=truncated,
-        next_token=_encode_token(provider, str(next_offset)) if truncated else None,
+        truncated=has_more or hard_capped,
+        next_token=_encode_token(provider, str(next_offset)) if has_more else None,
         current_is_delta_table=current_is_delta_table,
     )
 
@@ -596,6 +606,7 @@ def _list_gcs(
     except Exception as exc:
         raise _translate_gcs_error(exc, base) from None
 
+    hard_capped = len(items) > _GCS_MAX_ENTRIES
     entries: list[BrowseEntry] = []
     is_delta = False
     for item in items[:_GCS_MAX_ENTRIES]:
@@ -622,7 +633,9 @@ def _list_gcs(
             )
         )
 
-    return _slice_page(base, entries, page_size, page_token, "gso", current_is_delta_table=is_delta)
+    return _slice_page(
+        base, entries, page_size, page_token, "gso", current_is_delta_table=is_delta, hard_capped=hard_capped
+    )
 
 
 def _list_gcs_buckets(fs: Any, scheme: str, page_size: int, page_token: str | None) -> BrowseResult:
