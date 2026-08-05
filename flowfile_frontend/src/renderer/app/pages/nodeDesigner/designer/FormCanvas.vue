@@ -34,17 +34,49 @@
           <template #section-header="{ sectionKey, section }">
             <div
               class="section-header-edit"
-              :class="{ selected: editingSectionName === sectionKey }"
+              :class="{
+                selected: editingSectionName === sectionKey,
+                'drop-before': dropHint(sectionKey) === 'before',
+                'drop-into': dropHint(sectionKey) === 'into',
+              }"
               role="button"
               tabindex="0"
               title="Edit this group"
+              draggable="true"
+              :data-testid="`group-header-${sectionKey}`"
               @click="selectSectionByKey(sectionKey)"
               @keydown.enter="selectSectionByKey(sectionKey)"
+              @dragstart="onSectionDragStart(sectionKey, $event)"
+              @dragover.prevent="onHeaderDragOver(sectionKey, $event)"
+              @dragleave="onHeaderDragLeave(sectionKey)"
+              @drop.prevent="onHeaderDrop(sectionKey)"
+              @dragend="endDrag"
             >
+              <i class="fa-solid fa-grip-vertical section-grip"></i>
               <span class="section-header-title">
                 {{ section.title || sectionKey.replace(/_/g, " ") }}
               </span>
               <span class="section-header-name">{{ sectionKey }}</span>
+              <span class="section-header-actions">
+                <button
+                  class="chrome-btn"
+                  type="button"
+                  title="Move group up"
+                  :data-testid="`group-up-${sectionKey}`"
+                  @click.stop="moveGroup(sectionKey, -1)"
+                >
+                  <i class="fa-solid fa-chevron-up"></i>
+                </button>
+                <button
+                  class="chrome-btn"
+                  type="button"
+                  title="Move group down"
+                  :data-testid="`group-down-${sectionKey}`"
+                  @click.stop="moveGroup(sectionKey, 1)"
+                >
+                  <i class="fa-solid fa-chevron-down"></i>
+                </button>
+              </span>
               <i class="fa-solid fa-sliders section-header-icon"></i>
             </div>
           </template>
@@ -52,6 +84,15 @@
           <template #component-chrome="{ sectionKey, componentKey }">
             <div class="control-chrome" :class="{ selected: isSelected(sectionKey, componentKey) }">
               <div class="control-chrome-actions">
+                <span
+                  class="chrome-btn chrome-grip"
+                  title="Drag onto another group's header to move it there"
+                  draggable="true"
+                  @dragstart.stop="onControlDragStart(sectionKey, componentKey, $event)"
+                  @dragend="endDrag"
+                >
+                  <i class="fa-solid fa-grip-vertical"></i>
+                </span>
                 <button
                   class="chrome-btn"
                   type="button"
@@ -97,21 +138,30 @@
           </template>
         </CustomNodeForm>
 
-        <button
-          class="btn btn-secondary add-group-trailing"
-          type="button"
-          @click="store.addSection()"
+        <div
+          class="add-group-row"
+          :class="{ 'drop-before': endDropActive }"
+          @dragover.prevent="onEndDragOver"
+          @dragleave="onEndDragLeave"
+          @drop.prevent="onEndDrop"
         >
-          <i class="fa-solid fa-plus"></i>
-          Add group
-        </button>
+          <button
+            class="btn btn-secondary add-group-trailing"
+            type="button"
+            data-testid="add-group-trailing"
+            @click="store.addSection()"
+          >
+            <i class="fa-solid fa-plus"></i>
+            Add group
+          </button>
+        </div>
       </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useNodeDesignerStore } from "@/stores/node-designer-store";
 import type { ComponentType } from "../designerState";
 import type { FileColumn } from "../../../components/nodes/baseNode/nodeInterfaces";
@@ -199,6 +249,99 @@ function removeGroup(sectionKey: string) {
   if (sIdx >= 0) store.removeSection(sIdx);
 }
 
+function moveGroup(sectionKey: string, delta: number) {
+  const idx = sectionIndex(sectionKey);
+  if (idx >= 0) store.moveSection(idx, idx + delta);
+}
+
+// --- drag reorder ---
+// Dropping on a header always means "land at that group's position"; the row under
+// the last group is the only way to land at the end. One indicator, no ambiguity.
+// dataTransfer.getData() is unreadable during dragover, so the payload lives here.
+type DragPayload =
+  | { kind: "section"; index: number }
+  | { kind: "control"; sectionIndex: number; componentIndex: number };
+
+const dragging = ref<DragPayload | null>(null);
+const hoveredSection = ref<string | null>(null);
+const endDropActive = ref(false);
+
+function dropHint(sectionKey: string): "before" | "into" | null {
+  if (!dragging.value || hoveredSection.value !== sectionKey) return null;
+  return dragging.value.kind === "control" ? "into" : "before";
+}
+
+function beginDrag(payload: DragPayload, label: string, event: DragEvent) {
+  dragging.value = payload;
+  // Firefox refuses to start a drag without data on the transfer.
+  event.dataTransfer?.setData("text/plain", label);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+}
+
+function endDrag() {
+  dragging.value = null;
+  hoveredSection.value = null;
+  endDropActive.value = false;
+}
+
+function onSectionDragStart(sectionKey: string, event: DragEvent) {
+  const idx = sectionIndex(sectionKey);
+  if (idx < 0) return;
+  beginDrag({ kind: "section", index: idx }, sectionKey, event);
+}
+
+function onControlDragStart(sectionKey: string, componentKey: string, event: DragEvent) {
+  const sIdx = sectionIndex(sectionKey);
+  const cIdx = componentIndex(sectionKey, componentKey);
+  if (sIdx < 0 || cIdx < 0) return;
+  beginDrag({ kind: "control", sectionIndex: sIdx, componentIndex: cIdx }, componentKey, event);
+}
+
+function onHeaderDragOver(sectionKey: string, event: DragEvent) {
+  if (!dragging.value) return;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  hoveredSection.value = sectionKey;
+  endDropActive.value = false;
+}
+
+function onHeaderDragLeave(sectionKey: string) {
+  if (hoveredSection.value === sectionKey) hoveredSection.value = null;
+}
+
+function onHeaderDrop(sectionKey: string) {
+  const drag = dragging.value;
+  endDrag();
+  const target = sectionIndex(sectionKey);
+  if (!drag || target < 0) return;
+  if (drag.kind === "control") {
+    store.moveComponentToSection(
+      drag.sectionIndex,
+      drag.componentIndex,
+      target,
+      store.sections[target].components.length,
+    );
+    return;
+  }
+  store.moveSection(drag.index, target > drag.index ? target - 1 : target);
+}
+
+function onEndDragOver() {
+  if (dragging.value?.kind !== "section") return;
+  hoveredSection.value = null;
+  endDropActive.value = true;
+}
+
+function onEndDragLeave() {
+  endDropActive.value = false;
+}
+
+function onEndDrop() {
+  const drag = dragging.value;
+  endDrag();
+  if (drag?.kind !== "section") return;
+  store.moveSection(drag.index, store.sections.length - 1);
+}
+
 function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
   store.setPreviewValues(value);
 }
@@ -279,8 +422,41 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
   color: rgba(255, 255, 255, 0.85);
 }
 
-.section-header-icon {
+.section-grip {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary, #9ca3af);
+  cursor: grab;
+}
+
+.section-header-edit.selected .section-grip {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.section-header-actions {
+  display: flex;
+  gap: 0.125rem;
   margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.section-header-edit:hover .section-header-actions,
+.section-header-edit.selected .section-header-actions {
+  opacity: 1;
+}
+
+/* Insert-here line: dropping on a header lands the dragged group at its position. */
+.section-header-edit.drop-before {
+  box-shadow: inset 0 3px 0 0 var(--color-accent, #0891b2);
+}
+
+.section-header-edit.drop-into {
+  background: var(--color-focus-ring-accent, rgba(8, 145, 178, 0.12));
+  outline: 2px dashed var(--color-accent, #0891b2);
+  outline-offset: -2px;
+}
+
+.section-header-icon {
   font-size: 0.75rem;
   color: var(--color-text-tertiary, #9ca3af);
   opacity: 0;
@@ -349,6 +525,13 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
   color: var(--color-accent, #0891b2);
 }
 
+.chrome-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
 .chrome-btn-danger:hover {
   border-color: var(--color-text-danger, #dc2626);
   color: var(--color-text-danger, #dc2626);
@@ -376,6 +559,15 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
 
 .remove-group-btn:hover {
   color: var(--color-text-danger, #dc2626);
+}
+
+.add-group-row {
+  padding-top: 0.5rem;
+  border-top: 3px solid transparent;
+}
+
+.add-group-row.drop-before {
+  border-top-color: var(--color-accent, #0891b2);
 }
 
 .add-group-trailing {

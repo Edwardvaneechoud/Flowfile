@@ -720,15 +720,18 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     }
   }
 
-  function retargetVisibleWhenForComponent(sectionName: string, oldName: string, newName: string) {
-    if (!oldName || oldName === newName) return;
-    const oldField = `${sectionName}.${oldName}`;
-    const newField = `${sectionName}.${newName}`;
+  function retargetVisibleWhenField(oldField: string, newField: string) {
+    if (oldField === newField) return;
     for (const s of sections.value) {
       if (s.visible_when?.field === oldField) {
         s.visible_when = { ...s.visible_when, field: newField };
       }
     }
+  }
+
+  function retargetVisibleWhenForComponent(sectionName: string, oldName: string, newName: string) {
+    if (!oldName || oldName === newName) return;
+    retargetVisibleWhenField(`${sectionName}.${oldName}`, `${sectionName}.${newName}`);
   }
 
   function selectComponent(sectionIndex: number, compIndex: number) {
@@ -776,6 +779,70 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     }
   }
 
+  // Where an index lands after the element at `from` is spliced out and re-inserted at `to`.
+  function remapIndexAfterMove(index: number, from: number, to: number): number {
+    if (index === from) return to;
+    if (from < to) return index > from && index <= to ? index - 1 : index;
+    return index >= to && index < from ? index + 1 : index;
+  }
+
+  function moveSection(from: number, to: number) {
+    if (from === to) return;
+    if (from < 0 || from >= sections.value.length) return;
+    if (to < 0 || to >= sections.value.length) return;
+    const [moved] = sections.value.splice(from, 1);
+    sections.value.splice(to, 0, moved);
+    if (selectedSectionIndex.value !== null) {
+      selectedSectionIndex.value = remapIndexAfterMove(selectedSectionIndex.value, from, to);
+    }
+  }
+
+  // Free name for `desired` within `section`, suffixing _2, _3, ... on collision.
+  function uniqueComponentName(section: SectionState, desired: string): string {
+    const taken = new Set(section.components.map((c) => c.name));
+    if (!taken.has(desired)) return desired;
+    let n = 2;
+    while (taken.has(`${desired}_${n}`)) n += 1;
+    return `${desired}_${n}`;
+  }
+
+  function moveComponentToSection(
+    fromSection: number,
+    fromIndex: number,
+    toSection: number,
+    toIndex: number,
+  ) {
+    const source = sections.value[fromSection];
+    const target = sections.value[toSection];
+    if (!source || !target) return;
+    if (fromIndex < 0 || fromIndex >= source.components.length) return;
+    if (fromSection === toSection) {
+      moveComponent(fromSection, fromIndex, toIndex);
+      return;
+    }
+
+    const [moved] = source.components.splice(fromIndex, 1);
+    const oldName = moved.name;
+    moved.name = uniqueComponentName(target, oldName);
+    const landing = Math.max(0, Math.min(toIndex, target.components.length));
+    target.components.splice(landing, 0, moved);
+
+    // Gating references are dotted "<section>.<field>": both halves can change here.
+    retargetVisibleWhenField(`${source.name}.${oldName}`, `${target.name}.${moved.name}`);
+
+    // Carry the preview value to its new key so syncPreviewValues keeps it.
+    const carried = previewValues.value[source.name]?.[oldName];
+    if (carried !== undefined) {
+      const bucket = previewValues.value[target.name] ?? {};
+      bucket[moved.name] = carried;
+      previewValues.value[target.name] = bucket;
+    }
+    syncPreviewValues();
+
+    selectedSectionIndex.value = toSection;
+    selectedComponentIndex.value = target.components.indexOf(moved);
+  }
+
   return {
     // state
     designerState,
@@ -821,6 +888,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     addSection,
     ensureSection,
     removeSection,
+    moveSection,
     selectSection,
     sanitizeSectionName,
     updateSectionTitle,
@@ -834,6 +902,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     addComponentToSection,
     addComponent,
     moveComponent,
+    moveComponentToSection,
   };
 });
 
