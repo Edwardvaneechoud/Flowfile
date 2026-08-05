@@ -269,6 +269,46 @@ class TestKeyPairCrud:
         finally:
             _cleanup(name)
 
+    def test_switching_to_password_drops_a_stray_incoming_key(self):
+        """auth_method="password" with a non-empty private_key in the same payload (e.g. a
+        client that didn't clear the hidden field): the stray key must be ignored AND the
+        existing key secrets deleted — build_uri infers key-pair from key presence, so a
+        persisted stray key would silently out-vote the password."""
+        from flowfile_core.database.models import Secret
+
+        name = "snowflake_kp_stray"
+        _cleanup(name)
+        try:
+            with get_db_context() as db:
+                store_database_connection(db, _key_pair_connection(name, _make_pem(), "pp"), USER_ID)
+            with get_db_context() as db:
+                row = get_database_connection(db, name, USER_ID)
+                old_key_ids = [row.private_key_id, row.private_key_passphrase_id]
+
+            flipped = FullDatabaseConnection(
+                connection_name=name,
+                database_type="snowflake",
+                username="svc_user",
+                password=SecretStr("new-pass"),
+                database="ANALYTICS",
+                extra_params={"account": "myorg-myaccount"},
+                auth_method="password",
+                private_key=SecretStr(_make_pem()),
+                private_key_passphrase=SecretStr("stray-pass"),
+            )
+            with get_db_context() as db:
+                update_database_connection(db, flipped, USER_ID)
+            with get_db_context() as db:
+                row = get_database_connection(db, name, USER_ID)
+                assert row.private_key_id is None
+                assert row.private_key_passphrase_id is None
+                assert db.query(Secret).filter(Secret.id.in_(old_key_ids)).count() == 0
+                reloaded = get_database_connection_schema(db, name, USER_ID)
+            assert reloaded.private_key is None, "a stray incoming key must never be persisted"
+            assert reloaded.private_key_passphrase is None
+        finally:
+            _cleanup(name)
+
     def test_update_to_key_pair_without_key_is_rejected(self):
         name = "snowflake_kp_bad_flip"
         _cleanup(name)

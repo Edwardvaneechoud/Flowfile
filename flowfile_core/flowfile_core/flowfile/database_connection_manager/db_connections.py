@@ -128,9 +128,8 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
             db_connection.password_id = new_secret.id
 
     incoming_key = connection.private_key.get_secret_value() if connection.private_key else ""
-    keeps_key_material = connection.auth_method == "key_pair" or bool(incoming_key)
-    if keeps_key_material:
-        if connection.auth_method == "key_pair" and not incoming_key and db_connection.private_key_id is None:
+    if connection.auth_method == "key_pair":
+        if not incoming_key and db_connection.private_key_id is None:
             raise ValueError("key_pair authentication requires a private key.")
         # Rotate key material only when a non-empty value arrived (empty == keep existing,
         # mirroring password). _update_cloud_secret is generic despite the name.
@@ -149,8 +148,10 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
             user_id,
         )
     else:
-        # Switching away from key-pair auth: detach AND delete the key secrets, or a
-        # rotated-away (possibly compromised) key would keep authenticating silently.
+        # Switching away from key-pair auth: detach AND delete the key secrets — and
+        # ignore any stray incoming key — or a rotated-away (possibly compromised)
+        # key would keep authenticating silently (build_uri infers key-pair from key
+        # presence, and the reference resolver forwards whatever the row links).
         stale_ids = [
             secret_id
             for secret_id in (db_connection.private_key_id, db_connection.private_key_passphrase_id)

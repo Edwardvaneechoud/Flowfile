@@ -278,6 +278,12 @@ const authMethodModel = computed({
   get: () => connection.value.authMethod || "password",
   set: (value: string) => {
     connection.value.authMethod = value;
+    if (value !== "key_pair") {
+      // The hidden fields must not keep a pasted key: a stray private_key alongside
+      // auth_method="password" would win over the password server-side.
+      connection.value.privateKey = "";
+      connection.value.privateKeyPassphrase = "";
+    }
   },
 });
 

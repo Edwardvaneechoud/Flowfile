@@ -42,7 +42,7 @@
           id="auth-method"
           :value="modelValue.auth_method || 'password'"
           class="form-control"
-          @change="(e: Event) => updateField('auth_method', (e.target as HTMLSelectElement).value)"
+          @change="(e: Event) => updateAuthMethod((e.target as HTMLSelectElement).value)"
         >
           <option v-for="method in authMethodOptions" :key="method" :value="method">
             {{ authMethodLabel(method) }}
@@ -224,6 +224,17 @@ const updateDatabaseType = (value: string) => {
   // without it would fail backend validation with no visible field to fix.
   if (!authMethods(value).includes(next.auth_method || "password")) {
     next.auth_method = undefined;
+    next.private_key_ref = undefined;
+    next.private_key_passphrase_ref = undefined;
+  }
+  emit("update:modelValue", next);
+};
+
+const updateAuthMethod = (value: string) => {
+  const next: DatabaseConnection = { ...props.modelValue, auth_method: value };
+  // Leaving key-pair auth must drop the key refs: a stray private_key_ref alongside
+  // password auth would win over the password server-side.
+  if (value !== "key_pair") {
     next.private_key_ref = undefined;
     next.private_key_passphrase_ref = undefined;
   }
