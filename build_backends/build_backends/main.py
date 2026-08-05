@@ -212,6 +212,10 @@ for _pkg in _polars_plugins:
     except Exception as _e:
         print(f"WARN: could not collect plugin {{_pkg}}: {{_e}}")
 
+# polars' Rust side imports polars._utils.threading (and .cloud) at runtime —
+# invisible to static analysis, so collect every polars submodule explicitly.
+polars_hiddenimports = [m for m in collect_submodules("polars") if not m.startswith("polars.testing")]
+
 # litellm ships JSON data files (model_prices_and_context_window_backup.json,
 # policy_templates_backup.json, ...) read during `import litellm` via
 # importlib.resources.files("litellm"). collect_data_files grabs them;
@@ -255,7 +259,8 @@ a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=plugin_binaries + ai_binaries,
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + code_generator_datas + demo_flows_datas + standard_icons_datas + plugin_datas + litellm_datas + ai_datas,
-    hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + ai_hiddenimports + [
+    hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
+    + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',
