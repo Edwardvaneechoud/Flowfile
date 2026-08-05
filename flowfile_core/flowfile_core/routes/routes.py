@@ -760,8 +760,9 @@ def create_db_connection(
     _require_known_database_type(input_connection.database_type)
     try:
         store_database_connection(db, input_connection, current_user.id)
-    except ValueError:
-        raise HTTPException(422, "Connection name already exists") from None
+    except ValueError as e:
+        # Duplicate name or invalid credential shape (e.g. key_pair without a key).
+        raise HTTPException(422, str(e)) from None
     except Exception as e:
         logger.error(e)
         raise HTTPException(422, str(e)) from e
@@ -791,16 +792,23 @@ def update_db_connection(
         # JSON against the incoming dict, normalized, so unchanged params don't trip the guard.
         if (parse_extra_params(db_connection.extra_params) or {}) != (input_connection.extra_params or {}):
             changed.append("extra_params")
+        # auth_method needs normalization: a stored NULL and an incoming "password" are the same.
+        if (db_connection.auth_method or "password") != (input_connection.auth_method or "password"):
+            changed.append("auth_method")
         require_credentials_on_target_change(
             changed,
-            has_new_credentials=bool(input_connection.password.get_secret_value()),
-            has_bundled_secrets=db_connection.password_id is not None,
+            has_new_credentials=bool(input_connection.password.get_secret_value())
+            or bool(input_connection.private_key and input_connection.private_key.get_secret_value()),
+            has_bundled_secrets=db_connection.password_id is not None or db_connection.private_key_id is not None,
         )
     try:
         # Owner's user_id keeps a rotated password encrypted under the OWNER's key.
         update_database_connection(db, input_connection, db_connection.user_id)
-    except ValueError:
-        raise HTTPException(404, "Database connection not found") from None
+    except ValueError as e:
+        if "not found" in str(e):
+            raise HTTPException(404, "Database connection not found") from None
+        # Invalid credential shape (e.g. switching to key_pair without a key).
+        raise HTTPException(422, str(e)) from None
     except Exception as e:
         logger.error(e)
         raise HTTPException(422, str(e)) from e

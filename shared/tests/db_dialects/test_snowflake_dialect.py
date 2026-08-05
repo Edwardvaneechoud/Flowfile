@@ -43,6 +43,7 @@ def test_metadata():
     assert [f.name for f in dialect.extra_fields] == ["account", "warehouse", "role"]
     assert dialect.extra_fields[0].required is True
     assert dialect.hidden_fields == ("host", "port", "ssl")
+    assert dialect.auth_methods == ("password", "key_pair")
 
 
 def test_build_uri_account_shape():
@@ -93,6 +94,107 @@ def test_connect_kwargs_round_trip():
         "warehouse": "WH",
         "role": "R",
     }
+
+
+def _throwaway_key(passphrase: bytes | None = None) -> tuple[str, bytes]:
+    """Generate an RSA key; returns (PEM text as build_uri receives it, expected unencrypted PKCS#8 DER)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    encryption = serialization.BestAvailableEncryption(passphrase) if passphrase else serialization.NoEncryption()
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=encryption,
+    )
+    der = key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return pem.decode("ascii"), der
+
+
+def test_build_uri_key_pair_shape():
+    pem, _ = _throwaway_key()
+    uri = dialect.build_uri(
+        username="u",
+        password="should-not-appear",
+        database="d",
+        account="acct",
+        warehouse="WH",
+        auth_method="key_pair",
+        private_key=pem,
+    )
+    assert "should-not-appear" not in uri, "key-pair URIs must not carry the password"
+    assert uri.startswith("snowflake://u@acct/d?")
+    assert "warehouse=WH" in uri
+    assert "authenticator=snowflake_jwt" in uri
+    assert "private_key=" in uri
+    assert "private_key_passphrase" not in uri
+
+
+def test_build_uri_key_pair_requires_key():
+    with pytest.raises(ValueError, match="private key is required"):
+        dialect.build_uri(username="u", database="d", account="acct", auth_method="key_pair")
+
+
+def test_build_uri_private_key_implies_key_pair():
+    pem, _ = _throwaway_key()
+    uri = dialect.build_uri(username="u", password="p", database="d", account="acct", private_key=pem)
+    assert "authenticator=snowflake_jwt" in uri
+    assert ":p@" not in uri
+
+
+def test_connect_kwargs_key_pair_round_trip():
+    pem, der = _throwaway_key()
+    uri = dialect.build_uri(
+        username="u", database="db1", account="Acct-Id", warehouse="WH", auth_method="key_pair", private_key=pem
+    )
+    kwargs = dialect._connect_kwargs(uri)
+    assert kwargs["authenticator"] == "SNOWFLAKE_JWT"
+    assert kwargs["private_key"] == der, "PEM must round-trip to unencrypted PKCS#8 DER bytes"
+    assert "password" not in kwargs
+    assert kwargs["account"] == "Acct-Id"
+    assert kwargs["user"] == "u"
+    assert kwargs["warehouse"] == "WH"
+
+
+def test_connect_kwargs_key_pair_passphrase_round_trip():
+    passphrase = "s3cret pass+phrase"
+    pem, der = _throwaway_key(passphrase.encode("utf-8"))
+    uri = dialect.build_uri(
+        username="u",
+        database="db1",
+        account="acct",
+        auth_method="key_pair",
+        private_key=pem,
+        private_key_passphrase=passphrase,
+    )
+    kwargs = dialect._connect_kwargs(uri)
+    assert kwargs["private_key"] == der, "encrypted PEM must decrypt to the same unencrypted PKCS#8 DER"
+    assert kwargs["authenticator"] == "SNOWFLAKE_JWT"
+
+
+def test_other_dialects_reject_key_pair():
+    from shared.db_dialects import get_dialect as _get
+
+    postgres = _get("postgresql")
+    with pytest.raises(ValueError, match="does not support auth method"):
+        postgres.build_uri(host="h", username="u", password="p", auth_method="key_pair")
+    with pytest.raises(ValueError, match="key pair"):
+        postgres.build_uri(host="h", username="u", password="p", private_key="-----BEGIN PRIVATE KEY-----")
+    for file_based in ("sqlite", "duckdb"):
+        with pytest.raises(ValueError, match="does not support"):
+            _get(file_based).build_uri(database="/tmp/x.db", auth_method="key_pair")
+
+
+def test_auth_and_key_material_keys_stay_blocked_as_extra_params():
+    from shared.db_dialects import is_blocked_extra_param
+
+    for key in ("auth_method", "authenticator", "token", "private_key", "private_key_file", "private_key_passphrase"):
+        assert is_blocked_extra_param(key), key
 
 
 def test_limit_query_is_plain_limit_and_parses_as_snowflake():
@@ -179,3 +281,28 @@ def test_fakesnow_browse(snow_uri):
     assert tables is not None and any(t.lower() == "t_browse" for t in tables)
     qualified = dialect.list_tables(snow_uri, None)
     assert qualified is not None and any(t.lower() == "public.t_browse" for t in qualified)
+
+
+@pytest.fixture()
+def snow_uri_key_pair():
+    fakesnow = pytest.importorskip("fakesnow")
+    pem, _ = _throwaway_key()
+    with fakesnow.patch():
+        yield dialect.build_uri(
+            username="u",
+            database="db1",
+            account="test",
+            auth_method="key_pair",
+            private_key=pem,
+            **{"schema": "public"},
+        )
+
+
+def test_fakesnow_key_pair_uri_round_trip(snow_uri_key_pair):
+    # fakesnow ignores auth kwargs, so this proves the key-pair parse path does not
+    # break connections — auth correctness itself is covered by the DER unit tests
+    # and the live leg in test_snowflake_source.py.
+    df = pl.DataFrame({"x": [1, 2]})
+    dialect.write(df, uri=snow_uri_key_pair, table_name="t_kp", if_exists="replace")
+    result = dialect.read("SELECT * FROM t_kp", snow_uri_key_pair, logger)
+    assert result.height == 2

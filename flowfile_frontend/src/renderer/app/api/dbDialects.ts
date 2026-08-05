@@ -17,6 +17,8 @@ export interface DbDialectInfo {
   // form fields the dialect hides; absent on older cores, so keep optional.
   extra_fields?: DbDialectFieldInfo[];
   hidden_fields?: string[];
+  // Supported authentication methods (e.g. ["password", "key_pair"]); absent on older cores.
+  auth_methods?: string[];
 }
 
 // Rendered when the catalog request fails (offline, older core). Must mirror the
@@ -31,6 +33,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     available: true,
     extra_fields: [],
     hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "mysql",
@@ -41,6 +44,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     available: true,
     extra_fields: [],
     hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "sqlite",
@@ -51,6 +55,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     available: true,
     extra_fields: [],
     hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "duckdb",
@@ -61,6 +66,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     available: true,
     extra_fields: [],
     hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "mssql",
@@ -71,6 +77,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     available: true,
     extra_fields: [],
     hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "snowflake",
@@ -85,6 +92,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
       { name: "role", label: "Role", required: false },
     ],
     hidden_fields: ["host", "port", "ssl"],
+    auth_methods: ["password", "key_pair"],
   },
 ];
 

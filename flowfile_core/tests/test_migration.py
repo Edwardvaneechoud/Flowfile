@@ -913,3 +913,104 @@ class TestScd2ConfigMigration:
 
         _run_migration(db_path, monkeypatch)
         assert "scd2_config" in self._columns(db_path, "catalog_tables")
+
+
+# Migration 031: database_connections key-pair auth columns
+
+
+class TestKeyPairColumnsMigration:
+    _NEW_COLUMNS = ("auth_method", "private_key_id", "private_key_passphrase_id")
+
+    @staticmethod
+    def _columns(db_path: Path, table: str) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns(table)}
+        engine.dispose()
+        return names
+
+    def test_fresh_install_has_the_columns(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        columns = self._columns(db_path, "database_connections")
+        assert set(self._NEW_COLUMNS) <= columns
+
+    def test_upgrade_from_030_adds_the_columns(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "030")
+        assert not set(self._NEW_COLUMNS) & self._columns(db_path, "database_connections")
+
+        _run_migration(db_path, monkeypatch)
+        assert set(self._NEW_COLUMNS) <= self._columns(db_path, "database_connections")
+
+    def test_existing_rows_read_back_null(self, tmp_path, monkeypatch):
+        """Pre-031 connections become password connections (NULL auth_method), never half-migrated."""
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "030")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO database_connections (connection_name, database_type, username, user_id) "
+                    "VALUES ('legacy_conn', 'postgresql', 'u', 1)"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT auth_method, private_key_id, private_key_passphrase_id "
+                    "FROM database_connections WHERE connection_name = 'legacy_conn'"
+                )
+            ).one()
+        engine.dispose()
+        assert tuple(row) == (None, None, None)
+
+    def test_downgrade_then_upgrade_round_trips(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "030")
+        assert not set(self._NEW_COLUMNS) & self._columns(db_path, "database_connections")
+
+        command.upgrade(cfg, "031")
+        assert set(self._NEW_COLUMNS) <= self._columns(db_path, "database_connections")
+
+    def test_upgrade_is_guarded_when_a_column_already_exists(self, tmp_path, monkeypatch):
+        """Dev DBs that added a column out of band must not fail the startup upgrade."""
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "030")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE database_connections ADD COLUMN auth_method VARCHAR"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert set(self._NEW_COLUMNS) <= self._columns(db_path, "database_connections")

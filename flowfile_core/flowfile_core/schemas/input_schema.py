@@ -929,6 +929,16 @@ def _validate_extra_params(v: dict[str, str] | None) -> dict[str, str] | None:
     return v
 
 
+def _validate_auth_method(auth_method: str | None, database_type: str) -> None:
+    """Reject an auth method the connection's dialect does not support."""
+    if auth_method and auth_method != "password":
+        from shared.db_dialects import get_dialect_or_generic
+
+        dialect = get_dialect_or_generic(database_type)
+        if auth_method not in dialect.auth_methods:
+            raise ValueError(f"auth_method '{auth_method}' is not supported by database type '{database_type}'")
+
+
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 
@@ -940,6 +950,9 @@ class DatabaseConnection(BaseModel):
     database: str | None = None
     url: str | None = None
     extra_params: dict[str, str] | None = None
+    auth_method: str | None = None
+    private_key_ref: SecretRef | None = None
+    private_key_passphrase_ref: SecretRef | None = None
 
     @field_validator("database_type")
     @classmethod
@@ -951,7 +964,7 @@ class DatabaseConnection(BaseModel):
             raise ValueError(f"Unsupported database type '{v}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}")
         return low
 
-    @field_validator("password_ref", mode="before")
+    @field_validator("password_ref", "private_key_ref", "private_key_passphrase_ref", "auth_method", mode="before")
     @classmethod
     def empty_string_to_none(cls, v):
         if v == "":
@@ -963,9 +976,25 @@ class DatabaseConnection(BaseModel):
     def guard_extra_params(cls, v):
         return _validate_extra_params(v)
 
+    @model_validator(mode="after")
+    def check_auth_method(self):
+        _validate_auth_method(self.auth_method, self.database_type)
+        # getattr: the wire subclass (ExtDatabaseConnection) carries the key ciphertext
+        # in a `private_key` field this model does not have.
+        if self.auth_method == "key_pair" and not self.private_key_ref and not getattr(self, "private_key", None):
+            raise ValueError("key_pair authentication requires a private key")
+        return self
+
 
 class FullDatabaseConnection(BaseModel):
-    """A complete database connection model including the secret password."""
+    """A complete database connection model including the secret password.
+
+    For key-pair auth, ``private_key`` holds the PEM text (and
+    ``private_key_passphrase`` its optional passphrase). Both mirror
+    ``password``'s update semantics: empty means "keep the existing secret".
+    The key is not required at the model level for that reason — creation-time
+    enforcement lives in ``store_database_connection``.
+    """
 
     connection_name: str
     database_type: str = "postgresql"
@@ -977,6 +1006,9 @@ class FullDatabaseConnection(BaseModel):
     ssl_enabled: bool | None = False
     url: str | None = None
     extra_params: dict[str, str] | None = None
+    auth_method: str | None = None
+    private_key: SecretStr | None = None
+    private_key_passphrase: SecretStr | None = None
 
     @field_validator("database_type")
     @classmethod
@@ -984,14 +1016,36 @@ class FullDatabaseConnection(BaseModel):
         # lowercase only, no vocabulary check: legacy stored types (e.g. redshift) must keep loading
         return v.lower()
 
+    @field_validator("auth_method", mode="before")
+    @classmethod
+    def empty_auth_method_to_none(cls, v):
+        if v == "":
+            return None
+        return v
+
+    @field_validator("private_key", "private_key_passphrase", mode="before")
+    @classmethod
+    def empty_key_string_to_none(cls, v):
+        # A raw "" (JSON clients sending the empty form field) means "no key material";
+        # an explicit SecretStr("") (the project importer's placeholder refill rows)
+        # deliberately passes through and creates a linked empty secret.
+        if v == "":
+            return None
+        return v
+
     @field_validator("extra_params")
     @classmethod
     def guard_extra_params(cls, v):
         return _validate_extra_params(v)
 
+    @model_validator(mode="after")
+    def check_auth_method(self):
+        _validate_auth_method(self.auth_method, self.database_type)
+        return self
+
 
 class FullDatabaseConnectionInterface(BaseModel):
-    """A database connection model intended for UI display, omitting the password."""
+    """A database connection model intended for UI display, omitting the password and key material."""
 
     connection_name: str
     database_type: str = "postgresql"
@@ -1002,6 +1056,7 @@ class FullDatabaseConnectionInterface(BaseModel):
     ssl_enabled: bool | None = False
     url: str | None = None
     extra_params: dict[str, str] | None = None
+    auth_method: str | None = None
     id: int | None = None
     access: AccessInfo | None = None
 

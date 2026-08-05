@@ -25,6 +25,15 @@
         </select>
       </div>
 
+      <div v-if="dialectAuthMethods.length > 1" class="form-field">
+        <label for="auth-method" class="form-label">Authentication Method</label>
+        <select id="auth-method" v-model="authMethodModel" class="form-input" required>
+          <option v-for="method in dialectAuthMethods" :key="method" :value="method">
+            {{ authMethodLabel(method) }}
+          </option>
+        </select>
+      </div>
+
       <div v-for="field in dialectExtraFields" :key="field.name" class="form-field">
         <label :for="`extra-${field.name}`" class="form-label">{{ field.label }}</label>
         <input
@@ -86,7 +95,7 @@
         />
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="!isFileBasedType && !usesKeyPair" class="form-field">
         <label for="password" class="form-label">Password</label>
         <div class="password-field">
           <input
@@ -104,6 +113,42 @@
             @click="showPassword = !showPassword"
           >
             <i :class="showPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="usesKeyPair" class="form-field">
+        <label for="private-key" class="form-label">Private Key (PEM)</label>
+        <textarea
+          id="private-key"
+          v-model="connection.privateKey"
+          class="form-input private-key-input"
+          rows="5"
+          spellcheck="false"
+          :placeholder="
+            props.isEditing ? 'Leave blank to keep existing' : '-----BEGIN PRIVATE KEY-----'
+          "
+          :required="!props.isEditing"
+        ></textarea>
+      </div>
+
+      <div v-if="usesKeyPair" class="form-field">
+        <label for="private-key-passphrase" class="form-label">Key Passphrase (optional)</label>
+        <div class="password-field">
+          <input
+            id="private-key-passphrase"
+            v-model="connection.privateKeyPassphrase"
+            :type="showPassphrase ? 'text' : 'password'"
+            class="form-input"
+            :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Passphrase'"
+          />
+          <button
+            type="button"
+            class="toggle-visibility"
+            aria-label="Toggle passphrase visibility"
+            @click="showPassphrase = !showPassphrase"
+          >
+            <i :class="showPassphrase ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
           </button>
         </div>
       </div>
@@ -131,7 +176,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, defineProps, defineEmits, watch } from "vue";
+import { ref, computed, defineProps, defineEmits, watch, nextTick } from "vue";
 import type { FullDatabaseConnection } from "./databaseConnectionTypes";
 import { useDbDialects } from "../../composables/useDbDialects";
 
@@ -146,7 +191,13 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-const { dialects, isFileBased, defaultPort, extraFields, isFieldHidden } = useDbDialects();
+const { dialects, isFileBased, defaultPort, extraFields, isFieldHidden, authMethods } =
+  useDbDialects();
+
+const AUTH_METHOD_LABELS: Record<string, string> = {
+  password: "Password",
+  key_pair: "Key pair (JWT)",
+};
 
 const defaultConnection = (): FullDatabaseConnection => ({
   connectionName: "",
@@ -158,17 +209,29 @@ const defaultConnection = (): FullDatabaseConnection => ({
   database: "",
   sslEnabled: false,
   url: "",
+  authMethod: "password",
+  privateKey: "",
+  privateKeyPassphrase: "",
 });
 
 const connection = ref<FullDatabaseConnection>(
   props.initialConnection ? { ...props.initialConnection } : defaultConnection(),
 );
 
+// The dialect-change watcher must only react to USER type changes: when an edit
+// re-seeds the whole connection (the dialog is not destroy-on-close, so the form
+// survives across connections), clearing would wipe the just-seeded extraParams.
+let seedingConnection = false;
+
 watch(
   () => props.initialConnection,
   (newVal) => {
     if (newVal) {
+      seedingConnection = true;
       connection.value = { ...newVal };
+      nextTick(() => {
+        seedingConnection = false;
+      });
     }
   },
 );
@@ -176,6 +239,9 @@ watch(
 watch(
   () => connection.value.databaseType,
   (newType, oldType) => {
+    if (seedingConnection) {
+      return;
+    }
     if (newType !== oldType) {
       const newDefault = defaultPort(newType);
       if (isFileBased(newType)) {
@@ -187,17 +253,37 @@ watch(
           connection.value.port = newDefault;
         }
       }
-      // Extra params are dialect-specific; a stale set must not leak into the new dialect.
+      // Extra params and auth fields are dialect-specific; a stale set must not
+      // leak into the new dialect.
       connection.value.extraParams = undefined;
+      if (!authMethods(newType).includes(connection.value.authMethod || "password")) {
+        connection.value.authMethod = "password";
+      }
+      connection.value.privateKey = "";
+      connection.value.privateKeyPassphrase = "";
     }
   },
 );
 
 const showPassword = ref(false);
+const showPassphrase = ref(false);
 
 const isFileBasedType = computed(() => isFileBased(connection.value.databaseType));
 
 const dialectExtraFields = computed(() => extraFields(connection.value.databaseType));
+
+const dialectAuthMethods = computed(() => authMethods(connection.value.databaseType));
+
+const authMethodModel = computed({
+  get: () => connection.value.authMethod || "password",
+  set: (value: string) => {
+    connection.value.authMethod = value;
+  },
+});
+
+const usesKeyPair = computed(() => authMethodModel.value === "key_pair");
+
+const authMethodLabel = (method: string): string => AUTH_METHOD_LABELS[method] ?? method;
 
 const isHidden = (field: string) => isFieldHidden(connection.value.databaseType, field);
 
@@ -221,10 +307,13 @@ const isValid = computed(() => {
   if (isFileBasedType.value) {
     return !!connection.value.connectionName && !!connection.value.database;
   }
+  const credentialFilled = usesKeyPair.value
+    ? props.isEditing || !!connection.value.privateKey
+    : props.isEditing || !!connection.value.password;
   return (
     !!connection.value.connectionName &&
     !!connection.value.username &&
-    (props.isEditing || !!connection.value.password) &&
+    credentialFilled &&
     (isHidden("host") || !!connection.value.host) &&
     requiredExtraFieldsFilled.value
   );
@@ -243,3 +332,10 @@ const submitForm = () => {
   }
 };
 </script>
+
+<style scoped>
+.private-key-input {
+  font-family: monospace;
+  resize: vertical;
+}
+</style>

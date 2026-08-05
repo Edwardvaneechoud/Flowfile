@@ -32,7 +32,8 @@ class SQLiteDialect(DbDialect):
     file_based = True
     sqlglot_name = "sqlite"
 
-    def build_uri(self, *, host=None, database=None, **kwargs) -> str:
+    def build_uri(self, *, host=None, database=None, auth_method=None, private_key=None, **kwargs) -> str:
+        self._check_auth_supported(auth_method, private_key)
         path = database or host or "./database.db"
         # Strip sqlite:/// prefix if the full URI was passed as the path
         if path.startswith("sqlite:///"):

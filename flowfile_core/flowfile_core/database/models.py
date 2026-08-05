@@ -59,7 +59,10 @@ class DatabaseConnection(Base):
     database = Column(String, default=None)
     ssl_enabled = Column(Boolean, default=False)
     extra_params = Column(Text, nullable=True)  # JSON dict of dialect-specific params (e.g. snowflake account)
+    auth_method = Column(String, nullable=True)  # NULL == password (the historical default)
     password_id = Column(Integer, ForeignKey("secrets.id"))
+    private_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    private_key_passphrase_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"))
 
 

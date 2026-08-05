@@ -76,3 +76,54 @@ def test_snowflake_create_uri_carries_extra_params():
         extra_params={"account": "myorg-myaccount", "warehouse": "COMPUTE_WH"},
     )
     assert connection.create_uri() == "snowflake://u@myorg-myaccount/ANALYTICS?warehouse=COMPUTE_WH"
+
+
+def _pem() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+
+def test_snowflake_create_uri_key_pair_decrypts_and_omits_password():
+    # Real crypto under TEST_MODE=1 (conftest), matching test_sql_source.py's pattern.
+    from flowfile_worker.secrets import encrypt_secret
+
+    pem = _pem()
+    connection = DataBaseConnection(
+        database_type="snowflake",
+        username="svc",
+        database="ANALYTICS",
+        extra_params={"account": "myorg-myaccount"},
+        auth_method="key_pair",
+        private_key=encrypt_secret(pem),
+        private_key_passphrase=None,
+    )
+    uri = connection.create_uri()
+    assert uri.startswith("snowflake://svc@myorg-myaccount/ANALYTICS?")
+    assert "authenticator=snowflake_jwt" in uri
+    assert "private_key=" in uri
+    assert pem.splitlines()[1] not in uri, "the PEM body must be b64-wrapped, never verbatim"
+
+    from shared.db_dialects import get_dialect
+
+    kwargs = get_dialect("snowflake")._connect_kwargs(uri)
+    assert kwargs["authenticator"] == "SNOWFLAKE_JWT"
+    assert isinstance(kwargs["private_key"], bytes)
+    assert "password" not in kwargs
+
+
+def test_create_uri_strips_reserved_extra_params():
+    connection = DataBaseConnection(
+        database_type="snowflake",
+        username="u",
+        database="D",
+        extra_params={"account": "acct", "auth_method": "key_pair", "private_key": "evil"},
+    )
+    # Reserved keys are stripped before the splat, so no TypeError and no auth override.
+    assert connection.create_uri() == "snowflake://u@acct/D"

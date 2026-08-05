@@ -38,5 +38,8 @@ export function useDbDialects() {
   const isFieldHidden = (databaseType?: string, field?: string): boolean =>
     (findDialect(databaseType)?.hidden_fields ?? []).includes(field || "");
 
-  return { dialects, findDialect, isFileBased, defaultPort, extraFields, isFieldHidden };
+  const authMethods = (databaseType?: string): string[] =>
+    findDialect(databaseType)?.auth_methods ?? ["password"];
+
+  return { dialects, findDialect, isFileBased, defaultPort, extraFields, isFieldHidden, authMethods };
 }

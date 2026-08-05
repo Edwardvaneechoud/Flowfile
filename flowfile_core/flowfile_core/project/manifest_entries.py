@@ -23,8 +23,11 @@ class DatabaseConnectionEntry(_Entry):
     database: str | None = None
     username: str = ""
     ssl_enabled: bool = False
+    auth_method: str | None = None
     extra_params: dict[str, str] | None = None
     password: str | None = None
+    private_key: str | None = None
+    private_key_passphrase: str | None = None
 
 
 class CloudConnectionEntry(_Entry):

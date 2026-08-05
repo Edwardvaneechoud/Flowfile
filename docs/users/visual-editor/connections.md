@@ -47,6 +47,14 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
     usual username, password, and database. Connections always use TLS, so there is no SSL
     toggle. Semi-structured columns (`VARIANT`, `OBJECT`, `ARRAY`) are read as JSON text.
 
+    Snowflake also supports **key-pair (JWT) authentication** — Snowflake's recommended
+    method for programmatic access now that password-only logins are being phased out.
+    Pick *Key pair (JWT)* in the **Authentication Method** selector, then paste the
+    private key PEM text into the key field (plus its passphrase when the key is
+    encrypted). The key is stored as an encrypted secret, exactly like a password, and
+    is never written back to the form when editing — leave the field blank to keep the
+    existing key.
+
 ### Creating a Database Connection
 
 1. Open the **Connections** page from the left sidebar and select the **Database** tab

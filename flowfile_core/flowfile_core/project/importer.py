@@ -170,6 +170,15 @@ def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: Setup
     name = entry.connection_name
     secret_name = placeholder_name(entry.password) or name
     value = _resolve_secret_value(secret_name, owner_id, dotenv, result)
+
+    def _resolve_optional(raw: str | None) -> SecretStr | None:
+        # Only a placeholder resolves (no `or name` fallback like password): a None
+        # field means the connection has no such secret at all.
+        key_name = placeholder_name(raw)
+        if not key_name:
+            return None
+        return SecretStr(_resolve_secret_value(key_name, owner_id, dotenv, result))
+
     conn = FullDatabaseConnection(
         connection_name=name,
         database_type=entry.database_type,
@@ -180,12 +189,19 @@ def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: Setup
         database=entry.database,
         ssl_enabled=entry.ssl_enabled,
         extra_params=entry.extra_params,
+        auth_method=entry.auth_method,
+        private_key=_resolve_optional(entry.private_key),
+        private_key_passphrase=_resolve_optional(entry.private_key_passphrase),
     )
-    with get_db_context() as db:
-        if _get_own_database_connection(db, name, owner_id):
-            update_database_connection(db, conn, owner_id)
-        else:
-            store_database_connection(db, conn, owner_id)
+    try:
+        with get_db_context() as db:
+            if _get_own_database_connection(db, name, owner_id):
+                update_database_connection(db, conn, owner_id)
+            else:
+                store_database_connection(db, conn, owner_id)
+    except ValueError:
+        logger.warning("Project import: skipping invalid database connection %r", name, exc_info=True)
+        return None
     result.imported_connections += 1
     return name
 

@@ -15,9 +15,7 @@
           id="database-type"
           :value="modelValue.database_type"
           class="form-control"
-          @change="
-            (e: Event) => updateField('database_type', (e.target as HTMLSelectElement).value)
-          "
+          @change="(e: Event) => updateDatabaseType((e.target as HTMLSelectElement).value)"
         >
           <option v-for="dialect in dialects" :key="dialect.name" :value="dialect.name">
             {{ dialect.display_name }}
@@ -38,7 +36,21 @@
         />
       </div>
 
-      <div v-if="!isFileBasedConnection" class="form-group">
+      <div v-if="!isFileBasedConnection && authMethodOptions.length > 1" class="form-group">
+        <label for="auth-method">Authentication Method</label>
+        <select
+          id="auth-method"
+          :value="modelValue.auth_method || 'password'"
+          class="form-control"
+          @change="(e: Event) => updateField('auth_method', (e.target as HTMLSelectElement).value)"
+        >
+          <option v-for="method in authMethodOptions" :key="method" :value="method">
+            {{ authMethodLabel(method) }}
+          </option>
+        </select>
+      </div>
+
+      <div v-if="!isFileBasedConnection && !usesKeyPair" class="form-group">
         <label for="password-ref">Password Reference</label>
         <select
           id="password-ref"
@@ -47,6 +59,41 @@
           @change="(e: Event) => updateField('password_ref', (e.target as HTMLSelectElement).value)"
         >
           <option value="">Select a password from the secrets</option>
+          <option v-for="secret in availableSecrets" :key="secret.name" :value="secret.name">
+            {{ secret.name }}
+          </option>
+        </select>
+      </div>
+
+      <div v-if="!isFileBasedConnection && usesKeyPair" class="form-group">
+        <label for="private-key-ref">Private Key Reference</label>
+        <select
+          id="private-key-ref"
+          :value="modelValue.private_key_ref"
+          class="form-control"
+          @change="
+            (e: Event) => updateField('private_key_ref', (e.target as HTMLSelectElement).value)
+          "
+        >
+          <option value="">Select the private key (PEM) from the secrets</option>
+          <option v-for="secret in availableSecrets" :key="secret.name" :value="secret.name">
+            {{ secret.name }}
+          </option>
+        </select>
+      </div>
+
+      <div v-if="!isFileBasedConnection && usesKeyPair" class="form-group">
+        <label for="private-key-passphrase-ref">Key Passphrase Reference (optional)</label>
+        <select
+          id="private-key-passphrase-ref"
+          :value="modelValue.private_key_passphrase_ref"
+          class="form-control"
+          @change="
+            (e: Event) =>
+              updateField('private_key_passphrase_ref', (e.target as HTMLSelectElement).value)
+          "
+        >
+          <option value="">No passphrase</option>
           <option v-for="secret in availableSecrets" :key="secret.name" :value="secret.name">
             {{ secret.name }}
           </option>
@@ -133,13 +180,24 @@ const props = defineProps<{
   modelValue: DatabaseConnection;
 }>();
 
-const { dialects, isFileBased, extraFields, isFieldHidden } = useDbDialects();
+const { dialects, isFileBased, extraFields, isFieldHidden, authMethods } = useDbDialects();
+
+const AUTH_METHOD_LABELS: Record<string, string> = {
+  password: "Password",
+  key_pair: "Key pair (JWT)",
+};
 
 const isFileBasedConnection = computed(() => isFileBased(props.modelValue.database_type));
 
 const dialectExtraFields = computed(() => extraFields(props.modelValue.database_type));
 
 const isHidden = (field: string) => isFieldHidden(props.modelValue.database_type, field);
+
+const authMethodOptions = computed(() => authMethods(props.modelValue.database_type));
+
+const usesKeyPair = computed(() => props.modelValue.auth_method === "key_pair");
+
+const authMethodLabel = (method: string): string => AUTH_METHOD_LABELS[method] ?? method;
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: DatabaseConnection): void;
@@ -158,6 +216,18 @@ const updateField = <T extends keyof DatabaseConnection>(
     ...props.modelValue,
     [field]: value,
   });
+};
+
+const updateDatabaseType = (value: string) => {
+  const next: DatabaseConnection = { ...props.modelValue, database_type: value };
+  // Auth fields are dialect-specific: a stale key_pair selection on a dialect
+  // without it would fail backend validation with no visible field to fix.
+  if (!authMethods(value).includes(next.auth_method || "password")) {
+    next.auth_method = undefined;
+    next.private_key_ref = undefined;
+    next.private_key_passphrase_ref = undefined;
+  }
+  emit("update:modelValue", next);
 };
 
 const updateExtraParam = (name: string, value: string) => {

@@ -1315,3 +1315,75 @@ def test_database_connection_extra_params_round_trip(tmp_path, monkeypatch):
         assert restored.extra_params == extra_params
     finally:
         _cleanup([conn], [])
+
+
+def test_database_connection_key_pair_round_trip(tmp_path, monkeypatch):
+    """A key-pair snowflake connection projects auth_method verbatim and the key/passphrase
+    as ${secret:...} placeholders (never PEM text or ciphertext), the secret manifest keeps
+    treating the linked key secrets as connection-implied, and import restores a working
+    connection from FLOWFILE_SECRET_* env vars."""
+    import yaml
+
+    project_sync.close_project(OWNER)
+    conn = "proj_db_snowflake_kp"
+    pem = "-----BEGIN PRIVATE KEY-----\nkey-material-for-round-trip\n-----END PRIVATE KEY-----\n"
+    with get_db_context() as db:
+        if get_database_connection(db, conn, OWNER) is None:
+            store_database_connection(
+                db,
+                input_schema.FullDatabaseConnection(
+                    connection_name=conn,
+                    database_type="snowflake",
+                    username="svc_reader",
+                    password="",
+                    database="ANALYTICS",
+                    extra_params={"account": "myorg-myaccount"},
+                    auth_method="key_pair",
+                    private_key=pem,
+                    private_key_passphrase="kp-pass",
+                ),
+                OWNER,
+            )
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Snowflake KP RT", OWNER)
+        conn_text = (root / "connections" / "database" / f"{conn}.yaml").read_text(encoding="utf-8")
+        assert "auth_method: key_pair" in conn_text
+        assert f"${{secret:{conn}_private_key}}" in conn_text
+        assert f"${{secret:{conn}_private_key_passphrase}}" in conn_text
+        assert "BEGIN PRIVATE KEY" not in conn_text
+        assert "kp-pass" not in conn_text
+        assert "$ffsec$" not in conn_text
+
+        manifest_data = yaml.safe_load((root / "secrets.yaml").read_text(encoding="utf-8"))
+        listed = set(manifest_data.get("required_secrets") or [])
+        assert f"{conn}_private_key" not in listed, "linked key secrets are connection-implied"
+        assert f"{conn}_private_key_passphrase" not in listed
+
+        project_sync.close_project(OWNER)
+        with get_db_context() as db:
+            delete_database_connection(db, conn, OWNER)
+
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_DB_SNOWFLAKE_KP", "")
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_DB_SNOWFLAKE_KP_PRIVATE_KEY", pem)
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_DB_SNOWFLAKE_KP_PRIVATE_KEY_PASSPHRASE", "kp-pass")
+        from flowfile_core.project.importer import import_project
+
+        import_project(root, OWNER)
+        from flowfile_core.flowfile.database_connection_manager.db_connections import (
+            get_database_connection_schema,
+        )
+        from flowfile_core.secret_manager.secret_manager import decrypt_secret
+
+        with get_db_context() as db:
+            restored = get_database_connection_schema(db, conn, OWNER)
+        assert restored is not None
+        assert restored.auth_method == "key_pair"
+        assert restored.private_key is not None
+        assert decrypt_secret(restored.private_key.get_secret_value()).get_secret_value() == pem
+        assert restored.private_key_passphrase is not None
+        assert (
+            decrypt_secret(restored.private_key_passphrase.get_secret_value()).get_secret_value() == "kp-pass"
+        )
+    finally:
+        _cleanup([conn], [])

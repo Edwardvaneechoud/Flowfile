@@ -1316,15 +1316,24 @@ def _handle_physical_table_write(
     return df
 
 
+class ResolvedDatabaseCredentials(NamedTuple):
+    """A resolved connection plus its credential ciphertexts (``$ffsec$``, decrypted at point of use)."""
+
+    connection: Any
+    password: str | None
+    private_key: str | None
+    private_key_passphrase: str | None
+    reference_settings: input_schema.FullDatabaseConnection | None
+
+
 def _resolve_database_credentials(
     database_settings,
     user_id: int,
-) -> tuple:
-    """Resolve database connection and encrypted password from settings.
+) -> ResolvedDatabaseCredentials:
+    """Resolve database connection and encrypted credentials from settings.
 
-    Returns:
-        (database_connection, encrypted_password, database_reference_settings)
-        where database_reference_settings is the stored connection (or None for inline).
+    For key-pair auth the private key is the required credential and the password
+    becomes optional; ``reference_settings`` is the stored connection (None for inline).
     """
     is_file_based = (
         database_settings.connection_mode == "inline"
@@ -1333,12 +1342,33 @@ def _resolve_database_credentials(
     )
     if database_settings.connection_mode == "inline" and not is_file_based:
         database_connection = database_settings.database_connection
-        encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
-        if encrypted_password is None:
+        use_key_pair = database_connection.auth_method == "key_pair"
+        encrypted_password = None
+        if database_connection.password_ref:
+            encrypted_password = get_encrypted_secret(
+                current_user_id=user_id, secret_name=database_connection.password_ref
+            )
+        if encrypted_password is None and not use_key_pair:
             raise HTTPException(status_code=400, detail="Password not found")
-        return database_connection, encrypted_password, None
+        encrypted_private_key = None
+        encrypted_passphrase = None
+        if use_key_pair:
+            encrypted_private_key = get_encrypted_secret(
+                current_user_id=user_id, secret_name=database_connection.private_key_ref
+            )
+            if encrypted_private_key is None:
+                raise HTTPException(status_code=400, detail="Private key secret not found")
+            if database_connection.private_key_passphrase_ref:
+                encrypted_passphrase = get_encrypted_secret(
+                    current_user_id=user_id, secret_name=database_connection.private_key_passphrase_ref
+                )
+                if encrypted_passphrase is None:
+                    raise HTTPException(status_code=400, detail="Private key passphrase secret not found")
+        return ResolvedDatabaseCredentials(
+            database_connection, encrypted_password, encrypted_private_key, encrypted_passphrase, None
+        )
     elif is_file_based:
-        return database_settings.database_connection, None, None
+        return ResolvedDatabaseCredentials(database_settings.database_connection, None, None, None, None)
     else:
         ref_settings = get_local_database_connection(database_settings.database_connection_name, user_id)
         if ref_settings is None:
@@ -1349,8 +1379,13 @@ def _resolve_database_credentials(
                     "or not accessible for this user"
                 ),
             )
-        encrypted_password = ref_settings.password.get_secret_value()
-        return ref_settings, encrypted_password, ref_settings
+        return ResolvedDatabaseCredentials(
+            ref_settings,
+            ref_settings.password.get_secret_value(),
+            ref_settings.private_key.get_secret_value() if ref_settings.private_key else None,
+            ref_settings.private_key_passphrase.get_secret_value() if ref_settings.private_key_passphrase else None,
+            ref_settings,
+        )
 
 
 class _FlowIdentity(NamedTuple):
@@ -4570,9 +4605,8 @@ class FlowGraph:
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
 
         def _func(df: FlowDataEngine):
-            database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
-                database_settings, node_database_writer.user_id
-            )
+            creds = _resolve_database_credentials(database_settings, node_database_writer.user_id)
+            database_connection = creds.connection
             df.lazy = True
             table_name = (
                 database_settings.schema_name + "." + database_settings.table_name
@@ -4589,9 +4623,14 @@ class FlowGraph:
                         port=database_connection.port,
                         database=database_connection.database,
                         username=database_connection.username,
-                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                        password=decrypt_secret(creds.password) if creds.password else None,
                         ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
                         connect_timeout=10,
+                        auth_method=database_connection.auth_method,
+                        private_key=decrypt_secret(creds.private_key) if creds.private_key else None,
+                        private_key_passphrase=(
+                            decrypt_secret(creds.private_key_passphrase) if creds.private_key_passphrase else None
+                        ),
                         **(database_connection.extra_params or {}),
                     ),
                     table_name=table_name,
@@ -4602,12 +4641,14 @@ class FlowGraph:
             database_external_write_settings = (
                 sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
                     node_database_writer=node_database_writer,
-                    password=encrypted_password,
+                    password=creds.password,
                     table_name=table_name,
                     database_reference_settings=(
-                        database_reference_settings if database_settings.connection_mode == "reference" else None
+                        creds.reference_settings if database_settings.connection_mode == "reference" else None
                     ),
                     lf=df.data_frame,
+                    private_key=creds.private_key,
+                    private_key_passphrase=creds.private_key_passphrase,
                 )
             )
             external_database_writer = ExternalDatabaseWriter(
@@ -4660,7 +4701,8 @@ class FlowGraph:
                 return _creds["v"]
 
         def _func():
-            database_connection, encrypted_password, database_reference_settings = _get_creds()
+            creds = _get_creds()
+            database_connection = creds.connection
             sql_source = BaseSqlSource(
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,
@@ -4678,9 +4720,14 @@ class FlowGraph:
                         port=database_connection.port,
                         database=database_connection.database,
                         username=database_connection.username,
-                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                        password=decrypt_secret(creds.password) if creds.password else None,
                         ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
                         connect_timeout=10,
+                        auth_method=database_connection.auth_method,
+                        private_key=decrypt_secret(creds.private_key) if creds.private_key else None,
+                        private_key_passphrase=(
+                            decrypt_secret(creds.private_key_passphrase) if creds.private_key_passphrase else None
+                        ),
                         **(database_connection.extra_params or {}),
                     ),
                     query=None if database_settings.query_mode == "table" else database_settings.query,
@@ -4698,11 +4745,13 @@ class FlowGraph:
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,
-                    password=encrypted_password,
+                    password=creds.password,
                     query=sql_source.query,
                     database_reference_settings=(
-                        database_reference_settings if database_settings.connection_mode == "reference" else None
+                        creds.reference_settings if database_settings.connection_mode == "reference" else None
                     ),
+                    private_key=creds.private_key,
+                    private_key_passphrase=creds.private_key_passphrase,
                 )
             )
 
@@ -4720,7 +4769,8 @@ class FlowGraph:
             # when fields were never captured (failures here are caught per-node).
             if node_database_reader.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_database_reader.fields]
-            database_connection, encrypted_password, _ = _get_creds()
+            creds = _get_creds()
+            database_connection = creds.connection
             sql_source = SqlSource(
                 connection_string=sql_utils.construct_sql_uri(
                     database_type=database_connection.database_type,
@@ -4728,9 +4778,14 @@ class FlowGraph:
                     port=database_connection.port,
                     database=database_connection.database,
                     username=database_connection.username,
-                    password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                    password=decrypt_secret(creds.password) if creds.password else None,
                     ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
                     connect_timeout=10,
+                    auth_method=database_connection.auth_method,
+                    private_key=decrypt_secret(creds.private_key) if creds.private_key else None,
+                    private_key_passphrase=(
+                        decrypt_secret(creds.private_key_passphrase) if creds.private_key_passphrase else None
+                    ),
                     **(database_connection.extra_params or {}),
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,

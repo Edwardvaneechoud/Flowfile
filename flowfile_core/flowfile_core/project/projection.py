@@ -63,7 +63,12 @@ _CLOUD_PLAIN_FIELDS = (
     "verify_ssl",
 )
 # Non-secret database-connection fields that round-trip verbatim.
-_DB_PLAIN_FIELDS = ("database_type", "host", "port", "database", "username", "ssl_enabled")
+_DB_PLAIN_FIELDS = ("database_type", "host", "port", "database", "username", "ssl_enabled", "auth_method")
+# Secret-backed database-connection fields: (file field, model FK column), like _CLOUD_SECRETS.
+_DB_SECRETS = (
+    ("private_key", "private_key_id"),
+    ("private_key_passphrase", "private_key_passphrase_id"),
+)
 
 
 def _secret_name(db: Session, secret_id: int | None) -> str | None:
@@ -191,6 +196,9 @@ def _db_connection_dict(db: Session, conn: DatabaseConnection) -> dict:
         d[f] = getattr(conn, f)
     d["extra_params"] = parse_extra_params(conn.extra_params)
     d["password"] = make_placeholder(secret_name) if secret_name else None
+    for field, fk in _DB_SECRETS:
+        name = _secret_name(db, getattr(conn, fk))
+        d[field] = make_placeholder(name) if name else None
     return d
 
 
@@ -283,9 +291,13 @@ def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
     """secrets.yaml lists only standalone secrets; connection secrets are implied by
     the connection files (and recreated by their store functions on import)."""
     linked: set[int] = set()
-    for (sid,) in db.query(DatabaseConnection.password_id).filter(DatabaseConnection.user_id == owner_id):
-        if sid:
-            linked.add(sid)
+    db_secret_fk_columns = (
+        DatabaseConnection.password_id,
+        DatabaseConnection.private_key_id,
+        DatabaseConnection.private_key_passphrase_id,
+    )
+    for row in db.query(*db_secret_fk_columns).filter(DatabaseConnection.user_id == owner_id):
+        linked.update(sid for sid in row if sid)
     for row in db.query(*[getattr(CloudStorageConnection, fk) for fk in _CLOUD_SECRET_FK_COLUMNS]).filter(
         CloudStorageConnection.user_id == owner_id
     ):

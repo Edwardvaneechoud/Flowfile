@@ -13,6 +13,15 @@ URI as ``snowflake://user:pass@account/database?warehouse=...&role=...``.
 ``build_uri`` drops any blocked key (``base.is_blocked_extra_param``) so extra
 params can never override credentials.
 
+Key-pair (JWT) auth is first-class, not an extra param:
+``build_uri(auth_method="key_pair", private_key=<PEM text>)`` omits the
+password from the URI userinfo and appends dialect-generated
+``authenticator=snowflake_jwt&private_key=<urlsafe-b64 PEM>`` (plus an optional
+b64 passphrase) *after* the blocked-key filter, so user extra_params can never
+inject them. ``_connect_kwargs`` decodes the PEM back and hands the connector
+unencrypted PKCS#8 DER bytes with ``authenticator="SNOWFLAKE_JWT"``; key
+material only ever exists in memory, never on disk.
+
 Fast schema uses ``cursor.describe()`` — the query is compiled server-side but
 never executed — plus a dialect-local map keyed on the connector's type codes.
 ``read`` casts the fetched frame through the same map (Snowflake's Arrow
@@ -72,6 +81,7 @@ class SnowflakeDialect(DbDialect):
         DialectField("role", "Role"),
     )
     hidden_fields: ClassVar[tuple[str, ...]] = ("host", "port", "ssl")
+    auth_methods: ClassVar[tuple[str, ...]] = ("password", "key_pair")
 
     def is_available(self) -> bool:
         try:
@@ -90,10 +100,21 @@ class SnowflakeDialect(DbDialect):
         database: str | None = None,
         ssl_enabled: bool = False,
         connect_timeout: int | None = None,
+        auth_method: str | None = None,
+        private_key: str | None = None,
+        private_key_passphrase: str | None = None,
         **kwargs,
     ) -> str:
         """Account-shaped URI; ``account`` comes from extra_params (``host`` is accepted as an alias)."""
+        import base64
         from urllib.parse import quote_plus
+
+        self._check_auth_supported(auth_method, private_key)
+        use_key_pair = auth_method == "key_pair" or bool(private_key and auth_method in (None, "", "password"))
+        if auth_method == "key_pair" and not private_key:
+            raise ValueError("A private key is required for Snowflake key-pair authentication")
+        if use_key_pair:
+            password = None
 
         account = kwargs.pop("account", None) or host
         if not account:
@@ -110,17 +131,27 @@ class SnowflakeDialect(DbDialect):
         if database:
             uri += f"/{database}"
         params = {k: v for k, v in kwargs.items() if v is not None and not is_blocked_extra_param(k)}
+        if use_key_pair:
+            # Dialect-generated auth params, added after the blocked-key filter so
+            # user extra_params can never inject or override them.
+            params["authenticator"] = "snowflake_jwt"
+            params["private_key"] = base64.urlsafe_b64encode(private_key.encode("utf-8")).decode("ascii")
+            if private_key_passphrase:
+                params["private_key_passphrase"] = base64.urlsafe_b64encode(
+                    private_key_passphrase.encode("utf-8")
+                ).decode("ascii")
         if params:
             uri += "?" + "&".join(f"{key}={quote_plus(str(value))}" for key, value in params.items())
         return uri
 
-    @staticmethod
-    def _connect_kwargs(uri: str) -> dict[str, str]:
+    @classmethod
+    def _connect_kwargs(cls, uri: str) -> dict[str, Any]:
+        import base64
         from urllib.parse import parse_qsl, unquote, urlparse
 
         parsed = urlparse(uri)
         # netloc split instead of .hostname: account identifiers should keep their case.
-        kwargs: dict[str, str] = {"account": unquote(parsed.netloc.rsplit("@", 1)[-1])}
+        kwargs: dict[str, Any] = {"account": unquote(parsed.netloc.rsplit("@", 1)[-1])}
         if parsed.username:
             kwargs["user"] = unquote(parsed.username)
         if parsed.password:
@@ -128,10 +159,37 @@ class SnowflakeDialect(DbDialect):
         database = parsed.path.lstrip("/")
         if database:
             kwargs["database"] = unquote(database)
-        for key, value in parse_qsl(parsed.query):
-            if key in ("warehouse", "role", "schema") and value:
-                kwargs[key] = value
+        query = dict(parse_qsl(parsed.query))
+        for key in ("warehouse", "role", "schema"):
+            if query.get(key):
+                kwargs[key] = query[key]
+        if query.get("authenticator") == "snowflake_jwt" and query.get("private_key"):
+            pem = base64.urlsafe_b64decode(query["private_key"])
+            passphrase = (
+                base64.urlsafe_b64decode(query["private_key_passphrase"])
+                if query.get("private_key_passphrase")
+                else None
+            )
+            kwargs["private_key"] = cls._private_key_der(pem, passphrase)
+            kwargs["authenticator"] = "SNOWFLAKE_JWT"
+            kwargs.pop("password", None)
         return kwargs
+
+    @staticmethod
+    def _private_key_der(pem: bytes, passphrase: bytes | None) -> bytes:
+        """PEM text (optionally passphrase-encrypted) -> unencrypted PKCS#8 DER bytes.
+
+        snowflake-connector-python accepts DER bytes directly; decrypting here keeps
+        the passphrase out of the connector call and the key out of any file.
+        """
+        from cryptography.hazmat.primitives import serialization
+
+        key = serialization.load_pem_private_key(pem, password=passphrase)
+        return key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
 
     def _connect(self, uri: str):
         import snowflake.connector

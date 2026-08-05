@@ -367,12 +367,15 @@ def construct_sql_uri(
     url: str | None = None,
     ssl_enabled: bool = False,
     connect_timeout: int | None = None,
+    auth_method: str | None = None,
+    private_key: SecretStr | None = None,
+    private_key_passphrase: SecretStr | None = None,
     **kwargs,
 ) -> str:
     """
     Constructs a SQL URI string from the provided parameters.
 
-    Thin wrapper around shared.sql_utils.construct_sql_uri that unwraps SecretStr passwords.
+    Thin wrapper around shared.sql_utils.construct_sql_uri that unwraps SecretStr credentials.
 
     Args:
         database_type: Database type (postgresql, mysql, sqlite, etc.)
@@ -384,6 +387,9 @@ def construct_sql_uri(
         url: Complete database URL (overrides other parameters if provided)
         ssl_enabled: Adds sslmode=require for postgres-family databases
         connect_timeout: Connection timeout in seconds (postgres-family only)
+        auth_method: Authentication method ("password"/None, or "key_pair" where supported)
+        private_key: Private key PEM text as SecretStr (key-pair auth)
+        private_key_passphrase: Optional passphrase for an encrypted private key
         **kwargs: Additional connection parameters
 
     Returns:
@@ -403,6 +409,9 @@ def construct_sql_uri(
         url=url,
         ssl_enabled=ssl_enabled,
         connect_timeout=connect_timeout,
+        auth_method=auth_method,
+        private_key=private_key.get_secret_value() if private_key else None,
+        private_key_passphrase=private_key_passphrase.get_secret_value() if private_key_passphrase else None,
         **kwargs,
     )
 

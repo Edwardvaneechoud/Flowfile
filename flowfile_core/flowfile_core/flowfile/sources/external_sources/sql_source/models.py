@@ -29,10 +29,19 @@ Base64Bytes = Annotated[
 
 
 class ExtDatabaseConnection(DatabaseConnection):
-    """Database connection configuration with password handling."""
+    """Database connection configuration with credential handling.
+
+    password / private_key / private_key_passphrase carry $ffsec$ ciphertext
+    over the core -> worker wire; the worker decrypts them independently.
+    """
 
     password: str | None = None
     ssl_enabled: bool | None = False
+    private_key: str | None = None
+    private_key_passphrase: str | None = None
+
+
+_SECRET_FIELDS = ("password", "private_key", "private_key_passphrase")
 
 
 class DatabaseExternalWriteSettings(BaseModel):
@@ -53,24 +62,36 @@ class DatabaseExternalWriteSettings(BaseModel):
         table_name: str,
         lf: pl.LazyFrame,
         database_reference_settings: FullDatabaseConnection = None,
+        private_key: str | None = None,
+        private_key_passphrase: str | None = None,
     ) -> "DatabaseExternalWriteSettings":
         """
         Create DatabaseExternalWriteSettings from NodeDatabaseWriter.
         Args:
             node_database_writer (NodeDatabaseWriter): an instance of NodeDatabaseWriter
-            password (str): the password for the database connection
+            password (str): the encrypted password for the database connection
             table_name (str): the table name to be used for writing
             lf (pl.LazyFrame): the LazyFrame to be written to the database
             database_reference_settings (FullDatabaseConnection): optional database reference settings
+            private_key (str): the encrypted private key (key-pair auth)
+            private_key_passphrase (str): the encrypted private-key passphrase
         Returns:
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
         if node_database_writer.database_write_settings.connection_mode == "inline":
             database_connection = node_database_writer.database_write_settings.database_connection.model_dump()
         else:
-            database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
+            # Exclude the SecretStr fields from the splat; the ciphertexts are passed explicitly.
+            database_connection = {
+                k: v for k, v in database_reference_settings.model_dump().items() if k not in _SECRET_FIELDS
+            }
 
-        ext_database_connection = ExtDatabaseConnection(**database_connection, password=password)
+        ext_database_connection = ExtDatabaseConnection(
+            **database_connection,
+            password=password,
+            private_key=private_key,
+            private_key_passphrase=private_key_passphrase,
+        )
         return cls(
             connection=ext_database_connection,
             table_name=table_name,
@@ -96,23 +117,35 @@ class DatabaseExternalReadSettings(BaseModel):
         password: str,
         query: str,
         database_reference_settings: FullDatabaseConnection = None,
+        private_key: str | None = None,
+        private_key_passphrase: str | None = None,
     ) -> "DatabaseExternalReadSettings":
         """
         Create DatabaseExternalReadSettings from NodeDatabaseReader.
         Args:
             node_database_reader (NodeDatabaseReader): an instance of NodeDatabaseReader
-            password (str): the password for the database connection
+            password (str): the encrypted password for the database connection
             query (str): the SQL query to be executed
             database_reference_settings (FullDatabaseConnection): optional database reference settings
+            private_key (str): the encrypted private key (key-pair auth)
+            private_key_passphrase (str): the encrypted private-key passphrase
         Returns:
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
         if node_database_reader.database_settings.connection_mode == "inline":
             database_connection = node_database_reader.database_settings.database_connection.model_dump()
         else:
-            database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
+            # Exclude the SecretStr fields from the splat; the ciphertexts are passed explicitly.
+            database_connection = {
+                k: v for k, v in database_reference_settings.model_dump().items() if k not in _SECRET_FIELDS
+            }
 
-        ext_database_connection = ExtDatabaseConnection(**database_connection, password=password)
+        ext_database_connection = ExtDatabaseConnection(
+            **database_connection,
+            password=password,
+            private_key=private_key,
+            private_key_passphrase=private_key_passphrase,
+        )
         return cls(
             connection=ext_database_connection,
             query=query,

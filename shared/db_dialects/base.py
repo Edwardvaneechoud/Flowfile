@@ -47,6 +47,7 @@ _BLOCKED_EXTRA_PARAMS = frozenset(
         "port",
         "database",
         "dbname",
+        "auth_method",
         "authenticator",
         "token",
         "insecure_mode",
@@ -85,6 +86,10 @@ class DbDialect:
     # so a new connection shape needs no frontend changes.
     extra_fields: ClassVar[tuple[DialectField, ...]] = ()
     hidden_fields: ClassVar[tuple[str, ...]] = ()
+    # Authentication methods this dialect's build_uri understands. "password" is
+    # the implicit default everywhere; dialects opting into more (e.g. Snowflake
+    # key-pair JWT) extend this and handle the corresponding build_uri params.
+    auth_methods: ClassVar[tuple[str, ...]] = ("password",)
 
     @property
     def uri_scheme(self) -> str:
@@ -93,6 +98,13 @@ class DbDialect:
     def is_available(self) -> bool:
         """Whether the driver stack for this dialect is importable."""
         return True
+
+    def _check_auth_supported(self, auth_method: str | None, private_key: str | None) -> None:
+        """Refuse credentials this dialect cannot honor — silent ignoring is worse than an error."""
+        if auth_method not in (None, "", "password") and auth_method not in self.auth_methods:
+            raise ValueError(f"{self.display_name} does not support auth method {auth_method!r}")
+        if private_key and "key_pair" not in self.auth_methods:
+            raise ValueError(f"{self.display_name} does not support private-key (key pair) authentication")
 
     def build_uri(
         self,
@@ -104,11 +116,15 @@ class DbDialect:
         database: str | None = None,
         ssl_enabled: bool = False,
         connect_timeout: int | None = None,
+        auth_method: str | None = None,
+        private_key: str | None = None,
+        private_key_passphrase: str | None = None,
         **kwargs,
     ) -> str:
         """Build a base (connectorx-style) URI. ``password`` is a plain string."""
         from urllib.parse import quote_plus
 
+        self._check_auth_supported(auth_method, private_key)
         if not host:
             raise ValueError("Host is required to create a URI")
 

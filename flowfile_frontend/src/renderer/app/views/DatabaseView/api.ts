@@ -25,6 +25,11 @@ const toPythonFormat = (connection: FullDatabaseConnection): PythonFullDatabaseC
     ssl_enabled: connection.sslEnabled,
     url: connection.url,
     extra_params: connection.extraParams,
+    auth_method: connection.authMethod,
+    // undefined (dropped from JSON) rather than "": an empty string would create
+    // empty key-secret rows server-side; blank means "no key" / "keep existing".
+    private_key: connection.privateKey || undefined,
+    private_key_passphrase: connection.privateKeyPassphrase || undefined,
   };
 };
 
@@ -57,6 +62,7 @@ export const convertConnectionInterfacePytoTs = (
     url: pythonConnectionInterface.url,
     database: pythonConnectionInterface.database,
     extraParams: pythonConnectionInterface.extra_params,
+    authMethod: pythonConnectionInterface.auth_method ?? undefined,
     id: pythonConnectionInterface.id,
     access: pythonConnectionInterface.access,
   };
@@ -75,6 +81,7 @@ export const convertConnectionInterfaceTstoPy = (
     ssl_enabled: dbConnectionInterface.sslEnabled,
     url: dbConnectionInterface.url,
     extra_params: dbConnectionInterface.extraParams,
+    auth_method: dbConnectionInterface.authMethod,
   };
 };
 

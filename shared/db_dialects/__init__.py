@@ -90,6 +90,7 @@ class DialectInfo(BaseModel):
     available: bool
     extra_fields: list[DialectFieldInfo] = []
     hidden_fields: list[str] = []
+    auth_methods: list[str] = ["password"]
 
 
 def get_dialect(name: str) -> DbDialect:
@@ -128,6 +129,7 @@ def dialect_catalog() -> list[DialectInfo]:
             available=d.is_available(),
             extra_fields=[DialectFieldInfo(name=f.name, label=f.label, required=f.required) for f in d.extra_fields],
             hidden_fields=list(d.hidden_fields),
+            auth_methods=list(d.auth_methods),
         )
         for d in iter_dialects()
     ]

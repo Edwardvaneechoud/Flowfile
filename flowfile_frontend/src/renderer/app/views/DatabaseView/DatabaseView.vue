@@ -226,6 +226,9 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",
     extraParams: connection.extraParams || undefined,
+    authMethod: connection.authMethod || "password",
+    privateKey: "", // Key material is never returned from the API
+    privateKeyPassphrase: "",
   };
   dialogVisible.value = true;
 };

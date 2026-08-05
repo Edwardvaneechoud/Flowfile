@@ -49,6 +49,7 @@ def test_metadata_sanity(dialect):
     assert isinstance(dialect.is_available(), bool)
     if not dialect.is_available():
         assert dialect.install_hint
+    assert "password" in dialect.auth_methods
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=_ids)
