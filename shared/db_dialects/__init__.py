@@ -26,6 +26,7 @@ from shared.db_dialects.builtin import (
     SQLiteDialect,
 )
 from shared.db_dialects.duckdb import DuckDBDialect
+from shared.db_dialects.mssql import MSSQLDialect
 
 if TYPE_CHECKING:
     import polars as pl
@@ -37,6 +38,7 @@ __all__ = [
     "DuckDBDialect",
     "GenericDialect",
     "KNOWN_DIALECT_NAMES",
+    "MSSQLDialect",
     "UnknownDialectError",
     "dialect_catalog",
     "get_dialect",
@@ -55,6 +57,7 @@ _BUILTIN_DIALECTS: tuple[DbDialect, ...] = (
     MySQLDialect(),
     SQLiteDialect(),
     DuckDBDialect(),
+    MSSQLDialect(),
 )
 
 _REGISTRY: dict[str, DbDialect] = {d.name: d for d in _BUILTIN_DIALECTS}

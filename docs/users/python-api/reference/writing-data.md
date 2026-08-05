@@ -274,7 +274,7 @@ df.write_database(
 
 - `connection_name`: Name of the stored database connection (required)
 - `table_name`: Name of the table to write to (required)
-- `schema_name`: Database schema name (e.g., `"public"`)
+- `schema_name`: Database schema name (e.g., `"public"`, or `"dbo"` on SQL Server)
 - `if_exists`: What to do if the table exists: `"append"`, `"replace"`, or `"fail"` (default: `"append"`)
 - `description`: Optional description for this operation
 

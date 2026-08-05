@@ -373,6 +373,30 @@ The tested DuckDB example (runs fully in-process):
 --8<-- "docs/examples/integrations/database_read_duckdb.py:example"
 ```
 
+### SQL Server
+
+SQL Server connections use `database_type="mssql"` (default port 1433; the default schema is `dbo`):
+
+```python
+ff.create_database_connection(
+    connection_name="analytics-sqlserver",
+    database_type="mssql",
+    host="sqlserver.example.com",
+    port=1433,
+    database="analytics",
+    username="user",
+    password="pass",
+)
+
+df = ff.read_database("analytics-sqlserver", schema_name="dbo", table_name="events")
+```
+
+The tested SQL Server example reads a table and a query through a stored connection:
+
+```python
+--8<-- "docs/examples/integrations/database_read_mssql.py:example"
+```
+
 ## Connection Management
 
 Set up cloud and database connections once, then reference them by name. See [Cloud Connection Management](cloud-connections.md).

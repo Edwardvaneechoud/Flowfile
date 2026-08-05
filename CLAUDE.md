@@ -21,7 +21,7 @@ flowfile/            # CLI entry point and web UI launcher
 kernel_runtime/      # Docker-based isolated Python code execution environment (port 9999)
 shared/              # Cross-service package (storage_config, cloud_storage, kafka, ml, rest_api, google_analytics)
 build_backends/      # PyInstaller build scripts
-test_utils/          # Docker-backed test fixtures (postgres, mysql, s3/MinIO, gcs, azurite, kafka)
+test_utils/          # Docker-backed test fixtures (postgres, mysql, mssql, s3/MinIO, gcs, azurite, kafka)
 tools/               # Schema migration (migrate/) + Tauri sidecar staging/signing (rename_sidecar.py)
 docs/                # MkDocs documentation site (Material theme)
 ```
@@ -165,7 +165,7 @@ docker compose up -d
 
 ## Testing
 
-**Favor real integration tests over mocking.** The backing services (postgres, mysql, s3/MinIO, gcs, azurite, kafka) are available via `test_utils/` Docker fixtures, so exercise the real thing — mock only when a dependency is genuinely unavailable or non-deterministic. Real tests are easy to wire up here and catch contract drift that mocks hide.
+**Favor real integration tests over mocking.** The backing services (postgres, mysql, mssql/SQL Server, s3/MinIO, gcs, azurite, kafka) are available via `test_utils/` Docker fixtures, so exercise the real thing — mock only when a dependency is genuinely unavailable or non-deterministic. Real tests are easy to wire up here and catch contract drift that mocks hide.
 
 ### Python Tests (pytest)
 

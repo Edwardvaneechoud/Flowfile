@@ -25,6 +25,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | **MySQL** | `mysql` |
 | **SQLite** | `sqlite` |
 | **DuckDB** | `duckdb` |
+| **SQL Server** | `mssql` |
 
 !!! note "File-based connections (SQLite, DuckDB)"
     SQLite and DuckDB connect to a local database **file path** (e.g. `/path/to/database.db`
@@ -48,7 +49,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL, MySQL, SQLite, or DuckDB | `postgresql` |
+| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, or SQL Server | `postgresql` |
 | **Host** | Database server hostname | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |

@@ -33,6 +33,11 @@ def test_preflight_uses_registry_default_port(captured_connections):
     assert captured_connections == [("db.example", 5432)]
 
 
+def test_preflight_mssql_uses_registry_default_port(captured_connections):
+    verify_database_reachable(DataBaseConnection(database_type="mssql", host="db.example"))
+    assert captured_connections == [("db.example", 1433)]
+
+
 def test_preflight_explicit_port_wins(captured_connections):
     verify_database_reachable(DataBaseConnection(database_type="mysql", host="db.example", port=13306))
     assert captured_connections == [("db.example", 13306)]

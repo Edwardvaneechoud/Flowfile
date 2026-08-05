@@ -147,6 +147,9 @@ jobs:
       - name: Start Mock MySQL Database with Sample Data
         run: poetry run start_mysql
 
+      - name: Start Mock SQL Server Database with Sample Data
+        run: poetry run start_mssql
+
       - name: Start Mock S3 bucket with Sample Data
         run: poetry run start_minio
 
@@ -248,6 +251,9 @@ jobs:
       - name: Start Mock MySQL Database with Sample Data
         run: poetry run start_mysql
 
+      - name: Start Mock SQL Server Database with Sample Data
+        run: poetry run start_mssql
+
       - name: Start Mock S3 bucket with Sample Data
         run: poetry run start_minio
 
@@ -331,6 +337,10 @@ jobs:
       - name: Start Mock MySQL Database with Sample Data
         shell: pwsh
         run: poetry run start_mysql
+
+      - name: Start Mock SQL Server Database with Sample Data
+        shell: pwsh
+        run: poetry run start_mssql
 
       - name: Start Mock S3 bucket with Sample Data
         shell: pwsh

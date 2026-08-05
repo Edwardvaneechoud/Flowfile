@@ -202,6 +202,16 @@ def test_duckdb_in_dialect_catalog():
     assert duckdb_entry["available"] is True
 
 
+def test_mssql_in_dialect_catalog():
+    response = client.get("/db_dialects")
+    assert response.status_code == 200, response.text
+    mssql_entry = next(d for d in response.json() if d["name"] == "mssql")
+    assert mssql_entry["display_name"] == "SQL Server"
+    assert mssql_entry["file_based"] is False
+    assert mssql_entry["default_port"] == 1433
+    assert mssql_entry["available"] is True
+
+
 def test_create_duckdb_connection_without_credentials():
     _cleanup_connection("duckdb_conn")
     payload = {
