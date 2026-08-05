@@ -83,10 +83,18 @@ def _mssql_available() -> bool:
     return mssql_fixtures.can_connect_to_db()
 
 
+def _snowflake_available() -> bool:
+    import os
+
+    required = ("ACCOUNT", "USER", "PASSWORD", "WAREHOUSE")
+    return all(os.environ.get(f"FLOWFILE_TEST_SNOWFLAKE_{name}") for name in required)
+
+
 INTEGRATION_GATES = {
     "database_read": _postgres_available,
     "database_read_duckdb": lambda: True,  # in-process, no backing service
     "database_read_mssql": _mssql_available,
+    "database_read_snowflake": _snowflake_available,  # live account only; skipped in CI
     "database_transform_write": _postgres_available,
     "cloud_storage_s3": _minio_available,
     "kafka_read": _kafka_available,

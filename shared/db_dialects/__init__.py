@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from shared.db_dialects.base import POSTGRES_FAMILY, DbDialect
+from shared.db_dialects.base import POSTGRES_FAMILY, DbDialect, DialectField, is_blocked_extra_param
 from shared.db_dialects.builtin import (
     GenericDialect,
     MySQLDialect,
@@ -27,6 +27,7 @@ from shared.db_dialects.builtin import (
 )
 from shared.db_dialects.duckdb import DuckDBDialect
 from shared.db_dialects.mssql import MSSQLDialect
+from shared.db_dialects.snowflake import SnowflakeDialect
 
 if TYPE_CHECKING:
     import polars as pl
@@ -34,15 +35,19 @@ if TYPE_CHECKING:
 __all__ = [
     "POSTGRES_FAMILY",
     "DbDialect",
+    "DialectField",
+    "DialectFieldInfo",
     "DialectInfo",
     "DuckDBDialect",
     "GenericDialect",
     "KNOWN_DIALECT_NAMES",
     "MSSQLDialect",
+    "SnowflakeDialect",
     "UnknownDialectError",
     "dialect_catalog",
     "get_dialect",
     "get_dialect_or_generic",
+    "is_blocked_extra_param",
     "iter_dialects",
     "read_sql",
 ]
@@ -58,11 +63,20 @@ _BUILTIN_DIALECTS: tuple[DbDialect, ...] = (
     SQLiteDialect(),
     DuckDBDialect(),
     MSSQLDialect(),
+    SnowflakeDialect(),
 )
 
 _REGISTRY: dict[str, DbDialect] = {d.name: d for d in _BUILTIN_DIALECTS}
 
 KNOWN_DIALECT_NAMES: tuple[str, ...] = tuple(_REGISTRY)
+
+
+class DialectFieldInfo(BaseModel):
+    """A dialect-specific connection field the frontend renders into the form."""
+
+    name: str
+    label: str
+    required: bool = False
 
 
 class DialectInfo(BaseModel):
@@ -74,6 +88,8 @@ class DialectInfo(BaseModel):
     default_port: int | None
     supports_ssl: bool
     available: bool
+    extra_fields: list[DialectFieldInfo] = []
+    hidden_fields: list[str] = []
 
 
 def get_dialect(name: str) -> DbDialect:
@@ -110,6 +126,8 @@ def dialect_catalog() -> list[DialectInfo]:
             default_port=d.default_port,
             supports_ssl=d.supports_ssl,
             available=d.is_available(),
+            extra_fields=[DialectFieldInfo(name=f.name, label=f.label, required=f.required) for f in d.extra_fields],
+            hidden_fields=list(d.hidden_fields),
         )
         for d in iter_dialects()
     ]

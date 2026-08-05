@@ -25,7 +25,20 @@
         </select>
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-for="field in dialectExtraFields" :key="field.name" class="form-field">
+        <label :for="`extra-${field.name}`" class="form-label">{{ field.label }}</label>
+        <input
+          :id="`extra-${field.name}`"
+          :value="extraParamValue(field.name)"
+          type="text"
+          class="form-input"
+          :placeholder="field.label"
+          :required="field.required"
+          @input="setExtraParam(field.name, ($event.target as HTMLInputElement).value)"
+        />
+      </div>
+
+      <div v-if="!isFileBasedType && !isHidden('host')" class="form-field">
         <label for="host" class="form-label">Host</label>
         <input
           id="host"
@@ -37,7 +50,7 @@
         />
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="!isFileBasedType && !isHidden('port')" class="form-field">
         <label for="port" class="form-label">Port</label>
         <input
           id="port"
@@ -95,7 +108,7 @@
         </div>
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="!isFileBasedType && !isHidden('ssl')" class="form-field">
         <div class="checkbox-container">
           <input
             id="ssl-enabled"
@@ -133,7 +146,7 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-const { dialects, isFileBased, defaultPort } = useDbDialects();
+const { dialects, isFileBased, defaultPort, extraFields, isFieldHidden } = useDbDialects();
 
 const defaultConnection = (): FullDatabaseConnection => ({
   connectionName: "",
@@ -174,6 +187,8 @@ watch(
           connection.value.port = newDefault;
         }
       }
+      // Extra params are dialect-specific; a stale set must not leak into the new dialect.
+      connection.value.extraParams = undefined;
     }
   },
 );
@@ -181,6 +196,26 @@ watch(
 const showPassword = ref(false);
 
 const isFileBasedType = computed(() => isFileBased(connection.value.databaseType));
+
+const dialectExtraFields = computed(() => extraFields(connection.value.databaseType));
+
+const isHidden = (field: string) => isFieldHidden(connection.value.databaseType, field);
+
+const extraParamValue = (name: string): string => connection.value.extraParams?.[name] ?? "";
+
+const setExtraParam = (name: string, value: string) => {
+  const params = { ...(connection.value.extraParams || {}) };
+  if (value) {
+    params[name] = value;
+  } else {
+    delete params[name];
+  }
+  connection.value.extraParams = Object.keys(params).length ? params : undefined;
+};
+
+const requiredExtraFieldsFilled = computed(() =>
+  dialectExtraFields.value.every((f) => !f.required || !!connection.value.extraParams?.[f.name]),
+);
 
 const isValid = computed(() => {
   if (isFileBasedType.value) {
@@ -190,7 +225,8 @@ const isValid = computed(() => {
     !!connection.value.connectionName &&
     !!connection.value.username &&
     (props.isEditing || !!connection.value.password) &&
-    !!connection.value.host
+    (isHidden("host") || !!connection.value.host) &&
+    requiredExtraFieldsFilled.value
   );
 });
 

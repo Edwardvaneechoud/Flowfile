@@ -40,13 +40,14 @@ def create_database_connection(
     password: str | SecretStr | None = None,
     ssl_enabled: bool = False,
     url: str | None = None,
+    extra_params: dict[str, str] | None = None,
 ) -> FullDatabaseConnection:
     """Create and store a new database connection.
 
     Args:
         connection_name: Unique name for this connection.
         database_type: Type of database (one of shared.db_dialects.KNOWN_DIALECT_NAMES,
-            e.g. postgresql, mysql, sqlite, duckdb, mssql).
+            e.g. postgresql, mysql, sqlite, duckdb, mssql, snowflake).
         host: Database server hostname.
         port: Database server port.
         database: Database name.
@@ -54,6 +55,9 @@ def create_database_connection(
         password: Database password (not needed for file-based types like sqlite/duckdb).
         ssl_enabled: Whether to use SSL for the connection.
         url: Full database URL (overrides other connection parameters).
+        extra_params: Dialect-specific connection parameters, e.g. for Snowflake
+            ``{"account": "myorg-myaccount", "warehouse": "COMPUTE_WH", "role": "ANALYST"}``.
+            Keys that could override credentials (user, password, host, ...) are rejected.
 
     Returns:
         FullDatabaseConnection: The created connection object.
@@ -86,6 +90,7 @@ def create_database_connection(
         password=password,
         ssl_enabled=ssl_enabled,
         url=url,
+        extra_params=extra_params,
     )
 
     with get_db_context() as db:
@@ -105,13 +110,14 @@ def create_database_connection_if_not_exists(
     password: str | SecretStr | None = None,
     ssl_enabled: bool = False,
     url: str | None = None,
+    extra_params: dict[str, str] | None = None,
 ) -> FullDatabaseConnection:
     """Create a database connection if it doesn't already exist.
 
     Args:
         connection_name: Unique name for this connection.
         database_type: Type of database (one of shared.db_dialects.KNOWN_DIALECT_NAMES,
-            e.g. postgresql, mysql, sqlite, duckdb, mssql).
+            e.g. postgresql, mysql, sqlite, duckdb, mssql, snowflake).
         host: Database server hostname.
         port: Database server port.
         database: Database name.
@@ -119,6 +125,7 @@ def create_database_connection_if_not_exists(
         password: Database password (not needed for file-based types like sqlite/duckdb).
         ssl_enabled: Whether to use SSL for the connection.
         url: Full database URL (overrides other connection parameters).
+        extra_params: Dialect-specific connection parameters (see create_database_connection).
 
     Returns:
         FullDatabaseConnection: The existing or newly created connection.
@@ -139,6 +146,7 @@ def create_database_connection_if_not_exists(
         password=password,
         ssl_enabled=ssl_enabled,
         url=url,
+        extra_params=extra_params,
     )
 
 
@@ -163,6 +171,7 @@ def get_all_available_database_connections() -> list[FullDatabaseConnectionInter
         List of database connection interfaces (without passwords).
     """
     from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
+    from flowfile_core.flowfile.database_connection_manager.db_connections import parse_extra_params
 
     user_id = get_current_user_id()
     with get_db_context() as db:
@@ -177,6 +186,7 @@ def get_all_available_database_connections() -> list[FullDatabaseConnectionInter
                 port=conn.port,
                 database=conn.database,
                 ssl_enabled=conn.ssl_enabled,
+                extra_params=parse_extra_params(conn.extra_params),
             )
             for conn in connections
         ]

@@ -1,6 +1,11 @@
 import { ref } from "vue";
 
-import { DbDialectInfo, FALLBACK_DIALECTS, getDbDialects } from "../api/dbDialects";
+import {
+  DbDialectFieldInfo,
+  DbDialectInfo,
+  FALLBACK_DIALECTS,
+  getDbDialects,
+} from "../api/dbDialects";
 
 const dialects = ref<DbDialectInfo[]>(FALLBACK_DIALECTS);
 let fetchStarted = false;
@@ -27,5 +32,11 @@ export function useDbDialects() {
   const defaultPort = (databaseType?: string): number | undefined =>
     findDialect(databaseType)?.default_port ?? undefined;
 
-  return { dialects, findDialect, isFileBased, defaultPort };
+  const extraFields = (databaseType?: string): DbDialectFieldInfo[] =>
+    findDialect(databaseType)?.extra_fields ?? [];
+
+  const isFieldHidden = (databaseType?: string, field?: string): boolean =>
+    (findDialect(databaseType)?.hidden_fields ?? []).includes(field || "");
+
+  return { dialects, findDialect, isFileBased, defaultPort, extraFields, isFieldHidden };
 }

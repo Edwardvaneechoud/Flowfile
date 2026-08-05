@@ -1268,3 +1268,50 @@ def test_flow_writer_projects_portable_namespace(tmp_path):
         _delete_flow(flow_uuid)
         _cleanup_custom_namespaces(["WrCat"])
         project_sync.close_project(OWNER)
+
+
+def test_database_connection_extra_params_round_trip(tmp_path, monkeypatch):
+    """A snowflake connection's extra_params (account/warehouse) must survive
+    project → import → project, not silently drop out of the git projection."""
+    project_sync.close_project(OWNER)
+    conn = "proj_db_snowflake"
+    extra_params = {"account": "myorg-myaccount", "warehouse": "COMPUTE_WH"}
+    with get_db_context() as db:
+        if get_database_connection(db, conn, OWNER) is None:
+            store_database_connection(
+                db,
+                input_schema.FullDatabaseConnection(
+                    connection_name=conn,
+                    database_type="snowflake",
+                    username="etl_reader",
+                    password="s3cr3t",
+                    database="ANALYTICS",
+                    extra_params=extra_params,
+                ),
+                OWNER,
+            )
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Snowflake RT", OWNER)
+        conn_text = (root / "connections" / "database" / f"{conn}.yaml").read_text(encoding="utf-8")
+        assert "myorg-myaccount" in conn_text
+        assert "s3cr3t" not in conn_text
+
+        project_sync.close_project(OWNER)
+        with get_db_context() as db:
+            delete_database_connection(db, conn, OWNER)
+
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_DB_SNOWFLAKE", "s3cr3t")
+        from flowfile_core.project.importer import import_project
+
+        import_project(root, OWNER)
+        from flowfile_core.flowfile.database_connection_manager.db_connections import (
+            get_database_connection_schema,
+        )
+
+        with get_db_context() as db:
+            restored = get_database_connection_schema(db, conn, OWNER)
+        assert restored is not None
+        assert restored.extra_params == extra_params
+    finally:
+        _cleanup([conn], [])

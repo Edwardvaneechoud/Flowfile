@@ -57,3 +57,22 @@ def test_preflight_skips_file_based_dialects(captured_connections):
 def test_preflight_skips_url_connections(captured_connections):
     verify_database_reachable(DataBaseConnection(database_type="postgresql", url="postgresql://u@h/d"))
     assert captured_connections == []
+
+
+def test_preflight_skips_hostless_snowflake_connections(captured_connections):
+    """Snowflake's locator is the account in extra_params, so host is None and the
+    TCP pre-flight has nothing meaningful to probe."""
+    verify_database_reachable(
+        DataBaseConnection(database_type="snowflake", extra_params={"account": "myorg-myaccount"})
+    )
+    assert captured_connections == []
+
+
+def test_snowflake_create_uri_carries_extra_params():
+    connection = DataBaseConnection(
+        database_type="snowflake",
+        username="u",
+        database="ANALYTICS",
+        extra_params={"account": "myorg-myaccount", "warehouse": "COMPUTE_WH"},
+    )
+    assert connection.create_uri() == "snowflake://u@myorg-myaccount/ANALYTICS?warehouse=COMPUTE_WH"

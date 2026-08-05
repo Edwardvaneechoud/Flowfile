@@ -80,6 +80,19 @@ describe("getDbDialects", () => {
       "sqlite",
       "duckdb",
       "mssql",
+      "snowflake",
     ]);
+  });
+
+  it("carries the snowflake form metadata in the fallback entry", async () => {
+    const { FALLBACK_DIALECTS } = await loadModule();
+    const snowflake = FALLBACK_DIALECTS.find((dialect) => dialect.name === "snowflake");
+    expect(snowflake?.extra_fields?.map((field) => field.name)).toEqual([
+      "account",
+      "warehouse",
+      "role",
+    ]);
+    expect(snowflake?.extra_fields?.[0].required).toBe(true);
+    expect(snowflake?.hidden_fields).toEqual(["host", "port", "ssl"]);
   });
 });

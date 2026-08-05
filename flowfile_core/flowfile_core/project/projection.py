@@ -183,10 +183,13 @@ def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
 
 
 def _db_connection_dict(db: Session, conn: DatabaseConnection) -> dict:
+    from flowfile_core.flowfile.database_connection_manager.db_connections import parse_extra_params
+
     secret_name = _secret_name(db, conn.password_id)
     d = {"kind": "database_connection", "connection_name": conn.connection_name}
     for f in _DB_PLAIN_FIELDS:
         d[f] = getattr(conn, f)
+    d["extra_params"] = parse_extra_params(conn.extra_params)
     d["password"] = make_placeholder(secret_name) if secret_name else None
     return d
 

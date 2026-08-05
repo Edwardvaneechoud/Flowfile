@@ -16,6 +16,7 @@ export interface PythonFullDatabaseConnection {
   database?: string;
   ssl_enabled: boolean;
   url?: string;
+  extra_params?: Record<string, string> | null;
 }
 
 export interface FullDatabaseConnection {
@@ -28,6 +29,7 @@ export interface FullDatabaseConnection {
   database?: string;
   sslEnabled: boolean;
   url?: string;
+  extraParams?: Record<string, string> | null;
 }
 
 export interface PythonFullDatabaseConnectionInterface {
@@ -39,6 +41,7 @@ export interface PythonFullDatabaseConnectionInterface {
   database?: string;
   ssl_enabled: boolean;
   url?: string;
+  extra_params?: Record<string, string> | null;
   id?: number;
   access?: AccessInfo | null;
 }
@@ -52,6 +55,7 @@ export interface FullDatabaseConnectionInterface {
   database?: string;
   sslEnabled: boolean;
   url?: string;
+  extraParams?: Record<string, string> | null;
   id?: number;
   access?: AccessInfo | null;
 }

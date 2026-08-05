@@ -917,6 +917,18 @@ class NodeRead(NodeBase):
         return f"{name} ({rf.file_type})"
 
 
+def _validate_extra_params(v: dict[str, str] | None) -> dict[str, str] | None:
+    """Normalize empty to None and reject keys that could override auth/target settings."""
+    if not v:
+        return None
+    from shared.db_dialects import is_blocked_extra_param
+
+    blocked = sorted(key for key in v if is_blocked_extra_param(key))
+    if blocked:
+        raise ValueError(f"extra_params may not override connection auth or target settings: {', '.join(blocked)}")
+    return v
+
+
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 
@@ -927,6 +939,7 @@ class DatabaseConnection(BaseModel):
     port: int | None = None
     database: str | None = None
     url: str | None = None
+    extra_params: dict[str, str] | None = None
 
     @field_validator("database_type")
     @classmethod
@@ -945,6 +958,11 @@ class DatabaseConnection(BaseModel):
             return None
         return v
 
+    @field_validator("extra_params")
+    @classmethod
+    def guard_extra_params(cls, v):
+        return _validate_extra_params(v)
+
 
 class FullDatabaseConnection(BaseModel):
     """A complete database connection model including the secret password."""
@@ -958,12 +976,18 @@ class FullDatabaseConnection(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    extra_params: dict[str, str] | None = None
 
     @field_validator("database_type")
     @classmethod
     def normalize_database_type(cls, v: str) -> str:
         # lowercase only, no vocabulary check: legacy stored types (e.g. redshift) must keep loading
         return v.lower()
+
+    @field_validator("extra_params")
+    @classmethod
+    def guard_extra_params(cls, v):
+        return _validate_extra_params(v)
 
 
 class FullDatabaseConnectionInterface(BaseModel):
@@ -977,6 +1001,7 @@ class FullDatabaseConnectionInterface(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    extra_params: dict[str, str] | None = None
     id: int | None = None
     access: AccessInfo | None = None
 

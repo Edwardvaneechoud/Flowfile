@@ -225,6 +225,7 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     database: connection.database || "",
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",
+    extraParams: connection.extraParams || undefined,
   };
   dialogVisible.value = true;
 };

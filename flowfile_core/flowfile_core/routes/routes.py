@@ -80,6 +80,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_database_connection,
     get_all_database_connections_interface,
     get_database_connection,
+    parse_extra_params,
     store_database_connection,
     update_database_connection,
 )
@@ -786,6 +787,10 @@ def update_db_connection(
         changed = changed_target_fields(
             db_connection, input_connection, ("host", "port", "database", "database_type", "ssl_enabled")
         )
+        # extra_params is a target too (e.g. the snowflake account): compare the row's
+        # JSON against the incoming dict, normalized, so unchanged params don't trip the guard.
+        if (parse_extra_params(db_connection.extra_params) or {}) != (input_connection.extra_params or {}):
+            changed.append("extra_params")
         require_credentials_on_target_change(
             changed,
             has_new_credentials=bool(input_connection.password.get_secret_value()),

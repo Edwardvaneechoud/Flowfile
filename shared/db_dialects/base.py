@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
@@ -30,6 +31,42 @@ logger = logging.getLogger(__name__)
 # Database types speaking the postgres wire protocol, where libpq-style
 # sslmode/connect_timeout query params are valid (pymysql rejects unknown params).
 POSTGRES_FAMILY = {"postgresql", "postgres", "redshift"}
+
+# Connection extra_params (dialect-specific settings like Snowflake's
+# account/warehouse/role) must never be able to override credentials, the
+# connection target, or transport security. Mirrors the Kafka blocked-config
+# guard in shared/kafka/models.py: blocked keys are dropped at point of use;
+# core additionally rejects them with a 422 at the API boundary.
+_BLOCKED_EXTRA_PARAM_PREFIXES = ("private_key", "ssl")
+_BLOCKED_EXTRA_PARAMS = frozenset(
+    {
+        "password",
+        "user",
+        "username",
+        "host",
+        "port",
+        "database",
+        "dbname",
+        "authenticator",
+        "token",
+        "insecure_mode",
+    }
+)
+
+
+def is_blocked_extra_param(key: str) -> bool:
+    """Whether a connection extra_params key could override auth/target settings."""
+    lowered = key.lower()
+    return lowered in _BLOCKED_EXTRA_PARAMS or lowered.startswith(_BLOCKED_EXTRA_PARAM_PREFIXES)
+
+
+@dataclass(frozen=True)
+class DialectField:
+    """A dialect-specific connection form field, carried in the connection's extra_params."""
+
+    name: str
+    label: str
+    required: bool = False
 
 
 class DbDialect:
@@ -43,6 +80,11 @@ class DbDialect:
     sqlalchemy_driver: ClassVar[str | None] = None
     sqlglot_name: ClassVar[str] = "postgres"
     install_hint: ClassVar[str | None] = None
+    # Dialect-specific connection fields (stored in extra_params) and standard form
+    # fields the dialect does not use; served to the frontend via dialect_catalog()
+    # so a new connection shape needs no frontend changes.
+    extra_fields: ClassVar[tuple[DialectField, ...]] = ()
+    hidden_fields: ClassVar[tuple[str, ...]] = ()
 
     @property
     def uri_scheme(self) -> str:
@@ -97,7 +139,7 @@ class DbDialect:
                 "no SSL parameter was applied and the connection may be unencrypted.",
                 scheme,
             )
-        query_params.update(kwargs)
+        query_params.update({k: v for k, v in kwargs.items() if v is not None and not is_blocked_extra_param(k)})
 
         if query_params:
             sep = "&" if "?" in base_uri else "?"

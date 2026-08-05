@@ -709,6 +709,7 @@ export interface DatabaseConnection extends BaseConnection {
   database_type: string;
   username?: string;
   password_ref?: string; // Unused by file-based databases (sqlite, duckdb)
+  extra_params?: Record<string, string> | null; // Dialect-specific params (e.g. snowflake account)
 }
 export type ConnectionModeOption = "inline" | "reference";
 export type IfExistAction = "append" | "replace" | "fail";

@@ -17,6 +17,7 @@ class DataBaseConnection(BaseModel):
     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     ssl_enabled: bool | None = False
     url: str | None = None
+    extra_params: dict[str, str] | None = None  # Dialect-specific params (e.g. snowflake account/warehouse)
 
     def get_decrypted_secret(self) -> SecretStr:
         return decrypt_secret(self.password.get_secret_value())
@@ -43,6 +44,7 @@ class DataBaseConnection(BaseModel):
             url=self.url,
             ssl_enabled=bool(self.ssl_enabled),
             connect_timeout=10,
+            **(self.extra_params or {}),
         )
 
     def create_sqlalchemy_uri(self) -> str:

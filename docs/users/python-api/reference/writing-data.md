@@ -286,6 +286,12 @@ Returns a new child `FlowFrame`.
     natively rather than text-encoded. A DuckDB file accepts one writer at a time — close
     other tools using the file while a flow writes to it.
 
+!!! note "Snowflake"
+    Connections with `database_type="snowflake"` write through the native Snowflake
+    connector with the same `if_exists` modes. The table is created from the frame's
+    schema; column names are written case-exact, and nested columns are stored as JSON
+    text.
+
 ## Write Modes
 
 ### Overwrite vs Append

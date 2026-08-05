@@ -212,6 +212,51 @@ def test_mssql_in_dialect_catalog():
     assert mssql_entry["available"] is True
 
 
+def test_snowflake_in_dialect_catalog():
+    response = client.get("/db_dialects")
+    assert response.status_code == 200, response.text
+    entry = next(d for d in response.json() if d["name"] == "snowflake")
+    assert entry["display_name"] == "Snowflake"
+    assert entry["file_based"] is False
+    assert entry["default_port"] == 443
+    assert entry["available"] is True
+    assert [f["name"] for f in entry["extra_fields"]] == ["account", "warehouse", "role"]
+    assert entry["extra_fields"][0]["required"] is True
+    assert entry["hidden_fields"] == ["host", "port", "ssl"]
+
+
+def test_create_snowflake_connection_with_extra_params():
+    _cleanup_connection("snowflake_conn")
+    payload = {
+        "connection_name": "snowflake_conn",
+        "database_type": "snowflake",
+        "username": "user",
+        "password": "pass",
+        "database": "ANALYTICS",
+        "extra_params": {"account": "myorg-myaccount", "warehouse": "COMPUTE_WH", "role": "ANALYST"},
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 200, response.text
+    listed = client.get("/db_connection_lib").json()
+    entry = next(c for c in listed if c["connection_name"] == "snowflake_conn")
+    assert entry["extra_params"] == payload["extra_params"]
+    _cleanup_connection("snowflake_conn")
+
+
+def test_create_connection_rejects_blocked_extra_params():
+    payload = {
+        "connection_name": "snowflake_evil",
+        "database_type": "snowflake",
+        "username": "user",
+        "password": "pass",
+        "extra_params": {"account": "acct", "authenticator": "externalbrowser"},
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 422, response.text
+    assert "authenticator" in response.text
+    _cleanup_connection("snowflake_evil")
+
+
 def test_create_duckdb_connection_without_credentials():
     _cleanup_connection("duckdb_conn")
     payload = {

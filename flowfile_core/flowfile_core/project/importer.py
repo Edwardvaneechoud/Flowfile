@@ -179,6 +179,7 @@ def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: Setup
         port=entry.port,
         database=entry.database,
         ssl_enabled=entry.ssl_enabled,
+        extra_params=entry.extra_params,
     )
     with get_db_context() as db:
         if _get_own_database_connection(db, name, owner_id):

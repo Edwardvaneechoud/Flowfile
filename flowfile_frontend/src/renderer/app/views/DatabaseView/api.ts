@@ -24,6 +24,7 @@ const toPythonFormat = (connection: FullDatabaseConnection): PythonFullDatabaseC
     database: connection.database,
     ssl_enabled: connection.sslEnabled,
     url: connection.url,
+    extra_params: connection.extraParams,
   };
 };
 
@@ -55,6 +56,7 @@ export const convertConnectionInterfacePytoTs = (
     sslEnabled: pythonConnectionInterface.ssl_enabled,
     url: pythonConnectionInterface.url,
     database: pythonConnectionInterface.database,
+    extraParams: pythonConnectionInterface.extra_params,
     id: pythonConnectionInterface.id,
     access: pythonConnectionInterface.access,
   };
@@ -69,8 +71,10 @@ export const convertConnectionInterfaceTstoPy = (
     database_type: dbConnectionInterface.databaseType,
     host: dbConnectionInterface.host,
     port: dbConnectionInterface.port,
+    database: dbConnectionInterface.database,
     ssl_enabled: dbConnectionInterface.sslEnabled,
     url: dbConnectionInterface.url,
+    extra_params: dbConnectionInterface.extraParams,
   };
 };
 

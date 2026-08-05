@@ -53,7 +53,20 @@
         </select>
       </div>
 
-      <div v-if="!isFileBasedConnection" class="form-group">
+      <div v-for="field in dialectExtraFields" :key="field.name" class="form-group">
+        <label :for="`extra-${field.name}`">{{ field.label }}</label>
+        <input
+          :id="`extra-${field.name}`"
+          :value="modelValue.extra_params?.[field.name] ?? ''"
+          type="text"
+          class="form-control"
+          :placeholder="`Enter ${field.label.toLowerCase()}`"
+          :required="field.required"
+          @input="(e: Event) => updateExtraParam(field.name, (e.target as HTMLInputElement).value)"
+        />
+      </div>
+
+      <div v-if="!isFileBasedConnection && !isHidden('host')" class="form-group">
         <label for="host">Host</label>
         <input
           id="host"
@@ -66,7 +79,7 @@
       </div>
 
       <div v-if="!isFileBasedConnection" class="form-row">
-        <div class="form-group half">
+        <div v-if="!isHidden('port')" class="form-group half">
           <label for="port">Port</label>
           <input
             id="port"
@@ -120,9 +133,13 @@ const props = defineProps<{
   modelValue: DatabaseConnection;
 }>();
 
-const { dialects, isFileBased } = useDbDialects();
+const { dialects, isFileBased, extraFields, isFieldHidden } = useDbDialects();
 
 const isFileBasedConnection = computed(() => isFileBased(props.modelValue.database_type));
+
+const dialectExtraFields = computed(() => extraFields(props.modelValue.database_type));
+
+const isHidden = (field: string) => isFieldHidden(props.modelValue.database_type, field);
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: DatabaseConnection): void;
@@ -141,6 +158,16 @@ const updateField = <T extends keyof DatabaseConnection>(
     ...props.modelValue,
     [field]: value,
   });
+};
+
+const updateExtraParam = (name: string, value: string) => {
+  const params = { ...(props.modelValue.extra_params || {}) };
+  if (value) {
+    params[name] = value;
+  } else {
+    delete params[name];
+  }
+  updateField("extra_params", Object.keys(params).length ? params : null);
 };
 
 const fetchSecrets = async () => {

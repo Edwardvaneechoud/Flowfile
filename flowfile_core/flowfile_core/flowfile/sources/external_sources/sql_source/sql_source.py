@@ -463,6 +463,7 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
         password=password,
         ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
         connect_timeout=10,
+        **(database_connection.extra_params or {}),
     )
     return ResolvedConnection(uri=uri, database_type=database_connection.database_type)
 

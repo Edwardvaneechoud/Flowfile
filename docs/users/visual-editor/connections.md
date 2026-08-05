@@ -26,6 +26,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | **SQLite** | `sqlite` |
 | **DuckDB** | `duckdb` |
 | **SQL Server** | `mssql` |
+| **Snowflake** | `snowflake` |
 
 !!! note "File-based connections (SQLite, DuckDB)"
     SQLite and DuckDB connect to a local database **file path** (e.g. `/path/to/database.db`
@@ -40,6 +41,12 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
     `INTERVAL` columns are read as text — calendar intervals (months) have no fixed length,
     so there is no matching Polars type.
 
+!!! note "Snowflake connections"
+    Snowflake has no host or port: the form asks for the **Account** identifier
+    (e.g. `myorg-myaccount`) plus an optional **Warehouse** and **Role**, together with the
+    usual username, password, and database. Connections always use TLS, so there is no SSL
+    toggle. Semi-structured columns (`VARIANT`, `OBJECT`, `ARRAY`) are read as JSON text.
+
 ### Creating a Database Connection
 
 1. Open the **Connections** page from the left sidebar and select the **Database** tab
@@ -49,8 +56,8 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, or SQL Server | `postgresql` |
-| **Host** | Database server hostname | `db.example.com` |
+| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, or Snowflake | `postgresql` |
+| **Host** | Database server hostname (Snowflake asks for an account/warehouse/role instead) | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |
 | **Username** | Database user | `readonly_user` |

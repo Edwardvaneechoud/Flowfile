@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -11,6 +13,21 @@ from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
+
+
+def _dump_extra_params(extra_params: dict[str, str] | None) -> str | None:
+    return json.dumps(extra_params, sort_keys=True) if extra_params else None
+
+
+def parse_extra_params(raw: str | None) -> dict[str, str] | None:
+    """Parse the JSON extra_params column; malformed or empty values resolve to None."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed or None
 
 
 def _project_sync_connection(kind: str, name: str, user_id: int, deleted: bool = False) -> None:
@@ -44,6 +61,7 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
         username=connection.username,
         password_id=password_id,
         ssl_enabled=connection.ssl_enabled,
+        extra_params=_dump_extra_params(connection.extra_params),
         user_id=user_id,
     )
 
@@ -73,6 +91,7 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
     db_connection.database_type = connection.database_type
     db_connection.username = connection.username
     db_connection.ssl_enabled = connection.ssl_enabled
+    db_connection.extra_params = _dump_extra_params(connection.extra_params)
 
     password_value = connection.password.get_secret_value()
     if password_value:
@@ -171,6 +190,7 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
             username=db_connection.username,
             password=password_secret.encrypted_value,
             ssl_enabled=db_connection.ssl_enabled,
+            extra_params=parse_extra_params(db_connection.extra_params),
         )
 
     return None
@@ -227,6 +247,7 @@ def database_connection_interface_from_db_connection(
         port=db_connection.port,
         database=db_connection.database,
         ssl_enabled=db_connection.ssl_enabled,
+        extra_params=parse_extra_params(db_connection.extra_params),
         id=db_connection.id,
         access=access,
     )

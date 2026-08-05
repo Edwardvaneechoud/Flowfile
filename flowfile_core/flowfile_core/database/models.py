@@ -58,6 +58,7 @@ class DatabaseConnection(Base):
     port = Column(Integer)
     database = Column(String, default=None)
     ssl_enabled = Column(Boolean, default=False)
+    extra_params = Column(Text, nullable=True)  # JSON dict of dialect-specific params (e.g. snowflake account)
     password_id = Column(Integer, ForeignKey("secrets.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
 
