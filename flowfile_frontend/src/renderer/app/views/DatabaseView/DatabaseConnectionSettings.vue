@@ -95,7 +95,7 @@
         />
       </div>
 
-      <div v-if="!isFileBasedType && !usesKeyPair" class="form-field">
+      <div v-if="!isFileBasedType && !usesKeyPair && !usesOauth" class="form-field">
         <label for="password" class="form-label">Password</label>
         <div class="password-field">
           <input
@@ -153,6 +153,83 @@
         </div>
       </div>
 
+      <div v-if="usesOauth" class="form-field">
+        <label for="oauth-client-id" class="form-label">OAuth Client ID</label>
+        <input
+          id="oauth-client-id"
+          v-model="connection.oauthClientId"
+          type="text"
+          class="form-input"
+          placeholder="Client id from the security integration / IdP app"
+          required
+        />
+      </div>
+
+      <div v-if="usesOauth" class="form-field">
+        <label for="oauth-client-secret" class="form-label">OAuth Client Secret</label>
+        <div class="password-field">
+          <input
+            id="oauth-client-secret"
+            v-model="connection.oauthClientSecret"
+            :type="showClientSecret ? 'text' : 'password'"
+            class="form-input"
+            :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Client secret'"
+            :required="!props.isEditing"
+          />
+          <button
+            type="button"
+            class="toggle-visibility"
+            aria-label="Toggle client secret visibility"
+            @click="showClientSecret = !showClientSecret"
+          >
+            <i :class="showClientSecret ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="usesOauth" class="form-field">
+        <label for="oauth-authorize-endpoint" class="form-label">
+          Authorize Endpoint (optional)
+        </label>
+        <input
+          id="oauth-authorize-endpoint"
+          v-model="connection.oauthAuthorizeEndpoint"
+          type="url"
+          class="form-input"
+          placeholder="Leave blank to use Snowflake's built-in OAuth"
+        />
+      </div>
+
+      <div v-if="usesOauth" class="form-field">
+        <label for="oauth-token-endpoint" class="form-label">Token Endpoint (optional)</label>
+        <input
+          id="oauth-token-endpoint"
+          v-model="connection.oauthTokenEndpoint"
+          type="url"
+          class="form-input"
+          placeholder="Set both endpoints for an external IdP (Okta, Entra ID, …)"
+        />
+      </div>
+
+      <div v-if="usesOauth" class="form-field">
+        <label for="oauth-redirect-uri" class="form-label">Redirect URI (optional)</label>
+        <input
+          id="oauth-redirect-uri"
+          v-model="connection.oauthRedirectUri"
+          type="url"
+          class="form-input"
+          placeholder="http://localhost:63578/db_connection_lib/oauth/callback"
+        />
+      </div>
+
+      <div v-if="usesOauth && props.isEditing" class="form-field form-field--full">
+        <DbOauthSignInCard
+          :connection-name="connection.connectionName"
+          :connected="props.oauthConnected"
+          @changed="$emit('oauthChanged')"
+        />
+      </div>
+
       <div v-if="!isFileBasedType && !isHidden('ssl')" class="form-field">
         <div class="checkbox-container">
           <input
@@ -179,16 +256,19 @@
 import { ref, computed, defineProps, defineEmits, watch, nextTick } from "vue";
 import type { FullDatabaseConnection } from "./databaseConnectionTypes";
 import { useDbDialects } from "../../composables/useDbDialects";
+import DbOauthSignInCard from "./DbOauthSignInCard.vue";
 
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
   isSubmitting?: boolean;
   isEditing?: boolean;
+  oauthConnected?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "submit", connection: FullDatabaseConnection): void;
   (e: "cancel"): void;
+  (e: "oauthChanged"): void;
 }>();
 
 const { dialects, isFileBased, defaultPort, extraFields, isFieldHidden, authMethods } =
@@ -197,6 +277,7 @@ const { dialects, isFileBased, defaultPort, extraFields, isFieldHidden, authMeth
 const AUTH_METHOD_LABELS: Record<string, string> = {
   password: "Password",
   key_pair: "Key pair (JWT)",
+  oauth: "Single sign-on (OAuth)",
 };
 
 const defaultConnection = (): FullDatabaseConnection => ({
@@ -212,6 +293,11 @@ const defaultConnection = (): FullDatabaseConnection => ({
   authMethod: "password",
   privateKey: "",
   privateKeyPassphrase: "",
+  oauthClientId: "",
+  oauthClientSecret: "",
+  oauthAuthorizeEndpoint: "",
+  oauthTokenEndpoint: "",
+  oauthRedirectUri: "",
 });
 
 const connection = ref<FullDatabaseConnection>(
@@ -261,12 +347,22 @@ watch(
       }
       connection.value.privateKey = "";
       connection.value.privateKeyPassphrase = "";
+      clearOauthFields();
     }
   },
 );
 
 const showPassword = ref(false);
 const showPassphrase = ref(false);
+const showClientSecret = ref(false);
+
+const clearOauthFields = () => {
+  connection.value.oauthClientId = "";
+  connection.value.oauthClientSecret = "";
+  connection.value.oauthAuthorizeEndpoint = "";
+  connection.value.oauthTokenEndpoint = "";
+  connection.value.oauthRedirectUri = "";
+};
 
 const isFileBasedType = computed(() => isFileBased(connection.value.databaseType));
 
@@ -284,10 +380,14 @@ const authMethodModel = computed({
       connection.value.privateKey = "";
       connection.value.privateKeyPassphrase = "";
     }
+    if (value !== "oauth") {
+      clearOauthFields();
+    }
   },
 });
 
 const usesKeyPair = computed(() => authMethodModel.value === "key_pair");
+const usesOauth = computed(() => authMethodModel.value === "oauth");
 
 const authMethodLabel = (method: string): string => AUTH_METHOD_LABELS[method] ?? method;
 
@@ -315,7 +415,10 @@ const isValid = computed(() => {
   }
   const credentialFilled = usesKeyPair.value
     ? props.isEditing || !!connection.value.privateKey
-    : props.isEditing || !!connection.value.password;
+    : usesOauth.value
+      ? !!connection.value.oauthClientId &&
+        (props.isEditing || !!connection.value.oauthClientSecret)
+      : props.isEditing || !!connection.value.password;
   return (
     !!connection.value.connectionName &&
     !!connection.value.username &&
@@ -340,6 +443,10 @@ const submitForm = () => {
 </script>
 
 <style scoped>
+.form-field--full {
+  grid-column: 1 / -1;
+}
+
 .private-key-input {
   font-family: monospace;
   resize: vertical;

@@ -22,6 +22,13 @@ inject them. ``_connect_kwargs`` decodes the PEM back and hands the connector
 unencrypted PKCS#8 DER bytes with ``authenticator="SNOWFLAKE_JWT"``; key
 material only ever exists in memory, never on disk.
 
+OAuth (SSO) auth follows the same shape: ``build_uri(auth_method="oauth",
+oauth_token=<access token>)`` omits the password and appends dialect-generated
+``authenticator=oauth&token=<urlsafe-b64 token>`` after the blocked-key filter;
+``_connect_kwargs`` decodes it back and hands the connector
+``authenticator="oauth", token=...``. Token refresh happens in core — this
+module only transports an already-minted short-lived access token.
+
 Fast schema uses ``cursor.describe()`` — the query is compiled server-side but
 never executed — plus a dialect-local map keyed on the connector's type codes.
 ``read`` casts the fetched frame through the same map (Snowflake's Arrow
@@ -81,7 +88,7 @@ class SnowflakeDialect(DbDialect):
         DialectField("role", "Role"),
     )
     hidden_fields: ClassVar[tuple[str, ...]] = ("host", "port", "ssl")
-    auth_methods: ClassVar[tuple[str, ...]] = ("password", "key_pair")
+    auth_methods: ClassVar[tuple[str, ...]] = ("password", "key_pair", "oauth")
 
     def is_available(self) -> bool:
         try:
@@ -103,17 +110,21 @@ class SnowflakeDialect(DbDialect):
         auth_method: str | None = None,
         private_key: str | None = None,
         private_key_passphrase: str | None = None,
+        oauth_token: str | None = None,
         **kwargs,
     ) -> str:
         """Account-shaped URI; ``account`` comes from extra_params (``host`` is accepted as an alias)."""
         import base64
         from urllib.parse import quote_plus
 
-        self._check_auth_supported(auth_method, private_key)
+        self._check_auth_supported(auth_method, private_key, oauth_token)
         use_key_pair = auth_method == "key_pair" or bool(private_key and auth_method in (None, "", "password"))
         if auth_method == "key_pair" and not private_key:
             raise ValueError("A private key is required for Snowflake key-pair authentication")
-        if use_key_pair:
+        use_oauth = auth_method == "oauth"
+        if use_oauth and not oauth_token:
+            raise ValueError("An access token is required for Snowflake OAuth authentication")
+        if use_key_pair or use_oauth:
             password = None
 
         account = kwargs.pop("account", None) or host
@@ -140,6 +151,11 @@ class SnowflakeDialect(DbDialect):
                 params["private_key_passphrase"] = base64.urlsafe_b64encode(
                     private_key_passphrase.encode("utf-8")
                 ).decode("ascii")
+        if use_oauth:
+            # Dialect-generated auth params, after the blocked-key filter ("token" and
+            # "authenticator" are blocked keys, so user extra_params can never inject them).
+            params["authenticator"] = "oauth"
+            params["token"] = base64.urlsafe_b64encode(oauth_token.encode("utf-8")).decode("ascii")
         if params:
             uri += "?" + "&".join(f"{key}={quote_plus(str(value))}" for key, value in params.items())
         return uri
@@ -172,6 +188,10 @@ class SnowflakeDialect(DbDialect):
             )
             kwargs["private_key"] = cls._private_key_der(pem, passphrase)
             kwargs["authenticator"] = "SNOWFLAKE_JWT"
+            kwargs.pop("password", None)
+        elif query.get("authenticator") == "oauth" and query.get("token"):
+            kwargs["token"] = base64.urlsafe_b64decode(query["token"]).decode("utf-8")
+            kwargs["authenticator"] = "oauth"
             kwargs.pop("password", None)
         return kwargs
 

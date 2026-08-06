@@ -50,6 +50,7 @@ _BLOCKED_EXTRA_PARAMS = frozenset(
         "auth_method",
         "authenticator",
         "token",
+        "oauth_token",
         "insecure_mode",
     }
 )
@@ -99,12 +100,16 @@ class DbDialect:
         """Whether the driver stack for this dialect is importable."""
         return True
 
-    def _check_auth_supported(self, auth_method: str | None, private_key: str | None) -> None:
+    def _check_auth_supported(
+        self, auth_method: str | None, private_key: str | None, oauth_token: str | None = None
+    ) -> None:
         """Refuse credentials this dialect cannot honor — silent ignoring is worse than an error."""
         if auth_method not in (None, "", "password") and auth_method not in self.auth_methods:
             raise ValueError(f"{self.display_name} does not support auth method {auth_method!r}")
         if private_key and "key_pair" not in self.auth_methods:
             raise ValueError(f"{self.display_name} does not support private-key (key pair) authentication")
+        if oauth_token and "oauth" not in self.auth_methods:
+            raise ValueError(f"{self.display_name} does not support OAuth token authentication")
 
     def build_uri(
         self,
@@ -119,12 +124,13 @@ class DbDialect:
         auth_method: str | None = None,
         private_key: str | None = None,
         private_key_passphrase: str | None = None,
+        oauth_token: str | None = None,
         **kwargs,
     ) -> str:
         """Build a base (connectorx-style) URI. ``password`` is a plain string."""
         from urllib.parse import quote_plus
 
-        self._check_auth_supported(auth_method, private_key)
+        self._check_auth_supported(auth_method, private_key, oauth_token)
         if not host:
             raise ValueError("Host is required to create a URI")
 

@@ -432,6 +432,7 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
     database_connection = database_settings.database_connection
     private_key = None
     private_key_passphrase = None
+    oauth_token = None
 
     if database_settings.connection_mode == "inline":
         if database_connection is None:
@@ -479,6 +480,14 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
             private_key = decrypt_secret(database_connection.private_key.get_secret_value())
         if database_connection.private_key_passphrase:
             private_key_passphrase = decrypt_secret(database_connection.private_key_passphrase.get_secret_value())
+        if database_connection.auth_method == "oauth":
+            # Core-side refresh: mint a short-lived access token from the stored
+            # refresh token (raises ReconnectRequiredError when sign-in expired).
+            from flowfile_core.flowfile.database_connection_manager.db_oauth import resolve_oauth_access_token
+
+            oauth_token = decrypt_secret(
+                resolve_oauth_access_token(database_settings.database_connection_name, user_id)
+            )
 
     uri = construct_sql_uri(
         database_type=database_connection.database_type,
@@ -492,6 +501,7 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
         auth_method=database_connection.auth_method,
         private_key=private_key,
         private_key_passphrase=private_key_passphrase,
+        oauth_token=oauth_token,
         **(database_connection.extra_params or {}),
     )
     return ResolvedConnection(uri=uri, database_type=database_connection.database_type)

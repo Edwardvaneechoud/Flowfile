@@ -101,7 +101,7 @@ describe("getDbDialects", () => {
     for (const dialect of FALLBACK_DIALECTS) {
       expect(dialect.auth_methods, dialect.name).toContain("password");
       if (dialect.name === "snowflake") {
-        expect(dialect.auth_methods).toEqual(["password", "key_pair"]);
+        expect(dialect.auth_methods).toEqual(["password", "key_pair", "oauth"]);
       } else {
         expect(dialect.auth_methods).toEqual(["password"]);
       }

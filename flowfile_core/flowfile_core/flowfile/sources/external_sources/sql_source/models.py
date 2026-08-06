@@ -39,9 +39,11 @@ class ExtDatabaseConnection(DatabaseConnection):
     ssl_enabled: bool | None = False
     private_key: str | None = None
     private_key_passphrase: str | None = None
+    # Short-lived OAuth access token ($ffsec$ ciphertext); minted core-side at resolve time.
+    oauth_token: str | None = None
 
 
-_SECRET_FIELDS = ("password", "private_key", "private_key_passphrase")
+_SECRET_FIELDS = ("password", "private_key", "private_key_passphrase", "oauth_client_secret", "oauth_refresh_token")
 
 
 class DatabaseExternalWriteSettings(BaseModel):
@@ -64,6 +66,7 @@ class DatabaseExternalWriteSettings(BaseModel):
         database_reference_settings: FullDatabaseConnection = None,
         private_key: str | None = None,
         private_key_passphrase: str | None = None,
+        oauth_token: str | None = None,
     ) -> "DatabaseExternalWriteSettings":
         """
         Create DatabaseExternalWriteSettings from NodeDatabaseWriter.
@@ -75,6 +78,7 @@ class DatabaseExternalWriteSettings(BaseModel):
             database_reference_settings (FullDatabaseConnection): optional database reference settings
             private_key (str): the encrypted private key (key-pair auth)
             private_key_passphrase (str): the encrypted private-key passphrase
+            oauth_token (str): the encrypted short-lived OAuth access token (oauth auth)
         Returns:
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
@@ -91,6 +95,7 @@ class DatabaseExternalWriteSettings(BaseModel):
             password=password,
             private_key=private_key,
             private_key_passphrase=private_key_passphrase,
+            oauth_token=oauth_token,
         )
         return cls(
             connection=ext_database_connection,
@@ -119,6 +124,7 @@ class DatabaseExternalReadSettings(BaseModel):
         database_reference_settings: FullDatabaseConnection = None,
         private_key: str | None = None,
         private_key_passphrase: str | None = None,
+        oauth_token: str | None = None,
     ) -> "DatabaseExternalReadSettings":
         """
         Create DatabaseExternalReadSettings from NodeDatabaseReader.
@@ -129,6 +135,7 @@ class DatabaseExternalReadSettings(BaseModel):
             database_reference_settings (FullDatabaseConnection): optional database reference settings
             private_key (str): the encrypted private key (key-pair auth)
             private_key_passphrase (str): the encrypted private-key passphrase
+            oauth_token (str): the encrypted short-lived OAuth access token (oauth auth)
         Returns:
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
@@ -145,6 +152,7 @@ class DatabaseExternalReadSettings(BaseModel):
             password=password,
             private_key=private_key,
             private_key_passphrase=private_key_passphrase,
+            oauth_token=oauth_token,
         )
         return cls(
             connection=ext_database_connection,

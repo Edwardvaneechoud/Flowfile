@@ -63,11 +63,26 @@ _CLOUD_PLAIN_FIELDS = (
     "verify_ssl",
 )
 # Non-secret database-connection fields that round-trip verbatim.
-_DB_PLAIN_FIELDS = ("database_type", "host", "port", "database", "username", "ssl_enabled", "auth_method")
+_DB_PLAIN_FIELDS = (
+    "database_type",
+    "host",
+    "port",
+    "database",
+    "username",
+    "ssl_enabled",
+    "auth_method",
+    "oauth_client_id",
+    "oauth_authorize_endpoint",
+    "oauth_token_endpoint",
+    "oauth_redirect_uri",
+)
 # Secret-backed database-connection fields: (file field, model FK column), like _CLOUD_SECRETS.
+# The OAuth refresh token is deliberately absent: it is minted interactively, expires, and
+# must never reach the projection even as a placeholder — imports re-authenticate instead.
 _DB_SECRETS = (
     ("private_key", "private_key_id"),
     ("private_key_passphrase", "private_key_passphrase_id"),
+    ("oauth_client_secret", "oauth_client_secret_id"),
 )
 
 
@@ -295,6 +310,8 @@ def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
         DatabaseConnection.password_id,
         DatabaseConnection.private_key_id,
         DatabaseConnection.private_key_passphrase_id,
+        DatabaseConnection.oauth_client_secret_id,
+        DatabaseConnection.oauth_refresh_token_id,
     )
     for row in db.query(*db_secret_fk_columns).filter(DatabaseConnection.user_id == owner_id):
         linked.update(sid for sid in row if sid)

@@ -193,7 +193,11 @@ const dialectExtraFields = computed(() => extraFields(props.modelValue.database_
 
 const isHidden = (field: string) => isFieldHidden(props.modelValue.database_type, field);
 
-const authMethodOptions = computed(() => authMethods(props.modelValue.database_type));
+// OAuth is stored-connection-only (tokens are minted interactively against a saved
+// connection), so it never appears in the inline form's selector.
+const authMethodOptions = computed(() =>
+  authMethods(props.modelValue.database_type).filter((method) => method !== "oauth"),
+);
 
 const usesKeyPair = computed(() => props.modelValue.auth_method === "key_pair");
 

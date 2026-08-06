@@ -1324,6 +1324,8 @@ class ResolvedDatabaseCredentials(NamedTuple):
     private_key: str | None
     private_key_passphrase: str | None
     reference_settings: input_schema.FullDatabaseConnection | None
+    # Short-lived access token minted by core at resolution time (oauth auth only).
+    oauth_token: str | None = None
 
 
 def _resolve_database_credentials(
@@ -1379,12 +1381,20 @@ def _resolve_database_credentials(
                     "or not accessible for this user"
                 ),
             )
+        oauth_token = None
+        if ref_settings.auth_method == "oauth":
+            # Core-side refresh; raises ReconnectRequiredError (422 RECONNECT_REQUIRED at
+            # the API surface via main.py's exception handler, a plain node error at run time).
+            from flowfile_core.flowfile.database_connection_manager.db_oauth import resolve_oauth_access_token
+
+            oauth_token = resolve_oauth_access_token(database_settings.database_connection_name, user_id)
         return ResolvedDatabaseCredentials(
             ref_settings,
             ref_settings.password.get_secret_value(),
             ref_settings.private_key.get_secret_value() if ref_settings.private_key else None,
             ref_settings.private_key_passphrase.get_secret_value() if ref_settings.private_key_passphrase else None,
             ref_settings,
+            oauth_token,
         )
 
 
@@ -4631,6 +4641,7 @@ class FlowGraph:
                         private_key_passphrase=(
                             decrypt_secret(creds.private_key_passphrase) if creds.private_key_passphrase else None
                         ),
+                        oauth_token=decrypt_secret(creds.oauth_token) if creds.oauth_token else None,
                         **(database_connection.extra_params or {}),
                     ),
                     table_name=table_name,
@@ -4649,6 +4660,7 @@ class FlowGraph:
                     lf=df.data_frame,
                     private_key=creds.private_key,
                     private_key_passphrase=creds.private_key_passphrase,
+                    oauth_token=creds.oauth_token,
                 )
             )
             external_database_writer = ExternalDatabaseWriter(
@@ -4728,6 +4740,7 @@ class FlowGraph:
                         private_key_passphrase=(
                             decrypt_secret(creds.private_key_passphrase) if creds.private_key_passphrase else None
                         ),
+                        oauth_token=decrypt_secret(creds.oauth_token) if creds.oauth_token else None,
                         **(database_connection.extra_params or {}),
                     ),
                     query=None if database_settings.query_mode == "table" else database_settings.query,
@@ -4752,6 +4765,7 @@ class FlowGraph:
                     ),
                     private_key=creds.private_key,
                     private_key_passphrase=creds.private_key_passphrase,
+                    oauth_token=creds.oauth_token,
                 )
             )
 
@@ -4786,6 +4800,7 @@ class FlowGraph:
                     private_key_passphrase=(
                         decrypt_secret(creds.private_key_passphrase) if creds.private_key_passphrase else None
                     ),
+                    oauth_token=decrypt_secret(creds.oauth_token) if creds.oauth_token else None,
                     **(database_connection.extra_params or {}),
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,

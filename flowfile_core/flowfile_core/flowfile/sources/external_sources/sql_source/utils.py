@@ -370,6 +370,7 @@ def construct_sql_uri(
     auth_method: str | None = None,
     private_key: SecretStr | None = None,
     private_key_passphrase: SecretStr | None = None,
+    oauth_token: SecretStr | None = None,
     **kwargs,
 ) -> str:
     """
@@ -390,6 +391,7 @@ def construct_sql_uri(
         auth_method: Authentication method ("password"/None, or "key_pair" where supported)
         private_key: Private key PEM text as SecretStr (key-pair auth)
         private_key_passphrase: Optional passphrase for an encrypted private key
+        oauth_token: OAuth access token as SecretStr (oauth auth; minted by core)
         **kwargs: Additional connection parameters
 
     Returns:
@@ -412,6 +414,7 @@ def construct_sql_uri(
         auth_method=auth_method,
         private_key=private_key.get_secret_value() if private_key else None,
         private_key_passphrase=private_key_passphrase.get_secret_value() if private_key_passphrase else None,
+        oauth_token=oauth_token.get_secret_value() if oauth_token else None,
         **kwargs,
     )
 

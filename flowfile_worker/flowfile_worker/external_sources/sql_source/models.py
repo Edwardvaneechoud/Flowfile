@@ -5,7 +5,7 @@ from pydantic import BaseModel, SecretStr
 from flowfile_worker.secrets import decrypt_secret
 from shared.sql_utils import construct_sql_uri, get_sqlalchemy_uri
 
-_RESERVED_EXTRA_PARAMS = ("auth_method", "private_key", "private_key_passphrase")
+_RESERVED_EXTRA_PARAMS = ("auth_method", "private_key", "private_key_passphrase", "oauth_token")
 
 
 class DataBaseConnection(BaseModel):
@@ -23,6 +23,7 @@ class DataBaseConnection(BaseModel):
     auth_method: str | None = None  # None == password auth
     private_key: SecretStr | None = None  # Encrypted private key PEM (key-pair auth)
     private_key_passphrase: SecretStr | None = None  # Encrypted private-key passphrase
+    oauth_token: SecretStr | None = None  # Encrypted short-lived OAuth access token (core refreshed it)
 
     def get_decrypted_secret(self) -> SecretStr:
         return decrypt_secret(self.password.get_secret_value())
@@ -58,6 +59,7 @@ class DataBaseConnection(BaseModel):
             auth_method=self.auth_method,
             private_key=self._decrypt(self.private_key),
             private_key_passphrase=self._decrypt(self.private_key_passphrase),
+            oauth_token=self._decrypt(self.oauth_token),
             **extra_params,
         )
 

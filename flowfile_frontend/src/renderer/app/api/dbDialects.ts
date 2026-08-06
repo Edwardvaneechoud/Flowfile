@@ -92,7 +92,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
       { name: "role", label: "Role", required: false },
     ],
     hidden_fields: ["host", "port", "ssl"],
-    auth_methods: ["password", "key_pair"],
+    auth_methods: ["password", "key_pair", "oauth"],
   },
 ];
 

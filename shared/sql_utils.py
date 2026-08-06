@@ -30,6 +30,7 @@ def construct_sql_uri(
     auth_method: str | None = None,
     private_key: str | None = None,
     private_key_passphrase: str | None = None,
+    oauth_token: str | None = None,
     **kwargs,
 ) -> str:
     """
@@ -49,6 +50,7 @@ def construct_sql_uri(
             ("password" or None everywhere, "key_pair" where supported)
         private_key: Private key PEM text as a plain string (caller handles decryption)
         private_key_passphrase: Optional passphrase for an encrypted private key
+        oauth_token: OAuth access token as a plain string (caller handles refresh/decryption)
         **kwargs: Additional connection parameters appended as query string
 
     Returns:
@@ -71,6 +73,7 @@ def construct_sql_uri(
         auth_method=auth_method,
         private_key=private_key,
         private_key_passphrase=private_key_passphrase,
+        oauth_token=oauth_token,
         **kwargs,
     )
 

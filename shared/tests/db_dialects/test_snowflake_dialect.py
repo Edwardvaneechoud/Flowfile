@@ -43,7 +43,7 @@ def test_metadata():
     assert [f.name for f in dialect.extra_fields] == ["account", "warehouse", "role"]
     assert dialect.extra_fields[0].required is True
     assert dialect.hidden_fields == ("host", "port", "ssl")
-    assert dialect.auth_methods == ("password", "key_pair")
+    assert dialect.auth_methods == ("password", "key_pair", "oauth")
 
 
 def test_build_uri_account_shape():
@@ -193,8 +193,65 @@ def test_other_dialects_reject_key_pair():
 def test_auth_and_key_material_keys_stay_blocked_as_extra_params():
     from shared.db_dialects import is_blocked_extra_param
 
-    for key in ("auth_method", "authenticator", "token", "private_key", "private_key_file", "private_key_passphrase"):
+    for key in (
+        "auth_method",
+        "authenticator",
+        "token",
+        "oauth_token",
+        "private_key",
+        "private_key_file",
+        "private_key_passphrase",
+    ):
         assert is_blocked_extra_param(key), key
+
+
+def test_build_uri_oauth_shape():
+    uri = dialect.build_uri(
+        username="u",
+        password="should-not-appear",
+        database="d",
+        account="acct",
+        warehouse="WH",
+        auth_method="oauth",
+        oauth_token="ver:1-hint:abc.DEF/ghi+jk==",
+    )
+    assert "should-not-appear" not in uri, "OAuth URIs must not carry the password"
+    assert uri.startswith("snowflake://u@acct/d?")
+    assert "warehouse=WH" in uri
+    assert "authenticator=oauth" in uri
+    assert "token=" in uri
+
+
+def test_build_uri_oauth_requires_token():
+    with pytest.raises(ValueError, match="access token is required"):
+        dialect.build_uri(username="u", database="d", account="acct", auth_method="oauth")
+
+
+def test_connect_kwargs_oauth_round_trip():
+    token = "ver:1-hint:5A2b.C/d+e=="
+    uri = dialect.build_uri(
+        username="u", database="db1", account="Acct-Id", warehouse="WH", auth_method="oauth", oauth_token=token
+    )
+    kwargs = dialect._connect_kwargs(uri)
+    assert kwargs["authenticator"] == "oauth"
+    assert kwargs["token"] == token
+    assert "password" not in kwargs
+    assert kwargs["account"] == "Acct-Id"
+    assert kwargs["user"] == "u"
+    assert kwargs["warehouse"] == "WH"
+
+
+def test_other_dialects_reject_oauth():
+    from shared.db_dialects import get_dialect as _get
+
+    postgres = _get("postgresql")
+    with pytest.raises(ValueError, match="does not support auth method"):
+        postgres.build_uri(host="h", username="u", password="p", auth_method="oauth")
+    with pytest.raises(ValueError, match="OAuth token"):
+        postgres.build_uri(host="h", username="u", password="p", oauth_token="tok")
+    for file_based in ("sqlite", "duckdb"):
+        with pytest.raises(ValueError, match="does not support"):
+            _get(file_based).build_uri(database="/tmp/x.db", auth_method="oauth")
 
 
 def test_limit_query_is_plain_limit_and_parses_as_snowflake():

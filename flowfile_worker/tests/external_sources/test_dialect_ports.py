@@ -127,3 +127,38 @@ def test_create_uri_strips_reserved_extra_params():
     )
     # Reserved keys are stripped before the splat, so no TypeError and no auth override.
     assert connection.create_uri() == "snowflake://u@acct/D"
+
+
+def test_snowflake_create_uri_oauth_decrypts_token_and_omits_password():
+    from flowfile_worker.secrets import encrypt_secret
+
+    token = "ver:1-hint:abc.DEF/ghi+jk=="
+    connection = DataBaseConnection(
+        database_type="snowflake",
+        username="svc",
+        database="ANALYTICS",
+        extra_params={"account": "myorg-myaccount"},
+        auth_method="oauth",
+        oauth_token=encrypt_secret(token),
+    )
+    uri = connection.create_uri()
+    assert uri.startswith("snowflake://svc@myorg-myaccount/ANALYTICS?")
+    assert "authenticator=oauth" in uri
+    assert token not in uri, "the token must be b64-wrapped, never verbatim"
+
+    from shared.db_dialects import get_dialect
+
+    kwargs = get_dialect("snowflake")._connect_kwargs(uri)
+    assert kwargs["authenticator"] == "oauth"
+    assert kwargs["token"] == token
+    assert "password" not in kwargs
+
+
+def test_create_uri_strips_reserved_oauth_extra_param():
+    connection = DataBaseConnection(
+        database_type="snowflake",
+        username="u",
+        database="D",
+        extra_params={"account": "acct", "oauth_token": "evil"},
+    )
+    assert connection.create_uri() == "snowflake://u@acct/D"

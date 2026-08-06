@@ -224,7 +224,7 @@ def test_snowflake_in_dialect_catalog():
     assert [f["name"] for f in entry["extra_fields"]] == ["account", "warehouse", "role"]
     assert entry["extra_fields"][0]["required"] is True
     assert entry["hidden_fields"] == ["host", "port", "ssl"]
-    assert entry["auth_methods"] == ["password", "key_pair"]
+    assert entry["auth_methods"] == ["password", "key_pair", "oauth"]
 
 
 def test_create_snowflake_connection_with_extra_params():

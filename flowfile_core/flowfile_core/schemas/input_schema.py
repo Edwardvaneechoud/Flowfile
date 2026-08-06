@@ -983,6 +983,13 @@ class DatabaseConnection(BaseModel):
         # in a `private_key` field this model does not have.
         if self.auth_method == "key_pair" and not self.private_key_ref and not getattr(self, "private_key", None):
             raise ValueError("key_pair authentication requires a private key")
+        # OAuth tokens are minted interactively against a stored connection; inline node
+        # settings cannot carry them. The wire subclass passes with its token ciphertext.
+        if self.auth_method == "oauth" and not getattr(self, "oauth_token", None):
+            raise ValueError(
+                "OAuth authentication requires a stored connection: save the connection, sign in, "
+                "and use connection_mode='reference'"
+            )
         return self
 
 
@@ -1009,6 +1016,14 @@ class FullDatabaseConnection(BaseModel):
     auth_method: str | None = None
     private_key: SecretStr | None = None
     private_key_passphrase: SecretStr | None = None
+    oauth_client_id: str | None = None
+    oauth_client_secret: SecretStr | None = None
+    oauth_authorize_endpoint: str | None = None
+    oauth_token_endpoint: str | None = None
+    oauth_redirect_uri: str | None = None
+    # Read-side only: the refresh-token ciphertext when the connection is signed in.
+    # Ignored on create/update — the token is minted by the interactive OAuth flow.
+    oauth_refresh_token: SecretStr | None = None
 
     @field_validator("database_type")
     @classmethod
@@ -1023,7 +1038,14 @@ class FullDatabaseConnection(BaseModel):
             return None
         return v
 
-    @field_validator("private_key", "private_key_passphrase", mode="before")
+    @field_validator("oauth_client_id", "oauth_authorize_endpoint", "oauth_token_endpoint", "oauth_redirect_uri")
+    @classmethod
+    def empty_oauth_field_to_none(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+        return v or None
+
+    @field_validator("private_key", "private_key_passphrase", "oauth_client_secret", mode="before")
     @classmethod
     def empty_key_string_to_none(cls, v):
         # A raw "" (JSON clients sending the empty form field) means "no key material";
@@ -1057,6 +1079,11 @@ class FullDatabaseConnectionInterface(BaseModel):
     url: str | None = None
     extra_params: dict[str, str] | None = None
     auth_method: str | None = None
+    oauth_client_id: str | None = None
+    oauth_authorize_endpoint: str | None = None
+    oauth_token_endpoint: str | None = None
+    oauth_redirect_uri: str | None = None
+    oauth_connected: bool = False
     id: int | None = None
     access: AccessInfo | None = None
 

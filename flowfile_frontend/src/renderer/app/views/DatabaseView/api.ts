@@ -30,6 +30,11 @@ const toPythonFormat = (connection: FullDatabaseConnection): PythonFullDatabaseC
     // empty key-secret rows server-side; blank means "no key" / "keep existing".
     private_key: connection.privateKey || undefined,
     private_key_passphrase: connection.privateKeyPassphrase || undefined,
+    oauth_client_id: connection.oauthClientId || undefined,
+    oauth_client_secret: connection.oauthClientSecret || undefined,
+    oauth_authorize_endpoint: connection.oauthAuthorizeEndpoint || undefined,
+    oauth_token_endpoint: connection.oauthTokenEndpoint || undefined,
+    oauth_redirect_uri: connection.oauthRedirectUri || undefined,
   };
 };
 
@@ -63,6 +68,11 @@ export const convertConnectionInterfacePytoTs = (
     database: pythonConnectionInterface.database,
     extraParams: pythonConnectionInterface.extra_params,
     authMethod: pythonConnectionInterface.auth_method ?? undefined,
+    oauthClientId: pythonConnectionInterface.oauth_client_id ?? undefined,
+    oauthAuthorizeEndpoint: pythonConnectionInterface.oauth_authorize_endpoint ?? undefined,
+    oauthTokenEndpoint: pythonConnectionInterface.oauth_token_endpoint ?? undefined,
+    oauthRedirectUri: pythonConnectionInterface.oauth_redirect_uri ?? undefined,
+    oauthConnected: pythonConnectionInterface.oauth_connected ?? false,
     id: pythonConnectionInterface.id,
     access: pythonConnectionInterface.access,
   };
@@ -82,7 +92,23 @@ export const convertConnectionInterfaceTstoPy = (
     url: dbConnectionInterface.url,
     extra_params: dbConnectionInterface.extraParams,
     auth_method: dbConnectionInterface.authMethod,
+    oauth_client_id: dbConnectionInterface.oauthClientId,
+    oauth_authorize_endpoint: dbConnectionInterface.oauthAuthorizeEndpoint,
+    oauth_token_endpoint: dbConnectionInterface.oauthTokenEndpoint,
+    oauth_redirect_uri: dbConnectionInterface.oauthRedirectUri,
+    oauth_connected: dbConnectionInterface.oauthConnected,
   };
+};
+
+/**
+ * Starts the OAuth sign-in flow for a stored connection; returns the IdP
+ * authorize URL to open in a popup / the system browser.
+ */
+export const startDbOauthApi = async (connectionName: string): Promise<string> => {
+  const response = await axios.get<{ auth_url: string }>(`${API_BASE_URL}/oauth/start`, {
+    params: { connection_name: connectionName },
+  });
+  return response.data.auth_url;
 };
 
 /**

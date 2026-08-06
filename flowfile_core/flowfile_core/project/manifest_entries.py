@@ -28,6 +28,11 @@ class DatabaseConnectionEntry(_Entry):
     password: str | None = None
     private_key: str | None = None
     private_key_passphrase: str | None = None
+    oauth_client_id: str | None = None
+    oauth_authorize_endpoint: str | None = None
+    oauth_token_endpoint: str | None = None
+    oauth_redirect_uri: str | None = None
+    oauth_client_secret: str | None = None
 
 
 class CloudConnectionEntry(_Entry):

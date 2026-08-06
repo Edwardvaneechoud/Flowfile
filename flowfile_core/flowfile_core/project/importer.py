@@ -192,7 +192,18 @@ def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: Setup
         auth_method=entry.auth_method,
         private_key=_resolve_optional(entry.private_key),
         private_key_passphrase=_resolve_optional(entry.private_key_passphrase),
+        oauth_client_id=entry.oauth_client_id,
+        oauth_authorize_endpoint=entry.oauth_authorize_endpoint,
+        oauth_token_endpoint=entry.oauth_token_endpoint,
+        oauth_redirect_uri=entry.oauth_redirect_uri,
+        oauth_client_secret=_resolve_optional(entry.oauth_client_secret),
     )
+    if entry.auth_method == "oauth":
+        # Refresh tokens are never projected (interactive, expiring credentials) —
+        # the connection lands without a sign-in and needs the user in a browser.
+        result.warnings.append(
+            f"Database connection '{name}' uses OAuth sign-in and requires interactive re-authentication."
+        )
     try:
         with get_db_context() as db:
             if _get_own_database_connection(db, name, owner_id):

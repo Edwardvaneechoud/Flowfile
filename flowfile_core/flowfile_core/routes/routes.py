@@ -84,6 +84,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_database_connection,
 )
+from flowfile_core.flowfile.database_connection_manager.db_oauth import ReconnectRequiredError
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -795,11 +796,20 @@ def update_db_connection(
         # auth_method needs normalization: a stored NULL and an incoming "password" are the same.
         if (db_connection.auth_method or "password") != (input_connection.auth_method or "password"):
             changed.append("auth_method")
+        # OAuth endpoints/client are targets too: repointing the token endpoint would
+        # harvest the refresh token on the next resolve. (The update path additionally
+        # drops the stored refresh token whenever these change, forcing a re-sign-in.)
+        for oauth_field in ("oauth_client_id", "oauth_authorize_endpoint", "oauth_token_endpoint"):
+            if (getattr(db_connection, oauth_field) or None) != (getattr(input_connection, oauth_field) or None):
+                changed.append(oauth_field)
         require_credentials_on_target_change(
             changed,
             has_new_credentials=bool(input_connection.password.get_secret_value())
-            or bool(input_connection.private_key and input_connection.private_key.get_secret_value()),
-            has_bundled_secrets=db_connection.password_id is not None or db_connection.private_key_id is not None,
+            or bool(input_connection.private_key and input_connection.private_key.get_secret_value())
+            or bool(input_connection.oauth_client_secret and input_connection.oauth_client_secret.get_secret_value()),
+            has_bundled_secrets=db_connection.password_id is not None
+            or db_connection.private_key_id is not None
+            or db_connection.oauth_refresh_token_id is not None,
         )
     try:
         # Owner's user_id keeps a rotated password encrypted under the OWNER's key.
@@ -2446,6 +2456,9 @@ async def validate_db_settings(
         sql_source = create_sql_source_from_db_settings(database_settings, user_id=current_user.id)
         sql_source.validate()
         return {"message": "Query settings are valid"}
+    except ReconnectRequiredError:
+        # Typed: main.py's handler maps it to 422 with error_code=RECONNECT_REQUIRED.
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -2457,6 +2470,8 @@ async def get_db_schemas(
     """Returns available schema names for the given database connection."""
     try:
         return list_db_schemas(database_settings, user_id=current_user.id)
+    except ReconnectRequiredError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -2473,6 +2488,8 @@ async def get_db_tables(
     """
     try:
         return list_db_tables(database_settings, user_id=current_user.id)
+    except ReconnectRequiredError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
