@@ -6,6 +6,7 @@ Covers:
 - get_delta_partition_columns
 - vacuum_delta (dry_run, <168h retention guard)
 - optimize_delta (compact + z_order)
+- fixed-size Array -> List normalization on the way into a Delta write
 """
 
 import polars as pl
@@ -78,6 +79,92 @@ class TestMergePartitioning:
             partition_by=["v"],
         )
         assert get_delta_partition_columns(p) == ["v"]
+
+
+class TestFixedSizeArrayNormalization:
+    """A fixed-size ``Array`` column must survive a write/read round-trip as a ``List``.
+
+    Delta has no fixed-size-array type, so writing an ``Array(inner, N)`` unnormalized records a
+    list in the log while the Parquet files keep the fixed-size layout; ``scan_delta`` then plans
+    ``List`` and collects ``Array``, raising a dtype mismatch on every later read.
+    """
+
+    @staticmethod
+    def _embeddings(ids: list[int], vectors: list[list[float]], width: int = 3) -> pl.DataFrame:
+        return pl.DataFrame(
+            {"id": ids, "emb": vectors},
+            schema={"id": pl.Int64, "emb": pl.Array(pl.Float32, width)},
+        )
+
+    def test_array_column_reads_back_as_list(self, tmp_path):
+        p = tmp_path / "t"
+        df = self._embeddings([1, 2], [[0.5, 1.5, 2.5], [3.5, 4.5, 5.5]])
+        assert df.schema["emb"] == pl.Array(pl.Float32, 3)
+
+        write_delta(df, str(p), mode="overwrite")
+
+        lf = pl.scan_delta(str(p))
+        assert lf.collect_schema()["emb"] == pl.List(pl.Float32)
+        out = lf.collect().sort("id")  # no dtype-mismatch SchemaError
+        assert out.schema["emb"] == pl.List(pl.Float32)
+        assert out["emb"].to_list() == [[0.5, 1.5, 2.5], [3.5, 4.5, 5.5]]
+
+    def test_lazyframe_array_column_reads_back_as_list(self, tmp_path):
+        p = tmp_path / "t"
+        df = self._embeddings([1, 2], [[0.5, 1.5, 2.5], [3.5, 4.5, 5.5]])
+
+        write_delta(df.lazy(), str(p), mode="overwrite")
+
+        out = pl.scan_delta(str(p)).collect().sort("id")  # sink_delta does not preserve row order
+        assert out.schema["emb"] == pl.List(pl.Float32)
+        assert out["emb"].to_list() == [[0.5, 1.5, 2.5], [3.5, 4.5, 5.5]]
+
+    def test_append_array_column(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(self._embeddings([1], [[0.5, 1.5, 2.5]]), str(p), mode="overwrite")
+        write_delta(self._embeddings([2], [[3.5, 4.5, 5.5]]), str(p), mode="append")
+
+        out = pl.scan_delta(str(p)).collect().sort("id")
+        assert out.schema["emb"] == pl.List(pl.Float32)
+        assert out["emb"].to_list() == [[0.5, 1.5, 2.5], [3.5, 4.5, 5.5]]
+
+    def test_merge_array_column(self, tmp_path):
+        p = tmp_path / "t"
+        merge_into_delta(self._embeddings([1], [[0.5, 1.5, 2.5]]), str(p), merge_mode="upsert", merge_keys=["id"])
+        # The create branch is the guard here: a later merge rewrites the files and would mask it.
+        assert pl.scan_delta(str(p)).collect().schema["emb"] == pl.List(pl.Float32)
+
+        merge_into_delta(
+            self._embeddings([1, 2], [[9.5, 9.5, 9.5], [3.5, 4.5, 5.5]]),
+            str(p),
+            merge_mode="upsert",
+            merge_keys=["id"],
+        )
+
+        out = pl.scan_delta(str(p)).collect().sort("id")
+        assert out.schema["emb"] == pl.List(pl.Float32)
+        assert out["emb"].to_list() == [[9.5, 9.5, 9.5], [3.5, 4.5, 5.5]]
+
+    def test_non_array_columns_untouched(self, tmp_path):
+        p = tmp_path / "t"
+        df = pl.DataFrame(
+            {"id": [1], "name": ["x"], "tags": [["a", "b"]], "emb": [[0.5, 1.5]]},
+            schema={
+                "id": pl.Int64,
+                "name": pl.Utf8,
+                "tags": pl.List(pl.Utf8),
+                "emb": pl.Array(pl.Float32, 2),
+            },
+        )
+        write_delta(df, str(p), mode="overwrite")
+
+        out = pl.scan_delta(str(p)).collect()
+        assert out.schema == {
+            "id": pl.Int64,
+            "name": pl.Utf8,
+            "tags": pl.List(pl.Utf8),
+            "emb": pl.List(pl.Float32),
+        }
 
 
 class TestGetDeltaPartitionColumns:
