@@ -136,6 +136,10 @@ _RESERVED_NAMES: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(buil
 _FLAT_CTX_SHIM = '''# Minimal flowfile_ctx shim for standalone execution (logging/display only).
 # Export the flow as a project (code_to_project) for the full flowfile_ctx API.
 class _FlowfileCtx:
+    def is_dry_run(self):
+        # A single-file export runs for real, against real data.
+        return False
+
     def log(self, message, level="INFO"):
         print(f"[{level}] {message}")
 
@@ -148,7 +152,7 @@ class _FlowfileCtx:
     def log_error(self, message):
         self.log(message, "ERROR")
 
-    def display(self, obj, title=""):
+    def display(self, obj, title="", max_rows=10_000):
         if title:
             print(f"=== {title} ===")
         print(obj)

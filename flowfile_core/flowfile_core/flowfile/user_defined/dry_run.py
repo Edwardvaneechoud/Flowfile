@@ -478,11 +478,16 @@ def _build_dry_run_execute_request(**kwargs):
     logger, but the Test tab only surfaces captured stdout/stderr. Blanking the
     callback URL makes ``log()`` fall back to ``print()`` so its output lands in
     stdout the tab already renders.
+
+    ``dry_run`` tells the kernel to report ``flowfile_ctx.is_dry_run() == True``
+    and to keep ``publish_global`` writes in memory, so pressing Test never adds
+    a versioned row to the user's artifact catalog.
     """
     from flowfile_core.kernel.execution import build_execute_request
 
     request = build_execute_request(**kwargs)
     request.log_callback_url = ""
+    request.dry_run = True
     return request
 
 
@@ -517,6 +522,7 @@ def _run_dry_run_on_kernel(
             settings_values=request.settings_values,
             output_names=output_names,
             number_of_inputs=number_of_inputs,
+            dry_run=True,
         )
     except KernelCodegenError as e:
         return _fail("load", f"Cannot generate kernel script: {e}")

@@ -705,3 +705,114 @@ class TestDisplayDataFrames:
 
         out = flowfile_client._get_displays()
         assert out[0]["mime_type"] == "text/html"
+
+
+class TestDryRunMode:
+    """A dry run must run real code but write nothing to the artifact catalog."""
+
+    def _dry_ctx(self, tmp_dir: Path, dry_run: bool) -> None:
+        flowfile_client._set_context(
+            node_id=1,
+            input_paths={},
+            output_dir=str(tmp_dir),
+            artifact_store=ArtifactStore(),
+            flow_id=-1,
+            source_registration_id=7,
+            dry_run=dry_run,
+        )
+
+    def test_is_dry_run_defaults_to_false(self, ctx: dict):
+        assert flowfile_client.is_dry_run() is False
+
+    def test_is_dry_run_without_any_context(self):
+        # Notebook/interactive use must not raise just for asking.
+        assert flowfile_client.is_dry_run() is False
+
+    def test_is_dry_run_true_when_requested(self, tmp_dir: Path):
+        self._dry_ctx(tmp_dir, dry_run=True)
+        assert flowfile_client.is_dry_run() is True
+
+    def test_publish_global_is_sandboxed_and_returns_a_positive_id(self, tmp_dir: Path):
+        """No HTTP call is made — an unreachable core would raise if one were."""
+        self._dry_ctx(tmp_dir, dry_run=True)
+        artifact_id = flowfile_client.publish_global("model", {"w": [1, 2]}, tags=["ml"])
+        assert isinstance(artifact_id, int) and artifact_id > 0
+        assert flowfile_client.get_global("model") == {"w": [1, 2]}
+
+    def test_sandboxed_publish_survives_republish_as_a_new_version(self, tmp_dir: Path):
+        self._dry_ctx(tmp_dir, dry_run=True)
+        flowfile_client.publish_global("model", {"v": 1})
+        flowfile_client.publish_global("model", {"v": 2})
+        assert flowfile_client.get_global("model") == {"v": 2}
+        infos = [i for i in flowfile_client._dry_run_globals.get().values()]
+        assert infos[0]["info"].version == 2
+
+    def test_sandboxed_delete_removes_without_touching_core(self, tmp_dir: Path):
+        self._dry_ctx(tmp_dir, dry_run=True)
+        flowfile_client.publish_global("model", {"w": 1})
+        flowfile_client.delete_global_artifact("model")
+        assert "model" not in flowfile_client._dry_run_globals.get()
+
+    def test_unpicklable_object_still_fails_in_a_dry_run(self, tmp_dir: Path):
+        """The check runs before the sandbox, so an unpersistable object still fails."""
+        from kernel_runtime.serialization import UnpickleableObjectError
+
+        self._dry_ctx(tmp_dir, dry_run=True)
+        with pytest.raises(UnpickleableObjectError):
+            flowfile_client.publish_global("bad", (i for i in range(3)))
+
+    def test_sandbox_is_reset_between_executions(self, tmp_dir: Path):
+        self._dry_ctx(tmp_dir, dry_run=True)
+        flowfile_client.publish_global("model", {"w": 1})
+        self._dry_ctx(tmp_dir, dry_run=True)
+        assert flowfile_client._dry_run_globals.get() == {}
+
+    def test_non_dry_run_context_has_no_sandbox(self, tmp_dir: Path):
+        self._dry_ctx(tmp_dir, dry_run=False)
+        assert flowfile_client._dry_run_globals.get() is None
+
+    def test_sandbox_ids_are_never_reused_after_a_delete(self, tmp_dir: Path):
+        """len(sandbox)+1 would hand 'c' the id already live on 'b'."""
+        self._dry_ctx(tmp_dir, dry_run=True)
+        first = flowfile_client.publish_global("a", {1: 1})
+        second = flowfile_client.publish_global("b", {2: 2})
+        flowfile_client.delete_global_artifact("a")
+        third = flowfile_client.publish_global("c", {3: 3})
+        assert len({first, second, third}) == 3, (first, second, third)
+
+    def test_deleting_a_non_sandboxed_name_never_reaches_the_catalog(self, tmp_dir: Path, monkeypatch):
+        """A dry run must not delete real catalog data it did not publish."""
+        calls = []
+
+        class _Recorder:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def delete(self, url, **kwargs):
+                calls.append(url)
+                raise AssertionError("dry run issued a real DELETE: %s" % url)
+
+            def get(self, url, **kwargs):
+                calls.append(url)
+                raise AssertionError("dry run issued a real GET: %s" % url)
+
+        monkeypatch.setattr(flowfile_client.httpx, "Client", _Recorder)
+        self._dry_ctx(tmp_dir, dry_run=True)
+        flowfile_client.publish_global("mine", {"w": 1})
+
+        with pytest.raises(KeyError, match="was not published in this dry run"):
+            flowfile_client.delete_global_artifact("someone_elses_prod_model")
+        with pytest.raises(KeyError, match="was not published in this dry run"):
+            flowfile_client.delete_global_artifact("someone_elses_prod_model", version=1)
+        assert calls == []
+
+        # The node's own artifact still deletes, from the sandbox only.
+        flowfile_client.delete_global_artifact("mine")
+        assert "mine" not in flowfile_client._dry_run_globals.get()
+        assert calls == []

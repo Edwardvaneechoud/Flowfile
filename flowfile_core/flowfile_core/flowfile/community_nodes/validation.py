@@ -14,6 +14,7 @@ import re
 import struct
 from pathlib import Path
 
+import polars as pl
 from pydantic import BaseModel, ValidationError
 
 from flowfile_core.flowfile.community_nodes.models import (
@@ -332,12 +333,47 @@ def _check_parse(source: str, errors: list[Issue]) -> str:
 
 
 def _check_examples(source: str, errors: list[Issue]) -> None:
-    if extract_example_inputs(source) is None:
+    example_inputs = extract_example_inputs(source)
+    if example_inputs is None:
         errors.append(Issue(code="EXAMPLES_REQUIRED", message="example_inputs is required and must be a literal list"))
+    else:
+        _check_example_inputs_build(example_inputs, errors)
     if extract_example_settings(source) is None:
         errors.append(
             Issue(code="EXAMPLES_REQUIRED", message="example_settings is required and must be a literal dict")
         )
+
+
+def _check_example_inputs_build(example_inputs: list, errors: list[Issue]) -> None:
+    """Each example input must actually construct a LazyFrame.
+
+    A literal list is not enough: polars infers a column's dtype from its first
+    value, so ``[5, 6.5]`` infers Int64 and then rejects 6.5. Caught here, that
+    is a clear validate-time error; caught in the dry run it is a polars
+    traceback from inside the harness.
+    """
+    for i, entry in enumerate(example_inputs):
+        if not isinstance(entry, dict):
+            errors.append(
+                Issue(
+                    code="EXAMPLES_INVALID",
+                    message=f"example_inputs[{i}] must be a {{column: [values]}} dict, got {type(entry).__name__}",
+                )
+            )
+            continue
+        try:
+            pl.LazyFrame(entry)
+        except Exception as e:
+            errors.append(
+                Issue(
+                    code="EXAMPLES_INVALID",
+                    message=(
+                        f"example_inputs[{i}] cannot be built into a table: {e} "
+                        "(polars infers each column's dtype from its first value — "
+                        "write 5.0 rather than 5 in a column that holds decimals)"
+                    ),
+                )
+            )
 
 
 def _check_dependencies(source: str, errors: list[Issue]) -> None:
