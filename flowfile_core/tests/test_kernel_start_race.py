@@ -571,7 +571,7 @@ class TestExecuteSerialization:
 
         result = mgr.execute_sync("ml", _request())
         assert result.success is False
-        assert "300s" in (result.error or "")
+        assert f"{kernel_manager._CELL_EXECUTION_TIMEOUT:.0f}s" in (result.error or "")
         mgr.interrupt_execution_sync.assert_called_once_with("ml")
 
         follow_up = mgr.execute_sync("ml", _request())

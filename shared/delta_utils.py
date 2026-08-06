@@ -135,6 +135,27 @@ def _validate_partition_columns(df: pl.LazyFrame | pl.DataFrame, partition_by: l
         raise ValueError(f"partition_by columns not present in data: {missing}")
 
 
+def _lists_from_fixed_size_arrays(df: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+    """Cast top-level fixed-size ``Array`` columns to ``List`` before a Delta write.
+
+    Delta has no fixed-size-array type, so an ``Array(inner, N)`` column is recorded in the log
+    as a plain list while the Parquet files keep the fixed-size layout. ``scan_delta`` then plans
+    against the log's ``List`` and collects an ``Array``, so the mismatch surfaces as a dtype
+    error on every later read instead of at write time. Normalising on the way in keeps the log
+    and the data agreeing.
+
+    Only top-level columns are rewritten: an ``Array`` nested inside a ``Struct`` or a ``List``
+    still round-trips inconsistently.
+    """
+    import polars as pl_
+
+    schema = df.collect_schema() if isinstance(df, pl_.LazyFrame) else df.schema
+    casts = [
+        pl_.col(name).cast(pl_.List(dtype.inner)) for name, dtype in schema.items() if isinstance(dtype, pl_.Array)
+    ]
+    return df.with_columns(casts) if casts else df
+
+
 def _quote_ident(name: str) -> str:
     """Quote *name* as a SQL identifier for a DataFusion merge clause.
 
@@ -170,6 +191,8 @@ def write_delta(
     import os
 
     import polars as pl_
+
+    df = _lists_from_fixed_size_arrays(df)
 
     if storage_options is None:
         os.makedirs(output_path, exist_ok=True)
@@ -227,6 +250,8 @@ def merge_into_delta(
     import os
 
     from deltalake import DeltaTable
+
+    df = _lists_from_fixed_size_arrays(df)
 
     # Open the target once (re-used below) rather than probing then re-opening.
     dt = _open_delta_or_none(output_path, storage_options)
@@ -495,6 +520,8 @@ def scd2_into_delta(
         ValueError: The batch or the target is unusable, or *valid_from_iso* is not strictly newer
             than every instant already recorded in the table.
     """
+    df = _lists_from_fixed_size_arrays(df)
+
     last_error: Exception | None = None
     for attempt in range(max_commit_attempts):
         try:
