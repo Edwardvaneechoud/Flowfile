@@ -122,6 +122,121 @@ describe("state transitions", () => {
     expect(store.sections[0].components[1].name).toBe(firstName);
   });
 
+  it("moveSection reorders groups and refuses out-of-range targets", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.addSection();
+    expect(store.sections.map((s) => s.name)).toEqual(["settings", "section_2", "section_3"]);
+
+    store.moveSection(2, 0);
+    expect(store.sections.map((s) => s.name)).toEqual(["section_3", "settings", "section_2"]);
+
+    store.moveSection(0, 2);
+    expect(store.sections.map((s) => s.name)).toEqual(["settings", "section_2", "section_3"]);
+
+    store.moveSection(0, -1);
+    store.moveSection(0, 3);
+    store.moveSection(1, 1);
+    expect(store.sections.map((s) => s.name)).toEqual(["settings", "section_2", "section_3"]);
+  });
+
+  it("moveSection keeps the selection pointing at the same group", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.addSection();
+
+    // Selection follows the group that moved.
+    store.selectSection(0);
+    store.moveSection(0, 2);
+    expect(store.selectedSectionIndex).toBe(2);
+    expect(store.sections[store.selectedSectionIndex as number].name).toBe("settings");
+
+    // ...and survives a different group moving past it.
+    store.selectSection(0);
+    const selectedName = store.sections[0].name;
+    store.moveSection(2, 0);
+    expect(store.sections[store.selectedSectionIndex as number].name).toBe(selectedName);
+  });
+
+  it("moveComponentToSection moves a control across groups and selects it there", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.addComponent(0, "TextInput");
+    const moved = store.sections[0].components[0].name;
+
+    store.moveComponentToSection(0, 0, 1, 0);
+
+    expect(store.sections[0].components).toHaveLength(0);
+    expect(store.sections[1].components.map((c) => c.name)).toEqual([moved]);
+    expect(store.selectedSectionIndex).toBe(1);
+    expect(store.selectedComponentIndex).toBe(0);
+  });
+
+  it("moveComponentToSection renames on collision instead of shadowing", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.addComponent(0, "TextInput");
+    store.addComponent(1, "TextInput");
+    // Both groups seeded the same default name, so the move must rename.
+    expect(store.sections[0].components[0].name).toBe("text_input_1");
+    expect(store.sections[1].components[0].name).toBe("text_input_1");
+
+    store.moveComponentToSection(0, 0, 1, 1);
+
+    expect(store.sections[1].components.map((c) => c.name)).toEqual([
+      "text_input_1",
+      "text_input_1_2",
+    ]);
+  });
+
+  it("moveComponentToSection retargets visible_when across the move and the rename", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.addComponent(0, "ToggleSwitch");
+    store.setSectionVisibleWhen(1, { field: "settings.toggle_switch_1", equals: true });
+
+    store.moveComponentToSection(0, 0, 1, 0);
+
+    expect(store.sections[1].visible_when?.field).toBe("section_2.toggle_switch_1");
+    expect(store.sections[1].visible_when?.equals).toBe(true);
+  });
+
+  it("moveComponentToSection carries the preview value to the new key", () => {
+    const store = useNodeDesignerStore();
+    store.addSection();
+    store.addComponent(0, "TextInput");
+    store.previewValues.settings.text_input_1 = "typed by the user";
+
+    store.moveComponentToSection(0, 0, 1, 0);
+
+    expect(store.previewValues.section_2.text_input_1).toBe("typed by the user");
+    expect(store.previewValues.settings.text_input_1).toBeUndefined();
+  });
+
+  it("moveComponentToSection within one group falls back to moveComponent", () => {
+    const store = useNodeDesignerStore();
+    store.addComponent(0, "TextInput");
+    store.addComponent(0, "NumericInput");
+    const first = store.sections[0].components[0].name;
+
+    store.moveComponentToSection(0, 0, 0, 1);
+
+    expect(store.sections[0].components[1].name).toBe(first);
+  });
+
+  it("moveComponentToSection lands a control at the end when dropped on its own header", () => {
+    const store = useNodeDesignerStore();
+    store.addComponent(0, "TextInput");
+    store.addComponent(0, "NumericInput");
+    store.addComponent(0, "ToggleSwitch");
+    const first = store.sections[0].components[0].name;
+
+    // Header drops pass toIndex = components.length, one past the last valid index.
+    store.moveComponentToSection(0, 0, 0, store.sections[0].components.length);
+
+    expect(store.sections[0].components.map((c) => c.name).at(-1)).toBe(first);
+  });
+
   it("sanitizes section names to python identifiers", () => {
     const store = useNodeDesignerStore();
     store.addSection();

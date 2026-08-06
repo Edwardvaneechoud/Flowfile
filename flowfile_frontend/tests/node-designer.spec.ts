@@ -8,6 +8,9 @@
 // 3. Run: npx playwright test tests/node-designer.spec.ts
 // Not wired into make targets or CI yet — run explicitly.
 import { test, expect, APIRequestContext, Page } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const BASE_URL = process.env.TEST_URL || 'http://localhost:8080';
 const API_URL = process.env.API_URL || 'http://localhost:63578';
@@ -15,6 +18,16 @@ const API_URL = process.env.API_URL || 'http://localhost:63578';
 const NODE_NAME = 'E2E Upper';
 const NODE_FILE = 'e2e_upper.py';
 const NODE_CATEGORY = 'E2E Tools';
+
+const REORDER_NODE_NAME = 'E2E Reorder';
+const REORDER_NODE_FILE = 'e2e_reorder.py';
+
+const PUBLISH_A_NAME = 'E2E Publish A';
+const PUBLISH_A_FILE = 'e2e_publish_a.py';
+const PUBLISH_B_NAME = 'E2E Publish B';
+const PUBLISH_B_FILE = 'e2e_publish_b.py';
+
+const README_PLACEHOLDER = /Markdown shown on your node/;
 
 async function getAuthToken(request: APIRequestContext): Promise<string> {
   const tokenResponse = await request.post(`${API_URL}/auth/token`);
@@ -44,10 +57,45 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
   await page.waitForLoadState('networkidle');
 }
 
-async function deleteNodeIfExists(request: APIRequestContext, token: string) {
-  await request.delete(`${API_URL}/user_defined_components/delete-custom-node/${NODE_FILE}`, {
+async function deleteNodeIfExists(request: APIRequestContext, token: string, file = NODE_FILE) {
+  await request.delete(`${API_URL}/user_defined_components/delete-custom-node/${file}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+/** Group keys in the order the WYSIWYG canvas renders them. */
+async function groupOrder(page: Page): Promise<string[]> {
+  return page.locator('.section-header-name').allTextContents();
+}
+
+/** Name + category + save, from a designer already open on a blank node. */
+async function saveBlankNode(page: Page, name: string) {
+  await page.locator('#node-name').fill(name);
+  await page.locator('[data-testid="node-category-select"]').click();
+  await page.locator('[data-testid="node-category-select"] input').fill(NODE_CATEGORY);
+  await page.keyboard.press('Enter');
+  await page.locator('[data-testid="designer-save"]').click();
+  await expect(page.locator('[data-testid="designer-publish"]')).toBeEnabled();
+}
+
+// The GET returns "" for both "no sidecar" and "empty tombstone", so only the file
+// itself distinguishes them. Local-core runs only; skipped when the storage dir is
+// somewhere this process cannot see (Docker).
+const storageRoot = process.env.FLOWFILE_STORAGE_DIR || join(homedir(), '.flowfile');
+const prepDirVisible = existsSync(join(storageRoot, 'user_defined_nodes'));
+const readmeSidecar = (stem: string) =>
+  join(storageRoot, 'user_defined_nodes', 'screenshots', stem, 'README.md');
+
+async function readPublishReadme(
+  request: APIRequestContext,
+  token: string,
+  stem: string,
+): Promise<string> {
+  const response = await request.get(`${API_URL}/community_nodes/readme/${stem}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok()) return '';
+  return (await response.json()).readme ?? '';
 }
 
 test.describe('Node Designer E2E', () => {
@@ -56,10 +104,16 @@ test.describe('Node Designer E2E', () => {
   test.beforeAll(async ({ request }) => {
     authToken = await getAuthToken(request);
     await deleteNodeIfExists(request, authToken);
+    for (const file of [PUBLISH_A_FILE, PUBLISH_B_FILE, REORDER_NODE_FILE]) {
+      await deleteNodeIfExists(request, authToken, file);
+    }
   });
 
   test.afterAll(async ({ request }) => {
     await deleteNodeIfExists(request, authToken);
+    for (const file of [PUBLISH_A_FILE, PUBLISH_B_FILE, REORDER_NODE_FILE]) {
+      await deleteNodeIfExists(request, authToken, file);
+    }
   });
 
   test('build a node visually, dry-run it, save it, and find it in the palette', async ({
@@ -152,6 +206,83 @@ test.describe('Node Designer E2E', () => {
     await expect(guard).toContainText(/unsaved/i);
     await guard.getByRole('button', { name: /cancel/i }).click();
     await expect(page.locator('#node-name')).toHaveValue(`${NODE_NAME} edited`);
+  });
+
+  // Reordering is only real if it survives codegen -> save -> AST parse -> reload.
+  test('groups reorder and the new order survives a save/reopen round trip', async ({ page }) => {
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/main/nodeDesigner`);
+
+    await page.locator('#node-name').fill(REORDER_NODE_NAME);
+    await page.locator('[data-testid="node-category-select"]').click();
+    await page.locator('[data-testid="node-category-select"] input').fill(NODE_CATEGORY);
+    await page.keyboard.press('Enter');
+
+    await page.locator('[data-testid="add-group-trailing"]').click();
+    await expect.poll(() => groupOrder(page)).toEqual(['settings', 'section_2']);
+
+    // Move the second group above the seeded one.
+    await page.locator('[data-testid="group-up-section_2"]').click();
+    await expect.poll(() => groupOrder(page)).toEqual(['section_2', 'settings']);
+
+    await page.locator('[data-testid="designer-save"]').click();
+
+    // Reopen from disk: the order now has to come back out of the generated Python.
+    await navigateWithAuth(
+      page,
+      authToken,
+      `${BASE_URL}/#/main/nodeDesigner?openFile=${REORDER_NODE_FILE}`,
+    );
+    await expect(page.locator('#node-name')).toHaveValue(REORDER_NODE_NAME, { timeout: 15000 });
+    await expect.poll(() => groupOrder(page), { timeout: 15000 }).toEqual(['section_2', 'settings']);
+  });
+
+  // The publish modal never unmounts, so switching nodes inside one page session is the
+  // only way this shows up — a reload would empty its memory and hide the bug.
+  test('publish modal loads the README of the node it was opened for', async ({
+    page,
+    request,
+  }) => {
+    // Fresh page per node: "New" would trip the unsaved-changes guard, which is not
+    // what this test is about.
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/main/nodeDesigner`);
+    await saveBlankNode(page, PUBLISH_A_NAME);
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/main/nodeDesigner`);
+    await saveBlankNode(page, PUBLISH_B_NAME);
+
+    // Give A a README through the modal and let the debounced autosave land.
+    await page.locator('[data-testid="designer-browse"]').click();
+    await page.locator(`[data-testid="node-edit-${PUBLISH_A_FILE}"]`).click();
+    await expect(page.locator('#node-name')).toHaveValue(PUBLISH_A_NAME, { timeout: 15000 });
+    await page.locator('[data-testid="designer-publish"]').click();
+    await expect(page.locator('.el-dialog')).toBeVisible({ timeout: 15000 });
+    await page.getByPlaceholder(README_PLACEHOLDER).first().fill('# Node A readme');
+    await expect
+      .poll(() => readPublishReadme(request, authToken, 'e2e_publish_a'), { timeout: 15000 })
+      .toContain('# Node A readme');
+    await page.keyboard.press('Escape');
+
+    // Switch to B without reloading, then open its publish modal.
+    await page.locator('[data-testid="designer-browse"]').click();
+    await page.locator(`[data-testid="node-edit-${PUBLISH_B_FILE}"]`).click();
+    await expect(page.locator('#node-name')).toHaveValue(PUBLISH_B_NAME, { timeout: 15000 });
+    await page.locator('[data-testid="designer-publish"]').click();
+    await expect(page.locator('.el-dialog')).toBeVisible({ timeout: 15000 });
+
+    // B's own (empty) README, not A's text.
+    await expect(page.getByPlaceholder(README_PLACEHOLDER).first()).toHaveValue('');
+    await page.waitForTimeout(2000); // outlast the 800ms autosave debounce
+    await page.keyboard.press('Escape');
+
+    expect(await readPublishReadme(request, authToken, 'e2e_publish_b')).toBe('');
+    expect(await readPublishReadme(request, authToken, 'e2e_publish_a')).toContain(
+      '# Node A readme',
+    );
+
+    // And the reset must not have persisted itself as an empty sidecar: that tombstone
+    // permanently suppresses the registry README prefill for community installs.
+    if (prepDirVisible) {
+      expect(existsSync(readmeSidecar('e2e_publish_b'))).toBeFalsy();
+    }
   });
 
   test('catalog Custom Nodes tab lists the node and deep-links into the designer', async ({

@@ -105,3 +105,68 @@ describe("buildArtifactOptions", () => {
     expect(buildArtifactOptions("global", [], [])).toEqual([]);
   });
 });
+
+describe("global artifacts collapse to their newest version", () => {
+  // A bare name resolves to the newest version server-side, so older rows were N
+  // choices that all meant the same artifact.
+  const versioned: GlobalArtifactOption[] = [
+    { name: "churn", python_type: "xgboost.Booster", namespace_id: 1, version: 3 },
+    { name: "churn", python_type: "xgboost.Booster", namespace_id: 1, version: 2 },
+    { name: "churn", python_type: "xgboost.Booster", namespace_id: 1, version: 1 },
+    { name: "scaler", python_type: "sklearn.StandardScaler", namespace_id: 1, version: 1 },
+  ];
+
+  it("keeps one option per artifact, at its highest version", () => {
+    expect(buildArtifactOptions("global", [], versioned)).toEqual([
+      ["churn", "churn (v3 · Booster)"],
+      ["scaler", "scaler (v1 · StandardScaler)"],
+    ]);
+  });
+
+  it("picks the highest version regardless of arrival order", () => {
+    const shuffled = [versioned[1], versioned[2], versioned[0]];
+    expect(buildArtifactOptions("global", [], shuffled)).toEqual([["churn", "churn (v3 · Booster)"]]);
+  });
+
+  it("collapses for scope 'all' too, after the upstream-wins dedupe", () => {
+    const upstream: ArtifactOption[] = [{ name: "scaler", type_name: "StandardScaler" }];
+    expect(buildArtifactOptions("all", upstream, versioned)).toEqual([
+      ["scaler", "scaler (StandardScaler)"],
+      ["churn", "churn (v3 · Booster)"],
+    ]);
+  });
+
+  it("keeps same-named artifacts in different namespaces apart", () => {
+    // The backend rejects a bare-name lookup that is ambiguous across namespaces —
+    // merging them here would hide that conflict instead of surfacing it.
+    const twoNamespaces: GlobalArtifactOption[] = [
+      { name: "churn", python_type: "xgboost.Booster", namespace_id: 1, version: 2 },
+      { name: "churn", python_type: "xgboost.Booster", namespace_id: 7, version: 5 },
+    ];
+    expect(buildArtifactOptions("global", [], twoNamespaces)).toEqual([
+      ["churn", "churn (v2 · Booster)"],
+      ["churn", "churn (v5 · Booster)"],
+    ]);
+  });
+
+  it("treats a missing namespace_id as one bucket", () => {
+    const noNamespace: GlobalArtifactOption[] = [
+      { name: "churn", python_type: "xgboost.Booster", version: 1 },
+      { name: "churn", python_type: "xgboost.Booster", version: 4 },
+    ];
+    expect(buildArtifactOptions("global", [], noNamespace)).toEqual([
+      ["churn", "churn (v4 · Booster)"],
+    ]);
+  });
+
+  it("applies the type filter before collapsing", () => {
+    const mixed: GlobalArtifactOption[] = [
+      { name: "churn", python_type: "xgboost.Booster", namespace_id: 1, version: 9 },
+      { name: "churn", python_type: "sklearn.Pipeline", namespace_id: 1, version: 2 },
+    ];
+    // v9 is filtered out, so the surviving sklearn row must win — not "no options".
+    expect(buildArtifactOptions("global", [], mixed, ["sklearn.*"])).toEqual([
+      ["churn", "churn (v2 · Pipeline)"],
+    ]);
+  });
+});

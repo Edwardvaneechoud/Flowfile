@@ -437,6 +437,26 @@ const screenshotUrls = ref<Record<string, string>>({});
 const fileStem = computed(() => props.fileName.replace(/\.py$/, ""));
 const hasErrors = computed(() => issues.value.some((i) => i.severity === "error"));
 
+// The modal never unmounts, so switching nodes is its only "mount". `hydrating` marks
+// that window: every field write inside it comes from the reset or from the server, so
+// the autosave and readiness-check watchers must ignore it. `loadSeq` invalidates
+// in-flight responses that belong to the node we just switched away from.
+const hydrating = ref(true);
+let loadSeq = 0;
+// Last stem whose load completed, and the stem a load is currently running for.
+let hydratedStem: string | null = null;
+let pendingStem: string | null = null;
+// The README text the backend is known to hold. Autosave keys off this rather than a
+// time window: the reset and the sidecar load both write the field, and only a write
+// the user made should ever be persisted. A time window would also drop edits typed
+// while the modal was still loading.
+let lastSyncedReadme = "";
+
+function setReadmeFromServer(text: string) {
+  lastSyncedReadme = text;
+  readme.value = text;
+}
+
 type CheckStatus = "pass" | "warning" | "error";
 const checklist = computed(() =>
   REQUIREMENTS.map((req) => {
@@ -505,19 +525,22 @@ function scheduleCheck() {
 
 async function runCheck() {
   if (!props.fileName) return;
+  const seq = loadSeq;
   checking.value = true;
   try {
     const report = await checkPublishCompleteness(bundleBody());
+    if (seq !== loadSeq) return;
     issues.value = report.issues;
     currentVersion.value = report.version ?? "";
     publishedVersion.value = report.published_version ?? null;
   } catch (e: unknown) {
+    if (seq !== loadSeq) return;
     const err = e as { response?: { data?: { detail?: string } }; message?: string };
     ElMessage.error(
       `Could not check readiness: ${err.response?.data?.detail || err.message || "error"}`,
     );
   } finally {
-    checking.value = false;
+    if (seq === loadSeq) checking.value = false;
   }
 }
 
@@ -528,17 +551,25 @@ function revokeUrls() {
 
 async function loadScreenshots() {
   if (!props.fileName) return;
+  const seq = loadSeq;
   try {
     const shots = await listPublishScreenshots(fileStem.value);
+    if (seq !== loadSeq) return;
     revokeUrls();
     screenshots.value = shots;
     for (const shot of shots) {
       fetchPublishScreenshotUrl(fileStem.value, shot.file_name).then((url) => {
-        if (url) screenshotUrls.value = { ...screenshotUrls.value, [shot.file_name]: url };
+        if (!url) return;
+        // A node switch while this was in flight would otherwise show A's image on B.
+        if (seq !== loadSeq) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        screenshotUrls.value = { ...screenshotUrls.value, [shot.file_name]: url };
       });
     }
   } catch {
-    screenshots.value = [];
+    if (seq === loadSeq) screenshots.value = [];
   }
 }
 
@@ -706,39 +737,93 @@ function insertReadmeTemplate() {
 async function loadReadme() {
   if (!props.fileName || readme.value.trim()) return;
   const stem = fileStem.value;
+  const seq = loadSeq;
   try {
     const stored = await fetchPublishReadme(stem);
-    if (stored && stem === fileStem.value && !readme.value.trim()) readme.value = stored;
+    if (stored && seq === loadSeq && stem === fileStem.value && !readme.value.trim()) {
+      setReadmeFromServer(stored);
+    }
   } catch {
     /* sidecar is best-effort */
   }
 }
 
+function cancelPendingTimers() {
+  if (readmeSaveTimer) {
+    clearTimeout(readmeSaveTimer);
+    readmeSaveTimer = null;
+  }
+  if (checkTimer) {
+    clearTimeout(checkTimer);
+    checkTimer = null;
+  }
+}
+
+// resetGithubTransient owns the connect/PR half on close; these are the publish-form
+// fields, which nothing else clears. Keep the two lists disjoint.
+function resetPerNodeState() {
+  setReadmeFromServer("");
+  changelog.value = "";
+  currentVersion.value = "";
+  publishedVersion.value = null;
+  openPrs.value = [];
+  issues.value = [];
+  description.value = "";
+  license.value = "MIT";
+  category.value = "Utilities";
+  repository.value = "";
+  screenshots.value = [];
+  revokeUrls();
+}
+
 // The modal is permanently mounted: switching nodes must not leak per-node state
 // (a pending autosave would otherwise write node A's README into node B's sidecar).
+// `props.show` is already true when this runs — the parent sets fileName and show in
+// one tick — so hydrating, not show, is what keeps these writes out of the autosave.
 watch(
   () => props.fileName,
   () => {
-    if (readmeSaveTimer) {
-      clearTimeout(readmeSaveTimer);
-      readmeSaveTimer = null;
-    }
-    readme.value = "";
-    changelog.value = "";
-    currentVersion.value = "";
-    publishedVersion.value = null;
-    openPrs.value = [];
-    issues.value = [];
+    hydrating.value = true;
+    hydratedStem = null;
+    cancelPendingTimers();
+    resetPerNodeState();
+    // Deliberately not order-dependent: whichever of this and the `show` watcher runs
+    // first starts the load, and the other one is deduped by the pendingStem guard.
+    if (props.show) void onOpen();
   },
 );
 
 let readmeSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushReadmeSave() {
+  if (!readmeSaveTimer) return;
+  clearTimeout(readmeSaveTimer);
+  readmeSaveTimer = null;
+  void persistReadme();
+}
+
+async function persistReadme() {
+  const text = readme.value;
+  try {
+    await savePublishReadme(fileStem.value, text);
+    lastSyncedReadme = text;
+  } catch (e: unknown) {
+    // Silently dropping this hid oversized-README rejections entirely.
+    const err = e as { response?: { data?: { detail?: { message?: string } } }; message?: string };
+    ElMessage.error(
+      `Could not save the README: ${err.response?.data?.detail?.message || err.message || "error"}`,
+    );
+  }
+}
+
 watch(readme, () => {
-  if (!props.show) return;
+  // Only a divergence from what the backend holds is a user edit worth saving. The
+  // per-node reset used to land here as an empty PUT that tombstoned the new node.
+  if (!props.show || readme.value === lastSyncedReadme) return;
   if (readmeSaveTimer) clearTimeout(readmeSaveTimer);
   readmeSaveTimer = setTimeout(() => {
     readmeSaveTimer = null;
-    savePublishReadme(fileStem.value, readme.value).catch(() => undefined);
+    void persistReadme();
   }, 800);
 });
 
@@ -921,34 +1006,52 @@ function resetGithubTransient() {
   confirmed.value = false;
 }
 
+// Readiness runs after the loads, not alongside them: it submits the README, so
+// checking before the sidecar has landed reports a node as missing one it has.
+async function onOpen() {
+  const stem = fileStem.value;
+  if (hydrating.value && pendingStem === stem) return; // already loading this node
+  pendingStem = stem;
+  const seq = ++loadSeq;
+  hydrating.value = true;
+  cancelPendingTimers();
+  if (hydratedStem !== stem) resetPerNodeState();
+  if (!description.value.trim()) description.value = store.nodeMetadata.intro ?? "";
+  try {
+    await Promise.allSettled([loadReadme(), loadScreenshots(), loadGithubStatus()]);
+  } finally {
+    // allSettled never rejects, so hydration always ends — a stuck flag would
+    // silently disable autosave for the rest of the session.
+    if (seq === loadSeq) {
+      hydrating.value = false;
+      hydratedStem = stem;
+    }
+  }
+  if (seq === loadSeq) void runCheck();
+}
+
 watch(
   () => props.show,
   (open) => {
     if (!open) {
-      if (readmeSaveTimer) {
-        clearTimeout(readmeSaveTimer);
-        readmeSaveTimer = null;
-        savePublishReadme(fileStem.value, readme.value).catch(() => undefined);
-      }
+      flushReadmeSave();
+      cancelPendingTimers();
       stopGithubTimers();
       resetGithubTransient();
       return;
     }
-    if (!description.value.trim()) description.value = store.nodeMetadata.intro ?? "";
-    runCheck();
-    loadReadme();
-    loadScreenshots();
-    loadGithubStatus();
+    void onOpen();
   },
 );
 
 watch([license, category, description, repository, readme, changelog], () => {
-  if (props.show) scheduleCheck();
+  if (props.show && !hydrating.value) scheduleCheck();
 });
 
 onBeforeUnmount(() => {
   if (checkTimer) clearTimeout(checkTimer);
-  if (readmeSaveTimer) clearTimeout(readmeSaveTimer);
+  // Flush, not drop: leaving the route inside the debounce window used to lose edits.
+  flushReadmeSave();
   stopGithubTimers();
   revokeUrls();
 });
@@ -1272,6 +1375,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: var(--spacing-3);
+  /* Neither child can shrink below its label, so without this the row overflows
+     the card instead of reflowing. */
+  flex-wrap: wrap;
+}
+
+/* The label swaps between "Publishing…" and "Create/Update pull request"; without a
+   floor the whole row resizes on every publish-state change. */
+.connected-actions .btn-primary {
+  min-width: 11.5rem;
 }
 
 .link-btn {
