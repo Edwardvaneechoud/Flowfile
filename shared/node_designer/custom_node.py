@@ -780,6 +780,30 @@ if not inputs:
         """
         raise NotImplementedError
 
+    def example_artifacts(self) -> dict[str, Any]:
+        """Objects the dry-run seeds into the artifact store before ``process()`` runs.
+
+        A node that reads an artifact it does not itself publish — a predict node
+        loading a model a train node stored — has nothing to read in a dry run,
+        so it fails on a missing artifact instead of exercising its real path.
+        Return ``{name: obj}`` here and each entry is seeded into both the
+        flow-local store (``read_artifact``) and the global store
+        (``get_global``) before ``process()`` is called.
+
+        This is a **method**, not a class attribute, because the objects are
+        typically unrepresentable as literals (a fitted sklearn pipeline, a
+        tokenizer). Build them in-process — do not load them from disk or the
+        network, or the security scanner will attach ``fs_read`` / ``network``
+        capabilities to the node's consent disclosure. Heavy imports belong
+        inside the method body, exactly as in ``process``.
+
+        Only dry runs call this; a real flow run never does.
+
+        Returns:
+            A ``{artifact_name: object}`` dict; empty by default.
+        """
+        return {}
+
     def predict_output_schema(self, *inputs: pl.LazyFrame) -> "pl.LazyFrame | dict[str, pl.LazyFrame] | None":
         """
         Optionally declare the node's output schema without running ``process``.

@@ -27,40 +27,389 @@ from flowfile_core.flowfile.node_designer.parsing import (
 _MAX_ROW_LIMIT = 1000
 _MAX_TIMEOUT = 120
 
+# Public ``kernel_runtime.flowfile_client`` APIs deliberately left to the fake's
+# permissive ``__getattr__`` no-op instead of being modelled. Adding a name here is
+# a conscious statement that returning ``None`` is correct for it; the drift guard
+# in ``tests/flowfile/community_nodes/test_dry_run_ctx_parity.py`` fails for any
+# public API that is neither implemented on ``_FlowfileCtx`` nor listed here.
+_VOID_APIS: frozenset[str] = frozenset()
+
 # Runs in a child `python -c` with cwd inheriting the parent's sys.path (the poetry
 # venv), so `import shared` resolves. Must NOT import flowfile_core. argv: folder, config.
-_RUNNER = r"""
+_RUNNER = r'''
 import contextlib
 import json
 import logging
+import os
 import sys
+import tempfile
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
 
 import polars as pl
 
 from shared.node_designer.loading import find_custom_node_class, install_import_aliases, load_node_module
 
 
+@dataclass
+class _ArtifactInfo:
+    """Flow-local artifact metadata; mirrors ``kernel_runtime.schemas.ArtifactInfo``.
+
+    Redeclared rather than imported: the dry-run child may import neither
+    flowfile_core (DB migrations) nor kernel_runtime (not shipped in the
+    ``flowfile`` PyPI distribution).
+    """
+
+    name: str
+    type_name: str
+    module: str
+    node_id: int
+    flow_id: int
+    created_at: datetime
+    size_bytes: int
+    persisted: bool = False
+    persist_pending: bool = False
+
+
+@dataclass
+class _GlobalArtifactInfo:
+    """Global artifact metadata; mirrors ``kernel_runtime.schemas.GlobalArtifactInfo``.
+
+    Field-for-field with the real model: no ``description``, because the real one
+    has none. Inventing a field here would let a node read ``info.description``
+    in CI and AttributeError in a kernel.
+    """
+
+    id: int
+    name: str
+    version: int
+    status: str
+    source_registration_id: int
+    serialization_format: str
+    created_at: datetime
+    namespace_id: int | None = None
+    python_type: str | None = None
+    size_bytes: int | None = None
+    tags: list = field(default_factory=list)
+    owner_id: int = -1
+
+
+class _CatalogUnavailableError(RuntimeError):
+    """A catalog API was called in a dry run, where there is no Flowfile server."""
+
+
+_DRY_RUN_FLOW_ID = -1
+_DRY_RUN_NODE_ID = -1
+
+
 class _FlowfileCtx:
-    # Stand-in for the kernel runtime's `flowfile_ctx` global so kernel-env nodes that
-    # log / call the context can execute in the local dry-run (no Docker kernel here).
-    @staticmethod
-    def _log(level, *args):
-        print("[node:%s]" % level, *args, file=sys.stderr)
+    """In-memory stand-in for the kernel runtime's ``flowfile_ctx`` global.
 
-    def log_info(self, *a, **k):
-        self._log("info", *a)
+    Mirrors ``kernel_runtime/kernel_runtime/flowfile_client.py``: every
+    value-returning API returns a real value and raises the same
+    ``KeyError``/``ValueError`` the kernel raises, so a node that branches on a
+    published artifact id or reads back a stored model behaves here the way it
+    will in production. Signatures match the real client's, so a call that
+    type-checks against the kernel also works in the dry run.
 
-    def log_warning(self, *a, **k):
-        self._log("warning", *a)
+    Two stores back it, matching the kernel's two scopes: ``_artifacts`` is
+    flow-local (``publish_artifact``/``read_artifact``) and ``_globals`` is the
+    versioned global store (``publish_global``/``get_global``). Catalog APIs
+    need a running Flowfile server and raise a clear error rather than
+    pretending; unknown or future APIs fall through to a no-op via
+    ``__getattr__`` so an unmodelled call degrades instead of exploding.
+    """
 
-    def log_error(self, *a, **k):
-        self._log("error", *a)
+    def __init__(self, inputs=None):
+        self._inputs: dict[str, list] = {"main": list(inputs or [])}
+        self._artifacts: dict[str, tuple[Any, _ArtifactInfo]] = {}
+        # name -> {version: {"id", "obj", "info"}}
+        self._globals: dict[str, dict[int, dict[str, Any]]] = {}
+        self._outputs: dict[str, Any] = {}
+        self._next_global_id = 1
+        self._shared_dir: str | None = None
 
-    def log_debug(self, *a, **k):
-        self._log("debug", *a)
+    # ----- dry-run signal -----
+
+    def is_dry_run(self) -> bool:
+        """True: this is the community-node dry run, not a real kernel execution."""
+        return True
+
+    # ----- inputs / outputs -----
+    #
+    # Community-node dry runs call ``process(*inputs)`` directly and take the
+    # return value as the result, exactly as core's AST-generated kernel script
+    # does. These are still served faithfully so a node that reads its inputs
+    # through the context sees the same frames its ``process`` args carry.
+
+    def read_input(self, name: str = "main") -> pl.LazyFrame:
+        frames = self._check_input_available(name)
+        if len(frames) == 1:
+            return frames[0]
+        return pl.concat(frames)
+
+    def read_first(self, name: str = "main") -> pl.LazyFrame:
+        return self._check_input_available(name)[0]
+
+    def read_inputs(self) -> dict:
+        return {name: list(frames) for name, frames in self._inputs.items()}
+
+    def publish_output(self, df, name: str = "main") -> None:
+        """Record an output frame.
+
+        Recorded but unused on this path: the dry-run reads results from
+        ``process()``'s return value (a community node must return, since core's
+        kernel script publishes the return value for it).
+        """
+        self._outputs[name] = df.lazy() if isinstance(df, pl.DataFrame) else df
+
+    def _check_input_available(self, name: str) -> list:
+        frames = self._inputs.get(name) or []
+        if not frames:
+            available = sorted(k for k, v in self._inputs.items() if v)
+            if not available:
+                raise RuntimeError(
+                    "This node has no inputs. Add example_inputs to the node class so the dry run has data."
+                )
+            raise KeyError("Input '%s' not found. Available inputs: %s" % (name, available))
+        return frames
+
+    # ----- flow-local artifacts -----
+
+    def publish_artifact(self, name: str, obj: Any, preview: bool = False) -> None:
+        """Store *obj* under *name*. Mirrors the kernel: a duplicate name raises ValueError.
+
+        ``preview`` is accepted for signature parity; there is no preview panel here.
+        """
+        if name in self._artifacts:
+            raise ValueError(
+                "Artifact '%s' already exists (published by node %d). "
+                "Delete it first with flowfile_ctx.delete_artifact('%s') "
+                "before publishing a new one with the same name." % (name, _DRY_RUN_NODE_ID, name)
+            )
+        self._seed_artifact(name, obj)
+
+    def read_artifact(self, name: str) -> Any:
+        entry = self._artifacts.get(name)
+        if entry is None:
+            raise KeyError("Artifact '%s' not found" % name)
+        return entry[0]
+
+    def delete_artifact(self, name: str) -> None:
+        if name not in self._artifacts:
+            raise KeyError("Artifact '%s' not found" % name)
+        del self._artifacts[name]
+
+    def list_artifacts(self) -> list:
+        return [info for _obj, info in self._artifacts.values()]
+
+    def _seed_artifact(self, name: str, obj: Any) -> None:
+        """Store without the duplicate-name guard (used by publish and by seeding)."""
+        self._artifacts[name] = (
+            obj,
+            _ArtifactInfo(
+                name=name,
+                type_name=type(obj).__name__,
+                module=type(obj).__module__,
+                node_id=_DRY_RUN_NODE_ID,
+                flow_id=_DRY_RUN_FLOW_ID,
+                created_at=datetime.now(timezone.utc),
+                size_bytes=sys.getsizeof(obj),
+            ),
+        )
+
+    # ----- global artifacts -----
+
+    def publish_global(
+        self,
+        name: str,
+        obj: Any,
+        description: str | None = None,
+        tags: list | None = None,
+        namespace_id: int | None = None,
+        fmt: str | None = None,
+    ) -> int:
+        """Persist *obj* globally and return its artifact id (monotonic from 1).
+
+        Republishing a name adds a version, as the real store does.
+        """
+        return self._seed_global(name, obj, description=description, tags=tags, namespace_id=namespace_id, fmt=fmt)
+
+    def get_global(
+        self,
+        name: str,
+        version: int | None = None,
+        namespace_id: int | None = None,
+        namespace: str | None = None,
+    ) -> Any:
+        versions = self._globals.get(name)
+        if not versions:
+            raise KeyError("Artifact '%s' not found" % name)
+        if version is None:
+            version = max(versions)
+        entry = versions.get(version)
+        if entry is None:
+            raise KeyError("Artifact '%s' version %s not found" % (name, version))
+        return entry["obj"]
+
+    def list_global_artifacts(self, namespace_id: int | None = None, tags: list | None = None) -> list:
+        result = []
+        for versions in self._globals.values():
+            for entry in versions.values():
+                info = entry["info"]
+                if namespace_id is not None and info.namespace_id != namespace_id:
+                    continue
+                if tags and not set(tags).issubset(set(info.tags)):
+                    continue
+                result.append(info)
+        return result
+
+    def delete_global_artifact(
+        self,
+        name: str,
+        version: int | None = None,
+        namespace_id: int | None = None,
+        namespace: str | None = None,
+    ) -> None:
+        versions = self._globals.get(name)
+        if not versions:
+            raise KeyError("Artifact '%s' not found" % name)
+        if version is None:
+            del self._globals[name]
+            return
+        if version not in versions:
+            raise KeyError("Artifact '%s' version %s not found" % (name, version))
+        del versions[version]
+        if not versions:
+            del self._globals[name]
+
+    def _seed_global(
+        self,
+        name: str,
+        obj: Any,
+        description: str | None = None,
+        tags: list | None = None,
+        namespace_id: int | None = None,
+        fmt: str | None = None,
+    ) -> int:
+        """``description`` is accepted (the real API takes it) but not carried:
+        ``GlobalArtifactInfo`` has no field for it on either side."""
+        versions = self._globals.setdefault(name, {})
+        version = max(versions) + 1 if versions else 1
+        artifact_id = self._next_global_id
+        self._next_global_id += 1
+        versions[version] = {
+            "id": artifact_id,
+            "obj": obj,
+            "info": _GlobalArtifactInfo(
+                id=artifact_id,
+                name=name,
+                version=version,
+                status="ready",
+                source_registration_id=_DRY_RUN_FLOW_ID,
+                serialization_format=fmt or "pickle",
+                created_at=datetime.now(timezone.utc),
+                namespace_id=namespace_id,
+                python_type="%s.%s" % (type(obj).__module__, type(obj).__name__),
+                size_bytes=sys.getsizeof(obj),
+                tags=list(tags or []),
+            ),
+        }
+        return artifact_id
+
+    # ----- files -----
+
+    def get_shared_location(self, filename: str) -> str:
+        """Absolute path under a real temp dir, so a node can actually write files."""
+        if self._shared_dir is None:
+            self._shared_dir = tempfile.mkdtemp(prefix="ff-dry-run-shared-")
+        full_path = os.path.join(self._shared_dir, "user_files", filename)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        return full_path
+
+    # ----- logging / display -----
+
+    def log(self, message, level: str = "INFO") -> None:
+        print("[node:%s]" % str(level).lower(), message, file=sys.stderr)
+
+    def log_info(self, message) -> None:
+        self.log(message, "INFO")
+
+    def log_warning(self, message) -> None:
+        self.log(message, "WARNING")
+
+    def log_error(self, message) -> None:
+        self.log(message, "ERROR")
+
+    def display(self, obj, title: str = "", max_rows: int = 10000) -> None:
+        if title:
+            print("=== %s ===" % title, file=sys.stderr)
+        print(obj, file=sys.stderr)
+
+    def explore(self, obj, title: str = "", max_rows: int = 10000) -> None:
+        self.display(obj, title)
+
+    # ----- catalog (needs a running Flowfile server) -----
+
+    def _catalog_unavailable(self, api_name: str):
+        raise _CatalogUnavailableError(
+            "flowfile_ctx.%s() needs a running Flowfile server and is not available in a dry run. "
+            "Guard the call with `if not flowfile_ctx.is_dry_run():` so the node still dry-runs." % api_name
+        )
+
+    def read_catalog_table(self, *args, **kwargs):
+        self._catalog_unavailable("read_catalog_table")
+
+    def write_catalog_table(self, *args, **kwargs):
+        self._catalog_unavailable("write_catalog_table")
+
+    def list_catalog_tables(self, *args, **kwargs):
+        self._catalog_unavailable("list_catalog_tables")
+
+    def list_catalogs(self, *args, **kwargs):
+        self._catalog_unavailable("list_catalogs")
+
+    def get_catalog(self, *args, **kwargs):
+        self._catalog_unavailable("get_catalog")
+
+    def list_schemas(self, *args, **kwargs):
+        self._catalog_unavailable("list_schemas")
+
+    def default_schema(self, *args, **kwargs):
+        self._catalog_unavailable("default_schema")
+
+    # ----- fallback -----
 
     def __getattr__(self, name):
+        """No-op for APIs this fake does not model, so future SDK additions degrade.
+
+        Dunders still raise: handing ``copy``/``pickle``/``len`` a no-op lambda
+        instead of an AttributeError makes them misbehave in confusing ways.
+        """
+        if name.startswith("__"):
+            raise AttributeError(name)
         return lambda *a, **k: None
+
+
+def _seed_example_artifacts(node, ctx):
+    """Seed ``node.example_artifacts()`` into both artifact stores before process().
+
+    A flat ``{name: obj}`` dict lands in the flow-local store *and* the global
+    store, so a node reading via either ``read_artifact`` or ``get_global`` finds
+    it without the author having to know which scope the dry run uses.
+    """
+    hook = getattr(node, "example_artifacts", None)
+    if hook is None:
+        return
+    artifacts = hook()
+    if not artifacts:
+        return
+    if not isinstance(artifacts, dict):
+        raise TypeError("example_artifacts() must return a dict, got %s" % type(artifacts).__name__)
+    for name, obj in artifacts.items():
+        ctx._seed_artifact(name, obj)
+        ctx._seed_global(name, obj)
 
 
 def _normalize(result, output_names):
@@ -91,13 +440,15 @@ def _run(folder, config):
         source = f.read()
     module = load_node_module(source=source)
     module.__dict__.setdefault("logging", logging)
-    module.__dict__["flowfile_ctx"] = _FlowfileCtx()
+    lazy_inputs = [pl.LazyFrame(d) for d in config.get("example_inputs") or []]
+    ctx = _FlowfileCtx(inputs=lazy_inputs)
+    module.__dict__["flowfile_ctx"] = ctx
     node = find_custom_node_class(module, config["class_name"])()
     settings = config.get("example_settings") or {}
     if settings and node.settings_schema:
         node.settings_schema.populate_values(settings)
     node.set_execution_context(-1, resolver=None)
-    lazy_inputs = [pl.LazyFrame(d) for d in config.get("example_inputs") or []]
+    _seed_example_artifacts(node, ctx)
     outputs = _normalize(node.process(*lazy_inputs), config["output_names"])
     names = []
     for name, lf in outputs.items():
@@ -121,8 +472,9 @@ def main():
     real_stdout.flush()
 
 
-main()
-"""
+if __name__ == "__main__":
+    main()
+'''
 
 
 class DryRunOutcome(BaseModel):

@@ -420,6 +420,67 @@ def test_dry_run_kernel_request_disables_log_callback():
     assert dr._build_dry_run_execute_request(**kwargs).log_callback_url == ""
 
 
+def test_dry_run_kernel_request_sets_the_dry_run_flag():
+    """Without this flag the kernel writes a real, versioned catalog artifact every
+    time the Test panel runs a node that calls publish_global."""
+    from flowfile_core.kernel.execution import build_execute_request
+
+    class _FakeManager:
+        _kernel_volume = None
+
+        def to_kernel_path(self, path):
+            return path
+
+    kwargs = dict(
+        node_id=7,
+        code="x = 1",
+        input_paths={"main": []},
+        output_dir="/tmp/out",
+        flow_id=dr._DRY_RUN_FLOW_ID,
+        manager=_FakeManager(),
+        source_registration_id=None,
+    )
+    assert build_execute_request(**kwargs).dry_run is False
+    assert dr._build_dry_run_execute_request(**kwargs).dry_run is True
+
+
+def test_dry_run_kernel_script_seeds_example_artifacts():
+    """The Test panel's generated script seeds example_artifacts(); production does not."""
+    from flowfile_core.flowfile.user_defined.kernel_codegen import generate_kernel_script
+
+    source = (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n"
+        "\n"
+        "class N(nd.CustomNodeBase):\n"
+        '    node_name: str = "N"\n'
+        "\n"
+        "    def example_artifacts(self) -> dict:\n"
+        '        return {"m": {"coef": 2}}\n'
+        "\n"
+        "    def process(self, *inputs):\n"
+        "        return inputs[0]\n"
+    )
+    kwargs = dict(
+        node_source=source,
+        class_name="N",
+        settings_values={},
+        output_names=["main"],
+        number_of_inputs=1,
+    )
+    production = generate_kernel_script(**kwargs)
+    dry = generate_kernel_script(**kwargs, dry_run=True)
+
+    assert "_seed_hook" not in production
+    assert "_result = _Node().process(*_inputs)" in production
+    assert "_seed_hook" in dry
+    # Both scopes, matching example_artifacts()'s documented contract and the
+    # community CI harness. Seeding only the global store made a node that reads
+    # via read_artifact() pass CI and fail the Test panel with a bare KeyError.
+    assert "flowfile_ctx.publish_global(_seed_name, _seed_obj)" in dry
+    assert "flowfile_ctx.publish_artifact(_seed_name, _seed_obj)" in dry
+
+
 @pytest.mark.kernel
 def test_dry_run_executes_on_kernel(monkeypatch):
     """A kernel-env dry-run runs process() inside the Docker kernel (Docker required).

@@ -146,6 +146,7 @@ def generate_kernel_script(
     settings_values: dict[str, dict[str, Any]],
     output_names: list[str],
     number_of_inputs: int,
+    dry_run: bool = False,
 ) -> str:
     """Generate a self-contained kernel script for a custom node.
 
@@ -156,6 +157,9 @@ def generate_kernel_script(
         output_names: Declared output handle names.
         number_of_inputs: Declared input-port count (documentation only; the
             script passes every LazyFrame ``read_inputs`` yields, positionally).
+        dry_run: Emit the Test-panel prologue that seeds the node's
+            ``example_artifacts()`` before ``process()``. Production scripts are
+            byte-identical to before when this is false.
 
     Raises:
         KernelCodegenError: unparseable source, missing class/process, or a
@@ -182,10 +186,32 @@ def generate_kernel_script(
     # Root-DEBUG also unmutes chatty libraries — the log callback itself makes httpx
     # calls, and matplotlib's font manager logs hundreds of findfont lines per figure
     # — so pin the known-noisy ones to WARNING to keep the Test panel readable.
+    # The dry-run form seeds example_artifacts() into BOTH artifact scopes, matching
+    # what the SDK hook promises and what the community CI harness does — a node that
+    # reads a model another node stores has something to read whichever API it uses.
+    # publish_global is sandboxed in-process during a dry run, so the Test panel still
+    # writes nothing to the user's catalog. The flow-local publish tolerates an
+    # already-present name (a previous dry run in this same long-lived kernel).
+    if dry_run:
+        run_node = (
+            "_node = _Node()\n"
+            '_seed_hook = getattr(_node, "example_artifacts", None)\n'
+            "if _seed_hook is not None:\n"
+            "    for _seed_name, _seed_obj in (_seed_hook() or {}).items():\n"
+            "        flowfile_ctx.publish_global(_seed_name, _seed_obj)\n"
+            "        try:\n"
+            "            flowfile_ctx.publish_artifact(_seed_name, _seed_obj)\n"
+            "        except ValueError:\n"
+            "            pass\n"
+            "_result = _node.process(*_inputs)\n"
+        )
+    else:
+        run_node = "_result = _Node().process(*_inputs)\n"
+
     exec_body = (
         "_inputs_by_name = flowfile_ctx.read_inputs()\n"
         "_inputs = [_lf for _lfs in _inputs_by_name.values() for _lf in _lfs]\n"
-        "_result = _Node().process(*_inputs)\n"
+        f"{run_node}"
         "\n"
         f"{epilogue}"
     )

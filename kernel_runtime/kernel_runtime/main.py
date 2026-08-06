@@ -394,6 +394,9 @@ class ExecuteRequest(BaseModel):
     # artifact name -> source_node_id. None means no lineage context (no enforcement);
     # {} means lineage is known but nothing is in this node's input lineage.
     available_artifacts: dict[str, int] | None = None
+    # Test-panel / CI dry run: flowfile_ctx.is_dry_run() reports True and global-artifact
+    # writes are sandboxed in-process instead of hitting core's catalog.
+    dry_run: bool = False
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -517,6 +520,7 @@ def _run_user_code(
             internal_token=request.internal_token,
             interactive=request.interactive,
             available_artifacts=request.available_artifacts,
+            dry_run=request.dry_run,
         )
 
         flowfile_client._reset_displays()
