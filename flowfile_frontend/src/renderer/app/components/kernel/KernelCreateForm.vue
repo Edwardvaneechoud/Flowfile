@@ -8,7 +8,8 @@
     <p class="creating-overlay__hint">
       {{
         packages.length > 0
-          ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s."
+          ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s. " +
+            "Creation continues in the background — track it in the Kernel Manager."
           : "Provisioning kernel…"
       }}
     </p>

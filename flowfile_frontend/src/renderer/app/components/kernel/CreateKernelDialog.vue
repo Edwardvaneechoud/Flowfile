@@ -5,7 +5,6 @@
     width="640px"
     align-center
     append-to-body
-    :close-on-click-modal="false"
     class="create-kernel-dialog"
     @update:model-value="emit('update:modelValue', $event)"
   >
