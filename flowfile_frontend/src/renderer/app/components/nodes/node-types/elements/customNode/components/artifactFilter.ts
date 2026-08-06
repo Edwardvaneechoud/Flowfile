@@ -29,19 +29,38 @@ export function upstreamArtifactOptions(
 ): ArtifactSelectOption[] {
   return artifacts
     .filter((a) => matchesTypeFilter([a.module, a.type_name].filter(Boolean).join("."), typeFilter))
-    .map((a): ArtifactSelectOption => [a.name, a.type_name ? `${a.name} (${a.type_name})` : a.name]);
+    .map(
+      (a): ArtifactSelectOption => [a.name, a.type_name ? `${a.name} (${a.type_name})` : a.name],
+    );
+}
+
+// A name resolves to its newest version when no version is given, so every older
+// version is a duplicate choice. Namespace is part of the key: the same name in two
+// namespaces is two distinct artifacts (the backend rejects that lookup as ambiguous
+// rather than picking one), so collapsing them here would hide a real conflict.
+function newestPerArtifact(artifacts: GlobalArtifactOption[]): GlobalArtifactOption[] {
+  const newest = new Map<string, GlobalArtifactOption>();
+  for (const a of artifacts) {
+    const key = JSON.stringify([a.namespace_id ?? null, a.name]);
+    const seen = newest.get(key);
+    if (!seen || a.version > seen.version) newest.set(key, a);
+  }
+  // Map preserves first-insertion order, so the source ordering survives.
+  return [...newest.values()];
 }
 
 export function globalArtifactOptions(
   artifacts: GlobalArtifactOption[],
   typeFilter?: string[],
 ): ArtifactSelectOption[] {
-  return artifacts
-    .filter((a) => matchesTypeFilter(a.python_type ?? "", typeFilter))
-    .map((a): ArtifactSelectOption => [
+  return newestPerArtifact(
+    artifacts.filter((a) => matchesTypeFilter(a.python_type ?? "", typeFilter)),
+  ).map(
+    (a): ArtifactSelectOption => [
       a.name,
       `${a.name} (v${a.version}${a.python_type ? " · " + formatTypeShort(a.python_type) : ""})`,
-    ]);
+    ],
+  );
 }
 
 // scope "all": upstream options first, then global options whose bare name is not
