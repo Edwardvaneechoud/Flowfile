@@ -218,8 +218,7 @@ const deleteTarget = ref({ id: "", name: "" });
 const isDeleting = ref(false);
 
 const handleCreate = async (config: KernelConfig) => {
-  // The creation tracker owns success/error notifications; the rejection
-  // still propagates so the form keeps the user's input for retry.
+  // Tracker notifies; the rejection propagates so the form keeps input for retry.
   await createKernel(config);
 };
 

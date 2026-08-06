@@ -192,8 +192,7 @@ const emit = defineEmits<{
 
 const { pendingCreations } = useKernelCreationTracker();
 
-// Once create returns the poll lists the real kernel — the KernelCard takes
-// over and the pending row drops out.
+// Once create returns the poll lists the real kernel and the KernelCard takes over.
 const visiblePending = computed(() =>
   pendingCreations.value.filter((p) => !props.kernels.some((k) => k.id === p.id)),
 );

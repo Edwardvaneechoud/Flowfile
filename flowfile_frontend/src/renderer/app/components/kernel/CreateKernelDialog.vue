@@ -76,8 +76,7 @@ const { createKernel, pendingCreations } = useKernelCreationTracker();
 const seedSnapshot = ref<Partial<KernelConfig> | null>(null);
 const creationInFlight = ref(false);
 
-// A freshly mounted dialog can be seeded with an id whose creation (started
-// from an earlier mount) is still in flight in the tracker — surface it.
+// A remounted dialog can be seeded with an id whose creation is still in flight.
 const pendingForSeed = computed(() => {
   const id = seedSnapshot.value?.id;
   if (!id) return null;
@@ -96,9 +95,7 @@ function buildSeed(): Partial<KernelConfig> | null {
 }
 
 // @open never fires for a dialog mounted already-open — watch the model instead.
-// The seed is snapshotted per open so background match refreshes can't clobber
-// edits, and never re-armed while a create is in flight (a fresh seed identity
-// would overwrite the submitted form's fields).
+// The seed is snapshotted per open (never mid-create) so nothing clobbers edits.
 watch(
   () => props.modelValue,
   (open) => {
@@ -115,8 +112,7 @@ const dockerDown = computed(() => dockerStatus.value !== null && !dockerStatus.v
 async function handleCreate(config: KernelConfig): Promise<void> {
   creationInFlight.value = true;
   try {
-    // The tracker owns outcome notifications; rejections propagate so the
-    // form keeps its input for retry.
+    // Tracker owns outcome notifications; rejections propagate so the form keeps its input.
     const result = await createKernel(config, { autoStart: props.autoStart });
     emit("created", result);
     emit("update:modelValue", false);

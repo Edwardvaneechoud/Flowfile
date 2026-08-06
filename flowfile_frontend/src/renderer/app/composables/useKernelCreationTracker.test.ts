@@ -92,7 +92,10 @@ describe("createKernel", () => {
     gate.resolve(info());
     await expect(call).resolves.toMatchObject({ id: "k1" });
     expect(pendingCreations.value).toHaveLength(0);
-    expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
+    // Created without autoStart: the kernel is stopped, not "ready".
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Kernel created" }),
+    );
   });
 
   it("flips the phase to starting with autoStart and resolves with the started kernel", async () => {
@@ -109,6 +112,9 @@ describe("createKernel", () => {
     await expect(call).resolves.toMatchObject({ state: "idle" });
     expect(mocks.start).toHaveBeenCalledWith("k1");
     expect(pendingCreations.value).toHaveLength(0);
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Kernel ready" }),
+    );
   });
 
   it("removes the entry, notifies, and rethrows when create fails", async () => {
@@ -119,7 +125,10 @@ describe("createKernel", () => {
 
     expect(pendingCreations.value).toHaveLength(0);
     expect(mocks.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "error", message: expect.stringContaining("build exploded") }),
+      expect.objectContaining({
+        type: "error",
+        message: expect.stringContaining("build exploded"),
+      }),
     );
   });
 

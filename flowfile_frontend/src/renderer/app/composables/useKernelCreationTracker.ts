@@ -1,10 +1,3 @@
-// Module-singleton tracker for in-flight kernel creations. Owns the
-// create(+optional start) call so the operation outlives any dialog or
-// component: pending entries render in the Kernel Manager sidebar and
-// settle-time outcomes surface via ElNotification, making the tracker the
-// sole reporter of creation results. Known tradeoff: the backend only
-// registers a kernel after its image build finishes, so a page reload
-// during the build loses this pending state.
 import { ref, type Ref } from "vue";
 import { ElNotification } from "element-plus";
 
@@ -89,7 +82,17 @@ async function createKernel(
       }
     }
 
-    notify("success", "Kernel ready", `Kernel "${config.name}" was created.`);
+    const running =
+      created.state === "idle" || created.state === "starting" || created.state === "executing";
+    if (running) {
+      notify("success", "Kernel ready", `Kernel "${config.name}" is ready.`);
+    } else {
+      notify(
+        "success",
+        "Kernel created",
+        `Kernel "${config.name}" was created — start it from the Kernel Manager when you're ready.`,
+      );
+    }
     return created;
   } finally {
     removePending(config.id);
@@ -100,6 +103,15 @@ export function _resetKernelCreationTracker(): void {
   pendingCreations.value = [];
 }
 
+/**
+ * Module-singleton tracker for in-flight kernel creations. It owns the
+ * create(+optional start) call so the operation outlives any dialog or
+ * component: pending entries render in the Kernel Manager sidebar and
+ * settle-time outcomes surface via ElNotification, making the tracker the
+ * sole reporter of creation results. Known tradeoff: the backend registers
+ * a kernel only after its image build finishes, so a page reload during
+ * the build loses this pending state.
+ */
 export function useKernelCreationTracker() {
   return { pendingCreations, createKernel, isPending };
 }
