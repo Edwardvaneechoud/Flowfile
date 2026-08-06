@@ -817,7 +817,8 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     if (!source || !target) return;
     if (fromIndex < 0 || fromIndex >= source.components.length) return;
     if (fromSection === toSection) {
-      moveComponent(fromSection, fromIndex, toIndex);
+      // Header drops pass toIndex = components.length ("append"); clamp to land at the end.
+      moveComponent(fromSection, fromIndex, Math.min(toIndex, source.components.length - 1));
       return;
     }
 

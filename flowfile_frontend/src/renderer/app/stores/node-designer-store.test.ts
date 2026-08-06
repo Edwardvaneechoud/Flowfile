@@ -224,6 +224,19 @@ describe("state transitions", () => {
     expect(store.sections[0].components[1].name).toBe(first);
   });
 
+  it("moveComponentToSection lands a control at the end when dropped on its own header", () => {
+    const store = useNodeDesignerStore();
+    store.addComponent(0, "TextInput");
+    store.addComponent(0, "NumericInput");
+    store.addComponent(0, "ToggleSwitch");
+    const first = store.sections[0].components[0].name;
+
+    // Header drops pass toIndex = components.length, one past the last valid index.
+    store.moveComponentToSection(0, 0, 0, store.sections[0].components.length);
+
+    expect(store.sections[0].components.map((c) => c.name).at(-1)).toBe(first);
+  });
+
   it("sanitizes section names to python identifiers", () => {
     const store = useNodeDesignerStore();
     store.addSection();
