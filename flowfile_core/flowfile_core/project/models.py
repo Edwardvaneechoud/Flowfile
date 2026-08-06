@@ -44,6 +44,7 @@ class SetupResult:
     imported_schedules: int = 0
     placeholder_secrets: list[str] = field(default_factory=list)
     prune_errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     recovery_sha: str | None = None
 
     def to_dict(self) -> dict:
@@ -55,5 +56,6 @@ class SetupResult:
             },
             "placeholder_secrets": sorted(set(self.placeholder_secrets)),
             "prune_errors": list(self.prune_errors),
+            "warnings": list(self.warnings),
             "recovery_sha": self.recovery_sha,
         }

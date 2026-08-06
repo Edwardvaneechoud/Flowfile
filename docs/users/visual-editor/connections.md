@@ -26,6 +26,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | **SQLite** | `sqlite` |
 | **DuckDB** | `duckdb` |
 | **SQL Server** | `mssql` |
+| **Snowflake** | `snowflake` |
 
 !!! note "File-based connections (SQLite, DuckDB)"
     SQLite and DuckDB connect to a local database **file path** (e.g. `/path/to/database.db`
@@ -40,6 +41,63 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
     `INTERVAL` columns are read as text — calendar intervals (months) have no fixed length,
     so there is no matching Polars type.
 
+!!! note "Snowflake connections"
+    Snowflake has no host or port: the form asks for the **Account** identifier
+    (e.g. `myorg-myaccount`) plus an optional **Warehouse** and **Role**, together with the
+    usual username, password, and database. Connections always use TLS, so there is no SSL
+    toggle. Semi-structured columns (`VARIANT`, `OBJECT`, `ARRAY`) are read as JSON text.
+
+    Snowflake also supports **key-pair (JWT) authentication** — Snowflake's recommended
+    method for programmatic access now that password-only logins are being phased out.
+    Pick *Key pair (JWT)* in the **Authentication Method** selector, then paste the
+    private key PEM text into the key field (plus its passphrase when the key is
+    encrypted). The key is stored as an encrypted secret, exactly like a password, and
+    is never written back to the form when editing — leave the field blank to keep the
+    existing key.
+
+!!! note "Snowflake single sign-on (OAuth)"
+    Snowflake connections can also authenticate through your identity provider: pick
+    *Single sign-on (OAuth)* in the **Authentication Method** selector. You log in through
+    the browser **once**; Flowfile stores only the resulting refresh token (encrypted) and
+    silently exchanges it for short-lived access tokens whenever the connection is used —
+    including **scheduled runs**, which need no browser. When the refresh token expires or
+    is revoked (identity-provider policy, typically up to 90 days), runs fail with a
+    *"Reconnect your connection"* error and the connection form offers **Re-authenticate**.
+
+    Two flavors are supported through the same form:
+
+    - **Snowflake OAuth** (the default): a Snowflake admin creates a security integration
+      and hands you its client id/secret; the authorize/token endpoints are derived from
+      the account, so leave the endpoint fields blank.
+
+      ```sql
+      CREATE SECURITY INTEGRATION flowfile_oauth
+        TYPE = OAUTH
+        ENABLED = TRUE
+        OAUTH_CLIENT = CUSTOM
+        OAUTH_CLIENT_TYPE = 'CONFIDENTIAL'
+        OAUTH_REDIRECT_URI = 'http://localhost:63578/db_connection_lib/oauth/callback'
+        OAUTH_ISSUE_REFRESH_TOKENS = TRUE
+        OAUTH_REFRESH_TOKEN_VALIDITY = 7776000;  -- 90 days (the maximum)
+
+      -- client id / secret for the connection form:
+      SELECT SYSTEM$SHOW_OAUTH_CLIENT_SECRETS('FLOWFILE_OAUTH');
+      ```
+
+    - **External OAuth** (Okta, Entra ID, PingFederate): create an OAuth app at your IdP
+      with the same redirect URI, configure Snowflake to trust it
+      (`CREATE SECURITY INTEGRATION ... TYPE = EXTERNAL_OAUTH`), and fill in the
+      **Authorize Endpoint** and **Token Endpoint** fields with the IdP's URLs.
+
+    The redirect URI defaults to
+    `http://localhost:63578/db_connection_lib/oauth/callback` — register exactly that URL
+    with the security integration / IdP app (override it in the form if your Flowfile
+    server runs elsewhere).
+
+    **Sharing note:** a group-shared OAuth connection always runs as the **owner's**
+    Snowflake identity — exactly like a shared password connection, and like Power BI's
+    dataset-owner refresh model. Share it only with people who may act as that identity.
+
 ### Creating a Database Connection
 
 1. Open the **Connections** page from the left sidebar and select the **Database** tab
@@ -49,8 +107,8 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, or SQL Server | `postgresql` |
-| **Host** | Database server hostname | `db.example.com` |
+| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, or Snowflake | `postgresql` |
+| **Host** | Database server hostname (Snowflake asks for an account/warehouse/role instead) | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |
 | **Username** | Database user | `readonly_user` |

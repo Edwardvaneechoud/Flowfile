@@ -12,6 +12,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
@@ -24,6 +25,7 @@ from flowfile_core.configs.settings import (
     WORKER_PORT,
     WORKER_URL,
 )
+from flowfile_core.flowfile.database_connection_manager.db_oauth import ReconnectRequiredError
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
@@ -35,6 +37,7 @@ from flowfile_core.routes.cloud_connections import router as cloud_connections_r
 from flowfile_core.routes.community_github import router as community_github_router
 from flowfile_core.routes.community_nodes import router as community_nodes_router
 from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
+from flowfile_core.routes.db_oauth import router as db_oauth_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
@@ -172,6 +175,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(ReconnectRequiredError)
+async def reconnect_required_handler(request, exc: ReconnectRequiredError):
+    """An expired OAuth sign-in is user-actionable, not a server fault: 422 with a
+    typed error_code (never 401 — the frontend treats 401 as JWT expiry)."""
+    return JSONResponse(status_code=422, content={"detail": {"error_code": "RECONNECT_REQUIRED", "message": str(exc)}})
+
+
 app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
@@ -190,6 +201,7 @@ app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(project_router, prefix="/project", tags=["project"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(storage_browser_router, prefix="/storage_browser", tags=["storage_browser"])
+app.include_router(db_oauth_router)
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])

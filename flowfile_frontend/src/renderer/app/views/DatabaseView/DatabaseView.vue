@@ -119,8 +119,10 @@
         :initial-connection="activeConnection"
         :is-submitting="isSubmitting"
         :is-editing="isEditing"
+        :oauth-connected="activeOauthConnected"
         @submit="handleFormSubmit"
         @cancel="dialogVisible = false"
+        @oauth-changed="handleOauthChanged"
       />
     </el-dialog>
 
@@ -184,6 +186,7 @@ const isSubmitting = ref(false);
 const isDeleting = ref(false);
 const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
+const activeOauthConnected = ref(false);
 
 const { isMultiUser, isOwned, canManage, canManageGrants } = useResourceSharing();
 const { defaultPort } = useDbDialects();
@@ -210,6 +213,7 @@ const fetchConnections = async () => {
 const showAddModal = () => {
   isEditing.value = false;
   activeConnection.value = undefined;
+  activeOauthConnected.value = false;
   dialogVisible.value = true;
 };
 
@@ -225,8 +229,27 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     database: connection.database || "",
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",
+    extraParams: connection.extraParams || undefined,
+    authMethod: connection.authMethod || "password",
+    privateKey: "", // Key material is never returned from the API
+    privateKeyPassphrase: "",
+    oauthClientId: connection.oauthClientId || "",
+    oauthClientSecret: "", // Secret material is never returned from the API
+    oauthAuthorizeEndpoint: connection.oauthAuthorizeEndpoint || "",
+    oauthTokenEndpoint: connection.oauthTokenEndpoint || "",
+    oauthRedirectUri: connection.oauthRedirectUri || "",
   };
+  activeOauthConnected.value = !!connection.oauthConnected;
   dialogVisible.value = true;
+};
+
+const handleOauthChanged = async () => {
+  await fetchConnections();
+  const name = activeConnection.value?.connectionName;
+  if (name) {
+    const match = connectionInterfaces.value.find((c) => c.connectionName === name);
+    activeOauthConnected.value = !!match?.oauthConnected;
+  }
 };
 
 const showDeleteModal = (connectionName: string) => {
@@ -237,12 +260,26 @@ const showDeleteModal = (connectionName: string) => {
 const handleFormSubmit = async (connection: FullDatabaseConnection) => {
   isSubmitting.value = true;
   try {
+    const wasCreating = !isEditing.value;
     if (isEditing.value) {
       await updateDatabaseConnectionApi(connection);
     } else {
       await createDatabaseConnectionApi(connection);
     }
     await fetchConnections();
+    // A freshly created OAuth connection isn't usable until the user signs in:
+    // flip the dialog into edit mode in place so the sign-in card appears
+    // immediately (Power BI-style), instead of forcing a save -> reopen dance.
+    if (wasCreating && connection.authMethod === "oauth") {
+      const created = connectionInterfaces.value.find(
+        (c) => c.connectionName === connection.connectionName,
+      );
+      if (created) {
+        showEditModal(created);
+        ElMessage.success("Connection created — now sign in to finish setup");
+        return;
+      }
+    }
     dialogVisible.value = false;
     ElMessage.success(`Connection ${isEditing.value ? "updated" : "created"} successfully`);
   } catch (error: any) {

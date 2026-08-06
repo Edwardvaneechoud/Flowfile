@@ -58,7 +58,18 @@ class DatabaseConnection(Base):
     port = Column(Integer)
     database = Column(String, default=None)
     ssl_enabled = Column(Boolean, default=False)
+    extra_params = Column(Text, nullable=True)  # JSON dict of dialect-specific params (e.g. snowflake account)
+    auth_method = Column(String, nullable=True)  # NULL == password (the historical default)
     password_id = Column(Integer, ForeignKey("secrets.id"))
+    private_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    private_key_passphrase_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    # OAuth (SSO) auth: per-connection client config; empty endpoints derive from the account.
+    oauth_client_id = Column(String, nullable=True)
+    oauth_authorize_endpoint = Column(String, nullable=True)
+    oauth_token_endpoint = Column(String, nullable=True)
+    oauth_redirect_uri = Column(String, nullable=True)
+    oauth_client_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    oauth_refresh_token_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"))
 
 

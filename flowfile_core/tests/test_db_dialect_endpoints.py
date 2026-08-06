@@ -43,6 +43,7 @@ def test_get_db_dialects():
     assert by_name["sqlite"]["default_port"] is None
     assert by_name["postgresql"]["default_port"] == 5432
     assert by_name["postgresql"]["supports_ssl"] is True
+    assert by_name["postgresql"]["auth_methods"] == ["password"]
     assert all(d["available"] is True for d in dialects)
 
 
@@ -210,6 +211,145 @@ def test_mssql_in_dialect_catalog():
     assert mssql_entry["file_based"] is False
     assert mssql_entry["default_port"] == 1433
     assert mssql_entry["available"] is True
+
+
+def test_snowflake_in_dialect_catalog():
+    response = client.get("/db_dialects")
+    assert response.status_code == 200, response.text
+    entry = next(d for d in response.json() if d["name"] == "snowflake")
+    assert entry["display_name"] == "Snowflake"
+    assert entry["file_based"] is False
+    assert entry["default_port"] == 443
+    assert entry["available"] is True
+    assert [f["name"] for f in entry["extra_fields"]] == ["account", "warehouse", "role"]
+    assert entry["extra_fields"][0]["required"] is True
+    assert entry["hidden_fields"] == ["host", "port", "ssl"]
+    assert entry["auth_methods"] == ["password", "key_pair", "oauth"]
+
+
+def test_create_snowflake_connection_with_extra_params():
+    _cleanup_connection("snowflake_conn")
+    payload = {
+        "connection_name": "snowflake_conn",
+        "database_type": "snowflake",
+        "username": "user",
+        "password": "pass",
+        "database": "ANALYTICS",
+        "extra_params": {"account": "myorg-myaccount", "warehouse": "COMPUTE_WH", "role": "ANALYST"},
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 200, response.text
+    listed = client.get("/db_connection_lib").json()
+    entry = next(c for c in listed if c["connection_name"] == "snowflake_conn")
+    assert entry["extra_params"] == payload["extra_params"]
+    _cleanup_connection("snowflake_conn")
+
+
+def test_create_connection_rejects_blocked_extra_params():
+    payload = {
+        "connection_name": "snowflake_evil",
+        "database_type": "snowflake",
+        "username": "user",
+        "password": "pass",
+        "extra_params": {"account": "acct", "authenticator": "externalbrowser"},
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 422, response.text
+    assert "authenticator" in response.text
+    _cleanup_connection("snowflake_evil")
+
+
+def test_create_connection_rejects_auth_method_extra_param():
+    payload = {
+        "connection_name": "snowflake_evil_auth",
+        "database_type": "snowflake",
+        "username": "user",
+        "password": "pass",
+        "extra_params": {"account": "acct", "auth_method": "key_pair"},
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 422, response.text
+    assert "auth_method" in response.text
+    _cleanup_connection("snowflake_evil_auth")
+
+
+_TEST_PEM = (
+    "-----BEGIN PRIVATE KEY-----\nMIIB-not-a-real-key-but-round-trips-fine\n-----END PRIVATE KEY-----\n"
+)
+
+
+def test_snowflake_key_pair_connection_http_round_trip():
+    _cleanup_connection("snowflake_kp_http")
+    payload = {
+        "connection_name": "snowflake_kp_http",
+        "database_type": "snowflake",
+        "username": "svc_user",
+        "password": "",
+        "database": "ANALYTICS",
+        "extra_params": {"account": "myorg-myaccount"},
+        "auth_method": "key_pair",
+        "private_key": _TEST_PEM,
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 200, response.text
+    try:
+        listed = client.get("/db_connection_lib").json()
+        entry = next(c for c in listed if c["connection_name"] == "snowflake_kp_http")
+        assert entry["auth_method"] == "key_pair"
+        assert "private_key" not in entry, "the interface payload must never carry key material"
+        assert _TEST_PEM not in str(listed)
+
+        # The OWNER may flip the auth method freely — the anti-repoint guard applies to
+        # manage-grantees only (helper-level coverage in test_snowflake_source.py).
+        rotate = {**payload, "auth_method": "password", "private_key": "", "password": "new-pass"}
+        response = client.put("/db_connection_lib", json=rotate)
+        assert response.status_code == 200, response.text
+        listed = client.get("/db_connection_lib").json()
+        entry = next(c for c in listed if c["connection_name"] == "snowflake_kp_http")
+        assert entry["auth_method"] == "password"
+
+        # The flip must fully shed the key material — a stale key must never keep authenticating.
+        from flowfile_core.flowfile.database_connection_manager.db_connections import (
+            get_database_connection_schema,
+        )
+
+        with get_db_context() as db:
+            restored = get_database_connection_schema(db, "snowflake_kp_http", 1)
+        assert restored.private_key is None
+        assert restored.private_key_passphrase is None
+    finally:
+        _cleanup_connection("snowflake_kp_http")
+
+
+def test_create_key_pair_connection_requires_private_key():
+    _cleanup_connection("snowflake_kp_incomplete")
+    payload = {
+        "connection_name": "snowflake_kp_incomplete",
+        "database_type": "snowflake",
+        "username": "svc_user",
+        "password": "",
+        "extra_params": {"account": "acct"},
+        "auth_method": "key_pair",
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 422, response.text
+    assert "private key" in response.text
+    _cleanup_connection("snowflake_kp_incomplete")
+
+
+def test_create_key_pair_connection_rejected_for_password_only_dialect():
+    payload = {
+        "connection_name": "pg_kp_http",
+        "database_type": "postgresql",
+        "username": "u",
+        "password": "",
+        "host": "h",
+        "auth_method": "key_pair",
+        "private_key": _TEST_PEM,
+    }
+    response = client.post("/db_connection_lib", json=payload)
+    assert response.status_code == 422, response.text
+    _cleanup_connection("pg_kp_http")
 
 
 def test_create_duckdb_connection_without_credentials():

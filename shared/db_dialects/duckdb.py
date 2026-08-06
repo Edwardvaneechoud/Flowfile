@@ -64,7 +64,8 @@ class DuckDBDialect(DbDialect):
             return False
         return True
 
-    def build_uri(self, *, host=None, database=None, **kwargs) -> str:
+    def build_uri(self, *, host=None, database=None, auth_method=None, private_key=None, **kwargs) -> str:
+        self._check_auth_supported(auth_method, private_key, kwargs.pop("oauth_token", None))
         path = database or host or "./database.duckdb"
         if path.startswith(_URI_PREFIX):
             path = path[len(_URI_PREFIX) :]

@@ -1,5 +1,11 @@
 import axios from "axios";
 
+export interface DbDialectFieldInfo {
+  name: string;
+  label: string;
+  required: boolean;
+}
+
 export interface DbDialectInfo {
   name: string;
   display_name: string;
@@ -7,6 +13,12 @@ export interface DbDialectInfo {
   default_port: number | null;
   supports_ssl: boolean;
   available: boolean;
+  // Dialect-specific connection fields (stored in extra_params) and standard
+  // form fields the dialect hides; absent on older cores, so keep optional.
+  extra_fields?: DbDialectFieldInfo[];
+  hidden_fields?: string[];
+  // Supported authentication methods (e.g. ["password", "key_pair"]); absent on older cores.
+  auth_methods?: string[];
 }
 
 // Rendered when the catalog request fails (offline, older core). Must mirror the
@@ -19,6 +31,9 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 5432,
     supports_ssl: true,
     available: true,
+    extra_fields: [],
+    hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "mysql",
@@ -27,6 +42,9 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 3306,
     supports_ssl: false,
     available: true,
+    extra_fields: [],
+    hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "sqlite",
@@ -35,6 +53,9 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: null,
     supports_ssl: false,
     available: true,
+    extra_fields: [],
+    hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "duckdb",
@@ -43,6 +64,9 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: null,
     supports_ssl: false,
     available: true,
+    extra_fields: [],
+    hidden_fields: [],
+    auth_methods: ["password"],
   },
   {
     name: "mssql",
@@ -51,6 +75,24 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 1433,
     supports_ssl: false,
     available: true,
+    extra_fields: [],
+    hidden_fields: [],
+    auth_methods: ["password"],
+  },
+  {
+    name: "snowflake",
+    display_name: "Snowflake",
+    file_based: false,
+    default_port: 443,
+    supports_ssl: false,
+    available: true,
+    extra_fields: [
+      { name: "account", label: "Account", required: true },
+      { name: "warehouse", label: "Warehouse", required: false },
+      { name: "role", label: "Role", required: false },
+    ],
+    hidden_fields: ["host", "port", "ssl"],
+    auth_methods: ["password", "key_pair", "oauth"],
   },
 ];
 

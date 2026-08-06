@@ -14,6 +14,7 @@ import sqlglot
 
 from shared.db_dialects import (
     KNOWN_DIALECT_NAMES,
+    DbDialect,
     DialectInfo,
     GenericDialect,
     UnknownDialectError,
@@ -48,6 +49,7 @@ def test_metadata_sanity(dialect):
     assert isinstance(dialect.is_available(), bool)
     if not dialect.is_available():
         assert dialect.install_hint
+    assert "password" in dialect.auth_methods
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=_ids)
@@ -81,7 +83,13 @@ def test_build_uri(dialect):
         with pytest.raises(ValueError):
             dialect.build_uri(host=None)
         uri = dialect.build_uri(host="h", port=dialect.default_port, username="u", password="p", database="d")
-        assert uri == f"{dialect.uri_scheme}://u:p@h:{dialect.default_port}/d"
+        if type(dialect).build_uri is DbDialect.build_uri:
+            assert uri == f"{dialect.uri_scheme}://u:p@h:{dialect.default_port}/d"
+        else:
+            # Custom URI shapes (e.g. Snowflake's port-less account locator) assert form, not bytes.
+            assert uri.startswith(f"{dialect.uri_scheme}://")
+            assert "u:p@" in uri
+            assert "/d" in uri
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=_ids)

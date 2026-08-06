@@ -397,6 +397,54 @@ The tested SQL Server example reads a table and a query through a stored connect
 --8<-- "docs/examples/integrations/database_read_mssql.py:example"
 ```
 
+### Snowflake
+
+Snowflake connections use `database_type="snowflake"` with no host or port — the account
+identifier (plus an optional warehouse and role) goes in `extra_params`:
+
+```python
+ff.create_database_connection(
+    connection_name="analytics-snowflake",
+    database_type="snowflake",
+    database="ANALYTICS",
+    username="user",
+    password="pass",
+    extra_params={
+        "account": "myorg-myaccount",
+        "warehouse": "COMPUTE_WH",
+        "role": "ANALYST",
+    },
+)
+
+df = ff.read_database("analytics-snowflake", schema_name="PUBLIC", table_name="EVENTS")
+```
+
+For key-pair (JWT) authentication — Snowflake's recommended method for programmatic
+access — pass `auth_method="key_pair"` with the private key PEM *text* (never a file
+path; read the file yourself). Add `private_key_passphrase` when the PEM is encrypted:
+
+```python
+ff.create_database_connection(
+    connection_name="analytics-snowflake-kp",
+    database_type="snowflake",
+    database="ANALYTICS",
+    username="svc_user",
+    auth_method="key_pair",
+    private_key=open("rsa_key.p8").read(),
+    extra_params={"account": "myorg-myaccount", "warehouse": "COMPUTE_WH"},
+)
+```
+
+The key is stored as an encrypted secret, exactly like a password.
+
+Semi-structured columns (`VARIANT`, `OBJECT`, `ARRAY`) are read as JSON text. The tested
+Snowflake example reads a table and a query through a stored connection (it runs only when
+Snowflake test credentials are configured):
+
+```python
+--8<-- "docs/examples/integrations/database_read_snowflake.py:example"
+```
+
 ## Connection Management
 
 Set up cloud and database connections once, then reference them by name. See [Cloud Connection Management](cloud-connections.md).

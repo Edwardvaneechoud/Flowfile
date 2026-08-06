@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
@@ -30,6 +31,44 @@ logger = logging.getLogger(__name__)
 # Database types speaking the postgres wire protocol, where libpq-style
 # sslmode/connect_timeout query params are valid (pymysql rejects unknown params).
 POSTGRES_FAMILY = {"postgresql", "postgres", "redshift"}
+
+# Connection extra_params (dialect-specific settings like Snowflake's
+# account/warehouse/role) must never be able to override credentials, the
+# connection target, or transport security. Mirrors the Kafka blocked-config
+# guard in shared/kafka/models.py: blocked keys are dropped at point of use;
+# core additionally rejects them with a 422 at the API boundary.
+_BLOCKED_EXTRA_PARAM_PREFIXES = ("private_key", "ssl")
+_BLOCKED_EXTRA_PARAMS = frozenset(
+    {
+        "password",
+        "user",
+        "username",
+        "host",
+        "port",
+        "database",
+        "dbname",
+        "auth_method",
+        "authenticator",
+        "token",
+        "oauth_token",
+        "insecure_mode",
+    }
+)
+
+
+def is_blocked_extra_param(key: str) -> bool:
+    """Whether a connection extra_params key could override auth/target settings."""
+    lowered = key.lower()
+    return lowered in _BLOCKED_EXTRA_PARAMS or lowered.startswith(_BLOCKED_EXTRA_PARAM_PREFIXES)
+
+
+@dataclass(frozen=True)
+class DialectField:
+    """A dialect-specific connection form field, carried in the connection's extra_params."""
+
+    name: str
+    label: str
+    required: bool = False
 
 
 class DbDialect:
@@ -43,6 +82,15 @@ class DbDialect:
     sqlalchemy_driver: ClassVar[str | None] = None
     sqlglot_name: ClassVar[str] = "postgres"
     install_hint: ClassVar[str | None] = None
+    # Dialect-specific connection fields (stored in extra_params) and standard form
+    # fields the dialect does not use; served to the frontend via dialect_catalog()
+    # so a new connection shape needs no frontend changes.
+    extra_fields: ClassVar[tuple[DialectField, ...]] = ()
+    hidden_fields: ClassVar[tuple[str, ...]] = ()
+    # Authentication methods this dialect's build_uri understands. "password" is
+    # the implicit default everywhere; dialects opting into more (e.g. Snowflake
+    # key-pair JWT) extend this and handle the corresponding build_uri params.
+    auth_methods: ClassVar[tuple[str, ...]] = ("password",)
 
     @property
     def uri_scheme(self) -> str:
@@ -51,6 +99,17 @@ class DbDialect:
     def is_available(self) -> bool:
         """Whether the driver stack for this dialect is importable."""
         return True
+
+    def _check_auth_supported(
+        self, auth_method: str | None, private_key: str | None, oauth_token: str | None = None
+    ) -> None:
+        """Refuse credentials this dialect cannot honor — silent ignoring is worse than an error."""
+        if auth_method not in (None, "", "password") and auth_method not in self.auth_methods:
+            raise ValueError(f"{self.display_name} does not support auth method {auth_method!r}")
+        if private_key and "key_pair" not in self.auth_methods:
+            raise ValueError(f"{self.display_name} does not support private-key (key pair) authentication")
+        if oauth_token and "oauth" not in self.auth_methods:
+            raise ValueError(f"{self.display_name} does not support OAuth token authentication")
 
     def build_uri(
         self,
@@ -62,11 +121,16 @@ class DbDialect:
         database: str | None = None,
         ssl_enabled: bool = False,
         connect_timeout: int | None = None,
+        auth_method: str | None = None,
+        private_key: str | None = None,
+        private_key_passphrase: str | None = None,
+        oauth_token: str | None = None,
         **kwargs,
     ) -> str:
         """Build a base (connectorx-style) URI. ``password`` is a plain string."""
         from urllib.parse import quote_plus
 
+        self._check_auth_supported(auth_method, private_key, oauth_token)
         if not host:
             raise ValueError("Host is required to create a URI")
 
@@ -97,7 +161,7 @@ class DbDialect:
                 "no SSL parameter was applied and the connection may be unencrypted.",
                 scheme,
             )
-        query_params.update(kwargs)
+        query_params.update({k: v for k, v in kwargs.items() if v is not None and not is_blocked_extra_param(k)})
 
         if query_params:
             sep = "&" if "?" in base_uri else "?"

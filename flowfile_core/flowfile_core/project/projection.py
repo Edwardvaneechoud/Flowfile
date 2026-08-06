@@ -63,7 +63,27 @@ _CLOUD_PLAIN_FIELDS = (
     "verify_ssl",
 )
 # Non-secret database-connection fields that round-trip verbatim.
-_DB_PLAIN_FIELDS = ("database_type", "host", "port", "database", "username", "ssl_enabled")
+_DB_PLAIN_FIELDS = (
+    "database_type",
+    "host",
+    "port",
+    "database",
+    "username",
+    "ssl_enabled",
+    "auth_method",
+    "oauth_client_id",
+    "oauth_authorize_endpoint",
+    "oauth_token_endpoint",
+    "oauth_redirect_uri",
+)
+# Secret-backed database-connection fields: (file field, model FK column), like _CLOUD_SECRETS.
+# The OAuth refresh token is deliberately absent: it is minted interactively, expires, and
+# must never reach the projection even as a placeholder — imports re-authenticate instead.
+_DB_SECRETS = (
+    ("private_key", "private_key_id"),
+    ("private_key_passphrase", "private_key_passphrase_id"),
+    ("oauth_client_secret", "oauth_client_secret_id"),
+)
 
 
 def _secret_name(db: Session, secret_id: int | None) -> str | None:
@@ -183,11 +203,17 @@ def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
 
 
 def _db_connection_dict(db: Session, conn: DatabaseConnection) -> dict:
+    from flowfile_core.flowfile.database_connection_manager.db_connections import parse_extra_params
+
     secret_name = _secret_name(db, conn.password_id)
     d = {"kind": "database_connection", "connection_name": conn.connection_name}
     for f in _DB_PLAIN_FIELDS:
         d[f] = getattr(conn, f)
+    d["extra_params"] = parse_extra_params(conn.extra_params)
     d["password"] = make_placeholder(secret_name) if secret_name else None
+    for field, fk in _DB_SECRETS:
+        name = _secret_name(db, getattr(conn, fk))
+        d[field] = make_placeholder(name) if name else None
     return d
 
 
@@ -280,9 +306,15 @@ def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
     """secrets.yaml lists only standalone secrets; connection secrets are implied by
     the connection files (and recreated by their store functions on import)."""
     linked: set[int] = set()
-    for (sid,) in db.query(DatabaseConnection.password_id).filter(DatabaseConnection.user_id == owner_id):
-        if sid:
-            linked.add(sid)
+    db_secret_fk_columns = (
+        DatabaseConnection.password_id,
+        DatabaseConnection.private_key_id,
+        DatabaseConnection.private_key_passphrase_id,
+        DatabaseConnection.oauth_client_secret_id,
+        DatabaseConnection.oauth_refresh_token_id,
+    )
+    for row in db.query(*db_secret_fk_columns).filter(DatabaseConnection.user_id == owner_id):
+        linked.update(sid for sid in row if sid)
     for row in db.query(*[getattr(CloudStorageConnection, fk) for fk in _CLOUD_SECRET_FK_COLUMNS]).filter(
         CloudStorageConnection.user_id == owner_id
     ):

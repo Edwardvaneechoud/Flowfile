@@ -709,6 +709,10 @@ export interface DatabaseConnection extends BaseConnection {
   database_type: string;
   username?: string;
   password_ref?: string; // Unused by file-based databases (sqlite, duckdb)
+  extra_params?: Record<string, string> | null; // Dialect-specific params (e.g. snowflake account)
+  auth_method?: string | null; // From the dialect's auth_methods; null/absent == password
+  private_key_ref?: string; // Secret holding the private key PEM (key-pair auth)
+  private_key_passphrase_ref?: string; // Secret holding the optional key passphrase
 }
 export type ConnectionModeOption = "inline" | "reference";
 export type IfExistAction = "append" | "replace" | "fail";

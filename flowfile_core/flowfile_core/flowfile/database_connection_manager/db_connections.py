@@ -1,3 +1,6 @@
+import json
+
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -11,6 +14,21 @@ from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
+
+
+def _dump_extra_params(extra_params: dict[str, str] | None) -> str | None:
+    return json.dumps(extra_params, sort_keys=True) if extra_params else None
+
+
+def parse_extra_params(raw: str | None) -> dict[str, str] | None:
+    """Parse the JSON extra_params column; malformed or empty values resolve to None."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed or None
 
 
 def _project_sync_connection(kind: str, name: str, user_id: int, deleted: bool = False) -> None:
@@ -33,7 +51,35 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
             f" Please use a unique connection name or delete the existing connection first."
         )
 
+    if connection.auth_method == "key_pair" and connection.private_key is None:
+        raise ValueError("key_pair authentication requires a private key when creating a connection.")
+    if connection.auth_method == "oauth" and (not connection.oauth_client_id or connection.oauth_client_secret is None):
+        raise ValueError("oauth authentication requires an OAuth client id and client secret.")
+
     password_id = store_secret(db, SecretInput(name=connection.connection_name, value=connection.password), user_id).id
+    # `is not None` (not truthiness): a project import may pass an empty placeholder
+    # value that must still create a linked secret row for the refill UI.
+    private_key_id = None
+    if connection.private_key is not None:
+        private_key_id = store_secret(
+            db, SecretInput(name=f"{connection.connection_name}_private_key", value=connection.private_key), user_id
+        ).id
+    private_key_passphrase_id = None
+    if connection.private_key_passphrase is not None:
+        private_key_passphrase_id = store_secret(
+            db,
+            SecretInput(
+                name=f"{connection.connection_name}_private_key_passphrase", value=connection.private_key_passphrase
+            ),
+            user_id,
+        ).id
+    oauth_client_secret_id = None
+    if connection.oauth_client_secret is not None:
+        oauth_client_secret_id = store_secret(
+            db,
+            SecretInput(name=f"{connection.connection_name}_oauth_client_secret", value=connection.oauth_client_secret),
+            user_id,
+        ).id
 
     db_connection = DBConnectionModel(
         connection_name=connection.connection_name,
@@ -43,7 +89,16 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
         database_type=connection.database_type,
         username=connection.username,
         password_id=password_id,
+        private_key_id=private_key_id,
+        private_key_passphrase_id=private_key_passphrase_id,
+        oauth_client_id=connection.oauth_client_id,
+        oauth_authorize_endpoint=connection.oauth_authorize_endpoint,
+        oauth_token_endpoint=connection.oauth_token_endpoint,
+        oauth_redirect_uri=connection.oauth_redirect_uri,
+        oauth_client_secret_id=oauth_client_secret_id,
+        auth_method=connection.auth_method,
         ssl_enabled=connection.ssl_enabled,
+        extra_params=_dump_extra_params(connection.extra_params),
         user_id=user_id,
     )
 
@@ -73,6 +128,8 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
     db_connection.database_type = connection.database_type
     db_connection.username = connection.username
     db_connection.ssl_enabled = connection.ssl_enabled
+    db_connection.extra_params = _dump_extra_params(connection.extra_params)
+    db_connection.auth_method = connection.auth_method
 
     password_value = connection.password.get_secret_value()
     if password_value:
@@ -83,6 +140,86 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
             secret_input = SecretInput(name=connection.connection_name, value=connection.password)
             new_secret = store_secret(db, secret_input, user_id)
             db_connection.password_id = new_secret.id
+
+    incoming_key = connection.private_key.get_secret_value() if connection.private_key else ""
+    if connection.auth_method == "key_pair":
+        if not incoming_key and db_connection.private_key_id is None:
+            raise ValueError("key_pair authentication requires a private key.")
+        # Rotate key material only when a non-empty value arrived (empty == keep existing,
+        # mirroring password). _update_cloud_secret is generic despite the name.
+        db_connection.private_key_id = _update_cloud_secret(
+            db,
+            db_connection.private_key_id,
+            incoming_key,
+            f"{connection.connection_name}_private_key",
+            user_id,
+        )
+        db_connection.private_key_passphrase_id = _update_cloud_secret(
+            db,
+            db_connection.private_key_passphrase_id,
+            connection.private_key_passphrase.get_secret_value() if connection.private_key_passphrase else "",
+            f"{connection.connection_name}_private_key_passphrase",
+            user_id,
+        )
+    else:
+        # Switching away from key-pair auth: detach AND delete the key secrets — and
+        # ignore any stray incoming key — or a rotated-away (possibly compromised)
+        # key would keep authenticating silently (build_uri infers key-pair from key
+        # presence, and the reference resolver forwards whatever the row links).
+        stale_ids = [
+            secret_id
+            for secret_id in (db_connection.private_key_id, db_connection.private_key_passphrase_id)
+            if secret_id is not None
+        ]
+        db_connection.private_key_id = None
+        db_connection.private_key_passphrase_id = None
+        if stale_ids:
+            db.query(Secret).filter(Secret.id.in_(stale_ids)).delete(synchronize_session=False)
+
+    if connection.auth_method == "oauth":
+        if not (connection.oauth_client_id or db_connection.oauth_client_id):
+            raise ValueError("oauth authentication requires an OAuth client id.")
+        # A changed client or token endpoint invalidates the stored refresh token
+        # (it was minted against the old authorization server): drop it so the
+        # user re-authenticates — this is also what defuses endpoint repointing.
+        oauth_target_changed = (
+            (connection.oauth_client_id or None) != (db_connection.oauth_client_id or None)
+            or (connection.oauth_authorize_endpoint or None) != (db_connection.oauth_authorize_endpoint or None)
+            or (connection.oauth_token_endpoint or None) != (db_connection.oauth_token_endpoint or None)
+        )
+        db_connection.oauth_client_id = connection.oauth_client_id
+        db_connection.oauth_authorize_endpoint = connection.oauth_authorize_endpoint
+        db_connection.oauth_token_endpoint = connection.oauth_token_endpoint
+        db_connection.oauth_redirect_uri = connection.oauth_redirect_uri
+        db_connection.oauth_client_secret_id = _update_cloud_secret(
+            db,
+            db_connection.oauth_client_secret_id,
+            connection.oauth_client_secret.get_secret_value() if connection.oauth_client_secret else "",
+            f"{connection.connection_name}_oauth_client_secret",
+            user_id,
+        )
+        if db_connection.oauth_client_secret_id is None:
+            raise ValueError("oauth authentication requires an OAuth client secret.")
+        if oauth_target_changed and db_connection.oauth_refresh_token_id is not None:
+            stale_token_id = db_connection.oauth_refresh_token_id
+            db_connection.oauth_refresh_token_id = None
+            db.query(Secret).filter(Secret.id == stale_token_id).delete(synchronize_session=False)
+    else:
+        # Switching away from OAuth: drop the client config and delete both OAuth
+        # secrets, mirroring the key-pair branch above.
+        stale_oauth_ids = [
+            secret_id
+            for secret_id in (db_connection.oauth_client_secret_id, db_connection.oauth_refresh_token_id)
+            if secret_id is not None
+        ]
+        db_connection.oauth_client_id = None
+        db_connection.oauth_authorize_endpoint = None
+        db_connection.oauth_token_endpoint = None
+        db_connection.oauth_redirect_uri = None
+        db_connection.oauth_client_secret_id = None
+        db_connection.oauth_refresh_token_id = None
+        if stale_oauth_ids:
+            db.query(Secret).filter(Secret.id.in_(stale_oauth_ids)).delete(synchronize_session=False)
 
     db.commit()
     db.refresh(db_connection)
@@ -162,6 +299,16 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
         if not password_secret:
             raise Exception("Password secret not found")
 
+        def _ciphertext(secret_id: int | None) -> str | None:
+            if secret_id is None:
+                return None
+            secret = db.query(Secret).filter(Secret.id == secret_id).first()
+            return secret.encrypted_value if secret else None
+
+        private_key = _ciphertext(db_connection.private_key_id)
+        private_key_passphrase = _ciphertext(db_connection.private_key_passphrase_id)
+        oauth_client_secret = _ciphertext(db_connection.oauth_client_secret_id)
+        oauth_refresh_token = _ciphertext(db_connection.oauth_refresh_token_id)
         return FullDatabaseConnection(
             connection_name=db_connection.connection_name,
             host=db_connection.host,
@@ -171,6 +318,16 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
             username=db_connection.username,
             password=password_secret.encrypted_value,
             ssl_enabled=db_connection.ssl_enabled,
+            extra_params=parse_extra_params(db_connection.extra_params),
+            auth_method=db_connection.auth_method,
+            private_key=SecretStr(private_key) if private_key is not None else None,
+            private_key_passphrase=SecretStr(private_key_passphrase) if private_key_passphrase is not None else None,
+            oauth_client_id=db_connection.oauth_client_id,
+            oauth_authorize_endpoint=db_connection.oauth_authorize_endpoint,
+            oauth_token_endpoint=db_connection.oauth_token_endpoint,
+            oauth_redirect_uri=db_connection.oauth_redirect_uri,
+            oauth_client_secret=SecretStr(oauth_client_secret) if oauth_client_secret is not None else None,
+            oauth_refresh_token=SecretStr(oauth_refresh_token) if oauth_refresh_token is not None else None,
         )
 
     return None
@@ -202,12 +359,23 @@ def delete_database_connection(db: Session, connection_name: str, user_id: int) 
     db_connection = _get_own_database_connection(db, connection_name, user_id)
 
     if db_connection:
+        # Collect secret ids before the delete is staged (cloud-connection ordering).
+        secret_ids_to_delete = [
+            secret_id
+            for secret_id in (
+                db_connection.password_id,
+                db_connection.private_key_id,
+                db_connection.private_key_passphrase_id,
+                db_connection.oauth_client_secret_id,
+                db_connection.oauth_refresh_token_id,
+            )
+            if secret_id is not None
+        ]
+
         sharing.delete_grants_for_resource(db, "database_connection", db_connection.id)
         db.delete(db_connection)
-
-        password_secret = db.query(Secret).filter(Secret.id == db_connection.password_id).first()
-        if password_secret:
-            db.delete(password_secret)
+        if secret_ids_to_delete:
+            db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
         db.commit()
         _project_sync_connection("database", connection_name, user_id, deleted=True)
 
@@ -227,6 +395,13 @@ def database_connection_interface_from_db_connection(
         port=db_connection.port,
         database=db_connection.database,
         ssl_enabled=db_connection.ssl_enabled,
+        extra_params=parse_extra_params(db_connection.extra_params),
+        auth_method=db_connection.auth_method,
+        oauth_client_id=db_connection.oauth_client_id,
+        oauth_authorize_endpoint=db_connection.oauth_authorize_endpoint,
+        oauth_token_endpoint=db_connection.oauth_token_endpoint,
+        oauth_redirect_uri=db_connection.oauth_redirect_uri,
+        oauth_connected=db_connection.oauth_refresh_token_id is not None,
         id=db_connection.id,
         access=access,
     )

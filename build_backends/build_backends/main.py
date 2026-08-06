@@ -440,6 +440,9 @@ def main():
         # legs; imported lazily (sqlalchemy dialect adapter / is_available
         # probe), so list it explicitly like the other DB drivers.
         "pymssql",
+        # Snowflake driver: imported lazily inside the snowflake dialect, so
+        # PyInstaller's static scan misses it (hooks-contrib bundles its data).
+        "snowflake.connector",
         "alembic",
         # certifi ships cacert.pem; ssl uses it via certifi.where(). The
         # data_downloader builds its SSL context against this so urllib calls

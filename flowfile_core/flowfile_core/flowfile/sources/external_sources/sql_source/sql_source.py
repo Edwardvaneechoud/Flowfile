@@ -430,20 +430,43 @@ class ResolvedConnection(NamedTuple):
 def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> ResolvedConnection:
     """Resolve DatabaseSettings into a connection URI + dialect, handling inline/reference mode."""
     database_connection = database_settings.database_connection
+    private_key = None
+    private_key_passphrase = None
+    oauth_token = None
 
     if database_settings.connection_mode == "inline":
         if database_connection is None:
             raise ValueError("Database connection is required in inline mode")
         is_file_based = get_dialect_or_generic(database_connection.database_type).file_based
-        if is_file_based:
-            password = None
-        else:
+        use_key_pair = database_connection.auth_method == "key_pair"
+        password = None
+        if not is_file_based and database_connection.password_ref:
             encrypted_secret = get_encrypted_secret(
                 current_user_id=user_id, secret_name=database_connection.password_ref
             )
-            if encrypted_secret is None:
-                raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
-            password = decrypt_secret(encrypted_secret)
+            if encrypted_secret is not None:
+                password = decrypt_secret(encrypted_secret)
+        if password is None and not is_file_based and not use_key_pair:
+            raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
+        if use_key_pair:
+            encrypted_key = get_encrypted_secret(
+                current_user_id=user_id, secret_name=database_connection.private_key_ref
+            )
+            if encrypted_key is None:
+                raise ValueError(
+                    f"Private key secret with name {database_connection.private_key_ref} not found for user {user_id}"
+                )
+            private_key = decrypt_secret(encrypted_key)
+            if database_connection.private_key_passphrase_ref:
+                encrypted_passphrase = get_encrypted_secret(
+                    current_user_id=user_id, secret_name=database_connection.private_key_passphrase_ref
+                )
+                if encrypted_passphrase is None:
+                    raise ValueError(
+                        f"Private key passphrase secret with name "
+                        f"{database_connection.private_key_passphrase_ref} not found for user {user_id}"
+                    )
+                private_key_passphrase = decrypt_secret(encrypted_passphrase)
     else:
         database_connection = get_local_database_connection(database_settings.database_connection_name, user_id)
         if database_connection is None:
@@ -453,6 +476,18 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
             )
         encrypted_secret = database_connection.password.get_secret_value()
         password = decrypt_secret(encrypted_secret)
+        if database_connection.private_key:
+            private_key = decrypt_secret(database_connection.private_key.get_secret_value())
+        if database_connection.private_key_passphrase:
+            private_key_passphrase = decrypt_secret(database_connection.private_key_passphrase.get_secret_value())
+        if database_connection.auth_method == "oauth":
+            # Core-side refresh: mint a short-lived access token from the stored
+            # refresh token (raises ReconnectRequiredError when sign-in expired).
+            from flowfile_core.flowfile.database_connection_manager.db_oauth import resolve_oauth_access_token
+
+            oauth_token = decrypt_secret(
+                resolve_oauth_access_token(database_settings.database_connection_name, user_id)
+            )
 
     uri = construct_sql_uri(
         database_type=database_connection.database_type,
@@ -463,6 +498,11 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
         password=password,
         ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
         connect_timeout=10,
+        auth_method=database_connection.auth_method,
+        private_key=private_key,
+        private_key_passphrase=private_key_passphrase,
+        oauth_token=oauth_token,
+        **(database_connection.extra_params or {}),
     )
     return ResolvedConnection(uri=uri, database_type=database_connection.database_type)
 

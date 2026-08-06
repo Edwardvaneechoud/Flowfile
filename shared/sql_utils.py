@@ -27,6 +27,10 @@ def construct_sql_uri(
     url: str | None = None,
     ssl_enabled: bool = False,
     connect_timeout: int | None = None,
+    auth_method: str | None = None,
+    private_key: str | None = None,
+    private_key_passphrase: str | None = None,
+    oauth_token: str | None = None,
     **kwargs,
 ) -> str:
     """
@@ -42,6 +46,11 @@ def construct_sql_uri(
         url: Complete database URL (overrides other parameters if provided)
         ssl_enabled: Adds sslmode=require for postgres-family databases
         connect_timeout: Connection timeout in seconds (postgres-family only)
+        auth_method: Authentication method; must be in the dialect's auth_methods
+            ("password" or None everywhere, "key_pair" where supported)
+        private_key: Private key PEM text as a plain string (caller handles decryption)
+        private_key_passphrase: Optional passphrase for an encrypted private key
+        oauth_token: OAuth access token as a plain string (caller handles refresh/decryption)
         **kwargs: Additional connection parameters appended as query string
 
     Returns:
@@ -61,6 +70,10 @@ def construct_sql_uri(
         database=database,
         ssl_enabled=ssl_enabled,
         connect_timeout=connect_timeout,
+        auth_method=auth_method,
+        private_key=private_key,
+        private_key_passphrase=private_key_passphrase,
+        oauth_token=oauth_token,
         **kwargs,
     )
 

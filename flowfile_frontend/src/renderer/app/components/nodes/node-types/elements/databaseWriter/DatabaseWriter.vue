@@ -317,7 +317,8 @@ const isInlineConnectionComplete = () => {
   const conn = nodeData.value?.database_write_settings?.database_connection;
   if (!conn) return false;
   if (conn.database_type === "sqlite") return !!conn.database;
-  return !!(conn.host && conn.port && conn.database && conn.username && conn.password_ref);
+  const credentialRef = conn.auth_method === "key_pair" ? conn.private_key_ref : conn.password_ref;
+  return !!(conn.host && conn.port && conn.database && conn.username && credentialRef);
 };
 
 let inlineDebounceTimer: ReturnType<typeof setTimeout> | null = null;
