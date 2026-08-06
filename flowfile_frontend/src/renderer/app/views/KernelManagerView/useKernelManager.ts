@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import type { Ref } from "vue";
 import { KernelApi } from "../../api/kernel.api";
+import { useKernelCreationTracker } from "../../composables/useKernelCreationTracker";
 import type {
   DockerStatus,
   FlavourInfo,
@@ -14,6 +15,7 @@ const POLL_INTERVAL_MS = 5000;
 const MEMORY_POLL_INTERVAL_MS = 3000;
 
 export function useKernelManager() {
+  const { createKernel: trackedCreateKernel } = useKernelCreationTracker();
   const kernels: Ref<KernelInfo[]> = ref([]);
   const isLoading = ref(true);
   const errorMessage: Ref<string | null> = ref(null);
@@ -48,7 +50,7 @@ export function useKernelManager() {
   };
 
   const createKernel = async (config: KernelConfig): Promise<KernelInfo> => {
-    const kernel = await KernelApi.create(config);
+    const kernel = await trackedCreateKernel(config);
     await loadKernels();
     return kernel;
   };

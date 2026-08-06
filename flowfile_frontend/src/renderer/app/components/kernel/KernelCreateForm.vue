@@ -418,7 +418,7 @@ const handleSubmit = async () => {
     newPackage.value = "";
     emit("success");
   } catch {
-    // Parent has already shown an error alert. Keep form populated for retry.
+    // The creation tracker has already notified. Keep form populated for retry.
   } finally {
     isSubmitting.value = false;
   }
