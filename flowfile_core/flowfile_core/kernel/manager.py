@@ -711,7 +711,9 @@ class KernelManager:
         A running kernel keeps its live container — only a STOPPED kernel's cached config is
         refreshed to match the imported definition (a running container still reflects the config it
         was started with). Kernels with a start flight in progress are skipped entirely so the
-        reconcile can't prune or reconfigure a kernel out from under its flight leader."""
+        reconcile can't prune or reconfigure a kernel out from under its flight leader. CREATING
+        kernels are likewise never pruned: they are deliberately not in the DB until the image bake
+        finishes, so absence from the DB says nothing about them."""
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import get_all_kernels
@@ -732,6 +734,7 @@ class KernelManager:
                         self._kernel_owners.get(kernel_id) == owner_id
                         and kernel_id not in owner_rows
                         and not self._has_active_flight(kernel_id)
+                        and self._kernels[kernel_id].state != KernelState.CREATING
                     ):
                         self._cleanup_container(kernel_id)
                         self._kernels.pop(kernel_id, None)
@@ -741,7 +744,11 @@ class KernelManager:
             else:
                 # Full reconcile (startup): drop any kernel absent from the DB entirely.
                 for kernel_id in list(self._kernels):
-                    if kernel_id not in all_rows and not self._has_active_flight(kernel_id):
+                    if (
+                        kernel_id not in all_rows
+                        and not self._has_active_flight(kernel_id)
+                        and self._kernels[kernel_id].state != KernelState.CREATING
+                    ):
                         self._cleanup_container(kernel_id)
                         self._kernels.pop(kernel_id, None)
                         self._kernel_owners.pop(kernel_id, None)
@@ -1359,57 +1366,64 @@ class KernelManager:
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
-        # Check-and-allocate atomically so two concurrent creates can't pass the
-        # existence check or grab the same port. The long image build runs
-        # outside the lock; the registry is re-checked before the final commit.
-        with self._kernels_lock:
-            if config.id in self._kernels:
-                raise ValueError(f"Kernel '{config.id}' already exists")
-            # In Docker-in-Docker mode we don't map host ports — kernels are
-            # reached via container name on the shared Docker network.
-            port = None if self._kernel_volume else self._allocate_port()
-        # Validate image flavour and packages up-front so we fail before
-        # persisting state or kicking off a long-running build.
+        # Validate image flavour and packages up-front so nothing invalid is
+        # ever registered or kicks off a long-running build.
         try:
             _resolve_image(config.image_flavour, config.custom_image, self._docker)
             _validate_packages(config.packages)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
-        kernel = KernelInfo(
-            id=config.id,
-            name=config.name,
-            state=KernelState.STOPPED,
-            port=port,
-            packages=config.packages,
-            memory_gb=config.memory_gb,
-            cpu_cores=config.cpu_cores,
-            gpu=config.gpu,
-            health_timeout=config.health_timeout,
-            image_flavour=config.image_flavour,
-            custom_image=config.custom_image,
-            persistence_enabled=config.persistence_enabled,
-            recovery_mode=config.recovery_mode,
-        )
+        # Check-and-register atomically so two concurrent creates can't pass
+        # the existence check or grab the same port. Registering as CREATING
+        # makes the kernel visible to list/get while the image bakes.
+        with self._kernels_lock:
+            if config.id in self._kernels:
+                raise ValueError(f"Kernel '{config.id}' already exists")
+            # In Docker-in-Docker mode we don't map host ports — kernels are
+            # reached via container name on the shared Docker network.
+            port = None if self._kernel_volume else self._allocate_port()
+            kernel = KernelInfo(
+                id=config.id,
+                name=config.name,
+                state=KernelState.CREATING,
+                port=port,
+                packages=config.packages,
+                memory_gb=config.memory_gb,
+                cpu_cores=config.cpu_cores,
+                gpu=config.gpu,
+                health_timeout=config.health_timeout,
+                image_flavour=config.image_flavour,
+                custom_image=config.custom_image,
+                persistence_enabled=config.persistence_enabled,
+                recovery_mode=config.recovery_mode,
+            )
+            self._kernels[config.id] = kernel
+            self._kernel_owners[config.id] = user_id
 
         # Pre-bake packages into a derived image so subsequent kernel starts
         # don't re-run pip in the entrypoint. Run in a thread to keep the
         # event loop responsive — image builds can take 30–60 s.
-        if config.packages:
-            try:
-                derived_tag = await asyncio.to_thread(self._build_derived_image, kernel)
-            except (RuntimeError, ValueError) as exc:
-                raise ValueError(f"Failed to prepare kernel image: {exc}") from exc
+        try:
+            if config.packages:
+                try:
+                    derived_tag = await asyncio.to_thread(self._build_derived_image, kernel)
+                except (RuntimeError, ValueError) as exc:
+                    raise ValueError(f"Failed to prepare kernel image: {exc}") from exc
 
-            kernel.resolved_packages = await asyncio.to_thread(
-                self._resolve_installed_versions, derived_tag, config.packages
-            )
+                kernel.resolved_packages = await asyncio.to_thread(
+                    self._resolve_installed_versions, derived_tag, config.packages
+                )
+        except BaseException:
+            # Build failed or the request was cancelled — the kernel never existed.
+            # Identity-checked so this can never remove a later re-create's entry.
+            with self._kernels_lock:
+                if self._kernels.get(config.id) is kernel:
+                    self._kernels.pop(config.id, None)
+                    self._kernel_owners.pop(config.id, None)
+            raise
 
-        with self._kernels_lock:
-            if config.id in self._kernels:
-                raise ValueError(f"Kernel '{config.id}' already exists")
-            self._kernels[config.id] = kernel
-            self._kernel_owners[config.id] = user_id
+        kernel.state = KernelState.STOPPED
         self._persist_kernel(kernel, user_id)
         # Auto-register a scratch FlowRegistration so artifacts published from
         # interactive cells have a valid producer. See ``_create_scratch_flow``.
@@ -1428,6 +1442,8 @@ class KernelManager:
         """Single-flight start: one leader runs the start sequence, concurrent
         callers wait on the same flight and share its outcome."""
         kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state == KernelState.CREATING:
+            raise ValueError(f"Kernel '{kernel_id}' is still being created")
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return kernel
         with self._start_flights_lock:
@@ -1615,6 +1631,8 @@ class KernelManager:
 
     async def stop_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state == KernelState.CREATING:
+            raise ValueError(f"Kernel '{kernel_id}' is still being created")
         # Don't tear down a container an in-progress start still owns.
         await asyncio.to_thread(self._wait_out_flight, kernel_id)
         self._cleanup_container(kernel_id)
@@ -1630,6 +1648,8 @@ class KernelManager:
         """
         kernel = self._get_kernel_or_raise(kernel_id)
 
+        if kernel.state == KernelState.CREATING:
+            raise RuntimeError(f"Kernel '{kernel_id}' is still being created")
         if kernel.state in (
             KernelState.IDLE,
             KernelState.EXECUTING,
@@ -1683,6 +1703,8 @@ class KernelManager:
 
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state == KernelState.CREATING:
+            raise ValueError(f"Kernel '{kernel_id}' is still being created — wait for creation to finish")
         owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
         # Unconditional: a STOPPED/ERROR kernel may still track a leftover container.
         # stop_kernel waits out any in-progress start flight itself.
@@ -2169,6 +2191,8 @@ class KernelManager:
     async def _ensure_running(self, kernel_id: str) -> None:
         """Start the kernel if it is not ready (single-flight), then wait until IDLE."""
         kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state == KernelState.CREATING:
+            raise RuntimeError(f"Kernel '{kernel_id}' is still being created")
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return
         logger.info("Kernel '%s' is %s, ensuring it is running...", kernel_id, kernel.state.value)
@@ -2177,6 +2201,8 @@ class KernelManager:
     def _ensure_running_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> None:
         """Synchronous version of _ensure_running."""
         kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state == KernelState.CREATING:
+            raise RuntimeError(f"Kernel '{kernel_id}' is still being created")
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return
         msg = f"Kernel '{kernel_id}' is {kernel.state.value}, ensuring it is running..."

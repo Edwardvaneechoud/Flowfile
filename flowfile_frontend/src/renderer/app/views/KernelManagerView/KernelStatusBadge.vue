@@ -15,6 +15,7 @@ const props = defineProps<{
 
 const config = computed(() => {
   const map: Record<KernelState, { icon: string; label: string }> = {
+    creating: { icon: "fa-solid fa-spinner fa-spin", label: "Creating" },
     stopped: { icon: "fa-solid fa-circle-stop", label: "Stopped" },
     starting: { icon: "fa-solid fa-spinner fa-spin", label: "Starting" },
     idle: { icon: "fa-solid fa-circle-check", label: "Ready" },
@@ -45,6 +46,12 @@ const label = computed(() => config.value.label);
 .status-stopped {
   background-color: var(--color-background-tertiary);
   color: var(--color-text-secondary);
+}
+
+.status-creating {
+  background-color: var(--color-info-light);
+  color: var(--color-info-hover);
+  animation: km-badge-pulse 1.6s ease-in-out infinite;
 }
 
 .status-starting {

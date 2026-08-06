@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class KernelState(str, Enum):
+    # In-memory only while create_kernel bakes the image; never persisted.
+    CREATING = "creating"
     STOPPED = "stopped"
     STARTING = "starting"
     IDLE = "idle"

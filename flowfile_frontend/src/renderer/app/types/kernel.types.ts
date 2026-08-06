@@ -1,6 +1,6 @@
 // Kernel management related TypeScript interfaces and types
 
-export type KernelState = "stopped" | "starting" | "idle" | "executing" | "error";
+export type KernelState = "creating" | "stopped" | "starting" | "idle" | "executing" | "error";
 
 export type ImageFlavour = "base" | "ml" | "lite" | "custom";
 

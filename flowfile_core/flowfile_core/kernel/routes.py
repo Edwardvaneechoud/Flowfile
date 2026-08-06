@@ -302,6 +302,8 @@ async def delete_kernel(kernel_id: str, current_user=Depends(get_current_active_
     try:
         await manager.delete_kernel(kernel_id)
         return {"status": "deleted", "kernel_id": kernel_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -316,6 +318,8 @@ async def start_kernel(kernel_id: str, current_user=Depends(get_current_active_u
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
         return await manager.start_kernel(kernel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -331,6 +335,8 @@ async def stop_kernel(kernel_id: str, current_user=Depends(get_current_active_us
     try:
         await manager.stop_kernel(kernel_id)
         return {"status": "stopped", "kernel_id": kernel_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

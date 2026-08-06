@@ -259,8 +259,8 @@ const preinstalled = computed<FlavourPackage[]>(
 );
 
 const canEdit = computed(() => {
-  // Block while running, starting, or executing — saving rebuilds the image.
-  return !["idle", "executing", "starting"].includes(props.kernel.state);
+  // Block while creating, running, starting, or executing — saving rebuilds the image.
+  return !["creating", "idle", "executing", "starting"].includes(props.kernel.state);
 });
 
 const formattedCreatedAt = computed(() => {
