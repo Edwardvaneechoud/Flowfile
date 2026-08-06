@@ -46,6 +46,20 @@
               @input="update('label', ($event.target as HTMLInputElement).value)"
             />
           </div>
+          <div v-if="store.sections.length > 1" class="field-row">
+            <label>Group</label>
+            <select
+              class="ins-input"
+              :value="store.selectedSectionIndex ?? undefined"
+              data-testid="control-group-select"
+              @change="moveToGroup(Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option v-for="(s, i) in store.sections" :key="s.name" :value="i">
+                {{ s.title || s.name }}
+              </option>
+            </select>
+            <span class="field-hint">Moves this control into another group.</span>
+          </div>
         </div>
 
         <!-- TextInput -->
@@ -451,6 +465,16 @@ function commitName() {
     nameBeforeEdit.value,
     comp.value.name,
   );
+}
+
+// Append to the target group; the store renames on collision and retargets visible_when.
+function moveToGroup(targetIndex: number) {
+  const from = store.selectedSectionIndex;
+  const compIndex = store.selectedComponentIndex;
+  if (from === null || compIndex === null || targetIndex === from) return;
+  const target = store.sections[targetIndex];
+  if (!target) return;
+  store.moveComponentToSection(from, compIndex, targetIndex, target.components.length);
 }
 
 const optionsCsv = computed(() => {
