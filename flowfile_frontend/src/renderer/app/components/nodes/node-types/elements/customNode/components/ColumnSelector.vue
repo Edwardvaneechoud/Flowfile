@@ -61,11 +61,16 @@ const filteredColumns = computed(() => {
   }
 
   if (Array.isArray(dataTypes)) {
-    // A data_types entry is a specific polars type ("Int64") or a group ("Numeric"),
-    // so a column matches on either its concrete dtype or its data_type_group.
+    // A data_types entry is a specific polars type ("Int64") or a group ("Numeric"), so a column
+    // matches on its concrete dtype or its data_type_group. Parameterized dtypes arrive stringified
+    // with their inner type ("Array(Float32, shape=(384,))", "Datetime(time_unit='us')"), so they
+    // also match on the base token — mirroring get_readable_datatype_group() in core.
+    const baseType = (dtype: string) => (dtype ?? "").split("(")[0];
     return props.incomingColumns.filter(
       (column) =>
-        dataTypes.includes(column.data_type) || dataTypes.includes(column.data_type_group),
+        dataTypes.includes(column.data_type) ||
+        dataTypes.includes(baseType(column.data_type)) ||
+        dataTypes.includes(column.data_type_group),
     );
   }
 

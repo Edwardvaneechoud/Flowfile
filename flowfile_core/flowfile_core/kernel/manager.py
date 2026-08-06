@@ -46,6 +46,8 @@ _KERNEL_DOWN_MSG = (
     "core restart). Run the cell again to restart it."
 )
 
+_CELL_EXECUTION_TIMEOUT = 86_400.0
+
 
 def _envvar_or_default(name: str, default: str) -> str:
     """Read an env var, treating unset OR empty/whitespace as 'use default'.
@@ -1820,7 +1822,7 @@ class KernelManager:
 
             if cancel_event is None:
                 # Simple blocking call (no cancellation support)
-                with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+                with httpx.Client(timeout=httpx.Timeout(_CELL_EXECUTION_TIMEOUT)) as client:
                     response = client.post(url, json=request.model_dump())
                     response.raise_for_status()
                     return ExecuteResult(**response.json())
@@ -1831,7 +1833,7 @@ class KernelManager:
 
             def _post() -> None:
                 try:
-                    with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+                    with httpx.Client(timeout=httpx.Timeout(_CELL_EXECUTION_TIMEOUT)) as client:
                         resp = client.post(url, json=request.model_dump())
                         resp.raise_for_status()
                         result_holder[0] = ExecuteResult(**resp.json())
@@ -1879,7 +1881,10 @@ class KernelManager:
                 self.interrupt_execution_sync(kernel_id)
                 return ExecuteResult(
                     success=False,
-                    error="Cell exceeded the 300s execution limit and was interrupted.",
+                    error=(
+                        f"Cell exceeded the {_CELL_EXECUTION_TIMEOUT:.0f}s execution limit and was interrupted. "
+                        "The kernel stopped responding — check whether its container is healthy."
+                    ),
                 )
             raise
         finally:
