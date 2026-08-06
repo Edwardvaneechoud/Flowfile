@@ -8,7 +8,8 @@
     <p class="creating-overlay__hint">
       {{
         packages.length > 0
-          ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s."
+          ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s. " +
+            "Creation continues in the background — track it in the Kernel Manager."
           : "Provisioning kernel…"
       }}
     </p>
@@ -418,7 +419,7 @@ const handleSubmit = async () => {
     newPackage.value = "";
     emit("success");
   } catch {
-    // Parent has already shown an error alert. Keep form populated for retry.
+    // The creation tracker has already notified. Keep form populated for retry.
   } finally {
     isSubmitting.value = false;
   }

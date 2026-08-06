@@ -106,7 +106,7 @@
       </button>
       <button
         class="btn btn-danger btn-sm"
-        :disabled="busy || kernel.state === 'starting'"
+        :disabled="busy || kernel.state === 'starting' || kernel.state === 'creating'"
         @click="$emit('delete', kernel.id, kernel.name)"
       >
         <i class="fa-solid fa-trash-alt"></i> Delete
@@ -210,6 +210,11 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 
 .kernel-card--state-starting::before {
   background-color: var(--color-warning);
+  animation: km-stripe-pulse 1.6s ease-in-out infinite;
+}
+
+.kernel-card--state-creating::before {
+  background-color: var(--color-info);
   animation: km-stripe-pulse 1.6s ease-in-out infinite;
 }
 

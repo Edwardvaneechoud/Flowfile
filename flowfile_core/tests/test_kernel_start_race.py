@@ -722,6 +722,28 @@ class TestReconcileVsFlight:
         assert "ml" not in mgr._kernels
         mgr._docker.containers.get.assert_called_once_with("live-1")
 
+    def test_reconcile_skips_creating_kernel(self, monkeypatch):
+        """A CREATING kernel has no DB row yet — reconcile must never prune it."""
+        from contextlib import contextmanager
+
+        mgr = _bare_manager()
+        mgr._kernels["ml"] = _kernel(state=KernelState.CREATING)
+        mgr._kernel_owners["ml"] = 1
+
+        @contextmanager
+        def _fake_db():
+            yield None
+
+        monkeypatch.setattr("flowfile_core.database.connection.get_db_context", _fake_db)
+        monkeypatch.setattr("flowfile_core.kernel.persistence.get_all_kernels", lambda db: [])
+
+        mgr.reconcile_configs_from_db(owner_id=1)
+        assert mgr._kernels["ml"].state == KernelState.CREATING
+
+        mgr.reconcile_configs_from_db()
+        assert mgr._kernels["ml"].state == KernelState.CREATING
+        assert mgr._kernel_owners["ml"] == 1
+
 
 class TestStartupReconcile:
     def test_running_container_reclaimed_as_idle(self):

@@ -5,6 +5,7 @@
     width="560px"
     align-center
     append-to-body
+    :close-on-click-modal="false"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="setup-body">
@@ -173,14 +174,8 @@ async function upgrade(match: KernelMatch): Promise<void> {
   }
 }
 
-function onCreated(kernel: KernelInfo): void {
-  const running =
-    kernel.state === "idle" || kernel.state === "starting" || kernel.state === "executing";
-  ElMessage.success(
-    running
-      ? `Kernel "${kernel.name}" is ready for ${props.nodeName}.`
-      : `Kernel "${kernel.name}" was created for ${props.nodeName} — start it from the Kernel Manager.`,
-  );
+function onCreated(): void {
+  // The creation tracker already notified about the outcome.
   emit("update:modelValue", false);
 }
 </script>

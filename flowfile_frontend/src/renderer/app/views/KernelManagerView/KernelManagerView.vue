@@ -218,14 +218,8 @@ const deleteTarget = ref({ id: "", name: "" });
 const isDeleting = ref(false);
 
 const handleCreate = async (config: KernelConfig) => {
-  try {
-    await createKernel(config);
-    ElMessage.success(`Kernel "${config.name}" created`);
-  } catch (error: any) {
-    const msg = error.message || "Failed to create kernel.";
-    ElMessage.error({ message: `Error creating kernel: ${msg}` });
-    throw error; // Re-throw so the form keeps the user's input for retry.
-  }
+  // Tracker notifies; the rejection propagates so the form keeps input for retry.
+  await createKernel(config);
 };
 
 const handleStart = async (kernelId: string) => {

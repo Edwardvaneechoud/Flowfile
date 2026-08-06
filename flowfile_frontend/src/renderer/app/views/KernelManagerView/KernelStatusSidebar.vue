@@ -100,7 +100,7 @@
           <i class="fa-solid fa-cube"></i>
         </span>
         <h3 class="km-sidebar__title">Your kernels</h3>
-        <span class="km-sidebar__count">{{ kernels.length }}</span>
+        <span class="km-sidebar__count">{{ kernels.length + visiblePending.length }}</span>
       </header>
 
       <div v-if="isLoading" class="km-sidebar__loading">
@@ -108,13 +108,38 @@
         <p>Loading kernels…</p>
       </div>
 
-      <div v-else-if="kernels.length === 0" class="km-sidebar__empty">
+      <div
+        v-else-if="kernels.length === 0 && visiblePending.length === 0"
+        class="km-sidebar__empty"
+      >
         <i class="fa-solid fa-server"></i>
         <p>No kernels yet</p>
         <p class="km-sidebar__empty-hint">Fill out the form on the right to create one.</p>
       </div>
 
       <div v-else class="km-sidebar__kernels">
+        <div
+          v-for="p in visiblePending"
+          :key="`pending-${p.id}`"
+          class="km-image-row km-image-row--pulling"
+        >
+          <span class="km-image-row__dot" title="Creating"></span>
+          <div class="km-image-row__body">
+            <div class="km-image-row__header">
+              <span class="km-image-row__label">{{ p.name }}</span>
+              <span class="km-image-row__chip">{{ p.flavour }}</span>
+            </div>
+            <code v-if="p.packages.length" class="km-image-row__tag">
+              {{ p.packages.join(", ") }}
+            </code>
+          </div>
+          <div class="km-image-row__actions">
+            <span class="km-image-row__pulling">
+              <span class="loading-spinner loading-spinner--inline"></span>
+              {{ pendingLabel(p) }}
+            </span>
+          </div>
+        </div>
         <KernelCard
           v-for="kernel in kernels"
           :key="kernel.id"
@@ -143,6 +168,10 @@ import {
   type KernelMemoryInfo,
 } from "../../types";
 import { KernelApi } from "../../api/kernel.api";
+import {
+  useKernelCreationTracker,
+  type PendingKernelCreation,
+} from "../../composables/useKernelCreationTracker";
 import KernelCard from "./KernelCard.vue";
 
 const props = defineProps<{
@@ -160,6 +189,18 @@ const emit = defineEmits<{
   (e: "delete", id: string, name: string): void;
   (e: "refresh-status"): void;
 }>();
+
+const { pendingCreations } = useKernelCreationTracker();
+
+// Once create returns the poll lists the real kernel and the KernelCard takes over.
+const visiblePending = computed(() =>
+  pendingCreations.value.filter((p) => !props.kernels.some((k) => k.id === p.id)),
+);
+
+const pendingLabel = (p: PendingKernelCreation): string => {
+  if (p.phase === "starting") return "Starting…";
+  return p.packages.length ? "Baking packages…" : "Creating…";
+};
 
 // ---- image rows: derive a single row state per flavour -------------------
 

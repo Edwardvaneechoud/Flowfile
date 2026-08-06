@@ -298,13 +298,6 @@ function onKernelCreated(kernel: KernelInfo) {
   selectedKernelId.value = kernel.id; // the watcher below refetches artifacts
   void fetchKernels();
   void refreshMatch(nodeDeps.value, nodeDisplayName.value);
-  const running =
-    kernel.state === "idle" || kernel.state === "starting" || kernel.state === "executing";
-  ElMessage.success(
-    running
-      ? `Kernel "${kernel.name}" is ready and selected.`
-      : `Kernel "${kernel.name}" selected. Start it from the Kernel Manager when you're ready.`,
-  );
 }
 
 async function onAddMissingPackages() {

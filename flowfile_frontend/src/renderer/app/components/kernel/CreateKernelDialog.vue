@@ -26,6 +26,15 @@
         :title="`The suggested ${suggestion.config.image_flavour} image isn't installed yet`"
         description="Another flavour was selected below — you can install the suggested image from the Kernel Manager."
       />
+      <el-alert
+        v-if="pendingForSeed && !creationInFlight"
+        type="info"
+        :closable="false"
+        show-icon
+        class="flavour-hint"
+        :title="`Kernel &quot;${pendingForSeed.name}&quot; is already being created`"
+        description="You'll get a notification when it's ready — pick a different kernel ID to create another one."
+      />
       <KernelCreateForm
         :flavour-info="flavourInfo"
         :image-statuses="imageStatuses"
@@ -37,10 +46,9 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from "element-plus";
 import { computed, ref, watch } from "vue";
 
-import { KernelApi } from "@/api/kernel.api";
+import { useKernelCreationTracker } from "@/composables/useKernelCreationTracker";
 import { useKernelResources } from "@/composables/useKernelResources";
 import type { KernelConfig, KernelInfo, KernelSuggestion } from "@/types";
 
@@ -62,8 +70,17 @@ const emit = defineEmits<{
 }>();
 
 const { dockerStatus, flavourInfo, imageStatuses, ensureLoaded } = useKernelResources();
+const { createKernel, pendingCreations } = useKernelCreationTracker();
 
 const seedSnapshot = ref<Partial<KernelConfig> | null>(null);
+const creationInFlight = ref(false);
+
+// A remounted dialog can be seeded with an id whose creation is still in flight.
+const pendingForSeed = computed(() => {
+  const id = seedSnapshot.value?.id;
+  if (!id) return null;
+  return pendingCreations.value.find((p) => p.id === id) ?? null;
+});
 
 function buildSeed(): Partial<KernelConfig> | null {
   const s = props.suggestion;
@@ -77,12 +94,12 @@ function buildSeed(): Partial<KernelConfig> | null {
 }
 
 // @open never fires for a dialog mounted already-open — watch the model instead.
-// The seed is snapshotted per open so background match refreshes can't clobber edits.
+// The seed is snapshotted per open (never mid-create) so nothing clobbers edits.
 watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      seedSnapshot.value = buildSeed();
+      if (!creationInFlight.value) seedSnapshot.value = buildSeed();
       void ensureLoaded();
     }
   },
@@ -92,27 +109,15 @@ watch(
 const dockerDown = computed(() => dockerStatus.value !== null && !dockerStatus.value.available);
 
 async function handleCreate(config: KernelConfig): Promise<void> {
-  let created: KernelInfo;
+  creationInFlight.value = true;
   try {
-    created = await KernelApi.create(config);
-  } catch (error) {
-    ElMessage.error((error as Error).message || "Failed to create kernel");
-    throw error; // form keeps its input
+    // Tracker owns outcome notifications; rejections propagate so the form keeps its input.
+    const result = await createKernel(config, { autoStart: props.autoStart });
+    emit("created", result);
+    emit("update:modelValue", false);
+  } finally {
+    creationInFlight.value = false;
   }
-  let result = created;
-  if (props.autoStart) {
-    try {
-      result = await KernelApi.start(created.id);
-    } catch (error) {
-      // The kernel exists and should be selected regardless of a start failure.
-      ElMessage.warning(
-        `Kernel created but failed to start: ${(error as Error).message}. ` +
-          "Start it from the Kernel Manager.",
-      );
-    }
-  }
-  emit("created", result);
-  emit("update:modelValue", false);
 }
 </script>
 

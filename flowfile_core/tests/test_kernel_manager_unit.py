@@ -31,6 +31,7 @@ from flowfile_core.kernel.manager import (
 )
 from flowfile_core.kernel.models import (
     ImageFlavour,
+    KernelConfig,
     KernelInfo,
     KernelState,
     ResolvedPackage,
@@ -599,6 +600,136 @@ class TestUpdateKernel:
         # We don't re-persist on failure — caller already has stale-but-correct
         # state in the DB.
         mgr._persist_kernel.assert_not_called()
+
+
+def _config(kernel_id: str = "k1", packages: list[str] | None = None) -> KernelConfig:
+    return KernelConfig(id=kernel_id, name=f"test-{kernel_id}", packages=packages or [])
+
+
+def _create_manager() -> KernelManager:
+    mgr = _bare_manager()
+    mgr._persist_kernel = MagicMock()
+    mgr._provision_scratch_flow = MagicMock()
+    return mgr
+
+
+class TestCreateKernel:
+    def test_create_without_packages_registers_stopped(self):
+        mgr = _create_manager()
+        mgr._build_derived_image = MagicMock(return_value="should-not-be-called")
+
+        kernel = _run(mgr.create_kernel(_config(), user_id=42))
+
+        assert kernel.state == KernelState.STOPPED
+        assert mgr._kernels["k1"] is kernel
+        assert mgr._kernel_owners["k1"] == 42
+        mgr._build_derived_image.assert_not_called()
+        mgr._persist_kernel.assert_called_once()
+        mgr._provision_scratch_flow.assert_called_once_with("k1", 42)
+
+    def test_kernel_is_listed_as_creating_during_build(self):
+        mgr = _create_manager()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_build(kernel):
+            started.set()
+            assert release.wait(timeout=5)
+            return "derived:tag"
+
+        mgr._build_derived_image = MagicMock(side_effect=slow_build)
+        mgr._resolve_installed_versions = MagicMock(
+            return_value=[ResolvedPackage(name="xgboost", version="2.0.0")]
+        )
+
+        async def scenario():
+            task = asyncio.ensure_future(mgr.create_kernel(_config(packages=["xgboost"]), user_id=42))
+            await asyncio.to_thread(started.wait, 5)
+            listed = await mgr.list_kernels(user_id=42)
+            assert [(k.id, k.state) for k in listed] == [("k1", KernelState.CREATING)]
+            release.set()
+            return await task
+
+        kernel = asyncio.run(scenario())
+        assert kernel.state == KernelState.STOPPED
+        assert kernel.resolved_packages == [ResolvedPackage(name="xgboost", version="2.0.0")]
+
+    def test_duplicate_create_rejected_while_building(self):
+        mgr = _create_manager()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_build(kernel):
+            started.set()
+            assert release.wait(timeout=5)
+            return "derived:tag"
+
+        mgr._build_derived_image = MagicMock(side_effect=slow_build)
+        mgr._resolve_installed_versions = MagicMock(return_value=[])
+
+        async def scenario():
+            task = asyncio.ensure_future(mgr.create_kernel(_config(packages=["xgboost"]), user_id=42))
+            await asyncio.to_thread(started.wait, 5)
+            with pytest.raises(ValueError, match="already exists"):
+                await mgr.create_kernel(_config(packages=["numpy"]), user_id=42)
+            release.set()
+            await task
+
+        asyncio.run(scenario())
+        assert mgr._build_derived_image.call_count == 1
+
+    def test_failed_build_removes_creating_kernel(self):
+        mgr = _create_manager()
+        mgr._build_derived_image = MagicMock(side_effect=RuntimeError("pip exploded"))
+
+        with pytest.raises(ValueError, match="pip exploded"):
+            _run(mgr.create_kernel(_config(packages=["xgboost"]), user_id=42))
+
+        assert mgr._kernels == {}
+        assert mgr._kernel_owners == {}
+        mgr._persist_kernel.assert_not_called()
+
+    def test_cancelled_create_removes_creating_kernel(self):
+        mgr = _create_manager()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_build(kernel):
+            started.set()
+            assert release.wait(timeout=5)
+            return "derived:tag"
+
+        mgr._build_derived_image = MagicMock(side_effect=slow_build)
+
+        async def scenario():
+            task = asyncio.ensure_future(mgr.create_kernel(_config(packages=["xgboost"]), user_id=42))
+            await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+
+        asyncio.run(scenario())
+        assert mgr._kernels == {}
+        mgr._persist_kernel.assert_not_called()
+
+    def test_lifecycle_ops_blocked_while_creating(self):
+        mgr = _create_manager()
+        mgr._kernels["k1"] = _kernel(state=KernelState.CREATING)
+        mgr._kernel_owners["k1"] = 42
+
+        with pytest.raises(ValueError, match="still being created"):
+            mgr._get_or_start_kernel("k1")
+        with pytest.raises(ValueError, match="still being created"):
+            _run(mgr.stop_kernel("k1"))
+        with pytest.raises(ValueError, match="still being created"):
+            _run(mgr.delete_kernel("k1"))
+        with pytest.raises(RuntimeError, match="still being created"):
+            _run(mgr.update_kernel("k1", ["numpy"]))
+        with pytest.raises(RuntimeError, match="still being created"):
+            _run(mgr._ensure_running("k1"))
+        with pytest.raises(RuntimeError, match="still being created"):
+            mgr._ensure_running_sync("k1")
 
 
 # Sanity check: __init__'s startup sequence now calls the GC
