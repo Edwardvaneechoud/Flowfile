@@ -779,3 +779,40 @@ class TestDryRunMode:
         flowfile_client.delete_global_artifact("a")
         third = flowfile_client.publish_global("c", {3: 3})
         assert len({first, second, third}) == 3, (first, second, third)
+
+    def test_deleting_a_non_sandboxed_name_never_reaches_the_catalog(self, tmp_dir: Path, monkeypatch):
+        """A dry run must not delete real catalog data it did not publish."""
+        calls = []
+
+        class _Recorder:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def delete(self, url, **kwargs):
+                calls.append(url)
+                raise AssertionError("dry run issued a real DELETE: %s" % url)
+
+            def get(self, url, **kwargs):
+                calls.append(url)
+                raise AssertionError("dry run issued a real GET: %s" % url)
+
+        monkeypatch.setattr(flowfile_client.httpx, "Client", _Recorder)
+        self._dry_ctx(tmp_dir, dry_run=True)
+        flowfile_client.publish_global("mine", {"w": 1})
+
+        with pytest.raises(KeyError, match="was not published in this dry run"):
+            flowfile_client.delete_global_artifact("someone_elses_prod_model")
+        with pytest.raises(KeyError, match="was not published in this dry run"):
+            flowfile_client.delete_global_artifact("someone_elses_prod_model", version=1)
+        assert calls == []
+
+        # The node's own artifact still deletes, from the sandbox only.
+        flowfile_client.delete_global_artifact("mine")
+        assert "mine" not in flowfile_client._dry_run_globals.get()
+        assert calls == []

@@ -700,6 +700,9 @@ def delete_global_artifact(
         namespace: Namespace (schema) filter by name; resolved to an id server-side.
             Raises if the name is unknown or matches more than one namespace.
 
+    In a dry run this only deletes from the run's own sandbox; a name the run did
+    not publish raises ``KeyError`` rather than touching the stored artifact.
+
     Raises:
         KeyError: If artifact is not found.
         httpx.HTTPStatusError: If API calls fail.
@@ -709,9 +712,15 @@ def delete_global_artifact(
         >>> flowfile_ctx.delete_global_artifact("my_model", version=1)  # delete v1 only
         >>> flowfile_ctx.delete_global_artifact("my_model", namespace="my_schema")
     """
-    # Dry run: a node deleting what it just published must not reach the catalog.
+    # A dry run deletes only from its own sandbox. Unlike get_global, this never falls
+    # through to the catalog: a read of real data is harmless, a delete is not.
     sandbox = _dry_run_globals.get(None)
-    if sandbox is not None and name in sandbox:
+    if sandbox is not None:
+        if name not in sandbox:
+            raise KeyError(
+                f"Artifact '{name}' was not published in this dry run. "
+                "A dry run cannot delete artifacts from the artifact store."
+            )
         del sandbox[name]
         return
 
