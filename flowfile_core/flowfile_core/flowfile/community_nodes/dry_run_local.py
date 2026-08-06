@@ -27,11 +27,8 @@ from flowfile_core.flowfile.node_designer.parsing import (
 _MAX_ROW_LIMIT = 1000
 _MAX_TIMEOUT = 120
 
-# Public ``kernel_runtime.flowfile_client`` APIs deliberately left to the fake's
-# permissive ``__getattr__`` no-op instead of being modelled. Adding a name here is
-# a conscious statement that returning ``None`` is correct for it; the drift guard
-# in ``tests/flowfile/community_nodes/test_dry_run_ctx_parity.py`` fails for any
-# public API that is neither implemented on ``_FlowfileCtx`` nor listed here.
+# Kernel APIs for which returning None is deliberately correct; test_dry_run_ctx_parity
+# fails for any public API neither modelled on _FlowfileCtx nor listed here.
 _VOID_APIS: frozenset[str] = frozenset()
 
 # Runs in a child `python -c` with cwd inheriting the parent's sys.path (the poetry
@@ -130,18 +127,9 @@ class _FlowfileCtx:
         self._next_global_id = 1
         self._shared_dir: str | None = None
 
-    # ----- dry-run signal -----
-
     def is_dry_run(self) -> bool:
         """True: this is the community-node dry run, not a real kernel execution."""
         return True
-
-    # ----- inputs / outputs -----
-    #
-    # Community-node dry runs call ``process(*inputs)`` directly and take the
-    # return value as the result, exactly as core's AST-generated kernel script
-    # does. These are still served faithfully so a node that reads its inputs
-    # through the context sees the same frames its ``process`` args carry.
 
     def read_input(self, name: str = "main") -> pl.LazyFrame:
         frames = self._check_input_available(name)
@@ -174,8 +162,6 @@ class _FlowfileCtx:
                 )
             raise KeyError("Input '%s' not found. Available inputs: %s" % (name, available))
         return frames
-
-    # ----- flow-local artifacts -----
 
     def publish_artifact(self, name: str, obj: Any, preview: bool = False) -> None:
         """Store *obj* under *name*. Mirrors the kernel: a duplicate name raises ValueError.
@@ -218,8 +204,6 @@ class _FlowfileCtx:
                 size_bytes=sys.getsizeof(obj),
             ),
         )
-
-    # ----- global artifacts -----
 
     def publish_global(
         self,
@@ -318,8 +302,6 @@ class _FlowfileCtx:
         }
         return artifact_id
 
-    # ----- files -----
-
     def get_shared_location(self, filename: str) -> str:
         """Absolute path under a real temp dir, so a node can actually write files."""
         if self._shared_dir is None:
@@ -327,8 +309,6 @@ class _FlowfileCtx:
         full_path = os.path.join(self._shared_dir, "user_files", filename)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         return full_path
-
-    # ----- logging / display -----
 
     def log(self, message, level: str = "INFO") -> None:
         print("[node:%s]" % str(level).lower(), message, file=sys.stderr)
@@ -349,8 +329,6 @@ class _FlowfileCtx:
 
     def explore(self, obj, title: str = "", max_rows: int = 10000) -> None:
         self.display(obj, title)
-
-    # ----- catalog (needs a running Flowfile server) -----
 
     def _catalog_unavailable(self, api_name: str):
         raise _CatalogUnavailableError(
@@ -379,8 +357,6 @@ class _FlowfileCtx:
     def default_schema(self, *args, **kwargs):
         self._catalog_unavailable("default_schema")
 
-    # ----- fallback -----
-
     def __getattr__(self, name):
         """No-op for APIs this fake does not model, so future SDK additions degrade.
 
@@ -403,8 +379,9 @@ def _seed_example_artifacts(node, ctx):
     if hook is None:
         return
     artifacts = hook()
-    if not artifacts:
+    if artifacts is None:
         return
+    # Before the emptiness check, so `[]` fails like `[1]` does.
     if not isinstance(artifacts, dict):
         raise TypeError("example_artifacts() must return a dict, got %s" % type(artifacts).__name__)
     for name, obj in artifacts.items():

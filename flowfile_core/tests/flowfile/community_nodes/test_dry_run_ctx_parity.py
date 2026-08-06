@@ -1,17 +1,11 @@
 """Drift guard: the dry-run ``flowfile_ctx`` fake must track the real kernel client.
 
-Every public API a node can call on the real ``flowfile_ctx`` has to be either
-faithfully modelled on the dry-run fake or explicitly listed in ``_VOID_APIS``.
-Without this, a new kernel API silently returns ``None`` in CI dry runs and the
-node fails with a symptom that looks nothing like the cause — which is exactly
-how ``publish_global`` and ``get_global`` were broken.
+Every public API must be modelled on the fake or listed in ``_VOID_APIS``, else a
+new kernel API silently returns ``None`` in CI dry runs.
 
-Both sides are read with ``ast`` rather than imported: ``kernel_runtime`` is not
-on the path in the core test environment (it is absent from the poetry
-``packages`` list, and ``import kernel_runtime`` binds to the outer project dir
-as an empty namespace package), and the fake lives inside the ``_RUNNER`` source
-string, so ``dir()``/``inspect`` cannot see it either. Same approach as
-``test_project_exporter.py::test_shim_covers_kernel_public_api``.
+Both sides are read with ``ast``, not imported: ``kernel_runtime`` is not on the
+core test path, and the fake lives inside the ``_RUNNER`` source string. Same
+approach as ``test_project_exporter.py::test_shim_covers_kernel_public_api``.
 """
 
 import ast
@@ -96,11 +90,7 @@ def test_void_apis_are_real_kernel_apis():
 
 
 def test_fake_does_not_invent_apis_the_kernel_lacks():
-    """A method on the fake with no kernel counterpart would work in CI and fail in production.
-
-    ``log_debug`` used to be exactly this: present on the fake, absent from the
-    real client. Private helpers (``_seed_artifact``) and dunders are exempt.
-    """
+    """A fake-only method works in CI and fails in production — ``log_debug`` was one."""
     kernel_api = _kernel_client_api()
     invented = sorted(
         name for name in _fake_methods() if not name.startswith("_") and name not in kernel_api

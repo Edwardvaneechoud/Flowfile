@@ -474,11 +474,13 @@ def test_dry_run_kernel_script_seeds_example_artifacts():
     assert "_seed_hook" not in production
     assert "_result = _Node().process(*_inputs)" in production
     assert "_seed_hook" in dry
-    # Both scopes, matching example_artifacts()'s documented contract and the
-    # community CI harness. Seeding only the global store made a node that reads
-    # via read_artifact() pass CI and fail the Test panel with a bare KeyError.
+    # Both scopes: seeding only the global store breaks read_artifact() nodes.
     assert "flowfile_ctx.publish_global(_seed_name, _seed_obj)" in dry
     assert "flowfile_ctx.publish_artifact(_seed_name, _seed_obj)" in dry
+    assert "example_artifacts() must return a dict" in dry
+    # Delete-then-publish, so an edited hook isn't shadowed by the previous press.
+    assert "flowfile_ctx.delete_artifact(_seed_name)" in dry
+    assert "except ValueError" not in dry
 
 
 @pytest.mark.kernel

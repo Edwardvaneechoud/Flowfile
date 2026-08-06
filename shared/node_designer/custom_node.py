@@ -797,7 +797,10 @@ if not inputs:
         capabilities to the node's consent disclosure. Heavy imports belong
         inside the method body, exactly as in ``process``.
 
-        Only dry runs call this; a real flow run never does.
+        Only dry runs call this; a real flow run never does. It is called once per
+        dry run and must return a ``dict`` (or ``None``); anything else is a
+        ``TypeError``. Re-seeding replaces the previous run's entry, so editing
+        this hook and re-running takes effect immediately.
 
         Returns:
             A ``{artifact_name: object}`` dict; empty by default.

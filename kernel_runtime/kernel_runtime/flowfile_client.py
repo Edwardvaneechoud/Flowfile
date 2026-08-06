@@ -94,15 +94,12 @@ _rendered_figures: contextvars.ContextVar[weakref.WeakSet | None] = contextvars.
     "flowfile_rendered_figures", default=None
 )
 
-# Global artifacts published during a dry run. Kept in-process so pressing "Test"
-# on a node that calls publish_global exercises the real code path without
-# writing a versioned row into the user's catalog. Reset per execution.
+# Dry-run global artifacts, kept in-process so a Test press writes no catalog row.
 _dry_run_globals: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "flowfile_dry_run_globals", default=None
 )
 
-# Monotonic id source for the sandbox. Separate from len(sandbox) so a publish
-# after a delete cannot reuse a live artifact's id.
+# Monotonic, so a publish after a delete cannot reuse a live artifact's id.
 _dry_run_next_id: contextvars.ContextVar[list[int]] = contextvars.ContextVar("flowfile_dry_run_next_id", default=None)
 
 
@@ -472,9 +469,7 @@ def publish_global(
     if serialization_format in ("pickle", "joblib"):
         check_pickleable(obj)
 
-    # Dry run: keep the object in-process instead of writing a catalog row, but only
-    # after the serializability check above — an unpicklable model must fail the Test
-    # panel exactly as it would fail a real run.
+    # Sandboxed after the check above, so an unpicklable model still fails the Test panel.
     sandbox = _dry_run_globals.get(None)
     if sandbox is not None:
         return _dry_run_publish_global(sandbox, name, obj, tags, namespace_id, serialization_format, python_type)
@@ -595,9 +590,8 @@ def get_global(
     """
     from kernel_runtime.serialization import deserialize_from_bytes, deserialize_from_file
 
-    # Dry run: prefer anything this execution published or seeded, then fall through
-    # to the real catalog so a consumer node can still be tested against a model a
-    # previous real run genuinely stored.
+    # Sandbox first, then the real catalog, so a consumer node can be tested against
+    # a genuinely stored model.
     sandbox = _dry_run_globals.get(None)
     if sandbox is not None and name in sandbox:
         return sandbox[name]["obj"]

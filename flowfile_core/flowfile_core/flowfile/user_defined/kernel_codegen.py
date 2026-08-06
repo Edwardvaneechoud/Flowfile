@@ -186,23 +186,27 @@ def generate_kernel_script(
     # Root-DEBUG also unmutes chatty libraries — the log callback itself makes httpx
     # calls, and matplotlib's font manager logs hundreds of findfont lines per figure
     # — so pin the known-noisy ones to WARNING to keep the Test panel readable.
-    # The dry-run form seeds example_artifacts() into BOTH artifact scopes, matching
-    # what the SDK hook promises and what the community CI harness does — a node that
-    # reads a model another node stores has something to read whichever API it uses.
-    # publish_global is sandboxed in-process during a dry run, so the Test panel still
-    # writes nothing to the user's catalog. The flow-local publish tolerates an
-    # already-present name (a previous dry run in this same long-lived kernel).
+    # Seeds example_artifacts() into both scopes; publish_global is sandboxed in a dry
+    # run. Deletes first because each Test press gets a fresh node_id, so the
+    # per-execution clear never reclaims the previous press's seed.
     if dry_run:
         run_node = (
             "_node = _Node()\n"
             '_seed_hook = getattr(_node, "example_artifacts", None)\n'
             "if _seed_hook is not None:\n"
-            "    for _seed_name, _seed_obj in (_seed_hook() or {}).items():\n"
+            "    _seed_artifacts = _seed_hook()\n"
+            "    if _seed_artifacts is None:\n"
+            "        _seed_artifacts = {}\n"
+            "    if not isinstance(_seed_artifacts, dict):\n"
+            '        raise TypeError("example_artifacts() must return a dict, got %s"\n'
+            "                        % type(_seed_artifacts).__name__)\n"
+            "    for _seed_name, _seed_obj in _seed_artifacts.items():\n"
             "        flowfile_ctx.publish_global(_seed_name, _seed_obj)\n"
             "        try:\n"
-            "            flowfile_ctx.publish_artifact(_seed_name, _seed_obj)\n"
-            "        except ValueError:\n"
+            "            flowfile_ctx.delete_artifact(_seed_name)\n"
+            "        except KeyError:\n"
             "            pass\n"
+            "        flowfile_ctx.publish_artifact(_seed_name, _seed_obj)\n"
             "_result = _node.process(*_inputs)\n"
         )
     else:

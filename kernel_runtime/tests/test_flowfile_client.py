@@ -754,12 +754,7 @@ class TestDryRunMode:
         assert "model" not in flowfile_client._dry_run_globals.get()
 
     def test_unpicklable_object_still_fails_in_a_dry_run(self, tmp_dir: Path):
-        """The Test panel must reject what a real run would reject.
-
-        The serializability check runs before the sandbox short-circuit, so an
-        object that could never be persisted fails here too (cloudpickle handles
-        lambdas and closures, so this needs a genuinely unpicklable object).
-        """
+        """The check runs before the sandbox, so an unpersistable object still fails."""
         from kernel_runtime.serialization import UnpickleableObjectError
 
         self._dry_ctx(tmp_dir, dry_run=True)

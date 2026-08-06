@@ -152,12 +152,7 @@ def test_kernel_node_using_flowfile_ctx_dry_runs(tmp_path: Path):
 
 
 def test_global_artifact_store_round_trips(tmp_path: Path):
-    """publish_global returns a real positive id and get_global reads it back.
-
-    The producer node in the community registry raises when it gets None or -1,
-    and the consumer relies on KeyError to detect a miss — the old no-op stub
-    broke both.
-    """
+    """publish_global returns a real positive id and get_global reads it back."""
     outcome = _dry_run(tmp_path, _GLOBAL_ROUND_TRIP_NODE)
     assert outcome.success, outcome.error
 
@@ -177,3 +172,29 @@ def test_catalog_apis_fail_loudly_instead_of_returning_none(tmp_path: Path):
     assert not outcome.success
     assert "read_catalog_table" in outcome.error
     assert "is_dry_run" in outcome.error
+
+
+_BAD_HOOK_NODE = '''
+import polars as pl
+from flowfile import node_designer as nd
+
+
+class BadHook(nd.CustomNodeBase):
+    node_name: str = "Bad Hook"
+    environment: str = "kernel"
+    example_inputs: list = [{"a": [1]}]
+    example_settings: dict = {}
+
+    def example_artifacts(self):
+        return [{"m": 1}]
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+'''
+
+
+def test_example_artifacts_wrong_return_type_is_a_clear_error(tmp_path: Path):
+    """Same message the kernel prologue raises, not a raw AttributeError on .items()."""
+    outcome = _dry_run(tmp_path, _BAD_HOOK_NODE)
+    assert not outcome.success
+    assert outcome.error == "example_artifacts() must return a dict, got list"

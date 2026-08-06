@@ -187,9 +187,7 @@ class ExecuteRequest(BaseModel):
     # Artifact name → source node id lineage allowlist. None ⇒ no lineage context
     # (no enforcement); {} ⇒ lineage known, nothing available.
     available_artifacts: dict[str, int] | None = None
-    # Test-panel dry run: makes flowfile_ctx.is_dry_run() True and sandboxes
-    # global-artifact writes in the kernel. Kernel images older than 0.5.4 ignore
-    # the field (pydantic extra="ignore") and keep today's behaviour.
+    # Sandboxes global-artifact writes in the kernel; images before 0.5.4 ignore it.
     dry_run: bool = False
 
 
