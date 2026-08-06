@@ -72,7 +72,7 @@ A Pydantic model — declare attributes as **annotated fields with defaults**: `
 | `output_names` | `list[str]` | `["main"]` | Keys for multi-output `dict` returns. |
 | `environment` | `Literal["local","kernel"]` | `"local"` | Execution environment (§3). |
 | `dependencies` | `list[str]` | `[]` | pip specs; auto-installed **only** when `environment="kernel"`. |
-| `example_inputs` | `list[dict[str,list]] \| None` | `None` | Dry-run/publish sample data: one `{col: [values]}` per input port. |
+| `example_inputs` | `list[dict[str,list]] \| None` | `None` | Dry-run/publish sample data: one `{col: [values]}` per input port. Each entry must actually build a `pl.LazyFrame` (§2.7). |
 | `example_settings` | `dict[str,dict[str,Any]] \| None` | `None` | Dry-run/publish settings: `{section: {component: value}}`. |
 | `title` | `str \| None` | `"Custom Node"` | Settings-drawer title. |
 | `intro` | `str \| None` | `"A custom node…"` | Settings-drawer intro. |
@@ -137,6 +137,38 @@ Access: `self.settings_schema.<section_attr>.<component_attr>.value`. Gotchas:
 - `SecretSelector` → read `.secret_value` (a `SecretStr`; call `.get_secret_value()`), **not** `.value` (which is the secret *name*). **Local-only** — secrets are not available inside kernels yet (§3.3).
 - `ColumnActionInput.value` → a `ColumnActionValue` (`.rows` of `ColumnActionRow`, `.group_by_columns`, `.order_by_column`).
 
+### 2.7 Dry runs — `is_dry_run()` and `example_artifacts()`
+
+A **dry run** runs your real `process()` against `example_inputs`, but sandboxes its side effects. Two paths do this: the designer Test tab (`user_defined/dry_run.py`) and the community-node CI harness (`community_nodes/dry_run_local.py`, run by the registry's PR checks).
+
+**`example_inputs` must build a real frame.** Polars infers each column's dtype from its **first** value, so `"x1": [5, 6.5, 4.7, 6.9]` infers `Int64` and then rejects `6.5`. Write `5.0`. Bundle validation now constructs every entry and reports `EXAMPLES_INVALID` (`validation.py::_check_example_inputs_build`), so this fails at validate time rather than as a polars traceback mid-dry-run.
+
+**`flowfile_ctx.is_dry_run() -> bool`** — `True` only in a dry run; `False` in a real flow run, a single-file export, and an exported project. Branch on it to skip work that only makes sense against real data:
+
+```python
+if not flowfile_ctx.is_dry_run():
+    notify_downstream(result)
+```
+
+**`example_artifacts()`** — a node that *reads* an artifact another node publishes (a predict node loading a train node's model) has nothing to read in a dry run, so it fails on a missing artifact instead of exercising its real path. Override the hook to supply one:
+
+```python
+def example_artifacts(self) -> dict:
+    """Objects the dry-run seeds into the artifact store before process() runs."""
+    from sklearn.ensemble import RandomForestClassifier   # heavy imports inside, as in process()
+    ...
+    return {"automl_model": {"pipeline": pipeline, "task": "classification", ...}}
+```
+
+- It is a **method**, not a class attribute — the objects (a fitted pipeline, a tokenizer) are not AST-extractable literals, and `_check_examples` only requires `example_inputs`/`example_settings` to be literals.
+- Return a flat `{name: obj}` dict. Each entry is seeded into **both** the flow-local store (`read_artifact`) and the global store (`get_global`), in the CI harness and the Test tab alike.
+- **Build the objects in-process.** Loading a fixture from disk or the network makes the security scanner attach `fs_read` / `network` to the node's consent disclosure (§4.2), and an inlined base64 model blob over 1024 chars is a hard `FF-SEC-011` **deny** (§4.1).
+- Only dry runs call it; a real flow run never does.
+
+**What the harness fakes.** The dry-run `flowfile_ctx` is a faithful in-memory stand-in, not a no-op: `publish_global` returns a real positive id and versions on republish, `get_global`/`read_artifact` raise `KeyError` on a miss, `publish_artifact` raises `ValueError` on a duplicate name, and `get_shared_location` returns a writable temp path. Catalog APIs (`read_catalog_table`, `list_catalogs`, …) need a running server and raise a clear error — guard them with `if not flowfile_ctx.is_dry_run():`. Anything unmodelled falls through to a no-op returning `None`. A drift guard (`tests/flowfile/community_nodes/test_dry_run_ctx_parity.py`) fails CI if a new kernel API is added without a matching fake.
+
+> `flowfile_ctx` is only bound for `environment="kernel"` nodes. In a `local` node it is an undefined name at runtime.
+
 ---
 
 ## 3. Local vs kernel execution
@@ -154,7 +186,7 @@ A kernel node's source **never runs directly**. Core AST-generates a self-contai
 - **Only `process` + nested/helper defs are kept**; **all class-level attribute assignments are dropped.** Put every bit of logic inside `process` — nothing computed at class-body scope exists at kernel runtime.
 - **Settings are baked as JSON** and rebuilt behind a proxy, so `self.settings_schema.<section>.<component>.value` still works. **Every settings value must be JSON-serializable** or generation fails (`KernelCodegenError`).
 - **Inputs arrive as parquet scans** (`pl.scan_parquet` per input); `.collect()` for eager work. Outputs are marshalled back via an injected `flowfile_ctx.publish_output` epilogue.
-- **`flowfile_ctx` is an injected runtime global** (undefined in the plain file — that's expected; linters will flag it). Surface includes `log_info(...)` (surfaces in the Test panel), `read_inputs`/`read_first`, and `publish_artifact(name, obj)` / `read_artifact(name)` (cloudpickle-backed) for persisting a trained model across nodes.
+- **`flowfile_ctx` is an injected runtime global** (undefined in the plain file — that's expected; linters will flag it). Surface includes `log_info(...)` (surfaces in the Test panel), `read_inputs`/`read_first`, `publish_artifact(name, obj)` / `read_artifact(name)` (cloudpickle-backed) for persisting a trained model across nodes, `publish_global` / `get_global` for persisting one across *flows*, and `is_dry_run()` (§2.7).
 
 ### 3.3 Kernel gotchas
 
@@ -205,7 +237,7 @@ The scanner (`community_nodes/security_scan.py`) is a conservative pre-filter; t
 
 - **Folder contract:** `node.py` (≤200 KB) + `manifest.json` (≤16 KB) required; optional `icon.png` (≤256 KB, ≤512×512), `README.md`, `screenshots/` (≤5 PNGs). **SVG forbidden anywhere.** Total ≤6 MB.
 - **Class shape:** exactly one class inheriting **exactly** `CustomNodeBase` (no extra bases/decorators/keywords); defines `node_name` + `process()`.
-- **Examples required:** both `example_inputs` (literal list) and `example_settings` (literal dict), else `EXAMPLES_REQUIRED`.
+- **Examples required:** both `example_inputs` (literal list) and `example_settings` (literal dict), else `EXAMPLES_REQUIRED`. Every `example_inputs` entry must also construct a `pl.LazyFrame`, else `EXAMPLES_INVALID` (§2.7).
 - **Dependencies:** non-empty `dependencies` requires `environment="kernel"`; each spec is a plain PyPI name + optional version specifier — no URLs, `git+`, or pip flags.
 - **Identity:** folder name == `manifest.id` == slug of `node_name`; versions match and strictly increase on update.
 
@@ -436,7 +468,14 @@ class RowSplitter(nd.CustomNodeBase):
 1. **Lint:** `poetry run ruff check <file>` (tests/generated node files are lint-exempt by config, but a clean parse matters). Confirm it imports: the file must `import polars as pl` and `from flowfile import node_designer as nd` and nothing else from flowfile.
 2. **Dry-run** without the app: the designer Test tab drives `flowfile_core/flowfile/user_defined/dry_run.py` — it runs `process` against `example_inputs`/`example_settings` (kernel nodes go through the same AST-generated script path). This is the fastest way to confirm the node executes.
 3. **Install for real:** write the file to `~/.flowfile/user_defined_nodes/<name>.py`; the registry hot-reloads on save. A broken file stays visible-with-error rather than vanishing.
-4. **Publish-readiness:** run the bundle validator / CLI (`python -m flowfile_core.flowfile.community_nodes.cli`) — this is the same code the community repo's CI uses.
+4. **Publish-readiness:** run the bundle validator / CLI (`python -m flowfile_core.flowfile.community_nodes.cli`) — this is the same code the community repo's CI uses:
+
+   ```bash
+   python -m flowfile_core.flowfile.community_nodes.cli validate nodes/<id>
+   python -m flowfile_core.flowfile.community_nodes.cli dry-run nodes/<id> --install-deps --timeout 120 --row-limit 1000
+   ```
+
+   `dry-run` executes `process()` in a child process against `example_inputs`, with the in-memory `flowfile_ctx` of §2.7. A node that reads an artifact it does not publish needs `example_artifacts()` to pass.
 
 Per the repo's working agreement, **do not execute the user's tests or touch his running services** — write the file and describe the verification the user can run.
 

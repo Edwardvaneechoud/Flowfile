@@ -146,6 +146,7 @@ def generate_kernel_script(
     settings_values: dict[str, dict[str, Any]],
     output_names: list[str],
     number_of_inputs: int,
+    dry_run: bool = False,
 ) -> str:
     """Generate a self-contained kernel script for a custom node.
 
@@ -156,6 +157,9 @@ def generate_kernel_script(
         output_names: Declared output handle names.
         number_of_inputs: Declared input-port count (documentation only; the
             script passes every LazyFrame ``read_inputs`` yields, positionally).
+        dry_run: Emit the Test-panel prologue that seeds the node's
+            ``example_artifacts()`` before ``process()``. Production scripts are
+            byte-identical to before when this is false.
 
     Raises:
         KernelCodegenError: unparseable source, missing class/process, or a
@@ -182,10 +186,36 @@ def generate_kernel_script(
     # Root-DEBUG also unmutes chatty libraries — the log callback itself makes httpx
     # calls, and matplotlib's font manager logs hundreds of findfont lines per figure
     # — so pin the known-noisy ones to WARNING to keep the Test panel readable.
+    # Seeds example_artifacts() into both scopes; publish_global is sandboxed in a dry
+    # run. Deletes first because each Test press gets a fresh node_id, so the
+    # per-execution clear never reclaims the previous press's seed.
+    if dry_run:
+        run_node = (
+            "_node = _Node()\n"
+            '_seed_hook = getattr(_node, "example_artifacts", None)\n'
+            "if _seed_hook is not None:\n"
+            "    _seed_artifacts = _seed_hook()\n"
+            "    if _seed_artifacts is None:\n"
+            "        _seed_artifacts = {}\n"
+            "    if not isinstance(_seed_artifacts, dict):\n"
+            '        raise TypeError("example_artifacts() must return a dict, got %s"\n'
+            "                        % type(_seed_artifacts).__name__)\n"
+            "    for _seed_name, _seed_obj in _seed_artifacts.items():\n"
+            "        flowfile_ctx.publish_global(_seed_name, _seed_obj)\n"
+            "        try:\n"
+            "            flowfile_ctx.delete_artifact(_seed_name)\n"
+            "        except KeyError:\n"
+            "            pass\n"
+            "        flowfile_ctx.publish_artifact(_seed_name, _seed_obj)\n"
+            "_result = _node.process(*_inputs)\n"
+        )
+    else:
+        run_node = "_result = _Node().process(*_inputs)\n"
+
     exec_body = (
         "_inputs_by_name = flowfile_ctx.read_inputs()\n"
         "_inputs = [_lf for _lfs in _inputs_by_name.values() for _lf in _lfs]\n"
-        "_result = _Node().process(*_inputs)\n"
+        f"{run_node}"
         "\n"
         f"{epilogue}"
     )

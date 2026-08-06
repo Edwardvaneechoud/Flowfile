@@ -94,6 +94,14 @@ _rendered_figures: contextvars.ContextVar[weakref.WeakSet | None] = contextvars.
     "flowfile_rendered_figures", default=None
 )
 
+# Dry-run global artifacts, kept in-process so a Test press writes no catalog row.
+_dry_run_globals: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "flowfile_dry_run_globals", default=None
+)
+
+# Monotonic, so a publish after a delete cannot reuse a live artifact's id.
+_dry_run_next_id: contextvars.ContextVar[list[int]] = contextvars.ContextVar("flowfile_dry_run_next_id", default=None)
+
 
 def _set_context(
     node_id: int,
@@ -106,6 +114,7 @@ def _set_context(
     internal_token: str | None = None,
     interactive: bool = False,
     available_artifacts: dict[str, int] | None = None,
+    dry_run: bool = False,
 ) -> None:
     _context.set(
         {
@@ -119,10 +128,13 @@ def _set_context(
             "internal_token": internal_token,
             "interactive": interactive,
             "available_artifacts": available_artifacts,
+            "dry_run": dry_run,
             # Warn-once tracking per /execute; _set_context runs once per request.
             "_lineage_warned": set(),
         }
     )
+    _dry_run_globals.set({} if dry_run else None)
+    _dry_run_next_id.set([1])
     if log_callback_url:
         _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0)))
     else:
@@ -142,6 +154,8 @@ def _clear_context() -> None:
     _artifact_previews.set({})
     _deleted_artifacts.set([])
     _rendered_figures.set(None)
+    _dry_run_globals.set(None)
+    _dry_run_next_id.set(None)
 
 
 def _get_context_value(key: str) -> Any:
@@ -162,6 +176,21 @@ def _check_input_available(input_paths: dict[str, list[str]], name: str) -> list
             )
         raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
     return input_paths[name]
+
+
+def is_dry_run() -> bool:
+    """True when this execution is a Flowfile dry run against example data.
+
+    Dry runs (the Node Designer Test panel, the community-node CI harness) run
+    real code but sandbox its side effects: ``publish_global`` writes to an
+    in-process store instead of the catalog, and ``example_artifacts()`` is
+    seeded before ``process()``. Branch on this to skip work that only makes
+    sense against real data — an expensive refit, a downstream notification.
+
+    Always ``False`` outside a dry run, including in notebook/interactive cells
+    and when no execution context is set.
+    """
+    return bool(_context.get({}).get("dry_run", False))
 
 
 def read_input(name: str = "main") -> pl.LazyFrame:
@@ -331,6 +360,54 @@ def _get_internal_auth_headers() -> dict[str, str]:
     return headers
 
 
+def _dry_run_publish_global(
+    sandbox: dict[str, Any],
+    name: str,
+    obj: Any,
+    tags: list[str] | None,
+    namespace_id: int | None,
+    serialization_format: str,
+    python_type: str,
+) -> int:
+    """Store *obj* in the per-execution dry-run sandbox and return a positive id.
+
+    Returning a real-looking id matters: nodes commonly treat ``-1``/``None`` as
+    "the store rejected this" and raise, so a dry run that returned a sentinel
+    would fail every publishing node it was meant to test.
+
+    ``description`` is not carried: ``GlobalArtifactInfo`` has no field for it.
+    """
+    existing = sandbox.get(name)
+    version = existing["info"].version + 1 if existing else 1
+    counter = _dry_run_next_id.get(None) or [1]
+    artifact_id = counter[0]
+    counter[0] += 1
+    _dry_run_next_id.set(counter)
+    try:
+        source_registration_id = _get_context_value("source_registration_id") or -1
+    except RuntimeError:
+        source_registration_id = -1
+    sandbox[name] = {
+        "obj": obj,
+        "info": GlobalArtifactInfo(
+            id=artifact_id,
+            name=name,
+            namespace_id=namespace_id,
+            version=version,
+            status="ready",
+            source_registration_id=source_registration_id,
+            python_type=python_type,
+            serialization_format=serialization_format,
+            size_bytes=None,
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+            tags=list(tags or []),
+            owner_id=-1,
+        ),
+    }
+    log(f"Dry run: '{name}' was kept in memory instead of being written to the artifact store.", "INFO")
+    return artifact_id
+
+
 def publish_global(
     name: str,
     obj: Any,
@@ -391,6 +468,11 @@ def publish_global(
     # This provides a clear error message upfront rather than failing during serialization
     if serialization_format in ("pickle", "joblib"):
         check_pickleable(obj)
+
+    # Sandboxed after the check above, so an unpicklable model still fails the Test panel.
+    sandbox = _dry_run_globals.get(None)
+    if sandbox is not None:
+        return _dry_run_publish_global(sandbox, name, obj, tags, namespace_id, serialization_format, python_type)
 
     try:
         flow_id = _get_context_value("flow_id")
@@ -508,6 +590,12 @@ def get_global(
     """
     from kernel_runtime.serialization import deserialize_from_bytes, deserialize_from_file
 
+    # Sandbox first, then the real catalog, so a consumer node can be tested against
+    # a genuinely stored model.
+    sandbox = _dry_run_globals.get(None)
+    if sandbox is not None and name in sandbox:
+        return sandbox[name]["obj"]
+
     # 1. Get metadata and download source from Core
     params = {}
     if version is not None:
@@ -581,11 +669,20 @@ def list_global_artifacts(
     if tags:
         params["tags"] = tags
 
+    sandbox = _dry_run_globals.get(None)
+    sandboxed = [entry["info"] for entry in (sandbox or {}).values()]
+    if namespace_id is not None:
+        sandboxed = [info for info in sandboxed if info.namespace_id == namespace_id]
+    if tags:
+        sandboxed = [info for info in sandboxed if set(tags).issubset(set(info.tags))]
+
     auth_headers = _get_internal_auth_headers()
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         resp = client.get(f"{_CORE_URL}/artifacts/", params=params)
         resp.raise_for_status()
-        return [GlobalArtifactInfo.model_validate(item) for item in resp.json()]
+        published = [GlobalArtifactInfo.model_validate(item) for item in resp.json()]
+    sandboxed_names = {info.name for info in sandboxed}
+    return sandboxed + [info for info in published if info.name not in sandboxed_names]
 
 
 def delete_global_artifact(
@@ -603,6 +700,9 @@ def delete_global_artifact(
         namespace: Namespace (schema) filter by name; resolved to an id server-side.
             Raises if the name is unknown or matches more than one namespace.
 
+    In a dry run this only deletes from the run's own sandbox; a name the run did
+    not publish raises ``KeyError`` rather than touching the stored artifact.
+
     Raises:
         KeyError: If artifact is not found.
         httpx.HTTPStatusError: If API calls fail.
@@ -612,6 +712,18 @@ def delete_global_artifact(
         >>> flowfile_ctx.delete_global_artifact("my_model", version=1)  # delete v1 only
         >>> flowfile_ctx.delete_global_artifact("my_model", namespace="my_schema")
     """
+    # A dry run deletes only from its own sandbox. Unlike get_global, this never falls
+    # through to the catalog: a read of real data is harmless, a delete is not.
+    sandbox = _dry_run_globals.get(None)
+    if sandbox is not None:
+        if name not in sandbox:
+            raise KeyError(
+                f"Artifact '{name}' was not published in this dry run. "
+                "A dry run cannot delete artifacts from the artifact store."
+            )
+        del sandbox[name]
+        return
+
     auth_headers = _get_internal_auth_headers()
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         if version is not None:

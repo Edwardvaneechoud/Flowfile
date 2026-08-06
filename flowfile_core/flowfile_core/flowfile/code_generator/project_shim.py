@@ -121,6 +121,11 @@ def _first_input_frame(inputs: dict[str, list[pl.LazyFrame]]) -> pl.LazyFrame:
 # ===== Node-facing context helpers =====
 
 
+def is_dry_run() -> bool:
+    """Always False: an exported project runs for real, against real data."""
+    return False
+
+
 def _get_context() -> dict[str, Any]:
     if _current_context is None:
         raise RuntimeError(
@@ -174,10 +179,12 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
 # ===== Local artifact store (pickle-based) =====
 
 
-def publish_artifact(name: str, obj: Any) -> None:
+def publish_artifact(name: str, obj: Any, preview: bool = False) -> None:
     """Pickle *obj* into the project-local ``.artifacts/`` directory.
 
     Mirrors the kernel: publishing an existing name raises ValueError.
+    ``preview`` is accepted for signature parity; an exported project has no
+    preview panel to render into.
     """
     _ARTIFACTS_DIR.mkdir(exist_ok=True)
     path = _ARTIFACTS_DIR / f"{name}.pkl"
@@ -256,8 +263,11 @@ def log_error(message: str) -> None:
     log(message, level="ERROR")
 
 
-def display(obj: Any, title: str = "") -> None:
-    """Print *obj* to stdout (the kernel renders rich output in the notebook panel)."""
+def display(obj: Any, title: str = "", max_rows: int = 10_000) -> None:
+    """Print *obj* to stdout (the kernel renders rich output in the notebook panel).
+
+    ``max_rows`` is accepted for signature compatibility, unused here.
+    """
     if title:
         print(f"=== {title} ===")
     print(obj)
