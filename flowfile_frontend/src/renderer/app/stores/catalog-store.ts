@@ -190,7 +190,12 @@ export const useCatalogStore = defineStore("catalog", {
       Math.max(1, Math.ceil(state.scheduleRunsTotal / state.runsPageSize)),
 
     enrichedSchedules(state) {
-      const activeIds = new Set(
+      const activeScheduleIds = new Set(
+        state.activeRuns.map((r) => r.schedule_id).filter((id) => id !== null),
+      );
+      // Registration-scoped: any active run of the flow (including manual/designer runs with no
+      // schedule_id) blocks a new Run Now, even though the badge stays schedule-scoped.
+      const activeRegistrationIds = new Set(
         state.activeRuns.map((r) => r.registration_id).filter((id) => id !== null),
       );
       return state.schedules.map((s) => ({
@@ -198,7 +203,8 @@ export const useCatalogStore = defineStore("catalog", {
         flowName:
           state.allFlows.find((f) => f.id === s.registration_id)?.name ??
           `Flow #${s.registration_id}`,
-        isRunning: activeIds.has(s.registration_id),
+        isRunning: activeScheduleIds.has(s.id),
+        isFlowRunning: activeRegistrationIds.has(s.registration_id),
       }));
     },
   },

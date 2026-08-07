@@ -314,6 +314,7 @@ class FlowRunService:
                 nodes_completed=r.nodes_completed,
                 number_of_nodes=r.number_of_nodes,
                 run_type=r.run_type,
+                schedule_id=r.schedule_id,
             )
             for r in runs
         ]

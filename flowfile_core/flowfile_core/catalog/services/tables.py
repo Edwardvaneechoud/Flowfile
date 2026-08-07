@@ -1056,6 +1056,9 @@ class TableService:
         if namespace_id is not None and namespace_id != table.namespace_id:
             self._reject_invalid_reparent(table, namespace_id)
             table.namespace_id = namespace_id
+        # A metadata edit is not a data change: force the current value into the UPDATE
+        # to suppress onupdate, so table-trigger schedules don't fire on a rename.
+        flag_modified(table, "updated_at")
         table = self.repo.update_table(table)
         _project_sync_tables(table.owner_id)
         return self.table_to_out(table)

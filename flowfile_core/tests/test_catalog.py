@@ -5,6 +5,7 @@ run history, stats, and the default namespace seeding.
 """
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -1652,6 +1653,176 @@ class TestPushTableTrigger:
 
             runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
             assert len(runs) == 0
+
+
+# Trigger arming, metadata-edit suppression, scheduler-run visibility
+
+
+class TestTriggerArmingAndRunVisibility:
+    """A trigger schedule must be armed with the tables' current state at create
+    (and re-arm on re-enable) so the scheduler's first tick sees no change; metadata
+    edits must not bump ``updated_at``; scheduler-shaped runs must be visible to
+    core's registration-scoped run queries."""
+
+    OLD = datetime(2020, 1, 1, 0, 0, 0)
+
+    @staticmethod
+    def _setup(n_tables: int = 1, table_updated_at=None):
+        """Create namespace + flow + n tables. Returns (flow_id, [table_ids])."""
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="ArmCat", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+
+            schema = CatalogNamespace(name="ArmSch", level=1, parent_id=cat.id, owner_id=1)
+            db.add(schema)
+            db.commit()
+            db.refresh(schema)
+
+            flow = FlowRegistration(
+                name="armed_flow",
+                flow_path="/tmp/armed.yaml",
+                namespace_id=schema.id,
+                owner_id=1,
+            )
+            db.add(flow)
+            db.commit()
+            db.refresh(flow)
+
+            table_ids = []
+            for idx in range(n_tables):
+                kwargs = {}
+                if table_updated_at is not None:
+                    kwargs["updated_at"] = (
+                        table_updated_at[idx] if isinstance(table_updated_at, list) else table_updated_at
+                    )
+                table = CatalogTable(
+                    name=f"armed_table_{idx}",
+                    namespace_id=schema.id,
+                    owner_id=1,
+                    file_path=f"/tmp/armed_{idx}.parquet",
+                    **kwargs,
+                )
+                db.add(table)
+                db.commit()
+                db.refresh(table)
+                table_ids.append(table.id)
+
+            return flow.id, table_ids
+
+    def test_create_table_trigger_arms_watermark(self):
+        flow_id, table_ids = self._setup(1)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.create_schedule(
+                registration_id=flow_id,
+                owner_id=1,
+                schedule_type="table_trigger",
+                trigger_table_id=table_ids[0],
+            )
+            table = db.get(CatalogTable, table_ids[0])
+            assert out.last_trigger_table_updated_at == table.updated_at
+
+    def test_create_table_set_trigger_arms_watermark_to_max(self):
+        stamps = [datetime(2020, 1, 1, 0, 0, 0), datetime(2021, 6, 5, 4, 3, 2)]
+        flow_id, table_ids = self._setup(2, table_updated_at=stamps)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.create_schedule(
+                registration_id=flow_id,
+                owner_id=1,
+                schedule_type="table_set_trigger",
+                trigger_table_ids=table_ids,
+            )
+            assert out.last_trigger_table_updated_at == max(stamps)
+
+    def test_re_enabling_disabled_trigger_re_arms(self):
+        flow_id, table_ids = self._setup(1, table_updated_at=self.OLD)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            created = svc.create_schedule(
+                registration_id=flow_id,
+                owner_id=1,
+                schedule_type="table_trigger",
+                trigger_table_id=table_ids[0],
+            )
+            svc.update_schedule(created.id, enabled=False)
+
+            # A write lands while the schedule is disabled.
+            bumped = datetime(2026, 3, 1, 12, 0, 0)
+            db.get(CatalogTable, table_ids[0]).updated_at = bumped
+            db.commit()
+
+            out = svc.update_schedule(created.id, enabled=True)
+            assert out.last_trigger_table_updated_at >= bumped
+
+    def test_metadata_edit_does_not_bump_updated_at(self):
+        _flow_id, table_ids = self._setup(1, table_updated_at=self.OLD)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            svc.update_table(table_ids[0], name="renamed_table", description="new description")
+            db.expire_all()
+            assert db.get(CatalogTable, table_ids[0]).updated_at == self.OLD
+
+    def test_run_is_visible_only_with_flow_uuid(self):
+        """Registration-scoped run queries resolve through ``flow_uuid``, so a run row
+        without one is invisible to core — which is why the scheduler must stamp it."""
+        flow_id, _table_ids = self._setup(1)
+        with get_db_context() as db:
+            run = FlowRun(
+                registration_id=flow_id,
+                flow_uuid=None,
+                flow_name="armed_flow",
+                flow_path="/tmp/armed.yaml",
+                user_id=1,
+                started_at=datetime.now(timezone.utc),
+                number_of_nodes=0,
+                run_type="scheduled",
+            )
+            db.add(run)
+            db.commit()
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            assert svc.list_runs(registration_id=flow_id).total == 0
+            assert repo.has_active_run(flow_id) is False
+
+            run.flow_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow_id).scalar()
+            db.commit()
+
+            assert svc.list_runs(registration_id=flow_id).total == 1
+            assert repo.has_active_run(flow_id) is True
+
+    def test_list_active_runs_exposes_schedule_id(self):
+        flow_id, table_ids = self._setup(1)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            schedule = svc.create_schedule(
+                registration_id=flow_id,
+                owner_id=1,
+                schedule_type="table_trigger",
+                trigger_table_id=table_ids[0],
+            )
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow_id).scalar()
+            db.add(
+                FlowRun(
+                    registration_id=flow_id,
+                    flow_uuid=reg_uuid,
+                    flow_name="armed_flow",
+                    flow_path="/tmp/armed.yaml",
+                    user_id=1,
+                    started_at=datetime.now(timezone.utc),
+                    number_of_nodes=0,
+                    run_type="scheduled",
+                    schedule_id=schedule.id,
+                )
+            )
+            db.commit()
+
+            active = svc.list_active_runs()
+            assert len(active) == 1
+            assert active[0].schedule_id == schedule.id
 
 
 # Cross-namespace table resolution
