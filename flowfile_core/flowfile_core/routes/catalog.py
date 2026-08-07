@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.catalog import (
+    KEEP_PREDICTION,
     AmbiguousTableError,
     CatalogService,
     DashboardNotFoundError,
@@ -764,11 +765,15 @@ def update_table(
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
+    prediction_table_id = (
+        body.prediction_table_id if "prediction_table_id" in body.model_fields_set else KEEP_PREDICTION
+    )
     return service.update_table(
         table_id=table_id,
         name=body.name,
         description=body.description,
         namespace_id=body.namespace_id,
+        prediction_table_id=prediction_table_id,
     )
 
 

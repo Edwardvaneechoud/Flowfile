@@ -239,9 +239,16 @@ class CatalogTableCreate(BaseModel):
 
 
 class CatalogTableUpdate(BaseModel):
+    """Patch a catalog table's metadata.
+
+    ``prediction_table_id`` is tri-state: an explicitly-sent ``null`` clears the association,
+    an absent field keeps whatever is stored (the route distinguishes via ``model_fields_set``).
+    """
+
     name: str | None = None
     description: str | None = None
     namespace_id: int | None = None
+    prediction_table_id: int | None = None
 
 
 class CatalogTableFromDataCreate(BaseModel):
@@ -402,6 +409,9 @@ class CatalogTableOut(BaseModel):
     partition_columns: list[str] | None = None
     # Set only for tables maintained by an SCD2 write; NULL for every other table.
     scd2: Scd2TableConfig | None = None
+    # Sibling catalog table holding model predictions; the name is None when the target row is gone.
+    prediction_table_id: int | None = None
+    prediction_table_name: str | None = None
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None

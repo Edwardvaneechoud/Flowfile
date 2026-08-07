@@ -58,8 +58,8 @@
     <div v-else-if="step === 'setup'" class="editor-setup">
       <h3>How should edits attach to rows?</h3>
       <p class="setup-explainer">
-        Edits are saved as keyed merges: the key column(s) must uniquely identify every row.
-        Row order in the preview is not stable, so a real key is required.
+        Edits are saved as keyed merges: the key column(s) must uniquely identify every row. Row
+        order in the preview is not stable, so a real key is required.
       </p>
       <el-select
         v-model="selectedKeys"
@@ -86,8 +86,8 @@
         </el-select>
         <span v-if="totalRows > rowLimit" class="setup-warning">
           This table has {{ totalRows.toLocaleString() }} rows — only the first
-          {{ rowLimit.toLocaleString() }} are loaded for editing. Rows beyond that are not shown
-          and will not be modified.
+          {{ rowLimit.toLocaleString() }} are loaded for editing. Rows beyond that are not shown and
+          will not be modified.
         </span>
       </div>
       <div class="setup-actions">
@@ -156,6 +156,8 @@
     <TableLabelingMode
       v-if="showLabeling"
       :session="session"
+      :table="table"
+      :row-limit="rowLimit"
       @close="closeLabeling"
       @add-column="addColumnFromLabeling"
     />
@@ -400,7 +402,9 @@ async function mintKeyColumn() {
     emit("saved", response.table);
     selectedKeys.value = [response.column_name];
     await loadSession();
-    ElMessage.success(`Added ${response.column_name} — table rewritten as version ${response.new_version}.`);
+    ElMessage.success(
+      `Added ${response.column_name} — table rewritten as version ${response.new_version}.`,
+    );
   } catch (error) {
     ElMessage.error(catalogSaveErrorMessage(error, "Failed to add the record id column."));
   } finally {

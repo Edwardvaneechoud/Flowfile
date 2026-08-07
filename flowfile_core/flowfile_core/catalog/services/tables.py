@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from deltalake import DeltaTable
@@ -60,6 +61,9 @@ from flowfile_core.schemas.catalog_schema import (
 )
 from shared.storage_config import storage
 
+if TYPE_CHECKING:
+    from flowfile_core.catalog.access import AccessResolver
+
 logger = logging.getLogger(__name__)
 
 # Sentinel: the caller did not speak about scd2_config, so leave whatever is stored untouched.
@@ -67,6 +71,12 @@ logger = logging.getLogger(__name__)
 # authoritative and always passes an explicit dict (SCD2) or ``None`` (any other mode, which
 # destroyed the history and therefore clears the flag).
 _KEEP_SCD2 = object()
+
+# Sentinel: the caller did not speak about prediction_table_id, so leave the association untouched.
+# An explicit ``None`` clears it; only the update route distinguishes the two.
+# Public, unlike the sibling _KEEP_SCD2: the update route needs it to distinguish
+# "field absent" from an explicit null.
+KEEP_PREDICTION = object()
 
 
 def _scd2_columns_missing_from_schema(raw_scd2_config: str | None, schema_list: list[dict[str, str]] | None) -> bool:
@@ -135,11 +145,14 @@ class TableService:
         namespaces: NamespaceService,
         flows: FlowRegistrationService,
         schedules: ScheduleService,
+        access: AccessResolver | None = None,
     ) -> None:
         self.repo = repo
         self._namespaces = namespaces
         self._flows = flows
         self._schedules = schedules
+        # None (internal callers, electron mode, tests) ⇒ unrestricted enrichment.
+        self._access = access
         # Per-request cache of cloud connection availability by namespace_id (resolved once per catalog).
         self._cloud_conn_cache: dict[int | None, bool] = {}
 
@@ -330,6 +343,27 @@ class TableService:
         reg = self.repo.get_flow(registration_id)
         return reg.name if reg else None
 
+    def _can_read_table(self, table_id: int) -> bool:
+        """Whether the caller may see *table_id* at all; always True when unrestricted.
+
+        Mirrors the id set ``CatalogService._filter_by_access`` uses, so a cross-referenced
+        table's name is exposed exactly when that table would itself be listed.
+        """
+        if self._access is None or not self._access.restricted:
+            return True
+        return table_id in self._access.accessible_ids("catalog_table")
+
+    def _resolve_table_name(self, table_id: int | None) -> str | None:
+        """Name of a cross-referenced catalog table, or None when it is gone or off-limits.
+
+        Row filtering drops whole tables but never enrichment fields, so an inaccessible
+        target must degrade to a bare id here rather than leak its name.
+        """
+        if not table_id or not self._can_read_table(table_id):
+            return None
+        target = self.repo.get_table(table_id)
+        return target.name if target else None
+
     def _cloud_storage_connection_available(self, namespace_id: int | None) -> bool:
         """True when the catalog's object-storage connection still resolves (memoized per request, no data probe)."""
         if namespace_id in self._cloud_conn_cache:
@@ -468,6 +502,8 @@ class TableService:
             source_table_versions=getattr(table, "source_table_versions", None),
             partition_columns=self._parse_partition_columns(table),
             scd2=self._parse_scd2_config(table),
+            prediction_table_id=table.prediction_table_id,
+            prediction_table_name=self._resolve_table_name(table.prediction_table_id),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -487,6 +523,8 @@ class TableService:
                 ns_name_cache[t.namespace_id] = self._namespaces.resolve_namespace_name(t.namespace_id)
                 ns_path_cache[t.namespace_id] = self._namespaces.resolve_namespace_path(t.namespace_id)
 
+        prediction_name_cache: dict[int, str | None] = {t.id: t.name for t in tables if self._can_read_table(t.id)}
+
         result: list[CatalogTableOut] = []
         for table in tables:
             columns = self._parse_schema_columns(table)
@@ -502,6 +540,13 @@ class TableService:
             namespace_path = ns_path_cache.get(table.namespace_id) if table.namespace_id is not None else None
             full_table_name = format_full_name(namespace_name, table.name)
             qualified_name = format_full_name(namespace_path, table.name)
+
+            prediction_table_id = table.prediction_table_id
+            prediction_table_name = None
+            if prediction_table_id:
+                if prediction_table_id not in prediction_name_cache:
+                    prediction_name_cache[prediction_table_id] = self._resolve_table_name(prediction_table_id)
+                prediction_table_name = prediction_name_cache[prediction_table_id]
 
             result.append(
                 CatalogTableOut(
@@ -534,6 +579,8 @@ class TableService:
                     source_table_versions=getattr(table, "source_table_versions", None),
                     partition_columns=self._parse_partition_columns(table),
                     scd2=self._parse_scd2_config(table),
+                    prediction_table_id=prediction_table_id,
+                    prediction_table_name=prediction_table_name,
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -1240,8 +1287,13 @@ class TableService:
         name: str | None = None,
         description: str | None = None,
         namespace_id: int | None = None,
+        prediction_table_id: int | None | object = KEEP_PREDICTION,
     ) -> CatalogTableOut:
-        """Update a catalog table's metadata."""
+        """Update a catalog table's metadata.
+
+        ``prediction_table_id`` defaults to the ``KEEP_PREDICTION`` sentinel: an explicit ``None``
+        clears the association, an int must name a different, existing catalog table.
+        """
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
@@ -1252,6 +1304,13 @@ class TableService:
         if namespace_id is not None and namespace_id != table.namespace_id:
             self._reject_invalid_reparent(table, namespace_id)
             table.namespace_id = namespace_id
+        if prediction_table_id is not KEEP_PREDICTION:
+            if prediction_table_id is not None:
+                if prediction_table_id == table_id:
+                    raise ValueError("A table cannot be its own prediction table")
+                if self.repo.get_table(prediction_table_id) is None:
+                    raise TableNotFoundError(table_id=prediction_table_id)
+            table.prediction_table_id = prediction_table_id
         table = self.repo.update_table(table)
         _project_sync_tables(table.owner_id)
         return self.table_to_out(table)

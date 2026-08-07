@@ -2,17 +2,29 @@ import { describe, expect, it } from "vitest";
 import {
   applyCellEdit,
   buildEditsPayload,
+  buildJoinKeySpec,
   buildLabelClasses,
+  buildSuggestionMap,
+  detectProbabilityColumns,
   distinctColumnValues,
+  formatConfidence,
   hasPendingChanges,
   isEditableDtype,
+  isNumericDtype,
+  joinKeyToken,
   labelingOrder,
   labelingProgress,
+  rowSuggestion,
   sessionCounts,
   suggestKeyColumns,
+  suggestionCoverage,
+  suggestionDisagreement,
   validateKeyValues,
+  type EditColumn,
   type EditRow,
   type EditSession,
+  type JoinKeySpec,
+  type SuggestionEntry,
 } from "./tableEditing";
 
 let uid = 0;
@@ -61,7 +73,13 @@ describe("isEditableDtype", () => {
   });
 
   it("rejects nested and binary dtypes", () => {
-    for (const dtype of ["list<item: int64>", "struct<a: int64>", "binary", "large_binary", "map<...>"]) {
+    for (const dtype of [
+      "list<item: int64>",
+      "struct<a: int64>",
+      "binary",
+      "large_binary",
+      "map<...>",
+    ]) {
       expect(isEditableDtype(dtype), dtype).toBe(false);
     }
   });
@@ -144,7 +162,9 @@ describe("validateKeyValues", () => {
   });
 
   it("rejects integers beyond the JS safe range", () => {
-    const session = makeSession([makeRow({ id: 9007199254740993, text: "a", score: 1 })]);
+    const session = makeSession([
+      makeRow({ id: Number.MAX_SAFE_INTEGER + 1, text: "a", score: 1 }),
+    ]);
     expect(validateKeyValues(session)).toMatch(/safe range/i);
   });
 
@@ -158,7 +178,7 @@ describe("validateKeyValues", () => {
     // score is dirty on row A, so row B's unedited (JSON-rounded) big int would ship too.
     const edited = makeRow({ id: 1, text: "a", score: 1 });
     applyCellEdit(edited, "score", 2);
-    const collateral = makeRow({ id: 2, text: "b", score: 9007199254740993 });
+    const collateral = makeRow({ id: 2, text: "b", score: Number.MAX_SAFE_INTEGER + 1 });
     applyCellEdit(collateral, "text", "b-edited");
     const session = makeSession([edited, collateral]);
     expect(validateKeyValues(session)).toMatch(/rows you did not edit/i);
@@ -246,5 +266,435 @@ describe("labelling helpers", () => {
       total: 4,
       perClass: { spam: 1, ham: 1 },
     });
+  });
+});
+
+describe("isNumericDtype", () => {
+  it("accepts numeric arrow dtypes only", () => {
+    for (const dtype of ["int64", "uint8", " float32 ", "float", "double", "decimal128(10, 2)"]) {
+      expect(isNumericDtype(dtype), dtype).toBe(true);
+    }
+    for (const dtype of [
+      "large_string",
+      "string",
+      "bool",
+      "date32[day]",
+      "",
+      "list<item: int64>",
+    ]) {
+      expect(isNumericDtype(dtype), dtype).toBe(false);
+    }
+  });
+});
+
+const joinSessionColumns: EditColumn[] = [
+  { name: "id", dtype: "int64", isNew: false, editable: true },
+  { name: "region", dtype: "large_string", isNew: false, editable: true },
+];
+
+describe("buildJoinKeySpec", () => {
+  it("coerces a numeric session key even against a string prediction column", () => {
+    expect(
+      buildJoinKeySpec(["id", "region"], joinSessionColumns, ["id", "region", "prediction"]),
+    ).toEqual([
+      { column: "id", coerceNumeric: true },
+      { column: "region", coerceNumeric: false },
+    ]);
+  });
+
+  it("does not coerce a string session key against a numeric prediction column", () => {
+    expect(buildJoinKeySpec(["region"], joinSessionColumns, ["region"])).toEqual([
+      { column: "region", coerceNumeric: false },
+    ]);
+  });
+
+  it("keeps zero-padded string session keys distinct from their numeric form", () => {
+    const spec = buildJoinKeySpec(["region"], joinSessionColumns, ["region"])!;
+    expect(joinKeyToken(["007"], spec)).not.toBe(joinKeyToken(["7"], spec));
+    // Ordinary values still join across the grid's string/number shape difference.
+    expect(joinKeyToken(["7"], spec)).toBe(joinKeyToken([7], spec));
+  });
+
+  it("treats a dtype missing on both sides as non-numeric", () => {
+    expect(buildJoinKeySpec(["ghost"], joinSessionColumns, ["ghost"])).toEqual([
+      { column: "ghost", coerceNumeric: false },
+    ]);
+  });
+
+  it("returns null when a key column is absent from the prediction table", () => {
+    expect(buildJoinKeySpec(["id"], joinSessionColumns, ["region"])).toBeNull();
+  });
+
+  it("returns null without key columns", () => {
+    expect(buildJoinKeySpec([], joinSessionColumns, ["id"])).toBeNull();
+  });
+});
+
+describe("joinKeyToken", () => {
+  const numeric: JoinKeySpec[] = [{ column: "id", coerceNumeric: true }];
+  const strict: JoinKeySpec[] = [{ column: "id", coerceNumeric: false }];
+
+  it("matches numbers with their grid string forms", () => {
+    expect(joinKeyToken([42], numeric)).toBe(joinKeyToken(["42"], numeric));
+    expect(joinKeyToken(["007"], numeric)).toBe(joinKeyToken([7], numeric));
+    expect(joinKeyToken(["+7"], numeric)).toBe(joinKeyToken([7], numeric));
+    expect(joinKeyToken(["-0"], numeric)).toBe(joinKeyToken([0], numeric));
+    expect(joinKeyToken(["1.50"], numeric)).toBe(joinKeyToken([1.5], numeric));
+    expect(joinKeyToken([" 42 "], numeric)).toBe(joinKeyToken([42], numeric));
+  });
+
+  it("keeps text-valued integers beyond 2^53 exact", () => {
+    const big = joinKeyToken(["1234567890123456789"], numeric);
+    const neighbour = joinKeyToken(["1234567890123456788"], numeric);
+    expect(big).toBe("n:1234567890123456789");
+    expect(big).not.toBe(neighbour);
+    expect(joinKeyToken(["9007199254740993"], numeric)).toBe("n:9007199254740993");
+  });
+
+  it("cannot recover precision from a number-valued integer beyond 2^53", () => {
+    // An int column ships as a JSON number, so the server's ...993 arrives as ...992.
+    const fromNumber = joinKeyToken([Number.MAX_SAFE_INTEGER + 2], numeric);
+    expect(fromNumber).toBe("n:9007199254740992");
+    expect(fromNumber).toBe(joinKeyToken([Number.MAX_SAFE_INTEGER + 1], numeric));
+    expect(fromNumber).not.toBe(joinKeyToken(["9007199254740993"], numeric));
+  });
+
+  it("stays strict for non-numeric key columns", () => {
+    expect(joinKeyToken(["42"], strict)).toBe("s:42");
+    expect(joinKeyToken(["42"], strict)).not.toBe(joinKeyToken(["042"], strict));
+  });
+
+  it("falls back to the raw string when a coerced value is not a number", () => {
+    expect(joinKeyToken(["abc"], numeric)).toBe("s:abc");
+  });
+
+  it("returns null when any part is empty or blank", () => {
+    const composite: JoinKeySpec[] = [...numeric, { column: "region", coerceNumeric: false }];
+    expect(joinKeyToken([null], numeric)).toBeNull();
+    expect(joinKeyToken([""], strict)).toBeNull();
+    expect(joinKeyToken([1, undefined], composite)).toBeNull();
+    expect(joinKeyToken([" "], numeric)).toBeNull();
+    expect(joinKeyToken(["\t"], numeric)).toBeNull();
+    expect(joinKeyToken([" "], strict)).toBeNull();
+    expect(joinKeyToken([[]], numeric)).toBeNull();
+  });
+
+  it("never folds a blank or boolean key onto a genuine key of 0", () => {
+    expect(joinKeyToken([0], numeric)).toBe("n:0");
+    expect(joinKeyToken([" "], numeric)).not.toBe("n:0");
+    expect(joinKeyToken([[]], numeric)).not.toBe("n:0");
+    expect(joinKeyToken([false], numeric)).toBe("s:false");
+  });
+
+  it("joins composite keys on a separator no cell value can hold", () => {
+    const composite: JoinKeySpec[] = [...numeric, { column: "region", coerceNumeric: false }];
+    expect(joinKeyToken(["07", "eu"], composite)).toBe("n:7\u0000s:eu");
+    expect(joinKeyToken([7, "eu"], composite)).toBe(joinKeyToken(["7", "eu"], composite));
+    expect(joinKeyToken([7, "us"], composite)).not.toBe(joinKeyToken([7, "eu"], composite));
+  });
+
+  it("keeps composite keys distinct when a part looks like a joined token", () => {
+    const twoStrings: JoinKeySpec[] = [
+      { column: "a", coerceNumeric: false },
+      { column: "b", coerceNumeric: false },
+    ];
+    expect(joinKeyToken(["x s:y", "z"], twoStrings)).not.toBe(
+      joinKeyToken(["x", "y s:z"], twoStrings),
+    );
+  });
+});
+
+describe("buildSuggestionMap", () => {
+  const keySpec: JoinKeySpec[] = [{ column: "id", coerceNumeric: true }];
+  const predColumns = ["id", "prediction", "confidence", "proba_spam", "proba_ham"];
+
+  it("indexes a prediction row by its coerced key", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [["1", "spam", 0.91, 0.91, 0.09]],
+      keySpec,
+      "prediction",
+      "confidence",
+      { spam: "proba_spam", ham: "proba_ham" },
+    );
+    expect(map.byKey.get("n:1")).toEqual({
+      suggested: "spam",
+      confidence: 0.91,
+      probabilities: { spam: 0.91, ham: 0.09 },
+    });
+    expect(map.duplicateKeys).toBe(0);
+    expect(map.unjoinableRows).toBe(0);
+  });
+
+  it("takes the highest-probability class across rows sharing a key", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", 0.4, null, null],
+        ["01", "ham", 0.9, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(map.byKey.get("n:1")).toEqual({
+      suggested: "ham",
+      confidence: 0.9,
+      probabilities: { spam: 0.4, ham: 0.9 },
+    });
+    expect(map.duplicateKeys).toBe(0);
+  });
+
+  it("is order-independent for a long table", () => {
+    const rows = [
+      [19, "business", 0.7757, null, null],
+      [19, "sports", 0.2242, null, null],
+    ];
+    const forward = buildSuggestionMap(predColumns, rows, keySpec, "prediction", "confidence", null);
+    const reversed = buildSuggestionMap(
+      predColumns,
+      [...rows].reverse(),
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(forward.byKey.get("n:19")).toEqual(reversed.byKey.get("n:19"));
+    expect(forward.byKey.get("n:19")?.suggested).toBe("business");
+  });
+
+  it("counts a repeat of the same class for a key as a duplicate", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", 0.9, null, null],
+        [1, "spam", 0.3, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(map.byKey.get("n:1")?.confidence).toBe(0.9);
+    expect(map.duplicateKeys).toBe(1);
+  });
+
+  it("falls back to the first class when nothing can rank the candidates", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", null, null, null],
+        [1, "ham", null, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(map.byKey.get("n:1")?.suggested).toBe("spam");
+    expect(map.byKey.get("n:1")?.probabilities).toBeNull();
+  });
+
+  it("counts rows with an empty key as unjoinable", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [null, "spam", 0.9, null, null],
+        ["", "ham", 0.9, null, null],
+        [2, "ham", 0.9, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(map.unjoinableRows).toBe(2);
+    expect(map.byKey.size).toBe(1);
+  });
+
+  it("skips rows without a suggestion without counting them", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, null, 0.9, null, null],
+        [2, "", 0.9, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(map.byKey.size).toBe(0);
+    expect(map.unjoinableRows).toBe(0);
+    expect(map.duplicateKeys).toBe(0);
+  });
+
+  it("parses confidence and nulls unusable values", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", "0.75", null, null],
+        [2, "ham", "not-a-number", null, null],
+        [3, "ham", null, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      null,
+    );
+    expect(map.byKey.get("n:1")?.confidence).toBe(0.75);
+    expect(map.byKey.get("n:2")?.confidence).toBeNull();
+    expect(map.byKey.get("n:3")?.confidence).toBeNull();
+  });
+
+  it("leaves confidence null when no confidence column is picked", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [[1, "spam", 0.9, null, null]],
+      keySpec,
+      "prediction",
+      null,
+      null,
+    );
+    expect(map.byKey.get("n:1")?.confidence).toBeNull();
+  });
+
+  it("extracts partial probabilities and nulls them when nothing is usable", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", 0.9, "0.9", null],
+        [2, "ham", 0.9, null, null],
+      ],
+      keySpec,
+      "prediction",
+      "confidence",
+      { spam: "proba_spam", ham: "proba_ham", other: "proba_missing" },
+    );
+    expect(map.byKey.get("n:1")?.probabilities).toEqual({ spam: 0.9 });
+    expect(map.byKey.get("n:2")?.probabilities).toBeNull();
+  });
+});
+
+describe("detectProbabilityColumns", () => {
+  it("matches proba_ case-insensitively", () => {
+    expect(detectProbabilityColumns(["id", "Proba_Spam", "proba_ham"], ["spam", "ham"])).toEqual({
+      spam: "Proba_Spam",
+      ham: "proba_ham",
+    });
+  });
+
+  it("falls back to p_ and returns partial matches", () => {
+    expect(detectProbabilityColumns(["p_spam", "score"], ["spam", "ham"])).toEqual({
+      spam: "p_spam",
+    });
+  });
+
+  it("matches prob_ case-insensitively", () => {
+    expect(detectProbabilityColumns(["id", "Prob_Spam", "prob_ham"], ["spam", "ham"])).toEqual({
+      spam: "Prob_Spam",
+      ham: "prob_ham",
+    });
+  });
+
+  it("prefers proba_ over prob_ over p_", () => {
+    expect(
+      detectProbabilityColumns(
+        ["p_spam", "prob_spam", "proba_spam", "prob_ham", "p_ham"],
+        ["spam", "ham"],
+      ),
+    ).toEqual({
+      spam: "proba_spam",
+      ham: "prob_ham",
+    });
+  });
+
+  it("returns empty when nothing matches", () => {
+    expect(detectProbabilityColumns(["id", "prediction"], ["spam"])).toEqual({});
+  });
+});
+
+describe("rowSuggestion / coverage / disagreement", () => {
+  const spec: JoinKeySpec[] = [{ column: "id", coerceNumeric: true }];
+  const byKey = new Map<string, SuggestionEntry>([
+    ["n:1", { suggested: "spam", confidence: 0.9, probabilities: null }],
+    ["n:2", { suggested: "ham", confidence: 0.3, probabilities: null }],
+  ]);
+
+  it("joins a grid row to its suggestion", () => {
+    expect(rowSuggestion(makeRow({ id: "1", label: null }), spec, byKey)?.suggested).toBe("spam");
+  });
+
+  it("returns null for a miss and for an added row without a key", () => {
+    expect(rowSuggestion(makeRow({ id: 99, label: null }), spec, byKey)).toBeNull();
+    expect(rowSuggestion(makeRow({ id: null, label: null }, true), spec, byKey)).toBeNull();
+  });
+
+  it("reports coverage over non-deleted rows", () => {
+    const rows = [
+      makeRow({ id: 1, label: null }),
+      makeRow({ id: 99, label: null }),
+      makeRow({ id: 2, label: null }),
+    ];
+    rows[2].deleted = true;
+    expect(suggestionCoverage(rows, spec, byKey)).toEqual({ covered: 1, total: 2 });
+  });
+
+  it("counts only labelled rows that disagree with their suggestion", () => {
+    const rows = [
+      makeRow({ id: 1, label: "ham" }),
+      makeRow({ id: 2, label: "ham" }),
+      makeRow({ id: 1, label: null }),
+      makeRow({ id: 99, label: "ham" }),
+      makeRow({ id: 2, label: "spam" }),
+    ];
+    rows[4].deleted = true;
+    expect(suggestionDisagreement(rows, "label", spec, byKey)).toBe(1);
+  });
+});
+
+describe("labelingOrder with confidences", () => {
+  const rows = [
+    makeRow({ id: 1, label: "spam", conf: 0.5 }),
+    makeRow({ id: 2, label: null, conf: 0.9 }),
+    makeRow({ id: 3, label: null, conf: null }),
+    makeRow({ id: 4, label: null, conf: 0.2 }),
+    makeRow({ id: 5, label: "ham", conf: 0.1 }),
+    makeRow({ id: 6, label: null, conf: 0.2 }),
+  ];
+  const confidenceOf = (row: EditRow) => (row.cells.conf as number | null) ?? null;
+
+  it("puts least-confident unlabelled rows first, stably", () => {
+    expect(labelingOrder(rows, "label", confidenceOf)).toEqual([3, 5, 1, 2, 0, 4]);
+  });
+
+  it("keeps the two-argument order untouched", () => {
+    expect(labelingOrder(rows, "label")).toEqual([1, 2, 3, 5, 0, 4]);
+  });
+
+  it("skips deleted rows", () => {
+    const copy = rows.map((row) => ({ ...row, cells: { ...row.cells } }));
+    copy[3].deleted = true;
+    expect(labelingOrder(copy, "label", confidenceOf)).toEqual([5, 1, 2, 0, 4]);
+  });
+});
+
+describe("formatConfidence", () => {
+  it("renders fractions as percentages", () => {
+    expect(formatConfidence(0.824)).toBe("82%");
+    expect(formatConfidence(0)).toBe("0%");
+    expect(formatConfidence(1)).toBe("100%");
+  });
+
+  it("leaves already percent-scaled values alone", () => {
+    expect(formatConfidence(82)).toBe("82%");
+    expect(formatConfidence(99.6)).toBe("100%");
+  });
+
+  it("renders nothing for missing or non-finite values", () => {
+    expect(formatConfidence(null)).toBe("");
+    expect(formatConfidence(Number.NaN)).toBe("");
+    expect(formatConfidence(Number.POSITIVE_INFINITY)).toBe("");
   });
 });

@@ -262,6 +262,9 @@ export interface CatalogTable {
   source_registration_id: number | null;
   source_registration_name: string | null;
   source_run_id: number | null;
+  // Points at a sibling catalog table holding model predictions for this table.
+  prediction_table_id: number | null;
+  prediction_table_name: string | null;
   read_by_flows: FlowSummary[];
   table_type: "physical" | "virtual";
   producer_registration_id: number | null;
@@ -357,6 +360,8 @@ export interface CatalogTableUpdate {
   name?: string;
   description?: string;
   namespace_id?: number | null;
+  // An explicit null clears the prediction-table association.
+  prediction_table_id?: number | null;
 }
 
 export interface VirtualFlowTableCreate {

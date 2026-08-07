@@ -52,7 +52,12 @@ from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.stats import StatsService
-from flowfile_core.catalog.services.tables import _KEEP_SCD2, CatalogMaterializationResult, TableService
+from flowfile_core.catalog.services.tables import (
+    _KEEP_SCD2,
+    KEEP_PREDICTION,
+    CatalogMaterializationResult,
+    TableService,
+)
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
 
@@ -177,7 +182,7 @@ class CatalogService:
         self._runs = FlowRunService(repo)
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
-        self._tables = TableService(repo, self._namespaces, self._flows, self._schedules)
+        self._tables = TableService(repo, self._namespaces, self._flows, self._schedules, access=access)
 
         # SqlService and VirtualTableService form a cycle: SqlService.execute_sql_query
         # uses VirtualTableService for resolution, and VirtualTableService.create_query_virtual_table
@@ -1056,12 +1061,17 @@ class CatalogService:
         name: str | None = None,
         description: str | None = None,
         namespace_id: int | None = None,
+        prediction_table_id: int | None | object = KEEP_PREDICTION,
     ) -> CatalogTableOut:
         """Update a catalog table's metadata."""
         self._require_manage("catalog_table", table_id)
+        # The association exposes the target's name on every later read, so it needs read
+        # access to the target itself — not just manage on the table being edited.
+        if prediction_table_id is not KEEP_PREDICTION and prediction_table_id is not None:
+            self._require_use("catalog_table", prediction_table_id)
         if namespace_id is not None:
             self._require_namespace_writable(namespace_id)
-        return self._tables.update_table(table_id, name, description, namespace_id)
+        return self._tables.update_table(table_id, name, description, namespace_id, prediction_table_id)
 
     def delete_table(self, table_id: int, delete_file: bool = False) -> None:
         """Delete a catalog table; optionally delete its managed storage (Delta dir / Parquet)."""

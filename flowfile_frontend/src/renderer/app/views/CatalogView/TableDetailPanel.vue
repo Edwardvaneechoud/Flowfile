@@ -189,6 +189,18 @@
           <span class="meta-link-text">{{ table.source_registration_name }}</span>
         </span>
       </div>
+      <div v-if="table.prediction_table_id" class="meta-card">
+        <span class="meta-label">Scored by</span>
+        <span
+          v-if="table.prediction_table_name"
+          class="meta-value meta-static"
+          :title="table.prediction_table_name"
+        >
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span class="meta-link-text">{{ table.prediction_table_name }}</span>
+        </span>
+        <span v-else class="meta-value meta-muted">Prediction table unavailable</span>
+      </div>
       <div v-if="table.table_type === 'virtual' && !table.sql_query" class="meta-card">
         <span class="meta-label">Optimization</span>
         <span class="meta-value" :class="table.is_optimized ? 'optimized-badge' : ''">
@@ -751,6 +763,21 @@ function formatCell(value: any): string {
 
 .meta-link:hover {
   text-decoration: underline;
+}
+
+/* Same layout as .meta-link without the affordances — this one does not navigate. */
+.meta-static {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  font-size: var(--font-size-sm);
+  min-width: 0;
+}
+
+.meta-muted {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal, 400);
+  color: var(--color-text-muted);
 }
 
 .meta-card-clickable {

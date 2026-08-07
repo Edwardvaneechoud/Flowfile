@@ -296,8 +296,11 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async getTableHistory(tableId: number): Promise<DeltaTableHistory> {
-    const response = await axios.get<DeltaTableHistory>(`/catalog/tables/${tableId}/history`);
+  static async getTableHistory(tableId: number, limit?: number): Promise<DeltaTableHistory> {
+    const url = `/catalog/tables/${tableId}/history`;
+    const params: Record<string, any> = {};
+    if (typeof limit === "number") params.limit = limit;
+    const response = await axios.get<DeltaTableHistory>(url, { params });
     return response.data;
   }
 
