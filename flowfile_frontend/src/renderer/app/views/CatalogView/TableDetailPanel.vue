@@ -75,6 +75,13 @@
       :can-manage-grants="canManageGrants(table)"
     />
 
+    <TableEditorDialog
+      v-if="showTableEditor"
+      v-model="showTableEditor"
+      :table="table"
+      @saved="emit('editsSaved', $event)"
+    />
+
     <!-- File missing banner (physical tables only) -->
     <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
@@ -363,6 +370,15 @@
         <span v-if="preview" class="preview-info">
           Showing {{ preview.rows.length }} of {{ preview.total_rows }} rows
         </span>
+        <button
+          v-if="canEditData"
+          class="btn btn-sm btn-primary edit-data-btn"
+          title="Edit table data (cells, rows, columns) in place"
+          @click="showTableEditor = true"
+        >
+          <i class="fa-solid fa-pen-to-square"></i>
+          Edit data
+        </button>
       </div>
       <div v-if="loadingPreview" class="loading-state">Loading preview...</div>
       <div v-else-if="previewError" class="preview-error">
@@ -423,12 +439,14 @@ import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../..
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 import VisualizationsTab from "./VisualizationsTab.vue";
 import TableMaintenance from "./TableMaintenance.vue";
+import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
+const showTableEditor = ref(false);
 const { canShare, canManage, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
@@ -452,6 +470,7 @@ const emit = defineEmits([
   "recoverFromRun",
   "loadPreview",
   "refreshHistory",
+  "editsSaved",
 ]);
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
@@ -468,6 +487,16 @@ const isViewingHistorical = computed(
     props.selectedVersion !== null &&
     props.tableHistory !== null &&
     props.selectedVersion !== props.tableHistory.current_version,
+);
+
+// Edit surface: physical non-SCD2 tables with data on disk, manage access required.
+// Legacy Parquet tables pass this gate but are refused server-side with a clear message.
+const canEditData = computed(
+  () =>
+    canManage(props.table) &&
+    props.table.table_type !== "virtual" &&
+    props.table.file_exists &&
+    !props.table.scd2,
 );
 
 function formatTimestamp(ts: string | null): string {

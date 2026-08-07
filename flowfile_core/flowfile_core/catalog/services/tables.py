@@ -23,6 +23,7 @@ from flowfile_core.catalog.exceptions import (
     AmbiguousTableError,
     InvalidNamespaceStorageError,
     NamespaceNotFoundError,
+    StaleWriteError,
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
@@ -42,6 +43,8 @@ from flowfile_core.catalog.storage_backend import (
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogNamespace, CatalogTable, TableFavorite
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_add_key_column,
+    trigger_apply_table_edits,
     trigger_optimize_catalog_table,
     trigger_read_table_metadata,
     trigger_vacuum_catalog_table,
@@ -922,6 +925,199 @@ class TableService:
             file_count=len(files),
             size_bytes=size_bytes,
         )
+
+    # ---- In-place table edits (catalog edit surface) --------------------- #
+
+    def _require_editable_delta_path(self, table: CatalogTable) -> str:
+        """Guard: only physical, non-SCD2 Delta tables accept in-place edits.
+
+        Returns the local path or object-storage URI. SCD2 tables are refused for
+        the same reason the writer paths refuse incremental writes to them: a plain
+        keyed merge would corrupt the validity-window history.
+        """
+        if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
+            raise ValueError(f"Table '{table.name}' is virtual and has no physical data to edit")
+        if table.scd2_config:
+            raise ValueError(f"Table '{table.name}' is SCD2-tracked; in-place edits would corrupt its history")
+        if _is_cloud_uri(table.file_path):
+            if table.storage_format != "delta":
+                raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be edited")
+            return table.file_path
+        path = Path(table.file_path)
+        if table.storage_format != "delta" or is_legacy_parquet(path) or not is_delta_table(path):
+            raise ValueError(
+                f"Table '{table.name}' is not a Delta table and cannot be edited; "
+                "convert legacy Parquet tables to Delta first"
+            )
+        return str(path)
+
+    def apply_table_edits(
+        self,
+        table_id: int,
+        *,
+        key_columns: list[str],
+        expected_version: int | None = None,
+        upsert_columns: list[str] | None = None,
+        upsert_rows: list[list] | None = None,
+        new_columns: list[dict] | None = None,
+        delete_keys: list[list] | None = None,
+        edited_by: str | None = None,
+    ) -> tuple[CatalogTableOut, dict]:
+        """Apply keyed row edits (upserts / deletes / new columns) to a catalog table.
+
+        The Delta merge executes on the worker in offload mode (merge cost scales with
+        the *target* table, not the UI-sized payload); the in-process path serves
+        worker-less local runs. On success the catalog record is refreshed through
+        ``overwrite_table_data``, which fires table-trigger schedules — a manual edit
+        is a data change, so dependent scheduled flows re-run.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_editable_delta_path(table)
+
+        schema_names = {c.name for c in self._parse_schema_columns(table)}
+        new_columns = new_columns or []
+        missing_keys = [k for k in key_columns if k not in schema_names]
+        if missing_keys:
+            raise ValueError(f"Key columns not in table schema: {missing_keys}")
+        colliding = [c["name"] for c in new_columns if c["name"] in schema_names]
+        if colliding:
+            raise ValueError(f"New columns already exist in the table: {colliding}")
+
+        is_cloud = _is_cloud_uri(data_path)
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        commit_metadata = None
+        if edited_by:
+            commit_metadata = {"flowfile_user": edited_by, "flowfile_operation": "catalog_table_edit"}
+
+        # The worker resolves catalog routes by bare directory name under its managed
+        # catalog dir, so only managed (or cloud) tables may offload: an externally
+        # registered path's basename could collide with a managed table and the edit
+        # would land on the wrong table. External local tables run in-process — their
+        # payloads are UI-sized and this mirrors how local previews read in core.
+        offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
+
+        try:
+            if offload:
+                result = trigger_apply_table_edits(
+                    _catalog_table_dir_name(data_path),
+                    table_id,
+                    {
+                        "key_columns": key_columns,
+                        "expected_version": expected_version,
+                        "upsert_columns": upsert_columns,
+                        "upsert_rows": upsert_rows,
+                        "new_columns": new_columns,
+                        "delete_keys": delete_keys,
+                        "commit_metadata": commit_metadata,
+                    },
+                    storage=target.to_worker_payload() if target else None,
+                )
+            else:
+                from shared.delta_utils import DeltaEditError, DeltaEditStaleError, apply_delta_edits
+
+                try:
+                    result = apply_delta_edits(
+                        data_path,
+                        key_columns=key_columns,
+                        upsert_columns=upsert_columns,
+                        upsert_rows=upsert_rows,
+                        new_columns=new_columns,
+                        delete_keys=delete_keys,
+                        expected_version=expected_version,
+                        storage_options=(target.storage_options or None) if target else None,
+                        commit_metadata=commit_metadata,
+                    )
+                except DeltaEditStaleError as e:
+                    raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e
+                except DeltaEditError as e:
+                    raise ValueError(str(e)) from e
+        except (StaleWriteError, ValueError):
+            raise
+        except Exception:
+            # A failure mid-sequence (edits apply as up to three commits) may have
+            # landed some of them; refresh the catalog record from disk so it stays
+            # truthful before surfacing the error.
+            try:
+                self.overwrite_table_data(table_id, table_path=data_path, storage_format="delta")
+            except Exception:
+                logger.warning("Post-failure metadata refresh failed for table %s", table_id, exc_info=True)
+            raise
+
+        schema_list = result.get("column_schema") or result.get("schema") or []
+        table_out = self.overwrite_table_data(
+            table_id,
+            table_path=data_path,
+            storage_format="delta",
+            schema=schema_list,
+            row_count=result.get("row_count"),
+            column_count=result.get("column_count"),
+            size_bytes=result.get("size_bytes"),
+        )
+        return table_out, result
+
+    def add_table_key_column(
+        self,
+        table_id: int,
+        column_name: str = "record_id",
+        expected_version: int | None = None,
+    ) -> tuple[CatalogTableOut, dict]:
+        """Rewrite a catalog table with a sequential row-id column appended.
+
+        The escape hatch for editing tables with no natural unique key. A full-table
+        rewrite, so it runs on the worker in offload mode.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_editable_delta_path(table)
+
+        schema_names = {c.name for c in self._parse_schema_columns(table)}
+        if column_name in schema_names:
+            raise ValueError(f"Column '{column_name}' already exists in the table")
+
+        is_cloud = _is_cloud_uri(data_path)
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+
+        # Same offload gate as apply_table_edits: bare-name resolution is only
+        # unambiguous for managed catalog directories.
+        offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
+
+        if offload:
+            result = trigger_add_key_column(
+                _catalog_table_dir_name(data_path),
+                table_id,
+                column_name,
+                expected_version=expected_version,
+                storage=target.to_worker_payload() if target else None,
+            )
+        else:
+            from shared.delta_utils import DeltaEditError, DeltaEditStaleError, add_delta_row_id_column
+
+            try:
+                result = add_delta_row_id_column(
+                    data_path,
+                    column_name=column_name,
+                    expected_version=expected_version,
+                    storage_options=(target.storage_options or None) if target else None,
+                )
+            except DeltaEditStaleError as e:
+                raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e
+            except DeltaEditError as e:
+                raise ValueError(str(e)) from e
+
+        schema_list = result.get("column_schema") or result.get("schema") or []
+        table_out = self.overwrite_table_data(
+            table_id,
+            table_path=data_path,
+            storage_format="delta",
+            schema=schema_list,
+            row_count=result.get("row_count"),
+            column_count=result.get("column_count"),
+            size_bytes=result.get("size_bytes"),
+        )
+        return table_out, result
 
     # ---- Path resolution ------------------------------------------------- #
 

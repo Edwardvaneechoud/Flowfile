@@ -707,6 +707,124 @@ def vacuum_catalog_table(payload: models.CatalogVacuumRequest) -> models.Catalog
         gc.collect()
 
 
+def _raise_typed_edit_error(err: str, fallback_error_type: str) -> None:
+    """Map the edit tasks' encoded failures to typed HTTP errors (409 stale / 422 invalid)."""
+    if err.startswith("STALE_WRITE:"):
+        parts = err.split(":", 2)
+        expected = int(parts[1]) if len(parts) > 1 and parts[1].lstrip("-").isdigit() else None
+        current = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else None
+        raise HTTPException(
+            status_code=409,
+            detail={"error_type": "stale_write", "expected": expected, "current": current},
+        )
+    if err.startswith("EDIT_INVALID:"):
+        raise HTTPException(
+            status_code=422,
+            detail={"error_type": "edit_invalid", "message": err.removeprefix("EDIT_INVALID:")},
+        )
+    raise HTTPException(
+        status_code=500,
+        detail={"error_type": fallback_error_type, "message": err or "subprocess returned no result"},
+    )
+
+
+@router.post("/catalog/apply_edits", response_model=models.CatalogApplyEditsResponse)
+def apply_catalog_table_edits(payload: models.CatalogApplyEditsRequest) -> models.CatalogApplyEditsResponse:
+    """Apply keyed row edits (upserts / deletes / new columns) to a Delta catalog table."""
+    try:
+        resolved_path, _, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=funcs.apply_catalog_table_edits_task,
+        kwargs={
+            "table_path": resolved_path,
+            "key_columns": payload.key_columns,
+            "expected_version": payload.expected_version,
+            "upsert_columns": payload.upsert_columns,
+            "upsert_rows": payload.upsert_rows,
+            "new_columns": [c.model_dump() for c in payload.new_columns],
+            "delete_keys": payload.delete_keys,
+            "commit_metadata": payload.commit_metadata,
+            "progress": progress,
+            "error_message": error_message,
+            "queue": queue,
+            "storage_options": storage_options,
+        },
+    )
+    p.start()
+    result = _drain_then_join(p, queue)
+    try:
+        with progress.get_lock():
+            final_progress = progress.value
+        if final_progress != 100 or result is None:
+            with error_message.get_lock():
+                err = error_message.value.decode(errors="replace").rstrip("\x00")
+            logger.error(f"Catalog apply_edits subprocess failed: {err}")
+            _raise_typed_edit_error(err, "edit_failure")
+        return models.CatalogApplyEditsResponse(
+            rows_upserted=result.get("rows_upserted", 0),
+            rows_deleted=result.get("rows_deleted", 0),
+            new_version=result.get("new_version"),
+            column_schema=result.get("schema", []),
+            row_count=result.get("row_count", 0),
+            column_count=result.get("column_count", 0),
+            size_bytes=result.get("size_bytes"),
+        )
+    finally:
+        del p, progress, error_message, queue
+        gc.collect()
+
+
+@router.post("/catalog/add_key_column", response_model=models.CatalogAddKeyColumnResponse)
+def add_catalog_key_column(payload: models.CatalogAddKeyColumnRequest) -> models.CatalogAddKeyColumnResponse:
+    """Rewrite a Delta catalog table with a sequential row-id column appended."""
+    try:
+        resolved_path, _, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=funcs.add_catalog_key_column_task,
+        kwargs={
+            "table_path": resolved_path,
+            "column_name": payload.column_name,
+            "expected_version": payload.expected_version,
+            "progress": progress,
+            "error_message": error_message,
+            "queue": queue,
+            "storage_options": storage_options,
+        },
+    )
+    p.start()
+    result = _drain_then_join(p, queue)
+    try:
+        with progress.get_lock():
+            final_progress = progress.value
+        if final_progress != 100 or result is None:
+            with error_message.get_lock():
+                err = error_message.value.decode(errors="replace").rstrip("\x00")
+            logger.error(f"Catalog add_key_column subprocess failed: {err}")
+            _raise_typed_edit_error(err, "add_key_column_failure")
+        return models.CatalogAddKeyColumnResponse(
+            new_version=result.get("new_version"),
+            column_schema=result.get("schema", []),
+            row_count=result.get("row_count", 0),
+            column_count=result.get("column_count", 0),
+            size_bytes=result.get("size_bytes"),
+        )
+    finally:
+        del p, progress, error_message, queue
+        gc.collect()
+
+
 @router.post("/catalog/table_metadata", response_model=models.TableMetadataResponse)
 def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMetadataResponse:
     """Read schema, row_count, column_count, size_bytes from a table path.

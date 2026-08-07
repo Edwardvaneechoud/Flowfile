@@ -7,6 +7,10 @@ import type {
   CatalogStats,
   CatalogTable,
   CatalogTableCreate,
+  CatalogTableEditsRequest,
+  CatalogTableEditsResponse,
+  CatalogTableKeyColumnRequest,
+  CatalogTableKeyColumnResponse,
   CatalogTablePreview,
   CatalogTableUpdate,
   ColumnStatsResponse,
@@ -317,6 +321,30 @@ export class CatalogApi {
     const body: VacuumTableRequest = { retention_hours: retentionHours, dry_run: dryRun };
     const response = await axios.post<VacuumTableResponse>(
       `/catalog/tables/${tableId}/vacuum`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Apply row-level edits (keyed upserts / deletes / new columns) to a catalog table. */
+  static async applyTableEdits(
+    tableId: number,
+    body: CatalogTableEditsRequest,
+  ): Promise<CatalogTableEditsResponse> {
+    const response = await axios.post<CatalogTableEditsResponse>(
+      `/catalog/tables/${tableId}/edits`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Rewrite a table with a sequential row-id column (escape hatch for keyless tables). */
+  static async addTableKeyColumn(
+    tableId: number,
+    body: CatalogTableKeyColumnRequest,
+  ): Promise<CatalogTableKeyColumnResponse> {
+    const response = await axios.post<CatalogTableKeyColumnResponse>(
+      `/catalog/tables/${tableId}/key-column`,
       body,
     );
     return response.data;

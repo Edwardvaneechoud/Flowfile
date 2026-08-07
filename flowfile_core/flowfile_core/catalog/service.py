@@ -98,6 +98,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
+    CatalogTableEditsRequest,
+    CatalogTableEditsResponse,
+    CatalogTableKeyColumnResponse,
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
@@ -1232,6 +1235,48 @@ class CatalogService:
         """Vacuum tombstoned files from a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
         return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run)
+
+    def apply_table_edits(
+        self,
+        table_id: int,
+        edits: CatalogTableEditsRequest,
+        edited_by: str | None = None,
+    ) -> CatalogTableEditsResponse:
+        """Apply keyed row edits from the catalog edit surface (manage-gated, like overwrite)."""
+        self._require_manage("catalog_table", table_id)
+        table_out, result = self._tables.apply_table_edits(
+            table_id,
+            key_columns=edits.key_columns,
+            expected_version=edits.expected_version,
+            upsert_columns=edits.upsert_columns,
+            upsert_rows=edits.upsert_rows,
+            new_columns=[c.model_dump() for c in edits.new_columns],
+            delete_keys=edits.delete_keys,
+            edited_by=edited_by,
+        )
+        return CatalogTableEditsResponse(
+            table=table_out,
+            rows_upserted=result.get("rows_upserted", 0),
+            rows_deleted=result.get("rows_deleted", 0),
+            new_version=result.get("new_version"),
+        )
+
+    def add_table_key_column(
+        self,
+        table_id: int,
+        column_name: str = "record_id",
+        expected_version: int | None = None,
+    ) -> CatalogTableKeyColumnResponse:
+        """Mint a sequential row-id column so a keyless table becomes editable."""
+        self._require_manage("catalog_table", table_id)
+        table_out, result = self._tables.add_table_key_column(
+            table_id, column_name=column_name, expected_version=expected_version
+        )
+        return CatalogTableKeyColumnResponse(
+            table=table_out,
+            column_name=column_name,
+            new_version=result.get("new_version"),
+        )
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         """Add a table to the user's favourites (idempotent)."""

@@ -271,6 +271,51 @@ def test_optimize_and_vacuum_allowed_with_manage(users, alice_delta_table, team,
     assert calls == [("optimize", alice_delta_table), ("vacuum", alice_delta_table)]
 
 
+def test_table_edits_denied_for_reader(users, client_for, alice_delta_table, team, grant_factory):
+    """The edit surface is a data write: a use-grantee gets 403 like optimize/vacuum."""
+    bob = client_for("bob")
+    grant_factory("catalog_table", alice_delta_table, team, permission="use", granted_by=users["alice"].id)
+
+    edits = bob.post(
+        f"/catalog/tables/{alice_delta_table}/edits",
+        json={"key_columns": ["id"], "upsert_columns": ["id"], "upsert_rows": [[1]]},
+    )
+    assert edits.status_code == 403, edits.text
+
+    key_column = bob.post(f"/catalog/tables/{alice_delta_table}/key-column", json={"column_name": "record_id"})
+    assert key_column.status_code == 403, key_column.text
+
+
+def test_table_edits_allowed_with_manage(users, alice_delta_table, team, grant_factory):
+    """The auth gate passes for a manage grantee; the delta layer is stubbed so the
+    test does not depend on real table data or a running worker."""
+    from datetime import datetime, timezone
+
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.schemas.catalog_schema import CatalogTableEditsRequest, CatalogTableOut
+
+    grant_factory("catalog_table", alice_delta_table, team, permission="manage", granted_by=users["alice"].id)
+    now = datetime.now(timezone.utc)
+    dummy_out = CatalogTableOut(
+        id=alice_delta_table, name="alice_delta", owner_id=users["alice"].id, created_at=now, updated_at=now
+    )
+    calls = []
+    with get_db_context() as db:
+        bob = db.get(db_models.User, users["bob"].id)
+        svc = CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, bob))
+        svc._tables = SimpleNamespace(
+            apply_table_edits=lambda table_id, **kwargs: (calls.append(("edits", table_id)), (dummy_out, {}))[1],
+            add_table_key_column=lambda table_id, **kwargs: (calls.append(("key", table_id)), (dummy_out, {}))[1],
+        )
+        svc.apply_table_edits(
+            alice_delta_table,
+            CatalogTableEditsRequest(key_columns=["id"], upsert_columns=["id"], upsert_rows=[[1]]),
+        )
+        svc.add_table_key_column(alice_delta_table)
+    assert calls == [("edits", alice_delta_table), ("key", alice_delta_table)]
+
+
 # ---------- C3 save-time: catalog-writer node settings ----------
 
 
