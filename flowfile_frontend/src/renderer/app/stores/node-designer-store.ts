@@ -154,6 +154,12 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
     set output_names(v: string[]) {
       designerState.value.output_names = v;
     },
+    get input_labels() {
+      return designerState.value.input_labels;
+    },
+    set input_labels(v: string[]) {
+      designerState.value.input_labels = v;
+    },
     // Legacy compat: MetadataPanel/others toggle these; map onto environment.
     get requires_kernel() {
       return designerState.value.environment.kind === "kernel";
@@ -240,6 +246,20 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
       const next = names.slice();
       while (next.length < n) next.push(`output_${next.length}`);
       designerState.value.output_names = next;
+    }
+  };
+
+  // Input labels are optional and display-only, so shrinking the input count
+  // just drops the tail; nothing is auto-named. A legacy draft saved before the
+  // field existed arrives undefined, hence the reseat.
+  const reconcileInputLabels = (n: number) => {
+    const labels = designerState.value.input_labels;
+    if (!Array.isArray(labels)) {
+      designerState.value.input_labels = [];
+      return;
+    }
+    if (labels.length > n) {
+      designerState.value.input_labels = labels.slice(0, n);
     }
   };
 
@@ -339,6 +359,14 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
       reconcileOutputNames(n);
       normalizeProcessSignature();
       normalizePredictSchemaSignature();
+    },
+  );
+
+  watch(
+    () => designerState.value.number_of_inputs,
+    (n) => {
+      if (codeOnly.value) return;
+      reconcileInputLabels(n);
     },
   );
 

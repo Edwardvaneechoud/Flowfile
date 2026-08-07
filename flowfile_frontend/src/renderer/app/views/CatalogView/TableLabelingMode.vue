@@ -119,43 +119,35 @@
       </p>
       <template v-else-if="predColumns.length > 0">
         <div class="suggestion-row">
-          <span class="suggestion-label">{{
-            predRepeatsKeys ? "Class column" : "Suggested class column"
-          }}</span>
+          <span class="suggestion-label">Class column</span>
           <el-select
-            v-model="suggestionColumn"
+            v-model="classColumn"
             filterable
             clearable
             placeholder="Pick a column"
             class="suggestion-select"
           >
-            <el-option v-for="col in suggestionColumns" :key="col" :label="col" :value="col" />
+            <el-option v-for="col in classColumnOptions" :key="col" :label="col" :value="col" />
           </el-select>
         </div>
         <div class="suggestion-row">
-          <span class="suggestion-label">{{
-            predRepeatsKeys ? "Probability column" : "Confidence column"
-          }}</span>
+          <span class="suggestion-label">Probability column</span>
           <el-select
-            v-model="confidenceColumn"
+            v-model="probabilityColumn"
             filterable
             clearable
             placeholder="None"
             class="suggestion-select"
           >
-            <el-option v-for="col in confidenceColumns" :key="col" :label="col" :value="col" />
+            <el-option
+              v-for="col in probabilityColumnOptions"
+              :key="col"
+              :label="col"
+              :value="col"
+            />
           </el-select>
         </div>
-        <p v-if="predRepeatsKeys" class="setup-hint">
-          This table has one row per class. Pick the probability column so the highest-scoring class
-          wins — without it the first row per key is used.
-        </p>
-        <el-checkbox v-model="useProbabilityColumns" :disabled="!canUseProbabilities">
-          Show per-class probabilities
-        </el-checkbox>
-        <el-checkbox v-model="leastConfidentFirst" :disabled="!confidenceColumn">
-          Least confident first
-        </el-checkbox>
+        <el-checkbox v-model="leastConfidentFirst"> Least confident first </el-checkbox>
       </template>
 
       <div class="start-row">
@@ -277,8 +269,7 @@
         </span>
       </div>
 
-      <div v-if="predSliceNote || suggestionNote || pollPaused" class="suggestion-status">
-        <span v-if="predSliceNote" class="setup-note">{{ predSliceNote }}</span>
+      <div v-if="suggestionNote || pollPaused" class="suggestion-status">
         <span v-if="suggestionNote" class="setup-note">{{ suggestionNote }}</span>
         <template v-if="pollPaused">
           <span class="setup-note">Suggestion refresh paused after repeated failures.</span>
@@ -311,11 +302,10 @@ import {
   buildJoinKeySpec,
   buildLabelClasses,
   buildSuggestionMap,
-  detectProbabilityColumns,
   distinctColumnValues,
   formatConfidence,
-  hasRepeatedKeys,
   isContinuousDtype,
+  isEditableDtype,
   isNumericDtype,
   labelingOrder,
   labelingProgress,
@@ -340,6 +330,10 @@ import {
 const POLL_INTERVAL_MS = 10_000;
 const REMOTE_POLL_INTERVAL_MS = 30_000;
 const MAX_POLL_FAILURES = 3;
+// The join needs every class row for a key, and preview order is physical, not sorted —
+// so the prediction table is fetched whole (the endpoint's ceiling) rather than at the
+// session's row limit, and refuses to join when even that truncates it.
+const PREDICTION_FETCH_LIMIT = 10_000;
 
 const props = defineProps<{ session: EditSession; table: CatalogTable; rowLimit: number }>();
 
@@ -372,12 +366,11 @@ const predColumns = ref<string[]>([]);
 const predDtypes = ref<string[]>([]);
 const predRowCount = ref(0);
 const predTotalRows = ref(0);
+const predTruncated = ref(false);
 const predVersion = ref<number | null>(null);
-const predRepeatsKeys = ref(false);
 const predLoading = ref(false);
-const suggestionColumn = ref("");
-const confidenceColumn = ref<string | null>(null);
-const useProbabilityColumns = ref(false);
+const classColumn = ref("");
+const probabilityColumn = ref<string | null>(null);
 const leastConfidentFirst = ref(false);
 const suggestionError = ref("");
 const suggestionNote = ref("");
@@ -452,25 +445,19 @@ const displayFields = computed(() => {
     });
 });
 
-const suggestionColumns = computed(() =>
-  predColumns.value.filter(
-    (c, i) =>
-      !props.session.keyColumns.includes(c) && !isContinuousDtype(predDtypes.value[i] ?? ""),
-  ),
+// A class label is a scalar and never continuous — that rules out both the
+// probability columns and nested dtypes like a List(Float32) embedding.
+const classColumnOptions = computed(() =>
+  predColumns.value.filter((c, i) => {
+    const dtype = predDtypes.value[i] ?? "";
+    return (
+      !props.session.keyColumns.includes(c) && isEditableDtype(dtype) && !isContinuousDtype(dtype)
+    );
+  }),
 );
 
-const confidenceColumns = computed(() =>
+const probabilityColumnOptions = computed(() =>
   predColumns.value.filter((c, i) => isNumericDtype(predDtypes.value[i] ?? "")),
-);
-
-const probabilityMatches = computed(() =>
-  detectProbabilityColumns(predColumns.value, classes.value),
-);
-
-const canUseProbabilities = computed(
-  () =>
-    Object.keys(probabilityMatches.value).length > 0 ||
-    (predRepeatsKeys.value && !!confidenceColumn.value),
 );
 
 const missingJoinColumns = computed(() =>
@@ -481,6 +468,9 @@ const joinError = computed(() => {
   if (predColumns.value.length === 0) return "";
   if (props.session.keyColumns.length === 0) {
     return "This session has no key columns, so suggestions cannot be joined.";
+  }
+  if (predTruncated.value) {
+    return `Only ${predRowCount.value.toLocaleString()} of ${predTotalRows.value.toLocaleString()} prediction rows could be read. Rows arrive in storage order, so a partial read would hide classes and bias every suggestion — suggestions stay off. Reduce the prediction table to the rows you are labelling.`;
   }
   if (missingJoinColumns.value.length === 0) return "";
   return `The prediction table has no ${missingJoinColumns.value.join(", ")} column, so it cannot be joined to this session. Suggestions stay off.`;
@@ -527,11 +517,6 @@ const disagreement = computed(() => {
 const duplicateKeys = computed(() =>
   suggestionActive.value ? (suggestionMap.value?.duplicateKeys ?? 0) : 0,
 );
-
-const predSliceNote = computed(() => {
-  if (!suggestionActive.value || predTotalRows.value <= predRowCount.value) return "";
-  return `Suggestions cover the first ${predRowCount.value.toLocaleString()} of ${predTotalRows.value.toLocaleString()} prediction rows.`;
-});
 
 function addClass() {
   const value = newClass.value.trim();
@@ -598,7 +583,7 @@ function expandAll() {
 function currentSuggestionSettings(): StoredSuggestionSettings | null {
   const id = predictionTableId.value;
   if (id === null) return null;
-  if (!suggestionColumn.value) {
+  if (!classColumn.value) {
     const previewFailed = !!suggestionError.value || predColumns.value.length === 0;
     if (!previewFailed || rememberedSuggestion?.predictionTableId !== id) return null;
     return rememberedSuggestion;
@@ -606,9 +591,8 @@ function currentSuggestionSettings(): StoredSuggestionSettings | null {
   return {
     predictionTableId: id,
     predictionTableName: predictionTable.value?.name ?? "",
-    suggestionColumn: suggestionColumn.value,
-    confidenceColumn: confidenceColumn.value,
-    useProbabilityColumns: useProbabilityColumns.value,
+    classColumn: classColumn.value,
+    probabilityColumn: probabilityColumn.value,
     leastConfidentFirst: leastConfidentFirst.value,
   };
 }
@@ -648,20 +632,19 @@ function applyStoredSettings(stored: StoredLabelSettings | null) {
 
 function pruneSuggestionSelections() {
   const available = new Set(predColumns.value);
-  if (suggestionColumn.value && !available.has(suggestionColumn.value)) suggestionColumn.value = "";
-  if (confidenceColumn.value && !available.has(confidenceColumn.value))
-    confidenceColumn.value = null;
-  if (!confidenceColumn.value) leastConfidentFirst.value = false;
-  if (!canUseProbabilities.value) useProbabilityColumns.value = false;
+  if (classColumn.value && !available.has(classColumn.value)) classColumn.value = "";
+  if (probabilityColumn.value && !available.has(probabilityColumn.value))
+    probabilityColumn.value = null;
+  if (!probabilityColumn.value) leastConfidentFirst.value = false;
 }
 
 function clearPredictionData() {
-  predRepeatsKeys.value = false;
   predColumns.value = [];
   predDtypes.value = [];
   predRows = [];
   predRowCount.value = 0;
   predTotalRows.value = 0;
+  predTruncated.value = false;
   predVersion.value = null;
 }
 
@@ -673,7 +656,7 @@ async function loadPredictionTable(id: number) {
   suggestionError.value = "";
   const [history, preview] = await Promise.allSettled([
     CatalogApi.getTableHistory(id, 1),
-    CatalogApi.getTablePreview(id, props.rowLimit),
+    CatalogApi.getTablePreview(id, PREDICTION_FETCH_LIMIT),
   ]);
   predLoading.value = false;
   if (seq !== loadSeq) return;
@@ -687,15 +670,9 @@ async function loadPredictionTable(id: number) {
   predRows = preview.value.rows;
   predRowCount.value = preview.value.rows.length;
   predTotalRows.value = preview.value.total_rows;
+  predTruncated.value = preview.value.total_rows > preview.value.rows.length;
   // A missing version anchor only costs us change detection; the first poll re-anchors.
   predVersion.value = history.status === "fulfilled" ? history.value.current_version : null;
-  predRepeatsKeys.value = detectRepeatedKeys(preview.value.columns);
-}
-
-/** One row per class (long) vs one row per record (wide) — drives the probability affordance. */
-function detectRepeatedKeys(columns: string[]): boolean {
-  const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, columns);
-  return spec !== null && hasRepeatedKeys(columns, predRows, spec);
 }
 
 async function selectPredictionTable(id: number, stored?: StoredSuggestionSettings | null) {
@@ -706,9 +683,8 @@ async function selectPredictionTable(id: number, stored?: StoredSuggestionSettin
   await loadPredictionTable(id);
   if (predictionTableId.value !== id) return;
   if (stored && stored.predictionTableId === id) {
-    suggestionColumn.value = stored.suggestionColumn;
-    confidenceColumn.value = stored.confidenceColumn;
-    useProbabilityColumns.value = stored.useProbabilityColumns;
+    classColumn.value = stored.classColumn;
+    probabilityColumn.value = stored.probabilityColumn;
     leastConfidentFirst.value = stored.leastConfidentFirst;
   }
   pruneSuggestionSelections();
@@ -718,8 +694,8 @@ function clearPrediction() {
   loadSeq += 1; // orphan any in-flight load so it cannot repopulate the cleared slice
   predictionTableId.value = null;
   predictionTable.value = null;
-  suggestionColumn.value = "";
-  confidenceColumn.value = null;
+  classColumn.value = "";
+  probabilityColumn.value = null;
   suggestionError.value = "";
   suggestionNote.value = "";
   suggestionsDisabled.value = false;
@@ -838,14 +814,13 @@ async function initSuggestionSources(stored: StoredLabelSettings | null) {
 
 function rebuildSuggestionMap() {
   const spec = joinSpec.value;
-  if (!spec || suggestionsDisabled.value || !suggestionColumn.value) return;
+  if (!spec || suggestionsDisabled.value || !classColumn.value) return;
   suggestionMap.value = buildSuggestionMap(
     predColumns.value,
     predRows,
     spec,
-    suggestionColumn.value,
-    confidenceColumn.value,
-    useProbabilityColumns.value ? probabilityMatches.value : null,
+    classColumn.value,
+    probabilityColumn.value ?? "",
   );
 }
 
@@ -853,8 +828,8 @@ function buildSuggestionState() {
   joinSpec.value = null;
   suggestionMap.value = null;
   suggestionsDisabled.value = false;
-  if (predictionTableId.value === null || !suggestionColumn.value) return;
-  if (predColumns.value.length === 0) return;
+  if (predictionTableId.value === null || !classColumn.value || !probabilityColumn.value) return;
+  if (predColumns.value.length === 0 || predTruncated.value) return;
   const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, predColumns.value);
   if (!spec) return;
   joinSpec.value = spec;
@@ -862,7 +837,7 @@ function buildSuggestionState() {
 }
 
 function orderConfidence(): ((row: EditRow) => number | null) | undefined {
-  if (!leastConfidentFirst.value || !confidenceColumn.value) return undefined;
+  if (!leastConfidentFirst.value || !probabilityColumn.value) return undefined;
   const spec = joinSpec.value;
   const map = suggestionMap.value;
   if (!spec || !map) return undefined;
@@ -959,21 +934,21 @@ function resumePolling() {
 /** Re-read the prediction slice after a new Delta version; the visit order is
  * deliberately left alone so the row under the cursor never moves. */
 async function refreshSuggestions(id: number, version: number) {
-  const preview = await CatalogApi.getTablePreview(id, props.rowLimit);
+  const preview = await CatalogApi.getTablePreview(id, PREDICTION_FETCH_LIMIT);
   predColumns.value = preview.columns;
   predDtypes.value = preview.dtypes;
   predRows = preview.rows;
   predRowCount.value = preview.rows.length;
   predTotalRows.value = preview.total_rows;
+  predTruncated.value = preview.total_rows > preview.rows.length;
   predVersion.value = version;
-  predRepeatsKeys.value = detectRepeatedKeys(preview.columns);
 
-  const hadConfidence = confidenceColumn.value;
+  const hadConfidence = probabilityColumn.value;
   pruneSuggestionSelections();
-  const lostConfidence = !!hadConfidence && !confidenceColumn.value;
+  const lostConfidence = !!hadConfidence && !probabilityColumn.value;
 
   const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, preview.columns);
-  if (!spec || !preview.columns.includes(suggestionColumn.value)) {
+  if (!spec || !preview.columns.includes(classColumn.value)) {
     suggestionsDisabled.value = true;
     suggestionNote.value =
       "The prediction table's schema changed, so suggestions are off for this pass.";
@@ -1067,12 +1042,8 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-watch(confidenceColumn, (value) => {
+watch(probabilityColumn, (value) => {
   if (!value) leastConfidentFirst.value = false;
-});
-
-watch(canUseProbabilities, (usable) => {
-  if (!usable) useProbabilityColumns.value = false;
 });
 
 watch(leastConfidentFirst, () => {
@@ -1081,7 +1052,7 @@ watch(leastConfidentFirst, () => {
 
 // A prediction source that arrives after Start still gets picked up; the visit
 // order is deliberately left alone so no row moves mid-pass.
-watch([predictionTableId, suggestionColumn, predColumns], () => {
+watch([predictionTableId, classColumn, predColumns], () => {
   if (phase.value !== "labeling" || suggestionsDisabled.value || suggestionActive.value) return;
   buildSuggestionState();
 });

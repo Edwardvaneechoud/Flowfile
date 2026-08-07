@@ -115,7 +115,7 @@ jobs:
         env:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
-        run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts --reporter=html
+        run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts --reporter=html
 
       # Upload test results on failure
       - name: Upload Playwright report

@@ -93,7 +93,6 @@
 
 <script lang="ts" setup>
 import { ref, computed, nextTick, watch } from "vue";
-import { Position } from "@vue-flow/core";
 import { CodeLoader } from "vue-content-loader";
 
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
@@ -103,7 +102,7 @@ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { outputHandle } from "../../../../../utils/outputHandle";
+import { buildOutputHandles } from "../../../../../utils/nodeHandles";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import {
   FilterOperator,
@@ -127,14 +126,11 @@ const updateNodeOutputHandles = () => {
   if (!vfInstance || !nodeFilter.value) return;
   const vfNode = vfInstance.findNode(String(nodeFilter.value.node_id));
   if (!vfNode) return;
-  if (splitModeEnabled.value) {
-    vfNode.data.outputs = [
-      { id: outputHandle(0), position: Position.Right, label: "P", title: "pass" },
-      { id: outputHandle(1), position: Position.Right, label: "F", title: "fail" },
-    ];
-  } else {
-    vfNode.data.outputs = [{ id: outputHandle(0), position: Position.Right }];
-  }
+  // Same derivation the canvas uses on flow open (NodeFilter.output_names), so
+  // toggling split mode live and reloading the flow agree on the handles.
+  vfNode.data.outputs = splitModeEnabled.value
+    ? buildOutputHandles(2, ["pass", "fail"])
+    : buildOutputHandles(1);
 };
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({

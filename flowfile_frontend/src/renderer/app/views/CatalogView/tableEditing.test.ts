@@ -5,11 +5,11 @@ import {
   buildJoinKeySpec,
   buildLabelClasses,
   buildSuggestionMap,
-  detectProbabilityColumns,
   distinctColumnValues,
   formatConfidence,
   hasPendingChanges,
   isEditableDtype,
+  isContinuousDtype,
   isNumericDtype,
   joinKeyToken,
   labelingOrder,
@@ -406,212 +406,228 @@ describe("joinKeyToken", () => {
 
 describe("buildSuggestionMap", () => {
   const keySpec: JoinKeySpec[] = [{ column: "id", coerceNumeric: true }];
-  const predColumns = ["id", "prediction", "confidence", "proba_spam", "proba_ham"];
+  const predColumns = ["id", "label", "value"];
 
-  it("indexes a prediction row by its coerced key", () => {
+  it("takes the argmax across a key's class rows and reports the distribution", () => {
     const map = buildSuggestionMap(
       predColumns,
-      [["1", "spam", 0.91, 0.91, 0.09]],
+      [
+        [19, "business", 0.7757],
+        [19, "sports", 0.2242],
+        [21, "business", 0.6523],
+      ],
       keySpec,
-      "prediction",
-      "confidence",
-      { spam: "proba_spam", ham: "proba_ham" },
+      "label",
+      "value",
     );
-    expect(map.byKey.get("n:1")).toEqual({
-      suggested: "spam",
-      confidence: 0.91,
-      probabilities: { spam: 0.91, ham: 0.09 },
+    expect(map.byKey.get("n:19")).toEqual({
+      suggested: "business",
+      confidence: 0.7757,
+      probabilities: { business: 0.7757, sports: 0.2242 },
+    });
+    expect(map.byKey.get("n:21")).toEqual({
+      suggested: "business",
+      confidence: 0.6523,
+      probabilities: { business: 0.6523 },
     });
     expect(map.duplicateKeys).toBe(0);
     expect(map.unjoinableRows).toBe(0);
   });
 
-  it("takes the highest-probability class across rows sharing a key", () => {
-    const map = buildSuggestionMap(
-      predColumns,
-      [
-        [1, "spam", 0.4, null, null],
-        ["01", "ham", 0.9, null, null],
-      ],
-      keySpec,
-      "prediction",
-      "confidence",
-      null,
-    );
-    expect(map.byKey.get("n:1")).toEqual({
-      suggested: "ham",
-      confidence: 0.9,
-      probabilities: { spam: 0.4, ham: 0.9 },
-    });
-    expect(map.duplicateKeys).toBe(0);
-  });
-
-  it("is order-independent for a long table", () => {
+  it("is independent of row order", () => {
     const rows = [
-      [19, "business", 0.7757, null, null],
-      [19, "sports", 0.2242, null, null],
+      [19, "business", 0.7757],
+      [19, "sports", 0.2242],
     ];
-    const forward = buildSuggestionMap(predColumns, rows, keySpec, "prediction", "confidence", null);
-    const reversed = buildSuggestionMap(
-      predColumns,
-      [...rows].reverse(),
-      keySpec,
-      "prediction",
-      "confidence",
-      null,
-    );
+    const forward = buildSuggestionMap(predColumns, rows, keySpec, "label", "value");
+    const reversed = buildSuggestionMap(predColumns, [...rows].reverse(), keySpec, "label", "value");
     expect(forward.byKey.get("n:19")).toEqual(reversed.byKey.get("n:19"));
     expect(forward.byKey.get("n:19")?.suggested).toBe("business");
   });
 
-  it("counts a repeat of the same class for a key as a duplicate", () => {
+  it("keeps the first class on an exact tie", () => {
     const map = buildSuggestionMap(
       predColumns,
       [
-        [1, "spam", 0.9, null, null],
-        [1, "spam", 0.3, null, null],
+        [7, "spam", 0.5],
+        [7, "ham", 0.5],
       ],
       keySpec,
-      "prediction",
-      "confidence",
-      null,
+      "label",
+      "value",
     );
-    expect(map.byKey.get("n:1")?.confidence).toBe(0.9);
-    expect(map.duplicateKeys).toBe(1);
+    expect(map.byKey.get("n:7")?.suggested).toBe("spam");
+    expect(map.byKey.get("n:7")?.confidence).toBe(0.5);
   });
 
-  it("falls back to the first class when nothing can rank the candidates", () => {
+  it("lets a class with a probability beat a first-seen class without one", () => {
+    const rows = [
+      [3, "business", null],
+      [3, "sports", 0.62],
+    ];
+    const forward = buildSuggestionMap(predColumns, rows, keySpec, "label", "value");
+    const reversed = buildSuggestionMap(predColumns, [...rows].reverse(), keySpec, "label", "value");
+    expect(forward.byKey.get("n:3")).toEqual({
+      suggested: "sports",
+      confidence: 0.62,
+      probabilities: { sports: 0.62 },
+    });
+    expect(reversed.byKey.get("n:3")).toEqual(forward.byKey.get("n:3"));
+  });
+
+  it("falls back to the first class when no row carries a probability", () => {
     const map = buildSuggestionMap(
       predColumns,
       [
-        [1, "spam", null, null, null],
-        [1, "ham", null, null, null],
+        [4, "business", null],
+        [4, "sports", null],
+        [4, "politics", null],
       ],
       keySpec,
-      "prediction",
-      "confidence",
-      null,
+      "label",
+      "value",
     );
-    expect(map.byKey.get("n:1")?.suggested).toBe("spam");
-    expect(map.byKey.get("n:1")?.probabilities).toBeNull();
+    expect(map.byKey.get("n:4")).toEqual({
+      suggested: "business",
+      confidence: null,
+      probabilities: null,
+    });
+    expect(map.duplicateKeys).toBe(0);
+  });
+
+  it("counts a repeated class for one key and keeps its highest probability", () => {
+    const rows = [
+      [5, "business", 0.9],
+      [5, "sports", 0.3],
+      [5, "business", 0.4],
+    ];
+    const forward = buildSuggestionMap(predColumns, rows, keySpec, "label", "value");
+    const reversed = buildSuggestionMap(predColumns, [...rows].reverse(), keySpec, "label", "value");
+    expect(forward.byKey.get("n:5")).toEqual({
+      suggested: "business",
+      confidence: 0.9,
+      probabilities: { business: 0.9, sports: 0.3 },
+    });
+    expect(forward.duplicateKeys).toBe(1);
+    expect(reversed.byKey.get("n:5")).toEqual(forward.byKey.get("n:5"));
+    expect(reversed.duplicateKeys).toBe(1);
+  });
+
+  it("counts a repeated class even when both rows lack a probability", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [6, "business", null],
+        [6, "sports", 0.5],
+        [6, "business", null],
+      ],
+      keySpec,
+      "label",
+      "value",
+    );
+    expect(map.duplicateKeys).toBe(1);
+    expect(map.byKey.get("n:6")?.suggested).toBe("sports");
+  });
+
+  it("coerces string keys against numeric ones", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [["19", "business", "0.77"]],
+      keySpec,
+      "label",
+      "value",
+    );
+    expect(map.byKey.get("n:19")?.confidence).toBe(0.77);
   });
 
   it("counts rows with an empty key as unjoinable", () => {
     const map = buildSuggestionMap(
       predColumns,
       [
-        [null, "spam", 0.9, null, null],
-        ["", "ham", 0.9, null, null],
-        [2, "ham", 0.9, null, null],
+        [null, "business", 0.9],
+        ["", "sports", 0.9],
+        [2, "sports", 0.9],
       ],
       keySpec,
-      "prediction",
-      "confidence",
-      null,
+      "label",
+      "value",
     );
     expect(map.unjoinableRows).toBe(2);
     expect(map.byKey.size).toBe(1);
   });
 
-  it("skips rows without a suggestion without counting them", () => {
+  it("skips rows without a class without counting them", () => {
     const map = buildSuggestionMap(
       predColumns,
       [
-        [1, null, 0.9, null, null],
-        [2, "", 0.9, null, null],
+        [1, null, 0.9],
+        [2, "", 0.9],
       ],
       keySpec,
-      "prediction",
-      "confidence",
-      null,
+      "label",
+      "value",
     );
     expect(map.byKey.size).toBe(0);
     expect(map.unjoinableRows).toBe(0);
     expect(map.duplicateKeys).toBe(0);
   });
 
-  it("parses confidence and nulls unusable values", () => {
+  it("treats an unusable probability as absent", () => {
     const map = buildSuggestionMap(
       predColumns,
       [
-        [1, "spam", "0.75", null, null],
-        [2, "ham", "not-a-number", null, null],
-        [3, "ham", null, null, null],
+        [1, "business", "not-a-number"],
+        [2, "business", null],
       ],
       keySpec,
-      "prediction",
-      "confidence",
-      null,
-    );
-    expect(map.byKey.get("n:1")?.confidence).toBe(0.75);
-    expect(map.byKey.get("n:2")?.confidence).toBeNull();
-    expect(map.byKey.get("n:3")?.confidence).toBeNull();
-  });
-
-  it("leaves confidence null when no confidence column is picked", () => {
-    const map = buildSuggestionMap(
-      predColumns,
-      [[1, "spam", 0.9, null, null]],
-      keySpec,
-      "prediction",
-      null,
-      null,
+      "label",
+      "value",
     );
     expect(map.byKey.get("n:1")?.confidence).toBeNull();
+    expect(map.byKey.get("n:1")?.probabilities).toBeNull();
+    expect(map.byKey.get("n:2")?.confidence).toBeNull();
   });
 
-  it("extracts partial probabilities and nulls them when nothing is usable", () => {
-    const map = buildSuggestionMap(
-      predColumns,
-      [
-        [1, "spam", 0.9, "0.9", null],
-        [2, "ham", 0.9, null, null],
-      ],
-      keySpec,
-      "prediction",
-      "confidence",
-      { spam: "proba_spam", ham: "proba_ham", other: "proba_missing" },
-    );
-    expect(map.byKey.get("n:1")?.probabilities).toEqual({ spam: 0.9 });
-    expect(map.byKey.get("n:2")?.probabilities).toBeNull();
+  it("yields nothing usable when the probability column is absent", () => {
+    const map = buildSuggestionMap(predColumns, [[1, "business", 0.9]], keySpec, "label", "ghost");
+    expect(map.byKey.get("n:1")).toEqual({
+      suggested: "business",
+      confidence: null,
+      probabilities: null,
+    });
   });
 });
 
-describe("detectProbabilityColumns", () => {
-  it("matches proba_ case-insensitively", () => {
-    expect(detectProbabilityColumns(["id", "Proba_Spam", "proba_ham"], ["spam", "ham"])).toEqual({
-      spam: "Proba_Spam",
-      ham: "proba_ham",
-    });
+describe("isContinuousDtype", () => {
+  it("accepts float, double and decimal dtypes", () => {
+    for (const dtype of [
+      "float32",
+      "float64",
+      "float16",
+      "double",
+      "Float64",
+      "decimal128(10, 2)",
+      " FLOAT64 ",
+    ]) {
+      expect(isContinuousDtype(dtype), dtype).toBe(true);
+    }
   });
 
-  it("falls back to p_ and returns partial matches", () => {
-    expect(detectProbabilityColumns(["p_spam", "score"], ["spam", "ham"])).toEqual({
-      spam: "p_spam",
-    });
-  });
-
-  it("matches prob_ case-insensitively", () => {
-    expect(detectProbabilityColumns(["id", "Prob_Spam", "prob_ham"], ["spam", "ham"])).toEqual({
-      spam: "Prob_Spam",
-      ham: "prob_ham",
-    });
-  });
-
-  it("prefers proba_ over prob_ over p_", () => {
-    expect(
-      detectProbabilityColumns(
-        ["p_spam", "prob_spam", "proba_spam", "prob_ham", "p_ham"],
-        ["spam", "ham"],
-      ),
-    ).toEqual({
-      spam: "proba_spam",
-      ham: "prob_ham",
-    });
-  });
-
-  it("returns empty when nothing matches", () => {
-    expect(detectProbabilityColumns(["id", "prediction"], ["spam"])).toEqual({});
+  it("rejects labels, keys and nested dtypes", () => {
+    for (const dtype of [
+      "int64",
+      "Int32",
+      "uint8",
+      "large_string",
+      "string",
+      "bool",
+      "date32[day]",
+      "timestamp[us]",
+      "list[f32]",
+      "",
+    ]) {
+      expect(isContinuousDtype(dtype), dtype).toBe(false);
+    }
   });
 });
 

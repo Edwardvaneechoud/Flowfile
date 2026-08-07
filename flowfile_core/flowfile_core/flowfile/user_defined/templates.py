@@ -31,6 +31,8 @@ def manifest_to_template(manifest: NodeManifest, node_key: str) -> "NodeTemplate
         node_type=manifest.node_type,
         transform_type=manifest.transform_type,
         custom_node=True,
+        output_names=list(manifest.output_names) or None,
+        input_labels=list(manifest.input_labels) or None,
         execution_environment=manifest.environment.kind,
         dependencies=list(manifest.environment.dependencies) or None,
         publishes=list(manifest.publishes) or None,

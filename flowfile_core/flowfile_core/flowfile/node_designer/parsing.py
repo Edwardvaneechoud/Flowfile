@@ -119,6 +119,7 @@ _RECOGNIZED_NODE_ATTRS = {
     "number_of_inputs",
     "number_of_outputs",
     "output_names",
+    "input_labels",
     "environment",
     "dependencies",
     "settings_schema",
@@ -860,7 +861,14 @@ class _SourceParser:
         for attr in ("node_category", "node_group", "node_icon", "title", "intro", "author", "version"):
             if lifted.get(attr) is not None:
                 state_kwargs[attr] = lifted[attr]
-        for attr in ("number_of_inputs", "number_of_outputs", "output_names", "tags", "requires_data_for_prediction"):
+        for attr in (
+            "number_of_inputs",
+            "number_of_outputs",
+            "output_names",
+            "input_labels",
+            "tags",
+            "requires_data_for_prediction",
+        ):
             if attr in lifted:
                 state_kwargs[attr] = lifted[attr]
         if "example_inputs" in lifted:
@@ -942,6 +950,11 @@ class _SourceParser:
         if name == "output_names":
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 self.error(ParseIssueCode.INVALID_OUTPUT_NAMES, "'output_names' must be a list of strings", node)
+                return _INVALID
+            return value
+        if name == "input_labels":
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                self.error(ParseIssueCode.NON_LITERAL_ATTR, "'input_labels' must be a list of strings", node)
                 return _INVALID
             return value
         if name == "example_settings":
@@ -1457,9 +1470,14 @@ def extract_manifest(source: str) -> NodeManifest:
         for field in ("number_of_inputs", "number_of_outputs"):
             if type(attrs.get(field)) is int:
                 manifest_kwargs[field] = attrs[field]
+        # Empty lists are lifted too: manifest_to_template and to_node_template must
+        # agree exactly or registry.ensure_class flaps the palette template.
         output_names = attrs.get("output_names")
-        if isinstance(output_names, list) and output_names and all(isinstance(n, str) for n in output_names):
+        if isinstance(output_names, list) and all(isinstance(n, str) for n in output_names):
             manifest_kwargs["output_names"] = output_names
+        input_labels = attrs.get("input_labels")
+        if isinstance(input_labels, list) and all(isinstance(n, str) for n in input_labels):
+            manifest_kwargs["input_labels"] = input_labels
         if isinstance(attrs.get("node_group"), str):
             manifest_kwargs["node_group"] = attrs["node_group"]
         if attrs.get("node_type") in ("input", "output", "process"):

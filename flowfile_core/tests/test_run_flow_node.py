@@ -616,6 +616,66 @@ def test_node_list_exposes_new_templates():
     assert by_item["flow_output"]["input"] == 1 and by_item["flow_output"]["output"] == 0
     assert by_item["union"].get("dynamic_inputs") is False
 
+    # Static 2-input nodes name their canvas handles; the names are display-only
+    # and travel on the template, never on the per-instance input_names.
+    for item in ("join", "cross_join", "fuzzy_match", "wait_for"):
+        assert by_item[item]["input"] == 2
+        assert len(by_item[item]["input_labels"]) == 2
+        assert all(by_item[item]["input_labels"])
+    assert by_item["join"]["input_labels"] == ["Left", "Right"]
+    # Nothing to disambiguate on a single or collapsed-multi input.
+    assert by_item["filter"].get("input_labels") is None
+    assert by_item["union"].get("input_labels") is None
+    assert by_item["run_flow"].get("input_labels") is None
+
+
+def test_split_mode_filter_declares_both_output_handles():
+    """A split filter must ship two output handles on flow open.
+
+    The second handle used to exist only while the settings drawer was mounted
+    (Filter.vue built it client-side), so reloading a saved flow dropped it and
+    orphaned the output-1 edge.
+    """
+    graph = make_graph(425)
+    add_promise(graph, 1, "manual_input")
+    add_promise(graph, 2, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            filter_input=transform_schema.FilterInput(advanced_filter="[a] > 1", filter_type="advanced"),
+            split_mode=True,
+        )
+    )
+    node_input = graph.get_node(2).get_node_input()
+    assert node_input.output_names == ["pass", "fail"]
+
+    # Single-output filters stay exactly as they were.
+    add_promise(graph, 3, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=3,
+            filter_input=transform_schema.FilterInput(advanced_filter="[a] > 1", filter_type="advanced"),
+            split_mode=False,
+        )
+    )
+    assert graph.get_node(3).get_node_input().output_names is None
+
+
+def test_static_multi_input_node_serializes_template_input_labels():
+    """input_labels must survive get_node_input without colliding with the
+    per-instance input_names kwarg it is deliberately named apart from."""
+    graph = make_graph(424)
+    add_promise(graph, 1, "manual_input")
+    add_promise(graph, 2, "join")
+
+    node_input = graph.get_node(2).get_node_input()
+    assert node_input.input_labels == ["Left", "Right"]
+    assert node_input.input_names is None
+    assert node_input.dynamic_inputs is False
+    assert graph.get_node(1).get_node_input().input_labels is None
+
 
 def test_node_data_main_input_is_param_connection_only(head_subflow):
     """Settings panel column dropdown must reflect the input-0 (param) connection, not data slots."""

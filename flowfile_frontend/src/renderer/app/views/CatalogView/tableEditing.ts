@@ -400,24 +400,22 @@ export function joinKeyToken(values: unknown[], spec: JoinKeySpec[]): string | n
 }
 
 /**
- * Index a prediction table's rows by join token, treating every row as one
- * (class, probability) candidate for its key and keeping the highest-probability
- * candidate. That serves both table shapes from one path: a wide table has a
- * single candidate per key (so the winner is its own predicted class), while a
- * long table — one row per class — yields the argmax plus the full distribution.
+ * Index a prediction table by join token. A prediction table is exploded: one row
+ * per (record, class) carrying that class's probability. Per key the
+ * highest-probability row wins the suggestion, its probability is the confidence,
+ * and all of the key's rows form the distribution.
  *
- * Without a probability column candidates cannot be ranked, so the first one
- * wins. A repeat of the *same* class for a key is a genuine duplicate and is
- * counted; further classes are not. Empty keys count as unjoinable; rows with no
- * class are skipped silently.
+ * A repeat of the same class for one key is a data error, not a second candidate:
+ * it is counted and resolved to the higher probability so the result stays
+ * independent of row order. Empty keys count as unjoinable; rows with no class are
+ * skipped silently.
  */
 export function buildSuggestionMap(
   predColumns: string[],
   predRows: unknown[][],
   keySpec: JoinKeySpec[],
-  suggestionColumn: string,
-  confidenceColumn: string | null,
-  probabilityColumns: Record<string, string> | null,
+  classColumn: string,
+  probabilityColumn: string,
 ): SuggestionMap {
   const byKey = new Map<string, SuggestionEntry>();
   let duplicateKeys = 0;
@@ -427,17 +425,13 @@ export function buildSuggestionMap(
     best: string;
     bestProbability: number | null;
     observed: Record<string, number>;
-    classes: Set<string>;
-    columnProbabilities: Record<string, number> | null;
+    seen: Set<string>;
   }
   const accumulated = new Map<string, Candidate>();
 
   const keyIndexes = keySpec.map((s) => predColumns.indexOf(s.column));
-  const suggestionIndex = predColumns.indexOf(suggestionColumn);
-  const confidenceIndex = confidenceColumn === null ? -1 : predColumns.indexOf(confidenceColumn);
-  const probabilityIndexes = Object.entries(probabilityColumns ?? {})
-    .map(([className, column]) => ({ className, index: predColumns.indexOf(column) }))
-    .filter((entry) => entry.index !== -1);
+  const classIndex = predColumns.indexOf(classColumn);
+  const probabilityIndex = predColumns.indexOf(probabilityColumn);
 
   const cellOf = (row: unknown[], index: number): unknown => (index === -1 ? null : row[index]);
 
@@ -450,93 +444,46 @@ export function buildSuggestionMap(
       unjoinableRows += 1;
       continue;
     }
-    const rawSuggestion = cellOf(row, suggestionIndex);
-    if (rawSuggestion === null || rawSuggestion === undefined || rawSuggestion === "") continue;
-    const className = String(rawSuggestion);
+    const rawClass = cellOf(row, classIndex);
+    if (rawClass === null || rawClass === undefined || rawClass === "") continue;
+    const className = String(rawClass);
 
     let probability: number | null = null;
-    const rawConfidence = cellOf(row, confidenceIndex);
-    if (rawConfidence !== null && rawConfidence !== undefined && rawConfidence !== "") {
-      const parsed = Number(rawConfidence);
+    const rawProbability = cellOf(row, probabilityIndex);
+    if (rawProbability !== null && rawProbability !== undefined && rawProbability !== "") {
+      const parsed = Number(rawProbability);
       probability = Number.isFinite(parsed) ? parsed : null;
     }
 
-    let columnProbabilities: Record<string, number> | null = null;
-    if (probabilityIndexes.length > 0) {
-      const collected: Record<string, number> = {};
-      for (const entry of probabilityIndexes) {
-        const raw = row[entry.index];
-        if (raw === null || raw === undefined || raw === "") continue;
-        const parsed = Number(raw);
-        if (!Number.isFinite(parsed)) continue;
-        collected[entry.className] = parsed;
-      }
-      if (Object.keys(collected).length > 0) columnProbabilities = collected;
+    let candidate = accumulated.get(token);
+    if (candidate === undefined) {
+      candidate = { best: className, bestProbability: null, observed: {}, seen: new Set() };
+      accumulated.set(token, candidate);
     }
+    if (candidate.seen.has(className)) duplicateKeys += 1;
+    candidate.seen.add(className);
 
-    const existing = accumulated.get(token);
-    if (existing === undefined) {
-      accumulated.set(token, {
-        best: className,
-        bestProbability: probability,
-        observed: probability === null ? {} : { [className]: probability },
-        classes: new Set([className]),
-        columnProbabilities,
-      });
-      continue;
+    const known = candidate.observed[className];
+    if (probability !== null && (known === undefined || probability > known)) {
+      candidate.observed[className] = probability;
     }
-    if (existing.classes.has(className)) {
-      duplicateKeys += 1;
-      continue;
-    }
-    existing.classes.add(className);
-    if (probability !== null) existing.observed[className] = probability;
     if (
       probability !== null &&
-      (existing.bestProbability === null || probability > existing.bestProbability)
+      (candidate.bestProbability === null || probability > candidate.bestProbability)
     ) {
-      existing.best = className;
-      existing.bestProbability = probability;
+      candidate.best = className;
+      candidate.bestProbability = probability;
     }
-    if (existing.columnProbabilities === null) existing.columnProbabilities = columnProbabilities;
   }
 
   for (const [token, candidate] of accumulated) {
-    // Column-derived probabilities win: one wide row states the whole distribution,
-    // while observed pairs only cover the classes that turned up as rows.
-    const fromRows =
-      candidate.classes.size > 1 && Object.keys(candidate.observed).length > 0
-        ? candidate.observed
-        : null;
     byKey.set(token, {
       suggested: candidate.best,
       confidence: candidate.bestProbability,
-      probabilities: candidate.columnProbabilities ?? fromRows,
+      probabilities: Object.keys(candidate.observed).length > 0 ? candidate.observed : null,
     });
   }
   return { byKey, duplicateKeys, unjoinableRows };
-}
-
-/** Match `proba_<class>`, then `prob_<class>`, then `p_<class>`, case-insensitively; partial matches are fine. */
-export function detectProbabilityColumns(
-  predColumns: string[],
-  classes: string[],
-): Record<string, string> {
-  const byLowerName = new Map<string, string>();
-  for (const column of predColumns) {
-    const lower = column.toLowerCase();
-    if (!byLowerName.has(lower)) byLowerName.set(lower, column);
-  }
-  const matched: Record<string, string> = {};
-  for (const className of classes) {
-    const lower = className.toLowerCase();
-    const column =
-      byLowerName.get(`proba_${lower}`) ??
-      byLowerName.get(`prob_${lower}`) ??
-      byLowerName.get(`p_${lower}`);
-    if (column !== undefined) matched[className] = column;
-  }
-  return matched;
 }
 
 export function rowSuggestion(
@@ -591,24 +538,4 @@ export function formatConfidence(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "";
   const percent = value >= 0 && value <= 1 ? value * 100 : value;
   return `${Math.round(percent)}%`;
-}
-
-/** True when a key spans more than one prediction row — the long, one-row-per-class shape. */
-export function hasRepeatedKeys(
-  predColumns: string[],
-  predRows: unknown[][],
-  keySpec: JoinKeySpec[],
-): boolean {
-  const keyIndexes = keySpec.map((s) => predColumns.indexOf(s.column));
-  const seen = new Set<string>();
-  for (const row of predRows) {
-    const token = joinKeyToken(
-      keyIndexes.map((index) => (index === -1 ? null : row[index])),
-      keySpec,
-    );
-    if (token === null) continue;
-    if (seen.has(token)) return true;
-    seen.add(token);
-  }
-  return false;
 }

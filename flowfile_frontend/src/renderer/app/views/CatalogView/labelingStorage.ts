@@ -17,9 +17,8 @@ export interface StorageLike {
 export interface StoredSuggestionSettings {
   predictionTableId: number;
   predictionTableName: string;
-  suggestionColumn: string;
-  confidenceColumn: string | null;
-  useProbabilityColumns: boolean;
+  classColumn: string;
+  probabilityColumn: string | null;
   leastConfidentFirst: boolean;
 }
 
@@ -124,15 +123,14 @@ const sanitizeSuggestion = (raw: unknown): StoredSuggestionSettings | null => {
   if (typeof predictionTableId !== "number") return null;
   if (!Number.isInteger(predictionTableId) || predictionTableId <= 0) return null;
 
-  const suggestionColumn = raw.suggestionColumn;
-  if (typeof suggestionColumn !== "string" || suggestionColumn.length === 0) return null;
+  const classColumn = raw.classColumn;
+  if (typeof classColumn !== "string" || classColumn.length === 0) return null;
 
   return {
     predictionTableId,
     predictionTableName: asString(raw.predictionTableName),
-    suggestionColumn,
-    confidenceColumn: typeof raw.confidenceColumn === "string" ? raw.confidenceColumn : null,
-    useProbabilityColumns: Boolean(raw.useProbabilityColumns),
+    classColumn,
+    probabilityColumn: typeof raw.probabilityColumn === "string" ? raw.probabilityColumn : null,
     leastConfidentFirst: Boolean(raw.leastConfidentFirst),
   };
 };

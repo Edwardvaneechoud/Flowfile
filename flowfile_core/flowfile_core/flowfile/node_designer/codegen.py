@@ -391,6 +391,8 @@ class _Renderer:
             attrs.append(("number_of_outputs", "int", state.number_of_outputs))
         if state.output_names != ["main"]:
             attrs.append(("output_names", "list[str]", list(state.output_names)))
+        if state.input_labels:
+            attrs.append(("input_labels", "list[str]", list(state.input_labels)))
         if state.environment.kind == "kernel":
             attrs.append(("environment", "str", "kernel"))
         if state.environment.dependencies:

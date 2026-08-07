@@ -63,9 +63,8 @@ const fullSettings = (): StoredLabelSettings => ({
   suggestion: {
     predictionTableId: 12,
     predictionTableName: "preds",
-    suggestionColumn: "prediction",
-    confidenceColumn: "confidence",
-    useProbabilityColumns: true,
+    classColumn: "prediction",
+    probabilityColumn: "confidence",
     leastConfidentFirst: true,
   },
 });
@@ -186,7 +185,7 @@ describe("sanitizeLabelSettings", () => {
     expect(settings?.classes[MAX_LABEL_CLASSES - 1]).toBe(`c${MAX_LABEL_CLASSES - 1}`);
   });
 
-  it("drops only the suggestion when suggestionColumn is missing", () => {
+  it("drops only the suggestion when classColumn is missing", () => {
     const settings = sanitizeLabelSettings({
       targetMode: "new",
       newColumnName: "sentiment",
@@ -211,7 +210,7 @@ describe("sanitizeLabelSettings", () => {
     for (const predictionTableId of ["12", null, 0, -3, 1.5, Number.NaN, Infinity]) {
       const settings = sanitizeLabelSettings({
         ...base,
-        suggestion: { predictionTableId, suggestionColumn: "prediction" },
+        suggestion: { predictionTableId, classColumn: "prediction" },
       });
       expect(settings?.suggestion).toBeNull();
       expect(settings?.classes).toEqual(["a"]);
@@ -230,19 +229,17 @@ describe("sanitizeLabelSettings", () => {
       targetMode: "new",
       suggestion: {
         predictionTableId: 4,
-        suggestionColumn: "prediction",
+        classColumn: "prediction",
         predictionTableName: 99,
-        confidenceColumn: 0,
-        useProbabilityColumns: "yes",
+        probabilityColumn: 0,
         leastConfidentFirst: undefined,
       },
     });
     expect(settings?.suggestion).toEqual({
       predictionTableId: 4,
       predictionTableName: "",
-      suggestionColumn: "prediction",
-      confidenceColumn: null,
-      useProbabilityColumns: true,
+      classColumn: "prediction",
+      probabilityColumn: null,
       leastConfidentFirst: false,
     });
   });
