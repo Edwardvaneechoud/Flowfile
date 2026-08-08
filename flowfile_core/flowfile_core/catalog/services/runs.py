@@ -6,7 +6,6 @@ import logging
 import os
 import signal
 from datetime import datetime, timezone
-from pathlib import Path
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -23,6 +22,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRunOut,
     PaginatedFlowRuns,
 )
+from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
 from shared.subprocess_utils import spawn_flow_subprocess
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,10 @@ class FlowRunService:
     @staticmethod
     def _resolve_log_path(run_id: int, run_type: str) -> str | None:
         """Return the log file path if it exists for subprocess-spawned runs."""
-        if run_type not in ("scheduled", "manual", "on_demand"):
+        if run_type not in SUBPROCESS_RUN_TYPES:
             return None
-        log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
-        if log_file.exists():
-            return str(log_file)
-        return None
+        log_file = run_log_path(run_id)
+        return str(log_file) if log_file.exists() else None
 
     def _display_names_for(self, runs: list[FlowRun]) -> dict[int, str]:
         """Bulk-resolve ``registration_id -> current registration name``.

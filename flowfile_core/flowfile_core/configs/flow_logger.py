@@ -3,7 +3,6 @@ import logging.handlers
 import os
 import queue
 import threading
-from datetime import datetime
 from pathlib import Path
 
 from shared.storage_config import storage
@@ -335,24 +334,6 @@ def get_flow_log_file(flow_id: int) -> Path:
     return storage.logs_directory / f"flow_{flow_id}.log"
 
 
-def cleanup_old_logs(max_age_days: int = 7):
-    """Delete log files older than specified days"""
-    logs_dir = storage.logs_directory
-    now = datetime.now().timestamp()
-    deleted_count = 0
-
-    for log_file in logs_dir.glob("flow_*.log"):
-        try:
-            if (now - log_file.stat().st_mtime) > (max_age_days * 24 * 60 * 60):
-                log_file.unlink()
-                deleted_count += 1
-        except Exception as e:
-            main_logger.error(f"Failed to delete old log file {log_file}: {e}")
-
-    if deleted_count > 0:
-        main_logger.info(f"Deleted {deleted_count} old log files")
-
-
 def clear_all_flow_logs():
     """Delete all flow log files"""
     logs_dir = storage.logs_directory
@@ -370,7 +351,7 @@ def clear_all_flow_logs():
                 except Exception as e:
                     main_logger.error(f"Error closing handlers for flow {flow_id}: {e}")
 
-        for log_file in logs_dir.glob("*.log"):
+        for log_file in logs_dir.glob("flow_*.log"):
             try:
                 os.remove(log_file)
                 deleted_count += 1

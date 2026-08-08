@@ -1,6 +1,15 @@
 import os
+import tempfile
+from pathlib import Path
 
 os.environ['TESTING'] = 'True'
+
+# Keep jwt_secret / master_key / internal_token out of the developer's real
+# ~/.config/flowfile store (flowfile_frame imports flowfile_core in-process).
+os.environ.setdefault(
+    'FLOWFILE_SECURE_STORAGE_PATH',
+    str(Path(tempfile.gettempdir()) / 'flowfile_test_secure_storage'),
+)
 
 from pydantic import SecretStr
 

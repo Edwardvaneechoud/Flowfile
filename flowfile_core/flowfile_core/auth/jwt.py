@@ -28,6 +28,20 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 _internal_token: str | None = None
 
 
+def _load_or_create_persisted_token() -> str:
+    """Read the persisted internal token, minting and storing one if absent.
+
+    Re-reads after the write so two processes that both found an empty store
+    converge on whichever token actually landed.
+    """
+    token = get_password("flowfile", "internal_token")
+    if token:
+        return token
+    token = secrets.token_hex(32)
+    set_password("flowfile", "internal_token", token)
+    return get_password("flowfile", "internal_token") or token
+
+
 def get_internal_token() -> str:
     """Get the internal service token used for kernel → Core auth.
 
@@ -35,14 +49,18 @@ def get_internal_token() -> str:
     ``FLOWFILE_INTERNAL_TOKEN`` environment variable (configured in
     docker-compose.yml, same pattern as ``JWT_SECRET_KEY``).
 
-    In Electron mode (single-process) it is auto-generated if absent.
+    In Electron mode it is generated once and persisted through SecureStorage
+    (same pattern as ``get_jwt_secret``) so that CLI subprocesses spawned for
+    manual and scheduled runs agree with the long-lived server instead of each
+    minting a private token. There is no rotation path: delete the
+    ``internal_token`` entry from the store and restart to mint a new one.
     """
     global _internal_token
     if _internal_token is None:
         _internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
         if not _internal_token:
             if os.environ.get("FLOWFILE_MODE") == "electron":
-                _internal_token = secrets.token_hex(32)
+                _internal_token = _load_or_create_persisted_token()
                 os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
             else:
                 raise ValueError(

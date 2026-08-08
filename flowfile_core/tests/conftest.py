@@ -4,9 +4,11 @@ import platform
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 
 # Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
 import bcrypt
@@ -25,10 +27,16 @@ os.environ['TESTING'] = 'True'
 # warm-up thread touch Docker (container reclaim / image GC) from tests.
 os.environ.setdefault('FLOWFILE_KERNEL_WARMUP', '0')
 
+# Keep jwt_secret / master_key / internal_token out of the developer's real
+# ~/.config/flowfile store. Stable across sessions and outside storage.temp_directory,
+# which the 24h sweep in shared.storage_config.cleanup_directories would eat.
+os.environ.setdefault(
+    'FLOWFILE_SECURE_STORAGE_PATH',
+    str(Path(tempfile.gettempdir()) / 'flowfile_test_secure_storage'),
+)
+
 # Pin before core imports / worker spawn so every process derives the same shared paths.
 if 'FLOWFILE_SHARED_DIR' not in os.environ:
-    import tempfile
-    from pathlib import Path
     os.environ['FLOWFILE_SHARED_DIR'] = str(Path(tempfile.mkdtemp(prefix='flowfile_test_shared_')).resolve())
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))

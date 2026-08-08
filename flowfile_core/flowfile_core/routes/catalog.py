@@ -511,17 +511,14 @@ def get_run_log(
     run_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the log content for a scheduled run."""
+    """Return the log content for a subprocess-spawned run."""
     run = service.get_run_detail(run_id)
 
-    if run.run_type not in ("scheduled", "manual"):
-        raise HTTPException(404, "Logs are only available for scheduled/manual runs")
-
-    log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
-    if not log_file.exists():
+    log_path = service.resolve_run_log_path(run.id, run.run_type)
+    if log_path is None:
         raise HTTPException(404, "Log file not found")
 
-    return {"log": log_file.read_text(errors="replace")}
+    return {"log": Path(log_path).read_text(errors="replace")}
 
 
 # Open Run Snapshot in Designer

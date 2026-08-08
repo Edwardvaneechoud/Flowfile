@@ -438,7 +438,7 @@ class CatalogService:
         """Enrich many flows with favourites, follows, and run stats in bulk."""
         return self._flows.bulk_enrich_flows(flows, user_id)
 
-    def _resolve_log_path(self, run_id: int, run_type: str) -> str | None:
+    def resolve_run_log_path(self, run_id: int, run_type: str) -> str | None:
         """Return the log file path for subprocess-spawned runs, if it exists."""
         return self._runs._resolve_log_path(run_id, run_type)
 

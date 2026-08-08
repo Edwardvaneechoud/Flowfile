@@ -30,6 +30,7 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.routes.routes import flow_file_handler
+from shared.run_logs import run_log_path
 from shared.storage_config import storage
 
 # Helpers
@@ -75,6 +76,24 @@ def clean_catalog():
     _cleanup_catalog()
     yield
     _cleanup_catalog()
+
+
+@pytest.fixture
+def run_log_file():
+    """Write a run's subprocess log where the service resolves it, and clean up."""
+    written: list[Path] = []
+
+    def _write(run_id: int, content: str) -> Path:
+        path = run_log_path(run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        written.append(path)
+        return path
+
+    yield _write
+
+    for path in written:
+        path.unlink(missing_ok=True)
 
 
 # Namespace tests
@@ -665,6 +684,68 @@ class TestRuns:
         data = resp.json()
         assert data["total"] == 0
         assert len(data["items"]) == 0
+
+    # Run logs
+
+    @staticmethod
+    def _make_run(run_type: str) -> int:
+        """Insert a FlowRun of the given type against a fresh registration."""
+        cat = client.post("/catalog/namespaces", json={"name": f"LogCat_{run_type}"}).json()
+        schema = client.post(
+            "/catalog/namespaces", json={"name": f"LogSch_{run_type}", "parent_id": cat["id"]}
+        ).json()
+        flow = client.post(
+            "/catalog/flows",
+            json={
+                "name": f"log_flow_{run_type}",
+                "flow_path": f"/tmp/log_flow_{run_type}.yaml",
+                "namespace_id": schema["id"],
+            },
+        ).json()
+        with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow["id"]).scalar()
+            run = FlowRun(
+                registration_id=flow["id"],
+                flow_uuid=reg_uuid,
+                flow_name=f"log_flow_{run_type}",
+                flow_path=f"/tmp/log_flow_{run_type}.yaml",
+                user_id=1,
+                started_at=datetime.now(timezone.utc),
+                number_of_nodes=1,
+                run_type=run_type,
+            )
+            db.add(run)
+            db.commit()
+            return run.id
+
+    def test_run_log_endpoint_serves_on_demand_runs(self, run_log_file):
+        """A schedule's 'run now' advertises has_log — the endpoint must serve it."""
+        run_id = self._make_run("on_demand")
+        run_log_file(run_id, "on-demand run output")
+
+        resp = client.get(f"/catalog/runs/{run_id}/log")
+
+        assert resp.status_code == 200
+        assert resp.json()["log"] == "on-demand run output"
+
+    @pytest.mark.parametrize(
+        "run_type", ["scheduled", "manual", "on_demand", "in_designer_run"]
+    )
+    def test_has_log_agrees_with_log_endpoint(self, run_log_file, run_type):
+        """has_log must be true exactly when the log endpoint returns 200."""
+        run_id = self._make_run(run_type)
+        run_log_file(run_id, "output")
+
+        has_log = client.get(f"/catalog/runs/{run_id}").json()["has_log"]
+        served = client.get(f"/catalog/runs/{run_id}/log").status_code == 200
+
+        assert has_log == served
+
+    def test_run_log_404_when_file_absent(self):
+        run_id = self._make_run("scheduled")
+
+        assert client.get(f"/catalog/runs/{run_id}").json()["has_log"] is False
+        assert client.get(f"/catalog/runs/{run_id}/log").status_code == 404
 
 
 def test_open_run_snapshot_does_not_reuse_registration(tmp_path):

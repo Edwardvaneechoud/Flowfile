@@ -116,7 +116,9 @@ The flow detail panel includes:
 
 ### Run Logs
 
-Scheduled and manual runs write their output to log files. When viewing a run's detail panel, click **View log** to see the full execution log. Logs are stored under the internal storage directory at `logs/scheduled_run_{run_id}.log` — `~/.flowfile/logs/…` on desktop/local installs, and `/app/internal_storage/logs/…` in the shipped Docker image.
+Scheduled, manual, and on-demand ("Run now" from a schedule) runs write their output to log files. When viewing a run's detail panel, click **View log** to see the full execution log. Logs are stored under the internal storage directory at `logs/scheduled_run_{run_id}.log` — `~/.flowfile/logs/…` on desktop/local installs, and `/app/internal_storage/logs/…` in the shipped Docker image.
+
+Logs are kept for 30 days by default. Set `FLOWFILE_RUN_LOG_RETENTION_DAYS` to change the window, or to `0` to keep logs indefinitely.
 
 ---
 

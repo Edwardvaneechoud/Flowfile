@@ -11,7 +11,8 @@ import logging
 import os
 import subprocess
 import sys
-from pathlib import Path
+
+from shared.run_logs import run_log_path
 
 logger = logging.getLogger("flowfile.subprocess")
 
@@ -34,9 +35,8 @@ def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
         cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
     logger.info("Spawning: %s", " ".join(cmd))
     try:
-        log_dir = Path.home() / ".flowfile" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"scheduled_run_{run_id}.log"
+        log_file = run_log_path(run_id)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         try:
             proc = subprocess.Popen(

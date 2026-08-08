@@ -34,7 +34,8 @@ Standalone FastAPI compute service that offloads heavy Polars/data work from `fl
 - **Viz sources are lazy handles, not snapshots.** `_build_viz_loader_in_child` returns a LazyFrame for every kind — `physical` is `scan_delta`, `sql` is a `SQLContext` over live scans, and `plan` deserialises a flow node's shipped `pl.LazyFrame` — so Polars pushes each chart's projection into the source. Only `ipc_path` (catalog virtual flow tables) reads a materialised file, and that file is written by `funcs.resolve_virtual_table`, never by the viz child. Deserialisation must stay inside `_build_viz_loader_in_child`: `test_catalog_visualize.py` asserts `polars_gw` never reaches the FastAPI parent.
 - **Module-top polars imports** (`funcs.py`, `catalog_reader.py`, `viz_session_worker.py`) are fine because they're invoked in children; do not import them eagerly into the FastAPI request path.
 - `secrets.py` re-derives user keys independently of core using the same `$ffsec$1${user_id}${token}` format (`SECRET_FORMAT_PREFIX`) and `KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"` HKDF salt — keep these byte-for-byte in sync with core's secret module or decryption breaks.
-- `TEST_MODE` (env `TEST_MODE` set) returns a fixed master key; tests set it in `conftest.py`.
+- `TEST_MODE` (env `TEST_MODE` set) returns a fixed master key; tests set it in `conftest.py`. Note core's suite spawns the worker **without** `TEST_MODE`, so there the worker reads the real store.
+- `secrets.py`'s store dir honors `FLOWFILE_SECURE_STORAGE_PATH` (else `$APPDATA`/`~/.config` + `flowfile`), matching `flowfile_core/auth/secrets.py`. The two resolvers must stay in lockstep: core encrypts `$ffsec$` with the master key in that dir and the worker re-derives it, so a split store turns every secret-touching offloaded job into "Task failed".
 
 ## Running / entry points
 - Poetry script: `poetry run flowfile_worker` → `flowfile_worker.main:run`.
