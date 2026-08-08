@@ -223,6 +223,7 @@ class GlobalArtifactOut(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     blob_exists: bool = True  # False when the backing blob is missing (filesystem backend only)
+    version_count: int = 1  # Active versions of this artifact (the tree lists only the latest)
     access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)

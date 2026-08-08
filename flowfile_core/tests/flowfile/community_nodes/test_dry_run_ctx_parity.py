@@ -105,3 +105,49 @@ def test_is_dry_run_is_on_both_sides():
     """The signal itself must not be the thing that drifts."""
     assert "is_dry_run" in _kernel_client_api(), "is_dry_run() is missing from the real kernel client"
     assert "is_dry_run" in _fake_methods(), "is_dry_run() is missing from the dry-run fake"
+
+
+class _StripAnnotations(ast.NodeTransformer):
+    """Type hints are the one licensed difference: the child runs unannotated source."""
+
+    def visit_arg(self, node: ast.arg) -> ast.arg:
+        node.annotation = None
+        return self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        node.returns = None
+        return self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.stmt:
+        if node.value is None:
+            return node
+        return self.generic_visit(ast.Assign(targets=[node.target], value=node.value))
+
+
+def _artifact_aliases_ast(source: str) -> str:
+    for stmt in ast.parse(source).body:
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == "_artifact_aliases":
+            stripped = _StripAnnotations().visit(stmt)
+            stripped.body = [s for s in stripped.body if not (isinstance(s, ast.Expr) and _is_docstring(s))]
+            return ast.dump(ast.fix_missing_locations(stripped))
+    pytest.fail("_artifact_aliases not found")
+
+
+def _is_docstring(stmt: ast.Expr) -> bool:
+    return isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
+
+
+def test_artifact_alias_rules_match_on_both_sides():
+    """The dry-run child cannot import core's copy, so the two must be pinned equal.
+
+    Drift means the Test panel and the community-CI dry run disagree about what a
+    qualified ``get_global("catalog.schema::name")`` resolves to.
+    """
+    from flowfile_core.flowfile.user_defined import kernel_codegen
+
+    core = _artifact_aliases_ast(Path(kernel_codegen.__file__).read_text(encoding="utf-8"))
+    child = _artifact_aliases_ast(dry_run_local._RUNNER)
+    assert core == child, (
+        "kernel_codegen._artifact_aliases and dry_run_local's copy diverged; "
+        "change both or the two dry-run paths seed different artifact aliases."
+    )

@@ -195,8 +195,11 @@ artifact_id = flowfile_ctx.publish_global(
     tags=["ml", "classification"],
 )
 
-# Retrieve from the global catalog
+# Retrieve from the global catalog (latest version)
 model = flowfile_ctx.get_global("sales_model_v2")
+
+# Same artifact, addressed by its qualified reference
+model = flowfile_ctx.get_global("General.default::sales_model_v2")
 
 # Get a specific version
 model_v1 = flowfile_ctx.get_global("sales_model_v2", version=1)
@@ -212,6 +215,20 @@ flowfile_ctx.delete_global_artifact("sales_model_v2")
 
 !!! note "Registered flow required to persist"
     `publish_global` needs a flow registration to persist the artifact. Core normally auto-provisions a scratch registration for you, so this works in most cases. When no registration is available it returns `-1` and skips persisting rather than raising.
+
+#### Referring to an artifact by name
+
+Every name-based operation (`get_global`, `delete_global_artifact`, and the corresponding `/artifacts/by-name/...` routes) accepts two forms:
+
+| Form | Example | Resolution |
+|------|---------|------------|
+| Bare name | `"sales_model_v2"` | Searched across every namespace you can see. Fails with a conflict when the same name exists in more than one namespace. |
+| Qualified reference | `"General.default::sales_model_v2"` | `catalog.schema` before the separator, artifact name after it. Unambiguous by construction. |
+
+The reference is split on the **last** `::`, so artifact names themselves cannot contain `::` — `publish_global` rejects such a name. If the namespace path no longer resolves (a renamed catalog or schema) the bare name is used as a fallback, and only fails when that name is ambiguous. When no `version` is given, the newest active version is resolved.
+
+!!! warning "Version deletes are guarded"
+    `DELETE /artifacts/{id}` refuses to delete the current latest version while other versions exist (409 `CANNOT_DELETE_LATEST`, overridable with `force=true`) and refuses to delete the last remaining version (delete the artifact itself with `DELETE /artifacts/by-name/{ref}` instead). Kernel calls authenticate as the internal service principal and bypass both guards, so `delete_global_artifact` behaves exactly as before.
 
 !!! tip "Artifact Persistence"
     Local artifacts are automatically saved to disk and recovered if the kernel restarts — no configuration needed.
@@ -322,9 +339,9 @@ The following functions are available inside kernel code via the `flowfile_ctx` 
 | Function | Description |
 |----------|-------------|
 | `publish_global(name, obj, ...)` | Persist an object to the global catalog |
-| `get_global(name, version=None)` | Retrieve from the global catalog |
+| `get_global(name, version=None)` | Retrieve from the global catalog; `name` may be bare or qualified `catalog.schema::name`, latest version when unset |
 | `list_global_artifacts(...)` | List available global artifacts |
-| `delete_global_artifact(name, ...)` | Delete a global artifact |
+| `delete_global_artifact(name, ...)` | Delete a global artifact (same reference forms) |
 
 ### Display & Logging
 

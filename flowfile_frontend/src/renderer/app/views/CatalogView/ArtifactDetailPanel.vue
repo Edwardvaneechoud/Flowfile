@@ -26,6 +26,15 @@
           Share
         </button>
         <button
+          v-if="canManage(artifact) && totalVersions > 1"
+          class="btn btn-secondary btn-sm"
+          title="Delete older versions"
+          @click="showPruneDialog = true"
+        >
+          <i class="fa-solid fa-broom"></i>
+          Prune versions
+        </button>
+        <button
           v-if="canManage(artifact)"
           class="btn btn-danger btn-sm"
           title="Delete model"
@@ -44,6 +53,14 @@
       :resource-id="artifact.id"
       :resource-name="artifact.name"
       :can-manage-grants="canManageGrants(artifact)"
+    />
+
+    <ArtifactPruneDialog
+      v-model="showPruneDialog"
+      :artifact-name="artifact.name"
+      :total-versions="totalVersions"
+      :versions="versions"
+      @pruned="emit('versionsChanged')"
     />
 
     <!-- Data missing banner -->
@@ -78,7 +95,7 @@
       </div>
       <div class="meta-card">
         <span class="meta-label">Total Versions</span>
-        <span class="meta-value">{{ versions.length }}</span>
+        <span class="meta-value">{{ totalVersions }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Created</span>
@@ -132,7 +149,7 @@
     </div>
 
     <!-- Versions Table -->
-    <div v-if="versions.length > 1" class="section">
+    <div v-if="totalVersions > 0" class="section">
       <h3>Versions</h3>
       <div class="versions-table">
         <div class="versions-header">
@@ -140,29 +157,71 @@
           <span class="col-type">Type</span>
           <span class="col-size">Size</span>
           <span class="col-date">Created</span>
+          <span class="col-actions">Actions</span>
         </div>
-        <div
-          v-for="v in versions"
-          :key="v.id"
-          class="versions-row"
-          :class="{ current: v.id === artifact.id }"
+        <div v-if="loadingVersions" class="versions-loading">Loading versions…</div>
+        <template v-else>
+          <div
+            v-for="v in versions"
+            :key="v.id"
+            class="versions-row"
+            :class="{ current: isLatest(v.version, latestVersion) }"
+          >
+            <span class="col-version">
+              v{{ v.version }}
+              <span v-if="isLatest(v.version, latestVersion)" class="latest-tag">latest</span>
+              <el-tooltip
+                v-if="v.blob_exists === false"
+                content="Model data file not found on disk"
+                placement="top"
+                :show-after="300"
+              >
+                <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+              </el-tooltip>
+            </span>
+            <span class="col-type mono">{{ versionType(v) }}</span>
+            <span class="col-size">{{ formatSize(v.size_bytes) }}</span>
+            <span class="col-date">{{ v.created_at ? formatDate(v.created_at) : "--" }}</span>
+            <span class="col-actions">
+              <template v-if="canManage(artifact) && !isLatest(v.version, latestVersion)">
+                <el-tooltip content="Restore as newest version" placement="top" :show-after="400">
+                  <el-button size="small" text @click="emit('promoteVersion', v)">
+                    <i class="fa-solid fa-rotate-left" />
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="Delete this version" placement="top" :show-after="400">
+                  <el-button size="small" type="danger" text @click="emit('deleteVersion', v)">
+                    <i class="fa-solid fa-trash" />
+                  </el-button>
+                </el-tooltip>
+              </template>
+            </span>
+          </div>
+        </template>
+      </div>
+
+      <div v-if="totalPages > 1" class="pagination-bar">
+        <button class="page-btn" :disabled="page <= 1" @click="emit('setVersionsPage', 1)">
+          <i class="fa-solid fa-angles-left" />
+        </button>
+        <button class="page-btn" :disabled="page <= 1" @click="emit('setVersionsPage', page - 1)">
+          <i class="fa-solid fa-angle-left" />
+        </button>
+        <span class="page-info">Page {{ page }} of {{ totalPages }}</span>
+        <button
+          class="page-btn"
+          :disabled="page >= totalPages"
+          @click="emit('setVersionsPage', page + 1)"
         >
-          <span class="col-version">
-            v{{ v.version }}
-            <span v-if="v.id === artifact.id" class="latest-tag">latest</span>
-            <el-tooltip
-              v-if="v.blob_exists === false"
-              content="Model data file not found on disk"
-              placement="top"
-              :show-after="300"
-            >
-              <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
-            </el-tooltip>
-          </span>
-          <span class="col-type mono">{{ formatType(v) }}</span>
-          <span class="col-size">{{ formatSize(v.size_bytes) }}</span>
-          <span class="col-date">{{ v.created_at ? formatDate(v.created_at) : "--" }}</span>
-        </div>
+          <i class="fa-solid fa-angle-right" />
+        </button>
+        <button
+          class="page-btn"
+          :disabled="page >= totalPages"
+          @click="emit('setVersionsPage', totalPages)"
+        >
+          <i class="fa-solid fa-angles-right" />
+        </button>
       </div>
     </div>
 
@@ -170,10 +229,10 @@
     <div class="section">
       <h3>Usage</h3>
       <div class="code-block">
-        <code>obj = flowfile_ctx.get_global("{{ artifact.name }}"{{ nsArg }})</code>
+        <code>obj = flowfile_ctx.get_global("{{ usageRef }}")</code>
       </div>
-      <div v-if="versions.length > 1" class="code-block" style="margin-top: 8px">
-        <code>obj_v1 = flowfile_ctx.get_global("{{ artifact.name }}"{{ nsArg }}, version=1)</code>
+      <div v-if="totalVersions > 1" class="code-block" style="margin-top: 8px">
+        <code>obj_v1 = flowfile_ctx.get_global("{{ usageRef }}", version=1)</code>
       </div>
     </div>
   </div>
@@ -182,25 +241,54 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
-import type { GlobalArtifact } from "../../types";
-import { formatDate, formatSize, formatType } from "./catalog-formatters";
+import { findNamespacePath, type ArtifactVersionInfo, type GlobalArtifact } from "../../types";
+import { formatDate, formatPythonType, formatSize, formatType } from "./catalog-formatters";
+import {
+  artifactRef,
+  isLatest,
+  latestVersionNumber,
+  totalPages as computeTotalPages,
+} from "./artifactVersions";
+import ArtifactPruneDialog from "./ArtifactPruneDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const showShareDialog = ref(false);
+const showPruneDialog = ref(false);
 const { canShare, canManage, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
   artifact: GlobalArtifact;
-  versions: GlobalArtifact[];
+  versions: ArtifactVersionInfo[];
+  totalVersions: number;
+  page: number;
+  loadingVersions?: boolean;
 }>();
 
-const emit = defineEmits(["close", "navigate-to-flow", "deleteArtifact"]);
+const emit = defineEmits([
+  "close",
+  "navigate-to-flow",
+  "deleteArtifact",
+  "deleteVersion",
+  "promoteVersion",
+  "setVersionsPage",
+  "versionsChanged",
+]);
 
 const catalogStore = useCatalogStore();
 
+const totalPages = computed(() => computeTotalPages(props.totalVersions));
+
+// Latest is the highest version number, never row-id equality: a promote mints a
+// new max version and leaves the panel's own row behind.
+const latestVersion = computed(() => latestVersionNumber(props.artifact.version, props.versions));
+
 const isUnavailable = computed(() => props.artifact.blob_exists === false);
+
+// Same fallback the Type meta card uses, so one artifact never reads two ways.
+const versionType = (v: ArtifactVersionInfo): string =>
+  formatPythonType(v.python_type, props.artifact.serialization_format ?? "unknown");
 
 const sourceFlowName = computed((): string | null => {
   const regId = props.artifact.source_registration_id;
@@ -209,14 +297,12 @@ const sourceFlowName = computed((): string | null => {
   return flow?.name ?? null;
 });
 
-// Namespace-qualify the usage snippet so it resolves unambiguously when the
-// same name exists in multiple schemas. Prefer the readable namespace name,
-// falling back to the id; omitted when the artifact has no namespace.
-const nsArg = computed((): string => {
+// Qualified reference for the usage snippet so it resolves unambiguously when
+// the same name exists in multiple schemas; bare name when unnamespaced.
+const usageRef = computed((): string => {
   const id = props.artifact.namespace_id;
-  if (id === null || id === undefined) return "";
-  const name = catalogStore.getNamespaceName(id);
-  return name ? `, namespace=${JSON.stringify(name)}` : `, namespace_id=${id}`;
+  const path = id === null || id === undefined ? [] : findNamespacePath(catalogStore.tree, id);
+  return artifactRef(props.artifact.name, path);
 });
 </script>
 
@@ -378,7 +464,7 @@ const nsArg = computed((): string => {
 
 .versions-header {
   display: grid;
-  grid-template-columns: 120px 1fr 80px 140px;
+  grid-template-columns: 120px 1fr 80px 140px 96px;
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
   background: var(--color-background-tertiary);
@@ -391,7 +477,7 @@ const nsArg = computed((): string => {
 
 .versions-row {
   display: grid;
-  grid-template-columns: 120px 1fr 80px 140px;
+  grid-template-columns: 120px 1fr 80px 140px 96px;
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
   font-size: var(--font-size-sm);
@@ -401,6 +487,14 @@ const nsArg = computed((): string => {
 
 .versions-row:hover {
   background: var(--color-background-hover);
+}
+
+.versions-loading {
+  padding: var(--spacing-4);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  border-top: 1px solid var(--color-border-light);
 }
 
 .versions-row.current {

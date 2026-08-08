@@ -2,8 +2,11 @@
 import { defineStore } from "pinia";
 import type { AxiosRequestConfig } from "axios";
 import { CatalogApi } from "../api/catalog.api";
+import { ARTIFACT_VERSIONS_PAGE_SIZE } from "../views/CatalogView/artifactVersions";
 import type {
   ActiveFlowRun,
+  ArtifactPruneResult,
+  ArtifactVersionInfo,
   CatalogStats,
   CatalogTab,
   CatalogTable,
@@ -21,6 +24,9 @@ import type {
   VisualizationUpdatePayload,
   VizSourceDescriptor,
 } from "../types";
+
+// Monotonic token guarding the artifact-versions fetch against out-of-order responses.
+let artifactVersionsRequestToken = 0;
 
 interface CatalogState {
   tree: NamespaceTree[];
@@ -44,6 +50,12 @@ interface CatalogState {
   selectedArtifact: GlobalArtifact | null;
   flowArtifacts: GlobalArtifact[];
   loadingArtifacts: boolean;
+  artifactVersions: ArtifactVersionInfo[];
+  artifactVersionsTotal: number;
+  artifactVersionsPage: number;
+  artifactVersionsRef: string | null;
+  artifactVersionsNamespaceId: number | null;
+  loadingArtifactVersions: boolean;
   selectedNamespaceId: number | null;
   selectedNamespace: NamespaceTree | null;
   selectedTableId: number | null;
@@ -135,6 +147,12 @@ export const useCatalogStore = defineStore("catalog", {
     selectedArtifact: null,
     flowArtifacts: [],
     loadingArtifacts: false,
+    artifactVersions: [],
+    artifactVersionsTotal: 0,
+    artifactVersionsPage: 1,
+    artifactVersionsRef: null,
+    artifactVersionsNamespaceId: null,
+    loadingArtifactVersions: false,
     selectedNamespaceId: null,
     selectedNamespace: null,
     selectedTableId: null,
@@ -389,17 +407,136 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
-    selectArtifact(artifactId: number) {
+    async selectArtifact(artifactId: number) {
       this.selectedArtifactId = artifactId;
-      this.selectedArtifact =
+      const local =
         this.flowArtifacts.find((a) => a.id === artifactId) ??
         this.findArtifactInTree(artifactId) ??
         null;
+      this.selectedArtifact = local;
+      if (local) return;
+      // The tree carries one row per family, so a link minted against an older
+      // version's id misses. Resolve that row and land on its family instead.
+      try {
+        const row = await CatalogApi.getArtifactById(artifactId);
+        if (this.selectedArtifactId !== artifactId) return;
+        const match = this.findArtifactByName(row.name, row.namespace_id ?? null);
+        if (match) {
+          this.selectedArtifact = match;
+          this.selectedArtifactId = match.id;
+        }
+      } catch {
+        // Id no longer resolves (deleted, or not visible to this user).
+      }
     },
 
     clearArtifactSelection() {
       this.selectedArtifactId = null;
       this.selectedArtifact = null;
+      this.clearArtifactVersions();
+    },
+
+    // -- Artifact version actions --
+
+    clearArtifactVersions() {
+      artifactVersionsRequestToken++;
+      this.artifactVersions = [];
+      this.artifactVersionsTotal = 0;
+      this.artifactVersionsPage = 1;
+      this.artifactVersionsRef = null;
+      this.artifactVersionsNamespaceId = null;
+    },
+
+    /**
+     * Load one page of an artifact's version history. `ref` may be namespace-qualified.
+     * A superseded request's response is dropped: rows landing under another
+     * artifact's panel would point the per-row delete/restore actions at it.
+     */
+    async loadArtifactVersions(ref: string, namespaceId: number | null, page = 1) {
+      const token = ++artifactVersionsRequestToken;
+      this.artifactVersionsRef = ref;
+      this.artifactVersionsNamespaceId = namespaceId;
+      this.artifactVersionsPage = page;
+      this.loadingArtifactVersions = true;
+      try {
+        const result = await CatalogApi.getArtifactVersions(
+          ref,
+          namespaceId,
+          ARTIFACT_VERSIONS_PAGE_SIZE,
+          (page - 1) * ARTIFACT_VERSIONS_PAGE_SIZE,
+        );
+        if (token !== artifactVersionsRequestToken) return;
+        this.artifactVersions = result.all_versions;
+        this.artifactVersionsTotal = result.total_versions;
+      } catch (e: any) {
+        if (token !== artifactVersionsRequestToken) return;
+        this.artifactVersions = [];
+        this.artifactVersionsTotal = 0;
+        this.error = e?.response?.data?.detail ?? e?.message ?? "Failed to load model versions";
+      } finally {
+        if (token === artifactVersionsRequestToken) this.loadingArtifactVersions = false;
+      }
+    },
+
+    /** Re-fetch the current (or a given) page of the loaded artifact's versions. */
+    async reloadArtifactVersions(page?: number) {
+      if (this.artifactVersionsRef === null) return;
+      await this.loadArtifactVersions(
+        this.artifactVersionsRef,
+        this.artifactVersionsNamespaceId,
+        page ?? this.artifactVersionsPage,
+      );
+    },
+
+    setArtifactVersionsPage(page: number) {
+      this.reloadArtifactVersions(page);
+    },
+
+    async deleteArtifactVersion(artifactId: number, force = false) {
+      await CatalogApi.deleteArtifactVersion(artifactId, force);
+    },
+
+    async promoteArtifactVersion(artifactId: number) {
+      return CatalogApi.promoteArtifactVersion(artifactId);
+    },
+
+    async pruneArtifactVersions(keep: number, dryRun: boolean): Promise<ArtifactPruneResult> {
+      if (this.artifactVersionsRef === null) throw new Error("No artifact selected");
+      return CatalogApi.pruneArtifactVersions(
+        this.artifactVersionsRef,
+        this.artifactVersionsNamespaceId,
+        keep,
+        dryRun,
+      );
+    },
+
+    /**
+     * Re-resolve the selected artifact after a version mutation: promote mints a
+     * new latest row and a forced latest-version delete retires one, so the id
+     * the panel was opened with can stop being the family's latest row.
+     */
+    async refreshSelectedArtifact() {
+      const current = this.selectedArtifact;
+      if (!current) return;
+      await this.loadTree();
+      const match = this.findArtifactByName(current.name, current.namespace_id);
+      this.selectedArtifact = match;
+      this.selectedArtifactId = match?.id ?? null;
+    },
+
+    /** Walk the namespace tree for the latest row of an artifact family. */
+    findArtifactByName(name: string, namespaceId: number | null): GlobalArtifact | null {
+      const walk = (nodes: NamespaceTree[]): GlobalArtifact | null => {
+        for (const node of nodes) {
+          for (const a of node.artifacts ?? []) {
+            if (a.name === name && a.namespace_id === namespaceId) return a;
+          }
+          const nested = walk(node.children ?? []);
+          if (nested) return nested;
+        }
+        return null;
+      };
+      return walk(this.tree);
     },
 
     // -- Catalog Table actions --

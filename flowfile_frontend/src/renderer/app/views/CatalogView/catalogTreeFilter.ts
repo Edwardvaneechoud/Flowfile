@@ -51,7 +51,13 @@ export function groupArtifacts(artifacts: GlobalArtifact[]): ArtifactGroup[] {
   }
   return [...byName.entries()].map(([name, versions]) => {
     const sorted = [...versions].sort((a, b) => b.version - a.version);
-    return { name, latest: sorted[0], versionCount: versions.length };
+    // The tree ships one row per artifact with a server-side version_count; the
+    // row count is only a fallback for payloads that predate it.
+    return {
+      name,
+      latest: sorted[0],
+      versionCount: sorted[0].version_count ?? versions.length,
+    };
   });
 }
 

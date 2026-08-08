@@ -20,8 +20,36 @@ export function formatTypeShort(fullType: string): string {
   return idx >= 0 ? fullType.slice(idx + 1) : fullType;
 }
 
-// [value, label] pair; value is always the bare artifact name.
-export type ArtifactSelectOption = [string, string];
+// `value` is what gets stored in the node settings: a bare artifact name, or a
+// namespace-qualified "catalog.schema::name" reference that core resolves. `key`
+// is display-only identity and is always distinct, even when two artifacts share
+// a name. Labels never carry a version — a selection always resolves to the
+// newest version at run time.
+export interface ArtifactSelectOption {
+  value: string;
+  label: string;
+  key: string;
+  namespaceId?: number | null;
+}
+
+// Static (string[]) and IncomingColumns options stay plain strings; the legacy
+// [value, label] tuple is still accepted by the selects.
+export type SelectOptionItem = string | [string, string] | ArtifactSelectOption;
+
+export function optionValue(item: SelectOptionItem): string {
+  if (typeof item === "string") return item;
+  return Array.isArray(item) ? item[0] : item.value;
+}
+
+export function optionLabel(item: SelectOptionItem): string {
+  if (typeof item === "string") return item;
+  return Array.isArray(item) ? item[1] : item.label;
+}
+
+export function optionKey(item: SelectOptionItem): string {
+  if (typeof item === "string") return item;
+  return Array.isArray(item) ? item[0] : item.key;
+}
 
 export function upstreamArtifactOptions(
   artifacts: ArtifactOption[],
@@ -30,14 +58,16 @@ export function upstreamArtifactOptions(
   return artifacts
     .filter((a) => matchesTypeFilter([a.module, a.type_name].filter(Boolean).join("."), typeFilter))
     .map(
-      (a): ArtifactSelectOption => [a.name, a.type_name ? `${a.name} (${a.type_name})` : a.name],
+      (a): ArtifactSelectOption => ({
+        value: a.name,
+        label: a.type_name ? `${a.name} (${a.type_name})` : a.name,
+        key: a.name,
+      }),
     );
 }
 
-// A name resolves to its newest version when no version is given, so every older
-// version is a duplicate choice. Namespace is part of the key: the same name in two
-// namespaces is two distinct artifacts (the backend rejects that lookup as ambiguous
-// rather than picking one), so collapsing them here would hide a real conflict.
+// Safety net for older cores that don't serve ?latest_only=true: a name resolves
+// to its newest version anyway, so every older row is a duplicate choice.
 function newestPerArtifact(artifacts: GlobalArtifactOption[]): GlobalArtifactOption[] {
   const newest = new Map<string, GlobalArtifactOption>();
   for (const a of artifacts) {
@@ -49,18 +79,39 @@ function newestPerArtifact(artifacts: GlobalArtifactOption[]): GlobalArtifactOpt
   return [...newest.values()];
 }
 
+function artifactOptionValue(a: GlobalArtifactOption): string {
+  return a.namespace_path ? `${a.namespace_path}::${a.name}` : a.name;
+}
+
+function artifactOptionKey(a: GlobalArtifactOption): string {
+  return `${a.namespace_id ?? ""}::${a.name}`;
+}
+
+function namespaceLabel(a: GlobalArtifactOption): string {
+  if (a.namespace_path) return a.namespace_path;
+  return a.namespace_id != null ? `ns ${a.namespace_id}` : "default";
+}
+
 export function globalArtifactOptions(
   artifacts: GlobalArtifactOption[],
   typeFilter?: string[],
 ): ArtifactSelectOption[] {
-  return newestPerArtifact(
+  const collapsed = newestPerArtifact(
     artifacts.filter((a) => matchesTypeFilter(a.python_type ?? "", typeFilter)),
-  ).map(
-    (a): ArtifactSelectOption => [
-      a.name,
-      `${a.name} (v${a.version}${a.python_type ? " · " + formatTypeShort(a.python_type) : ""})`,
-    ],
   );
+  const counts = new Map<string, number>();
+  for (const a of collapsed) counts.set(a.name, (counts.get(a.name) ?? 0) + 1);
+
+  return collapsed.map((a): ArtifactSelectOption => {
+    const type = a.python_type ? ` (${formatTypeShort(a.python_type)})` : "";
+    const suffix = (counts.get(a.name) ?? 0) > 1 ? ` — ${namespaceLabel(a)}` : "";
+    return {
+      value: artifactOptionValue(a),
+      label: `${a.name}${type}${suffix}`,
+      key: artifactOptionKey(a),
+      namespaceId: a.namespace_id ?? null,
+    };
+  });
 }
 
 // scope "all": upstream options first, then global options whose bare name is not
@@ -79,7 +130,10 @@ export function buildArtifactOptions(
   if (resolved === "upstream") {
     return upstreamOpts;
   }
-  const seen = new Set(upstreamOpts.map(([name]) => name));
-  const globalOpts = globalArtifactOptions(global, typeFilter).filter(([name]) => !seen.has(name));
+  const seen = new Set(upstreamOpts.map((o) => o.value));
+  const globalOpts = globalArtifactOptions(
+    global.filter((a) => !seen.has(a.name)),
+    typeFilter,
+  );
   return [...upstreamOpts, ...globalOpts];
 }

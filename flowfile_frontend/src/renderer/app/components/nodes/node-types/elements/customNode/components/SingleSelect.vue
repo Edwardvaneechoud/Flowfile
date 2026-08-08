@@ -13,9 +13,9 @@
     >
       <el-option
         v-for="item in options"
-        :key="Array.isArray(item) ? item[0] : item"
-        :label="Array.isArray(item) ? item[1] : item"
-        :value="Array.isArray(item) ? item[0] : item"
+        :key="optionKey(item)"
+        :label="optionLabel(item)"
+        :value="optionValue(item)"
       />
     </el-select>
   </div>
@@ -24,7 +24,13 @@
 <script setup lang="ts">
 import { computed, PropType } from "vue";
 import type { ArtifactOption, GlobalArtifactOption, SingleSelectComponent } from "../interface";
-import { buildArtifactOptions } from "./artifactFilter";
+import {
+  buildArtifactOptions,
+  optionKey,
+  optionLabel,
+  optionValue,
+  type SelectOptionItem,
+} from "./artifactFilter";
 
 const props = defineProps({
   schema: {
@@ -55,8 +61,8 @@ const props = defineProps({
 
 defineEmits(["update:modelValue"]);
 
-// Value is always the bare artifact name; scope decides source and label.
-const options = computed(() => {
+// Artifact values are bare names or namespace-qualified refs; scope decides the source.
+const options = computed((): SelectOptionItem[] => {
   const opts = props.schema.options;
   if (Array.isArray(opts)) {
     return opts;

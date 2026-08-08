@@ -123,6 +123,29 @@ class SeededConsumer(nd.CustomNodeBase):
         return inputs[0].with_columns((pl.col("a") * bundle["coef"]).alias("scaled"))
 '''
 
+_QUALIFIED_SETTINGS_NODE = '''
+import polars as pl
+from flowfile import node_designer as nd
+
+
+class QualifiedConsumer(nd.CustomNodeBase):
+    node_name: str = "Qualified Consumer"
+    environment: str = "kernel"
+    example_inputs: list = [{"a": [1, 2]}]
+    example_settings: dict = {"main": {"model": "General.models::seeded_model", "other": "plain"}}
+
+    def example_artifacts(self) -> dict:
+        return {"seeded_model": {"coef": 3}}
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        bundle = flowfile_ctx.get_global("General.models::seeded_model")
+        if bundle != {"coef": 3}:
+            raise RuntimeError("the qualified settings value was not seeded")
+        if flowfile_ctx.get_global("seeded_model") != {"coef": 3}:
+            raise RuntimeError("the bare name must stay seeded too")
+        return inputs[0].with_columns((pl.col("a") * bundle["coef"]).alias("scaled"))
+'''
+
 _CATALOG_NODE = '''
 import polars as pl
 from flowfile import node_designer as nd
@@ -164,6 +187,12 @@ def test_flow_local_artifact_store_matches_kernel_semantics(tmp_path: Path):
 
 def test_example_artifacts_are_seeded_and_is_dry_run_is_true(tmp_path: Path):
     outcome = _dry_run(tmp_path, _SEEDED_NODE)
+    assert outcome.success, outcome.error
+
+
+def test_qualified_settings_values_are_seeded_as_aliases(tmp_path: Path):
+    """A `catalog.schema::name` selector value must resolve without a live catalog."""
+    outcome = _dry_run(tmp_path, _QUALIFIED_SETTINGS_NODE)
     assert outcome.success, outcome.error
 
 
