@@ -6291,9 +6291,7 @@ class FlowGraph:
         # Record the current state as the clean baseline for dirty tracking
         self.mark_as_saved()
 
-    def _owns_registration(
-        self, repo: SQLAlchemyCatalogRepository, registration_id: int, own_path: str | None
-    ) -> bool:
+    def _owns_registration(self, repo: SQLAlchemyCatalogRepository, registration_id: int, own_path: str | None) -> bool:
         """Whether ``registration_id`` really points at ``own_path``, this flow's file.
 
         Registration ids are machine-local and can alias another flow: SQLite reuses
