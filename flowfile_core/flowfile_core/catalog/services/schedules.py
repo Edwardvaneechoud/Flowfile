@@ -105,6 +105,31 @@ class ScheduleService:
             updated_at=schedule.updated_at,
         )
 
+    def _arm_trigger(self, schedule: FlowSchedule, trigger_table_ids: list[int] | None = None) -> None:
+        """Seed a trigger schedule's watermark to what its table(s) look like now.
+
+        Without this the scheduler's first tick reads a NULL watermark against a
+        never-NULL ``CatalogTable.updated_at`` and fires a phantom run. The tables
+        were just validated, so ``get_table`` here is an identity-map hit.
+        """
+        if schedule.schedule_type == "table_trigger":
+            if schedule.trigger_table_id is None:
+                return
+            table = self.repo.get_table(schedule.trigger_table_id)
+            if table is not None and table.updated_at is not None:
+                schedule.last_trigger_table_updated_at = table.updated_at
+        elif schedule.schedule_type == "table_set_trigger":
+            table_ids = trigger_table_ids
+            if table_ids is None:
+                table_ids = self.repo.get_trigger_table_ids(schedule.id)
+            stamps = []
+            for table_id in table_ids:
+                table = self.repo.get_table(table_id)
+                if table is not None and table.updated_at is not None:
+                    stamps.append(table.updated_at)
+            if stamps:
+                schedule.last_trigger_table_updated_at = max(stamps)
+
     def create_schedule(
         self,
         registration_id: int,
@@ -146,6 +171,7 @@ class ScheduleService:
             cron_timezone=cron_timezone,
             trigger_table_id=trigger_table_id,
         )
+        self._arm_trigger(schedule, trigger_table_ids=trigger_table_ids)
         schedule = self.repo.create_schedule(schedule)
 
         if schedule_type == "table_set_trigger" and trigger_table_ids:
@@ -174,6 +200,9 @@ class ScheduleService:
             raise ValueError("cron_expression/cron_timezone can only be set on cron schedules")
         validate_schedule_update(interval_seconds, cron_expression, cron_timezone)
         if enabled is not None:
+            # Re-arm on re-enable: writes made while disabled must not fire on resume.
+            if enabled and not schedule.enabled:
+                self._arm_trigger(schedule)
             schedule.enabled = enabled
         if interval_seconds is not None:
             schedule.interval_seconds = interval_seconds

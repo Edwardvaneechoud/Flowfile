@@ -1389,9 +1389,7 @@ async function handleDeleteSchedule(id: number) {
 
 async function handleCancelScheduleRun(schedule: FlowSchedule) {
   try {
-    const activeRuns = catalogStore.activeRuns.filter(
-      (r) => r.registration_id === schedule.registration_id,
-    );
+    const activeRuns = catalogStore.activeRuns.filter((r) => r.schedule_id === schedule.id);
     for (const run of activeRuns) {
       await catalogStore.cancelRun(run.id);
     }

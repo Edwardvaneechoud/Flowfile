@@ -8,6 +8,7 @@ flowfile_core** and its heavy dependency tree (FastAPI, Pydantic, etc.).
 Only columns required by non-core consumers are mapped here.
 """
 
+import uuid
 from typing import Literal
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
@@ -42,6 +43,7 @@ class FlowRegistration(Base):
     __tablename__ = "flow_registrations"
 
     id = Column(Integer, primary_key=True)
+    flow_uuid = Column(String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     flow_path = Column(String, nullable=False)
     owner_id = Column(Integer, nullable=False)
@@ -52,6 +54,8 @@ class FlowRun(Base):
 
     id = Column(Integer, primary_key=True)
     registration_id = Column(Integer, nullable=True)
+    # Copied from FlowRegistration.flow_uuid at creation; core's run queries resolve on it.
+    flow_uuid = Column(String(36), nullable=True, index=True)
     flow_name = Column(String, nullable=False)
     flow_path = Column(String, nullable=True)
     user_id = Column(Integer, nullable=False)

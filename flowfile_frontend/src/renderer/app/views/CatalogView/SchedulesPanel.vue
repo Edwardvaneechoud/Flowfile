@@ -94,7 +94,7 @@ defineEmits([
 const catalogStore = useCatalogStore();
 
 function isRunning(schedule: FlowSchedule): boolean {
-  return catalogStore.activeRuns.some((r) => r.registration_id === schedule.registration_id);
+  return catalogStore.activeRuns.some((r) => r.schedule_id === schedule.id);
 }
 
 function flowName(schedule: FlowSchedule): string {

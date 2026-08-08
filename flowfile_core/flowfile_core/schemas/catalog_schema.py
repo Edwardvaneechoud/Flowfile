@@ -864,6 +864,7 @@ class ActiveFlowRun(BaseModel):
     nodes_completed: int = 0
     number_of_nodes: int = 0
     run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand"] = "in_designer_run"
+    schedule_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

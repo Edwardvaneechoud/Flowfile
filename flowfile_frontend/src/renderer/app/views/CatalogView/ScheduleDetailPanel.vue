@@ -33,7 +33,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="isScheduleRunning && !isFlowRunning"
+          v-if="isScheduleRunning"
           class="btn btn-warning btn-sm"
           @click="$emit('cancelScheduleRun', schedule)"
         >
@@ -45,6 +45,10 @@
           class="btn btn-success btn-sm"
           @click="$emit('runNow', schedule.id)"
         >
+          <i class="fa-solid fa-play"></i>
+          Run Now
+        </button>
+        <button v-else class="btn btn-success btn-sm" disabled title="Flow is already running">
           <i class="fa-solid fa-play"></i>
           Run Now
         </button>
@@ -237,7 +241,7 @@ const scheduleTypeName = computed(() => {
 });
 
 const isScheduleRunning = computed(() =>
-  catalogStore.activeRuns.some((r) => r.registration_id === props.schedule.registration_id),
+  catalogStore.activeRuns.some((r) => r.schedule_id === props.schedule.id),
 );
 
 const isFlowRunning = computed(() =>
