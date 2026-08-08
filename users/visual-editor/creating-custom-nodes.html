@@ -1,0 +1,5723 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/creating-custom-nodes.html">
+      
+      
+        <link rel="prev" href="../../for-developers/visualizations.html">
+      
+      
+        <link rel="next" href="../../community.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Custom Nodes in Code - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#custom-nodes-in-code" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Custom Nodes in Code
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../connect/index.html" class="md-tabs__link">
+          
+  
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="catalog/index.html" class="md-tabs__link">
+          
+  
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Get Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What is Flowfile
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    What is Flowfile
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../what-is-flowfile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../what-is-flowfile-plain.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Non-Technical Readers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../what-is-flowfile-technical.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Technical Readers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/lite.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flowfile Lite (Browser)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    By Audience
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    By Audience
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coming-from-excel.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coming from Excel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../build-flows-visually.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build Flows Visually
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analyze-your-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analyze Your Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-elsewhere.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Your Data Lives Elsewhere
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../write-python.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-for-a-team.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run Flowfile for a Team
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formulas
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Formulas
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulas/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulas/functions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Function Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Node Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transform Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregate Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="nodes/ml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Learning Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandboxed Python (Kernels)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernel-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The flowfile_ctx API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Node Designer
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="node-designer.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="custom-node-tutorial.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial: Your First Custom Node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kmeans-kernel-node.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial: K-Means on a Kernel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="community-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Worked Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/sales-pipeline.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sales Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/sales-dashboard.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sales Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/code-generator.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export to Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Connect Your Data
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connect/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/secrets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secrets & Encryption
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/database-connectivity.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Databases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connect/kafka.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connect/apis.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    REST APIs & Google Analytics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Catalog & Automation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/virtual-tables.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Virtual Tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/slowly-changing-dimensions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slowly Changing Dimensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/sql-editor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQL Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/notebooks.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog/schedules.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schedules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="subflows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../projects.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects & Git
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/concepts/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/concepts/design-concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlowFrame & FlowGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/concepts/expressions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Expressions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/concepts/formulas.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formulas in Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/reading-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/writing-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/catalog-references.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/data-types.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/flowframe-operations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DataFrame Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/aggregations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/joins.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/reference/visual-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual UI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-api/tutorials/flowfile_frame_api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows with Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    AI Assistant
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai/providers.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy & Operate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/desktop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop App
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/python.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Package
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/docker.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/sharing.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users, Groups & Sharing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/cli.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless Runs & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    For Developers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/design-philosophy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/flowfile-core.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/python-api-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/catalog-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/kernel-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/ai-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Integration Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../for-developers/visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations & Graphic Walker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Nodes in Code
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="creating-custom-nodes.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Nodes in Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-are-custom-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What are custom nodes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-canonical-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The canonical import
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick start">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-create-your-first-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Create your first node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-use-your-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Use your node
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node structure
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node structure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-process-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The process contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#declaring-the-output-schema-predict_output_schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring the output schema — predict_output_schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-dependent-nodes-without-a-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data-dependent nodes without a hook
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#palette-placement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Palette placement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-ui-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available UI components
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available UI components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#text-input-value-str" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text Input — .value → str
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numeric-input-value-float" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Numeric Input — .value → float
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slider-value-float" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slider — .value → float
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toggle-switch-value-bool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toggle Switch — .value → bool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-select-value-str" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single Select — .value → str
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-select-value-liststr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi Select — .value → list[str]
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#column-selector-value-str-liststr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column Selector — .value → str | list[str]
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#column-action-value-columnactionvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column Action — .value → ColumnActionValue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secret-selector-secret_value-secretstr-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret Selector — .secret_value → SecretStr | None
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dynamic-options-from-the-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic options from the input
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execution-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiple-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiple inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiple-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiple outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-a-node-before-you-ship-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing a node before you ship it
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing a node before you ship it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#logging-from-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging from process
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-execution-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker execution semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#real-world-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Real-world examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Real-world examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-quality-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data quality node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#text-processing-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text processing node
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mounting-other-directories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mounting other directories
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-visual-round-trip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The visual round-trip
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#node-doesnt-appear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node doesn't appear
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-dont-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings don't work
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#processing-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Processing errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-are-custom-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What are custom nodes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-canonical-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The canonical import
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick start">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-create-your-first-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Create your first node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-use-your-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Use your node
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node structure
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node structure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-process-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The process contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#declaring-the-output-schema-predict_output_schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring the output schema — predict_output_schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-dependent-nodes-without-a-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data-dependent nodes without a hook
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#palette-placement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Palette placement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-ui-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available UI components
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available UI components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#text-input-value-str" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text Input — .value → str
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numeric-input-value-float" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Numeric Input — .value → float
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slider-value-float" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slider — .value → float
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toggle-switch-value-bool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toggle Switch — .value → bool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-select-value-str" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single Select — .value → str
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-select-value-liststr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi Select — .value → list[str]
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#column-selector-value-str-liststr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column Selector — .value → str | list[str]
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#column-action-value-columnactionvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column Action — .value → ColumnActionValue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secret-selector-secret_value-secretstr-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret Selector — .secret_value → SecretStr | None
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dynamic-options-from-the-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic options from the input
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execution-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiple-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiple inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiple-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiple outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-a-node-before-you-ship-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing a node before you ship it
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing a node before you ship it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#logging-from-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging from process
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-execution-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker execution semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#real-world-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Real-world examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Real-world examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-quality-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data quality node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#text-processing-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text processing node
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mounting-other-directories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mounting other directories
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-visual-round-trip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The visual round-trip
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#node-doesnt-appear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node doesn't appear
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings-dont-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings don't work
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#processing-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Processing errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="custom-nodes-in-code">Custom Nodes in Code</h1>
+<p>This page is the SDK reference for writing a custom node as a Python file by hand — the class structure, the settings components, type filtering, the <code>process()</code> contract, execution environments, and the dry-run test loop. It's written for developers who want node definitions in version control, generated programmatically, or shared as plain files.</p>
+<div class="admonition tip">
+<p class="admonition-title">You don't need this page to build a custom node</p>
+<p>The <a href="node-designer.html">Node Designer</a> builds the same nodes visually — settings form, transform, test run, save — and writes this file for you. If you're new to custom nodes, start with the <a href="custom-node-tutorial.html">guided tutorial</a> instead. The two paths interoperate: a file that stays within the visual subset of the SDK reopens in the visual editor, so you can start visually and drop to code later (or the other way around).</p>
+</div>
+<h2 id="what-are-custom-nodes">What are custom nodes?</h2>
+<p>Custom nodes extend Flowfile with your own data transformations that appear alongside the built-in nodes in the visual editor. Each one is a single <code>.py</code> file — the file is the whole node, the single source of truth. A node has:</p>
+<ul>
+<li><strong>A settings panel</strong> — generated automatically from a schema (dropdowns, inputs, toggles, column pickers).</li>
+<li><strong>Processing logic</strong> — a <code>process()</code> method written in Polars.</li>
+<li><strong>Palette placement</strong> — driven by <code>node_category</code> (see <a href="#palette-placement">Palette placement</a>).</li>
+</ul>
+<h2 id="the-canonical-import">The canonical import</h2>
+<p>Import the SDK through the <code>flowfile</code> package and alias it <code>nd</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">node_designer</span> <span class="k">as</span> <span class="n">nd</span>
+</code></pre></div>
+<p><code>nd.CustomNodeBase</code>, <code>nd.Section</code>, <code>nd.ColumnSelector</code>, <code>nd.Types</code>, and every other symbol come from this one import. The SDK lives in <code>shared/node_designer</code> and is side-effect-free — importing it pulls in no database, no migrations, and no other Flowfile internals — which is what lets your node run in the worker and in isolated kernels.</p>
+<div class="admonition note">
+<p class="admonition-title">The import contract</p>
+<p>A custom node file may import <strong>only</strong> the node-designer SDK (plus the standard library and third-party packages). Importing any other <code>flowfile</code> / <code>flowfile_core</code> internal from a node file raises an <code>ImportError</code> when the node runs in the worker. The designer warns about such imports at save time.</p>
+</div>
+<p>Older files that import <code>from flowfile_core.flowfile.node_designer import ...</code> still load through a compatibility shim — the symbols are the same classes — but new files should use the canonical spelling.</p>
+<h2 id="quick-start">Quick start</h2>
+<h3 id="1-create-your-first-node">1. Create your first node</h3>
+<p>Create a Python file in your custom-nodes directory:</p>
+<div class="highlight"><pre><span></span><code>~/.flowfile/user_defined_nodes/my_first_node.py
+</code></pre></div>
+<div class="admonition info">
+<p class="admonition-title">Custom-node location</p>
+<p>The <code>~/.flowfile/user_defined_nodes/</code> directory is created the first time you run Flowfile. Files placed there are picked up automatically. You can also register additional directories — see <a href="#mounting-other-directories">Mounting other directories</a>.</p>
+</div>
+<p>Here is a complete node that adds a greeting column. Note the <code>process</code> signature — it receives one or more <code>pl.LazyFrame</code> inputs (variadic <code>*inputs</code>) and returns a <code>pl.LazyFrame</code> or <code>pl.DataFrame</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">node_designer</span> <span class="k">as</span> <span class="n">nd</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GreetingSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">main_config</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Greeting Configuration&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Configure how to greet each row&quot;</span><span class="p">,</span>
+        <span class="n">name_column</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span>
+            <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Name Column&quot;</span><span class="p">,</span>
+            <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">String</span><span class="p">,</span>
+            <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">greeting</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">SingleSelect</span><span class="p">(</span>
+            <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Greeting&quot;</span><span class="p">,</span>
+            <span class="n">options</span><span class="o">=</span><span class="p">[</span>
+                <span class="p">(</span><span class="s2">&quot;formal&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;casual&quot;</span><span class="p">,</span> <span class="s2">&quot;Hey&quot;</span><span class="p">),</span>
+            <span class="p">],</span>
+            <span class="n">default</span><span class="o">=</span><span class="s2">&quot;casual&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GreetingNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Greeting Generator&quot;</span>
+    <span class="n">node_category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Text Processing&quot;</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Add greetings&quot;</span>
+    <span class="n">intro</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Prefix a name column with a greeting.&quot;</span>
+
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">GreetingSettings</span> <span class="o">=</span> <span class="n">GreetingSettings</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">lf</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">name_col</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">main_config</span><span class="o">.</span><span class="n">name_column</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">style</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">main_config</span><span class="o">.</span><span class="n">greeting</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">word</span> <span class="o">=</span> <span class="s2">&quot;Hello&quot;</span> <span class="k">if</span> <span class="n">style</span> <span class="o">==</span> <span class="s2">&quot;formal&quot;</span> <span class="k">else</span> <span class="s2">&quot;Hey&quot;</span>
+        <span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span>
+            <span class="n">pl</span><span class="o">.</span><span class="n">concat_str</span><span class="p">([</span><span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">word</span><span class="si">}</span><span class="s2">, &quot;</span><span class="p">),</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">name_col</span><span class="p">)])</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;greeting&quot;</span><span class="p">)</span>
+        <span class="p">)</span>
+</code></pre></div>
+<h3 id="2-use-your-node">2. Use your node</h3>
+<ol>
+<li><strong>Save the file.</strong> Flowfile hot-reloads the custom-nodes directory on save — no restart. If the node was added while Flowfile was already open, click <strong>Rescan</strong> in the Node Designer's browser (or the Catalog's Custom Nodes tab) to pick it up.</li>
+<li><strong>Open the visual editor.</strong></li>
+<li><strong>Find your node</strong> in the palette. It lands in the group named after its <code>node_category</code> (see <a href="#palette-placement">Palette placement</a>).</li>
+<li><strong>Drag it</strong> onto the canvas and connect an input.</li>
+<li><strong>Configure the settings</strong> in the right panel.</li>
+<li><strong>Run your flow.</strong></li>
+</ol>
+<details>
+<summary>The result: the node on the canvas with its generated settings form</summary>
+<p><img alt="The Greeting Generator in the Text Processing palette group, on the canvas with its generated settings drawer and the greeting column in the results" src="../../assets/images/guides/node-designer/basic_overview.png" /></p>
+</details>
+<h2 id="node-structure">Node structure</h2>
+<p>Every custom node has three parts: metadata, a settings schema, and a <code>process</code> method.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">node_designer</span> <span class="k">as</span> <span class="n">nd</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MyCustomNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="c1"># 1. Metadata — how the node appears in Flowfile</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;My Node&quot;</span>
+    <span class="n">node_category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Data Enhancement&quot;</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Add greetings&quot;</span>
+    <span class="n">intro</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Prefix a name column with a greeting.&quot;</span>
+
+    <span class="c1"># 2. Settings schema — the UI configuration</span>
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">MySettings</span> <span class="o">=</span> <span class="n">MySettings</span><span class="p">()</span>
+
+    <span class="c1"># 3. Processing logic — what the node does</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">lf</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="c1"># ... transformation logic ...</span>
+        <span class="k">return</span> <span class="n">lf</span>
+</code></pre></div>
+<h3 id="the-process-contract">The <code>process</code> contract</h3>
+<p><code>process</code> is the engine of the node.</p>
+<ul>
+<li><strong>Inputs are always <code>pl.LazyFrame</code>.</strong> One frame per connected input port, passed positionally: <code>inputs[0]</code> is the first port, <code>inputs[1]</code> the second, and so on. This holds everywhere the node runs — worker, local fallback, isolated kernel, and dry-run.</li>
+<li><strong>Return a <code>pl.LazyFrame</code> or <code>pl.DataFrame</code>.</strong> The framework normalizes either. For a multi-output node, return a <code>dict[str, pl.LazyFrame | pl.DataFrame]</code> keyed by output name (see <a href="#multiple-outputs">Multiple outputs</a>).</li>
+<li><strong>Reading settings:</strong> <code>self.settings_schema.&lt;section_name&gt;.&lt;component_name&gt;.value</code>.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Collect only when you must</p>
+<p>Because inputs are lazy, prefer to express the transform as lazy Polars operations and return the <code>LazyFrame</code> unmaterialized — that keeps the frame streamable. If a step genuinely needs eager data (row-wise Python, <code>map_elements</code>, a shape-dependent branch), call <code>.collect()</code> <strong>inside</strong> <code>process</code> on just that frame. <code>process</code> never runs on core's hot path, so an in-node <code>.collect()</code> is fine — it materializes in the worker subprocess, not in core.</p>
+</div>
+<h3 id="declaring-the-output-schema-predict_output_schema">Declaring the output schema — <code>predict_output_schema</code></h3>
+<p>By default, Flowfile predicts a custom node's output schema by actually running <code>process</code> on schema-only frames — and a kernel node is never run implicitly at all, so its columns stay unknown until it runs. Implementing the optional <code>predict_output_schema</code> method skips all of that: you declare the output schema as a pure function of the input schemas and the node's settings, and prediction becomes instant.</p>
+<p>The signature mirrors <code>process</code> — return a frame and Flowfile reads its schema lazily. For a node built from pure polars expressions, prediction is one line:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">predict_output_schema</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+    <span class="c1"># Inputs are schema-only (no rows); pure polars logic predicts itself.</span>
+    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="o">*</span><span class="n">inputs</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>One <code>pl.LazyFrame</code> arrives per connected input port, in the same order as <code>process</code>. By default each is a <strong>schema-only empty frame</strong> — the hook derives the output schema from input schemas and settings alone.</li>
+<li>Data-dependent schemas opt in with <code>requires_data_for_prediction = True</code>: pre-run inputs then carry the upstream's real lazy data whenever everything un-run upstream is kernel-free. A one-hot encoder can <code>collect()</code> the <code>unique()</code> values of a column and build its dummy columns from them — just handle the empty case (returning <code>None</code> is a fine answer, and prediction upgrades itself after the first run). When an un-run kernel node sits upstream, Flowfile never executes it implicitly: prediction shows a "run it to resolve" warning instead.</li>
+<li>Return a <code>pl.LazyFrame</code> (or <code>pl.DataFrame</code>); for a multi-output node return a <code>dict[str, pl.LazyFrame]</code> keyed by output name. A hand-built <code>pl.Schema</code> also works.</li>
+<li>Return <code>None</code> (or raise) to fall back to the default execution-based prediction.</li>
+</ul>
+<p>In the Node Designer, the <strong>Code</strong> tab has a collapsible <strong>Schema prediction (optional)</strong> panel below the <code>process</code> editor — it scaffolds the method for you and edits just the body under a read-only signature, exactly like the <code>process</code> editor. The panel's <strong>Schema depends on data values</strong> checkbox is the <code>requires_data_for_prediction</code> flag.</p>
+<div class="admonition tip">
+<p class="admonition-title">It runs in the main process</p>
+<p><code>predict_output_schema</code> always runs in the main Flowfile process — even for <code>environment="kernel"</code> nodes — so it must not depend on kernel-only packages. Read settings the same way as in <code>process</code>, and keep any data peeks bounded (unique lists, small samples): this runs when settings panels open.</p>
+</div>
+<h3 id="data-dependent-nodes-without-a-hook">Data-dependent nodes without a hook</h3>
+<p>Setting <code>requires_data_for_prediction = True</code> on a node <strong>without</strong> <code>predict_output_schema</code> disables implicit prediction entirely: Flowfile will not run <code>process</code> just to discover the columns. The node — and everything downstream of it — shows <em>"Columns can't be predicted yet: … Run it to resolve them."</em> until the node has actually run once. Use this marker when the output schema genuinely depends on data values (so predicting on empty frames would be wrong) and a data-free hook isn't possible; the Node Designer shows a warning for this combination and nudges you toward adding schema prediction instead. At the default (<code>False</code>), Flowfile predicts by running <code>process</code> on empty schema-only frames, which is correct for any schema-stable transformation.</p>
+<h3 id="palette-placement">Palette placement</h3>
+<p><code>node_category</code> is a real palette group. A node with <code>node_category = "Text Processing"</code> appears under a <strong>Text Processing</strong> group in the palette; the group is created from the category name (slugified internally, displayed as written). The default category, <code>"Custom"</code>, keeps the historical <strong>User Defined Operations</strong> group. A node can also target a built-in group by naming it exactly.</p>
+<h3 id="settings-architecture">Settings architecture</h3>
+<p>Settings are organized into sections. Each <code>Section</code> becomes a collapsible panel in the node's settings drawer; components are passed as keyword arguments, and the keyword is the field name you read in <code>process</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MyNodeSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">basic_config</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Basic Settings&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Core options&quot;</span><span class="p">,</span>
+        <span class="n">input_column</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
+        <span class="n">operation_type</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">SingleSelect</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="n">advanced_options</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Advanced Options&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Fine-tune behavior&quot;</span><span class="p">,</span>
+        <span class="n">enable_caching</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ToggleSwitch</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
+        <span class="n">max_iterations</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">NumericInput</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>A <code>Section</code> accepts a few non-component keywords alongside its controls:</p>
+<ul>
+<li><code>title</code> — the panel heading.</li>
+<li><code>description</code> — helper text shown under the title.</li>
+<li><code>layout</code> — <code>"vertical"</code> (default, controls stacked) or <code>"horizontal"</code>. Horizontal
+  flows controls side by side and wraps wide controls to their own row — handy for
+  lining up a few small inputs instead of a tall stack.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MyNodeSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">bounds</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Bounds&quot;</span><span class="p">,</span>
+        <span class="n">layout</span><span class="o">=</span><span class="s2">&quot;horizontal&quot;</span><span class="p">,</span>
+        <span class="n">lower</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">NumericInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Lower&quot;</span><span class="p">),</span>
+        <span class="n">upper</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">NumericInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Upper&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p><code>title</code>, <code>description</code>, and <code>layout</code> are all editable from the visual designer's
+Section inspector (select a group with no control selected).</p>
+<h2 id="available-ui-components">Available UI components</h2>
+<p>Flowfile ships nine settings components:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Value in <code>process</code></th>
+<th>Reach for it when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#text-input-value-str">Text Input</a></td>
+<td><code>str</code></td>
+<td>Free-form text, or a column name typed by hand</td>
+</tr>
+<tr>
+<td><a href="#numeric-input-value-float">Numeric Input</a></td>
+<td><code>float</code></td>
+<td>Exact numeric entry, optional bounds</td>
+</tr>
+<tr>
+<td><a href="#slider-value-float">Slider</a></td>
+<td><code>float</code></td>
+<td>A bounded value where dragging beats typing</td>
+</tr>
+<tr>
+<td><a href="#toggle-switch-value-bool">Toggle Switch</a></td>
+<td><code>bool</code></td>
+<td>A single on/off flag</td>
+</tr>
+<tr>
+<td><a href="#single-select-value-str">Single Select</a></td>
+<td><code>str</code></td>
+<td>One choice from a fixed list</td>
+</tr>
+<tr>
+<td><a href="#multi-select-value-liststr">Multi Select</a></td>
+<td><code>list[str]</code></td>
+<td>Several choices from a fixed list</td>
+</tr>
+<tr>
+<td><a href="#column-selector-value-str-liststr">Column Selector</a></td>
+<td><code>str</code> / <code>list[str]</code></td>
+<td>Picking input columns, with type filtering</td>
+</tr>
+<tr>
+<td><a href="#column-action-value-columnactionvalue">Column Action</a></td>
+<td><code>ColumnActionValue</code></td>
+<td>Pairing columns with an operation and output name</td>
+</tr>
+<tr>
+<td><a href="#secret-selector-secret_value-secretstr-none">Secret Selector</a></td>
+<td><code>SecretStr \| None</code></td>
+<td>Stored credentials (API keys, passwords)</td>
+</tr>
+</tbody>
+</table>
+<p>Each one below is documented the same way: <strong>what it does</strong>, <strong>what it returns</strong> (shown in the heading as <code>accessor → type</code>, plus how you read it in <code>process</code>), how to <strong>configure</strong> it, whether it <strong>needs a connected input</strong>, and <strong>when to reach for it</strong>.</p>
+<p>Read a component's value in <code>process</code> with <code>self.settings_schema.&lt;section&gt;.&lt;field&gt;.value</code> — the one exception is <code>SecretSelector</code>, which uses <code>.secret_value</code>.</p>
+<h3 id="text-input-value-str">Text Input — <code>.value</code> → <code>str</code></h3>
+<p>A single-line text field for a free-form string.</p>
+<div class="highlight"><pre><span></span><code><span class="n">text_field</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">TextInput</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Enter a value&quot;</span><span class="p">,</span>
+    <span class="n">default</span><span class="o">=</span><span class="s2">&quot;Default text&quot;</span><span class="p">,</span>
+    <span class="n">placeholder</span><span class="o">=</span><span class="s2">&quot;Hint text here...&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>default</code>, <code>placeholder</code>. <strong>Needs a connected input:</strong> no.</p>
+<div class="highlight"><pre><span></span><code><span class="n">prefix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">prefix</span><span class="o">.</span><span class="n">value</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">with_columns</span><span class="p">((</span><span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="o">+</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;greeting&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>When to use</strong> — free-form text, or a column name typed by hand.</p>
+<h3 id="numeric-input-value-float">Numeric Input — <code>.value</code> → <code>float</code></h3>
+<p>A number field with optional minimum and maximum bounds. The value is always a <code>float</code>, even when a whole number is entered — cast with <code>int(...)</code> if you need an integer.</p>
+<div class="highlight"><pre><span></span><code><span class="n">number_field</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">NumericInput</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Count&quot;</span><span class="p">,</span>
+    <span class="n">default</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">max_value</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>default</code>, <code>min_value</code>, <code>max_value</code>. <strong>Needs a connected input:</strong> no.</p>
+<div class="highlight"><pre><span></span><code><span class="n">threshold</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">threshold</span><span class="o">.</span><span class="n">value</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">threshold</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>When to use</strong> — exact numeric entry with optional bounds (use <strong>Slider</strong> when a bounded slider is friendlier than typing).</p>
+<h3 id="slider-value-float">Slider — <code>.value</code> → <code>float</code></h3>
+<p>A slider for choosing a numeric value within a fixed range. When no <code>default</code> is given the value starts at <code>min_value</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="n">sample_field</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">SliderInput</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Rows to keep&quot;</span><span class="p">,</span>
+    <span class="n">min_value</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">max_value</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+    <span class="n">step</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">default</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>min_value</code> (0), <code>max_value</code> (100), <code>step</code> (1), <code>default</code>. <strong>Needs a connected input:</strong> no.</p>
+<div class="highlight"><pre><span></span><code><span class="n">top_n</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">top_n</span><span class="o">.</span><span class="n">value</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">top_n</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>When to use</strong> — a bounded numeric value where dragging beats typing.</p>
+<h3 id="toggle-switch-value-bool">Toggle Switch — <code>.value</code> → <code>bool</code></h3>
+<p>A boolean on/off switch.</p>
+<div class="highlight"><pre><span></span><code><span class="n">toggle_field</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">ToggleSwitch</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Enable feature&quot;</span><span class="p">,</span>
+    <span class="n">default</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Turn this on to enable the feature&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>default</code> (False), <code>description</code>. <strong>Needs a connected input:</strong> no.</p>
+<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">drop_nulls</span><span class="o">.</span><span class="n">value</span><span class="p">:</span>
+    <span class="n">lf</span> <span class="o">=</span> <span class="n">lf</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+<span class="k">return</span> <span class="n">lf</span>
+</code></pre></div>
+<p><strong>When to use</strong> — a single on/off feature flag.</p>
+<h3 id="single-select-value-str">Single Select — <code>.value</code> → <code>str</code></h3>
+<p>A dropdown for picking one option from a list.</p>
+<div class="highlight"><pre><span></span><code><span class="n">choice_field</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">SingleSelect</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Choose option&quot;</span><span class="p">,</span>
+    <span class="n">options</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">(</span><span class="s2">&quot;value1&quot;</span><span class="p">,</span> <span class="s2">&quot;Display Name 1&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;value2&quot;</span><span class="p">,</span> <span class="s2">&quot;Display Name 2&quot;</span><span class="p">),</span>
+    <span class="p">],</span>
+    <span class="n">default</span><span class="o">=</span><span class="s2">&quot;value1&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>options</code> (a static list, or the <code>IncomingColumns</code> / <code>AvailableArtifacts</code> marker), <code>default</code>. <strong>Needs a connected input:</strong> only with <code>options=nd.IncomingColumns</code> (see <a href="#dynamic-options-from-the-input">Dynamic options</a>).</p>
+<div class="highlight"><pre><span></span><code><span class="n">op</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">aggregation</span><span class="o">.</span><span class="n">value</span>  <span class="c1"># e.g. &quot;sum&quot;</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">),</span> <span class="n">op</span><span class="p">)())</span>
+</code></pre></div>
+<p><strong>When to use</strong> — one choice from a fixed list. For picking a single input column, prefer <strong>Column Selector</strong>; reach for <code>options=nd.IncomingColumns</code> only for a lightweight column dropdown.</p>
+<div class="admonition info">
+<p class="admonition-title">Picking artifacts with <code>AvailableArtifacts</code></p>
+<p><code>options=nd.AvailableArtifacts(scope="global")</code> populates the dropdown from the catalog. Each entry is one artifact, not one version — the value stored in the node settings is a <strong>namespace-qualified</strong> reference (<code>catalog.schema::name</code>, or the bare name for an artifact with no namespace), and the node resolves the <strong>latest</strong> version of that artifact at run time. With <code>scope="all"</code> the catalog entries are qualified the same way, but a pick from the <strong>upstream</strong> part of the list stores the artifact's plain in-flow name. There is no version pinning here; pin a version from Kernel code with <code>flowfile_ctx.get_global(name, version=N)</code>. Settings saved before qualified references existed are bare names: opening a <code>scope="global"</code> selector upgrades one to its qualified form when the name is unique across namespaces, and clears it when the name now exists in more than one namespace so you re-pick (that value could not resolve server-side either). A <code>scope="all"</code> selector never rewrites its saved value, since that value may name an upstream artifact.</p>
+</div>
+<h3 id="multi-select-value-liststr">Multi Select — <code>.value</code> → <code>list[str]</code></h3>
+<p>A dropdown for picking several options from a list.</p>
+<div class="highlight"><pre><span></span><code><span class="n">multi_field</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">MultiSelect</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Select multiple&quot;</span><span class="p">,</span>
+    <span class="n">options</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">(</span><span class="s2">&quot;opt1&quot;</span><span class="p">,</span> <span class="s2">&quot;Option 1&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;opt2&quot;</span><span class="p">,</span> <span class="s2">&quot;Option 2&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;opt3&quot;</span><span class="p">,</span> <span class="s2">&quot;Option 3&quot;</span><span class="p">),</span>
+    <span class="p">],</span>
+    <span class="n">default</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;opt1&quot;</span><span class="p">,</span> <span class="s2">&quot;opt2&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>options</code> (same as Single Select), <code>default</code> (an empty list). <strong>Needs a connected input:</strong> only with <code>options=nd.IncomingColumns</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ops</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">cleaning</span><span class="o">.</span><span class="n">operations</span><span class="o">.</span><span class="n">value</span>  <span class="c1"># [&quot;lowercase&quot;, &quot;trim&quot;]</span>
+<span class="n">expr</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="s2">&quot;lowercase&quot;</span> <span class="ow">in</span> <span class="n">ops</span><span class="p">:</span>
+    <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">to_lowercase</span><span class="p">()</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">expr</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;clean&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>When to use</strong> — several choices from a fixed list.</p>
+<h3 id="column-selector-value-str-liststr">Column Selector — <code>.value</code> → <code>str | list[str]</code></h3>
+<p>A picker for one or more columns from the input frame, optionally filtered by data type (see <a href="#type-filtering">Type filtering</a>). Returns a single column name, or a <code>list[str]</code> when <code>multiple=True</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Any column</span>
+<span class="n">any_column</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Pick a column&quot;</span><span class="p">,</span> <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">All</span><span class="p">)</span>
+
+<span class="c1"># Numeric columns only, required</span>
+<span class="n">numeric_column</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Numeric column only&quot;</span><span class="p">,</span>
+    <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Numeric</span><span class="p">,</span>
+    <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Multiple string/categorical columns</span>
+<span class="n">text_columns</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Text columns&quot;</span><span class="p">,</span>
+    <span class="n">data_types</span><span class="o">=</span><span class="p">[</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">String</span><span class="p">,</span> <span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Categorical</span><span class="p">],</span>
+    <span class="n">multiple</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>required</code> (False), <code>multiple</code> (False), <code>data_types</code> ("ALL"). <strong>Needs a connected input:</strong> yes — the choices come from the input schema.</p>
+<div class="highlight"><pre><span></span><code><span class="n">cols</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">value</span>  <span class="c1"># str, or list[str] when multiple=True</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">cols</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>When to use</strong> — the purpose-built, type-filterable column picker. Prefer it over <code>SingleSelect(IncomingColumns)</code> whenever you are choosing real input columns.</p>
+<h3 id="column-action-value-columnactionvalue">Column Action — <code>.value</code> → <code>ColumnActionValue</code></h3>
+<p>A table where the user pairs input columns with an action and an output name, with optional group-by and order-by pickers. Built for aggregations, rolling windows, string operations, and type casts.</p>
+<div class="highlight"><pre><span></span><code><span class="n">column_actions</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">ColumnActionInput</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Aggregations&quot;</span><span class="p">,</span>
+    <span class="n">actions</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">nd</span><span class="o">.</span><span class="n">ActionOption</span><span class="p">(</span><span class="s2">&quot;sum&quot;</span><span class="p">,</span> <span class="s2">&quot;Sum&quot;</span><span class="p">),</span>
+        <span class="n">nd</span><span class="o">.</span><span class="n">ActionOption</span><span class="p">(</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span> <span class="s2">&quot;Average&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;min&quot;</span><span class="p">,</span>  <span class="c1"># plain strings also work</span>
+    <span class="p">],</span>
+    <span class="n">output_name_template</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">{column}</span><span class="s2">_</span><span class="si">{action}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="n">show_group_by</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Numeric</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>actions</code> (strings or <code>nd.ActionOption(value, label)</code>), <code>output_name_template</code> (<code>"{column}_{action}"</code>), <code>show_group_by</code> (False), <code>show_order_by</code> (False), <code>data_types</code>. <strong>Needs a connected input:</strong> yes.</p>
+<p>The value is a typed <code>nd.ColumnActionValue</code> with attribute access:</p>
+<div class="highlight"><pre><span></span><code><span class="n">cfg</span><span class="o">.</span><span class="n">rows</span>              <span class="c1"># list[nd.ColumnActionRow], each with .column / .action / .output_name (all str)</span>
+<span class="n">cfg</span><span class="o">.</span><span class="n">group_by_columns</span>  <span class="c1"># list[str]   ([] unless show_group_by=True)</span>
+<span class="n">cfg</span><span class="o">.</span><span class="n">order_by_column</span>   <span class="c1"># str | None  (None unless show_order_by=True)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">agg</span><span class="o">.</span><span class="n">column_actions</span><span class="o">.</span><span class="n">value</span>
+<span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">group_by_columns</span><span class="p">)</span><span class="o">.</span><span class="n">agg</span><span class="p">([</span>
+    <span class="nb">getattr</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">column</span><span class="p">),</span> <span class="n">r</span><span class="o">.</span><span class="n">action</span><span class="p">)()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">output_name</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">cfg</span><span class="o">.</span><span class="n">rows</span>
+<span class="p">])</span>
+</code></pre></div>
+<p><strong>When to use</strong> — to pair many columns with an operation and an output name in one table. Column Selector only returns column names; Column Action returns column + action + output rows.</p>
+<div class="admonition tip">
+<p class="admonition-title">Annotate for autocomplete</p>
+<p>Section components are populated dynamically, so the attribute chain
+(<code>self.settings_schema.agg.column_actions.value</code>) is untyped to the editor even though the
+value is a real <code>nd.ColumnActionValue</code> at runtime. Annotate the local once to get full
+autocomplete on <code>cfg.</code> and each <code>r.</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">cfg</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">ColumnActionValue</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">agg</span><span class="o">.</span><span class="n">column_actions</span><span class="o">.</span><span class="n">value</span>
+</code></pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">You interpret the actions</p>
+<p>The action strings are yours to act on in <code>process</code> — the component collects the rows, it does not run the operations for you.</p>
+</div>
+<h3 id="secret-selector-secret_value-secretstr-none">Secret Selector — <code>.secret_value</code> → <code>SecretStr | None</code></h3>
+<p>A dropdown listing the secrets the current user has stored (API keys, credentials, tokens). Only the secret's name shows in the UI; its value is resolved at run time. Add it inside a <code>Section</code> like any other component — it has only a <code>label</code>, no <code>name=</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ApiSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">connection</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Connection&quot;</span><span class="p">,</span>
+        <span class="n">api_key</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">SecretSelector</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;API Key&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MyNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;API Reader&quot;</span>
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">ApiSettings</span> <span class="o">=</span> <span class="n">ApiSettings</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">secret</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">connection</span><span class="o">.</span><span class="n">api_key</span><span class="o">.</span><span class="n">secret_value</span>
+        <span class="k">if</span> <span class="n">secret</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">api_key</span> <span class="o">=</span> <span class="n">secret</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">()</span>  <span class="c1"># the decrypted string</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p><strong>Configure</strong> — <code>required</code> (False), <code>description</code>, <code>name_prefix</code>. <strong>Needs a connected input:</strong> no.</p>
+<p><code>secret_value</code> returns a <code>SecretStr</code> (or <code>None</code> when nothing is selected); call <code>.get_secret_value()</code> for the plaintext. It is only resolvable during execution. On a run, core pre-resolves the secret to its <code>$ffsec$</code> ciphertext and ships that to the worker, which decrypts it locally; the plaintext never leaves the worker process.</p>
+<div class="admonition warning">
+<p class="admonition-title">Secrets are not available in isolated kernels</p>
+<p>A node whose <code>environment = "kernel"</code> runs its <code>process</code> in a Docker kernel that has no access to the secret store. Reading <code>secret_value</code> inside a kernel node raises at runtime. Use <code>environment = "local"</code> (the default) for secret-backed nodes.</p>
+</div>
+<h3 id="dynamic-options-from-the-input">Dynamic options from the input</h3>
+<p><code>SingleSelect</code> and <code>MultiSelect</code> can populate their choices from the input's column names instead of a static list — pass the <code>IncomingColumns</code> marker:</p>
+<div class="highlight"><pre><span></span><code><span class="n">column_dropdown</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">SingleSelect</span><span class="p">(</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Choose input column&quot;</span><span class="p">,</span>
+    <span class="n">options</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">IncomingColumns</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>For choosing columns to operate on, <strong>Column Selector</strong> is usually the better fit — it adds type filtering, multi-select, and a required flag.</p>
+<h3 id="type-filtering">Type filtering</h3>
+<p><code>ColumnSelector</code> and <code>ColumnActionInput</code> accept a <code>data_types</code> filter. <code>nd.Types</code> provides type groups and specific types:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Type groups</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Numeric</span>    <span class="c1"># all numeric types</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">String</span>     <span class="c1"># string and categorical</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">AnyDate</span>    <span class="c1"># date, datetime, time, duration</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Boolean</span>    <span class="c1"># boolean columns</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">All</span>        <span class="c1"># all column types</span>
+
+<span class="c1"># Specific types</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Int64</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Float</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Decimal</span>
+<span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Date</span>       <span class="c1"># the Date type specifically (not the date group)</span>
+
+<span class="c1"># Mix</span>
+<span class="n">data_types</span><span class="o">=</span><span class="p">[</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Numeric</span><span class="p">,</span> <span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">AnyDate</span><span class="p">]</span>
+</code></pre></div>
+<h2 id="execution-environment">Execution environment</h2>
+<p>Every node declares where its <code>process</code> runs, via the <code>environment</code> attribute:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MyNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;My Node&quot;</span>
+    <span class="n">environment</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;local&quot;</span>   <span class="c1"># &quot;local&quot; (default) or &quot;kernel&quot;</span>
+    <span class="n">dependencies</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># pip specs, kernel-only</span>
+</code></pre></div>
+<ul>
+<li><strong><code>"local"</code></strong> (default) — <code>process</code> runs in a <code>flowfile_worker</code> subprocess: a killable, isolated child process that owns the dataset memory. The worker environment does not pip-install anything, so a local node may use only packages already available to Flowfile.</li>
+<li><strong><code>"kernel"</code></strong> — <code>process</code> runs inside an isolated Docker kernel. Use this when the node needs third-party libraries or stronger isolation. Declare them in <code>dependencies</code> (e.g. <code>dependencies = ["scikit-learn", "xgboost"]</code>) — the list travels with the node and is a <strong>requirement, not an install step</strong>: run the node on a kernel that already has the packages. Flowfile enforces and eases that requirement: the node's kernel picker marks kernels that satisfy the list (version-aware), offers <strong>Add missing packages</strong> on a partial match, and <strong>Create kernel for this node</strong> pre-fills a new kernel from the requirements; running on a kernel that provably lacks a dependency fails fast with a clear message instead of a <code>ModuleNotFoundError</code> from inside <code>process</code>. The standard <strong>ML</strong> kernel image ships scikit-learn, XGBoost, LightGBM, and statsmodels; anything else can be baked into a kernel when it's created in the <a href="kernels.html#creating-a-kernel">Kernel Manager</a>. Kernel nodes can also declare multiple named outputs. Secrets are not available in kernel nodes. For a full worked example — including setting up the right kernel — see <a href="kmeans-kernel-node.html">K-Means on a Kernel</a>.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Import kernel-only libraries inside <code>process</code></p>
+<p>Put <code>import</code>s for packages that live only in the kernel (scikit-learn, xgboost, …) <strong>inside</strong> <code>process</code>, not at the top of the file. Flowfile core loads your node file to register it in the palette, and core doesn't have the kernel's dependencies — a top-level <code>import</code> of one would make the node load with an error. The import runs only in the kernel, which has the package.</p>
+</div>
+<p>The legacy <code>requires_kernel = True</code> flag still loads (it maps to <code>environment = "kernel"</code> with a deprecation warning), as does a class-level <code>kernel_id</code>. Prefer <code>environment</code> in new code.</p>
+<div class="admonition info">
+<p class="admonition-title">Docker required for kernel nodes</p>
+<p>Kernel execution needs Docker. When Docker is unavailable, the Node Designer's environment picker shows the local option only and explains how to enable kernels. See <a href="kernels.html">Kernel Execution</a>.</p>
+</div>
+<h2 id="multiple-inputs">Multiple inputs</h2>
+<p>A node reads as many input frames as it declares in <code>number_of_inputs</code>; they arrive positionally in <code>*inputs</code>, in the order the input ports are connected on the canvas.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">JoinerSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">keys</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Join Keys&quot;</span><span class="p">,</span>
+        <span class="n">left_key</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">TextInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Left key column&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;id&quot;</span><span class="p">),</span>
+        <span class="n">right_key</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">TextInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Right key column&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;id&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TwoInputJoiner</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Inner Join Two Inputs&quot;</span>
+    <span class="n">node_category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Joins&quot;</span>
+    <span class="n">number_of_inputs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">JoinerSettings</span> <span class="o">=</span> <span class="n">JoinerSettings</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">left</span><span class="p">,</span> <span class="n">right</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">left_key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">keys</span><span class="o">.</span><span class="n">left_key</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">right_key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">keys</span><span class="o">.</span><span class="n">right_key</span><span class="o">.</span><span class="n">value</span>
+        <span class="k">return</span> <span class="n">left</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">right</span><span class="p">,</span> <span class="n">left_on</span><span class="o">=</span><span class="n">left_key</span><span class="p">,</span> <span class="n">right_on</span><span class="o">=</span><span class="n">right_key</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;inner&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="multiple-outputs">Multiple outputs</h2>
+<p>Declare the output names in <code>output_names</code>; <code>process</code> then returns a <code>dict</code> keyed by those names. Each name becomes a separate output handle on the node.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">SplitterSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Split&quot;</span><span class="p">,</span>
+        <span class="n">threshold_column</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span>
+            <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Numeric column&quot;</span><span class="p">,</span>
+            <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">Numeric</span><span class="p">,</span>
+            <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">threshold</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">NumericInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Threshold&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ThresholdSplitter</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Threshold Splitter&quot;</span>
+    <span class="n">node_category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Filtering&quot;</span>
+    <span class="n">number_of_outputs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">output_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;above&quot;</span><span class="p">,</span> <span class="s2">&quot;below&quot;</span><span class="p">]</span>
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">SplitterSettings</span> <span class="o">=</span> <span class="n">SplitterSettings</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">]:</span>
+        <span class="n">lf</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">col</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">threshold_column</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">cutoff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">threshold</span><span class="o">.</span><span class="n">value</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;above&quot;</span><span class="p">:</span> <span class="n">lf</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">cutoff</span><span class="p">),</span>
+            <span class="s2">&quot;below&quot;</span><span class="p">:</span> <span class="n">lf</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">cutoff</span><span class="p">),</span>
+        <span class="p">}</span>
+</code></pre></div>
+<p>Every declared name must be present in the returned dict, or the run fails with an explicit error naming the missing output.</p>
+<h2 id="testing-a-node-before-you-ship-it">Testing a node before you ship it</h2>
+<p>You do not need to add a node to a flow to test it. Two paths run its <code>process</code> against sample data:</p>
+<ul>
+<li><strong>In the designer:</strong> the <a href="node-designer.html#test-tab">Test tab</a> runs the node against a small sample you provide (grid or CSV paste) and shows a per-output preview, logs, and any error — the same execution path as a real run. A kernel-environment node runs on the kernel you pick in the Test tab's <strong>Kernel</strong> selector, so pick one that has the node's dependencies.</li>
+<li><strong>Bake samples into the file:</strong> two optional class attributes make the dry-run reproducible and travel with the node:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MyNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;My Node&quot;</span>
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">MySettings</span> <span class="o">=</span> <span class="n">MySettings</span><span class="p">()</span>
+
+    <span class="c1"># One column-oriented dict per input port.</span>
+    <span class="n">example_inputs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Bob&quot;</span><span class="p">],</span> <span class="s2">&quot;score&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">91</span><span class="p">,</span> <span class="mi">40</span><span class="p">]},</span>
+    <span class="p">]</span>
+    <span class="c1"># The settings values to test with: {section: {component: value}}.</span>
+    <span class="n">example_settings</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;threshold_column&quot;</span><span class="p">:</span> <span class="s2">&quot;score&quot;</span><span class="p">,</span> <span class="s2">&quot;threshold&quot;</span><span class="p">:</span> <span class="mf">50.0</span><span class="p">},</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p><code>example_inputs</code> is column-oriented — one <code>{column: [values]}</code> dict per input port, directly constructible with <code>pl.LazyFrame(...)</code>. Both attributes round-trip through the designer: saving "test setup with node" in the Test tab writes them into the file, and reopening the node restores them.</p>
+<p>Under the hood, both the designer's Test tab and the <code>example_inputs</code> path call the dry-run endpoint (<code>POST /user_defined_components/dry-run</code>), which runs the candidate node against the bounded sample frames through the same worker seam as a real run (with <code>flow_id = -1</code> and row/timeout caps).</p>
+<h3 id="logging-from-process">Logging from <code>process</code></h3>
+<p>To trace what a node is doing during a dry run, call <code>logging</code> or <code>print</code> inside <code>process</code> — the output appears in the Test tab's <strong>Logs</strong> panel, one line per call, tagged with its level:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;rows in: </span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">len</span><span class="p">())</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;threshold = </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">threshold</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;checkpoint reached&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+<p>You do not need <code>import logging</code> — the name is available inside <code>process</code>, and everything from <code>DEBUG</code> up is captured (the editor autocompletes <code>logging.</code> too). This is dry-run only; in a real flow run these lines go to the flow log instead.</p>
+<h2 id="worker-execution-semantics">Worker execution semantics</h2>
+<p>For a <code>"local"</code> node, a run does not execute <code>process</code> inside core. Core ships the node's <strong>source text</strong>, the resolved settings values, any secret ciphertext, and the serialized input plans to <code>flowfile_worker</code>, which:</p>
+<ol>
+<li>Registers alias modules so the SDK import spellings resolve, then loads the node source in a spawned subprocess.</li>
+<li>Enforces the <a href="#the-canonical-import">import contract</a> — a non-SDK <code>flowfile</code> import raises here.</li>
+<li>Instantiates the node, applies settings, decrypts any secrets locally, and calls <code>process(*lazy_inputs)</code>.</li>
+<li>Writes each output as Arrow IPC and returns paths and row counts. Core binds the primary output back with <code>pl.scan_ipc</code> and never materializes the dataset.</li>
+</ol>
+<p>This is why the <a href="#the-canonical-import">import contract</a> and the lazy <code>process</code> signature matter: the node body must run standalone in a process that has the SDK but not the rest of core.</p>
+<h2 id="real-world-examples">Real-world examples</h2>
+<h3 id="data-quality-node">Data quality node</h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DataQualityNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Data Quality Checker&quot;</span>
+    <span class="n">node_category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Data Validation&quot;</span>
+
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">(</span>
+        <span class="n">validation_rules</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+            <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Validation Rules&quot;</span><span class="p">,</span>
+            <span class="n">columns_to_check</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span>
+                <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Columns to Validate&quot;</span><span class="p">,</span>
+                <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">All</span><span class="p">,</span>
+                <span class="n">multiple</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">),</span>
+            <span class="n">null_threshold</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">NumericInput</span><span class="p">(</span>
+                <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Max Null Percentage&quot;</span><span class="p">,</span>
+                <span class="n">default</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+                <span class="n">min_value</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                <span class="n">max_value</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">lf</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">columns</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">validation_rules</span><span class="o">.</span><span class="n">columns_to_check</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">threshold</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">validation_rules</span><span class="o">.</span><span class="n">null_threshold</span><span class="o">.</span><span class="n">value</span>
+
+        <span class="c1"># Row count is shape-dependent, so collect once for the null ratios.</span>
+        <span class="n">df</span> <span class="o">=</span> <span class="n">lf</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+        <span class="n">row_count</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">height</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">df</span>
+        <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">columns</span><span class="p">:</span>
+            <span class="n">null_pct</span> <span class="o">=</span> <span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">null_count</span><span class="p">()</span> <span class="o">/</span> <span class="n">row_count</span><span class="p">)</span> <span class="o">*</span> <span class="mi">100</span> <span class="k">if</span> <span class="n">row_count</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="k">if</span> <span class="n">null_pct</span> <span class="o">&gt;</span> <span class="n">threshold</span><span class="p">:</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span>
+                    <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span><span class="o">.</span><span class="n">is_null</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">col</span><span class="si">}</span><span class="s2">_has_issues&quot;</span><span class="p">)</span>
+                <span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+</code></pre></div>
+<h3 id="text-processing-node">Text processing node</h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TextCleanerNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Text Cleaner&quot;</span>
+    <span class="n">node_category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Text Processing&quot;</span>
+
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">(</span>
+        <span class="n">cleaning_options</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+            <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Cleaning Options&quot;</span><span class="p">,</span>
+            <span class="n">text_column</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ColumnSelector</span><span class="p">(</span>
+                <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Text Column&quot;</span><span class="p">,</span>
+                <span class="n">data_types</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">Types</span><span class="o">.</span><span class="n">String</span><span class="p">,</span>
+                <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">),</span>
+            <span class="n">operations</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">MultiSelect</span><span class="p">(</span>
+                <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Cleaning Operations&quot;</span><span class="p">,</span>
+                <span class="n">options</span><span class="o">=</span><span class="p">[</span>
+                    <span class="p">(</span><span class="s2">&quot;lowercase&quot;</span><span class="p">,</span> <span class="s2">&quot;Convert to lowercase&quot;</span><span class="p">),</span>
+                    <span class="p">(</span><span class="s2">&quot;remove_punctuation&quot;</span><span class="p">,</span> <span class="s2">&quot;Remove punctuation&quot;</span><span class="p">),</span>
+                    <span class="p">(</span><span class="s2">&quot;trim&quot;</span><span class="p">,</span> <span class="s2">&quot;Trim whitespace&quot;</span><span class="p">),</span>
+                <span class="p">],</span>
+                <span class="n">default</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;lowercase&quot;</span><span class="p">,</span> <span class="s2">&quot;trim&quot;</span><span class="p">],</span>
+            <span class="p">),</span>
+            <span class="n">output_column</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">TextInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;Output Column Name&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;cleaned_text&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">lf</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">text_col</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">cleaning_options</span><span class="o">.</span><span class="n">text_column</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">operations</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">cleaning_options</span><span class="o">.</span><span class="n">operations</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">output_col</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">cleaning_options</span><span class="o">.</span><span class="n">output_column</span><span class="o">.</span><span class="n">value</span>
+
+        <span class="n">expr</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">text_col</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s2">&quot;lowercase&quot;</span> <span class="ow">in</span> <span class="n">operations</span><span class="p">:</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">to_lowercase</span><span class="p">()</span>
+        <span class="k">if</span> <span class="s2">&quot;remove_punctuation&quot;</span> <span class="ow">in</span> <span class="n">operations</span><span class="p">:</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">replace_all</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;[^\w\s]&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s2">&quot;trim&quot;</span> <span class="ow">in</span> <span class="n">operations</span><span class="p">:</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip_chars</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">lf</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">expr</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="n">output_col</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="mounting-other-directories">Mounting other directories</h2>
+<p>The default directory is <code>~/.flowfile/user_defined_nodes/</code>, but you can register additional folders (for example a version-controlled repo of shared nodes). Register a directory in the Catalog's <strong>Custom Nodes</strong> tab or via <code>POST /custom-node-mounts</code>; the registrations persist in a <code>mounts.json</code> next to the default directory.</p>
+<p>Mounted directories are <strong>read-only sources</strong> — the designer edits and saves them, but a fresh save from the designer always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and the Custom Nodes tab like any other.</p>
+<h2 id="the-visual-round-trip">The visual round-trip</h2>
+<p>A node file written in the SDK's "designer subset" reopens in the visual editor: Browse the node, click <strong>Edit</strong>, and its metadata, sections, components, and <code>process</code> code load back into the Form and Code tabs. The first time you save a hand-written node from the designer, its formatting is canonicalized (the designer shows a diff preview before writing). Files that use constructs outside the subset (builder objects, dynamic construction, non-literal component kwargs) still load — they open in code-only mode, with the Test tab fully functional. See <a href="node-designer.html#code-only-mode">Code-only mode</a>.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="node-doesnt-appear">Node doesn't appear</h3>
+<ol>
+<li>Check the file is in <code>~/.flowfile/user_defined_nodes/</code> (or a registered mount).</li>
+<li>Click <strong>Rescan</strong> in the Node Designer browser or the Catalog Custom Nodes tab.</li>
+<li>Check the browser: a file with a syntax or load error stays listed with its error attached.</li>
+<li>Ensure the class inherits from <code>nd.CustomNodeBase</code>.</li>
+</ol>
+<h3 id="settings-dont-work">Settings don't work</h3>
+<ol>
+<li>Verify <code>settings_schema</code> is assigned.</li>
+<li>Ensure components are keyword arguments inside a <code>Section</code>.</li>
+<li>Read component values with <code>.value</code> in <code>process</code>.</li>
+</ol>
+<h3 id="processing-errors">Processing errors</h3>
+<ol>
+<li>Check the input has the expected columns.</li>
+<li>Ensure <code>process</code> returns a <code>LazyFrame</code>/<code>DataFrame</code> (or a dict of them for multi-output).</li>
+<li>Confirm the node file imports only the node-designer SDK — a non-SDK <code>flowfile</code> import fails at run time in the worker.</li>
+</ol>
+<hr />
+<p>For a step-by-step walkthrough, see the <a href="custom-node-tutorial.html">Custom Node Tutorial</a> (local execution) or <a href="kmeans-kernel-node.html">K-Means on a Kernel</a> (kernel execution with scikit-learn).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

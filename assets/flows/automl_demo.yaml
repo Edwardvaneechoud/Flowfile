@@ -1,0 +1,297 @@
+flowfile_version: 0.13.3
+flowfile_id: 990101
+flowfile_name: automl_demo
+flowfile_settings:
+  description: null
+  execution_mode: Development
+  execution_location: remote
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: titanic.csv (csv)
+  node_reference: null
+  x_position: 80
+  y_position: 440
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [2, 4, 5, 6, 7, 7, 8]
+  output_handles: [output-0, output-0, output-0, output-0, output-0, output-0, output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    received_file:
+      id: null
+      name: titanic.csv
+      path: /Users/edwardvaneechoud/.flowfile/sample_data/titanic.csv
+      directory: null
+      analysis_file_available: false
+      status: null
+      fields: []
+      abs_file_path: /Users/edwardvaneechoud/.flowfile/sample_data/titanic.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+        reference: ''
+        starting_from_line: 0
+        delimiter: ','
+        has_headers: true
+        encoding: utf-8
+        parquet_ref: null
+        row_delimiter: '
+
+          '
+        quote_char: '"'
+        infer_schema_length: 10000
+        infer_schema: true
+        truncate_ragged_lines: false
+        ignore_errors: false
+- id: 2
+  type: automl_compare_models
+  is_start_node: false
+  description: Cross-validate 9 models -> leaderboard + accuracy chart + ROC curve
+  node_reference: null
+  x_position: 420
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      data:
+        feature_columns: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked]
+        target_column: Survived
+        task: classification
+      training:
+        models: [Linear Model, Random Forest, Extra Trees, Gradient Boosting, Hist
+            Gradient Boosting, Decision Tree, K-Nearest Neighbors, XGBoost, LightGBM]
+        balance_method: class_weight
+        cv_folds: 5
+        primary_metric: roc_auc
+      visualization:
+        publish_chart: true
+        chart_artifact_name: model_comparison
+        publish_roc: true
+        roc_artifact_name: roc_curve
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: b17b46b1f04225884cc8b3e1d0d5f307b26c6cbfacb0e474479d6a424983d386
+    settings_format_version: 1
+    is_user_defined: true
+- id: 3
+  type: automl_visualize_results
+  is_start_node: false
+  description: Chart the leaderboard from Compare Models
+  node_reference: null
+  x_position: 760
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      chart:
+        label_column: model
+        metric_columns: [roc_auc, accuracy, f1]
+        sort_descending: true
+        chart_title: Titanic model comparison
+        artifact_name: model_comparison_chart
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: 7257e9247c957e0b67bc3a2ed04ab6d999c0f29cd1dc5af57c2140fb0c984745
+    settings_format_version: 1
+    is_user_defined: true
+- id: 4
+  type: attribute_importance
+  is_start_node: false
+  description: Model-free attribute ranking (mutual information)
+  node_reference: null
+  x_position: 420
+  y_position: 260
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      data:
+        feature_columns: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked]
+        target_column: Survived
+        task: classification
+      scoring:
+        method: mutual_info
+        normalize: true
+        top_n: 20
+      visualization:
+        publish_chart: true
+        artifact_name: attribute_importance
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: b677c261388071a9c7452a10c2a1e6ca6cc1cd11cfdab1245cce6a8eac3c7d61
+    settings_format_version: 1
+    is_user_defined: true
+- id: 5
+  type: automl_feature_importance
+  is_start_node: false
+  description: Model-based feature importance (permutation)
+  node_reference: null
+  x_position: 420
+  y_position: 400
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      data:
+        feature_columns: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked]
+        target_column: Survived
+        task: classification
+      model:
+        model: Random Forest
+        balance_method: class_weight
+      importance:
+        method: permutation
+        scoring_metric: auto
+        n_repeats: 10
+        top_n: 20
+      visualization:
+        publish_chart: true
+        artifact_name: feature_importance
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: f3dfaeaf422de4dc12374b3a30c3fcb1c1c491a5f888f2a10c2abeb37973206d
+    settings_format_version: 1
+    is_user_defined: true
+- id: 6
+  type: automl_store_model
+  is_start_node: false
+  description: Train (auto-select) and persist as global 'titanic_model'
+  node_reference: null
+  x_position: 420
+  y_position: 540
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      data:
+        feature_columns: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked]
+        target_column: Survived
+        task: classification
+      training:
+        model: Auto (best)
+        balance_method: class_weight
+        cv_folds: 5
+        primary_metric: roc_auc
+      storage:
+        artifact_name: titanic_model
+      visualization:
+        publish_importance: true
+        importance_artifact_name: stored_feature_importance
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: ed51846b4a990f8ab982f9d802f583fbdd5b1a686a4dec0625306e7c84733170
+    settings_format_version: 1
+    is_user_defined: true
+- id: 7
+  type: automl_select_and_predict
+  is_start_node: false
+  description: Auto-select best model and score the unseen input
+  node_reference: null
+  x_position: 420
+  y_position: 700
+  group_id: null
+  left_input_id: null
+  right_input_id: 1
+  input_ids: [1]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      data:
+        feature_columns: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked]
+        target_column: Survived
+        task: classification
+      training:
+        models: [Linear Model, Random Forest, Extra Trees, Gradient Boosting, Hist
+            Gradient Boosting, Decision Tree, K-Nearest Neighbors, XGBoost, LightGBM]
+        balance_method: class_weight
+        cv_folds: 5
+        primary_metric: roc_auc
+      output:
+        prediction_column: prediction
+        include_probabilities: true
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: 5f1c7aadec419374fcee034ceac7f184c2840882d57aa7713bbbb1bb5ba17357
+    settings_format_version: 1
+    is_user_defined: true
+- id: 8
+  type: automl_reuse_model
+  is_start_node: false
+  description: Load global 'titanic_model' and score (run after Store Model)
+  node_reference: null
+  x_position: 420
+  y_position: 860
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    settings:
+      model:
+        model_artifact: titanic_model
+        artifact_name: titanic_model
+        prediction_column: prediction
+        include_probabilities: true
+    kernel_id: ml
+    output_names: [main]
+    node_source_hash: 371b826b0d00e9b1c5417101d6819d2af475a0ff7e033ac639b409bb3decf8d3
+    settings_format_version: 1
+    is_user_defined: true
+groups: []
