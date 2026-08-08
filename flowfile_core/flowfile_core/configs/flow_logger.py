@@ -135,7 +135,20 @@ class FlowLogger:
             main_logger.error(f"Error recreating log file for flow {self.flow_id}: {e}")
 
     def refresh_logger_if_needed(self):
-        """Check if log file exists and refresh logger if needed"""
+        """Re-point or recreate the file handler when it no longer matches reality.
+
+        Instances are cached per flow_id for the process lifetime, so a logger
+        built before the logs directory moved would keep writing to the old
+        path while every reader resolves the new one through
+        ``get_flow_log_file``. Rebinding appends rather than truncating, so an
+        existing log at the new location is preserved.
+        """
+        current_path = get_flow_log_file(self.flow_id)
+        if current_path != self.log_file_path:
+            main_logger.info(f"Log path moved for flow {self.flow_id}, rebinding to: {current_path}")
+            self.log_file_path = current_path
+            self.setup_logging()
+            return True
         if not os.path.exists(self.log_file_path):
             main_logger.info(f"Log file missing, recreating: {self.log_file_path}")
             self.cleanup_self()

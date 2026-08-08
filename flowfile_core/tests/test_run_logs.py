@@ -14,12 +14,19 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.configs.flow_logger import FlowLogger, clear_all_flow_logs, get_flow_log_file
 from shared.run_logs import run_log_path
-from shared.storage_config import storage
+from shared.storage_config import get_database_url, storage
 
 
 @pytest.fixture(autouse=True)
 def logs_dir(tmp_path, monkeypatch):
-    """Point the storage singleton at a throwaway root for the whole test."""
+    """Point the storage singleton at a throwaway root for the whole test.
+
+    The catalog DB is pinned back to the session database first: it resolves
+    through the same singleton, so letting it follow ``tmp_path`` would make
+    the lifespan's best-effort orphan reap log a "no such table" traceback
+    against an empty file.
+    """
+    monkeypatch.setenv("FLOWFILE_DB_PATH", get_database_url().removeprefix("sqlite:///"))
     monkeypatch.setattr(storage, "_base_dir", tmp_path)
     directory = storage.logs_directory
     directory.mkdir(parents=True, exist_ok=True)
