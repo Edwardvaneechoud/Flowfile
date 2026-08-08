@@ -6,6 +6,7 @@ Defines a ``CatalogRepository`` :pep:`544` Protocol and provides a concrete
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
@@ -233,7 +234,7 @@ class CatalogRepository(Protocol):
 
     def bulk_get_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
 
-    def upsert_read_link(self, table_id: int, registration_id: int) -> None: ...
+    def replace_read_links(self, registration_id: int, table_ids: Collection[int]) -> None: ...
 
     def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]: ...
 
@@ -465,6 +466,9 @@ class SQLAlchemyCatalogRepository:
     def delete_flow(self, registration_id: int) -> None:
         self._db.query(FlowFavorite).filter_by(registration_id=registration_id).delete()
         self._db.query(FlowFollow).filter_by(registration_id=registration_id).delete()
+        # Read-lineage links don't cascade either; a stale one would attribute this
+        # flow's reads to whichever future registration reuses the SQLite rowid.
+        self._db.query(CatalogTableReadLink).filter_by(registration_id=registration_id).delete()
         # Schedules don't FK-cascade; a flow can't have schedules without the flow, so drop them
         # (and their trigger-table links) — otherwise they'd be orphaned on the flow's deletion.
         schedule_ids = [
@@ -1008,13 +1012,23 @@ class SQLAlchemyCatalogRepository:
             result.setdefault(table.source_registration_id, []).append(table)
         return result
 
-    def upsert_read_link(self, table_id: int, registration_id: int) -> None:
-        """Record that a flow reads from a catalog table (idempotent)."""
-        existing = (
-            self._db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=registration_id).first()
-        )
-        if not existing:
+    def replace_read_links(self, registration_id: int, table_ids: Collection[int]) -> None:
+        """Make a flow's read links exactly ``table_ids``.
+
+        Prunes links to tables the flow no longer reads and inserts the missing
+        ones, so a removed catalog_reader stops showing up as read lineage. An
+        empty collection drops every link for the registration.
+        """
+        wanted = set(table_ids)
+        links = self._db.query(CatalogTableReadLink).filter(CatalogTableReadLink.registration_id == registration_id)
+        existing = {link.table_id for link in links.all()}
+        stale = existing - wanted
+        missing = wanted - existing
+        if stale:
+            links.filter(CatalogTableReadLink.table_id.in_(stale)).delete(synchronize_session=False)
+        for table_id in missing:
             self._db.add(CatalogTableReadLink(table_id=table_id, registration_id=registration_id))
+        if stale or missing:
             self._db.commit()
 
     def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]:
