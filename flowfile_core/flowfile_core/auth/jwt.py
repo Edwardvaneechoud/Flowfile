@@ -1,8 +1,11 @@
 # jwt.py
 
+import logging
 import os
 import secrets
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
@@ -14,6 +17,8 @@ from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -28,18 +33,81 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 _internal_token: str | None = None
 
 
-def _load_or_create_persisted_token() -> str:
-    """Read the persisted internal token, minting and storing one if absent.
+_LOCK_STALE_SECONDS = 5.0
+_LOCK_WAIT_SECONDS = 6.0
+_LOCK_POLL_SECONDS = 0.05
 
-    Re-reads after the write so two processes that both found an empty store
-    converge on whichever token actually landed.
-    """
+
+def _token_lock_path() -> Path:
+    from flowfile_core.auth import secrets as secrets_module
+
+    return Path(secrets_module._storage.storage_path) / ".internal_token.lock"
+
+
+def _read_or_mint_token() -> str:
+    """The critical section: adopt a persisted token, else mint and persist one."""
     token = get_password("flowfile", "internal_token")
     if token:
         return token
     token = secrets.token_hex(32)
     set_password("flowfile", "internal_token", token)
     return get_password("flowfile", "internal_token") or token
+
+
+def _break_stale_token_lock(lock_path: Path) -> None:
+    """Drop a lock whose holder died mid-mint."""
+    try:
+        if time.time() - os.path.getmtime(lock_path) > _LOCK_STALE_SECONDS:
+            os.unlink(lock_path)
+    except OSError:
+        pass
+
+
+def _load_or_create_persisted_token() -> str:
+    """Read the persisted internal token, minting and storing one if absent.
+
+    Serialised across processes by an O_CREAT|O_EXCL lock file beside the store,
+    so two processes that both start with an empty store cannot each mint: the
+    loser waits for the winner's write and adopts it. A re-read alone does not
+    converge — the loser can write after the winner has already re-read, leaving
+    the winner on a token the store no longer holds for the rest of its uptime.
+
+    Never raises: any failure in the lock machinery falls back to the unguarded
+    read-mint-persist, which is last-writer-wins but still yields a usable token.
+    """
+    token = get_password("flowfile", "internal_token")
+    if token:
+        return token
+
+    try:
+        lock_path = _token_lock_path()
+        deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+        while True:
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                os.close(fd)
+                try:
+                    return _read_or_mint_token()
+                finally:
+                    try:
+                        os.unlink(lock_path)
+                    except OSError:
+                        pass
+
+            token = get_password("flowfile", "internal_token")
+            if token:
+                return token
+            _break_stale_token_lock(lock_path)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_LOCK_POLL_SECONDS)
+    except Exception as exc:
+        logger.debug(f"Internal-token lock unavailable, falling back to unguarded mint: {exc}")
+
+    return _read_or_mint_token()
 
 
 def get_internal_token() -> str:

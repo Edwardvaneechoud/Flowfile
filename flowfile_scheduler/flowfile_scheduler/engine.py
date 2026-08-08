@@ -65,7 +65,9 @@ class FlowScheduler:
         self._holder_id = uuid.uuid4().hex[:12]
         self._task: asyncio.Task | None = None
         self._stopping = False
-        self._last_log_sweep: float = 0.0
+        # None, not 0.0: time.monotonic() is seconds-since-boot on Linux, so a
+        # zero seed would skip the first sweep for an hour on a freshly booted host.
+        self._last_log_sweep: float | None = None
 
         url = get_database_url()
         connect_args = {"check_same_thread": False} if "sqlite" in url else {}
@@ -135,7 +137,7 @@ class FlowScheduler:
 
             # Throttled: the tick runs every 30s and the sweep globs the logs dir.
             now_monotonic = time.monotonic()
-            if now_monotonic - self._last_log_sweep > LOG_SWEEP_INTERVAL:
+            if self._last_log_sweep is None or now_monotonic - self._last_log_sweep > LOG_SWEEP_INTERVAL:
                 self._last_log_sweep = now_monotonic
                 try:
                     cleanup_old_logs()

@@ -30,10 +30,17 @@ os.environ.setdefault('FLOWFILE_KERNEL_WARMUP', '0')
 # Keep jwt_secret / master_key / internal_token out of the developer's real
 # ~/.config/flowfile store. Stable across sessions and outside storage.temp_directory,
 # which the 24h sweep in shared.storage_config.cleanup_directories would eat.
-os.environ.setdefault(
-    'FLOWFILE_SECURE_STORAGE_PATH',
-    str(Path(tempfile.gettempdir()) / 'flowfile_test_secure_storage'),
+# Skipped when a worker is already running: it resolved its own store at its
+# import, and a split store breaks every worker-offloaded $ffsec$ decrypt.
+from tests.secure_storage_isolation import (  # noqa: E402
+    resolve_test_secure_storage_path,
+    worker_is_listening,
 )
+
+_explicit_secure_store = bool(os.environ.get('FLOWFILE_SECURE_STORAGE_PATH'))
+_test_secure_store = resolve_test_secure_storage_path(worker_is_listening(), os.environ)
+if _test_secure_store is not None:
+    os.environ['FLOWFILE_SECURE_STORAGE_PATH'] = _test_secure_store
 
 # Pin before core imports / worker spawn so every process derives the same shared paths.
 if 'FLOWFILE_SHARED_DIR' not in os.environ:
@@ -47,6 +54,31 @@ from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
 from tests.flowfile_core_test_utils import is_docker_available
 from tests.kernel_fixtures import managed_kernel
+
+
+_NOT_ISOLATED_MSG = (
+    'Secure store NOT isolated: a flowfile_worker is already running, so tests use the real '
+    '~/.config/flowfile store (core and that worker must share a master key, or every '
+    'worker-offloaded $ffsec$ decrypt fails). Stop the worker, or export '
+    'FLOWFILE_SECURE_STORAGE_PATH for both, to keep test secrets out of it.'
+)
+
+
+def _secure_store_is_isolated() -> bool:
+    return _test_secure_store is not None or _explicit_secure_store
+
+
+def pytest_report_header(config):
+    """Surface which secure store the suite is using — a split store is silent otherwise."""
+    if not _secure_store_is_isolated():
+        return f'secure store: {_NOT_ISOLATED_MSG}'
+    return f"secure store: isolated at {os.environ.get('FLOWFILE_SECURE_STORAGE_PATH')}"
+
+
+def pytest_configure(config):
+    # The header is suppressed under -q; a config-time warning still shows.
+    if not _secure_store_is_isolated():
+        config.issue_config_time_warning(pytest.PytestConfigWarning(_NOT_ISOLATED_MSG), stacklevel=2)
 
 
 def is_port_in_use(port, host='localhost'):

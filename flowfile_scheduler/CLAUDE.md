@@ -31,7 +31,7 @@ Lightweight, embeddable engine that polls the shared catalog DB for due flow sch
 poetry run flowfile_scheduler          # continuous polling loop
 poetry run flowfile_scheduler --once   # single tick, then exit
 ```
-Embedded mode: started automatically from core when `FLOWFILE_SCHEDULER_ENABLED` is truthy (see core `main.py` lifespan). Launched flows run as detached subprocesses — `python -m flowfile run flow <path> --run-id <id>` (or `<exe> --run-flow <path> --run-id <id>` when `sys.frozen`), logging to `~/.flowfile/logs/scheduled_run_<run_id>.log`.
+Embedded mode: started automatically from core when `FLOWFILE_SCHEDULER_ENABLED` is truthy (see core `main.py` lifespan). Launched flows run as detached subprocesses — `python -m flowfile run flow <path> --run-id <id>` (or `<exe> --run-flow <path> --run-id <id>` when `sys.frozen`), logging to `<storage>/logs/scheduled_run_<run_id>.log` (path via `shared.run_logs.run_log_path` — `~/.flowfile/logs/...` by default, `FLOWFILE_STORAGE_DIR`-aware).
 
 ## Testing
 ```bash

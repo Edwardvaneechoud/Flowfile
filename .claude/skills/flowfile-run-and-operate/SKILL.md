@@ -118,7 +118,7 @@ python -m flowfile_core.main --run-flow <path> --run-id <id>   # --run-id is REQ
 `shared/subprocess_utils.py:spawn_flow_subprocess(flow_path, run_id)`:
 - **frozen**: `[sys.executable, --run-flow, path, --run-id, N]`
 - **dev**: `[sys.executable, -m, flowfile, run, flow, path, --run-id, N]`
-- stdout+stderr redirect to a **hardcoded** `Path.home() / ".flowfile" / "logs" / "scheduled_run_<run_id>.log"` (mode 0644, truncated each run) — this path **ignores `FLOWFILE_STORAGE_DIR`**, always the real home dir.
+- stdout+stderr redirect to `shared.run_logs.run_log_path(run_id)` = `storage.logs_directory / "scheduled_run_<run_id>.log"` (mode 0644, truncated each run) — resolved per call, so it **honors `FLOWFILE_STORAGE_DIR`**, docker mode, and `TESTING`. The `scheduled_run_` prefix is legacy: manual and on-demand runs use it too.
 - `start_new_session=True` (fire-and-forget); returns the child PID or `None` on spawn failure.
 
 The scheduler engine (`flowfile_scheduler/flowfile_scheduler/engine.py`) polls the shared SQLite catalog DB every `DEFAULT_POLL_INTERVAL = 30` seconds, supports cron/interval/table-trigger schedules, skips launching a schedule that already has an active run (`ended_at IS NULL`), creates the `FlowRun` row (`run_type="scheduled"`) **before** spawning, and records the child PID. Standalone: `poetry run flowfile_scheduler` (continuous) or `poetry run flowfile_scheduler --once` (single tick). Embedded inside core only when `FLOWFILE_SCHEDULER_ENABLED` is truthy (`true`/`1`/`yes`).
@@ -287,7 +287,7 @@ Ciphertext format and HKDF derivation are owned by `flowfile-architecture-contra
 | log | location | writer |
 |---|---|---|
 | per-flow execution log | `<base>/logs/flow_<flow_id>.log` | `FlowLogger`, `FileHandler`, format `%(asctime)s - %(levelname)s - %(message)s`; node lines prefixed `Node ID: <n> - ` |
-| scheduled-run subprocess output | `~/.flowfile/logs/scheduled_run_<run_id>.log` (**always real home**, ignores `FLOWFILE_STORAGE_DIR`) | `shared/subprocess_utils.py` |
+| scheduled/manual/on-demand run subprocess output | `<base>/logs/scheduled_run_<run_id>.log` (via `shared.run_logs.run_log_path`; honors `FLOWFILE_STORAGE_DIR`) | `shared/subprocess_utils.py` |
 | core service log | stdout only, `%(asctime)s [%(levelname)s] %(name)s: %(message)s` | no file handler — Electron/Tauri captures stdout |
 | worker service log | stdout only, `%(asctime)s: %(message)s`; worker subprocesses ship flow-scoped lines back to core via `POST /raw_logs` so they land in the same `flow_<id>.log` | no file |
 | AI prompt log | `<base>/ai_prompts/YYYY-MM-DD.jsonl` (UTC-dated), only when `FLOWFILE_AI_LOG_PROMPTS` is truthy | `flowfile_core/ai/prompt_log.py` |
@@ -304,8 +304,8 @@ Access:
 
 1. `flowfile run ui --host/--port` is dead — flags parsed, never used; `start_server` throws on non-default values.
 2. `import flowfile` mutates env and importing `flowfile_core` migrates + seeds the live DB (§2) — always isolate ad-hoc imports with `FLOWFILE_DB_PATH`.
-3. Scheduled-run logs are hardcoded to the real `~/.flowfile/logs/`, ignoring `FLOWFILE_STORAGE_DIR`.
-4. Flow logs are wiped on every core shutdown and by a 7-day sweep — don't treat them as history.
+3. Run logs live under `storage.logs_directory` (`shared/run_logs.py`), so `FLOWFILE_STORAGE_DIR` / docker / `TESTING` move them — don't assume the real home dir.
+4. Flow logs survive core restarts (the shutdown wipe and hardcoded 7-day sweep were removed); both `flow_*.log` and `scheduled_run_*.log` are expired only by `shared.run_logs.cleanup_old_logs` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30). Per-flow `flow_<id>.log` is still truncated at the start of each run, so only the run logs are true history.
 5. Cache files older than 1h are deleted every time core starts — don't assume a `Status.file_ref` survives a restart.
 6. Opening a flow renames it in-app to the file's stem; renaming the YAML on disk renames the flow.
 7. Saving `.flowfile` raises `DeprecationWarning`; *loading* `.flowfile` still works via the legacy pickle path.
@@ -338,7 +338,8 @@ sqlite3 ~/.flowfile/database/flowfile_catalog.db 'select id,flow_path from flow_
 
 # 3. Read the flow's own log (or stream it live via GET /logs/{flow_id})
 tail -100 ~/.flowfile/logs/flow_<flow_id>.log
-# scheduled runs always log to the real home dir, regardless of FLOWFILE_STORAGE_DIR:
+# run logs follow storage.logs_directory (<base>/logs; ~/.flowfile/logs by default,
+# but FLOWFILE_STORAGE_DIR / docker / TESTING relocate them):
 tail -100 ~/.flowfile/logs/scheduled_run_<run_id>.log
 
 # 4. Worker offload / connectivity — core prints its resolved worker URL at startup

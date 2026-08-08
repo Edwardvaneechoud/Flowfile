@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -102,24 +104,68 @@ def test_non_electron_non_docker_mode_still_raises(isolated_token, monkeypatch, 
     assert _store_entries(tmp_path) == {".secret_key"}
 
 
-def test_concurrent_mint_converges_via_reread(isolated_token, monkeypatch):
-    """Two first-ever minters converge on whichever token actually landed."""
+def test_loser_waits_for_the_winners_token_instead_of_minting(isolated_token):
+    """The unfavorable interleaving: the other process writes *after* we would re-read.
+
+    A re-read alone cannot fix this — it happens before the loser's write. The
+    lock has to keep the loser out of the mint entirely.
+    """
     jwt_module = isolated_token
-    import flowfile_core.auth.secrets as secrets_module
+    winner_token = "a" * 64
+    lock_path = jwt_module._token_lock_path()
 
-    racing_token = "f" * 64
+    # Stand in for a process that holds the lock and is still mid-mint.
+    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
 
-    def set_password_then_race(service, username, password):
-        secrets_module.set_password(service, username, password)
-        # A second process persists its own token last.
-        secrets_module.set_password(service, username, racing_token)
+    def finish_winner():
+        time.sleep(0.15)
+        set_password("flowfile", "internal_token", winner_token)
+        os.unlink(lock_path)
 
-    monkeypatch.setattr(jwt_module, "set_password", set_password_then_race)
+    helper = threading.Thread(target=finish_winner)
+    helper.start()
+    try:
+        token = jwt_module._load_or_create_persisted_token()
+    finally:
+        helper.join()
 
-    token = jwt_module.get_internal_token()
+    assert token == winner_token
+    assert token == get_password("flowfile", "internal_token")
+
+
+def test_concurrent_minters_agree(isolated_token):
+    """Two first-ever minters racing for real must not end up on different tokens."""
+    jwt_module = isolated_token
+    results: dict[str, str] = {}
+    barrier = threading.Barrier(2)
+
+    def mint(name: str) -> None:
+        barrier.wait()
+        results[name] = jwt_module._load_or_create_persisted_token()
+
+    threads = [threading.Thread(target=mint, args=(name,)) for name in ("p1", "p2")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results["p1"] == results["p2"] == get_password("flowfile", "internal_token")
+
+
+def test_stale_lock_is_broken(isolated_token, monkeypatch):
+    """A holder that died mid-mint must not wedge every later boot."""
+    jwt_module = isolated_token
+    lock_path = jwt_module._token_lock_path()
+    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    os.utime(lock_path, (0, 0))
+    monkeypatch.setattr(jwt_module, "_LOCK_WAIT_SECONDS", 1.0)
+
+    token = jwt_module._load_or_create_persisted_token()
 
     assert token == get_password("flowfile", "internal_token")
-    assert token == racing_token
+    assert not lock_path.exists()
 
 
 # --- B. eager mint in the lifespan ----------------------------------------------

@@ -18,6 +18,11 @@ from cryptography.fernet import Fernet
 
 import flowfile_core.auth.secrets as secrets_module
 from flowfile_core.auth.secrets import SecureStorage
+from tests.secure_storage_isolation import (
+    DEFAULT_STORE_DIRNAME,
+    resolve_test_secure_storage_path,
+    worker_is_listening,
+)
 
 
 @pytest.fixture
@@ -143,7 +148,38 @@ def test_worker_resolves_the_same_store_as_core(tmp_path, monkeypatch, with_over
     assert _worker_store_path(env_overrides) == str(SecureStorage().storage_path)
 
 
-def test_suite_does_not_write_to_the_real_user_store():
-    """The conftest override must be applied before flowfile_core is imported."""
+def test_suite_store_matches_the_isolation_decision():
+    """The conftest decision must be applied before flowfile_core is imported.
+
+    When no worker was running the suite must be isolated; when one was, core
+    deliberately stays on the real store so it shares a master key with it.
+    """
     app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
-    assert secrets_module._storage.storage_path != Path(app_data) / "flowfile"
+    real_store = Path(app_data) / "flowfile"
+    effective = secrets_module._storage.storage_path
+
+    pinned = os.environ.get("FLOWFILE_SECURE_STORAGE_PATH")
+    if pinned:
+        assert effective == Path(pinned)
+        assert effective != real_store
+    else:
+        # Only legitimate because an external worker owns the real store.
+        assert effective == real_store
+        assert worker_is_listening()
+
+
+@pytest.mark.parametrize(
+    ("worker_running", "env", "expects_path"),
+    [
+        (False, {}, True),
+        (True, {}, False),
+        (True, {"FLOWFILE_SECURE_STORAGE_PATH": "/explicit"}, False),
+        (False, {"FLOWFILE_SECURE_STORAGE_PATH": "/explicit"}, False),
+    ],
+)
+def test_isolation_decision(worker_running, env, expects_path):
+    """Isolate only when nothing else already owns the store."""
+    resolved = resolve_test_secure_storage_path(worker_running, env)
+    assert (resolved is not None) is expects_path
+    if expects_path:
+        assert resolved.endswith(DEFAULT_STORE_DIRNAME)

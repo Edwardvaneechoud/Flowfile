@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -74,6 +75,23 @@ def test_tick_sweeps_logs_once_per_interval(sched, sweeps):
     sched._last_log_sweep = time.monotonic() - LOG_SWEEP_INTERVAL - 1
     sched._tick()
     assert len(sweeps) == 2
+
+
+def test_first_tick_sweeps_on_a_freshly_booted_host(sched, sweeps, monkeypatch):
+    """time.monotonic() is seconds-since-boot on Linux.
+
+    A 0.0 seed makes the first sweep wait until uptime exceeds LOG_SWEEP_INTERVAL,
+    so on a fresh CI VM the standalone scheduler never expires its logs for an hour.
+    """
+    # Scoped to engine's namespace (its only `time` use is monotonic) so
+    # sqlalchemy's pool keeps the real clock.
+    monkeypatch.setattr(engine_mod, "time", SimpleNamespace(monotonic=lambda: 120.0))
+    assert sched._last_log_sweep is None
+
+    sched._tick()
+
+    assert len(sweeps) == 1
+    assert sched._last_log_sweep == 120.0
 
 
 def test_tick_survives_sweep_failure(sched, monkeypatch):

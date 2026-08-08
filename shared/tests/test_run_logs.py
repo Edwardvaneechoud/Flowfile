@@ -185,3 +185,15 @@ def test_cleanup_directories_does_not_expire_logs(tmp_path, monkeypatch):
     assert run_log.exists()
     assert flow_log.exists()
     assert not system_log.exists()
+
+
+def test_subprocess_run_types_mirror_reapable_run_types():
+    """run_logs duplicates the tuple to stay free of run_completion's sqlalchemy import.
+
+    Pin the mirror so the two cannot drift: a run type that is reaped but whose
+    logs are never swept (or vice versa) is silent breakage.
+    """
+    from shared.run_completion import REAPABLE_RUN_TYPES
+    from shared.run_logs import SUBPROCESS_RUN_TYPES
+
+    assert SUBPROCESS_RUN_TYPES == REAPABLE_RUN_TYPES
