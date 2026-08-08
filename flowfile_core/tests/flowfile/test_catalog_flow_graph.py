@@ -10,6 +10,7 @@ Covers:
 import io as _io
 import json
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -486,10 +487,244 @@ class TestCatalogReader:
 class TestSyncCatalogReadLinks:
     """Test that save_flow records read links for catalog_reader nodes."""
 
-    def test_save_flow_records_read_links(self):
-        """Saving a flow with catalog_reader nodes should upsert read links."""
+    @staticmethod
+    def _register_table(ns_id: int, name: str) -> int:
+        """Register a parquet-backed catalog table and return its id."""
+        df = pl.DataFrame(SAMPLE_DATA)
+        tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+        df.write_parquet(tmp.name)
+        tmp.close()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_out = svc.register_table(name=name, file_path=tmp.name, owner_id=1, namespace_id=ns_id)
+        return table_out.id
+
+    @staticmethod
+    def _add_reader(graph, node_id: int, table_id: int) -> None:
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_reader")
+        )
+        graph.add_catalog_reader(
+            input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=node_id, catalog_table_id=table_id)
+        )
+
+    @staticmethod
+    def _linked_table_ids(reg_id: int) -> set[int]:
+        with get_db_context() as db:
+            rows = db.query(CatalogTableReadLink.table_id).filter_by(registration_id=reg_id).all()
+        return {row[0] for row in rows}
+
+    @staticmethod
+    def _temp_flow_path() -> str:
+        """A save path the flow's registration can be registered at (they must match)."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+            return f.name
+
+    def test_save_flow_prunes_removed_reader(self):
+        """Removing one of two catalog_reader nodes drops only that reader's link."""
         ns_id = _create_namespace()
-        reg_id = _create_flow_registration(ns_id, name="reader_flow", path="/tmp/reader_flow.yaml")
+        save_path = self._temp_flow_path()
+        reg_id = _create_flow_registration(ns_id, name="two_readers", path=save_path)
+        table_a = self._register_table(ns_id, "prune_table_a")
+        table_b = self._register_table(ns_id, "prune_table_b")
+
+        graph = _create_graph(source_registration_id=reg_id)
+        self._add_reader(graph, 1, table_a)
+        self._add_reader(graph, 2, table_b)
+
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == {table_a, table_b}
+
+        graph.delete_node(2)
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == {table_a}
+
+        os.unlink(save_path)
+
+    def test_save_flow_prunes_last_reader(self):
+        """Removing the last catalog_reader leaves the flow with no read links."""
+        ns_id = _create_namespace()
+        save_path = self._temp_flow_path()
+        reg_id = _create_flow_registration(ns_id, name="last_reader", path=save_path)
+        table_id = self._register_table(ns_id, "last_reader_table")
+
+        graph = _create_graph(source_registration_id=reg_id)
+        self._add_reader(graph, 1, table_id)
+
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == {table_id}
+
+        graph.delete_node(1)
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == set()
+
+        os.unlink(save_path)
+
+    def test_save_flow_restores_readded_reader(self):
+        """A reader added back after a prune gets its link recreated."""
+        ns_id = _create_namespace()
+        save_path = self._temp_flow_path()
+        reg_id = _create_flow_registration(ns_id, name="readded_reader", path=save_path)
+        table_id = self._register_table(ns_id, "readd_table")
+
+        graph = _create_graph(source_registration_id=reg_id)
+        self._add_reader(graph, 1, table_id)
+
+        graph.save_flow(save_path)
+        graph.delete_node(1)
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == set()
+
+        self._add_reader(graph, 1, table_id)
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == {table_id}
+
+        os.unlink(save_path)
+
+    def test_save_flow_leaves_other_flows_links_intact(self):
+        """Pruning one flow's links must not touch another flow reading the same table."""
+        ns_id = _create_namespace()
+        path_a = self._temp_flow_path()
+        path_b = self._temp_flow_path()
+        reg_a = _create_flow_registration(ns_id, name="flow_a", path=path_a)
+        reg_b = _create_flow_registration(ns_id, name="flow_b", path=path_b)
+        table_id = self._register_table(ns_id, "shared_read_table")
+
+        graph_a = _create_graph(flow_id=1, source_registration_id=reg_a)
+        self._add_reader(graph_a, 1, table_id)
+        graph_b = _create_graph(flow_id=2, source_registration_id=reg_b)
+        self._add_reader(graph_b, 1, table_id)
+
+        graph_a.save_flow(path_a)
+        graph_b.save_flow(path_b)
+        assert self._linked_table_ids(reg_a) == {table_id}
+        assert self._linked_table_ids(reg_b) == {table_id}
+
+        graph_a.delete_node(1)
+        graph_a.save_flow(path_a)
+        assert self._linked_table_ids(reg_a) == set()
+        assert self._linked_table_ids(reg_b) == {table_id}
+
+        os.unlink(path_a)
+        os.unlink(path_b)
+
+    def test_save_flow_ignores_registration_id_reused_by_another_flow(self):
+        """A stale id that SQLite handed to another flow must not prune that flow's links.
+
+        Registration ids are bare rowids, so deleting a registration frees the id for
+        the next insert while an open FlowGraph (and its YAML) still carries it.
+        """
+        ns_id = _create_namespace()
+        path_a = self._temp_flow_path()
+        path_b = self._temp_flow_path()
+        table_a = self._register_table(ns_id, "reuse_table_a")
+        table_b = self._register_table(ns_id, "reuse_table_b")
+
+        reg_a = _create_flow_registration(ns_id, name="flow_a", path=path_a)
+        graph_a = _create_graph(flow_id=1, source_registration_id=reg_a)
+        self._add_reader(graph_a, 1, table_a)
+        graph_a.save_flow(path_a)
+        assert self._linked_table_ids(reg_a) == {table_a}
+
+        with get_db_context() as db:
+            SQLAlchemyCatalogRepository(db).delete_flow(reg_a)
+
+        reg_b = _create_flow_registration(ns_id, name="flow_b", path=path_b)
+        assert reg_b == reg_a, "SQLite should hand the freed rowid to the next registration"
+
+        graph_b = _create_graph(flow_id=2, source_registration_id=reg_b)
+        self._add_reader(graph_b, 1, table_b)
+        graph_b.save_flow(path_b)
+        assert self._linked_table_ids(reg_b) == {table_b}
+
+        # graph_a still points at the recycled id; its save must not touch flow B.
+        graph_a.delete_node(1)
+        graph_a.save_flow(path_a)
+        assert self._linked_table_ids(reg_b) == {table_b}
+        assert graph_a.flow_settings.source_registration_id is None
+
+        os.unlink(path_a)
+        os.unlink(path_b)
+
+    def test_save_flow_ignores_registration_id_of_a_copied_flow(self):
+        """A copied YAML carries the original's id; saving the copy must not prune the original."""
+        ns_id = _create_namespace()
+        original_path = self._temp_flow_path()
+        copy_path = self._temp_flow_path()
+        table_id = self._register_table(ns_id, "copied_flow_table")
+
+        reg_id = _create_flow_registration(ns_id, name="original", path=original_path)
+        graph = _create_graph(source_registration_id=reg_id)
+        self._add_reader(graph, 1, table_id)
+        graph.save_flow(original_path)
+        assert self._linked_table_ids(reg_id) == {table_id}
+
+        copy_graph = _create_graph(flow_id=2, source_registration_id=reg_id)
+        copy_graph.save_flow(copy_path)
+        assert self._linked_table_ids(reg_id) == {table_id}
+        assert copy_graph.flow_settings.source_registration_id is None
+
+        os.unlink(original_path)
+        os.unlink(copy_path)
+
+    def test_import_flow_strips_foreign_registration_id(self):
+        """Opening/copying a YAML must not adopt the id baked into it."""
+        from flowfile_core.flowfile.handler import FlowfileHandler
+
+        ns_id = _create_namespace()
+        original_path = self._temp_flow_path()
+        table_id = self._register_table(ns_id, "imported_flow_table")
+
+        reg_id = _create_flow_registration(ns_id, name="import_origin", path=original_path)
+        graph = _create_graph(source_registration_id=reg_id)
+        self._add_reader(graph, 1, table_id)
+        graph.save_flow(original_path)
+
+        copy_path = self._temp_flow_path()
+        shutil.copyfile(original_path, copy_path)
+
+        handler = FlowfileHandler()
+        imported_id = handler.import_flow(copy_path, user_id=1)
+        imported = handler.get_flow(imported_id)
+        assert imported.flow_settings.source_registration_id is None
+
+        # The copy's own save leaves the original's lineage alone.
+        imported.save_flow(copy_path)
+        assert self._linked_table_ids(reg_id) == {table_id}
+
+        os.unlink(original_path)
+        os.unlink(copy_path)
+
+    def test_save_flow_syncs_links_after_registration_rename(self):
+        """A renamed registration keeps its path, so the guard must not misfire on it."""
+        ns_id = _create_namespace()
+        save_path = self._temp_flow_path()
+        reg_id = _create_flow_registration(ns_id, name="before_rename", path=save_path)
+        table_a = self._register_table(ns_id, "rename_table_a")
+        table_b = self._register_table(ns_id, "rename_table_b")
+
+        graph = _create_graph(source_registration_id=reg_id)
+        self._add_reader(graph, 1, table_a)
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == {table_a}
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            svc.update_flow(registration_id=reg_id, requesting_user_id=1, name="after_rename")
+
+        self._add_reader(graph, 2, table_b)
+        graph.save_flow(save_path)
+        assert self._linked_table_ids(reg_id) == {table_a, table_b}
+        assert graph.flow_settings.source_registration_id == reg_id
+
+        os.unlink(save_path)
+
+    def test_save_flow_records_read_links(self):
+        """Saving a flow with catalog_reader nodes should record read links."""
+        ns_id = _create_namespace()
+        save_path = self._temp_flow_path()
+        reg_id = _create_flow_registration(ns_id, name="reader_flow", path=save_path)
 
         df = pl.DataFrame(SAMPLE_DATA)
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
@@ -516,9 +751,6 @@ class TestSyncCatalogReadLinks:
             catalog_table_id=table_id,
         )
         graph.add_catalog_reader(reader)
-
-        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
-            save_path = f.name
 
         graph.save_flow(save_path)
 

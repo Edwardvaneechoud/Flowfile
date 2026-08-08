@@ -6290,35 +6290,55 @@ class FlowGraph:
         # Record the current state as the clean baseline for dirty tracking
         self.mark_as_saved()
 
+    def _owns_registration(self, repo: SQLAlchemyCatalogRepository, registration_id: int) -> bool:
+        """Whether ``registration_id`` really points at this flow's own file.
+
+        Registration ids are machine-local and can alias another flow: SQLite reuses
+        rowids after a registration is deleted, and a copied YAML carries the original's
+        id. Since the read-link sync prunes, syncing under an aliased id would wipe the
+        other flow's lineage. Renames never move ``flow_path``, so path identity is the
+        authoritative check.
+        """
+        registration = repo.get_flow(registration_id)
+        own_path = self._flow_settings.path or self._flow_settings.save_location
+        if registration is None or not registration.flow_path or not own_path:
+            return False
+        return os.path.realpath(registration.flow_path) == os.path.realpath(own_path)
+
     def _sync_catalog_read_links(self):
         """Record which catalog tables this flow reads from.
 
-        Scans all nodes for catalog_reader types and upserts read links
-        in the catalog database.  Runs at save time so that
-        source_registration_id is guaranteed to be set.
+        Scans all nodes for catalog_reader types and replaces the flow's read
+        links with exactly that set, so removing a reader drops its link. Runs
+        at save time so that source_registration_id is guaranteed to be set.
         """
         registration_id = self._flow_settings.source_registration_id
         logger.debug("Found registration_id %s", registration_id)
         if not registration_id:
             return
 
-        table_ids = []
+        table_ids = set()
         for node in self.nodes:
             if node.node_type != "catalog_reader":
                 continue
             setting = node.setting_input
             table_id = getattr(setting, "catalog_table_id", None)
             if table_id:
-                table_ids.append(table_id)
-
-        if not table_ids:
-            return
+                table_ids.add(table_id)
 
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
-                for table_id in table_ids:
-                    repo.upsert_read_link(table_id, registration_id)
+                if not self._owns_registration(repo, registration_id):
+                    logger.warning(
+                        "Registration %s does not belong to flow '%s' (reused id or copied flow file); "
+                        "clearing it and skipping the catalog read-link sync",
+                        registration_id,
+                        self._flow_settings.path or self._flow_settings.save_location,
+                    )
+                    self._flow_settings.source_registration_id = None
+                    return
+                repo.replace_read_links(registration_id, table_ids)
         except Exception:
             logger.warning(
                 "Failed to record catalog read links for tables %s",

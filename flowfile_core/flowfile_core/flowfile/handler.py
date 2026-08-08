@@ -87,6 +87,13 @@ class FlowfileHandler:
         imported_flow = open_flow(flow_path, user_id=user_id)
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
+        # The stored id is machine-local and a copied file carries the original's; callers
+        # re-resolve it from the path (same reasoning as save_as_flow and project normalize).
+        try:
+            imported_flow.flow_settings.source_registration_id = None
+        except (AttributeError, ValueError):
+            # Legacy .flowfile pickles unpickle a FlowSettings class without the field.
+            object.__setattr__(imported_flow.flow_settings, "source_registration_id", None)
         imported_flow.flow_settings.is_running = False
         if register_session:
             self._register_user_session(user_id, imported_flow.flow_id)

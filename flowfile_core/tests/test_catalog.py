@@ -1165,10 +1165,10 @@ class TestScratchNamespaceCleanup:
 
 
 class TestReadLinks:
-    """Tests for CatalogTableReadLink upsert and query methods."""
+    """Tests for CatalogTableReadLink replace and query methods."""
 
     @staticmethod
-    def _setup_flow_and_table():
+    def _setup_flow_and_table(flow_path: str = "/tmp/reader.yaml"):
         """Create a namespace, flow registration, and catalog table for testing."""
         with get_db_context() as db:
             ns = CatalogNamespace(name="LinkCat", level=0, owner_id=1)
@@ -1183,7 +1183,7 @@ class TestReadLinks:
 
             flow = FlowRegistration(
                 name="reader_flow",
-                flow_path="/tmp/reader.yaml",
+                flow_path=flow_path,
                 namespace_id=schema.id,
                 owner_id=1,
             )
@@ -1203,32 +1203,43 @@ class TestReadLinks:
 
             return flow.id, table.id
 
-    def test_upsert_read_link_creates_record(self):
+    def test_replace_read_links_creates_record(self):
         flow_id, table_id = self._setup_flow_and_table()
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
-            repo.upsert_read_link(table_id, flow_id)
+            repo.replace_read_links(flow_id, [table_id])
 
         with get_db_context() as db:
             link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=flow_id).first()
             assert link is not None
 
-    def test_upsert_read_link_is_idempotent(self):
+    def test_replace_read_links_is_idempotent(self):
         flow_id, table_id = self._setup_flow_and_table()
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
-            repo.upsert_read_link(table_id, flow_id)
-            repo.upsert_read_link(table_id, flow_id)
+            repo.replace_read_links(flow_id, [table_id])
+            repo.replace_read_links(flow_id, [table_id])
 
         with get_db_context() as db:
             links = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=flow_id).all()
             assert len(links) == 1
 
+    def test_replace_read_links_prunes_dropped_tables(self):
+        flow_id, table_id = self._setup_flow_and_table()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            repo.replace_read_links(flow_id, [table_id])
+            repo.replace_read_links(flow_id, [])
+
+        with get_db_context() as db:
+            links = db.query(CatalogTableReadLink).filter_by(registration_id=flow_id).all()
+            assert links == []
+
     def test_list_readers_for_table(self):
         flow_id, table_id = self._setup_flow_and_table()
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
-            repo.upsert_read_link(table_id, flow_id)
+            repo.replace_read_links(flow_id, [table_id])
             readers = repo.list_readers_for_table(table_id)
             assert len(readers) == 1
             assert readers[0].id == flow_id
@@ -1244,7 +1255,7 @@ class TestReadLinks:
         flow_id, table_id = self._setup_flow_and_table()
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
-            repo.upsert_read_link(table_id, flow_id)
+            repo.replace_read_links(flow_id, [table_id])
             tables = repo.list_read_tables_for_flow(flow_id)
             assert len(tables) == 1
             assert tables[0].id == table_id
@@ -1273,11 +1284,57 @@ class TestReadLinks:
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
-            repo.upsert_read_link(table_id, flow_id_1)
-            repo.upsert_read_link(table_id, flow_id_2)
+            repo.replace_read_links(flow_id_1, [table_id])
+            repo.replace_read_links(flow_id_2, [table_id])
             readers = repo.list_readers_for_table(table_id)
             reader_ids = {r.id for r in readers}
             assert reader_ids == {flow_id_1, flow_id_2}
+
+    def test_delete_flow_removes_read_links(self):
+        """A deleted flow leaves no read links behind for a reused id to inherit."""
+        flow_id, table_id = self._setup_flow_and_table()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            repo.replace_read_links(flow_id, [table_id])
+            repo.delete_flow(flow_id)
+
+        with get_db_context() as db:
+            assert db.query(CatalogTableReadLink).filter_by(registration_id=flow_id).all() == []
+
+    def test_removed_reader_drops_out_of_tables_read(self, tmp_path):
+        """End-to-end: the catalog stops reporting a table read once its reader node is gone."""
+        from flowfile_core.schemas import input_schema
+
+        flow_path = tmp_path / "reader_flow.yaml"
+        reg_id, table_id = self._setup_flow_and_table(flow_path=str(flow_path))
+        internal_id = flow_file_handler.add_flow(name="reader_flow", flow_path=str(flow_path), user_id=1)
+        graph = flow_file_handler.get_flow(internal_id)
+        graph.flow_settings.source_registration_id = reg_id
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        )
+        graph.add_catalog_reader(
+            input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=1, catalog_table_id=table_id)
+        )
+        graph.save_flow(str(flow_path))
+
+        try:
+            with get_db_context() as db:
+                svc = CatalogService(SQLAlchemyCatalogRepository(db))
+                assert [t.id for t in svc.get_flow(reg_id, user_id=1).tables_read] == [table_id]
+                listed = [f for f in svc.list_flows(user_id=1) if f.id == reg_id]
+                assert [t.id for t in listed[0].tables_read] == [table_id]
+
+            graph.delete_node(1)
+            graph.save_flow(str(flow_path))
+
+            with get_db_context() as db:
+                svc = CatalogService(SQLAlchemyCatalogRepository(db))
+                assert svc.get_flow(reg_id, user_id=1).tables_read == []
+                listed = [f for f in svc.list_flows(user_id=1) if f.id == reg_id]
+                assert listed[0].tables_read == []
+        finally:
+            flow_file_handler.delete_flow(internal_id)
 
 
 # Table lineage tests (source_registration_id on CatalogTable)
@@ -1460,7 +1517,7 @@ class TestServiceLineageEnrichment:
             db.refresh(table)
 
             repo = SQLAlchemyCatalogRepository(db)
-            repo.upsert_read_link(table.id, reader.id)
+            repo.replace_read_links(reader.id, [table.id])
 
             return schema.id, producer.id, reader.id, table.id
 
