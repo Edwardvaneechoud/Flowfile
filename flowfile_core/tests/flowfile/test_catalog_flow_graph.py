@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
+import yaml
 
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -521,6 +522,12 @@ class TestSyncCatalogReadLinks:
         with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
             return f.name
 
+    @staticmethod
+    def _persisted_registration_id(flow_path: str):
+        """The source_registration_id actually written into the flow file."""
+        with open(flow_path, encoding="utf-8") as f:
+            return yaml.safe_load(f)["flowfile_settings"]["source_registration_id"]
+
     def test_save_flow_prunes_removed_reader(self):
         """Removing one of two catalog_reader nodes drops only that reader's link."""
         ns_id = _create_namespace()
@@ -643,6 +650,7 @@ class TestSyncCatalogReadLinks:
         graph_a.save_flow(path_a)
         assert self._linked_table_ids(reg_b) == {table_b}
         assert graph_a.flow_settings.source_registration_id is None
+        assert self._persisted_registration_id(path_a) is None
 
         os.unlink(path_a)
         os.unlink(path_b)
@@ -664,9 +672,69 @@ class TestSyncCatalogReadLinks:
         copy_graph.save_flow(copy_path)
         assert self._linked_table_ids(reg_id) == {table_id}
         assert copy_graph.flow_settings.source_registration_id is None
+        # Persisted too: a stale id left in the file would be resurrected on reopen.
+        assert self._persisted_registration_id(copy_path) is None
 
         os.unlink(original_path)
         os.unlink(copy_path)
+
+    def test_save_flow_reresolves_foreign_registration_id_to_own_in_one_save(self):
+        """A flow whose own path IS registered self-heals: the correct id is persisted and
+        its links sync in the same save, leaving the foreign registration untouched."""
+        ns_id = _create_namespace()
+        foreign_path = self._temp_flow_path()
+        own_path = self._temp_flow_path()
+        foreign_table = self._register_table(ns_id, "heal_foreign_table")
+        own_table = self._register_table(ns_id, "heal_own_table")
+
+        foreign_reg = _create_flow_registration(ns_id, name="foreign_flow", path=foreign_path)
+        foreign_graph = _create_graph(flow_id=1, source_registration_id=foreign_reg)
+        self._add_reader(foreign_graph, 1, foreign_table)
+        foreign_graph.save_flow(foreign_path)
+        assert self._linked_table_ids(foreign_reg) == {foreign_table}
+
+        own_reg = _create_flow_registration(ns_id, name="own_flow", path=own_path)
+        graph = _create_graph(flow_id=2, source_registration_id=foreign_reg)
+        self._add_reader(graph, 1, own_table)
+        graph.save_flow(own_path)
+
+        assert graph.flow_settings.source_registration_id == own_reg
+        assert self._persisted_registration_id(own_path) == own_reg
+        assert self._linked_table_ids(own_reg) == {own_table}
+        assert self._linked_table_ids(foreign_reg) == {foreign_table}
+
+        os.unlink(foreign_path)
+        os.unlink(own_path)
+
+    def test_reopened_flow_no_longer_resurrects_a_stale_registration_id(self):
+        """The persisted None breaks the resurrection loop: reopening re-resolves by path."""
+        from flowfile_core.flowfile.catalog_helpers import resolve_source_registration_id
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+        ns_id = _create_namespace()
+        foreign_path = self._temp_flow_path()
+        own_path = self._temp_flow_path()
+        table_id = self._register_table(ns_id, "loop_breaker_table")
+
+        foreign_reg = _create_flow_registration(ns_id, name="loop_foreign", path=foreign_path)
+        graph = _create_graph(source_registration_id=foreign_reg)
+        self._add_reader(graph, 1, table_id)
+        graph.save_flow(own_path)  # own_path has no registration yet -> unresolvable, cleared
+
+        reopened = open_flow(Path(own_path))
+        assert reopened.flow_settings.source_registration_id is None
+
+        # open_flow stamps the resolved path; the by-path resolver matches on the exact string.
+        own_reg = _create_flow_registration(ns_id, name="loop_own", path=os.path.realpath(own_path))
+        resolve_source_registration_id(reopened)
+        assert reopened.flow_settings.source_registration_id == own_reg
+
+        reopened.save_flow(own_path)
+        assert self._linked_table_ids(own_reg) == {table_id}
+        assert self._linked_table_ids(foreign_reg) == set()
+
+        os.unlink(foreign_path)
+        os.unlink(own_path)
 
     def test_import_flow_strips_foreign_registration_id(self):
         """Opening/copying a YAML must not adopt the id baked into it."""
