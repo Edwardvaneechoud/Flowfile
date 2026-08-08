@@ -42,6 +42,8 @@ class AmbiguousArtifactError(ArtifactError):
     result would be ambiguous, so the caller must disambiguate.
     """
 
+    code = "AMBIGUOUS_ARTIFACT"
+
     def __init__(self, name: str, namespace_ids: list[int | None]):
         self.name = name
         self.namespace_ids = namespace_ids
@@ -49,6 +51,53 @@ class AmbiguousArtifactError(ArtifactError):
         super().__init__(
             f"Multiple artifacts named '{name}' exist across namespaces [{rendered}]. "
             "Specify a namespace_id to disambiguate."
+        )
+
+
+class InvalidArtifactNameError(ArtifactError):
+    """Raised when an artifact name is not usable as a reference.
+
+    ``::`` is the qualified-reference separator (``catalog.schema::name``), so it
+    can never appear inside a name.
+    """
+
+    def __init__(self, name: str, reason: str):
+        self.name = name
+        self.reason = reason
+        super().__init__(f"Invalid artifact name '{name}': {reason}")
+
+
+class CannotDeleteLatestVersionError(ArtifactError):
+    """Raised when deleting the current latest version would silently repoint consumers.
+
+    Every ``get_global(name)`` resolves ``max(version)``, so removing the latest
+    changes what already-saved nodes load. Callers may pass ``force`` to override.
+    """
+
+    code = "CANNOT_DELETE_LATEST"
+
+    def __init__(self, artifact_id: int, name: str, version: int):
+        self.artifact_id = artifact_id
+        self.name = name
+        self.version = version
+        super().__init__(
+            f"Version {version} is the current latest version of '{name}'. "
+            "Delete an older version, or pass force=true to delete it anyway."
+        )
+
+
+class CannotDeleteLastVersionError(ArtifactError):
+    """Raised when the deletion would remove the only remaining active version."""
+
+    code = "CANNOT_DELETE_LAST_VERSION"
+
+    def __init__(self, artifact_id: int, name: str, version: int):
+        self.artifact_id = artifact_id
+        self.name = name
+        self.version = version
+        super().__init__(
+            f"Version {version} is the only remaining version of '{name}'. "
+            f"Delete the whole artifact with DELETE /artifacts/by-name/{name} instead."
         )
 
 
@@ -117,6 +166,8 @@ class AmbiguousNamespaceError(ArtifactError):
     Namespace names are unique only within their parent (catalog vs schema), so
     resolving a bare name can match several; the caller must use ``namespace_id``.
     """
+
+    code = "AMBIGUOUS_NAMESPACE"
 
     def __init__(self, name: str, namespace_ids: list[int]):
         self.name = name

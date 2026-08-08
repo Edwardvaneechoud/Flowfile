@@ -96,6 +96,22 @@ class ArtifactStorageBackend(ABC):
         pass
 
     @abstractmethod
+    def copy(self, src_key: str, dst_key: str) -> int:
+        """Copy a stored blob to a new key, backend-natively (Core never streams bytes).
+
+        Args:
+            src_key: Storage key of the blob to copy.
+            dst_key: Storage key to copy it to.
+
+        Returns:
+            Size in bytes of the copied blob.
+
+        Raises:
+            FileNotFoundError: If the source blob does not exist.
+        """
+        pass
+
+    @abstractmethod
     def delete(self, storage_key: str) -> None:
         """Remove blob from storage.
 
@@ -181,6 +197,16 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
             method="file",
             path=str(self.permanent / storage_key),
         )
+
+    def copy(self, src_key: str, dst_key: str) -> int:
+        """Copy a permanent blob to another key on the same filesystem."""
+        src = self.permanent / src_key
+        if not src.is_file():
+            raise FileNotFoundError(f"Artifact blob not found: {src}")
+        dst = self.permanent / dst_key
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return dst.stat().st_size
 
     def delete(self, storage_key: str) -> None:
         """Delete blob from permanent storage."""
@@ -301,6 +327,23 @@ class S3Storage(ArtifactStorageBackend):
             method="s3_presigned",
             path=presigned_url,
         )
+
+    def copy(self, src_key: str, dst_key: str) -> int:
+        """Server-side copy within the bucket; no bytes pass through Core."""
+        src_s3_key = f"{self.prefix}{src_key}"
+        dst_s3_key = f"{self.prefix}{dst_key}"
+        try:
+            self.client.copy_object(
+                Bucket=self.bucket,
+                CopySource={"Bucket": self.bucket, "Key": src_s3_key},
+                Key=dst_s3_key,
+            )
+            head = self.client.head_object(Bucket=self.bucket, Key=dst_s3_key)
+        except self.client.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                raise FileNotFoundError(f"S3 object not found: {src_s3_key}") from e
+            raise
+        return head["ContentLength"]
 
     def delete(self, storage_key: str) -> None:
         """Delete object from S3."""

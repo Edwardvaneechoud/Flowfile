@@ -32,11 +32,14 @@ export interface ArtifactOption {
   status?: "published" | "declared";
 }
 
-// One global (catalog) artifact option surfaced by /artifacts/.
+// One global (catalog) artifact option surfaced by /artifacts/?latest_only=true.
+// namespace_path ("catalog.schema") is what makes a value unambiguous; older cores
+// omit it, in which case the bare name is still used.
 export interface GlobalArtifactOption {
   name: string;
   python_type?: string | null;
   namespace_id?: number | null;
+  namespace_path?: string | null;
   version: number;
 }
 

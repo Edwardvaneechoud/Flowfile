@@ -177,7 +177,12 @@ import { useKernelMatch } from "@/composables/useKernelMatch";
 import { CustomNodeSchema } from "./interface";
 import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
-import { initializeFormData, schemaWantsGlobalArtifacts } from "./formInit";
+import {
+  coerceLegacyArtifactValues,
+  initializeFormData,
+  schemaWantsGlobalArtifacts,
+} from "./formInit";
+import { buildArtifactOptions } from "./components/artifactFilter";
 import type { CustomNodeFormData } from "./formInit";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeUserDefined } from "../../../baseNode/nodeInput";
@@ -357,13 +362,16 @@ async function fetchAvailableArtifacts(nodeId: number, kernelId: string | null) 
 // Trailing slash: /artifacts/ is the router root; a missing slash 307-drops the body in Docker.
 async function fetchGlobalArtifacts() {
   try {
-    const response = await axios.get("/artifacts/", { params: { limit: 500 } });
+    const response = await axios.get("/artifacts/", {
+      params: { latest_only: true, limit: 500 },
+    });
     const raw = response.data;
     const items: any[] = Array.isArray(raw) ? raw : (raw?.artifacts ?? raw?.items ?? []);
     globalArtifacts.value = items.map((a) => ({
       name: a.name,
       python_type: a.python_type ?? null,
       namespace_id: a.namespace_id ?? null,
+      namespace_path: a.namespace_path ?? null,
       version: a.version,
     }));
   } catch {
@@ -512,6 +520,16 @@ async function hydrateArtifacts(nodeId: number, kernelId: string | null, seq: nu
         ? fetchGlobalArtifacts()
         : Promise.resolve(),
     ]);
+    if (seq === loadSeq && schema.value && formData.value) {
+      coerceLegacyArtifactValues(schema.value, formData.value, (marker) =>
+        buildArtifactOptions(
+          marker.scope,
+          artifactOptions.value,
+          globalArtifacts.value,
+          marker.type_filter,
+        ),
+      );
+    }
   } finally {
     // The flag is owned by the latest artifact request (kernel token + load).
     if (seq === loadSeq && lastArtifactsKernelId.value === kernelId) {

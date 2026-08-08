@@ -150,10 +150,17 @@
         <ArtifactDetailPanel
           v-else-if="catalogStore.selectedArtifact"
           :artifact="catalogStore.selectedArtifact"
-          :versions="selectedArtifactVersions"
+          :versions="catalogStore.artifactVersions"
+          :total-versions="catalogStore.artifactVersionsTotal"
+          :page="catalogStore.artifactVersionsPage"
+          :loading-versions="catalogStore.loadingArtifactVersions"
           @close="handleCloseDetail"
           @navigate-to-flow="navigateToFlow($event)"
           @delete-artifact="handleDeleteArtifact($event)"
+          @delete-version="handleDeleteArtifactVersion($event)"
+          @promote-version="handlePromoteArtifactVersion($event)"
+          @set-versions-page="catalogStore.setArtifactVersionsPage($event)"
+          @versions-changed="refreshArtifactVersions()"
         />
         <!-- Namespace (catalog) settings view -->
         <NamespaceDetailPanel
@@ -558,11 +565,13 @@ import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { countMatches, normalizeQuery } from "./catalogTreeFilter";
+import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
+  ArtifactVersionInfo,
   CatalogTab,
   CatalogTable,
   FlowRegistration,
@@ -1037,28 +1046,91 @@ function handleCloseDetail() {
   router.back();
 }
 
-/** Collect all versions of the selected artifact from the tree. */
-function collectArtifactVersions(
-  nodes: NamespaceTree[],
-  name: string,
-  nsId: number | null,
-): GlobalArtifact[] {
-  const result: GlobalArtifact[] = [];
-  for (const node of nodes) {
-    for (const a of node.artifacts ?? []) {
-      if (a.name === name && a.namespace_id === nsId) result.push(a);
-    }
-    result.push(...collectArtifactVersions(node.children, name, nsId));
-  }
-  return result;
+// Namespace-qualified reference so same-named models in other schemas can't bleed
+// into this artifact's version list.
+function selectedArtifactRef(a: GlobalArtifact): string {
+  const path = a.namespace_id === null ? [] : findNamespacePath(catalogStore.tree, a.namespace_id);
+  return artifactRef(a.name, path);
 }
 
-const selectedArtifactVersions = computed((): GlobalArtifact[] => {
-  const a = catalogStore.selectedArtifact;
-  if (!a) return [];
-  const versions = collectArtifactVersions(catalogStore.tree, a.name, a.namespace_id);
-  return versions.sort((x, y) => y.version - x.version);
-});
+watch(
+  () => {
+    const a = catalogStore.selectedArtifact;
+    return a ? `${a.namespace_id ?? ""}::${a.name}` : null;
+  },
+  () => {
+    const a = catalogStore.selectedArtifact;
+    if (!a) {
+      catalogStore.clearArtifactVersions();
+      return;
+    }
+    catalogStore.loadArtifactVersions(selectedArtifactRef(a), a.namespace_id, 1);
+  },
+  { immediate: true },
+);
+
+/**
+ * Post-mutation refresh: reload the version page (stepping back when the current
+ * page emptied out) and re-resolve the artifact itself, since promote mints a new
+ * latest row and the panel's stat cards must stay truthful.
+ */
+async function refreshArtifactVersions(page?: number) {
+  await catalogStore.reloadArtifactVersions(page);
+  const settled = pageAfterDelete(
+    catalogStore.artifactVersionsPage,
+    catalogStore.artifactVersionsTotal,
+  );
+  if (settled !== catalogStore.artifactVersionsPage) {
+    await catalogStore.reloadArtifactVersions(settled);
+  }
+  const previousId = catalogStore.selectedArtifactId;
+  await catalogStore.refreshSelectedArtifact();
+  const nextId = catalogStore.selectedArtifactId;
+  if (nextId !== null && nextId !== previousId) {
+    router.replace({ name: "catalog", query: { tab: "catalog", artifactId: String(nextId) } });
+  }
+  catalogStore.loadStats();
+}
+
+async function handleDeleteArtifactVersion(version: ArtifactVersionInfo) {
+  const name = catalogStore.selectedArtifact?.name ?? "";
+  try {
+    await ElMessageBox.confirm(
+      `Delete version v${version.version} of "${name}"? Its data file is removed permanently.`,
+      "Delete version",
+      { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return; // User cancelled
+  }
+  try {
+    await catalogStore.deleteArtifactVersion(version.id);
+    await refreshArtifactVersions();
+  } catch (e: any) {
+    ElMessage.error(apiErrorMessage(e, "Failed to delete version"));
+  }
+}
+
+async function handlePromoteArtifactVersion(version: ArtifactVersionInfo) {
+  const name = catalogStore.selectedArtifact?.name ?? "";
+  try {
+    await ElMessageBox.confirm(
+      `Restore v${version.version} of "${name}"? It is copied forward as a new version, ` +
+        "so nothing is deleted and you can always come back.",
+      "Restore version",
+      { confirmButtonText: "Restore", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return; // User cancelled
+  }
+  try {
+    const promoted = await catalogStore.promoteArtifactVersion(version.id);
+    ElMessage.success(`Restored v${version.version} as v${promoted.version}`);
+    await refreshArtifactVersions(1);
+  } catch (e: any) {
+    ElMessage.error(apiErrorMessage(e, "Failed to restore version"));
+  }
+}
 
 function openCreateSchema(parentId: number) {
   createSchemaParentId.value = parentId;
@@ -1177,7 +1249,7 @@ async function handleDeleteArtifact(artifact: GlobalArtifact) {
     catalogStore.clearArtifactSelection();
     await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete model");
+    ElMessage.error(apiErrorMessage(e, "Failed to delete model"));
   }
 }
 

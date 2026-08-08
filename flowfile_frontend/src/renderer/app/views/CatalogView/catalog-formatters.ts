@@ -25,12 +25,18 @@ export function formatSize(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+/** Last dotted segment of a python type, e.g. "xgboost.core.Booster" -> "Booster". */
+export function formatPythonType(
+  pythonType: string | null | undefined,
+  fallback = "unknown",
+): string {
+  if (!pythonType) return fallback;
+  const parts = pythonType.split(".");
+  return parts[parts.length - 1];
+}
+
 export function formatType(artifact: GlobalArtifact): string {
-  if (artifact.python_type) {
-    const parts = artifact.python_type.split(".");
-    return parts[parts.length - 1];
-  }
-  return artifact.serialization_format ?? "unknown";
+  return formatPythonType(artifact.python_type, artifact.serialization_format ?? "unknown");
 }
 
 export function formatNumber(n: number | null | undefined): string {

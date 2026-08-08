@@ -146,6 +146,8 @@ class ArtifactListItem(BaseModel):
     created_at: datetime
     tags: list[str] = Field(default_factory=list)
     owner_id: int
+    namespace_path: str | None = Field(None, description="Dotted namespace path, e.g. 'General.models'")
+    version_count: int | None = Field(None, description="Number of active versions of this artifact")
 
     model_config = {"from_attributes": True}
 
@@ -158,12 +160,15 @@ class ArtifactVersionInfo(BaseModel):
     created_at: datetime
     size_bytes: int | None = None
     sha256: str | None = None
+    python_type: str | None = None
+    blob_exists: bool = True
 
 
 class ArtifactWithVersions(ArtifactOut):
     """Artifact with list of all available versions."""
 
     all_versions: list[ArtifactVersionInfo] = Field(default_factory=list)
+    total_versions: int = 0
 
 
 # ==================== Search and Filter Schemas ====================
@@ -189,3 +194,22 @@ class ArtifactDeleteResponse(BaseModel):
     status: str = Field(default="deleted", description="Status of the deletion")
     artifact_id: int = Field(..., description="ID of the deleted artifact")
     versions_deleted: int = Field(default=1, description="Number of versions deleted (>1 if all versions deleted)")
+
+
+# ==================== Retention ====================
+
+
+class ArtifactPruneCandidate(BaseModel):
+    """One version a prune would remove (or removed)."""
+
+    id: int
+    version: int
+    size_bytes: int | None = None
+
+
+class ArtifactPruneResponse(BaseModel):
+    """Result of a prune run (``dry_run=true`` deletes nothing)."""
+
+    would_delete: list[ArtifactPruneCandidate] = Field(default_factory=list)
+    freed_bytes: int = 0
+    deleted: int = 0

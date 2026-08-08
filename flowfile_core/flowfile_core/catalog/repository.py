@@ -10,7 +10,7 @@ from collections.abc import Collection
 from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -104,6 +104,8 @@ class CatalogRepository(Protocol):
     # -- Artifact operations -------------------------------------------------
 
     def list_artifacts_for_namespace(self, namespace_id: int) -> list[GlobalArtifact]: ...
+
+    def artifact_version_counts_for_namespace(self, namespace_id: int) -> dict[str, int]: ...
 
     def list_artifacts_for_flow(self, registration_id: int) -> list[GlobalArtifact]: ...
 
@@ -595,14 +597,38 @@ class SQLAlchemyCatalogRepository:
     # -- Artifact operations -------------------------------------------------
 
     def list_artifacts_for_namespace(self, namespace_id: int) -> list[GlobalArtifact]:
-        """List active artifacts belonging to a namespace."""
-        return (
+        """One row per artifact name in a namespace: its latest active version.
+
+        An artifact with no active version falls back to its newest non-deleted row so
+        a failed or pending publish stays visible (flagged unavailable) instead of
+        vanishing from the tree.
+        """
+        rows = (
             self._db.query(GlobalArtifact)
             .filter_by(namespace_id=namespace_id)
             .filter(GlobalArtifact.status != "deleted")
             .order_by(GlobalArtifact.name, GlobalArtifact.version.desc())
             .all()
         )
+        latest: dict[str, GlobalArtifact] = {}
+        for row in rows:
+            current = latest.get(row.name)
+            if current is None or (current.status != "active" and row.status == "active"):
+                latest[row.name] = row
+        return list(latest.values())
+
+    def artifact_version_counts_for_namespace(self, namespace_id: int) -> dict[str, int]:
+        """name -> version count in a namespace: active versions, or the non-deleted group
+        size when an artifact has none (a failed publish's rows still count as versions)."""
+        active = func.sum(case((GlobalArtifact.status == "active", 1), else_=0))
+        rows = (
+            self._db.query(GlobalArtifact.name, active, func.count(GlobalArtifact.id))
+            .filter_by(namespace_id=namespace_id)
+            .filter(GlobalArtifact.status != "deleted")
+            .group_by(GlobalArtifact.name)
+            .all()
+        )
+        return {name: (active_count or group_size) for name, active_count, group_size in rows}
 
     def list_artifacts_for_flow(self, registration_id: int) -> list[GlobalArtifact]:
         """List active artifacts produced by a specific flow."""
