@@ -345,7 +345,18 @@ Once published, the flow's detail panel shows the **Expose as API** section: the
 
 Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernel-api.md#global-artifacts-catalog) using `flowfile_ctx.publish_global()`.
 
-Click an artifact in the tree to view its versions, metadata, and producing flow.
+Click an artifact in the tree to view its versions, metadata, and producing flow. Each publish adds a version; the tree shows one row per artifact (with a version count when there is more than one), and the detail panel pages through the full version list (25 at a time).
+
+Version management (available to the artifact's owner and anyone with a manage grant):
+
+| Action | Effect |
+|--------|--------|
+| **Restore** | Copies an older version forward as a new highest version, so it becomes what "latest" resolves to. History stays append-only — nothing is overwritten. Not offered on the latest version. |
+| **Delete version** | Permanently removes that version and its stored data. The latest version is protected; delete the artifact itself to remove it entirely. |
+| **Prune versions** | Keeps the newest *N* versions (always including the latest) and deletes the rest. Preview first — the dialog reports how many versions and how much space the prune would free before you commit. |
+
+!!! warning "Deletes are permanent"
+    Version deletes and prunes remove the stored object immediately. There is no trash window or undo.
 
 ---
 

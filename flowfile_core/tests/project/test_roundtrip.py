@@ -1039,6 +1039,34 @@ def test_model_round_trips_and_upserts_by_version(tmp_path):
         project_sync.close_project(OWNER)
 
 
+def test_import_does_not_resurrect_a_deleted_model(tmp_path):
+    """A version deleted in the catalog must stay deleted across a project reload."""
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    model = f"deleted_mdl_{uuid4().hex[:6]}"
+    flow_uuid, _ = _make_flow(tmp_path, f"deleted_mdl_flow_{uuid4().hex[:6]}")
+    _make_artifact(model, _reg_id(flow_uuid), version=1)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Deleted Model Test", OWNER)
+        assert (model, 1) in _models_yaml(root)
+
+        project_sync.close_project(OWNER)
+        with get_db_context() as db:
+            db.query(GlobalArtifact).filter_by(name=model).update({"status": "deleted"})
+            db.commit()
+
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            rows = db.query(GlobalArtifact).filter_by(name=model).all()
+            assert [r.status for r in rows] == ["deleted"]
+    finally:
+        _delete_artifacts(model)
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
 def test_model_skipped_when_source_flow_absent(tmp_path):
     from flowfile_core.project.importer import import_project
 

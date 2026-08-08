@@ -169,6 +169,30 @@ class TestPrepareDownload:
         assert Path(source.path).read_bytes() == sample_data
 
 
+# Copy Tests
+
+
+class TestCopy:
+    """Tests for the backend-native blob copy (used by version promote)."""
+
+    def test_copies_blob_to_a_new_key(self, storage, sample_data, sample_sha256):
+        """Should duplicate the bytes under the new key and leave the source intact."""
+        target = storage.prepare_upload(artifact_id=1, filename="model.pkl")
+        Path(target.path).write_bytes(sample_data)
+        storage.finalize_upload(target.storage_key, sample_sha256)
+
+        size = storage.copy(target.storage_key, "2/model.pkl")
+
+        assert size == len(sample_data)
+        assert storage.exists("2/model.pkl")
+        assert storage.exists(target.storage_key)
+        assert Path(storage.prepare_download("2/model.pkl").path).read_bytes() == sample_data
+
+    def test_copy_missing_source_raises(self, storage):
+        with pytest.raises(FileNotFoundError):
+            storage.copy("999/missing.pkl", "1000/missing.pkl")
+
+
 # Delete Tests
 
 

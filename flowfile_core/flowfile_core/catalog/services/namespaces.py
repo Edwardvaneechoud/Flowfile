@@ -85,7 +85,10 @@ def _project_sync_namespace(owner_id: int) -> None:
     project_sync.namespace_changed(owner_id)
 
 
-def bulk_enrich_artifacts(artifacts: list[GlobalArtifact]) -> list[GlobalArtifactOut]:
+def bulk_enrich_artifacts(
+    artifacts: list[GlobalArtifact],
+    version_counts: dict[str, int] | None = None,
+) -> list[GlobalArtifactOut]:
     """Serialize artifacts, flagging ones whose backing blob is missing on disk
     (filesystem backend only — exists() is one cheap stat; an S3 probe per item
     would be a network call on every load)."""
@@ -99,7 +102,10 @@ def bulk_enrich_artifacts(artifacts: list[GlobalArtifact]) -> list[GlobalArtifac
         blob_exists = True
         if fs_storage is not None and a.storage_key:
             blob_exists = fs_storage.exists(a.storage_key)
-        items.append(artifact_to_out(a, blob_exists=blob_exists))
+        out = artifact_to_out(a, blob_exists=blob_exists)
+        if version_counts is not None:
+            out.version_count = version_counts.get(a.name, 1)
+        items.append(out)
     return items
 
 
@@ -329,7 +335,13 @@ class NamespaceService:
         namespace_table_map: dict[int, list[CatalogTableOut]] = {}
 
         def _artifacts_out(ns_id: int) -> list[GlobalArtifactOut]:
-            return bulk_enrich_artifacts(self.repo.list_artifacts_for_namespace(ns_id))
+            artifacts = self.repo.list_artifacts_for_namespace(ns_id)
+            if not artifacts:
+                return []
+            return bulk_enrich_artifacts(
+                artifacts,
+                version_counts=self.repo.artifact_version_counts_for_namespace(ns_id),
+            )
 
         # Visualizations are surfaced as a peer of flows / tables / artifacts in
         # whatever namespace they were saved into (their own ``namespace_id``,

@@ -1,7 +1,14 @@
 // Unit tests for the pure custom-node form helpers (no Vue/axios involved).
 import { describe, expect, it } from "vitest";
-import { initializeFormData, resolveOptionsLoading, schemaWantsGlobalArtifacts } from "./formInit";
+import {
+  coerceArtifactValue,
+  coerceLegacyArtifactValues,
+  initializeFormData,
+  resolveOptionsLoading,
+  schemaWantsGlobalArtifacts,
+} from "./formInit";
 import type { CustomNodeSchema, UIComponent } from "./interface";
+import type { ArtifactSelectOption } from "./components/artifactFilter";
 
 const schemaWith = (components: Record<string, Partial<UIComponent>>): CustomNodeSchema =>
   ({
@@ -53,6 +60,121 @@ describe("initializeFormData precedence", () => {
     });
     const data = initializeFormData(schema, { main: { gone: 1 }, dropped_section: { x: 2 } });
     expect(data).toEqual({ main: { a: "d" } });
+  });
+});
+
+describe("legacy bare-name artifact values", () => {
+  const opt = (value: string, key: string): ArtifactSelectOption => ({ value, label: value, key });
+  const options = [
+    opt("General.default::churn", "1::churn"),
+    opt("General.models::churn", "7::churn"),
+    opt("General.models::scaler", "7::scaler"),
+    opt("plain", "::plain"),
+  ];
+
+  it("resolves an unambiguous bare name onto its qualified option", () => {
+    expect(coerceArtifactValue("scaler", options)).toBe("General.models::scaler");
+  });
+
+  it("clears an ambiguous bare name instead of guessing", () => {
+    expect(coerceArtifactValue("churn", options)).toBeNull();
+  });
+
+  it("leaves already-qualified, unknown and non-string values alone", () => {
+    expect(coerceArtifactValue("General.models::churn", options)).toBe("General.models::churn");
+    expect(coerceArtifactValue("gone", options)).toBe("gone");
+    expect(coerceArtifactValue("plain", options)).toBe("plain");
+    expect(coerceArtifactValue("", options)).toBe("");
+    expect(coerceArtifactValue(7, options)).toBe(7);
+  });
+
+  it("maps multi-select arrays and drops the ambiguous entries", () => {
+    expect(coerceArtifactValue(["scaler", "churn", "plain"], options)).toEqual([
+      "General.models::scaler",
+      "plain",
+    ]);
+  });
+
+  it("only touches global-scope artifact selects", () => {
+    const schema = schemaWith({
+      global_pick: {
+        component_type: "SingleSelect",
+        input_type: "text",
+        value: undefined,
+        default: null,
+        options: { __type__: "AvailableArtifacts", scope: "global" },
+      } as never,
+      upstream_pick: {
+        component_type: "SingleSelect",
+        input_type: "text",
+        value: undefined,
+        default: null,
+        options: { __type__: "AvailableArtifacts", scope: "upstream" },
+      } as never,
+      all_pick: {
+        component_type: "SingleSelect",
+        input_type: "text",
+        value: undefined,
+        default: null,
+        options: { __type__: "AvailableArtifacts", scope: "all" },
+      } as never,
+      text: { component_type: "TextInput", value: undefined, default: null, input_type: "text" },
+    });
+    const data = {
+      main: {
+        global_pick: "scaler",
+        upstream_pick: "scaler",
+        all_pick: "scaler",
+        text: "scaler",
+      },
+    };
+    coerceLegacyArtifactValues(schema, data, () => options);
+    expect(data.main.global_pick).toBe("General.models::scaler");
+    expect(data.main.upstream_pick).toBe("scaler");
+    expect(data.main.all_pick).toBe("scaler");
+    expect(data.main.text).toBe("scaler");
+  });
+
+  // A scope-"all" value may name an upstream artifact; a failed upstream fetch
+  // leaves only catalog options, which must never repoint the saved selection.
+  it("never repoints a scope-all selection when the upstream fetch came back empty", () => {
+    const schema = schemaWith({
+      pick: {
+        component_type: "SingleSelect",
+        input_type: "text",
+        value: undefined,
+        default: null,
+        options: { __type__: "AvailableArtifacts", scope: "all" },
+      } as never,
+      ambiguous_pick: {
+        component_type: "SingleSelect",
+        input_type: "text",
+        value: undefined,
+        default: null,
+        options: { __type__: "AvailableArtifacts", scope: "all" },
+      } as never,
+    });
+    const data = { main: { pick: "scaler", ambiguous_pick: "churn" } };
+
+    coerceLegacyArtifactValues(schema, data, () => options);
+
+    expect(data.main.pick).toBe("scaler");
+    expect(data.main.ambiguous_pick).toBe("churn");
+  });
+
+  it("skips components with no saved selection", () => {
+    const schema = schemaWith({
+      pick: {
+        component_type: "SingleSelect",
+        input_type: "text",
+        value: undefined,
+        default: null,
+        options: { __type__: "AvailableArtifacts", scope: "global" },
+      } as never,
+    });
+    const data = { main: { pick: null } };
+    coerceLegacyArtifactValues(schema, data, () => options);
+    expect(data.main.pick).toBeNull();
   });
 });
 

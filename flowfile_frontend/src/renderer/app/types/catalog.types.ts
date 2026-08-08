@@ -210,7 +210,53 @@ export interface GlobalArtifact {
   created_at: string | null;
   updated_at: string | null;
   blob_exists: boolean;
+  // Number of versions in this artifact's family. The tree returns one row per
+  // (name, namespace) so the row count can no longer stand in for it.
+  version_count?: number | null;
   access?: AccessInfo | null;
+}
+
+/** One row of an artifact's version history (GET /artifacts/by-name/{ref}/versions). */
+export interface ArtifactVersionInfo {
+  id: number;
+  version: number;
+  created_at: string;
+  size_bytes: number | null;
+  sha256: string | null;
+  python_type: string | null;
+  blob_exists: boolean;
+}
+
+/** Paginated version history: `all_versions` is one page, `total_versions` the count. */
+export interface ArtifactWithVersions {
+  id: number;
+  name: string;
+  namespace_id: number | null;
+  version: number;
+  status: string;
+  all_versions: ArtifactVersionInfo[];
+  total_versions: number;
+}
+
+/** Row minted by POST /artifacts/{id}/promote (backend ArtifactOut). */
+export interface PromotedArtifactVersion {
+  id: number;
+  name: string;
+  namespace_id: number | null;
+  version: number;
+  status: string;
+}
+
+export interface ArtifactPruneCandidate {
+  id: number;
+  version: number;
+  size_bytes: number | null;
+}
+
+export interface ArtifactPruneResult {
+  would_delete: ArtifactPruneCandidate[];
+  freed_bytes: number;
+  deleted: number;
 }
 
 // Catalog Table

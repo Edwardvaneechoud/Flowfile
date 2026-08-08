@@ -303,6 +303,9 @@ return lf.select(getattr(pl.col("amount"), op)())
 
 **When to use** — one choice from a fixed list. For picking a single input column, prefer **Column Selector**; reach for `options=nd.IncomingColumns` only for a lightweight column dropdown.
 
+!!! info "Picking artifacts with `AvailableArtifacts`"
+    `options=nd.AvailableArtifacts(scope="global")` populates the dropdown from the catalog. Each entry is one artifact, not one version — the value stored in the node settings is a **namespace-qualified** reference (`catalog.schema::name`, or the bare name for an artifact with no namespace), and the node resolves the **latest** version of that artifact at run time. With `scope="all"` the catalog entries are qualified the same way, but a pick from the **upstream** part of the list stores the artifact's plain in-flow name. There is no version pinning here; pin a version from Kernel code with `flowfile_ctx.get_global(name, version=N)`. Settings saved before qualified references existed are bare names: opening a `scope="global"` selector upgrades one to its qualified form when the name is unique across namespaces, and clears it when the name now exists in more than one namespace so you re-pick (that value could not resolve server-side either). A `scope="all"` selector never rewrites its saved value, since that value may name an upstream artifact.
+
 ### Multi Select — `.value` → `list[str]`
 
 A dropdown for picking several options from a list.

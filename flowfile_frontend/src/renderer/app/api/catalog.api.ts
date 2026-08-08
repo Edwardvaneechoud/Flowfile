@@ -3,6 +3,8 @@ import axios from "../services/axios.config";
 import type { AxiosRequestConfig } from "axios";
 import type {
   ActiveFlowRun,
+  ArtifactPruneResult,
+  ArtifactWithVersions,
   CatalogNamespace,
   CatalogStats,
   CatalogTable,
@@ -32,6 +34,7 @@ import type {
   OptimizeTableRequest,
   OptimizeTableResponse,
   PaginatedFlowRuns,
+  PromotedArtifactVersion,
   QueryVirtualTableCreate,
   SchedulerStatus,
   SqlQueryResult,
@@ -46,6 +49,12 @@ import type {
   VisualizationUpdatePayload,
   VizSourceDescriptor,
 } from "../types";
+
+// A namespace-qualified artifact ref ("catalog.schema::name") already carries its
+// namespace, so namespace_id is only sent alongside a bare name.
+function artifactRefParams(ref: string, namespaceId: number | null): Record<string, any> {
+  return !ref.includes("::") && namespaceId !== null ? { namespace_id: namespaceId } : {};
+}
 
 export class CatalogApi {
   // ====== Namespaces ======
@@ -206,6 +215,56 @@ export class CatalogApi {
   static async getFlowArtifacts(registrationId: number): Promise<GlobalArtifact[]> {
     const response = await axios.get<GlobalArtifact[]>(
       `/catalog/flows/${registrationId}/artifacts`,
+    );
+    return response.data;
+  }
+
+  /** One artifact row by id — resolves links carrying a non-latest version's id. */
+  static async getArtifactById(
+    artifactId: number,
+  ): Promise<Pick<GlobalArtifact, "id" | "name" | "namespace_id">> {
+    const response = await axios.get<Pick<GlobalArtifact, "id" | "name" | "namespace_id">>(
+      `/artifacts/${artifactId}`,
+    );
+    return response.data;
+  }
+
+  /** One page of a model's version history, newest first. */
+  static async getArtifactVersions(
+    ref: string,
+    namespaceId: number | null,
+    limit = 25,
+    offset = 0,
+  ): Promise<ArtifactWithVersions> {
+    const response = await axios.get<ArtifactWithVersions>(
+      `/artifacts/by-name/${encodeURIComponent(ref)}/versions`,
+      { params: { limit, offset, ...artifactRefParams(ref, namespaceId) } },
+    );
+    return response.data;
+  }
+
+  /** Delete one version row. `force` overrides the latest-version guard. */
+  static async deleteArtifactVersion(artifactId: number, force = false): Promise<void> {
+    await axios.delete(`/artifacts/${artifactId}`, { params: { force } });
+  }
+
+  /** Copy an older version forward so it becomes the new latest version. */
+  static async promoteArtifactVersion(artifactId: number): Promise<PromotedArtifactVersion> {
+    const response = await axios.post<PromotedArtifactVersion>(`/artifacts/${artifactId}/promote`);
+    return response.data;
+  }
+
+  /** Keep the newest `keep` versions and drop the rest. `dryRun` deletes nothing. */
+  static async pruneArtifactVersions(
+    ref: string,
+    namespaceId: number | null,
+    keep: number,
+    dryRun: boolean,
+  ): Promise<ArtifactPruneResult> {
+    const response = await axios.post<ArtifactPruneResult>(
+      `/artifacts/by-name/${encodeURIComponent(ref)}/prune`,
+      null,
+      { params: { keep, dry_run: dryRun, ...artifactRefParams(ref, namespaceId) } },
     );
     return response.data;
   }

@@ -475,12 +475,63 @@ def test_dry_run_kernel_script_seeds_example_artifacts():
     assert "_result = _Node().process(*_inputs)" in production
     assert "_seed_hook" in dry
     # Both scopes: seeding only the global store breaks read_artifact() nodes.
-    assert "flowfile_ctx.publish_global(_seed_name, _seed_obj)" in dry
-    assert "flowfile_ctx.publish_artifact(_seed_name, _seed_obj)" in dry
+    assert "flowfile_ctx.publish_global(_seed_key, _seed_obj)" in dry
+    assert "flowfile_ctx.publish_artifact(_seed_key, _seed_obj)" in dry
     assert "example_artifacts() must return a dict" in dry
     # Delete-then-publish, so an edited hook isn't shadowed by the previous press.
-    assert "flowfile_ctx.delete_artifact(_seed_name)" in dry
+    assert "flowfile_ctx.delete_artifact(_seed_key)" in dry
     assert "except ValueError" not in dry
+
+
+def _seeded_aliases(script: str) -> dict:
+    """The alias table the prologue actually bakes into the dry-run script."""
+    import ast
+    import json
+    import re
+
+    match = re.search(r"_SEED_ALIASES = _json\.loads\((.+)\)\s*$", script, re.M)
+    assert match, "the dry-run prologue does not emit _SEED_ALIASES"
+    return json.loads(ast.literal_eval(match.group(1)))
+
+
+def test_dry_run_prologue_seeds_qualified_artifact_aliases():
+    """A namespace-qualified selector value must resolve inside the sandbox too."""
+    from flowfile_core.flowfile.user_defined.kernel_codegen import generate_kernel_script
+
+    source = (
+        "import polars as pl\n"
+        "from flowfile import node_designer as nd\n\n\n"
+        "class N(nd.CustomNodeBase):\n"
+        '    node_name: str = "N"\n'
+        "\n"
+        "    def example_artifacts(self) -> dict:\n"
+        '        return {"m": {"coef": 2}}\n'
+        "\n"
+        "    def process(self, *inputs):\n"
+        "        return inputs[0]\n"
+    )
+    def _script(settings_values: dict) -> str:
+        return generate_kernel_script(
+            node_source=source,
+            class_name="N",
+            settings_values=settings_values,
+            output_names=["main"],
+            number_of_inputs=1,
+            dry_run=True,
+        )
+
+    dry = _script({"main": {"model": "General.models::m", "other": "plain"}})
+    assert _seeded_aliases(dry) == {"m": ["General.models::m"]}
+    # The seed loop keys on the bare name, so the alias is what makes the
+    # qualified spelling resolve inside the sandbox.
+    assert "for _seed_key in [_seed_name] + _SEED_ALIASES.get(_seed_name, [])" in dry
+
+    # A multi-select contributes every qualified entry it holds.
+    multi = _script({"main": {"models": ["General.models::m", "Other.ns::m", "bare"]}})
+    assert _seeded_aliases(multi) == {"m": ["General.models::m", "Other.ns::m"]}
+
+    # No qualified value ⇒ nothing to alias.
+    assert _seeded_aliases(_script({"main": {"model": "m", "count": 3}})) == {}
 
 
 @pytest.mark.kernel

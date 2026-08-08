@@ -103,6 +103,34 @@ def _bake_settings(settings_values: dict[str, dict[str, Any]]) -> str:
     return json.dumps(settings_values or {})
 
 
+def _artifact_aliases(settings_values: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """Map a bare artifact name to the qualified ``catalog.schema::name`` values referring to it.
+
+    An artifact-select stores a namespace-qualified string, but ``example_artifacts()``
+    is keyed by the bare name, so a dry run must seed both spellings or the node's
+    ``get_global(<qualified>)`` falls through to the live catalog.
+    """
+    aliases: dict[str, list[str]] = {}
+
+    def _record(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                _record(item)
+            return
+        if not isinstance(value, str) or "::" not in value:
+            return
+        bare = value.rsplit("::", 1)[1]
+        if bare and value not in aliases.setdefault(bare, []):
+            aliases[bare].append(value)
+
+    for components in (settings_values or {}).values():
+        if not isinstance(components, dict):
+            continue
+        for value in components.values():
+            _record(value)
+    return aliases
+
+
 def _indent(block: str, spaces: int = 4) -> str:
     pad = " " * spaces
     return "\n".join(pad + line if line.strip() else line for line in block.splitlines())
@@ -188,9 +216,13 @@ def generate_kernel_script(
     # — so pin the known-noisy ones to WARNING to keep the Test panel readable.
     # Seeds example_artifacts() into both scopes; publish_global is sandboxed in a dry
     # run. Deletes first because each Test press gets a fresh node_id, so the
-    # per-execution clear never reclaims the previous press's seed.
+    # per-execution clear never reclaims the previous press's seed. Each seed is also
+    # published under any qualified "ns.path::name" the settings select, so a dry run
+    # never falls through to the live catalog.
     if dry_run:
+        aliases_json = json.dumps(_artifact_aliases(settings_values))
         run_node = (
+            f"_SEED_ALIASES = _json.loads({aliases_json!r})\n"
             "_node = _Node()\n"
             '_seed_hook = getattr(_node, "example_artifacts", None)\n'
             "if _seed_hook is not None:\n"
@@ -201,12 +233,13 @@ def generate_kernel_script(
             '        raise TypeError("example_artifacts() must return a dict, got %s"\n'
             "                        % type(_seed_artifacts).__name__)\n"
             "    for _seed_name, _seed_obj in _seed_artifacts.items():\n"
-            "        flowfile_ctx.publish_global(_seed_name, _seed_obj)\n"
-            "        try:\n"
-            "            flowfile_ctx.delete_artifact(_seed_name)\n"
-            "        except KeyError:\n"
-            "            pass\n"
-            "        flowfile_ctx.publish_artifact(_seed_name, _seed_obj)\n"
+            "        for _seed_key in [_seed_name] + _SEED_ALIASES.get(_seed_name, []):\n"
+            "            flowfile_ctx.publish_global(_seed_key, _seed_obj)\n"
+            "            try:\n"
+            "                flowfile_ctx.delete_artifact(_seed_key)\n"
+            "            except KeyError:\n"
+            "                pass\n"
+            "            flowfile_ctx.publish_artifact(_seed_key, _seed_obj)\n"
             "_result = _node.process(*_inputs)\n"
         )
     else:

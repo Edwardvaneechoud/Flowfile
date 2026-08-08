@@ -474,7 +474,8 @@ def _import_artifacts(root: Path, owner_id: int) -> set[int]:
 
     Upserts by (name, namespace, version) so reloads never bloat versions. The blob isn't restored
     (it lives outside the project) — a fresh row is ``active`` but its data refills when the producing
-    flow re-runs. An artifact whose source flow isn't present is skipped (its FK can't be satisfied)."""
+    flow re-runs. An artifact whose source flow isn't present is skipped (its FK can't be satisfied), and a
+    version deleted locally is left deleted — import must never resurrect a deletion."""
     kept: set[int] = set()
     artifact_entries = _read_yaml(manifest.models_manifest_path(root)).get("models", []) or []
     _assert_within_cap(artifact_entries, _MAX_ARTIFACTS, "models")
@@ -493,6 +494,9 @@ def _import_artifacts(root: Path, owner_id: int) -> set[int]:
             existing = repository.owned_or_none(
                 db, GlobalArtifact, "owner_id", owner_id, name=name, namespace_id=ns_id, version=version
             )
+            if existing is not None and existing.status == "deleted":
+                # A version deleted locally stays deleted; import must not resurrect it.
+                continue
             artifact = existing or GlobalArtifact(name=name, namespace_id=ns_id, version=version, owner_id=owner_id)
             artifact.source_registration_id = src_reg_id
             artifact.serialization_format = entry.get("serialization_format", "pickle")

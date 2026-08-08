@@ -368,12 +368,40 @@ class _FlowfileCtx:
         return lambda *a, **k: None
 
 
-def _seed_example_artifacts(node, ctx):
+def _artifact_aliases(settings_values):
+    """bare artifact name -> qualified "catalog.schema::name" settings values naming it.
+
+    Mirrors core's dry-run prologue: an artifact-select stores a qualified string while
+    example_artifacts() is keyed by the bare name, so both spellings must be seeded.
+    """
+    aliases = {}
+
+    def _record(value):
+        if isinstance(value, list):
+            for item in value:
+                _record(item)
+            return
+        if not isinstance(value, str) or "::" not in value:
+            return
+        bare = value.rsplit("::", 1)[1]
+        if bare and value not in aliases.setdefault(bare, []):
+            aliases[bare].append(value)
+
+    for components in (settings_values or {}).values():
+        if not isinstance(components, dict):
+            continue
+        for value in components.values():
+            _record(value)
+    return aliases
+
+
+def _seed_example_artifacts(node, ctx, settings_values=None):
     """Seed ``node.example_artifacts()`` into both artifact stores before process().
 
     A flat ``{name: obj}`` dict lands in the flow-local store *and* the global
     store, so a node reading via either ``read_artifact`` or ``get_global`` finds
-    it without the author having to know which scope the dry run uses.
+    it without the author having to know which scope the dry run uses. Each entry
+    is also seeded under any qualified reference the example settings select.
     """
     hook = getattr(node, "example_artifacts", None)
     if hook is None:
@@ -384,9 +412,11 @@ def _seed_example_artifacts(node, ctx):
     # Before the emptiness check, so `[]` fails like `[1]` does.
     if not isinstance(artifacts, dict):
         raise TypeError("example_artifacts() must return a dict, got %s" % type(artifacts).__name__)
+    aliases = _artifact_aliases(settings_values)
     for name, obj in artifacts.items():
-        ctx._seed_artifact(name, obj)
-        ctx._seed_global(name, obj)
+        for key in [name] + aliases.get(name, []):
+            ctx._seed_artifact(key, obj)
+            ctx._seed_global(key, obj)
 
 
 def _normalize(result, output_names):
@@ -425,7 +455,7 @@ def _run(folder, config):
     if settings and node.settings_schema:
         node.settings_schema.populate_values(settings)
     node.set_execution_context(-1, resolver=None)
-    _seed_example_artifacts(node, ctx)
+    _seed_example_artifacts(node, ctx, settings)
     outputs = _normalize(node.process(*lazy_inputs), config["output_names"])
     names = []
     for name, lf in outputs.items():

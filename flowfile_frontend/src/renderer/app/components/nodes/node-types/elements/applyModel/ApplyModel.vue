@@ -93,11 +93,11 @@
         </el-row>
 
         <el-row v-if="versionOptions.length > 1" class="setting-row">
-          <el-col :span="10" class="grid-content">Version</el-col>
+          <el-col :span="10" class="grid-content">Pin version</el-col>
           <el-col :span="14" class="grid-content">
             <el-select
               v-model="versionSelection"
-              placeholder="Latest"
+              placeholder="Latest (default)"
               clearable
               @change="onVersionSelected"
             >
