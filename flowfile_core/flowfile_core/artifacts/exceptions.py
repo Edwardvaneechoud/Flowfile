@@ -97,7 +97,7 @@ class CannotDeleteLastVersionError(ArtifactError):
         self.version = version
         super().__init__(
             f"Version {version} is the only remaining version of '{name}'. "
-            "Delete the whole artifact with DELETE /artifacts/by-name/{ref} instead."
+            f"Delete the whole artifact with DELETE /artifacts/by-name/{name} instead."
         )
 
 

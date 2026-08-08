@@ -54,7 +54,7 @@ import { ElMessage } from "element-plus";
 import type { ArtifactPruneResult, ArtifactVersionInfo } from "../../types";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { formatSize } from "./catalog-formatters";
-import { pruneCandidates } from "./artifactVersions";
+import { apiErrorMessage, pruneCandidates } from "./artifactVersions";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -102,7 +102,7 @@ async function run() {
       emit("pruned");
     }
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Prune failed");
+    ElMessage.error(apiErrorMessage(e, e?.message ?? "Prune failed"));
   } finally {
     running.value = false;
   }

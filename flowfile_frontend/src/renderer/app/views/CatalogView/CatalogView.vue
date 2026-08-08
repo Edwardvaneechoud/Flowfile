@@ -564,7 +564,7 @@ import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { countMatches, normalizeQuery } from "./catalogTreeFilter";
-import { artifactRef, pageAfterDelete } from "./artifactVersions";
+import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
 import { catalogTabs } from "./catalogTabs";
@@ -1106,7 +1106,7 @@ async function handleDeleteArtifactVersion(version: ArtifactVersionInfo) {
     await catalogStore.deleteArtifactVersion(version.id);
     await refreshArtifactVersions();
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete version");
+    ElMessage.error(apiErrorMessage(e, "Failed to delete version"));
   }
 }
 
@@ -1127,7 +1127,7 @@ async function handlePromoteArtifactVersion(version: ArtifactVersionInfo) {
     ElMessage.success(`Restored v${version.version} as v${promoted.version}`);
     await refreshArtifactVersions(1);
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to restore version");
+    ElMessage.error(apiErrorMessage(e, "Failed to restore version"));
   }
 }
 
@@ -1248,7 +1248,7 @@ async function handleDeleteArtifact(artifact: GlobalArtifact) {
     catalogStore.clearArtifactSelection();
     await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete model");
+    ElMessage.error(apiErrorMessage(e, "Failed to delete model"));
   }
 }
 

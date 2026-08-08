@@ -204,6 +204,26 @@ def test_use_grantee_cannot_delete_another_owners_same_named_artifact(
         assert db.get(db_models.GlobalArtifact, bob_row).status == "active"
 
 
+def test_managing_only_the_latest_version_does_not_authorize_pruning_older_rows(
+    users, client_for, published, team, grant_factory
+):
+    """Prune must require manage on every row it deletes, not just the newest one."""
+    v1 = published("prunable_model")
+    v2 = published("prunable_model", payload=b"v2")
+    grant_factory("global_artifact", v1, team, permission="use", granted_by=users["alice"].id)
+    grant_factory("global_artifact", v2, team, permission="manage", granted_by=users["alice"].id)
+
+    bob = client_for("bob")
+    resp = bob.post(
+        "/artifacts/by-name/prunable_model/prune", params={"keep": 1, "dry_run": False}
+    )
+    assert resp.status_code == 403
+
+    with get_db_context() as db:
+        assert db.get(db_models.GlobalArtifact, v1).status == "active"
+        assert db.get(db_models.GlobalArtifact, v2).status == "active"
+
+
 def test_stranger_cannot_see_or_prune(users, client_for, published, alice_flow):
     v1 = published("hidden_model")
     v2 = published("hidden_model", payload=b"v2")

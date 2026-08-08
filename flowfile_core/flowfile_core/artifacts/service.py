@@ -802,6 +802,10 @@ class ArtifactService:
         self._require_manage(versions[0])
 
         candidates = versions[keep:]
+        # Every candidate, not just the newest row: sibling versions can carry
+        # different owners, so managing the latest must never authorize deleting theirs.
+        for artifact in candidates:
+            self._require_manage(artifact)
         would_delete = [ArtifactPruneCandidate(id=v.id, version=v.version, size_bytes=v.size_bytes) for v in candidates]
         freed_bytes = sum(v.size_bytes or 0 for v in candidates)
 

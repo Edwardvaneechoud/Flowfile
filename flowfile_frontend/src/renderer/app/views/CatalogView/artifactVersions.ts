@@ -43,6 +43,21 @@ export function isLatest(version: number, latestVersion: number): boolean {
   return version === latestVersion;
 }
 
+/**
+ * Human-readable message from an axios error whose `detail` may be a plain
+ * string (403/404), an {error_code, message} object (the 409 guards), or a
+ * FastAPI validation list (422) — never render an object into a toast.
+ */
+export function apiErrorMessage(e: unknown, fallback: string): string {
+  const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return fallback;
+}
+
 /** Versions a prune would remove, keeping the newest `keep` (never fewer than one). */
 export function pruneCandidates(
   versions: ArtifactVersionInfo[],
