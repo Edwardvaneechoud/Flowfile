@@ -319,6 +319,10 @@ export interface SuggestionMap {
   byKey: Map<string, SuggestionEntry>;
   duplicateKeys: number;
   unjoinableRows: number;
+  /** Rows whose probability was not in 0..1 — a melted key or a count, not a score. */
+  outOfRangeRows: number;
+  /** Rows naming a class that was not declared — typically a column swept into a melt. */
+  unknownClassRows: number;
 }
 
 const NUMERIC_DTYPE_PATTERN = /^(u?int(8|16|32|64)|float(16|32|64)?|double|decimal.*)$/i;
@@ -405,6 +409,8 @@ export function joinKeyToken(values: unknown[], spec: JoinKeySpec[]): string | n
  * highest-probability row wins the suggestion, its probability is the confidence,
  * and all of the key's rows form the distribution.
  *
+ * Only classes present in `allowedClasses` are considered (an empty list accepts all).
+ *
  * A repeat of the same class for one key is a data error, not a second candidate:
  * it is counted and resolved to the higher probability so the result stays
  * independent of row order. Empty keys count as unjoinable; rows with no class are
@@ -416,10 +422,14 @@ export function buildSuggestionMap(
   keySpec: JoinKeySpec[],
   classColumn: string,
   probabilityColumn: string,
+  allowedClasses: readonly string[] = [],
 ): SuggestionMap {
   const byKey = new Map<string, SuggestionEntry>();
   let duplicateKeys = 0;
   let unjoinableRows = 0;
+  let outOfRangeRows = 0;
+  let unknownClassRows = 0;
+  const allowed = allowedClasses.length > 0 ? new Set(allowedClasses) : null;
 
   interface Candidate {
     best: string;
@@ -447,12 +457,20 @@ export function buildSuggestionMap(
     const rawClass = cellOf(row, classIndex);
     if (rawClass === null || rawClass === undefined || rawClass === "") continue;
     const className = String(rawClass);
+    // Only a declared class can be a candidate. A melt that swept in a key or a
+    // confidence column otherwise contributes a pseudo-class that wins the argmax.
+    if (allowed !== null && !allowed.has(className)) {
+      unknownClassRows += 1;
+      continue;
+    }
 
     let probability: number | null = null;
     const rawProbability = cellOf(row, probabilityIndex);
     if (rawProbability !== null && rawProbability !== undefined && rawProbability !== "") {
       const parsed = Number(rawProbability);
-      probability = Number.isFinite(parsed) ? parsed : null;
+      if (!Number.isFinite(parsed)) probability = null;
+      else if (parsed < 0 || parsed > 1) outOfRangeRows += 1;
+      else probability = parsed;
     }
 
     let candidate = accumulated.get(token);
@@ -483,7 +501,7 @@ export function buildSuggestionMap(
       probabilities: Object.keys(candidate.observed).length > 0 ? candidate.observed : null,
     });
   }
-  return { byKey, duplicateKeys, unjoinableRows };
+  return { byKey, duplicateKeys, unjoinableRows, outOfRangeRows, unknownClassRows };
 }
 
 export function rowSuggestion(
@@ -533,9 +551,27 @@ export function suggestionDisagreement(
   return disagreeing;
 }
 
-/** 0..1 is read as a fraction and scaled; anything outside it is already percent-scaled. */
+/** Only a 0..1 fraction is a probability; anything else renders as nothing rather than a bogus percent. */
 export function formatConfidence(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "";
-  const percent = value >= 0 && value <= 1 ? value * 100 : value;
-  return `${Math.round(percent)}%`;
+  if (value === null || !Number.isFinite(value) || value < 0 || value > 1) return "";
+  return `${Math.round(value * 100)}%`;
+}
+
+/** Distinct values of the prediction table's class column, in first-seen order. */
+export function distinctPredictionClasses(
+  predColumns: string[],
+  predRows: unknown[][],
+  classColumn: string,
+  cap = 50,
+): string[] {
+  const index = predColumns.indexOf(classColumn);
+  if (index === -1) return [];
+  const seen = new Set<string>();
+  for (const row of predRows) {
+    const raw = row[index];
+    if (raw === null || raw === undefined || raw === "") continue;
+    seen.add(String(raw));
+    if (seen.size >= cap) break;
+  }
+  return [...seen];
 }

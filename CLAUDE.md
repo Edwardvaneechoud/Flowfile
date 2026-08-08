@@ -387,6 +387,7 @@ environment in local/desktop runs.
 - `FLOWFILE_OFFLOAD_TO_WORKER` (default `1`) — route heavy compute to the worker.
 - `FLOWFILE_SINGLE_FILE_MODE` (default `0`) — co-host the worker on the core port; the bundled CLI sets this with `FLOWFILE_WORKER_PORT=63578`.
 - `FLOWFILE_DB_BACKUP_KEEP` (default `10`) — how many pre-migration catalog-DB snapshots to keep in `db_backups/` next to the DB file; `0` disables snapshotting.
+- `FLOWFILE_RUN_MAX_AGE_SECONDS` (default `86400`) — age backstop for the orphaned-run reaper (`shared/run_completion.py`, run at core startup and on every scheduler tick): an unfinished spawned run older than this is closed as failed even when its pid still looks alive; `0` disables the backstop (dead-pid and pid-less reaping stay on).
 - `FLOWFILE_COMMUNITY_INDEX_URL` (default raw-main `index.json`) — community registry index location; a **local filesystem path switches the client into fixture mode** (index + artifacts read from disk). `FLOWFILE_COMMUNITY_POPULARITY_URL` (default: sibling `popularity.json` of the index), `FLOWFILE_COMMUNITY_ARTIFACT_BASE` (default jsDelivr `@{commit}` template), `FLOWFILE_COMMUNITY_ARTIFACT_FALLBACK` (default raw `@{commit}` template), `FLOWFILE_COMMUNITY_CACHE_TTL` (default `3600`), `FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID` (OAuth App client id for in-app device-flow publishing; resolves env var → `.env` → the baked `COMMUNITY_GITHUB_CLIENT_ID_DEFAULT` in `configs/settings.py`, so device flow is on by default; PAT/bundle work regardless). All read per call in `configs/settings.py`.
 
 ## Default Ports

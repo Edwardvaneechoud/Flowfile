@@ -51,6 +51,7 @@ from flowfile_core.routes.user_defined_components import router as user_defined_
 from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from shared.parent_watcher import start_parent_death_watcher
+from shared.run_completion import reap_orphaned_runs
 from shared.storage_config import storage
 
 storage.cleanup_directories()
@@ -73,6 +74,15 @@ async def shutdown_handler(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     print("Starting core application...")
+
+    # Runs whose process died with the last app instance would otherwise stay "active"
+    # forever and block every relaunch. Best-effort; must never fail startup.
+    try:
+        reaped = reap_orphaned_runs()
+        if reaped:
+            print(f"Reaped {reaped} orphaned flow run(s)")
+    except Exception:
+        logging.getLogger(__name__).exception("Startup orphaned-run reap failed")
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):

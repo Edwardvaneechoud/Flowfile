@@ -147,11 +147,27 @@
             />
           </el-select>
         </div>
+        <div v-if="discoveredClasses.length > 0" class="discovered-classes">
+          <span class="setup-note">
+            Classes found in “{{ classColumn }}”: {{ discoveredClasses.join(", ") }} ({{
+              discoveredClasses.length
+            }})
+          </span>
+          <button
+            v-if="!classesMatchDiscovered"
+            type="button"
+            class="text-btn"
+            @mousedown.prevent
+            @click="adoptDiscoveredClasses"
+          >
+            Use these as my classes
+          </button>
+        </div>
         <el-checkbox v-model="leastConfidentFirst"> Least confident first </el-checkbox>
       </template>
 
       <div class="start-row">
-        <el-button type="primary" :disabled="!canStart" @click="startLabeling">
+        <el-button type="primary" :disabled="!canStart || startPending" @click="startLabeling">
           Start labelling
         </el-button>
         <span v-if="suggestionsResolving" class="setup-note">checking for predictions…</span>
@@ -240,7 +256,9 @@
           <span v-if="probabilityFor(cls.value)" class="class-prob">
             {{ probabilityFor(cls.value) }}
           </span>
-          <span v-if="suggestedValue === cls.value" class="suggested-chip">suggested</span>
+          <span v-if="suggestedValue === cls.value" class="suggested-chip">
+            suggested <kbd>⏎</kbd>
+          </span>
         </button>
       </div>
 
@@ -263,6 +281,12 @@
         </span>
         <span v-if="suggestionActive && disagreement > 0" class="count-chip">
           {{ disagreement }} disagree with model
+        </span>
+        <span v-if="unknownClassRows > 0" class="count-chip">
+          {{ unknownClassRows }} row(s) ignored — class not in your list
+        </span>
+        <span v-if="outOfRangeRows > 0" class="count-chip">
+          {{ outOfRangeRows }} row(s) ignored — value outside 0–1
         </span>
         <span v-if="duplicateKeys > 0" class="count-chip">
           {{ duplicateKeys }} repeated class row(s) ignored
@@ -295,7 +319,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { ElMessage } from "element-plus";
-import type { CatalogTable, NewColumnSpec } from "../../types";
+import type { CatalogTable, NewColumnSpec, SqlQueryResult } from "../../types";
 import { CatalogApi } from "../../api/catalog.api";
 import {
   applyCellEdit,
@@ -303,6 +327,7 @@ import {
   buildLabelClasses,
   buildSuggestionMap,
   distinctColumnValues,
+  distinctPredictionClasses,
   formatConfidence,
   isContinuousDtype,
   isEditableDtype,
@@ -330,10 +355,12 @@ import {
 const POLL_INTERVAL_MS = 10_000;
 const REMOTE_POLL_INTERVAL_MS = 30_000;
 const MAX_POLL_FAILURES = 3;
-// The join needs every class row for a key, and preview order is physical, not sorted —
-// so the prediction table is fetched whole (the endpoint's ceiling) rather than at the
-// session's row limit, and refuses to join when even that truncates it.
-const PREDICTION_FETCH_LIMIT = 10_000;
+// The join needs every class row for a key, and read order is physical, not sorted — so the
+// prediction table is read whole, projected to the join columns through the SQL endpoint. That
+// path only reaches local Delta tables; anything else falls back to the row-capped preview and
+// refuses to join when the cap truncates it.
+const MAX_PREDICTION_ROWS = 500_000;
+const PREDICTION_PREVIEW_LIMIT = 10_000;
 
 const props = defineProps<{ session: EditSession; table: CatalogTable; rowLimit: number }>();
 
@@ -367,6 +394,10 @@ const predDtypes = ref<string[]>([]);
 const predRowCount = ref(0);
 const predTotalRows = ref(0);
 const predTruncated = ref(false);
+const predRowsLoaded = ref(false);
+/** Rows came from the row-capped preview because SQL could not reach the table. */
+const predRowsViaPreview = ref(false);
+const discoveredClasses = ref<string[]>([]);
 const predVersion = ref<number | null>(null);
 const predLoading = ref(false);
 const classColumn = ref("");
@@ -379,16 +410,22 @@ const suggestionsDisabled = ref(false);
 const refreshNotice = ref(false);
 const pollPaused = ref(false);
 const hydrating = ref(true);
+const startPending = ref(false);
 
 const joinSpec = shallowRef<JoinKeySpec[] | null>(null);
 const suggestionMap = shallowRef<SuggestionMap | null>(null);
 
 // Prediction rows are only ever read to rebuild the map — kept out of reactivity.
 let predRows: unknown[][] = [];
+// The column order of predRows, which is the projection's, not the table's.
+let rowColumns: string[] = [];
 let pollTimer: number | null = null;
 let pollInFlight = false;
 let pollFailures = 0;
 let loadSeq = 0;
+let predFetches = 0;
+/** In-flight row fetch, so Start can await one already running instead of firing a second. */
+let predRowsPending: Promise<boolean> | null = null;
 /** Survives a transient preview failure so persistSettings can't erase the block. */
 let rememberedSuggestion: StoredSuggestionSettings | null = null;
 
@@ -457,7 +494,9 @@ const classColumnOptions = computed(() =>
 );
 
 const probabilityColumnOptions = computed(() =>
-  predColumns.value.filter((c, i) => isNumericDtype(predDtypes.value[i] ?? "")),
+  predColumns.value.filter(
+    (c, i) => !props.session.keyColumns.includes(c) && isNumericDtype(predDtypes.value[i] ?? ""),
+  ),
 );
 
 const missingJoinColumns = computed(() =>
@@ -470,7 +509,10 @@ const joinError = computed(() => {
     return "This session has no key columns, so suggestions cannot be joined.";
   }
   if (predTruncated.value) {
-    return `Only ${predRowCount.value.toLocaleString()} of ${predTotalRows.value.toLocaleString()} prediction rows could be read. Rows arrive in storage order, so a partial read would hide classes and bias every suggestion — suggestions stay off. Reduce the prediction table to the rows you are labelling.`;
+    const cause = predRowsViaPreview.value
+      ? "this table is not a local Delta table, so it can only be read through the row-capped preview"
+      : `this view reads at most ${MAX_PREDICTION_ROWS.toLocaleString()} prediction rows`;
+    return `Only ${predRowCount.value.toLocaleString()} of ${predTotalRows.value.toLocaleString()} prediction rows could be read: ${cause}. Rows arrive in storage order, so a partial read would hide classes and bias every suggestion — suggestions stay off. Reduce the prediction table to the rows you are labelling.`;
   }
   if (missingJoinColumns.value.length === 0) return "";
   return `The prediction table has no ${missingJoinColumns.value.join(", ")} column, so it cannot be joined to this session. Suggestions stay off.`;
@@ -518,6 +560,14 @@ const duplicateKeys = computed(() =>
   suggestionActive.value ? (suggestionMap.value?.duplicateKeys ?? 0) : 0,
 );
 
+const outOfRangeRows = computed(() =>
+  suggestionActive.value ? (suggestionMap.value?.outOfRangeRows ?? 0) : 0,
+);
+
+const unknownClassRows = computed(() =>
+  suggestionActive.value ? (suggestionMap.value?.unknownClassRows ?? 0) : 0,
+);
+
 function addClass() {
   const value = newClass.value.trim();
   if (value && !classes.value.includes(value)) pushClass(value);
@@ -533,6 +583,19 @@ function pushClass(value: string): boolean {
   classes.value.push(value);
   classNote.value = "";
   return true;
+}
+
+const classesMatchDiscovered = computed(
+  () =>
+    discoveredClasses.value.length === classes.value.length &&
+    discoveredClasses.value.every((c) => classes.value.includes(c)),
+);
+
+/** Replace the class list with what the model actually emits, so the two can never drift. */
+function adoptDiscoveredClasses() {
+  classes.value = discoveredClasses.value.slice(0, MAX_LABEL_CLASSES);
+  classNote.value = "";
+  persistSettings();
 }
 
 function removeClass(index: number) {
@@ -638,41 +701,185 @@ function pruneSuggestionSelections() {
   if (!probabilityColumn.value) leastConfidentFirst.value = false;
 }
 
+/** Called explicitly after a row fetch too: predRows and its column list are non-reactive. */
+function recomputeDiscoveredClasses() {
+  discoveredClasses.value = classColumn.value
+    ? distinctPredictionClasses(rowColumns, predRows, classColumn.value)
+    : [];
+}
+
+function clearPredictionRows() {
+  predRows = [];
+  rowColumns = [];
+  predRowCount.value = 0;
+  predTruncated.value = false;
+  predRowsLoaded.value = false;
+  predRowsViaPreview.value = false;
+}
+
 function clearPredictionData() {
   predColumns.value = [];
   predDtypes.value = [];
-  predRows = [];
-  predRowCount.value = 0;
   predTotalRows.value = 0;
-  predTruncated.value = false;
   predVersion.value = null;
+  clearPredictionRows();
 }
 
+function beginPredFetch() {
+  predFetches += 1;
+  predLoading.value = true;
+}
+
+/** Paired with beginPredFetch in a finally — a failed or orphaned fetch must never
+ * latch the "checking for predictions…" hint on. */
+function endPredFetch() {
+  predFetches = Math.max(0, predFetches - 1);
+  if (predFetches === 0) predLoading.value = false;
+}
+
+/**
+ * Phase 1: read the schema only. A one-row preview is enough to drive the column
+ * pickers and carries the real row count, and it keeps embedding columns out of
+ * setup — the preview serializer reprs any non-scalar cell, so one List(Float32)
+ * vector is kilobytes of JSON a row.
+ */
 async function loadPredictionTable(id: number) {
   // Stale responses must not pair one table's columns with another's id — the
   // poll would then compare Delta versions across two unrelated tables.
   const seq = ++loadSeq;
-  predLoading.value = true;
+  beginPredFetch();
   suggestionError.value = "";
-  const [history, preview] = await Promise.allSettled([
-    CatalogApi.getTableHistory(id, 1),
-    CatalogApi.getTablePreview(id, PREDICTION_FETCH_LIMIT),
-  ]);
-  predLoading.value = false;
-  if (seq !== loadSeq) return;
-  if (preview.status === "rejected") {
-    clearPredictionData();
-    suggestionError.value = "Could not read the prediction table.";
-    return;
+  try {
+    const [history, preview] = await Promise.allSettled([
+      CatalogApi.getTableHistory(id, 1),
+      CatalogApi.getTablePreview(id, 1),
+    ]);
+    if (seq !== loadSeq) return;
+    if (preview.status === "rejected") {
+      clearPredictionData();
+      suggestionError.value = "Could not read the prediction table.";
+      return;
+    }
+    predColumns.value = preview.value.columns;
+    predDtypes.value = preview.value.dtypes;
+    predTotalRows.value = preview.value.total_rows;
+    clearPredictionRows();
+    // A missing version anchor only costs us change detection; the first poll re-anchors.
+    predVersion.value = history.status === "fulfilled" ? history.value.current_version : null;
+  } finally {
+    endPredFetch();
   }
-  predColumns.value = preview.value.columns;
-  predDtypes.value = preview.value.dtypes;
-  predRows = preview.value.rows;
-  predRowCount.value = preview.value.rows.length;
-  predTotalRows.value = preview.value.total_rows;
-  predTruncated.value = preview.value.total_rows > preview.value.rows.length;
-  // A missing version anchor only costs us change detection; the first poll re-anchors.
-  predVersion.value = history.status === "fulfilled" ? history.value.current_version : null;
+}
+
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** The join only needs the key columns plus the two picked ones, so project to those. */
+function predictionRowsQuery(): string | null {
+  const table = predictionTable.value;
+  const target = table?.qualified_name ?? table?.full_table_name ?? table?.name;
+  if (!target || !classColumn.value || !probabilityColumn.value) return null;
+  const columns = [
+    ...new Set([...props.session.keyColumns, classColumn.value, probabilityColumn.value]),
+  ];
+  return `SELECT ${columns.map(quoteIdent).join(", ")} FROM ${quoteIdent(target)}`;
+}
+
+/** Generous headroom over the row count we saw, so rows written since still fit. */
+function predictionRowsLimit(): number {
+  return Math.min(Math.max(predTotalRows.value * 2, 50_000), MAX_PREDICTION_ROWS);
+}
+
+/** `null` on any failure — the endpoint reports its refusals as `error` on a 200. */
+async function runPredictionQuery(query: string, maxRows: number): Promise<SqlQueryResult | null> {
+  try {
+    const result = await CatalogApi.executeSqlQuery(query, maxRows);
+    return result.error ? null : result;
+  } catch {
+    return null;
+  }
+}
+
+function applyPredictionRows(
+  columns: string[],
+  rows: unknown[][],
+  totalRows: number,
+  truncated: boolean,
+  viaPreview: boolean,
+) {
+  rowColumns = columns;
+  predRows = rows;
+  predRowCount.value = rows.length;
+  predTotalRows.value = totalRows;
+  predTruncated.value = truncated;
+  predRowsViaPreview.value = viaPreview;
+  predRowsLoaded.value = true;
+  suggestionError.value = "";
+  recomputeDiscoveredClasses();
+}
+
+/**
+ * Phase 2: read the join columns for every row. SQL takes no row cap worth worrying
+ * about; a table it cannot reach (object storage, legacy Parquet) falls back to the
+ * row-capped preview, which joinError then refuses to join.
+ */
+async function fetchPredictionRows(): Promise<boolean> {
+  const id = predictionTableId.value;
+  const query = predictionRowsQuery();
+  if (id === null || query === null) return false;
+  const seq = ++loadSeq;
+  beginPredFetch();
+  try {
+    const result = await runPredictionQuery(query, predictionRowsLimit());
+    if (seq !== loadSeq) return false;
+    if (result) {
+      applyPredictionRows(result.columns, result.rows, result.total_rows, result.truncated, false);
+      return true;
+    }
+    const preview = await CatalogApi.getTablePreview(id, PREDICTION_PREVIEW_LIMIT).catch(
+      () => null,
+    );
+    if (seq !== loadSeq) return false;
+    if (!preview) {
+      // Whatever rows we already had are the last known good ones — keep them.
+      suggestionError.value = "Could not read the prediction table.";
+      return false;
+    }
+    // The full schema arrives with the fallback, so refresh the pickers off it too.
+    predColumns.value = preview.columns;
+    predDtypes.value = preview.dtypes;
+    applyPredictionRows(
+      preview.columns,
+      preview.rows,
+      preview.total_rows,
+      preview.total_rows > preview.rows.length,
+      true,
+    );
+    return true;
+  } finally {
+    endPredFetch();
+  }
+}
+
+/** Resolves `true` only when rows were actually applied. */
+async function loadPredictionRows(): Promise<boolean> {
+  const run = fetchPredictionRows();
+  predRowsPending = run;
+  try {
+    return await run;
+  } finally {
+    if (predRowsPending === run) predRowsPending = null;
+  }
+}
+
+function needsPredictionRows(): boolean {
+  return (
+    predictionTableId.value !== null &&
+    !!classColumn.value &&
+    !!probabilityColumn.value &&
+    !predRowsLoaded.value
+  );
 }
 
 async function selectPredictionTable(id: number, stored?: StoredSuggestionSettings | null) {
@@ -688,6 +895,9 @@ async function selectPredictionTable(id: number, stored?: StoredSuggestionSettin
     leastConfidentFirst.value = stored.leastConfidentFirst;
   }
   pruneSuggestionSelections();
+  // The column watcher can't cover this: restored (or carried-over) picks may be
+  // identical to the previous table's, so nothing changes for it to react to.
+  if (needsPredictionRows()) void loadPredictionRows();
 }
 
 function clearPrediction() {
@@ -734,7 +944,10 @@ async function onPredictionTablePick(value: unknown) {
 function retryPredictionLoad() {
   const id = predictionTableId.value;
   if (id === null) return;
-  void loadPredictionTable(id).then(pruneSuggestionSelections);
+  void loadPredictionTable(id).then(() => {
+    pruneSuggestionSelections();
+    if (needsPredictionRows()) void loadPredictionRows();
+  });
 }
 
 /** Best-effort name match for a sibling predictions table; failures are silent. */
@@ -816,11 +1029,12 @@ function rebuildSuggestionMap() {
   const spec = joinSpec.value;
   if (!spec || suggestionsDisabled.value || !classColumn.value) return;
   suggestionMap.value = buildSuggestionMap(
-    predColumns.value,
+    rowColumns,
     predRows,
     spec,
     classColumn.value,
     probabilityColumn.value ?? "",
+    classes.value,
   );
 }
 
@@ -829,8 +1043,10 @@ function buildSuggestionState() {
   suggestionMap.value = null;
   suggestionsDisabled.value = false;
   if (predictionTableId.value === null || !classColumn.value || !probabilityColumn.value) return;
-  if (predColumns.value.length === 0 || predTruncated.value) return;
-  const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, predColumns.value);
+  if (!predRowsLoaded.value || predTruncated.value) return;
+  // The fetched projection, not the table schema, is what the map indexes into.
+  if (!rowColumns.includes(classColumn.value)) return;
+  const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, rowColumns);
   if (!spec) return;
   joinSpec.value = spec;
   rebuildSuggestionMap();
@@ -844,20 +1060,29 @@ function orderConfidence(): ((row: EditRow) => number | null) | undefined {
   return (row) => rowSuggestion(row, spec, map.byKey)?.confidence ?? null;
 }
 
-function startLabeling() {
-  if (targetMode.value === "new") {
-    const name = newColumnName.value.trim();
-    emit("add-column", { name, dtype: "String" });
-    targetColumn.value = name;
-  } else {
-    targetColumn.value = existingTarget.value;
+async function startLabeling() {
+  if (startPending.value) return;
+  startPending.value = true;
+  try {
+    if (targetMode.value === "new") {
+      const name = newColumnName.value.trim();
+      emit("add-column", { name, dtype: "String" });
+      targetColumn.value = name;
+    } else {
+      targetColumn.value = existingTarget.value;
+    }
+    // The visit order depends on the suggestion map, so the rows have to be in
+    // before it is derived. Every fetch path settles, so this can't hang Start.
+    if (needsPredictionRows()) await (predRowsPending ?? loadPredictionRows());
+    buildSuggestionState();
+    persistSettings();
+    order.value = labelingOrder(props.session.rows, targetColumn.value, orderConfidence());
+    pointer.value = 0;
+    undoStack.value = [];
+    phase.value = "labeling";
+  } finally {
+    startPending.value = false;
   }
-  buildSuggestionState();
-  persistSettings();
-  order.value = labelingOrder(props.session.rows, targetColumn.value, orderConfidence());
-  pointer.value = 0;
-  undoStack.value = [];
-  phase.value = "labeling";
 }
 
 function assign(classValue: string) {
@@ -934,21 +1159,21 @@ function resumePolling() {
 /** Re-read the prediction slice after a new Delta version; the visit order is
  * deliberately left alone so the row under the cursor never moves. */
 async function refreshSuggestions(id: number, version: number) {
-  const preview = await CatalogApi.getTablePreview(id, PREDICTION_FETCH_LIMIT);
-  predColumns.value = preview.columns;
-  predDtypes.value = preview.dtypes;
-  predRows = preview.rows;
-  predRowCount.value = preview.rows.length;
-  predTotalRows.value = preview.total_rows;
-  predTruncated.value = preview.total_rows > preview.rows.length;
+  const loaded = await loadPredictionRows();
+  // A table switch mid-refresh already orphaned the fetch; don't re-anchor its version.
+  if (predictionTableId.value !== id) return;
+  // A failed re-read keeps the current map and the old version anchor, and counts as a
+  // poll failure so the pause-after-three ladder still applies.
+  if (!loaded) throw new Error("Could not re-read the prediction table");
   predVersion.value = version;
 
   const hadConfidence = probabilityColumn.value;
   pruneSuggestionSelections();
   const lostConfidence = !!hadConfidence && !probabilityColumn.value;
 
-  const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, preview.columns);
-  if (!spec || !preview.columns.includes(classColumn.value)) {
+  const columns = rowColumns;
+  const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, columns);
+  if (!spec || !columns.includes(classColumn.value)) {
     suggestionsDisabled.value = true;
     suggestionNote.value =
       "The prediction table's schema changed, so suggestions are off for this pass.";
@@ -1042,6 +1267,16 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+watch([classColumn, predColumns], recomputeDiscoveredClasses);
+
+// Rows are only worth reading once both picks are in — the join needs the pair, and
+// the projection is built from them.
+watch([classColumn, probabilityColumn], () => {
+  if (hydrating.value) return;
+  if (!classColumn.value || !probabilityColumn.value) return;
+  void loadPredictionRows();
+});
+
 watch(probabilityColumn, (value) => {
   if (!value) leastConfidentFirst.value = false;
 });
@@ -1052,7 +1287,7 @@ watch(leastConfidentFirst, () => {
 
 // A prediction source that arrives after Start still gets picked up; the visit
 // order is deliberately left alone so no row moves mid-pass.
-watch([predictionTableId, classColumn, predColumns], () => {
+watch([predictionTableId, classColumn, probabilityColumn, predRowsLoaded], () => {
   if (phase.value !== "labeling" || suggestionsDisabled.value || suggestionActive.value) return;
   buildSuggestionState();
 });
@@ -1372,14 +1607,46 @@ onBeforeUnmount(() => {
   background: rgba(103, 194, 58, 0.08);
 }
 
+/* Pre-selected weight: the model's pick should be obvious without reading the line above. */
 .class-btn.suggested {
   border-color: var(--color-primary, #409eff);
-  background: rgba(64, 158, 255, 0.08);
+  border-width: 2px;
+  padding: 9px 15px;
+  background: rgba(64, 158, 255, 0.12);
+  font-weight: 600;
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.12);
+}
+
+.class-btn.suggested .suggested-chip kbd {
+  font-family: inherit;
+  font-size: var(--font-size-xs, 11px);
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(64, 158, 255, 0.2);
+}
+
+.discovered-classes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spacing-2, 8px);
+}
+
+.shortcut-key {
+  border-color: var(--color-primary, #409eff);
+  background: var(--color-primary, #409eff);
+  color: #fff;
 }
 
 .class-btn.suggested.active {
   border-color: var(--color-success, #67c23a);
   background: rgba(103, 194, 58, 0.08);
+  box-shadow: none;
+}
+
+.class-btn.suggested.active .shortcut-key {
+  border-color: var(--color-success, #67c23a);
+  background: var(--color-success, #67c23a);
 }
 
 .class-prob {
@@ -1388,6 +1655,9 @@ onBeforeUnmount(() => {
 }
 
 .suggested-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--font-size-xs, 11px);
   padding: 1px 6px;
   border-radius: 8px;

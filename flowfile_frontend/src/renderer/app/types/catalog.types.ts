@@ -470,6 +470,7 @@ export interface CronValidationResult {
 export interface ActiveFlowRun {
   id: number;
   registration_id: number | null;
+  schedule_id: number | null;
   flow_name: string;
   flow_path: string | null;
   user_id: number;

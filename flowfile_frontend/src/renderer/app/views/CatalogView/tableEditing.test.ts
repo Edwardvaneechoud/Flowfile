@@ -6,6 +6,7 @@ import {
   buildLabelClasses,
   buildSuggestionMap,
   distinctColumnValues,
+  distinctPredictionClasses,
   formatConfidence,
   hasPendingChanges,
   isEditableDtype,
@@ -432,6 +433,8 @@ describe("buildSuggestionMap", () => {
     });
     expect(map.duplicateKeys).toBe(0);
     expect(map.unjoinableRows).toBe(0);
+    expect(map.outOfRangeRows).toBe(0);
+    expect(map.unknownClassRows).toBe(0);
   });
 
   it("is independent of row order", () => {
@@ -588,6 +591,94 @@ describe("buildSuggestionMap", () => {
     expect(map.byKey.get("n:2")?.confidence).toBeNull();
   });
 
+  it("ignores classes that were not declared, so a melted column cannot win", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [207, "World", 0.4498],
+        [207, "Sports", 0.4425],
+        [207, "Business", 0.5491],
+        [207, "Sci/Tech", 0.4646],
+        [207, "confidence", 0.5491],
+        [207, "record_id", 207],
+      ],
+      keySpec,
+      "label",
+      "value",
+      ["World", "Sports", "Business", "Sci/Tech"],
+    );
+    const entry = map.byKey.get("n:207");
+    expect(entry?.suggested).toBe("Business");
+    expect(entry?.confidence).toBe(0.5491);
+    expect(entry?.probabilities).toEqual({
+      World: 0.4498,
+      Sports: 0.4425,
+      Business: 0.5491,
+      "Sci/Tech": 0.4646,
+    });
+    // `record_id` and `confidence` are both dropped before ranking.
+    expect(map.unknownClassRows).toBe(2);
+    expect(map.outOfRangeRows).toBe(0);
+  });
+
+  it("accepts every class when no list is declared", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", 0.3],
+        [1, "ham", 0.6],
+      ],
+      keySpec,
+      "label",
+      "value",
+    );
+    expect(map.byKey.get("n:1")?.suggested).toBe("ham");
+    expect(map.unknownClassRows).toBe(0);
+  });
+
+  it("refuses a probability outside 0..1 and counts it", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [207, "World", 0.25],
+        [207, "Sports", 0.26],
+        [207, "Business", 0.23],
+        [207, "Sci/Tech", 0.26],
+        [207, "record_id", 207],
+      ],
+      keySpec,
+      "label",
+      "value",
+    );
+    // The melted key row must not win just because 207 > every real probability.
+    const entry = map.byKey.get("n:207");
+    expect(entry?.suggested).toBe("Sports");
+    expect(entry?.confidence).toBe(0.26);
+    expect(entry?.probabilities).toEqual({
+      World: 0.25,
+      Sports: 0.26,
+      Business: 0.23,
+      "Sci/Tech": 0.26,
+    });
+    expect(map.outOfRangeRows).toBe(1);
+  });
+
+  it("counts a negative probability as out of range", () => {
+    const map = buildSuggestionMap(
+      predColumns,
+      [
+        [1, "spam", -0.2],
+        [1, "ham", 0.4],
+      ],
+      keySpec,
+      "label",
+      "value",
+    );
+    expect(map.byKey.get("n:1")?.suggested).toBe("ham");
+    expect(map.byKey.get("n:1")?.probabilities).toEqual({ ham: 0.4 });
+    expect(map.outOfRangeRows).toBe(1);
+  });
+
   it("yields nothing usable when the probability column is absent", () => {
     const map = buildSuggestionMap(predColumns, [[1, "business", 0.9]], keySpec, "label", "ghost");
     expect(map.byKey.get("n:1")).toEqual({
@@ -703,14 +794,45 @@ describe("formatConfidence", () => {
     expect(formatConfidence(1)).toBe("100%");
   });
 
-  it("leaves already percent-scaled values alone", () => {
-    expect(formatConfidence(82)).toBe("82%");
-    expect(formatConfidence(99.6)).toBe("100%");
+  it("renders nothing for values that cannot be probabilities", () => {
+    expect(formatConfidence(82)).toBe("");
+    expect(formatConfidence(207)).toBe("");
+    expect(formatConfidence(-0.5)).toBe("");
   });
 
   it("renders nothing for missing or non-finite values", () => {
     expect(formatConfidence(null)).toBe("");
     expect(formatConfidence(Number.NaN)).toBe("");
     expect(formatConfidence(Number.POSITIVE_INFINITY)).toBe("");
+  });
+});
+
+describe("distinctPredictionClasses", () => {
+  const predColumns = ["record_id", "label", "value"];
+
+  it("lists the class values in first-seen order, junk included", () => {
+    const rows = [
+      [207, "World", 0.25],
+      [207, "Sports", 0.26],
+      [207, "record_id", 207],
+      [208, "World", 0.4],
+    ];
+    expect(distinctPredictionClasses(predColumns, rows, "label")).toEqual([
+      "World",
+      "Sports",
+      "record_id",
+    ]);
+  });
+
+  it("skips blanks, honours the cap and tolerates a missing column", () => {
+    const rows = [
+      [1, null, 0.1],
+      [2, "", 0.2],
+      [3, "a", 0.3],
+      [4, "b", 0.4],
+    ];
+    expect(distinctPredictionClasses(predColumns, rows, "label")).toEqual(["a", "b"]);
+    expect(distinctPredictionClasses(predColumns, rows, "label", 1)).toEqual(["a"]);
+    expect(distinctPredictionClasses(predColumns, rows, "ghost")).toEqual([]);
   });
 });

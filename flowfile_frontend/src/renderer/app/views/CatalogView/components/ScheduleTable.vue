@@ -76,16 +76,23 @@
             <i class="fa-solid fa-stop" />
           </el-button>
         </el-tooltip>
-        <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
-          <el-button
-            size="small"
-            type="success"
-            text
-            :disabled="disableRunNow"
-            @click="emit('runNow', schedule.id)"
-          >
-            <i class="fa-solid fa-play" />
-          </el-button>
+        <el-tooltip
+          v-else
+          :content="runNowDisabled(schedule) ? 'Flow is already running' : 'Run Now'"
+          placement="top"
+          :show-after="400"
+        >
+          <span class="run-now-wrap">
+            <el-button
+              size="small"
+              type="success"
+              text
+              :disabled="runNowDisabled(schedule)"
+              @click="emit('runNow', schedule.id)"
+            >
+              <i class="fa-solid fa-play" />
+            </el-button>
+          </span>
         </el-tooltip>
         <el-switch
           :model-value="schedule.enabled"
@@ -144,6 +151,7 @@ import ScheduleStatusBadge from "./ScheduleStatusBadge.vue";
 interface EnrichedFlowSchedule extends FlowSchedule {
   flowName: string;
   isRunning: boolean;
+  isFlowRunning: boolean;
 }
 
 type ScheduleLike = FlowSchedule | EnrichedFlowSchedule;
@@ -200,6 +208,14 @@ function isRunning(schedule: ScheduleLike): boolean {
   if ("isRunning" in schedule) return schedule.isRunning;
   return false;
 }
+
+// Run Now is registration-scoped even though the badge above is schedule-scoped: any active run of
+// the flow makes a new run 409.
+function runNowDisabled(schedule: ScheduleLike): boolean {
+  if (props.disableRunNow) return true;
+  if ("isFlowRunning" in schedule) return schedule.isFlowRunning;
+  return false;
+}
 </script>
 
 <style scoped>
@@ -227,6 +243,11 @@ function isRunning(schedule: ScheduleLike): boolean {
 
 .col-actions {
   gap: var(--spacing-2);
+}
+
+/* Wrapper keeps the tooltip reachable over a natively-disabled button. */
+.run-now-wrap {
+  display: inline-flex;
 }
 
 .type-icon {

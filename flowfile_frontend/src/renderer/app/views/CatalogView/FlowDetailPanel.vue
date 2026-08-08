@@ -419,18 +419,16 @@ const scheduleEnabledCount = computed(
 const scheduleRunningCount = computed(
   () =>
     catalogStore.flowSchedules.filter((s) =>
-      catalogStore.activeRuns.some((r) => r.registration_id === s.registration_id),
+      catalogStore.activeRuns.some((r) => r.schedule_id === s.id),
     ).length,
 );
 
 function isScheduleRunning(schedule: FlowSchedule): boolean {
-  return catalogStore.activeRuns.some((r) => r.registration_id === schedule.registration_id);
+  return catalogStore.activeRuns.some((r) => r.schedule_id === schedule.id);
 }
 
 async function handleCancelScheduleRun(schedule: FlowSchedule) {
-  const activeRuns = catalogStore.activeRuns.filter(
-    (r) => r.registration_id === schedule.registration_id,
-  );
+  const activeRuns = catalogStore.activeRuns.filter((r) => r.schedule_id === schedule.id);
   for (const run of activeRuns) {
     await catalogStore.cancelRun(run.id);
   }

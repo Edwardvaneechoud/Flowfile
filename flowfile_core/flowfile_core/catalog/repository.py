@@ -828,8 +828,11 @@ class SQLAlchemyCatalogRepository:
             sharing.delete_grants_for_resource(self._db, "visualization", viz_id)
         self._db.query(CatalogVisualization).filter_by(catalog_table_id=table_id).delete()
         sharing.delete_grants_for_resource(self._db, "catalog_table", table_id)
+        # Self-assigning updated_at keeps it in the SET clause, suppressing onupdate — losing a
+        # prediction reference is not a data change and must not fire table-trigger schedules.
         self._db.query(CatalogTable).filter(CatalogTable.prediction_table_id == table_id).update(
-            {CatalogTable.prediction_table_id: None}, synchronize_session=False
+            {CatalogTable.prediction_table_id: None, CatalogTable.updated_at: CatalogTable.updated_at},
+            synchronize_session=False,
         )
         table = self._db.get(CatalogTable, table_id)
         if table is not None:

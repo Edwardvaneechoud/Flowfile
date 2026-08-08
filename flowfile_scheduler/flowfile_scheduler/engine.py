@@ -12,6 +12,7 @@ import logging
 import uuid
 import zoneinfo
 from datetime import datetime, timezone
+from enum import Enum
 
 from croniter import croniter
 from sqlalchemy import create_engine
@@ -25,6 +26,7 @@ from flowfile_scheduler.models import (
     SchedulerLock,
     ScheduleTriggerTable,
 )
+from shared.run_completion import reap_orphaned_runs
 from shared.storage_config import get_database_url
 
 logger = logging.getLogger("flowfile.scheduler")
@@ -32,6 +34,19 @@ logger = logging.getLogger("flowfile.scheduler")
 DEFAULT_POLL_INTERVAL = 30
 
 STALE_THRESHOLD = 90
+
+
+class LaunchOutcome(Enum):
+    """Result of a ``_maybe_launch`` attempt.
+
+    ``SKIPPED`` (the active-run guard declined) and ``FAILED`` (missing
+    registration or a spawn that failed) are distinct because trigger watermarks
+    must advance on ``FAILED`` but not on ``SKIPPED``.
+    """
+
+    LAUNCHED = "launched"
+    SKIPPED = "skipped"
+    FAILED = "failed"
 
 
 def _utcnow() -> datetime:
@@ -108,6 +123,10 @@ class FlowScheduler:
             if not self._acquire_lock(db):
                 logger.info("Tick skipped — lock held by another instance")
                 return
+            try:
+                reap_orphaned_runs()
+            except Exception:
+                logger.exception("Orphaned-run reap failed")
             launched = self._process_interval_schedules(db)
             launched += self._process_cron_schedules(db)
             launched += self._process_table_trigger_schedules(db)
@@ -184,7 +203,7 @@ class FlowScheduler:
                     logger.info("Schedule %s not due yet (%.0fs remaining)", sched.id, remaining)
                     continue
 
-            if self._maybe_launch(db, sched, now):
+            if self._maybe_launch(db, sched, now) is LaunchOutcome.LAUNCHED:
                 launched += 1
         return launched
 
@@ -262,7 +281,7 @@ class FlowScheduler:
                 logger.info(
                     "Cron schedule %s due (next_run=%s local, now=%s) — triggering", sched.id, next_run, now
                 )
-                if self._maybe_launch(db, sched, now):
+                if self._maybe_launch(db, sched, now) is LaunchOutcome.LAUNCHED:
                     # Advance the cursor to *now* (not next_run) so a scheduler
                     # that was down catches up with a single fire.
                     sched.last_cron_slot = now_local
@@ -299,6 +318,10 @@ class FlowScheduler:
            value equal to ``table.updated_at`` before returning, so this
            method's ``table_updated > last_seen`` comparison evaluates to
            ``False`` and the schedule is skipped.
+
+        A NULL watermark means "never observed", not "changed": the first tick
+        that sees such a schedule arms it with the table's current
+        ``updated_at`` and launches nothing.
         """
         schedules: list[FlowSchedule] = (
             db.query(FlowSchedule)
@@ -324,24 +347,48 @@ class FlowScheduler:
                 else None
             )
 
-            if table_updated is not None and (last_seen is None or table_updated > last_seen):
-                logger.info(
-                    "Table '%s' (id=%s) updated at %s (last seen %s) — triggering schedule %s",
-                    table.name,
-                    table.id,
-                    table_updated,
-                    last_seen,
-                    sched.id,
-                )
-                now = _utcnow()
+            if table_updated is None:
+                continue
+
+            if last_seen is None:
+                # Arm, don't replay: a pre-existing updated_at is not a change we saw happen.
                 sched.last_trigger_table_updated_at = table_updated
-                if self._maybe_launch(db, sched, now):
-                    launched += 1
+                db.commit()
+                continue
+
+            if table_updated <= last_seen:
+                continue
+
+            logger.info(
+                "Table '%s' (id=%s) updated at %s (last seen %s) — triggering schedule %s",
+                table.name,
+                table.id,
+                table_updated,
+                last_seen,
+                sched.id,
+            )
+            outcome = self._maybe_launch(db, sched, _utcnow())
+            if outcome is LaunchOutcome.SKIPPED:
+                # Leave the watermark so the trigger re-fires once the blocking run ends.
+                continue
+
+            sched.last_trigger_table_updated_at = table_updated
+            db.commit()
+            if outcome is LaunchOutcome.LAUNCHED:
+                launched += 1
         return launched
 
     # Table-set-trigger schedules
 
     def _process_table_set_trigger_schedules(self, db: Session) -> int:
+        """Launch when *every* linked table has advanced past the watermark.
+
+        Like the single-table path, the watermark is
+        ``last_trigger_table_updated_at`` and is armed (never replayed) the first
+        time a schedule is seen. It always carries an *observed*
+        ``max(table.updated_at)`` — never ``now()``, which would swallow a write
+        landing between the reads and the stamp.
+        """
         schedules: list[FlowSchedule] = (
             db.query(FlowSchedule)
             .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_set_trigger")
@@ -359,60 +406,84 @@ class FlowScheduler:
                 logger.warning("Schedule %s has fewer than 2 trigger tables, skipping", sched.id)
                 continue
 
-            last_triggered = sched.last_triggered_at.replace(tzinfo=timezone.utc) if sched.last_triggered_at else None
+            last_seen = (
+                sched.last_trigger_table_updated_at.replace(tzinfo=timezone.utc)
+                if sched.last_trigger_table_updated_at
+                else None
+            )
 
-            all_updated = True
+            stamps: list[datetime] = []
             for tid in table_ids:
                 table: CatalogTable | None = db.get(CatalogTable, tid)
                 if table is None:
                     logger.warning("Schedule %s references missing table %s", sched.id, tid)
-                    all_updated = False
                     break
+                if table.updated_at is None:
+                    break
+                stamps.append(table.updated_at.replace(tzinfo=timezone.utc))
+            if len(stamps) != len(table_ids):
+                continue
 
-                table_updated = table.updated_at.replace(tzinfo=timezone.utc) if table.updated_at else None
-                if table_updated is None:
-                    all_updated = False
-                    break
-                if last_triggered is not None and table_updated <= last_triggered:
-                    all_updated = False
-                    break
+            observed = max(stamps)
+            if last_seen is None:
+                # Arm, don't replay: pre-existing timestamps are not changes we saw happen.
+                sched.last_trigger_table_updated_at = observed
+                db.commit()
+                continue
 
-            if all_updated:
-                logger.info(
-                    "All %d trigger tables updated for schedule %s — triggering",
-                    len(table_ids),
-                    sched.id,
-                )
-                now = _utcnow()
-                if self._maybe_launch(db, sched, now):
-                    launched += 1
+            if not all(stamp > last_seen for stamp in stamps):
+                continue
+
+            logger.info(
+                "All %d trigger tables updated for schedule %s — triggering",
+                len(table_ids),
+                sched.id,
+            )
+            outcome = self._maybe_launch(db, sched, _utcnow())
+            if outcome is LaunchOutcome.SKIPPED:
+                # Leave the watermark so the trigger re-fires once the blocking run ends.
+                continue
+
+            sched.last_trigger_table_updated_at = observed
+            db.commit()
+            if outcome is LaunchOutcome.LAUNCHED:
+                launched += 1
         return launched
 
     # Launch helpers
 
-    def _has_active_run(self, db: Session, registration_id: int) -> bool:
+    def _has_active_run(self, db: Session, reg: FlowRegistration) -> bool:
+        """Whether the flow has an unfinished run, matched on either key.
+
+        The ``flow_uuid`` arm mirrors core's registration-scoped queries; the
+        ``registration_id`` arm still counts rows written before runs carried a uuid
+        (a NULL uuid never satisfies the equality, so the OR stays safe).
+        """
         return (
-            db.query(FlowRun).filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None)).first()
+            db.query(FlowRun)
+            .filter(
+                (FlowRun.registration_id == reg.id) | (FlowRun.flow_uuid == reg.flow_uuid),
+                FlowRun.ended_at.is_(None),
+            )
+            .first()
             is not None
         )
 
-    def _maybe_launch(self, db: Session, sched: FlowSchedule, now: datetime) -> bool:
-        """Create a run record and spawn the flow if no run is active.
-
-        Returns ``True`` if a flow was launched.
-        """
+    def _maybe_launch(self, db: Session, sched: FlowSchedule, now: datetime) -> LaunchOutcome:
+        """Create a run record and spawn the flow if no run is active."""
         reg: FlowRegistration | None = db.get(FlowRegistration, sched.registration_id)
         if reg is None:
             logger.warning("Schedule %s references missing flow registration %s", sched.id, sched.registration_id)
-            return False
+            return LaunchOutcome.FAILED
 
-        if self._has_active_run(db, sched.registration_id):
+        if self._has_active_run(db, reg):
             logger.info("Skipping schedule %s — flow '%s' already has an active run", sched.id, reg.name)
-            return False
+            return LaunchOutcome.SKIPPED
 
         # Create a run record *before* spawning so it shows as active
         run = FlowRun(
             registration_id=reg.id,
+            flow_uuid=reg.flow_uuid,
             flow_name=reg.name,
             flow_path=reg.flow_path,
             user_id=sched.owner_id,
@@ -435,17 +506,22 @@ class FlowScheduler:
             reg.flow_path,
         )
 
-        pid = self._spawn_flow(reg.flow_path, run.id)
-        if pid is not None:
-            run.pid = pid
-            db.commit()
-        else:
+        try:
+            pid = self._spawn_flow(reg.flow_path, run.id)
+        except Exception:
+            logger.exception("Spawn raised for run %s", run.id)
+            pid = None
+
+        if pid is None:
             logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
             run.ended_at = _utcnow()
             run.success = False
             db.commit()
-            return False
-        return True
+            return LaunchOutcome.FAILED
+
+        run.pid = pid
+        db.commit()
+        return LaunchOutcome.LAUNCHED
 
     def _spawn_flow(self, flow_path: str, run_id: int) -> int | None:
         """Fire-and-forget a ``flowfile run flow`` subprocess.
