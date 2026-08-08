@@ -380,6 +380,7 @@ export default function useDragAndDrop() {
         output: node.numberOfOutputs,
         dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
         output_names: node.nodeTemplate?.output_names,
+        input_labels: node.nodeTemplate?.input_labels,
       });
       const newNode: Node = {
         id: String(nodeId),
@@ -801,6 +802,7 @@ export default function useDragAndDrop() {
         output: node.numberOfOutputs,
         dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
         output_names: node.nodeTemplate?.output_names,
+        input_labels: node.nodeTemplate?.input_labels,
       });
       const newNode: Node = {
         id: String(newNodeId),

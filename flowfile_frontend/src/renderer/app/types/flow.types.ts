@@ -137,6 +137,9 @@ export interface NodeTemplate {
   dependencies?: string[] | null;
   tags?: string[];
   output_names?: string[];
+  // Display-only names for the input handles, index i ↔ handle input-${i}.
+  // Rendered as the handle tooltip; the canvas letter stays positional.
+  input_labels?: string[] | null;
   // True for nodes whose handles come from per-instance input_names/output_names
   // (run_flow); every handle of such a node accepts exactly one edge.
   dynamic_inputs?: boolean;

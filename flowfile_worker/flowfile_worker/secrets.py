@@ -28,8 +28,14 @@ class SecureStorage:
     """A secure local storage mechanism for reading secrets using Fernet encryption."""
 
     def __init__(self):
-        app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
-        self.storage_path = Path(app_data) / "flowfile"
+        # Must resolve to the same directory core writes to: core encrypts with the
+        # master key found here, and the worker re-derives it independently.
+        override = os.environ.get("FLOWFILE_SECURE_STORAGE_PATH")
+        if override:
+            self.storage_path = Path(override)
+        else:
+            app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
+            self.storage_path = Path(app_data) / "flowfile"
         logger.debug(f"Using storage path: {self.storage_path}")
         self.key_path = self.storage_path / ".secret_key"
 

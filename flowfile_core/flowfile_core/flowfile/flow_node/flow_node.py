@@ -1032,16 +1032,24 @@ class FlowNode:
     def _slot_input_pairs(self) -> list[tuple[Optional["FlowNode"], str]]:
         """Positional inputs for the node function, as (source_node, source_handle).
 
-        Static nodes: one pair per connected input, in ``all_inputs`` order —
-        byte-equivalent to the historical behavior. Dynamic-input nodes: index i
-        corresponds to handle ``input-i`` (0 = the parameter handle); unconnected
-        slots yield ``(None, DEFAULT_OUTPUT_HANDLE)`` so the function signature
-        stays positional with gaps preserved.
+        Static nodes: one pair per connected input, in canvas handle order
+        (input-0, input-1, input-2 -> main, right, left). ``all_inputs`` yields
+        main + [left, right], which swaps the last two for a 3-input node — the
+        canvas labels the handles top-to-bottom, so the arguments must follow.
+        Dynamic-input nodes: index i corresponds to handle ``input-i`` (0 = the
+        parameter handle); unconnected slots yield ``(None, DEFAULT_OUTPUT_HANDLE)``
+        so the function signature stays positional with gaps preserved.
         """
         if not self.accepts_dynamic_inputs:
+            ordered = [
+                *(self.node_inputs.main_inputs or []),
+                self.node_inputs.right_input,
+                self.node_inputs.left_input,
+            ]
             return [
                 (node, self._input_output_handles.get(node.node_id, DEFAULT_OUTPUT_HANDLE))
-                for node in self.all_inputs
+                for node in ordered
+                if node is not None
             ]
         keyed = self.node_inputs.keyed_inputs or {}
         source_handles = self.node_inputs.keyed_source_handles or {}
@@ -1801,22 +1809,22 @@ class FlowNode:
         if self.accepts_dynamic_inputs:
             return self._delete_keyed_connection(node_id, connection_type, complete)
         deleted: bool = False
-        if connection_type == "input-0":
-            for i, node in enumerate(self.node_inputs.main_inputs):
+        if connection_type == "input-0" or complete:
+            for i, node in enumerate(self.node_inputs.main_inputs or []):
                 if node.node_id == node_id:
                     self.node_inputs.main_inputs.pop(i)
                     deleted = True
                     if not complete:
                         continue
-        elif connection_type == "input-1" or complete:
+        if connection_type == "input-1" or complete:
             if self.node_inputs.right_input is not None and self.node_inputs.right_input.node_id == node_id:
                 self.node_inputs.right_input = None
                 deleted = True
-        elif connection_type == "input-2" or complete:
-            if self.node_inputs.left_input is not None and self.node_inputs.right_input.node_id == node_id:
+        if connection_type == "input-2" or complete:
+            if self.node_inputs.left_input is not None and self.node_inputs.left_input.node_id == node_id:
                 self.node_inputs.left_input = None
                 deleted = True
-        else:
+        if not deleted and connection_type not in ("input-0", "input-1", "input-2"):
             logger.warning("Could not find the connection to delete...")
         if deleted:
             self._input_output_handles.pop(node_id, None)
@@ -2165,8 +2173,10 @@ class FlowNode:
             # Per-instance handles: pass names verbatim (may be [] -> zero outputs,
             # or a single labeled output) so the frontend derives counts from them.
             template_fields["output_names"] = output_names
-        else:
-            template_fields["output_names"] = output_names if output_names and len(output_names) > 1 else None
+        elif output_names and len(output_names) > 1:
+            template_fields["output_names"] = output_names
+        # else: keep the template's own names — an unconfigured node has no
+        # settings snapshot yet, and clobbering here would drop the tooltips.
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,

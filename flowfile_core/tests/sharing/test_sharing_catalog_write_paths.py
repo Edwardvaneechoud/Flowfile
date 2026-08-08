@@ -271,6 +271,138 @@ def test_optimize_and_vacuum_allowed_with_manage(users, alice_delta_table, team,
     assert calls == [("optimize", alice_delta_table), ("vacuum", alice_delta_table)]
 
 
+def test_table_edits_denied_for_reader(users, client_for, alice_delta_table, team, grant_factory):
+    """The edit surface is a data write: a use-grantee gets 403 like optimize/vacuum."""
+    bob = client_for("bob")
+    grant_factory("catalog_table", alice_delta_table, team, permission="use", granted_by=users["alice"].id)
+
+    edits = bob.post(
+        f"/catalog/tables/{alice_delta_table}/edits",
+        json={"key_columns": ["id"], "upsert_columns": ["id"], "upsert_rows": [[1]]},
+    )
+    assert edits.status_code == 403, edits.text
+
+    key_column = bob.post(f"/catalog/tables/{alice_delta_table}/key-column", json={"column_name": "record_id"})
+    assert key_column.status_code == 403, key_column.text
+
+
+def test_table_edits_allowed_with_manage(users, alice_delta_table, team, grant_factory):
+    """The auth gate passes for a manage grantee; the delta layer is stubbed so the
+    test does not depend on real table data or a running worker."""
+    from datetime import datetime, timezone
+
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.schemas.catalog_schema import CatalogTableEditsRequest, CatalogTableOut
+
+    grant_factory("catalog_table", alice_delta_table, team, permission="manage", granted_by=users["alice"].id)
+    now = datetime.now(timezone.utc)
+    dummy_out = CatalogTableOut(
+        id=alice_delta_table, name="alice_delta", owner_id=users["alice"].id, created_at=now, updated_at=now
+    )
+    calls = []
+    with get_db_context() as db:
+        bob = db.get(db_models.User, users["bob"].id)
+        svc = CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, bob))
+        svc._tables = SimpleNamespace(
+            apply_table_edits=lambda table_id, **kwargs: (calls.append(("edits", table_id)), (dummy_out, {}))[1],
+            add_table_key_column=lambda table_id, **kwargs: (calls.append(("key", table_id)), (dummy_out, {}))[1],
+        )
+        svc.apply_table_edits(
+            alice_delta_table,
+            CatalogTableEditsRequest(key_columns=["id"], upsert_columns=["id"], upsert_rows=[[1]]),
+        )
+        svc.add_table_key_column(alice_delta_table)
+    assert calls == [("edits", alice_delta_table), ("key", alice_delta_table)]
+
+
+@pytest.fixture
+def alice_prediction_table(users, alice_ns, resource_factory, tmp_path):
+    """A second table of alice's, used as a prediction-association target."""
+    return resource_factory(
+        db_models.CatalogTable,
+        name="alice_predictions",
+        namespace_id=alice_ns["schema"],
+        owner_id=users["alice"].id,
+        file_path=str(tmp_path / "alice_predictions"),
+    )
+
+
+def test_prediction_table_association_denied_for_reader(
+    users, client_for, alice_delta_table, alice_prediction_table, team, grant_factory
+):
+    """Pointing a table at its prediction table is a metadata write: a use-grantee gets 403."""
+    bob = client_for("bob")
+    grant_factory("catalog_table", alice_delta_table, team, permission="use", granted_by=users["alice"].id)
+
+    denied = bob.put(f"/catalog/tables/{alice_delta_table}", json={"prediction_table_id": alice_prediction_table})
+    assert denied.status_code == 403, denied.text
+    with get_db_context() as db:
+        assert db.get(db_models.CatalogTable, alice_delta_table).prediction_table_id is None
+
+
+def test_prediction_table_association_requires_access_to_the_target(
+    users, client_for, alice_delta_table, alice_prediction_table, team, grant_factory
+):
+    """Manage on the edited table is not access to the target: the response would echo its name."""
+    bob = client_for("bob")
+    grant_factory("catalog_table", alice_delta_table, team, permission="manage", granted_by=users["alice"].id)
+
+    denied = bob.put(f"/catalog/tables/{alice_delta_table}", json={"prediction_table_id": alice_prediction_table})
+    assert denied.status_code == 403, denied.text
+    assert "alice_predictions" not in denied.text
+    with get_db_context() as db:
+        assert db.get(db_models.CatalogTable, alice_delta_table).prediction_table_id is None
+
+    # A table id bob cannot see must not be distinguishable from one that does not exist.
+    missing = bob.put(f"/catalog/tables/{alice_delta_table}", json={"prediction_table_id": 987654})
+    assert missing.status_code == 403, missing.text
+
+
+def test_prediction_table_association_allowed_with_use_on_target(
+    users, client_for, alice_delta_table, alice_prediction_table, team, grant_factory
+):
+    """A read grant on the target is enough: the association works and the name is returned."""
+    bob = client_for("bob")
+    grant_factory("catalog_table", alice_delta_table, team, permission="manage", granted_by=users["alice"].id)
+    grant_factory("catalog_table", alice_prediction_table, team, permission="use", granted_by=users["alice"].id)
+
+    allowed = bob.put(f"/catalog/tables/{alice_delta_table}", json={"prediction_table_id": alice_prediction_table})
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["prediction_table_id"] == alice_prediction_table
+    assert allowed.json()["prediction_table_name"] == "alice_predictions"
+
+    fetched = bob.get(f"/catalog/tables/{alice_delta_table}")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["prediction_table_name"] == "alice_predictions"
+
+
+def test_prediction_table_name_hidden_when_target_not_visible(
+    users, client_for, alice_delta_table, alice_prediction_table, team, grant_factory
+):
+    """An association made by someone else degrades to a bare id for a caller who cannot see the target."""
+    with get_db_context() as db:
+        db.get(db_models.CatalogTable, alice_delta_table).prediction_table_id = alice_prediction_table
+        db.commit()
+    bob = client_for("bob")
+    grant_factory("catalog_table", alice_delta_table, team, permission="use", granted_by=users["alice"].id)
+
+    fetched = bob.get(f"/catalog/tables/{alice_delta_table}")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["prediction_table_id"] == alice_prediction_table
+    assert fetched.json()["prediction_table_name"] is None
+
+    listed = bob.get("/catalog/tables")
+    assert listed.status_code == 200, listed.text
+    row = next(r for r in listed.json() if r["id"] == alice_delta_table)
+    assert row["prediction_table_id"] == alice_prediction_table
+    assert row["prediction_table_name"] is None
+
+    # Alice still sees the name on the same rows.
+    alice = client_for("alice")
+    assert alice.get(f"/catalog/tables/{alice_delta_table}").json()["prediction_table_name"] == "alice_predictions"
+
+
 # ---------- C3 save-time: catalog-writer node settings ----------
 
 

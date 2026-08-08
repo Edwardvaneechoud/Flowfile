@@ -236,6 +236,7 @@ def merge_into_delta(
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
+    commit_metadata: dict[str, str] | None = None,
 ) -> bool:
     """Merge a Polars DataFrame into a Delta table.
 
@@ -244,6 +245,9 @@ def merge_into_delta(
 
     When *storage_options* is set, *output_path* is an object-storage URI and existence is
     probed by opening the table rather than via local filesystem checks.
+
+    *commit_metadata* (when set) is stamped onto the Delta commit as custom metadata
+    (``userMetadata`` in the log), so table history can attribute the change.
 
     Returns ``True`` if data was written, ``False`` if the write was a no-op.
     """
@@ -296,11 +300,18 @@ def merge_into_delta(
         predicate = " AND ".join(f"target.{_quote_ident(k)} = source.{_quote_ident(k)}" for k in merge_keys)
         source_arrow = df.to_arrow()
 
+        merge_kwargs: dict[str, object] = {}
+        if commit_metadata:
+            from deltalake import CommitProperties
+
+            merge_kwargs["commit_properties"] = CommitProperties(custom_metadata=commit_metadata)
+
         merger = dt.merge(
             source=source_arrow,
             predicate=predicate,
             source_alias="source",
             target_alias="target",
+            **merge_kwargs,
         )
         if merge_mode == "upsert":
             merger.when_matched_update_all().when_not_matched_insert_all().execute()
@@ -311,6 +322,280 @@ def merge_into_delta(
         else:
             raise ValueError(f"Unknown merge_mode: {merge_mode}")
     return True
+
+
+# In-place table edits (catalog "edit table data" surface)
+
+
+class DeltaEditError(ValueError):
+    """An edit payload failed validation (bad keys, uncastable values, …)."""
+
+
+class DeltaEditStaleError(Exception):
+    """Optimistic-concurrency failure: the table moved past the version the edits were based on."""
+
+    def __init__(self, expected: int, current: int):
+        self.expected = expected
+        self.current = current
+        super().__init__(f"Table is at Delta version {current}, edits were based on version {expected}")
+
+
+EDIT_COLUMN_DTYPES = ("String", "Int64", "Float64", "Boolean", "Date", "Datetime")
+"""Polars dtype names a user may pick for a column added through the edit surface."""
+
+
+def _edit_dtype(name: str) -> pl.DataType:
+    import polars as pl_
+
+    mapping: dict[str, pl.DataType] = {
+        "String": pl_.String(),
+        "Int64": pl_.Int64(),
+        "Float64": pl_.Float64(),
+        "Boolean": pl_.Boolean(),
+        "Date": pl_.Date(),
+        "Datetime": pl_.Datetime("us"),
+    }
+    if name not in mapping:
+        raise DeltaEditError(f"Unsupported dtype for a new column: {name!r} (allowed: {', '.join(EDIT_COLUMN_DTYPES)})")
+    return mapping[name]
+
+
+def _edit_rows_to_frame(
+    columns: list[str],
+    rows: list[list],
+    target_schema: dict[str, pl.DataType],
+) -> pl.DataFrame:
+    """Build a typed DataFrame from row-major JSON cell values.
+
+    Values arrive JSON-typed (str/int/float/bool/None); each column is cast to the
+    target table's dtype, with string→temporal handled via the parsing helpers so
+    both ``2024-01-02 10:11:12`` and ISO ``T`` forms round-trip.
+    """
+    import polars as pl_
+
+    for i, row in enumerate(rows):
+        if len(row) != len(columns):
+            raise DeltaEditError(f"Row {i} has {len(row)} values, expected {len(columns)}")
+
+    data = {col: [row[i] for row in rows] for i, col in enumerate(columns)}
+    df = pl_.DataFrame(data, strict=False)
+
+    exprs = []
+    for col in columns:
+        target = target_schema[col]
+        current = df.schema[col]
+        if current == target:
+            continue
+        if target.is_nested() or isinstance(target, pl_.Binary | pl_.Object):
+            raise DeltaEditError(f"Column {col!r} has unsupported dtype {target} for editing")
+        expr = pl_.col(col)
+        if current == pl_.String:
+            if target == pl_.Date:
+                expr = expr.str.to_date()
+            elif isinstance(target, pl_.Datetime):
+                expr = expr.str.to_datetime(time_unit=target.time_unit, time_zone=target.time_zone)
+            elif target == pl_.Time:
+                expr = expr.str.to_time()
+            else:
+                expr = expr.cast(target)
+        else:
+            expr = expr.cast(target)
+        exprs.append(expr)
+    try:
+        return df.with_columns(exprs) if exprs else df
+    except Exception as exc:
+        raise DeltaEditError(f"Edited values could not be converted to the table's column types: {exc}") from exc
+
+
+def _require_unique_keys(df: pl.DataFrame, key_columns: list[str], what: str) -> None:
+    keys = df.select(key_columns)
+    if any(count > 0 for count in keys.null_count().row(0)):
+        raise DeltaEditError(f"{what} contain null key values in {key_columns}")
+    if keys.is_duplicated().any():
+        raise DeltaEditError(f"{what} contain duplicate key values in {key_columns}")
+
+
+def apply_delta_edits(
+    table_path: str,
+    key_columns: list[str],
+    upsert_columns: list[str] | None = None,
+    upsert_rows: list[list] | None = None,
+    new_columns: list[dict] | None = None,
+    delete_keys: list[list] | None = None,
+    expected_version: int | None = None,
+    storage_options: dict[str, str] | None = None,
+    commit_metadata: dict[str, str] | None = None,
+) -> dict:
+    """Apply row-level edits (keyed upserts, deletes, new columns) to an existing Delta table.
+
+    The payload is UI-sized: *upsert_rows* / *delete_keys* are row-major JSON cell
+    values from an edit grid. Edits attach to rows via *key_columns*, which must
+    uniquely identify rows in the target table — validated here, because a merge
+    over duplicate keys would silently mis-attach values.
+
+    *expected_version* enables optimistic concurrency: when set and the table's
+    current Delta version differs, ``DeltaEditStaleError`` is raised before writing.
+
+    *new_columns* entries are ``{"name", "dtype"}`` with dtype one of
+    ``EDIT_COLUMN_DTYPES``; they are added via Delta schema evolution even when no
+    rows reference them yet.
+
+    Returns a dict with ``rows_upserted``, ``rows_deleted``, ``new_version`` and
+    refreshed table metadata (``schema``, ``row_count``, ``column_count``, ``size_bytes``).
+    """
+    import polars as pl_
+    from deltalake import DeltaTable
+
+    dt = _open_delta_or_none(table_path, storage_options)
+    if dt is None:
+        raise DeltaEditError(f"No Delta table found at {table_path}")
+
+    current_version = dt.version()
+    if expected_version is not None and current_version != expected_version:
+        raise DeltaEditStaleError(expected=expected_version, current=current_version)
+
+    target_schema = dict(pl_.scan_delta(table_path, storage_options=storage_options).collect_schema())
+    missing_keys = [k for k in key_columns if k not in target_schema]
+    if missing_keys:
+        raise DeltaEditError(f"Key columns not in table schema: {missing_keys}")
+
+    new_columns = new_columns or []
+    for spec in new_columns:
+        if spec["name"] in target_schema:
+            raise DeltaEditError(f"Column {spec['name']!r} already exists in the table")
+        target_schema[spec["name"]] = _edit_dtype(spec["dtype"])
+
+    # Aliased count so a real column named "len" can still serve as a key.
+    count_col = "__ff_edit_group_count__"
+    key_dupes = (
+        pl_.scan_delta(table_path, storage_options=storage_options)
+        .group_by(key_columns)
+        .agg(pl_.len().alias(count_col))
+        .filter(pl_.col(count_col) > 1)
+        .select(pl_.len())
+        .collect()
+        .item()
+    )
+    if key_dupes:
+        raise DeltaEditError(
+            f"Key columns {key_columns} do not uniquely identify rows "
+            f"({key_dupes} duplicated key groups); pick different key columns or add a record id column"
+        )
+
+    # Validate and build every frame before the first commit, so a rejected
+    # payload never leaves a partially-applied sequence behind.
+    source: pl.DataFrame | None = None
+    if upsert_rows:
+        if not upsert_columns:
+            raise DeltaEditError("upsert_rows requires upsert_columns")
+        unknown = [c for c in upsert_columns if c not in target_schema]
+        if unknown:
+            raise DeltaEditError(f"Unknown columns in edit payload: {unknown}")
+        missing = [k for k in key_columns if k not in upsert_columns]
+        if missing:
+            raise DeltaEditError(f"Edit payload must include the key columns; missing: {missing}")
+        source = _edit_rows_to_frame(upsert_columns, upsert_rows, target_schema)
+        _require_unique_keys(source, key_columns, "Edited rows")
+
+    deletes: pl.DataFrame | None = None
+    if delete_keys:
+        deletes = _edit_rows_to_frame(key_columns, delete_keys, target_schema)
+        _require_unique_keys(deletes, key_columns, "Deleted rows")
+
+    rows_upserted = 0
+    rows_deleted = 0
+
+    # Schema evolution for declared new columns the upsert payload does not carry:
+    # merge_into_delta only evolves columns present in its source frame, so a
+    # column added without any values yet needs an explicit 0-row append.
+    covered = set(upsert_columns or [])
+    uncovered = [spec for spec in new_columns if spec["name"] not in covered]
+    if uncovered:
+        empty = pl_.DataFrame(schema={spec["name"]: _edit_dtype(spec["dtype"]) for spec in uncovered})
+        write_kwargs: dict[str, object] = {}
+        if storage_options is not None:
+            write_kwargs["storage_options"] = storage_options
+        empty.write_delta(table_path, mode="append", delta_write_options={"schema_mode": "merge"}, **write_kwargs)
+
+    if source is not None:
+        merge_into_delta(
+            source,
+            table_path,
+            merge_mode="upsert",
+            merge_keys=key_columns,
+            storage_options=storage_options,
+            commit_metadata=commit_metadata,
+        )
+        rows_upserted = source.height
+
+    if deletes is not None:
+        merge_into_delta(
+            deletes,
+            table_path,
+            merge_mode="delete",
+            merge_keys=key_columns,
+            storage_options=storage_options,
+            commit_metadata=commit_metadata,
+        )
+        rows_deleted = deletes.height
+
+    refreshed = pl_.scan_delta(table_path, storage_options=storage_options)
+    schema = dict(refreshed.collect_schema())
+    row_count = int(refreshed.select(pl_.len()).collect().item())
+    return {
+        "rows_upserted": rows_upserted,
+        "rows_deleted": rows_deleted,
+        "new_version": DeltaTable(table_path, without_files=True, storage_options=storage_options).version(),
+        "schema": [{"name": name, "dtype": str(dtype)} for name, dtype in schema.items()],
+        "row_count": row_count,
+        "column_count": len(schema),
+        "size_bytes": get_delta_size_bytes(table_path, storage_options=storage_options),
+    }
+
+
+def add_delta_row_id_column(
+    table_path: str,
+    column_name: str = "record_id",
+    expected_version: int | None = None,
+    storage_options: dict[str, str] | None = None,
+) -> dict:
+    """Rewrite a Delta table with a sequential ``Int64`` row-id column appended.
+
+    The escape hatch for tables with no natural unique key: the edit surface needs
+    key columns, so this mints them once. A full-table rewrite — the caller decides
+    where it runs (worker child in offload mode, in-process otherwise).
+    """
+    import polars as pl_
+    from deltalake import DeltaTable
+
+    dt = _open_delta_or_none(table_path, storage_options)
+    if dt is None:
+        raise DeltaEditError(f"No Delta table found at {table_path}")
+    current_version = dt.version()
+    if expected_version is not None and current_version != expected_version:
+        raise DeltaEditStaleError(expected=expected_version, current=current_version)
+
+    existing = {f.name for f in dt.schema().fields}
+    if column_name in existing:
+        raise DeltaEditError(f"Column {column_name!r} already exists in the table")
+
+    df = pl_.scan_delta(table_path, storage_options=storage_options).collect()
+    df = df.with_row_index(column_name, offset=1).with_columns(pl_.col(column_name).cast(pl_.Int64))
+    # Re-check right before the overwrite: a commit that landed while we collected
+    # would otherwise be silently erased by the full rewrite.
+    latest = DeltaTable(table_path, without_files=True, storage_options=storage_options).version()
+    if latest != current_version:
+        raise DeltaEditStaleError(expected=current_version, current=latest)
+    write_delta(df, table_path, mode="overwrite", storage_options=storage_options)
+
+    schema = df.schema
+    return {
+        "new_version": DeltaTable(table_path, without_files=True, storage_options=storage_options).version(),
+        "schema": [{"name": name, "dtype": str(dtype)} for name, dtype in schema.items()],
+        "row_count": df.height,
+        "column_count": len(schema),
+        "size_bytes": get_delta_size_bytes(table_path, storage_options=storage_options),
+    }
 
 
 # SCD2 (slowly changing dimension, type 2)

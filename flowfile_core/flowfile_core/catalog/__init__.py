@@ -44,9 +44,11 @@ from .exceptions import (
 )
 from .repository import CatalogRepository, SQLAlchemyCatalogRepository
 from .service import CatalogService
+from .services.tables import KEEP_PREDICTION
 
 __all__ = [
     "CatalogService",
+    "KEEP_PREDICTION",
     "CatalogRepository",
     "SQLAlchemyCatalogRepository",
     "CatalogError",

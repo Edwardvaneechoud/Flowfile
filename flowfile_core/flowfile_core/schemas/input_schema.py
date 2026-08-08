@@ -550,6 +550,16 @@ class NodeFilter(NodeSingleInput):
     # single-output behaviour for existing flows.
     split_mode: bool = False
 
+    @property
+    def output_names(self) -> list[str] | None:
+        """Declared output handles, so the canvas can build both without the drawer.
+
+        The template's ``output`` stays 1 for backwards compatibility; the canvas
+        sizes the handle list off ``max(output, len(output_names))``. Matches the
+        keys ``FlowDataEngine.filter_split`` produces at run time.
+        """
+        return ["pass", "fail"] if self.split_mode else None
+
     def get_default_description(self) -> str:
         """Describes the filter condition."""
         fi = self.filter_input

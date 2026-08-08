@@ -1816,6 +1816,16 @@ class KernelManager:
         if request.source_registration_id is None:
             request.source_registration_id = self.get_scratch_flow_id(kernel_id)
 
+        # Stamp server-side: the notebook /execute[_cell] routes take the request
+        # straight from the client (no token), and a reclaimed or adopted
+        # container may still carry a stale FLOWFILE_INTERNAL_TOKEN.
+        try:
+            from flowfile_core.auth.jwt import get_internal_token
+
+            request.internal_token = get_internal_token()
+        except (ValueError, ImportError):
+            pass
+
         lock = self._exec_lock_for(kernel_id)
         if not self._acquire_cancellable(lock, cancel_event):
             # Nothing was submitted — do NOT interrupt (that would kill the

@@ -841,6 +841,14 @@ class SQLAlchemyCatalogRepository:
         return table
 
     def delete_table(self, table_id: int) -> None:
+        """Delete a table row with its read links, favourites, visualizations, grants and
+        ``prediction_table_id`` references, in one transaction. Schedule trigger rows are
+        cleaned per-schedule elsewhere and are deliberately not touched here.
+
+        ``prediction_table_id`` has no DB-level FK, so surviving references are nulled in this
+        same transaction rather than by a follow-up commit: SQLite reuses rowids, so a reference
+        that outlived the delete would later resolve to an unrelated table.
+        """
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
         # Drop grants on the table's visualizations before the bulk delete (this is a
@@ -850,10 +858,16 @@ class SQLAlchemyCatalogRepository:
             sharing.delete_grants_for_resource(self._db, "visualization", viz_id)
         self._db.query(CatalogVisualization).filter_by(catalog_table_id=table_id).delete()
         sharing.delete_grants_for_resource(self._db, "catalog_table", table_id)
+        # Self-assigning updated_at keeps it in the SET clause, suppressing onupdate — losing a
+        # prediction reference is not a data change and must not fire table-trigger schedules.
+        self._db.query(CatalogTable).filter(CatalogTable.prediction_table_id == table_id).update(
+            {CatalogTable.prediction_table_id: None, CatalogTable.updated_at: CatalogTable.updated_at},
+            synchronize_session=False,
+        )
         table = self._db.get(CatalogTable, table_id)
         if table is not None:
             self._db.delete(table)
-            self._db.commit()
+        self._db.commit()
 
     def count_tables_in_namespace(self, namespace_id: int) -> int:
         return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).count()

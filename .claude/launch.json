@@ -8,6 +8,12 @@
       "port": 63578
     },
     {
+      "name": "worker",
+      "runtimeExecutable": "poetry",
+      "runtimeArgs": ["run", "flowfile_worker"],
+      "port": 63579
+    },
+    {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:web", "--prefix", "flowfile_frontend"],

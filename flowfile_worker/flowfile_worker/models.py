@@ -264,6 +264,52 @@ class CatalogVacuumResponse(BaseModel):
     size_bytes: int | None = None
 
 
+class CatalogNewColumn(BaseModel):
+    name: str
+    dtype: str  # One of shared.delta_utils.EDIT_COLUMN_DTYPES
+
+
+class CatalogApplyEditsRequest(BaseModel):
+    """Row-level edits from the catalog edit surface, applied as keyed Delta merges."""
+
+    table_path: str  # Bare table directory name (no path separators)
+    key_columns: list[str]
+    expected_version: int | None = None
+    upsert_columns: list[str] | None = None
+    upsert_rows: list[list] | None = None
+    new_columns: list[CatalogNewColumn] = []
+    delete_keys: list[list] | None = None
+    commit_metadata: dict[str, str] | None = None
+    storage: CatalogStorageInterface | None = None
+
+
+class CatalogApplyEditsResponse(BaseModel):
+    rows_upserted: int = 0
+    rows_deleted: int = 0
+    new_version: int | None = None
+    column_schema: list[ColumnSchema] = []
+    row_count: int = 0
+    column_count: int = 0
+    size_bytes: int | None = None
+
+
+class CatalogAddKeyColumnRequest(BaseModel):
+    """Rewrite a Delta catalog table with a sequential row-id column appended."""
+
+    table_path: str  # Bare table directory name (no path separators)
+    column_name: str = "record_id"
+    expected_version: int | None = None
+    storage: CatalogStorageInterface | None = None
+
+
+class CatalogAddKeyColumnResponse(BaseModel):
+    new_version: int | None = None
+    column_schema: list[ColumnSchema] = []
+    row_count: int = 0
+    column_count: int = 0
+    size_bytes: int | None = None
+
+
 class TableMetadataRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
     storage: CatalogStorageInterface | None = None

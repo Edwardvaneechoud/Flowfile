@@ -30,6 +30,8 @@ from flowfile_core.kernel.manager import (
     parse_image_version,
 )
 from flowfile_core.kernel.models import (
+    ExecuteRequest,
+    ExecuteResult,
     ImageFlavour,
     KernelConfig,
     KernelInfo,
@@ -1001,3 +1003,59 @@ class TestExecuteKernelDown:
         # The container reference is kept so the next start's tracked cleanup
         # replaces the name-holder instead of 409ing on it.
         assert k.container_id == "abc"
+
+
+class TestExecuteSyncInternalTokenStamp:
+    """execute_sync is the one choke point where the live token gets attached.
+
+    The notebook /execute and /execute_cell routes deserialize the ExecuteRequest
+    straight from the client body (no token), and a reclaimed or adopted
+    container may still carry a stale baked FLOWFILE_INTERNAL_TOKEN.
+    """
+
+    @staticmethod
+    def _manager_capturing_request(monkeypatch):
+        mgr = _bare_manager()
+        kernel = KernelInfo(id="k1", name="k1", state=KernelState.IDLE)
+        mgr._kernels["k1"] = kernel
+
+        captured = {}
+
+        def fake_execute_locked(kernel_id, kernel_info, request, flow_logger, cancel_event):
+            captured["request"] = request
+            return ExecuteResult(success=True)
+
+        monkeypatch.setattr(mgr, "_execute_locked", fake_execute_locked)
+        return mgr, captured
+
+    def test_execute_sync_stamps_internal_token(self, monkeypatch):
+        from flowfile_core.auth.jwt import get_internal_token
+
+        mgr, captured = self._manager_capturing_request(monkeypatch)
+        expected = get_internal_token()
+
+        mgr.execute_sync("k1", ExecuteRequest(node_id=1, code="", source_registration_id=1))
+        assert captured["request"].internal_token == expected
+
+        # A client-supplied token in the request body is overwritten, not forwarded.
+        mgr.execute_sync(
+            "k1",
+            ExecuteRequest(
+                node_id=1, code="", source_registration_id=1, internal_token="attacker-supplied"
+            ),
+        )
+        assert captured["request"].internal_token == expected
+
+    def test_execute_sync_stamp_tolerates_unconfigured_token(self, monkeypatch):
+        """An unconfigured token must not break execution — it stays unstamped."""
+        import flowfile_core.auth.jwt as jwt_module
+
+        mgr, captured = self._manager_capturing_request(monkeypatch)
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        monkeypatch.delenv("FLOWFILE_INTERNAL_TOKEN", raising=False)
+        monkeypatch.setattr(jwt_module, "_internal_token", None)
+
+        result = mgr.execute_sync("k1", ExecuteRequest(node_id=1, code="", source_registration_id=1))
+
+        assert result.success is True
+        assert captured["request"].internal_token is None

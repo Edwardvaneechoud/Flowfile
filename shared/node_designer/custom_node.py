@@ -432,6 +432,10 @@ class CustomNodeBase(BaseModel):
     number_of_inputs: int = 1
     number_of_outputs: int = 1
 
+    # Display-only names for the canvas input handles, index i <-> port i. Shown
+    # as a tooltip on the handle; the ports themselves stay positional.
+    input_labels: list[str] = Field(default_factory=list)
+
     # Execution environment: "local" runs in the Flowfile process/worker,
     # "kernel" runs in an isolated Docker kernel. dependencies are pip specs —
     # a requirement the chosen kernel must satisfy, never an install step;
@@ -560,6 +564,7 @@ class CustomNodeBase(BaseModel):
             "requires_kernel": self.requires_kernel,
             "kernel_id": self.kernel_id,
             "output_names": self.output_names,
+            "input_labels": list(self.input_labels),
             "node_group": self.node_group,
             "title": self.title,
             "intro": self.intro,
@@ -875,6 +880,8 @@ if not inputs:
             node_type=self.node_type,
             transform_type=self.transform_type,
             custom_node=True,
+            output_names=self.output_names or None,
+            input_labels=list(self.input_labels) or None,
             execution_environment=self.environment,
             dependencies=self.dependencies or None,
             # pydantic v2 doesn't coerce class-attribute defaults, so a

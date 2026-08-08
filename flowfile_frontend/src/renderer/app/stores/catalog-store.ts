@@ -635,6 +635,19 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    /** Refresh state after the edit surface wrote to a table (data, schema and version moved). */
+    async handleTableEdited(table: CatalogTable) {
+      if (this.selectedTableId === table.id) {
+        this.selectedTable = table;
+        this.selectedVersion = null;
+        if (!table.is_remote_storage) {
+          this.loadTablePreview(table.id);
+        }
+        await this.loadTableHistory(table.id);
+      }
+      await this.loadAllTables();
+    },
+
     async optimizeTable(tableId: number, zOrderColumns?: string[] | null) {
       const result = await CatalogApi.optimizeTable(tableId, zOrderColumns);
       if (this.selectedTable && this.selectedTable.id === tableId) {

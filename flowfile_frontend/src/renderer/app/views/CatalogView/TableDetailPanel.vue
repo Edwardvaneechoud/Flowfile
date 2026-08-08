@@ -75,6 +75,13 @@
       :can-manage-grants="canManageGrants(table)"
     />
 
+    <TableEditorDialog
+      v-if="showTableEditor"
+      v-model="showTableEditor"
+      :table="table"
+      @saved="emit('editsSaved', $event)"
+    />
+
     <!-- File missing banner (physical tables only) -->
     <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
@@ -181,6 +188,18 @@
           <i class="fa-solid fa-diagram-project"></i>
           <span class="meta-link-text">{{ table.source_registration_name }}</span>
         </span>
+      </div>
+      <div v-if="table.prediction_table_id" class="meta-card">
+        <span class="meta-label">Scored by</span>
+        <span
+          v-if="table.prediction_table_name"
+          class="meta-value meta-static"
+          :title="table.prediction_table_name"
+        >
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span class="meta-link-text">{{ table.prediction_table_name }}</span>
+        </span>
+        <span v-else class="meta-value meta-muted">Prediction table unavailable</span>
       </div>
       <div v-if="table.table_type === 'virtual' && !table.sql_query" class="meta-card">
         <span class="meta-label">Optimization</span>
@@ -363,6 +382,15 @@
         <span v-if="preview" class="preview-info">
           Showing {{ preview.rows.length }} of {{ preview.total_rows }} rows
         </span>
+        <button
+          v-if="canEditData"
+          class="btn btn-sm btn-primary edit-data-btn"
+          title="Edit table data (cells, rows, columns) in place"
+          @click="showTableEditor = true"
+        >
+          <i class="fa-solid fa-pen-to-square"></i>
+          Edit data
+        </button>
       </div>
       <div v-if="loadingPreview" class="loading-state">Loading preview...</div>
       <div v-else-if="previewError" class="preview-error">
@@ -423,12 +451,14 @@ import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../..
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 import VisualizationsTab from "./VisualizationsTab.vue";
 import TableMaintenance from "./TableMaintenance.vue";
+import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
+const showTableEditor = ref(false);
 const { canShare, canManage, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
@@ -452,6 +482,7 @@ const emit = defineEmits([
   "recoverFromRun",
   "loadPreview",
   "refreshHistory",
+  "editsSaved",
 ]);
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
@@ -468,6 +499,16 @@ const isViewingHistorical = computed(
     props.selectedVersion !== null &&
     props.tableHistory !== null &&
     props.selectedVersion !== props.tableHistory.current_version,
+);
+
+// Edit surface: physical non-SCD2 tables with data on disk, manage access required.
+// Legacy Parquet tables pass this gate but are refused server-side with a clear message.
+const canEditData = computed(
+  () =>
+    canManage(props.table) &&
+    props.table.table_type !== "virtual" &&
+    props.table.file_exists &&
+    !props.table.scd2,
 );
 
 function formatTimestamp(ts: string | null): string {
@@ -722,6 +763,21 @@ function formatCell(value: any): string {
 
 .meta-link:hover {
   text-decoration: underline;
+}
+
+/* Same layout as .meta-link without the affordances — this one does not navigate. */
+.meta-static {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  font-size: var(--font-size-sm);
+  min-width: 0;
+}
+
+.meta-muted {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal, 400);
+  color: var(--color-text-muted);
 }
 
 .meta-card-clickable {

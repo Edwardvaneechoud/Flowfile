@@ -308,6 +308,9 @@ export interface CatalogTable {
   source_registration_id: number | null;
   source_registration_name: string | null;
   source_run_id: number | null;
+  // Points at a sibling catalog table holding model predictions for this table.
+  prediction_table_id: number | null;
+  prediction_table_name: string | null;
   read_by_flows: FlowSummary[];
   table_type: "physical" | "virtual";
   producer_registration_id: number | null;
@@ -346,6 +349,52 @@ export interface VacuumTableResponse {
   size_bytes: number | null;
 }
 
+// Table Edits (catalog edit surface)
+
+export type NewColumnDtype = "String" | "Int64" | "Float64" | "Boolean" | "Date" | "Datetime";
+
+export interface NewColumnSpec {
+  name: string;
+  dtype: NewColumnDtype;
+}
+
+export interface CatalogTableEditsRequest {
+  key_columns: string[];
+  expected_version?: number | null;
+  upsert_columns?: string[] | null;
+  upsert_rows?: unknown[][] | null;
+  new_columns?: NewColumnSpec[];
+  delete_keys?: unknown[][] | null;
+}
+
+export interface CatalogTableEditsResponse {
+  table: CatalogTable;
+  rows_upserted: number;
+  rows_deleted: number;
+  new_version: number | null;
+}
+
+export interface CatalogTableKeyColumnRequest {
+  column_name?: string;
+  expected_version?: number | null;
+}
+
+export interface CatalogTableKeyColumnResponse {
+  table: CatalogTable;
+  column_name: string;
+  new_version: number | null;
+}
+
+/** Structured detail of the 409 the edits endpoint returns when the table moved. */
+export interface StaleWriteDetail {
+  error: "stale_write";
+  resource_type: string;
+  resource_id: number;
+  expected: number | null;
+  current: number | null;
+  message: string;
+}
+
 export interface CatalogTableCreate {
   name: string;
   file_path: string;
@@ -357,6 +406,8 @@ export interface CatalogTableUpdate {
   name?: string;
   description?: string;
   namespace_id?: number | null;
+  // An explicit null clears the prediction-table association.
+  prediction_table_id?: number | null;
 }
 
 export interface VirtualFlowTableCreate {

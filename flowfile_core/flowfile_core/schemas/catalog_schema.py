@@ -240,9 +240,16 @@ class CatalogTableCreate(BaseModel):
 
 
 class CatalogTableUpdate(BaseModel):
+    """Patch a catalog table's metadata.
+
+    ``prediction_table_id`` is tri-state: an explicitly-sent ``null`` clears the association,
+    an absent field keeps whatever is stored (the route distinguishes via ``model_fields_set``).
+    """
+
     name: str | None = None
     description: str | None = None
     namespace_id: int | None = None
+    prediction_table_id: int | None = None
 
 
 class CatalogTableFromDataCreate(BaseModel):
@@ -403,6 +410,9 @@ class CatalogTableOut(BaseModel):
     partition_columns: list[str] | None = None
     # Set only for tables maintained by an SCD2 write; NULL for every other table.
     scd2: Scd2TableConfig | None = None
+    # Sibling catalog table holding model predictions; the name is None when the target row is gone.
+    prediction_table_id: int | None = None
+    prediction_table_name: str | None = None
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
@@ -495,6 +505,57 @@ class VacuumTableResponse(BaseModel):
     files_removed: list[str] = Field(default_factory=list)
     file_count: int = 0
     size_bytes: int | None = None
+
+
+# ==================== Table Edit Schemas ====================
+
+
+class NewColumnSpec(BaseModel):
+    """A column added through the edit surface (e.g. a fresh label column)."""
+
+    # Delta rejects column names containing whitespace or ,;{}()= characters.
+    name: str = Field(min_length=1, max_length=255, pattern=r"^[^\s,;{}()=]+$")
+    dtype: Literal["String", "Int64", "Float64", "Boolean", "Date", "Datetime"]
+
+
+class CatalogTableEditsRequest(BaseModel):
+    """Row-level edits from the catalog edit grid, applied as keyed Delta merges.
+
+    ``upsert_rows`` carry full values for edited/added rows in ``upsert_columns``
+    order (key columns plus whichever columns actually changed — unsent columns
+    are preserved on matched rows). ``expected_version`` is the Delta version the
+    grid was loaded at; a moved table raises a 409 stale-write instead of
+    silently clobbering another writer.
+    """
+
+    key_columns: list[str] = Field(min_length=1, max_length=8)
+    expected_version: int | None = None
+    upsert_columns: list[str] | None = None
+    upsert_rows: list[list] | None = Field(default=None, max_length=10000)
+    new_columns: list[NewColumnSpec] = Field(default_factory=list, max_length=25)
+    delete_keys: list[list] | None = Field(default=None, max_length=10000)
+
+
+class CatalogTableEditsResponse(BaseModel):
+    """Result of applying table edits: refreshed table DTO plus write metrics."""
+
+    table: CatalogTableOut
+    rows_upserted: int = 0
+    rows_deleted: int = 0
+    new_version: int | None = None
+
+
+class CatalogTableKeyColumnRequest(BaseModel):
+    """Request to mint a sequential row-id column on a table with no natural key."""
+
+    column_name: str = Field(default="record_id", min_length=1, max_length=255, pattern=r"^[^\s,;{}()=]+$")
+    expected_version: int | None = None
+
+
+class CatalogTableKeyColumnResponse(BaseModel):
+    table: CatalogTableOut
+    column_name: str
+    new_version: int | None = None
 
 
 # ==================== SQL Query Schemas ====================

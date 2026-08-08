@@ -52,7 +52,12 @@ from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.stats import StatsService
-from flowfile_core.catalog.services.tables import _KEEP_SCD2, CatalogMaterializationResult, TableService
+from flowfile_core.catalog.services.tables import (
+    _KEEP_SCD2,
+    KEEP_PREDICTION,
+    CatalogMaterializationResult,
+    TableService,
+)
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
 
@@ -98,6 +103,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
+    CatalogTableEditsRequest,
+    CatalogTableEditsResponse,
+    CatalogTableKeyColumnResponse,
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
@@ -174,7 +182,7 @@ class CatalogService:
         self._runs = FlowRunService(repo)
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
-        self._tables = TableService(repo, self._namespaces, self._flows, self._schedules)
+        self._tables = TableService(repo, self._namespaces, self._flows, self._schedules, access=access)
 
         # SqlService and VirtualTableService form a cycle: SqlService.execute_sql_query
         # uses VirtualTableService for resolution, and VirtualTableService.create_query_virtual_table
@@ -430,7 +438,7 @@ class CatalogService:
         """Enrich many flows with favourites, follows, and run stats in bulk."""
         return self._flows.bulk_enrich_flows(flows, user_id)
 
-    def _resolve_log_path(self, run_id: int, run_type: str) -> str | None:
+    def resolve_run_log_path(self, run_id: int, run_type: str) -> str | None:
         """Return the log file path for subprocess-spawned runs, if it exists."""
         return self._runs._resolve_log_path(run_id, run_type)
 
@@ -1053,12 +1061,17 @@ class CatalogService:
         name: str | None = None,
         description: str | None = None,
         namespace_id: int | None = None,
+        prediction_table_id: int | None | object = KEEP_PREDICTION,
     ) -> CatalogTableOut:
         """Update a catalog table's metadata."""
         self._require_manage("catalog_table", table_id)
+        # The association exposes the target's name on every later read, so it needs read
+        # access to the target itself — not just manage on the table being edited.
+        if prediction_table_id is not KEEP_PREDICTION and prediction_table_id is not None:
+            self._require_use("catalog_table", prediction_table_id)
         if namespace_id is not None:
             self._require_namespace_writable(namespace_id)
-        return self._tables.update_table(table_id, name, description, namespace_id)
+        return self._tables.update_table(table_id, name, description, namespace_id, prediction_table_id)
 
     def delete_table(self, table_id: int, delete_file: bool = False) -> None:
         """Delete a catalog table; optionally delete its managed storage (Delta dir / Parquet)."""
@@ -1232,6 +1245,48 @@ class CatalogService:
         """Vacuum tombstoned files from a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
         return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run)
+
+    def apply_table_edits(
+        self,
+        table_id: int,
+        edits: CatalogTableEditsRequest,
+        edited_by: str | None = None,
+    ) -> CatalogTableEditsResponse:
+        """Apply keyed row edits from the catalog edit surface (manage-gated, like overwrite)."""
+        self._require_manage("catalog_table", table_id)
+        table_out, result = self._tables.apply_table_edits(
+            table_id,
+            key_columns=edits.key_columns,
+            expected_version=edits.expected_version,
+            upsert_columns=edits.upsert_columns,
+            upsert_rows=edits.upsert_rows,
+            new_columns=[c.model_dump() for c in edits.new_columns],
+            delete_keys=edits.delete_keys,
+            edited_by=edited_by,
+        )
+        return CatalogTableEditsResponse(
+            table=table_out,
+            rows_upserted=result.get("rows_upserted", 0),
+            rows_deleted=result.get("rows_deleted", 0),
+            new_version=result.get("new_version"),
+        )
+
+    def add_table_key_column(
+        self,
+        table_id: int,
+        column_name: str = "record_id",
+        expected_version: int | None = None,
+    ) -> CatalogTableKeyColumnResponse:
+        """Mint a sequential row-id column so a keyless table becomes editable."""
+        self._require_manage("catalog_table", table_id)
+        table_out, result = self._tables.add_table_key_column(
+            table_id, column_name=column_name, expected_version=expected_version
+        )
+        return CatalogTableKeyColumnResponse(
+            table=table_out,
+            column_name=column_name,
+            new_version=result.get("new_version"),
+        )
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         """Add a table to the user's favourites (idempotent)."""
