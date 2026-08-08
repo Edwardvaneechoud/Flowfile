@@ -672,13 +672,13 @@ def test_open_run_snapshot_does_not_reuse_registration(tmp_path):
     matched by the registration-scoped reuse — the snapshot opens as a fresh, unlinked tab."""
     from datetime import datetime, timezone
 
-    # Build a real flow, stamp a registration id, and serialize it as the run snapshot.
+    # Build a real flow and serialize it as the run snapshot. save_flow now scrubs an id that
+    # resolves to no registration, so the foreign id is injected into the snapshot text instead.
     flow_path = tmp_path / "snap_src.yaml"
     flow_id = flow_file_handler.add_flow(name="snap_src", flow_path=str(flow_path), user_id=1)
     flow = flow_file_handler.get_flow(flow_id)
-    flow.flow_settings.source_registration_id = 4242
     flow.save_flow(str(flow_path))
-    snapshot_text = flow_path.read_text()
+    snapshot_text = flow_path.read_text().replace("source_registration_id: null", "source_registration_id: 4242")
     flow_file_handler.delete_flow(flow_id)
     assert "4242" in snapshot_text  # sanity: the id is baked into the snapshot
 
