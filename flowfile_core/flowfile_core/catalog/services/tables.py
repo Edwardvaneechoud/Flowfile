@@ -1131,28 +1131,39 @@ class TableService:
         # unambiguous for managed catalog directories.
         offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
 
-        if offload:
-            result = trigger_add_key_column(
-                _catalog_table_dir_name(data_path),
-                table_id,
-                column_name,
-                expected_version=expected_version,
-                storage=target.to_worker_payload() if target else None,
-            )
-        else:
-            from shared.delta_utils import DeltaEditError, DeltaEditStaleError, add_delta_row_id_column
-
-            try:
-                result = add_delta_row_id_column(
-                    data_path,
-                    column_name=column_name,
+        try:
+            if offload:
+                result = trigger_add_key_column(
+                    _catalog_table_dir_name(data_path),
+                    table_id,
+                    column_name,
                     expected_version=expected_version,
-                    storage_options=(target.storage_options or None) if target else None,
+                    storage=target.to_worker_payload() if target else None,
                 )
-            except DeltaEditStaleError as e:
-                raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e
-            except DeltaEditError as e:
-                raise ValueError(str(e)) from e
+            else:
+                from shared.delta_utils import DeltaEditError, DeltaEditStaleError, add_delta_row_id_column
+
+                try:
+                    result = add_delta_row_id_column(
+                        data_path,
+                        column_name=column_name,
+                        expected_version=expected_version,
+                        storage_options=(target.storage_options or None) if target else None,
+                    )
+                except DeltaEditStaleError as e:
+                    raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e
+                except DeltaEditError as e:
+                    raise ValueError(str(e)) from e
+        except (StaleWriteError, ValueError):
+            raise
+        except Exception:
+            # Mirrors apply_table_edits: a response lost after the rewrite committed
+            # would leave schema_json describing the pre-rewrite schema.
+            try:
+                self.overwrite_table_data(table_id, table_path=data_path, storage_format="delta")
+            except Exception:
+                logger.warning("Post-failure metadata refresh failed for table %s", table_id, exc_info=True)
+            raise
 
         schema_list = result.get("column_schema") or result.get("schema") or []
         table_out = self.overwrite_table_data(

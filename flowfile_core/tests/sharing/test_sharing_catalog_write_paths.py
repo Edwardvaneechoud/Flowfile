@@ -307,6 +307,9 @@ def test_table_edits_allowed_with_manage(users, alice_delta_table, team, grant_f
         svc._tables = SimpleNamespace(
             apply_table_edits=lambda table_id, **kwargs: (calls.append(("edits", table_id)), (dummy_out, {}))[1],
             add_table_key_column=lambda table_id, **kwargs: (calls.append(("key", table_id)), (dummy_out, {}))[1],
+            # Both write paths re-read the table so the response carries the same
+            # enrichment as a read route.
+            get_table=lambda table_id, user_id=None: dummy_out,
         )
         svc.apply_table_edits(
             alice_delta_table,

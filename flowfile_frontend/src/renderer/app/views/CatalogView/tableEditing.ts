@@ -403,6 +403,40 @@ export function joinKeyToken(values: unknown[], spec: JoinKeySpec[]): string | n
   return parts.join("\u0000");
 }
 
+/** Columns the prediction read must project, or null when the pick is incomplete.
+ *  The probability column is optional — without it confidence is simply null. */
+export function predictionProjectionColumns(
+  keyColumns: string[],
+  classColumn: string,
+  probabilityColumn: string | null,
+): string[] | null {
+  if (!classColumn) return null;
+  return [
+    ...new Set([...keyColumns, classColumn, ...(probabilityColumn ? [probabilityColumn] : [])]),
+  ];
+}
+
+export const TRUNCATED_SUGGESTION_NOTE =
+  "The prediction table was only read in part, so suggestions are off for this pass.";
+export const SCHEMA_CHANGED_SUGGESTION_NOTE =
+  "The prediction table's schema changed, so suggestions are off for this pass.";
+
+/** Why the current prediction read cannot back suggestions, or null when it can.
+ *  Truncation must be re-checked on every rebuild: rows past the cap lose their
+ *  suggestion and tail-only classes drop out of the argmax. */
+export function suggestionBlockReason(read: {
+  truncated: boolean;
+  joinSpec: JoinKeySpec[] | null;
+  columns: string[];
+  classColumn: string;
+}): string | null {
+  if (read.truncated) return TRUNCATED_SUGGESTION_NOTE;
+  if (!read.joinSpec || !read.classColumn || !read.columns.includes(read.classColumn)) {
+    return SCHEMA_CHANGED_SUGGESTION_NOTE;
+  }
+  return null;
+}
+
 /**
  * Index a prediction table by join token. A prediction table is exploded: one row
  * per (record, class) carrying that class's probability. Per key the

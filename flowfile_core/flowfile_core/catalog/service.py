@@ -1246,15 +1246,24 @@ class CatalogService:
         self._require_manage("catalog_table", table_id)
         return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run)
 
+    def _reloaded_table_out(self, table_id: int, user_id: int | None) -> CatalogTableOut:
+        """Re-read a table as a fully enriched, access-stamped DTO after a write.
+
+        ``overwrite_table_data`` knows neither the caller nor the sharing filter, so its
+        DTO carries ``is_favorite=False`` and no ``access``.
+        """
+        return self._stamp_access([self._tables.get_table(table_id, user_id)], "catalog_table")[0]
+
     def apply_table_edits(
         self,
         table_id: int,
         edits: CatalogTableEditsRequest,
         edited_by: str | None = None,
+        user_id: int | None = None,
     ) -> CatalogTableEditsResponse:
         """Apply keyed row edits from the catalog edit surface (manage-gated, like overwrite)."""
         self._require_manage("catalog_table", table_id)
-        table_out, result = self._tables.apply_table_edits(
+        _, result = self._tables.apply_table_edits(
             table_id,
             key_columns=edits.key_columns,
             expected_version=edits.expected_version,
@@ -1265,7 +1274,7 @@ class CatalogService:
             edited_by=edited_by,
         )
         return CatalogTableEditsResponse(
-            table=table_out,
+            table=self._reloaded_table_out(table_id, user_id),
             rows_upserted=result.get("rows_upserted", 0),
             rows_deleted=result.get("rows_deleted", 0),
             new_version=result.get("new_version"),
@@ -1276,14 +1285,15 @@ class CatalogService:
         table_id: int,
         column_name: str = "record_id",
         expected_version: int | None = None,
+        user_id: int | None = None,
     ) -> CatalogTableKeyColumnResponse:
         """Mint a sequential row-id column so a keyless table becomes editable."""
         self._require_manage("catalog_table", table_id)
-        table_out, result = self._tables.add_table_key_column(
+        _, result = self._tables.add_table_key_column(
             table_id, column_name=column_name, expected_version=expected_version
         )
         return CatalogTableKeyColumnResponse(
-            table=table_out,
+            table=self._reloaded_table_out(table_id, user_id),
             column_name=column_name,
             new_version=result.get("new_version"),
         )

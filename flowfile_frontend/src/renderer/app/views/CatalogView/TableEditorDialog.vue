@@ -165,7 +165,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { AgGridVue } from "@ag-grid-community/vue3";
 import type {
@@ -533,6 +534,35 @@ async function requestClose() {
   }
   emit("update:modelValue", false);
 }
+
+// Edits live only in the in-memory session until Save; the labelling workspace mutates the same one.
+const dirty = computed(() => props.modelValue && hasChanges.value);
+
+function warnOnUnload(event: BeforeUnloadEvent) {
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+watch(dirty, (isDirty) => {
+  if (isDirty) window.addEventListener("beforeunload", warnOnUnload);
+  else window.removeEventListener("beforeunload", warnOnUnload);
+});
+
+onBeforeUnmount(() => window.removeEventListener("beforeunload", warnOnUnload));
+
+onBeforeRouteLeave(async () => {
+  if (!dirty.value) return true;
+  try {
+    await ElMessageBox.confirm(
+      "You have unsaved table edits. Leave and discard them?",
+      "Discard changes",
+      { confirmButtonText: "Discard", cancelButtonText: "Keep editing", type: "warning" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+});
 
 watch(
   () => props.modelValue,

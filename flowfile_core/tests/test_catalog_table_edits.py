@@ -256,6 +256,27 @@ class TestAddTableKeyColumnService:
         with _service() as svc, pytest.raises(ValueError, match="already exists"):
             svc.add_table_key_column(table_id, column_name="text")
 
+    def test_metadata_refreshed_when_the_rewrite_lands_but_the_call_fails(self, tmp_path, monkeypatch):
+        """A response lost after the commit must not leave schema_json stale."""
+        import shared.delta_utils as delta_utils
+
+        table_id = _make_delta_table(tmp_path)
+        real = delta_utils.add_delta_row_id_column
+
+        def commit_then_lose_the_response(*args, **kwargs):
+            real(*args, **kwargs)
+            raise RuntimeError("worker response lost")
+
+        monkeypatch.setattr(delta_utils, "add_delta_row_id_column", commit_then_lose_the_response)
+
+        with _service() as svc, pytest.raises(RuntimeError, match="worker response lost"):
+            svc.add_table_key_column(table_id, column_name="record_id", expected_version=0)
+
+        with get_db_context() as db:
+            table = db.get(CatalogTable, table_id)
+            schema_names = {c["name"] for c in json.loads(table.schema_json)}
+        assert "record_id" in schema_names, "catalog record still describes the pre-rewrite schema"
+
 
 class TestTableEditsApi:
     def test_edits_endpoint_happy_path(self, client, tmp_path):
@@ -324,6 +345,35 @@ class TestTableEditsApi:
         body = response.json()
         assert body["column_name"] == "record_id"
         assert any(c["name"] == "record_id" for c in body["table"]["schema_columns"])
+
+    def test_edits_response_carries_the_same_enrichment_as_a_read(self, client, tmp_path):
+        """The store replaces selectedTable with this DTO, so it must not lose is_favorite."""
+        table_id = _make_delta_table(tmp_path)
+        assert client.post(f"/catalog/tables/{table_id}/favorite").status_code == 201
+        assert client.get(f"/catalog/tables/{table_id}").json()["is_favorite"] is True
+
+        response = client.post(
+            f"/catalog/tables/{table_id}/edits",
+            json={
+                "key_columns": ["id"],
+                "expected_version": 0,
+                "upsert_columns": ["id", "text"],
+                "upsert_rows": [[1, "edited"]],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["table"]["is_favorite"] is True
+
+    def test_key_column_response_carries_the_same_enrichment_as_a_read(self, client, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        assert client.post(f"/catalog/tables/{table_id}/favorite").status_code == 201
+
+        response = client.post(
+            f"/catalog/tables/{table_id}/key-column",
+            json={"column_name": "record_id", "expected_version": 0},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["table"]["is_favorite"] is True
 
     def test_key_column_bad_name_rejected(self, client, tmp_path):
         table_id = _make_delta_table(tmp_path)

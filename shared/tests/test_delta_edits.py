@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable
 
+from shared import delta_utils
 from shared.delta_utils import (
     DeltaEditError,
     DeltaEditStaleError,
@@ -118,6 +119,72 @@ class TestApplyDeltaEdits:
         assert out["note"].dtype == pl.Float64
         assert out["note"].null_count() == 3
         assert result["row_count"] == 3
+
+    def test_new_column_listed_in_upsert_columns_but_carrying_no_rows(self, delta_table):
+        """An empty upsert_rows builds no source, so the declared column never reaches Delta."""
+        result = apply_delta_edits(
+            delta_table,
+            key_columns=["id"],
+            upsert_columns=["id", "label"],
+            upsert_rows=[],
+            new_columns=[{"name": "label", "dtype": "String"}],
+            expected_version=0,
+        )
+        out = pl.read_delta(delta_table)
+        assert "label" in out.columns
+        assert out["label"].null_count() == 3
+        assert any(c["name"] == "label" for c in result["schema"])
+        assert result["new_version"] > 0
+
+    def test_commit_landing_during_validation_is_rejected(self, delta_table, monkeypatch):
+        """expected_version must be re-checked at commit time, not only at entry."""
+        original = delta_utils._edit_rows_to_frame
+
+        def commit_then_build(*args, **kwargs):
+            monkeypatch.setattr(delta_utils, "_edit_rows_to_frame", original)
+            racer = pl.DataFrame({"id": [9], "text": ["racer"], "score": [9.9]}).with_columns(
+                pl.lit("2024-01-02 10:11:12").str.to_datetime().alias("created")
+            )
+            racer.write_delta(delta_table, mode="append")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(delta_utils, "_edit_rows_to_frame", commit_then_build)
+
+        with pytest.raises(DeltaEditStaleError):
+            apply_delta_edits(
+                delta_table,
+                key_columns=["id"],
+                upsert_columns=["id", "text"],
+                upsert_rows=[[2, "beta-fixed"]],
+                expected_version=0,
+            )
+
+        out = pl.read_delta(delta_table).sort("id")
+        assert out["text"].to_list() == ["alpha", "beta", "gamma", "racer"]
+
+    def test_commit_landing_during_validation_ignored_without_expected_version(self, delta_table, monkeypatch):
+        """Callers who opt out of optimistic concurrency keep last-write-wins."""
+        original = delta_utils._edit_rows_to_frame
+
+        def commit_then_build(*args, **kwargs):
+            monkeypatch.setattr(delta_utils, "_edit_rows_to_frame", original)
+            racer = pl.DataFrame({"id": [9], "text": ["racer"], "score": [9.9]}).with_columns(
+                pl.lit("2024-01-02 10:11:12").str.to_datetime().alias("created")
+            )
+            racer.write_delta(delta_table, mode="append")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(delta_utils, "_edit_rows_to_frame", commit_then_build)
+
+        apply_delta_edits(
+            delta_table,
+            key_columns=["id"],
+            upsert_columns=["id", "text"],
+            upsert_rows=[[2, "beta-fixed"]],
+        )
+
+        out = pl.read_delta(delta_table).sort("id")
+        assert out["text"].to_list() == ["alpha", "beta-fixed", "gamma", "racer"]
 
     def test_string_values_cast_to_temporal_and_numeric(self, delta_table):
         apply_delta_edits(

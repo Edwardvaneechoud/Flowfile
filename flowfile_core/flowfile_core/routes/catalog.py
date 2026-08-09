@@ -891,7 +891,12 @@ def apply_table_edits(
     against concurrent writers (409 stale-write on mismatch). Requires manage on
     the table, like every other data-mutating table operation.
     """
-    return service.apply_table_edits(table_id, body, edited_by=getattr(current_user, "username", None))
+    return service.apply_table_edits(
+        table_id,
+        body,
+        edited_by=getattr(current_user, "username", None),
+        user_id=current_user.id,
+    )
 
 
 @router.post("/tables/{table_id}/key-column", response_model=CatalogTableKeyColumnResponse)
@@ -909,7 +914,10 @@ def add_table_key_column(
     version). Requires manage on the table.
     """
     return service.add_table_key_column(
-        table_id, column_name=body.column_name, expected_version=body.expected_version
+        table_id,
+        column_name=body.column_name,
+        expected_version=body.expected_version,
+        user_id=current_user.id,
     )
 
 

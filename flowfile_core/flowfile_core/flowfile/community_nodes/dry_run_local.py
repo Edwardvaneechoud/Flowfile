@@ -512,7 +512,8 @@ def run_bundle_dry_run(folder: Path, *, timeout_seconds: int = 120, row_limit: i
 
     config = {
         "class_name": manifest.class_name,
-        "output_names": manifest.output_names,
+        # The AST lift keeps a declared `output_names = []` verbatim; the exec side defaults it.
+        "output_names": manifest.output_names or ["main"],
         "number_of_inputs": manifest.number_of_inputs,
         "row_limit": row_limit,
         "example_inputs": extract_example_inputs(source) or [],

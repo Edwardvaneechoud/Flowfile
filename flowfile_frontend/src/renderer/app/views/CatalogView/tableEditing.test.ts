@@ -15,12 +15,16 @@ import {
   joinKeyToken,
   labelingOrder,
   labelingProgress,
+  predictionProjectionColumns,
   rowSuggestion,
   sessionCounts,
   suggestKeyColumns,
+  suggestionBlockReason,
   suggestionCoverage,
   suggestionDisagreement,
   validateKeyValues,
+  SCHEMA_CHANGED_SUGGESTION_NOTE,
+  TRUNCATED_SUGGESTION_NOTE,
   type EditColumn,
   type EditRow,
   type EditSession,
@@ -293,6 +297,64 @@ const joinSessionColumns: EditColumn[] = [
   { name: "region", dtype: "large_string", isNew: false, editable: true },
 ];
 
+describe("predictionProjectionColumns", () => {
+  it("projects keys plus class plus probability when all are picked", () => {
+    expect(predictionProjectionColumns(["id"], "prediction", "score")).toEqual([
+      "id",
+      "prediction",
+      "score",
+    ]);
+  });
+
+  it("treats the probability column as optional", () => {
+    // A class-only prediction table is a common non-exploded shape.
+    expect(predictionProjectionColumns(["id"], "prediction", null)).toEqual(["id", "prediction"]);
+  });
+
+  it("de-duplicates when the class column is also a key", () => {
+    expect(predictionProjectionColumns(["id", "prediction"], "prediction", null)).toEqual([
+      "id",
+      "prediction",
+    ]);
+  });
+
+  it("returns null without a class column", () => {
+    expect(predictionProjectionColumns(["id"], "", "score")).toBeNull();
+  });
+});
+
+describe("suggestionBlockReason", () => {
+  const spec: JoinKeySpec[] = [{ column: "id", coerceNumeric: true }];
+  const ok = { truncated: false, joinSpec: spec, columns: ["id", "prediction"], classColumn: "prediction" };
+
+  it("allows a complete read with a usable join key and class column", () => {
+    expect(suggestionBlockReason(ok)).toBeNull();
+  });
+
+  it("blocks a truncated read even when the schema is fine", () => {
+    // The poll path hits this when a transient SQL failure falls back to the capped preview.
+    expect(suggestionBlockReason({ ...ok, truncated: true })).toBe(TRUNCATED_SUGGESTION_NOTE);
+  });
+
+  it("reports truncation ahead of a schema change when both are wrong", () => {
+    expect(suggestionBlockReason({ ...ok, truncated: true, joinSpec: null })).toBe(
+      TRUNCATED_SUGGESTION_NOTE,
+    );
+  });
+
+  it("blocks when no join key survives", () => {
+    expect(suggestionBlockReason({ ...ok, joinSpec: null })).toBe(SCHEMA_CHANGED_SUGGESTION_NOTE);
+  });
+
+  it("blocks when the class column is gone from the read", () => {
+    expect(suggestionBlockReason({ ...ok, columns: ["id"] })).toBe(SCHEMA_CHANGED_SUGGESTION_NOTE);
+  });
+
+  it("blocks when no class column is selected", () => {
+    expect(suggestionBlockReason({ ...ok, classColumn: "" })).toBe(SCHEMA_CHANGED_SUGGESTION_NOTE);
+  });
+});
+
 describe("buildJoinKeySpec", () => {
   it("coerces a numeric session key even against a string prediction column", () => {
     expect(
@@ -408,6 +470,23 @@ describe("joinKeyToken", () => {
 describe("buildSuggestionMap", () => {
   const keySpec: JoinKeySpec[] = [{ column: "id", coerceNumeric: true }];
   const predColumns = ["id", "label", "value"];
+
+  it("resolves suggestions with no probability column, leaving confidence null", () => {
+    // The contract the optional probability picker relies on.
+    const map = buildSuggestionMap(
+      ["id", "label"],
+      [
+        [19, "business"],
+        [21, "sports"],
+      ],
+      keySpec,
+      "label",
+      "",
+    );
+    expect(map.byKey.get("n:19")?.suggested).toBe("business");
+    expect(map.byKey.get("n:19")?.confidence).toBeNull();
+    expect(map.byKey.get("n:21")?.suggested).toBe("sports");
+  });
 
   it("takes the argmax across a key's class rows and reports the distribution", () => {
     const map = buildSuggestionMap(

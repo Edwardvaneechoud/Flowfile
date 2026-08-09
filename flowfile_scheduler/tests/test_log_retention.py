@@ -9,8 +9,10 @@ which is shared with sqlalchemy's pool.
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +21,8 @@ from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import LOG_SWEEP_INTERVAL, FlowScheduler
 from shared import run_completion
 from shared.models import FlowRegistration, FlowSchedule
+from shared.run_logs import cleanup_old_logs
+from shared.storage_config import storage
 
 BASE_TS = datetime(2026, 5, 25, 9, 0, 0)
 
@@ -92,6 +96,29 @@ def test_first_tick_sweeps_on_a_freshly_booted_host(sched, sweeps, monkeypatch):
 
     assert len(sweeps) == 1
     assert sched._last_log_sweep == 120.0
+
+
+def test_suite_storage_is_isolated_from_the_real_logs_dir():
+    """The conftest redirect is load-bearing: tests below drive ``_tick``, which unlinks logs."""
+    logs_dir = storage.logs_directory
+    assert Path.home() not in logs_dir.parents
+    assert logs_dir != Path.home() / ".flowfile" / "logs"
+
+
+def test_tick_sweep_only_touches_the_redirected_logs_dir(sched, monkeypatch):
+    """End-to-end: a real (unstubbed) sweep on tick expires only isolated files."""
+    monkeypatch.delenv("FLOWFILE_RUN_LOG_RETENTION_DAYS", raising=False)
+    logs_dir = storage.logs_directory
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    stale = logs_dir / "scheduled_run_424242.log"
+    stale.write_text("stale")
+    old = time.time() - 400 * 86400
+    os.utime(stale, (old, old))
+
+    assert cleanup_old_logs is engine_mod.cleanup_old_logs
+    sched._tick()
+
+    assert not stale.exists()
 
 
 def test_tick_survives_sweep_failure(sched, monkeypatch):

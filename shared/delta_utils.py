@@ -505,10 +505,17 @@ def apply_delta_edits(
     rows_upserted = 0
     rows_deleted = 0
 
+    # Re-read before the first commit: the scans above leave a window a concurrent editor can commit in.
+    if expected_version is not None:
+        latest = DeltaTable(table_path, without_files=True, storage_options=storage_options).version()
+        if latest != current_version:
+            raise DeltaEditStaleError(expected=expected_version, current=latest)
+
     # Schema evolution for declared new columns the upsert payload does not carry:
     # merge_into_delta only evolves columns present in its source frame, so a
     # column added without any values yet needs an explicit 0-row append.
-    covered = set(upsert_columns or [])
+    # Keyed off the shipped frame — a declared column with no rows never reaches Delta.
+    covered = set(source.columns) if source is not None else set()
     uncovered = [spec for spec in new_columns if spec["name"] not in covered]
     if uncovered:
         empty = pl_.DataFrame(schema={spec["name"]: _edit_dtype(spec["dtype"]) for spec in uncovered})

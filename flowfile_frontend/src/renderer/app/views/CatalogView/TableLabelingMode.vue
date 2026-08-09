@@ -163,7 +163,9 @@
             Use these as my classes
           </button>
         </div>
-        <el-checkbox v-model="leastConfidentFirst"> Least confident first </el-checkbox>
+        <el-checkbox v-if="probabilityColumn" v-model="leastConfidentFirst">
+          Least confident first
+        </el-checkbox>
       </template>
 
       <div class="start-row">
@@ -334,7 +336,9 @@ import {
   isNumericDtype,
   labelingOrder,
   labelingProgress,
+  predictionProjectionColumns,
   rowSuggestion,
+  suggestionBlockReason,
   suggestionCoverage,
   suggestionDisagreement,
   type EditRow,
@@ -423,6 +427,8 @@ let pollTimer: number | null = null;
 let pollInFlight = false;
 let pollFailures = 0;
 let loadSeq = 0;
+/** Sequences the association PUTs; a slower earlier one must not win the race. */
+let persistSeq = 0;
 let predFetches = 0;
 /** In-flight row fetch, so Start can await one already running instead of firing a second. */
 let predRowsPending: Promise<boolean> | null = null;
@@ -775,14 +781,17 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-/** The join only needs the key columns plus the two picked ones, so project to those. */
+/** The join only needs the key columns plus the picked ones, so project to those. */
 function predictionRowsQuery(): string | null {
   const table = predictionTable.value;
   const target = table?.qualified_name ?? table?.full_table_name ?? table?.name;
-  if (!target || !classColumn.value || !probabilityColumn.value) return null;
-  const columns = [
-    ...new Set([...props.session.keyColumns, classColumn.value, probabilityColumn.value]),
-  ];
+  if (!target) return null;
+  const columns = predictionProjectionColumns(
+    props.session.keyColumns,
+    classColumn.value,
+    probabilityColumn.value,
+  );
+  if (!columns) return null;
   return `SELECT ${columns.map(quoteIdent).join(", ")} FROM ${quoteIdent(target)}`;
 }
 
@@ -874,12 +883,7 @@ async function loadPredictionRows(): Promise<boolean> {
 }
 
 function needsPredictionRows(): boolean {
-  return (
-    predictionTableId.value !== null &&
-    !!classColumn.value &&
-    !!probabilityColumn.value &&
-    !predRowsLoaded.value
-  );
+  return predictionTableId.value !== null && !!classColumn.value && !predRowsLoaded.value;
 }
 
 async function selectPredictionTable(id: number, stored?: StoredSuggestionSettings | null) {
@@ -916,12 +920,15 @@ function clearPrediction() {
 
 /** `null` is the explicit clear: the backend tri-state drops the association. */
 async function persistPredictionTable(id: number | null) {
+  const seq = ++persistSeq;
   try {
     const updated = await CatalogApi.updateTable(props.table.id, { prediction_table_id: id });
+    if (seq !== persistSeq) return;
     serverPredictionTableId.value = updated.prediction_table_id;
     serverPredictionTableName.value = updated.prediction_table_name;
     serverNote.value = "";
   } catch {
+    if (seq !== persistSeq) return;
     serverNote.value =
       id === null
         ? "Could not forget this prediction table on the server — it stays off for this session."
@@ -1042,7 +1049,8 @@ function buildSuggestionState() {
   joinSpec.value = null;
   suggestionMap.value = null;
   suggestionsDisabled.value = false;
-  if (predictionTableId.value === null || !classColumn.value || !probabilityColumn.value) return;
+  // A plain class table (no probability column) is a supported shape.
+  if (predictionTableId.value === null || !classColumn.value) return;
   if (!predRowsLoaded.value || predTruncated.value) return;
   // The fetched projection, not the table schema, is what the map indexes into.
   if (!rowColumns.includes(classColumn.value)) return;
@@ -1173,10 +1181,15 @@ async function refreshSuggestions(id: number, version: number) {
 
   const columns = rowColumns;
   const spec = buildJoinKeySpec(props.session.keyColumns, props.session.columns, columns);
-  if (!spec || !columns.includes(classColumn.value)) {
+  const blocked = suggestionBlockReason({
+    truncated: predTruncated.value,
+    joinSpec: spec,
+    columns,
+    classColumn: classColumn.value,
+  });
+  if (blocked) {
     suggestionsDisabled.value = true;
-    suggestionNote.value =
-      "The prediction table's schema changed, so suggestions are off for this pass.";
+    suggestionNote.value = blocked;
     stopPolling();
     return;
   }

@@ -336,7 +336,12 @@ class FlowGraphCodeConverter(
         return self.node_var_mapping.get(upstream_id, default)
 
     def _get_input_vars(self, node: FlowNode) -> dict[str, str]:
-        """Get input variable names for a node."""
+        """Get input variable names for a node, keyed by port role.
+
+        Insertion order is the positional-argument order for custom-node ``process()``
+        calls, so it must match ``FlowNode._slot_input_pairs`` — canvas handle order:
+        main, then right (input-1), then left (input-2).
+        """
         input_vars = {}
 
         if node.node_inputs.main_inputs:
@@ -348,14 +353,14 @@ class FlowGraphCodeConverter(
                 for i, input_node in enumerate(node.node_inputs.main_inputs):
                     input_vars[f"main_{i}"] = self._resolve_upstream_var(node, input_node.node_id, f"df_{i}")
 
-        if node.node_inputs.left_input:
-            input_vars["left"] = self._resolve_upstream_var(
-                node, node.node_inputs.left_input.node_id, "df_left"
-            )
-
         if node.node_inputs.right_input:
             input_vars["right"] = self._resolve_upstream_var(
                 node, node.node_inputs.right_input.node_id, "df_right"
+            )
+
+        if node.node_inputs.left_input:
+            input_vars["left"] = self._resolve_upstream_var(
+                node, node.node_inputs.left_input.node_id, "df_left"
             )
 
         return input_vars
