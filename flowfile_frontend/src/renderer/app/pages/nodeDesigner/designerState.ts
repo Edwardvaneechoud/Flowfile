@@ -153,6 +153,7 @@ export interface DesignerState {
   number_of_inputs: number;
   number_of_outputs: number;
   output_names: string[];
+  input_labels: string[]; // display-only canvas handle names, index i ↔ port i
   environment: EnvironmentState;
   publishes: PublishState[];
   sections: SectionState[];
@@ -205,6 +206,7 @@ export function newDesignerState(): DesignerState {
     number_of_inputs: 1,
     number_of_outputs: 1,
     output_names: ["main"],
+    input_labels: [],
     environment: newEnvironmentState(),
     publishes: [],
     sections: [

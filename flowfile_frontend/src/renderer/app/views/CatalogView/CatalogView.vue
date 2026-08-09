@@ -188,6 +188,7 @@
           @recover-from-run="openRunSnapshot($event)"
           @load-preview="catalogStore.loadSelectedPreview()"
           @refresh-history="catalogStore.refreshTableHistory()"
+          @edits-saved="catalogStore.handleTableEdited($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel

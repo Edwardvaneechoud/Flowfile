@@ -2,7 +2,7 @@
 // instance access) so it stays unit-testable in the node environment.
 import { Position } from "@vue-flow/core";
 import type { NodeHandle } from "../types/flow.types";
-import { outputHandle, outputLabel } from "./outputHandle";
+import { handleLetters, outputHandle } from "./outputHandle";
 
 // Fixed parameter-data handle on dynamic-input nodes (run_flow).
 export const PARAM_INPUT_HANDLE = "input-0";
@@ -19,20 +19,23 @@ export function inputHandle(index: number): string {
 // number of saved output names.
 export function buildOutputHandles(outputCount: number, names?: string[]): NodeHandle[] {
   const count = Math.max(outputCount, names?.length ?? 0);
-  const multi = count > 1;
+  const letters = handleLetters(count, names);
   return Array.from({ length: count }, (_, i) => ({
     id: outputHandle(i),
     position: Position.Right,
-    label: multi ? outputLabel(i) : undefined,
-    title: multi ? names?.[i] : undefined,
+    label: letters[i],
+    title: count > 1 ? names?.[i] : undefined,
   }));
 }
 
+// Mirror of buildOutputHandles for the input side: more than one handle gets a
+// compact letter on the canvas and the declared name as a tooltip.
 export function buildInputHandles(count: number, names?: string[]): NodeHandle[] {
+  const letters = handleLetters(count, names);
   return Array.from({ length: count }, (_, i) => ({
     id: inputHandle(i),
     position: Position.Left,
-    label: names?.[i],
+    label: letters[i],
     title: names?.[i],
   }));
 }
@@ -82,6 +85,9 @@ export interface HandleSource {
   dynamic_inputs?: boolean;
   input_names?: string[] | null;
   output_names?: string[] | null;
+  // Static per-type handle names. Distinct from input_names, which is the
+  // per-instance dynamic-handle list and selects the branch below.
+  input_labels?: string[] | null;
 }
 
 export interface DerivedHandles {
@@ -100,7 +106,7 @@ export function deriveHandles(node: HandleSource): DerivedHandles {
     };
   }
   return {
-    inputs: buildInputHandles(node.multi ? 1 : node.input),
+    inputs: buildInputHandles(node.multi ? 1 : node.input, node.input_labels ?? undefined),
     outputs: buildOutputHandles(node.output, node.output_names ?? undefined),
   };
 }

@@ -5,10 +5,12 @@ Tests that generated code includes proper imports, settings classes, and correct
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.flowfile.code_generator.code_generator import (
     FlowGraphToFlowFrameConverter,
+    FlowGraphToPolarsConverter,
     export_flow_to_flowframe,
     export_flow_to_polars,
 )
@@ -123,6 +125,28 @@ def add_record_count(graph: FlowGraph, node_id: int, depends_on: int) -> FlowGra
 
 
 @pytest.fixture
+def ThreeInputOrderNode():
+    """A 3-input custom node that stamps each input with its argument position.
+
+    Order shows up as differing *values*, not row order, which the comparison ignores.
+    """
+
+    class ThreeInputOrder(CustomNodeBase):
+        node_name: str = "Three Input Order"
+        node_category: str = "Transform"
+        title: str = "Three Input Order"
+        intro: str = "Stamps each input with its positional index"
+        number_of_inputs: int = 3
+        number_of_outputs: int = 1
+
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            stamped = [lf.with_columns(pl.lit(i).alias("position")) for i, lf in enumerate(inputs)]
+            return pl.concat(stamped, how="vertical")
+
+    return ThreeInputOrder
+
+
+@pytest.fixture
 def AddColumnNode():
     """A custom node that adds a column with a fixed value."""
 
@@ -155,6 +179,78 @@ def AddColumnNode():
             return lf.with_columns(pl.lit(value).alias(col_name))
 
     return AddColumn
+
+
+class TestCustomNodeInputOrder:
+    """The exported process() call must feed inputs in the same order the engine does.
+
+    Only reachable through custom nodes: no built-in has three positional handles.
+    """
+
+    def _build(self, graph, node_class):
+        add_manual_input(graph, [{"tag": "A"}], node_id=1)
+        add_manual_input(graph, [{"tag": "B"}], node_id=2)
+        add_manual_input(graph, [{"tag": "C"}], node_id=3)
+        add_custom_node_to_graph(graph, node_class, node_id=4, settings={})
+        connect(graph, 1, 4, "input-0")
+        connect(graph, 2, 4, "input-1")
+        connect(graph, 3, 4, "input-2")
+
+    def test_export_matches_execution_for_three_inputs(self, ThreeInputOrderNode):
+        add_to_custom_node_store(ThreeInputOrderNode)
+        graph = create_graph()
+        self._build(graph, ThreeInputOrderNode)
+
+        executed = graph.get_node(4).get_resulting_data().data_frame
+        if hasattr(executed, "collect"):
+            executed = executed.collect()
+
+        code = export_flow_to_polars(graph)
+        ns: dict = {}
+        exec(compile(code, "<gen>", "exec"), ns)
+        exported = ns["run_etl_pipeline"]()
+        if hasattr(exported, "collect"):
+            exported = exported.collect()
+
+        assert_frame_equal(
+            exported.sort("position"),
+            executed.sort("position"),
+            check_column_order=False,
+            check_row_order=False,
+        )
+
+    def test_input_handles_map_to_positions_in_order(self, ThreeInputOrderNode):
+        """Pins the expected mapping itself: input-0/1/2 are argument 0/1/2."""
+        add_to_custom_node_store(ThreeInputOrderNode)
+        graph = create_graph()
+        self._build(graph, ThreeInputOrderNode)
+
+        executed = graph.get_node(4).get_resulting_data().data_frame
+        if hasattr(executed, "collect"):
+            executed = executed.collect()
+
+        assert executed.sort("position")["tag"].to_list() == ["A", "B", "C"]
+
+    def test_codegen_input_order_matches_slot_input_pairs(self, ThreeInputOrderNode):
+        """_slot_input_pairs (executor) and _get_input_vars (exporter) must agree on order."""
+        add_to_custom_node_store(ThreeInputOrderNode)
+        graph = create_graph()
+        self._build(graph, ThreeInputOrderNode)
+
+        node = graph.get_node(4)
+        converter = FlowGraphToPolarsConverter(graph)
+        converter.convert()
+
+        codegen_order = list(converter._get_input_vars(node).keys())
+        executor_ids = [source.node_id for source, _ in node._slot_input_pairs() if source is not None]
+        codegen_ids = [
+            node.node_inputs.main_inputs[0].node_id,
+            node.node_inputs.right_input.node_id,
+            node.node_inputs.left_input.node_id,
+        ]
+
+        assert codegen_order == ["main", "right", "left"]
+        assert codegen_ids == executor_ids
 
 
 class TestCustomNodeCodeGeneration:

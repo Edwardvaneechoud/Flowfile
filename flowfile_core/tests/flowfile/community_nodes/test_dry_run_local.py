@@ -146,6 +146,22 @@ class QualifiedConsumer(nd.CustomNodeBase):
         return inputs[0].with_columns((pl.col("a") * bundle["coef"]).alias("scaled"))
 '''
 
+# The AST lift keeps a declared `output_names = []` verbatim.
+_EMPTY_OUTPUT_NAMES_NODE = '''
+import polars as pl
+from flowfile import node_designer as nd
+
+
+class EmptyOutputNames(nd.CustomNodeBase):
+    node_name: str = "Empty Output Names"
+    output_names: list[str] = []
+    example_inputs: list = [{"a": [1, 2, 3]}]
+    example_settings: dict = {}
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0].with_columns((pl.col("a") * 2).alias("b"))
+'''
+
 _CATALOG_NODE = '''
 import polars as pl
 from flowfile import node_designer as nd
@@ -170,6 +186,13 @@ def _dry_run(tmp_path: Path, source: str):
 
 def test_kernel_node_using_flowfile_ctx_dry_runs(tmp_path: Path):
     outcome = _dry_run(tmp_path, _CTX_NODE)
+    assert outcome.success, outcome.error
+    assert outcome.output_names == ["main"]
+
+
+def test_empty_output_names_falls_back_to_main(tmp_path: Path):
+    """A node declaring `output_names = []` must dry-run, not IndexError."""
+    outcome = _dry_run(tmp_path, _EMPTY_OUTPUT_NAMES_NODE)
     assert outcome.success, outcome.error
     assert outcome.output_names == ["main"]
 

@@ -635,6 +635,11 @@ class NodeTemplate(BaseModel):
     publishes: list[ArtifactDecl] | None = None
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
+    # Display-only names for the canvas input handles, index i <-> "input-{i}".
+    # Purely cosmetic: unlike output_names these are never dict keys and nothing
+    # reads them at execution time. Distinct from NodeInput.input_names, which is
+    # the per-instance dynamic-handle list (run_flow) with a reserved index 0.
+    input_labels: list[str] | None = None
     # Per-instance input handles (run_flow): connections are keyed by target
     # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
     dynamic_inputs: bool = False

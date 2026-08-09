@@ -206,8 +206,9 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
     def _ordered_input_args(input_vars: dict[str, str]) -> list[str]:
         """Positional args for process(), in the node's connected-input order.
 
-        ``_get_input_vars`` inserts keys in port order (main inputs in edge
-        order, then left, then right), so insertion order is the argument order.
+        ``_get_input_vars`` inserts keys in canvas handle order (main inputs in
+        edge order, then right = input-1, then left = input-2), mirroring
+        ``FlowNode._slot_input_pairs``, so insertion order is the argument order.
         The old code dropped every non-"main" key and sorted alphabetically —
         this preserves all inputs and their order.
         """

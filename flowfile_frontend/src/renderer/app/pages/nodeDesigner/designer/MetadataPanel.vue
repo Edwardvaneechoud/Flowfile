@@ -78,6 +78,29 @@
               size="small"
             />
           </div>
+          <div v-if="showInputLabels" class="form-field">
+            <label>Input Names</label>
+            <div class="output-names-list">
+              <div
+                v-for="index in nodeMetadata.number_of_inputs"
+                :key="index"
+                class="output-name-row"
+              >
+                <span class="output-handle-label">input-{{ index - 1 }}</span>
+                <input
+                  :value="nodeMetadata.input_labels?.[index - 1] ?? ''"
+                  type="text"
+                  class="form-input"
+                  :placeholder="`input ${index - 1}`"
+                  @input="updateInputLabel(index - 1, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
+            </div>
+            <p class="field-hint">
+              Shown when hovering the handle on the canvas. Ports stay positional —
+              <code>inputs[{{ 0 }}]</code> is always the top handle.
+            </p>
+          </div>
           <div class="form-field">
             <label for="node-outputs">Number of Outputs</label>
             <el-input-number
@@ -290,6 +313,10 @@ const showOutputNames = computed(
   () => nodeMetadata.number_of_outputs > 1 || store.environment.kind === "kernel",
 );
 
+// Input names are only a canvas disambiguator, so they earn their row only once
+// there is more than one handle to tell apart.
+const showInputLabels = computed(() => nodeMetadata.number_of_inputs > 1);
+
 // One request feeds both the category and tag suggestion lists.
 async function fetchLocalNodeMeta() {
   try {
@@ -335,6 +362,17 @@ function removeOutputName(index: number) {
 
 function updateOutputName(index: number, value: string) {
   nodeMetadata.output_names[index] = value;
+}
+
+// Rows are driven by number_of_inputs, so pad the sparse array and drop a
+// trailing run of blanks rather than persisting empty strings. A draft saved
+// before the field existed arrives without the array at all.
+function updateInputLabel(index: number, value: string) {
+  const labels = [...(nodeMetadata.input_labels ?? [])];
+  while (labels.length <= index) labels.push("");
+  labels[index] = value;
+  while (labels.length > 0 && !labels[labels.length - 1]) labels.pop();
+  nodeMetadata.input_labels = labels;
 }
 
 onMounted(() => {

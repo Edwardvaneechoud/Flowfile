@@ -183,6 +183,7 @@ def managed_kernel(
 
     core_started_by_us = False
     original_token = None
+    original_cached_token = None
     original_core_url = None
     original_shared_dir = None
     original_kernel_image = os.environ.get("FLOWFILE_KERNEL_IMAGE")
@@ -207,6 +208,11 @@ def managed_kernel(
         original_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
         internal_token = secrets.token_hex(32)
         os.environ["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+        # The module cache may already be warm from an earlier test, which would
+        # silently ignore the fresh token above.
+        import flowfile_core.auth.jwt as jwt_module
+        original_cached_token = jwt_module._internal_token
+        jwt_module._internal_token = None
         logger.info("Set FLOWFILE_INTERNAL_TOKEN for kernel ↔ Core auth")
 
         # Set FLOWFILE_CORE_URL so kernel can reach Core
@@ -312,6 +318,8 @@ def managed_kernel(
                 os.environ["FLOWFILE_INTERNAL_TOKEN"] = original_token
             else:
                 os.environ.pop("FLOWFILE_INTERNAL_TOKEN", None)
+            import flowfile_core.auth.jwt as jwt_module
+            jwt_module._internal_token = original_cached_token
             if original_core_url is not None:
                 os.environ["FLOWFILE_CORE_URL"] = original_core_url
             else:

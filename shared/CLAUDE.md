@@ -25,6 +25,7 @@ It is a Poetry package — `{ include = "shared" }` in root `pyproject.toml`, wi
 - `rest_api/` — `models.py` (wire), `fetch.py` (`fetch_rest_api`: pure httpx engine, JSON-only, flattened via `pl.json_normalize`).
 - `google_analytics/models.py` — GA4 wire models.
 - `subprocess_utils.py` — `spawn_flow_subprocess(flow_path, run_id)` (fire-and-forget `flowfile run flow`).
+- `run_logs.py` — `run_log_path(run_id)` (canonical `<storage>/logs/scheduled_run_<id>.log`, resolved per call) + `cleanup_old_logs()` age retention over `scheduled_run_*.log` and `flow_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `<=0` disables). Stdlib + `storage_config` only — no sqlalchemy — so `subprocess_utils` stays dependency-light; `SUBPROCESS_RUN_TYPES` mirrors `run_completion.REAPABLE_RUN_TYPES` rather than importing it.
 - `parent_watcher.py` — `start_parent_death_watcher` for Tauri sidecar reparent detection.
 - `run_completion.py` — `complete_run` / `get_run_user_id` (CLI subprocess updates `FlowRun` via raw SQLAlchemy) + `reap_orphaned_runs` (closes active runs whose subprocess died — zombie-aware pid liveness, 5-min pid-NULL grace for subprocess run types only, `FLOWFILE_RUN_MAX_AGE_SECONDS` backstop that SIGTERMs before closing; called from the scheduler tick and core startup).
 - `viz_protocol.py` — `HTTP_TIMEOUT_SECONDS` / `REQUEST_TIMEOUT_SECONDS` for catalog viz core↔worker calls.
@@ -61,6 +62,7 @@ poetry run pytest shared/tests
 - `artifact_storage.py` — blob-storage backend ABC + filesystem/S3 impls.
 - `run_completion.py` — CLI-subprocess `FlowRun` completion + orphan-run reaper, without core.
 - `subprocess_utils.py` — `spawn_flow_subprocess`.
+- `run_logs.py` — run-log path resolution + log retention (core startup, scheduler tick).
 - `parent_watcher.py` — sidecar parent-death watcher.
 - `kafka/consumer.py` — Kafka read/commit engine.
 - `ml/algorithms.py` — ML algorithm/hyperparam registry (core+worker source of truth, served to the UI picker).

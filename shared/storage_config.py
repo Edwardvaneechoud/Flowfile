@@ -157,7 +157,13 @@ class FlowfileStorage:
 
     @property
     def logs_directory(self) -> Path:
-        """Directory for application logs (internal)."""
+        """Directory for application logs (internal).
+
+        ``TESTING=True`` redirects to a disposable temp subdir so test runs never
+        write into — or expire — a developer's real logs (mirrors get_database_url).
+        """
+        if os.environ.get("TESTING") == "True":
+            return self.temp_directory / "test_logs"
         return self.base_directory / "logs"
 
     @property
@@ -374,7 +380,8 @@ class FlowfileStorage:
         """Clean up temporary files older than specified hours."""
         self.cleanup_directory("temp_directory", storage_duration_hours=24)
         self.cleanup_directory("cache_directory", storage_duration_hours=1)
-        self.cleanup_directory("logs_directory", storage_duration_hours=168)
+        # logs_directory is deliberately absent: run/flow log retention is owned by
+        # shared.run_logs.cleanup_old_logs (FLOWFILE_RUN_LOG_RETENTION_DAYS).
         self.cleanup_directory("system_logs_directory", storage_duration_hours=168)
 
 

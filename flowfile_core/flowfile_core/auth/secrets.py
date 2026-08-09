@@ -5,6 +5,7 @@ Secure storage module for FlowFile credentials and secrets.
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -19,8 +20,12 @@ class SecureStorage:
         env = os.environ.get("FLOWFILE_MODE")
         logger.debug(f"Using secure storage in {env} mode")
         if os.environ.get("FLOWFILE_MODE") == "electron":
-            app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
-            self.storage_path = Path(app_data) / "flowfile"
+            override = os.environ.get("FLOWFILE_SECURE_STORAGE_PATH")
+            if override:
+                self.storage_path = Path(override)
+            else:
+                app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
+                self.storage_path = Path(app_data) / "flowfile"
         else:
             self.storage_path = Path(os.environ.get("SECURE_STORAGE_PATH", "/tmp/.flowfile"))
         self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -61,7 +66,12 @@ class SecureStorage:
             return {}
 
     def _write_store(self, service_name, data):
-        """Encrypt and write data to the store file for a service."""
+        """Encrypt and write data to the store file for a service.
+
+        Written via a sibling temp file + os.replace: a torn read decrypts to
+        {} and the next set_password would then wipe every other secret.
+        """
+        tmp_path = None
         try:
             with open(self.key_path, "rb") as f:
                 key = f.read()
@@ -69,14 +79,23 @@ class SecureStorage:
             encrypted = Fernet(key).encrypt(json.dumps(data).encode())
             path = self._get_store_path(service_name)
 
-            with open(path, "wb") as f:
+            fd, tmp_path = tempfile.mkstemp(dir=str(self.storage_path), prefix=f".{service_name}.", suffix=".tmp")
+            with os.fdopen(fd, "wb") as f:
                 f.write(encrypted)
             try:
-                os.chmod(path, 0o600)
+                os.chmod(tmp_path, 0o600)
             except Exception as e:
                 logger.debug(f"Could not set permissions on store file: {e}")
+            os.replace(tmp_path, path)
+            tmp_path = None
         except Exception as e:
             logger.error(f"Failed to write to secure store: {e}")
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def get_password(self, service_name, username):
         """Retrieve a password from secure storage."""

@@ -166,6 +166,7 @@ class DesignerState(BaseModel):
     number_of_inputs: int = 1
     number_of_outputs: int = 1
     output_names: list[str] = ["main"]
+    input_labels: list[str] = []  # display-only canvas handle names, index i <-> port i
     environment: EnvironmentState = EnvironmentState()
     sections: list[SectionState] = []
     process_code: str = ""  # full `def process(...)` source, dedented, verbatim
@@ -208,6 +209,7 @@ class NodeManifest(BaseModel):
     number_of_inputs: int = 1
     number_of_outputs: int = 1
     output_names: list[str] = ["main"]
+    input_labels: list[str] = []  # display-only canvas handle names, index i <-> port i
     environment: EnvironmentState = EnvironmentState()
     node_type: Literal["input", "output", "process"] = "process"
     transform_type: Literal["narrow", "wide", "other"] = "wide"

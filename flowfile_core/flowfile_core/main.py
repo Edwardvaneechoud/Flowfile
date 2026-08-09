@@ -16,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
-from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import (
     SERVER_HOST,
     SERVER_PORT,
@@ -52,6 +51,7 @@ from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from shared.parent_watcher import start_parent_death_watcher
 from shared.run_completion import reap_orphaned_runs
+from shared.run_logs import cleanup_old_logs
 from shared.storage_config import storage
 
 storage.cleanup_directories()
@@ -75,6 +75,15 @@ async def shutdown_handler(app: FastAPI):
 
     print("Starting core application...")
 
+    # Mint the kernel<->core token before anything can spawn a CLI child: an
+    # unstamped env makes the child mint its own and 401 on kernel callbacks.
+    try:
+        from flowfile_core.auth.jwt import get_internal_token
+
+        get_internal_token()
+    except ValueError as exc:
+        logging.getLogger(__name__).warning("Internal service token unavailable: %s", exc)
+
     # Runs whose process died with the last app instance would otherwise stay "active"
     # forever and block every relaunch. Best-effort; must never fail startup.
     try:
@@ -83,6 +92,13 @@ async def shutdown_handler(app: FastAPI):
             print(f"Reaped {reaped} orphaned flow run(s)")
     except Exception:
         logging.getLogger(__name__).exception("Startup orphaned-run reap failed")
+
+    try:
+        removed = cleanup_old_logs()
+        if removed:
+            print(f"Removed {removed} expired log file(s)")
+    except Exception:
+        logging.getLogger(__name__).exception("Startup log retention sweep failed")
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
@@ -111,7 +127,6 @@ async def shutdown_handler(app: FastAPI):
         print("Cleaning up core service resources...")
         _shutdown_kernels()
         _shutdown_local_model()
-        clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
 
 

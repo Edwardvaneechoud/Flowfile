@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 import zoneinfo
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from flowfile_scheduler.models import (
     ScheduleTriggerTable,
 )
 from shared.run_completion import reap_orphaned_runs
+from shared.run_logs import cleanup_old_logs
 from shared.storage_config import get_database_url
 
 logger = logging.getLogger("flowfile.scheduler")
@@ -34,6 +36,8 @@ logger = logging.getLogger("flowfile.scheduler")
 DEFAULT_POLL_INTERVAL = 30
 
 STALE_THRESHOLD = 90
+
+LOG_SWEEP_INTERVAL = 3600
 
 
 class LaunchOutcome(Enum):
@@ -61,6 +65,9 @@ class FlowScheduler:
         self._holder_id = uuid.uuid4().hex[:12]
         self._task: asyncio.Task | None = None
         self._stopping = False
+        # None, not 0.0: time.monotonic() is seconds-since-boot on Linux, so a
+        # zero seed would skip the first sweep for an hour on a freshly booted host.
+        self._last_log_sweep: float | None = None
 
         url = get_database_url()
         connect_args = {"check_same_thread": False} if "sqlite" in url else {}
@@ -127,6 +134,16 @@ class FlowScheduler:
                 reap_orphaned_runs()
             except Exception:
                 logger.exception("Orphaned-run reap failed")
+
+            # Throttled: the tick runs every 30s and the sweep globs the logs dir.
+            now_monotonic = time.monotonic()
+            if self._last_log_sweep is None or now_monotonic - self._last_log_sweep > LOG_SWEEP_INTERVAL:
+                self._last_log_sweep = now_monotonic
+                try:
+                    cleanup_old_logs()
+                except Exception:
+                    logger.exception("Log retention sweep failed")
+
             launched = self._process_interval_schedules(db)
             launched += self._process_cron_schedules(db)
             launched += self._process_table_trigger_schedules(db)

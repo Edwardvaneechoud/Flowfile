@@ -1528,5 +1528,60 @@ class TestCorrectNoInputNode:
         assert correct_result.success, "Correct implementation should succeed"
 
 
+class TestInputHandleOrdering:
+    """Canvas handle order must equal the positional order process() receives.
+
+    Handles map input-0 -> main, input-1 -> right, input-2 -> left, while
+    NodeStepInputs.get_all_inputs() yields main + [left, right]. Labelling the
+    handles A/B/C makes any disagreement between the two visible, so the order
+    is pinned here.
+    """
+
+    def test_three_input_node_receives_frames_in_handle_order(self):
+        class ThreeInputProbe(CustomNodeBase):
+            node_name: str = "Three Input Probe"
+            number_of_inputs: int = 3
+            input_labels: list[str] = ["first", "second", "third"]
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                return pl.concat([lf for lf in inputs], how="vertical")
+
+        add_to_custom_node_store(ThreeInputProbe)
+        graph = create_graph(flow_id=71, execution_location="local")
+        add_manual_input(graph, [{"port": "input-0"}], node_id=1)
+        add_manual_input(graph, [{"port": "input-1"}], node_id=2)
+        add_manual_input(graph, [{"port": "input-2"}], node_id=3)
+        add_custom_node_to_graph(graph, ThreeInputProbe, node_id=4, settings={})
+
+        for source_id, handle in ((1, "input-0"), (2, "input-1"), (3, "input-2")):
+            add_connection(
+                graph,
+                input_schema.NodeConnection(
+                    input_connection=input_schema.NodeInputConnection(node_id=4, connection_class=handle),
+                    output_connection=input_schema.NodeOutputConnection(
+                        node_id=source_id, connection_class="output-0"
+                    ),
+                )
+            )
+
+        run_info = graph.run_graph()
+        assert run_info.success, [
+            f"node {r.node_id}: {r.error}" for r in run_info.node_step_result if not r.success
+        ]
+        result = graph.get_node(4).get_resulting_data().collect()
+        assert result["port"].to_list() == ["input-0", "input-1", "input-2"]
+
+    def test_template_carries_input_labels_to_the_canvas(self):
+        class LabelledProbe(CustomNodeBase):
+            node_name: str = "Labelled Probe"
+            number_of_inputs: int = 2
+            input_labels: list[str] = ["training", "scoring"]
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                return inputs[0]
+
+        assert LabelledProbe().to_node_template().input_labels == ["training", "scoring"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -974,6 +974,91 @@ def vacuum_catalog_table_task(
             progress.value = -1
 
 
+def apply_catalog_table_edits_task(
+    table_path: str,
+    key_columns: list[str],
+    expected_version: int | None,
+    upsert_columns: list[str] | None,
+    upsert_rows: list[list] | None,
+    new_columns: list[dict] | None,
+    delete_keys: list[list] | None,
+    commit_metadata: dict[str, str] | None,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    storage_options: dict | None = None,
+):
+    """Subprocess task: apply keyed row edits from the catalog edit surface.
+
+    Typed failures are encoded as ``STALE_WRITE:<expected>:<current>`` /
+    ``EDIT_INVALID:<message>`` in the shared error buffer so the parent route can
+    map them to 409 / 422 instead of a generic 500.
+    """
+    try:
+        from shared.delta_utils import DeltaEditError, DeltaEditStaleError, apply_delta_edits
+
+        try:
+            result = apply_delta_edits(
+                table_path,
+                key_columns=key_columns,
+                upsert_columns=upsert_columns,
+                upsert_rows=upsert_rows,
+                new_columns=new_columns,
+                delete_keys=delete_keys,
+                expected_version=expected_version,
+                storage_options=storage_options,
+                commit_metadata=commit_metadata,
+            )
+        except DeltaEditStaleError as e:
+            raise ValueError(f"STALE_WRITE:{e.expected}:{e.current}") from e
+        except DeltaEditError as e:
+            raise ValueError(f"EDIT_INVALID:{e}") from e
+        queue.put(result)
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def add_catalog_key_column_task(
+    table_path: str,
+    column_name: str,
+    expected_version: int | None,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    storage_options: dict | None = None,
+):
+    """Subprocess task: rewrite a Delta catalog table with a sequential row-id column."""
+    try:
+        from shared.delta_utils import DeltaEditError, DeltaEditStaleError, add_delta_row_id_column
+
+        try:
+            result = add_delta_row_id_column(
+                table_path,
+                column_name=column_name,
+                expected_version=expected_version,
+                storage_options=storage_options,
+            )
+        except DeltaEditStaleError as e:
+            raise ValueError(f"STALE_WRITE:{e.expected}:{e.current}") from e
+        except DeltaEditError as e:
+            raise ValueError(f"EDIT_INVALID:{e}") from e
+        queue.put(result)
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
 def execute_sql_query(
     query: str,
     tables: dict[str, str],

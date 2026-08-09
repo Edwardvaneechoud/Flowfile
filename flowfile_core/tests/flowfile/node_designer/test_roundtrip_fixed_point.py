@@ -253,6 +253,8 @@ def _random_state(seed: int) -> DesignerState:
     taken: set[str] = set()
     n_outputs = rng.randint(1, 3)
     output_names = ["main"] if n_outputs == 1 else [f"out_{i}" for i in range(n_outputs)]
+    n_inputs = rng.randint(0, 3)
+    input_labels = [f"in_{i}" for i in range(n_inputs)] if rng.random() < 0.4 else []
     env_kind = rng.choice(["local", "local", "kernel"])
     environment = EnvironmentState(
         kind=env_kind,
@@ -295,9 +297,10 @@ def _random_state(seed: int) -> DesignerState:
         author=rng.choice(["", _text(rng)]),
         version=rng.choice(["", f"{rng.randint(0, 3)}.{rng.randint(0, 9)}.{rng.randint(0, 9)}"]),
         tags=[f"tag-{i}" for i in range(rng.randint(1, 3))] if rng.random() < 0.4 else [],
-        number_of_inputs=rng.randint(0, 3),
+        number_of_inputs=n_inputs,
         number_of_outputs=n_outputs,
         output_names=output_names,
+        input_labels=input_labels,
         environment=environment,
         sections=sections,
         requires_data_for_prediction=rng.random() < 0.3,

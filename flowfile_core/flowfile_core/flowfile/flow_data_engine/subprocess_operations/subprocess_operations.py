@@ -594,6 +594,78 @@ def trigger_vacuum_catalog_table(
     return response.json()
 
 
+def _raise_for_edit_response(response, table_id: int) -> None:
+    """Translate the worker edit routes' typed failures into domain exceptions."""
+    if response.status_code == 409:
+        from flowfile_core.catalog.exceptions import StaleWriteError
+
+        detail = {}
+        try:
+            detail = response.json().get("detail", {}) or {}
+        except ValueError:
+            pass
+        raise StaleWriteError(
+            "catalog_table", table_id, expected=detail.get("expected"), current=detail.get("current")
+        )
+    if response.status_code == 422:
+        try:
+            detail = response.json().get("detail", {}) or {}
+            message = detail.get("message") if isinstance(detail, dict) else str(detail)
+        except ValueError:
+            message = response.text
+        raise ValueError(message or "Edit payload was rejected")
+
+
+def trigger_apply_table_edits(
+    table_name: str,
+    table_id: int,
+    edits: dict,
+    storage: dict | None = None,
+) -> dict:
+    """Ask the worker to apply keyed row edits to a Delta catalog table.
+
+    *table_name* is the bare directory name inside the catalog tables directory;
+    *edits* carries key_columns / expected_version / upserts / deletes / new columns.
+    *table_id* is only used to construct typed errors (409 → ``StaleWriteError``).
+    """
+    payload = {"table_path": table_name, **edits}
+    if storage is not None:
+        payload["storage"] = storage
+    try:
+        response = requests.post(f"{WORKER_URL}/catalog/apply_edits", json=payload, timeout=600)
+    except requests.RequestException as exc:
+        from flowfile_core.catalog.exceptions import WorkerUnavailableError
+
+        raise WorkerUnavailableError(f"worker unreachable while applying table edits: {exc}") from exc
+    _raise_for_edit_response(response, table_id)
+    if not response.ok:
+        raise RuntimeError(f"Worker apply_edits failed: {response.text}")
+    return response.json()
+
+
+def trigger_add_key_column(
+    table_name: str,
+    table_id: int,
+    column_name: str,
+    expected_version: int | None = None,
+    storage: dict | None = None,
+) -> dict:
+    """Ask the worker to rewrite a Delta catalog table with a sequential row-id column."""
+    payload = {"table_path": table_name, "column_name": column_name, "expected_version": expected_version}
+    if storage is not None:
+        payload["storage"] = storage
+    try:
+        response = requests.post(f"{WORKER_URL}/catalog/add_key_column", json=payload, timeout=600)
+    except requests.RequestException as exc:
+        from flowfile_core.catalog.exceptions import WorkerUnavailableError
+
+        raise WorkerUnavailableError(f"worker unreachable while adding a key column: {exc}") from exc
+    _raise_for_edit_response(response, table_id)
+    if not response.ok:
+        raise RuntimeError(f"Worker add_key_column failed: {response.text}")
+    return response.json()
+
+
 def get_results(file_ref: str) -> Status | None:
     f = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
     if f.status_code == 200:

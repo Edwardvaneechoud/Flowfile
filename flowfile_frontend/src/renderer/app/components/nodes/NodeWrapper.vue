@@ -66,14 +66,18 @@
         class="handle-input"
         :style="getHandleStyle(index, sideInputs.length)"
       >
-        <span
-          v-if="input.label && sideInputs.length > 1"
-          class="handle-label handle-label--input"
-          :title="input.title || input.label"
-        >
+        <span v-if="input.label && sideInputs.length > 1" class="handle-label handle-label--input">
           {{ input.label }}
         </span>
-        <Handle :id="input.id" type="target" :position="input.position" />
+        <!-- The title lives on the handle, not the label: .handle-label is
+             pointer-events:none, so a title there would never surface. Handle
+             drops fallthrough attrs, hence the directive. -->
+        <Handle
+          :id="input.id"
+          v-native-title="input.title"
+          type="target"
+          :position="input.position"
+        />
       </div>
       <!-- Fixed parameter-data handle (run_flow): bottom-center, subdued until hovered -->
       <div
@@ -90,11 +94,15 @@
         class="handle-output"
         :style="getHandleStyle(index, data.outputs.length)"
       >
-        <Handle :id="output.id" type="source" :position="output.position" />
+        <Handle
+          :id="output.id"
+          v-native-title="output.title"
+          type="source"
+          :position="output.position"
+        />
         <span
           v-if="output.label && data.outputs.length > 1"
           class="handle-label handle-label--output"
-          :title="output.title"
         >
           {{ output.label }}
         </span>
@@ -339,6 +347,18 @@ const props = defineProps({
     required: true,
   },
 });
+
+// VueFlow's <Handle> does not inherit fallthrough attributes, so the native
+// tooltip has to be written onto its root element directly.
+function applyNativeTitle(el: HTMLElement, value?: string) {
+  if (value) el.setAttribute("title", value);
+  else el.removeAttribute("title");
+}
+
+const vNativeTitle = {
+  mounted: (el: HTMLElement, binding: { value?: string }) => applyNativeTitle(el, binding.value),
+  updated: (el: HTMLElement, binding: { value?: string }) => applyNativeTitle(el, binding.value),
+};
 
 // The parameter-data handle (run_flow) renders bottom-center; only real data
 // inputs share the left edge spacing.
@@ -825,19 +845,27 @@ onMounted(async () => {
   right: -8px;
 }
 
+/* The letters sit over the node icon, so they carry their own chip — the icons
+   are saturated gradient circles and bare grey text on one is unreadable.
+   Both colours are literals because the card underneath (.node-button) is a
+   theme-independent #dedede; a themed chip would invert against it in dark mode. */
 .handle-label {
   position: absolute;
-  font-size: 0.55rem;
-  color: var(--el-text-color-secondary);
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #4a4a4a;
+  background-color: #dedede;
+  border-radius: 3px;
+  padding: 1px 2px;
   white-space: nowrap;
   pointer-events: none;
   top: 50%;
   transform: translateY(-50%);
-  opacity: 0.8;
 }
 
 .handle-label--input {
-  left: 14px;
+  left: 13px;
 }
 
 /* Parameter handles (input-0 on dynamic-input nodes): square amber marker. */
@@ -867,7 +895,7 @@ onMounted(async () => {
 }
 
 .handle-label--output {
-  right: 14px;
+  right: 13px;
 }
 
 .context-menu {

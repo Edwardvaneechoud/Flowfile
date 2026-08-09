@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.catalog import (
+    KEEP_PREDICTION,
     AmbiguousTableError,
     CatalogService,
     DashboardNotFoundError,
@@ -66,7 +67,11 @@ from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
     CatalogTableCreate,
+    CatalogTableEditsRequest,
+    CatalogTableEditsResponse,
     CatalogTableFromDataCreate,
+    CatalogTableKeyColumnRequest,
+    CatalogTableKeyColumnResponse,
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
@@ -506,17 +511,14 @@ def get_run_log(
     run_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the log content for a scheduled run."""
+    """Return the log content for a subprocess-spawned run."""
     run = service.get_run_detail(run_id)
 
-    if run.run_type not in ("scheduled", "manual"):
-        raise HTTPException(404, "Logs are only available for scheduled/manual runs")
-
-    log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
-    if not log_file.exists():
+    log_path = service.resolve_run_log_path(run.id, run.run_type)
+    if log_path is None:
         raise HTTPException(404, "Log file not found")
 
-    return {"log": log_file.read_text(errors="replace")}
+    return {"log": Path(log_path).read_text(errors="replace")}
 
 
 # Open Run Snapshot in Designer
@@ -760,11 +762,15 @@ def update_table(
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
+    prediction_table_id = (
+        body.prediction_table_id if "prediction_table_id" in body.model_fields_set else KEEP_PREDICTION
+    )
     return service.update_table(
         table_id=table_id,
         name=body.name,
         description=body.description,
         namespace_id=body.namespace_id,
+        prediction_table_id=prediction_table_id,
     )
 
 
@@ -867,6 +873,52 @@ def vacuum_table(
 ):
     """Vacuum tombstoned files from a Delta catalog table (dry-run by default)."""
     return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run)
+
+
+@router.post("/tables/{table_id}/edits", response_model=CatalogTableEditsResponse)
+@handle_catalog_exceptions()
+def apply_table_edits(
+    table_id: int,
+    body: CatalogTableEditsRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Apply row-level edits from the catalog edit surface to a Delta catalog table.
+
+    Edits attach to rows via ``key_columns`` (validated as unique server-side) and
+    land as keyed Delta merges — every save is a new Delta version, visible in the
+    table's history and revertible via time travel. ``expected_version`` guards
+    against concurrent writers (409 stale-write on mismatch). Requires manage on
+    the table, like every other data-mutating table operation.
+    """
+    return service.apply_table_edits(
+        table_id,
+        body,
+        edited_by=getattr(current_user, "username", None),
+        user_id=current_user.id,
+    )
+
+
+@router.post("/tables/{table_id}/key-column", response_model=CatalogTableKeyColumnResponse)
+@handle_catalog_exceptions()
+def add_table_key_column(
+    table_id: int,
+    body: CatalogTableKeyColumnRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Rewrite a catalog table with a sequential row-id column appended.
+
+    The escape hatch for the edit surface on tables with no natural unique key:
+    edits need key columns, so this mints one. A full-table rewrite (new Delta
+    version). Requires manage on the table.
+    """
+    return service.add_table_key_column(
+        table_id,
+        column_name=body.column_name,
+        expected_version=body.expected_version,
+        user_id=current_user.id,
+    )
 
 
 # Table Favorites
