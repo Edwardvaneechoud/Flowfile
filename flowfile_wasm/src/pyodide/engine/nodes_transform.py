@@ -213,7 +213,9 @@ def build_head(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     filter on a shuffled row rank because polars only offers ``sample`` on eager
     DataFrames, keeping this node lazy like every other transform here.
     """
-    n = settings.get("sample_size") or settings.get("head_input", {}).get("n", 10)
+    n = settings.get("sample_size")
+    if n is None:
+        n = settings.get("head_input", {}).get("n", 10)
     method = settings.get("sample_method", "first")
     if method not in ("random", "random_fraction"):
         return input_lf.head(n)

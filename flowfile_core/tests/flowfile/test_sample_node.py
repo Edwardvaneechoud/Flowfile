@@ -3,12 +3,15 @@
 Run with:
     pytest flowfile_core/tests/flowfile/test_sample_node.py -v
 """
+from pathlib import Path
+
 import polars as pl
 import pytest
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas
 
 ROW_COUNT = 200
@@ -164,3 +167,23 @@ def test_random_sample_requires_exactly_one_of_n_or_fraction():
         fde.random_sample()
     with pytest.raises(ValueError):
         fde.random_sample(n=5, fraction=0.5)
+
+
+LEGACY_FLOW = (
+    Path(__file__).parent.parent.parent.parent / "flowfile_frontend" / "tests" / "fixtures" / "complex-flow.yaml"
+)
+
+
+@pytest.mark.skipif(not LEGACY_FLOW.exists(), reason="frontend fixture not present")
+def test_flow_saved_before_random_sampling_still_opens_as_head():
+    """A real pre-feature flow whose sample node only carries sample_size."""
+    graph = open_flow(LEGACY_FLOW)
+
+    sample_nodes = [n for n in graph.nodes if n.node_type == "sample"]
+    assert sample_nodes, "fixture is expected to contain a sample node"
+    for node in sample_nodes:
+        settings = node.setting_input
+        assert settings.sample_method == "first"
+        assert settings.seed is None
+        assert settings.sample_size == 50
+        assert settings.get_default_description() == "First 50 rows"
