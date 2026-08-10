@@ -2516,6 +2516,60 @@ class FlowFrame:
     def limit(self, n: int, description: str = None):
         return self.head(n, description)
 
+    def sample(
+        self,
+        n: int | None = None,
+        *,
+        fraction: float | None = None,
+        seed: int | None = None,
+        description: str = None,
+    ):
+        """Take a uniform random sample of rows.
+
+        Unlike ``polars``, which only offers ``sample`` on eager DataFrames,
+        this stays lazy: it emits a sample node that filters on a shuffled row
+        rank, so nothing is materialized until ``collect()``. Sampling more rows
+        than the frame holds returns the whole frame, and the original row order
+        is preserved. Sampling with replacement is not supported.
+
+        Args:
+            n: Number of rows to keep. Mutually exclusive with `fraction`.
+            fraction: Share of rows to keep, between 0 and 1. Mutually exclusive with `n`.
+            seed: Seed for a reproducible sample; None draws a fresh permutation
+                on every execution.
+            description: Optional node description shown in the Designer.
+
+        Returns:
+            A new FlowFrame over the sampled rows.
+        """
+        if (n is None) == (fraction is None):
+            raise ValueError("Provide exactly one of n or fraction")
+        new_node_id = generate_node_id()
+        if fraction is not None:
+            if not 0 < fraction <= 1:
+                raise ValueError("fraction must be greater than 0 and at most 1")
+            settings = input_schema.NodeSample(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                depending_on_id=self.node_id,
+                sample_method="random_fraction",
+                fraction=fraction * 100.0,
+                seed=seed,
+                description=description,
+            )
+        else:
+            settings = input_schema.NodeSample(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                depending_on_id=self.node_id,
+                sample_method="random",
+                sample_size=n,
+                seed=seed,
+                description=description,
+            )
+        self.flow_graph.add_sample(settings)
+        return self._create_child_frame(new_node_id)
+
     def solve_graph(
         self,
         col_from: str,

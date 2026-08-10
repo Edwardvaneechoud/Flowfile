@@ -220,6 +220,31 @@ def test_head_limits_rows():
     assert out["n"].to_list() == [0, 1, 2, 3, 4]
 
 
+def test_head_random_takes_n_rows_off_the_head():
+    plan = engine.build_head(
+        lf(n=list(range(100))), {"sample_method": "random", "sample_size": 5, "seed": 42}
+    )
+    assert isinstance(plan, pl.LazyFrame)
+    out = plan.collect()
+    assert len(out) == 5
+    assert out["n"].to_list() != [0, 1, 2, 3, 4]
+    assert out["n"].to_list() == sorted(out["n"].to_list())
+
+
+def test_head_random_is_reproducible_for_a_fixed_seed():
+    settings = {"sample_method": "random", "sample_size": 10, "seed": 7}
+    first = engine.build_head(lf(n=list(range(100))), settings).collect()["n"].to_list()
+    second = engine.build_head(lf(n=list(range(100))), settings).collect()["n"].to_list()
+    assert first == second
+
+
+def test_head_random_fraction_keeps_that_share():
+    out = engine.build_head(
+        lf(n=list(range(100))), {"sample_method": "random_fraction", "fraction": 20.0, "seed": 3}
+    ).collect()
+    assert len(out) == 20
+
+
 def test_unpivot_wide_to_long():
     out = engine.build_unpivot(
         lf(id=[1, 2], q1=[10, 30], q2=[20, 40]),
