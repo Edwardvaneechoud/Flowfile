@@ -156,7 +156,7 @@ class FlowNode:
     _fetch_cached_df: ExternalTaskHandle | None
     _cache_progress: ExternalTaskHandle | None
 
-    _kernel_cancel_context: Any
+    _kernel_cancel_context: Any  # (kernel_id, manager, exec_token) of this node's in-flight cell
     _kernel_cancel_event: threading.Event | None
     _subflow_cancel_context: Any  # a running child FlowGraph of a run_flow node
 
@@ -1641,13 +1641,15 @@ class FlowNode:
         if self._fetch_cached_df is not None:
             self._fetch_cached_df.cancel()
         elif self._kernel_cancel_context is not None:
-            kernel_id, manager = self._kernel_cancel_context
+            kernel_id, manager, exec_token = self._kernel_cancel_context
             logger.info("Cancelling kernel execution for kernel '%s'", kernel_id)
             # Signal the cancel event so execute_sync returns promptly
             if self._kernel_cancel_event is not None:
                 self._kernel_cancel_event.set()
             try:
-                manager.interrupt_execution_sync(kernel_id)
+                # Addressed to this node's own cell: a node still queued behind
+                # another flow on this shared kernel interrupts nothing.
+                manager.interrupt_execution_sync(kernel_id, exec_token)
             except Exception:
                 logger.exception("Failed to interrupt kernel execution for kernel '%s'", kernel_id)
         elif self._subflow_cancel_context is not None:

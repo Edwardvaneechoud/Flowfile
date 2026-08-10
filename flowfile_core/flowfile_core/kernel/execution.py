@@ -7,6 +7,7 @@ each piece independently testable.
 import logging
 import os
 import re
+import uuid
 
 import polars as pl
 
@@ -168,6 +169,9 @@ def build_execute_request(
         log_callback_url=log_callback_url,
         internal_token=internal_token,
         available_artifacts=available_artifacts,
+        # Minted here, not in execute_sync: the node stores it as its cancel
+        # address before the call, so a cancel can only hit this one cell.
+        exec_token=uuid.uuid4().hex,
     )
 
 

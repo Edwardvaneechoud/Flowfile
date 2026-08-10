@@ -191,6 +191,11 @@ class ExecuteRequest(BaseModel):
     available_artifacts: dict[str, int] | None = None
     # Sandboxes global-artifact writes in the kernel; images before 0.5.4 ignore it.
     dry_run: bool = False
+    # Identity of this one execution, stamped server-side by KernelManager.execute_sync.
+    # Cancellation is addressed to it, so a cancel can never land on a cell another
+    # flow is running on the same kernel. Kernel images at 0.5.4 and older ignore it —
+    # core's own ownership gate is what keeps cancellation flow-scoped against those.
+    exec_token: str = ""
 
 
 class ClearNodeArtifactsRequest(BaseModel):
