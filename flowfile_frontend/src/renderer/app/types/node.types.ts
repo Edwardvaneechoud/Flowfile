@@ -982,8 +982,13 @@ export interface NodeDynamicRename extends NodeSingleInput {
   dynamic_rename_input: DynamicRenameInput;
 }
 
+export type SampleMethod = "first" | "random" | "random_fraction";
+
 export interface NodeSample extends NodeBase {
+  sample_method: SampleMethod;
   sample_size: number;
+  fraction: number;
+  seed: number | null;
 }
 
 export interface RandomSplitGroup {

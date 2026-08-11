@@ -340,7 +340,15 @@ class TestNodeManualInputDescription:
 class TestNodeSampleDescription:
     def test_sample_description(self):
         node = input_schema.NodeSample(**BASE_KWARGS, sample_size=500)
-        assert node.get_default_description() == "Sample 500 rows"
+        assert node.get_default_description() == "First 500 rows"
+
+    def test_random_sample_description(self):
+        node = input_schema.NodeSample(**BASE_KWARGS, sample_method="random", sample_size=500)
+        assert node.get_default_description() == "Random 500 rows"
+
+    def test_random_fraction_description(self):
+        node = input_schema.NodeSample(**BASE_KWARGS, sample_method="random_fraction", fraction=12.5)
+        assert node.get_default_description() == "Random 12.5% of rows"
 
 
 # NodePivot

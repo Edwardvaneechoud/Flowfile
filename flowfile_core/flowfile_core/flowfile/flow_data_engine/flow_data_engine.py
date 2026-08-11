@@ -1719,6 +1719,41 @@ class FlowDataEngine:
 
         return FlowDataEngine(sample_df, schema=self.schema)
 
+    def random_sample(
+        self,
+        n: int | None = None,
+        fraction: float | None = None,
+        seed: int | None = None,
+    ) -> FlowDataEngine:
+        """Takes a uniform random sample of rows without materialising the frame.
+
+        Polars exposes ``sample`` only on eager DataFrames, so the lazy
+        equivalent is built from a shuffled row rank: each row draws a distinct
+        rank from a random permutation of ``0..len``, and keeping the ranks
+        below a threshold keeps a uniform subset. Nothing is collected and the
+        row count is never queried, so the result stays a plan that ships to
+        the worker like any other lazy transform — unlike :meth:`random_split`,
+        which has to materialise because its outputs must share one permutation.
+
+        Sampling more rows than the frame holds yields the whole frame, and the
+        original row order is preserved.
+
+        Args:
+            n: Number of rows to keep. Mutually exclusive with `fraction`.
+            fraction: Share of rows to keep, between 0 and 1. Mutually exclusive with `n`.
+            seed: Seed for a reproducible sample; None draws a fresh permutation
+                on every execution.
+
+        Returns:
+            A new `FlowDataEngine` instance containing the sampled rows.
+        """
+        if (n is None) == (fraction is None):
+            raise ValueError("Provide exactly one of n or fraction")
+        df = self.data_frame if self.lazy else self.data_frame.lazy()
+        threshold = (pl.len() * fraction).round().cast(pl.Int64) if fraction is not None else max(0, n)
+        sampled = df.filter(pl.int_range(0, pl.len()).shuffle(seed=seed) < threshold)
+        return FlowDataEngine(sampled, schema=self.schema, streamable=self._streamable)
+
     def random_split(
         self,
         splits: list[tuple[str, float]],

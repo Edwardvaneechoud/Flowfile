@@ -552,6 +552,45 @@ def test_head_limit():
     assert result["id"].to_list() == [1, 2]
 
 
+def test_sample_random_rows():
+    """sample(n) takes a reproducible random subset without collecting early."""
+    df = FlowFrame({"id": list(range(100))})
+
+    result = df.sample(10, seed=42).collect()
+    assert len(result) == 10
+    assert len(set(result["id"].to_list())) == 10
+    assert result["id"].to_list() != list(range(10))
+    assert result["id"].to_list() == df.sample(10, seed=42).collect()["id"].to_list()
+
+
+def test_sample_fraction():
+    df = FlowFrame({"id": list(range(100))})
+
+    assert len(df.sample(fraction=0.25, seed=1).collect()) == 25
+
+
+def test_sample_emits_a_native_sample_node():
+    df = FlowFrame({"id": list(range(20))})
+    frame = df.sample(5, seed=3)
+
+    node = frame.flow_graph.get_node(frame.node_id)
+    assert node.node_type == "sample"
+    assert node.setting_input.sample_method == "random"
+    assert node.setting_input.sample_size == 5
+    assert node.setting_input.seed == 3
+
+
+def test_sample_rejects_ambiguous_or_invalid_sizes():
+    df = FlowFrame({"id": list(range(20))})
+
+    with pytest.raises(ValueError):
+        df.sample()
+    with pytest.raises(ValueError):
+        df.sample(5, fraction=0.5)
+    with pytest.raises(ValueError):
+        df.sample(fraction=1.5)
+
+
 def test_complex_workflow():
     """Test a more complex workflow combining multiple operations."""
     data = {
