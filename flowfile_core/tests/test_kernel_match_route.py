@@ -109,6 +109,40 @@ class TestMatchWithManager:
         assert body["suggestion"]["config"]["image_flavour"] == "base"
 
 
+class TestMatchWithoutBaseline:
+    """Without an image baseline the route must say so, not invent a match."""
+
+    def test_response_is_honest_when_the_baseline_is_missing(self, client, monkeypatch):
+        from flowfile_core.kernel import matching
+
+        base = _kernel("b1", "Base kernel")
+        manager = _mock_manager(owned=[base], all_kernels=[base])
+        monkeypatch.setattr(kernel_pkg, "get_kernel_manager_if_initialized", lambda: manager)
+        monkeypatch.setattr(matching, "_image_contents", lambda: None)
+
+        resp = client.post("/kernels/match", json={"dependencies": ["scikit-learn>=1.0"]})
+        assert resp.status_code == 200, resp.text
+        match = resp.json()["matches"][0]
+        # The old shape here was level=full with the dep parked in `unverified`,
+        # which the UI renders as "✓ should have all packages".
+        assert match["level"] == "unknown"
+        assert match["unknown"] == ["scikit-learn>=1.0"]
+        assert match["unverified"] == []
+        assert match["baseline"] == "unknown"
+
+    def test_batch_summary_carries_unknown(self, client, monkeypatch):
+        from flowfile_core.kernel import matching
+
+        base = _kernel("b1", "Base kernel")
+        manager = _mock_manager(owned=[base], all_kernels=[base])
+        monkeypatch.setattr(kernel_pkg, "get_kernel_manager_if_initialized", lambda: manager)
+        monkeypatch.setattr(matching, "_image_contents", lambda: None)
+
+        resp = client.post("/kernels/match/batch", json={"items": {"a": ["scikit-learn>=1.0"]}})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["results"]["a"]["level"] == "unknown"
+
+
 class TestMatchDockerDown:
     def test_db_fallback(self, client, user_id, monkeypatch):
         monkeypatch.setattr(kernel_pkg, "get_kernel_manager_if_initialized", lambda: None)

@@ -37,18 +37,22 @@ function match(
   missing: string[] = [],
   state: KernelMatch["state"] = "stopped",
   unverified: string[] = [],
+  unknown: string[] = [],
+  imageFlavour: KernelMatch["image_flavour"] = "base",
 ): KernelMatch {
   return {
     kernel_id: kernelId,
     kernel_name: kernelId,
     state,
-    image_flavour: "base",
+    image_flavour: imageFlavour,
     satisfied: [],
     missing,
     unverified,
+    unknown,
     invalid: [],
     details: {},
     level,
+    baseline: level === "unknown" ? "unknown" : "manifest",
   };
 }
 
@@ -84,6 +88,22 @@ describe("describeMatch", () => {
     expect(badge.label).toBe("✓ should have all packages");
     expect(badge.tone).toBe("full");
     expect(badge.title).toBe("Unverified: pkg>=1");
+  });
+
+  it("unknown never claims the packages are there", () => {
+    const badge = describeMatch(match("k", "unknown", [], "stopped", [], ["pkg>=1"]), 1);
+    expect(badge.label).toBe("? can't verify packages");
+    expect(badge.tone).toBe("unknown");
+    expect(badge.label).not.toContain("✓");
+    expect(badge.title).toContain("pkg>=1");
+  });
+
+  it("unknown on a custom image explains why", () => {
+    const badge = describeMatch(
+      match("k", "unknown", [], "stopped", [], ["pkg>=1"], "custom"),
+      1,
+    );
+    expect(badge.title).toBe("Custom image contents are unknown: pkg>=1");
   });
 });
 
@@ -124,6 +144,11 @@ describe("pickAutoSelect", () => {
   it("never picks a partial match", () => {
     const kernels = [kernel("a")];
     expect(pickAutoSelect([match("a", "partial", ["x"])], kernels)).toBeNull();
+  });
+
+  it("never silently picks a kernel we couldn't verify", () => {
+    const kernels = [kernel("a", "idle")];
+    expect(pickAutoSelect([match("a", "unknown", [], "idle", [], ["x"])], kernels)).toBeNull();
   });
 
   it("ignores matches for kernels not in the list", () => {

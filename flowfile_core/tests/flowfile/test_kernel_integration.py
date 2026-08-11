@@ -1877,3 +1877,83 @@ class TestPythonScriptNodeCancellation:
 
         finally:
             _kernel_mod._manager = _prev
+
+    def test_cancelling_one_flow_leaves_the_other_flow_running(
+        self, kernel_manager: tuple[KernelManager, str]
+    ):
+        """Two flows share one kernel. Flow A runs a long cell; flow B queues behind
+        it and is cancelled. A must finish successfully — a cancel addresses one
+        execution, not the whole kernel.
+        """
+        import threading
+        import time
+
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        def _build(flow_id: int, code: str) -> FlowGraph:
+            graph = _create_graph(flow_id=flow_id)
+            graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=flow_id,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist([{"x": 1}]),
+                )
+            )
+            graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=2, node_type="python_script"))
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=flow_id,
+                    node_id=2,
+                    depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(code=code, kernel_id=kernel_id),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+            return graph
+
+        slow_code = """
+import time
+df = flowfile_ctx.read_input()
+time.sleep(12)
+flowfile_ctx.publish_output(df)
+"""
+        quick_code = """
+df = flowfile_ctx.read_input()
+flowfile_ctx.publish_output(df)
+"""
+
+        try:
+            graph_a = _build(998, slow_code)
+            graph_b = _build(997, quick_code)
+
+            info_a: list[RunInformation | None] = [None]
+            info_b: list[RunInformation | None] = [None]
+
+            t_a = threading.Thread(target=lambda: info_a.__setitem__(0, graph_a.run_graph()))
+            t_a.start()
+            time.sleep(4)  # let A claim the kernel and get into its sleep
+
+            t_b = threading.Thread(target=lambda: info_b.__setitem__(0, graph_b.run_graph()))
+            t_b.start()
+            time.sleep(2)  # B is now queued on the per-kernel exec lock
+
+            graph_b.cancel()
+
+            t_b.join(timeout=20)
+            assert not t_b.is_alive(), "Cancelled flow did not stop"
+            assert graph_b.get_node(2).node_stats.is_canceled is True
+
+            t_a.join(timeout=60)
+            assert not t_a.is_alive(), "Uncancelled flow never finished"
+
+            node_a = graph_a.get_node(2)
+            assert node_a.node_stats.is_canceled is False, "Cancelling flow B cancelled flow A's node"
+            assert info_a[0] is not None and info_a[0].success, "Cancelling flow B killed flow A's cell"
+
+        finally:
+            _kernel_mod._manager = _prev

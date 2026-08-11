@@ -14,7 +14,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, Query
 from pydantic import BaseModel, Field
 
 from kernel_runtime import __version__, flowfile_client
@@ -169,6 +169,7 @@ def _peek_namespace(flow_id: int) -> dict:
 _exec_lock = threading.RLock()
 _exec_generation = 0
 _running_execs: dict[int, int] = {}  # generation -> thread ident
+_exec_tokens: dict[str, int] = {}  # caller's exec token -> generation
 _interrupt_generation: int | None = None  # generation the last interrupt targeted
 
 
@@ -180,18 +181,27 @@ def _raise_in_thread(tid: int) -> None:
     )
 
 
-def _request_interrupt() -> bool:
-    """Interrupt the most recently started running cell, if any.
+def _request_interrupt(exec_token: str = "") -> bool:
+    """Interrupt one running cell: the one *exec_token* names, else the newest.
 
     Injects ``KeyboardInterrupt`` and sends a single ``SIGUSR1`` to nudge the
     thread out of a blocking syscall. The interrupt is bound to that cell's
     generation, so a later cell can never receive it. One-shot: never re-arms.
+
+    A token whose cell has already finished interrupts *nothing* — falling back
+    to the newest cell there would cancel whatever flow started next.
     """
     global _interrupt_generation
     with _exec_lock:
-        if not _running_execs:
+        if exec_token:
+            gen = _exec_tokens.get(exec_token)
+            if gen is None or gen not in _running_execs:
+                return False
+            _interrupt_generation = gen
+        elif _running_execs:
+            _interrupt_generation = max(_running_execs)
+        else:
             return False
-        _interrupt_generation = max(_running_execs)
         tid = _running_execs[_interrupt_generation]
     _raise_in_thread(tid)
     try:
@@ -396,6 +406,14 @@ class ExecuteRequest(BaseModel):
     available_artifacts: dict[str, int] | None = None
     # Makes is_dry_run() True and sandboxes global-artifact writes in-process.
     dry_run: bool = False
+    # Identity of this one execution; /interrupt addresses it so a cancel from one
+    # flow can never land on a cell another flow is running on this kernel.
+    exec_token: str = ""
+
+
+class InterruptRequest(BaseModel):
+    # Empty ⇒ untargeted (legacy core): interrupt the newest running cell.
+    exec_token: str = ""
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -470,6 +488,8 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         _exec_generation += 1
         my_gen = _exec_generation
         _running_execs[my_gen] = threading.get_ident()
+        if request.exec_token:
+            _exec_tokens[request.exec_token] = my_gen
     try:
         return _run_user_code(request, start, stdout_buf, stderr_buf)
     except BaseException as exc:  # noqa: BLE001 - never surface a stray interrupt as a 500
@@ -486,6 +506,8 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
     finally:
         with _exec_lock:
             _running_execs.pop(my_gen, None)
+            if _exec_tokens.get(request.exec_token) == my_gen:
+                _exec_tokens.pop(request.exec_token, None)
             if _interrupt_generation == my_gen:
                 _interrupt_generation = None
 
@@ -637,9 +659,14 @@ async def execute(request: ExecuteRequest):
 
 
 @app.post("/interrupt")
-async def interrupt():
-    """Interrupt running user code by injecting ``KeyboardInterrupt``."""
-    if _request_interrupt():
+async def interrupt(request: InterruptRequest | None = Body(default=None)):
+    """Interrupt running user code by injecting ``KeyboardInterrupt``.
+
+    The optional ``exec_token`` names the execution to interrupt; without it the
+    newest running cell is targeted (older core sends no body).
+    """
+    exec_token = request.exec_token if request else ""
+    if _request_interrupt(exec_token):
         return {"status": "interrupted"}
     return {"status": "no_execution_running"}
 

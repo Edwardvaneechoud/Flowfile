@@ -106,6 +106,12 @@ jobs:
       - name: Build Python services (PyInstaller)
         run: poetry run build_backends
 
+      # A sidecar without the kernel dependency baseline reports every kernel
+      # dependency as satisfied — the desktop-only failure this guards against.
+      - name: Verify the kernel image manifest is in the bundle
+        shell: bash
+        run: test -f services_dist/_internal/flowfile_core/kernel/kernel_image_manifest.json
+
       - name: Stage sidecars for Tauri
         run: poetry run python tools/rename_sidecar.py --triple ${{ matrix.target }}
 

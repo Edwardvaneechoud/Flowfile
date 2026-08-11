@@ -4,15 +4,25 @@ Powers ``POST /kernels/match`` (picker ranking + create-from-spec suggestion)
 and the run-time dependency pre-check in ``flow_graph``. This module must not
 import ``kernel.manager`` — that pulls in the docker SDK at module level.
 
-Satisfaction semantics: a dependency is ``missing`` only when we positively
-know the kernel lacks it (name absent from a known image, or an installed
-version that fails the specifier). Anything we cannot prove — unknown
-versions, custom images, extras — is ``unverified`` and never blocks.
+Satisfaction semantics, three ways to fail to say "yes":
+
+* ``missing`` — we positively know the kernel lacks it (name absent from an
+  image whose contents we know, or an installed version that fails the
+  specifier). Only this blocks a run.
+* ``unverified`` — we know the image's contents and the name is there, but the
+  version or extras can't be proven.
+* ``unknown`` — we can't enumerate the image at all (a user's custom image, or
+  no shipped baseline for this flavour). Absence is unprovable, so this must
+  never render as a match.
+
+The last one is deliberately distinct: collapsing it into ``full`` is what made
+every packaged install report "has all packages" for kernels that had none.
 """
 
 from __future__ import annotations
 
 import functools
+import logging
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -22,7 +32,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from flowfile_core.kernel.flavours import _KERNEL_LOCK_PATH, _ML_EXTRA_PACKAGE_NAMES, get_flavour_packages
+from flowfile_core.kernel.flavours import _ML_EXTRA_PACKAGE_NAMES, flavour_contents
 from flowfile_core.kernel.models import (
     ImageFlavour,
     KernelConfig,
@@ -31,12 +41,15 @@ from flowfile_core.kernel.models import (
     KernelState,
 )
 
-DependencyStatus = Literal["satisfied", "unverified", "missing", "invalid"]
+logger = logging.getLogger(__name__)
+
+DependencyStatus = Literal["satisfied", "unverified", "unknown", "missing", "invalid"]
+BaselineSource = Literal["manifest", "declared", "unknown"]
 
 _NAME_FALLBACK_RE = re.compile(r"^[A-Za-z0-9_.\-]+")
 _SLUG_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
-_LEVEL_RANK = {"full": 0, "partial": 1, "none": 2}
+_LEVEL_RANK = {"full": 0, "unknown": 1, "partial": 2, "none": 3}
 _STATE_RANK = {
     KernelState.IDLE: 0,
     KernelState.EXECUTING: 0,
@@ -82,130 +95,22 @@ def parse_dependency(spec: str) -> ParsedDependency | None:
     )
 
 
-_KERNEL_PYPROJECT_PATH = _KERNEL_LOCK_PATH.parent / "pyproject.toml"
-
-_TOML_ENTRY_RE = re.compile(r"^([A-Za-z0-9_.\-]+)\s*=\s*(.+)$")
-_LOCK_NAME_RE = re.compile(r'^name = "([^"]+)"', re.MULTILINE)
-
-
-def _toml_section_lines(text: str, header: str) -> list[str]:
-    lines: list[str] = []
-    in_section = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped == header:
-            in_section = True
-            continue
-        if in_section:
-            if stripped.startswith("["):
-                break
-            lines.append(stripped)
-    return lines
-
-
-def _kernel_pyproject_roots(text: str) -> tuple[frozenset[str], frozenset[str]]:
-    """(base_roots, ml_extra_roots): the image's non-optional main deps + the ml extras."""
-    base: set[str] = set()
-    for line in _toml_section_lines(text, "[tool.poetry.dependencies]"):
-        match = _TOML_ENTRY_RE.match(line)
-        if not match or match.group(1) == "python" or "optional = true" in match.group(2):
-            continue
-        base.add(canonicalize_name(match.group(1)))
-    ml: set[str] = set()
-    for line in _toml_section_lines(text, "[tool.poetry.extras]"):
-        if line.startswith("ml"):
-            ml.update(canonicalize_name(name) for name in re.findall(r'"([^"]+)"', line))
-    return frozenset(base), frozenset(ml)
-
-
-def _lock_dependency_graph(text: str) -> dict[str, frozenset[str]]:
-    """``{canonical_name: canonical dep names}`` from poetry.lock, skipping
-    extras-only (``optional = true``) edges."""
-    graph: dict[str, frozenset[str]] = {}
-    for block in text.split("[[package]]")[1:]:
-        name_match = _LOCK_NAME_RE.search(block)
-        if not name_match:
-            continue
-        deps: set[str] = set()
-        for line in _toml_section_lines(block, "[package.dependencies]"):
-            match = _TOML_ENTRY_RE.match(line)
-            if match and "optional = true" not in match.group(2):
-                deps.add(canonicalize_name(match.group(1)))
-        graph[canonicalize_name(name_match.group(1))] = frozenset(deps)
-    return graph
-
-
 @functools.lru_cache(maxsize=1)
-def _image_contents() -> dict[ImageFlavour, frozenset[str]] | None:
-    """Canonical names actually installed per flavour image, or ``None``.
+def _image_contents() -> dict[ImageFlavour, dict[str, str | None]] | None:
+    """``{flavour: {canonical_name: version | None}}`` from the shipped manifest.
 
-    The images install the FULL kernel_runtime main dependency group (plus ml
-    extras for the ml image) — far more than the curated display list in
-    flavours.py — so provable absence must be judged against the dependency
-    closure of pyproject roots over the lockfile graph. ``None`` (files
-    unreadable, e.g. a packaged install without the repo) means absence can
-    never be proven and callers treat known images as opaque.
+    ``None`` means no baseline at all, so absence can never be proven and every
+    known image is treated as opaque. A flavour *missing* from the returned dict
+    is one the manifest doesn't vouch for (its configured image is a different
+    release) and is opaque on its own.
     """
-    try:
-        pyproject_text = _KERNEL_PYPROJECT_PATH.read_text(encoding="utf-8")
-        lock_text = _KERNEL_LOCK_PATH.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    base_roots, ml_roots = _kernel_pyproject_roots(pyproject_text)
-    if not base_roots:
-        return None
-    graph = _lock_dependency_graph(lock_text)
-
-    def closure(roots: frozenset[str]) -> frozenset[str]:
-        seen: set[str] = set()
-        stack = list(roots)
-        while stack:
-            name = stack.pop()
-            if name in seen:
-                continue
-            seen.add(name)
-            stack.extend(graph.get(name, frozenset()))
-        return frozenset(seen)
-
-    base = closure(base_roots)
-    # Lite installs the same package set as base — only the constraint pins differ.
-    return {
-        ImageFlavour.BASE: base,
-        ImageFlavour.ML: closure(base_roots | ml_roots),
-        ImageFlavour.LITE: base,
-        ImageFlavour.CUSTOM: frozenset(),
-    }
-
-
-@functools.lru_cache(maxsize=1)
-def _flavour_provides() -> dict[ImageFlavour, dict[str, str | None]]:
-    """``{flavour: {canonical_name: version | None}}`` for the baked images.
-
-    Name-presence comes from the full image contents closure; known versions
-    come from the curated lockfile lists (flavours.py). Lite bakes the same
-    packages as base but only pins a whitelist in /opt/constraints.txt, so
-    its non-whitelisted versions stay unknown.
-    """
-    packages = get_flavour_packages()
-    contents = _image_contents() or {}
-
-    def to_map(entries: list[tuple[str, str]]) -> dict[str, str | None]:
-        return {canonicalize_name(name): (version if version != "—" else None) for name, version in entries}
-
-    def build(flavour: ImageFlavour, versions: dict[str, str | None]) -> dict[str, str | None]:
-        provides: dict[str, str | None] = {name: None for name in contents.get(flavour, frozenset())}
-        provides.update(versions)
-        return provides
-
-    base_versions = to_map(packages[ImageFlavour.BASE])
-    lite_versions = {name: None for name in base_versions}
-    lite_versions.update(to_map(packages[ImageFlavour.LITE]))
-    return {
-        ImageFlavour.BASE: build(ImageFlavour.BASE, base_versions),
-        ImageFlavour.ML: build(ImageFlavour.ML, to_map(packages[ImageFlavour.ML])),
-        ImageFlavour.LITE: build(ImageFlavour.LITE, lite_versions),
-        ImageFlavour.CUSTOM: {},
-    }
+    contents = flavour_contents()
+    if contents is None:
+        logger.warning(
+            "No kernel image baseline available — every kernel dependency will report as "
+            "unknown rather than missing. See flowfile_core/kernel/flavours.py."
+        )
+    return contents
 
 
 @functools.lru_cache(maxsize=1)
@@ -226,18 +131,29 @@ def kernel_provides(kernel: KernelInfo) -> tuple[dict[str, str | None], bool]:
     Flavour-baked packages, then the requested ``packages`` specs name-only
     (legacy kernels created before resolved_packages existed), then the
     resolved versions, which win. ``opaque`` means the image's contents can't
-    be enumerated (custom image, or the kernel_runtime lock/pyproject files
-    are unreadable) — absence is then never provable.
+    be enumerated (custom image, or no shipped manifest entry for this
+    flavour) — absence is then never provable.
     """
-    provides = dict(_flavour_provides().get(kernel.image_flavour, {}))
+    contents = _image_contents() or {}
+    provides = dict(contents.get(kernel.image_flavour, {}))
     for spec in kernel.packages:
         parsed = parse_dependency(spec)
         if parsed is not None:
             provides.setdefault(parsed.name, None)
     for pkg in kernel.resolved_packages:
         provides[canonicalize_name(pkg.name)] = pkg.version
-    opaque = kernel.image_flavour == ImageFlavour.CUSTOM or _image_contents() is None
+    opaque = kernel.image_flavour == ImageFlavour.CUSTOM or kernel.image_flavour not in contents
     return provides, opaque
+
+
+def kernel_baseline(kernel: KernelInfo) -> BaselineSource:
+    """Where this kernel's package inventory came from, for honest UI copy."""
+    contents = _image_contents() or {}
+    if kernel.image_flavour in contents and kernel.image_flavour != ImageFlavour.CUSTOM:
+        return "manifest"
+    if kernel.resolved_packages or kernel.packages:
+        return "declared"
+    return "unknown"
 
 
 def evaluate_dependency(
@@ -248,7 +164,7 @@ def evaluate_dependency(
 ) -> tuple[DependencyStatus, str | None]:
     if dep.name not in provides:
         if opaque:
-            return "unverified", "image contents unknown"
+            return "unknown", "image contents unknown"
         return "missing", "not installed"
     version = provides[dep.name]
     if version is None:
@@ -277,7 +193,7 @@ def evaluate_dependency(
 
 def evaluate_kernel(dependencies: list[str], kernel: KernelInfo) -> KernelMatchEntry:
     provides, opaque = kernel_provides(kernel)
-    buckets: dict[str, list[str]] = {"satisfied": [], "unverified": [], "missing": []}
+    buckets: dict[str, list[str]] = {"satisfied": [], "unverified": [], "unknown": [], "missing": []}
     invalid: list[str] = []
     details: dict[str, str] = {}
     for spec in dependencies:
@@ -295,7 +211,12 @@ def evaluate_kernel(dependencies: list[str], kernel: KernelInfo) -> KernelMatchE
             details[spec_repr] = reason
     missing = buckets["missing"]
     parseable = sum(len(bucket) for bucket in buckets.values())
-    level = "none" if missing and len(missing) == parseable else ("partial" if missing else "full")
+    if missing:
+        level = "none" if len(missing) == parseable else "partial"
+    elif buckets["unknown"]:
+        level = "unknown"
+    else:
+        level = "full"
     return KernelMatchEntry(
         kernel_id=kernel.id,
         kernel_name=kernel.name,
@@ -304,9 +225,11 @@ def evaluate_kernel(dependencies: list[str], kernel: KernelInfo) -> KernelMatchE
         satisfied=buckets["satisfied"],
         missing=missing,
         unverified=buckets["unverified"],
+        unknown=buckets["unknown"],
         invalid=invalid,
         details=details,
         level=level,
+        baseline=kernel_baseline(kernel),
     )
 
 
@@ -317,6 +240,7 @@ def match_kernels(dependencies: list[str], kernels: list[KernelInfo]) -> list[Ke
         key=lambda e: (
             _LEVEL_RANK[e.level],
             len(e.missing),
+            len(e.unknown),
             len(e.unverified),
             _STATE_RANK.get(e.state, 4),
             e.kernel_id,
@@ -339,12 +263,18 @@ def suggest_kernel_config(
     """
     parsed = [dep for dep in (parse_dependency(spec) for spec in dependencies) if dep is not None]
     flavour = ImageFlavour.ML if any(dep.name in _ml_extra_names() for dep in parsed) else ImageFlavour.BASE
-    provides = _flavour_provides()[flavour]
+    contents = _image_contents() or {}
+    provides = contents.get(flavour, {})
+    # Don't claim provable knowledge we don't have. Without a baseline every dep
+    # falls through to `packages` either way, but hardcoding opaque=False here
+    # made "not in the curated list" read as "missing" — which is how the
+    # baseline-less app ended up baking packages the image already ships.
+    opaque = flavour not in contents
 
     covered: list[str] = []
     packages: list[str] = []
     for dep in parsed:
-        status, _ = evaluate_dependency(dep, provides, opaque=False, raw_packages=[])
+        status, _ = evaluate_dependency(dep, provides, opaque=opaque, raw_packages=[])
         if status == "satisfied":
             covered.append(canonical_spec(dep))
         else:
@@ -366,8 +296,8 @@ def suggest_kernel_config(
 def verify_kernel_for_node(kernel: KernelInfo | None, dependencies: list[str]) -> list[str]:
     """Pre-check: formatted entries for deps the kernel *provably* lacks.
 
-    Empty list means "don't block": unknown kernel, no deps, unverified or
-    invalid specs all pass — only positive mismatches stop a run.
+    Empty list means "don't block": unknown kernel, no deps, unverified,
+    unknown or invalid specs all pass — only positive mismatches stop a run.
     """
     if kernel is None or not dependencies:
         return []

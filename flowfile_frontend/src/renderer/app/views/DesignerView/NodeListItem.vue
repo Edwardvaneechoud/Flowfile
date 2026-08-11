@@ -84,6 +84,8 @@ const kernelBadgeTitle = computed(() => {
     return `${base} — kernel "${summary.best_kernel_name}" has all required packages`;
   if (summary.level === "partial")
     return `${base} — kernel "${summary.best_kernel_name}" is missing some required packages`;
+  // Distinct from "none": we couldn't check, rather than checked and found nothing.
+  if (summary.level === "unknown") return `${base} — kernel packages could not be verified`;
   return `${base} — no kernel has the required packages yet`;
 });
 </script>
@@ -132,6 +134,11 @@ const kernelBadgeTitle = computed(() => {
 .kernel-badge--partial {
   color: var(--color-warning);
   opacity: 0.9;
+}
+
+/* Unverifiable reads as neutral, never as the success tint. */
+.kernel-badge--unknown {
+  color: var(--color-text-secondary);
 }
 
 .kernel-badge--none {

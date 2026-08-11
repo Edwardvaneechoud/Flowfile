@@ -2,7 +2,7 @@
 """Fail if flowfile_core's kernel image pins drift from the kernel_runtime version (CI guard).
 
 kernel_runtime/pyproject.toml carries the kernel image version that CI publishes;
-flowfile_core/kernel/manager.py hardcodes the exact registry tags core pulls at
+flowfile_core/kernel/images.py hardcodes the exact registry tags core pulls at
 runtime. The two must move together — see docs/for-developers/kernel-architecture.md,
 "Shipping a kernel change".
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 KERNEL_PYPROJECT = ROOT / "kernel_runtime/pyproject.toml"
-MANAGER = ROOT / "flowfile_core/flowfile_core/kernel/manager.py"
+IMAGES = ROOT / "flowfile_core/flowfile_core/kernel/images.py"
 
 
 def _section_version(path: Path, section: str) -> str | None:
@@ -32,22 +32,22 @@ def main() -> int:
         print(f"Could not read the kernel version from {KERNEL_PYPROJECT}.", file=sys.stderr)
         return 1
 
-    pins = re.findall(r'_KERNEL_IMAGE_(BASE|ML|LITE)_DEFAULT\s*=\s*"([^"]+)"', MANAGER.read_text(encoding="utf-8"))
+    pins = re.findall(r'_KERNEL_IMAGE_(BASE|ML|LITE)_DEFAULT\s*=\s*"([^"]+)"', IMAGES.read_text(encoding="utf-8"))
     if len(pins) < 3:
-        print(f"Expected 3 _KERNEL_IMAGE_*_DEFAULT pins in {MANAGER}, found {len(pins)}.", file=sys.stderr)
+        print(f"Expected 3 _KERNEL_IMAGE_*_DEFAULT pins in {IMAGES}, found {len(pins)}.", file=sys.stderr)
         return 1
 
     print(f"  kernel_runtime/pyproject.toml   {kernel_version}")
     drifted = False
     for flavour, ref in pins:
         tag = ref.rsplit(":", 1)[-1]
-        print(f"  manager.py {flavour:<4} pin             {ref}")
+        print(f"  images.py {flavour:<4} pin              {ref}")
         if tag != kernel_version:
             drifted = True
 
     if drifted:
         print(
-            f"\nKernel image pin drift: manager.py pins do not match kernel_runtime/pyproject.toml "
+            f"\nKernel image pin drift: images.py pins do not match kernel_runtime/pyproject.toml "
             f"({kernel_version!r}). Bump the three _KERNEL_IMAGE_*_DEFAULT pins together with the "
             'kernel version (docs/for-developers/kernel-architecture.md, "Shipping a kernel change").',
             file=sys.stderr,

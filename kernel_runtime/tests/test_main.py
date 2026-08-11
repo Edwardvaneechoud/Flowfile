@@ -1532,6 +1532,83 @@ class TestExecutionCancellation:
         assert resp.status_code == 200
         assert resp.json()["status"] == "no_execution_running"
 
+    def test_targeted_interrupt_hits_only_its_own_cell(self, monkeypatch):
+        """Two flows' cells are registered; a token targets exactly one of them."""
+        import kernel_runtime.main as main_module
+
+        injected: list = []
+        monkeypatch.setattr(main_module, "_raise_in_thread", lambda tid: injected.append(tid))
+        monkeypatch.setattr(main_module.signal, "pthread_kill", lambda *a, **k: None)
+        with main_module._exec_lock:
+            main_module._exec_generation += 1
+            gen_a = main_module._exec_generation
+            main_module._running_execs[gen_a] = 111
+            main_module._exec_tokens["tok-a"] = gen_a
+            main_module._exec_generation += 1
+            gen_b = main_module._exec_generation
+            main_module._running_execs[gen_b] = 222
+            main_module._exec_tokens["tok-b"] = gen_b
+
+        assert main_module._request_interrupt("tok-a") is True
+        assert injected == [111], "targeted interrupt landed on the wrong cell"
+        assert main_module._interrupt_generation == gen_a
+
+    def test_interrupt_for_a_finished_cell_spares_the_newest(self, monkeypatch):
+        """The reported bug: a stale cancel must not fall back to whatever runs now."""
+        import kernel_runtime.main as main_module
+
+        injected: list = []
+        monkeypatch.setattr(main_module, "_raise_in_thread", lambda tid: injected.append(tid))
+        with main_module._exec_lock:
+            main_module._exec_generation += 1
+            gen_b = main_module._exec_generation  # another flow's cell, running now
+            main_module._running_execs[gen_b] = 222
+            main_module._exec_tokens["tok-b"] = gen_b
+
+        assert main_module._request_interrupt("tok-a-finished") is False
+        assert injected == []
+        assert main_module._interrupt_generation is None
+
+    def test_untargeted_interrupt_keeps_legacy_newest_cell_behaviour(self, monkeypatch):
+        """An empty token (core before 0.5.5) still cancels the newest cell."""
+        import kernel_runtime.main as main_module
+
+        injected: list = []
+        monkeypatch.setattr(main_module, "_raise_in_thread", lambda tid: injected.append(tid))
+        monkeypatch.setattr(main_module.signal, "pthread_kill", lambda *a, **k: None)
+        with main_module._exec_lock:
+            main_module._exec_generation += 1
+            main_module._running_execs[main_module._exec_generation] = 111
+            main_module._exec_generation += 1
+            main_module._running_execs[main_module._exec_generation] = 222
+
+        assert main_module._request_interrupt() is True
+        assert injected == [222]
+
+    def test_execute_registers_and_clears_its_token(self, client: TestClient):
+        """The token mapping must not outlive the cell that owns it."""
+        import kernel_runtime.main as main_module
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 1,
+                "code": "x = 1",
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "exec_token": "tok-xyz",
+            },
+        )
+        assert resp.json()["success"] is True
+        assert main_module._exec_tokens == {}
+
+    def test_interrupt_endpoint_accepts_a_token(self, client: TestClient):
+        """The endpoint takes an optional body without breaking the bodyless form."""
+        resp = client.post("/interrupt", json={"exec_token": "nobody-home"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "no_execution_running"
+
 
 class TestDisplayOutputStore:
     """Tests for the GET /display_outputs endpoint that persists display
