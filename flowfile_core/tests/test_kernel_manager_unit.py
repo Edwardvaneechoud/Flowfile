@@ -1060,3 +1060,81 @@ class TestExecuteSyncInternalTokenStamp:
 
         assert result.success is True
         assert captured["request"].internal_token is None
+
+
+class TestCoreCallbackUrl:
+    """Kernels must call back to the port core actually bound.
+
+    The desktop shell scans for a free (core, worker) pair, so core is on 63580
+    whenever 63578 is taken — a dev core, a stale sidecar, a second window. The
+    URL used to hardcode 63578, sending every kernel API callback to whatever
+    else held that port while the log callback went to the right one.
+    """
+
+    def _env(self, monkeypatch, *, port: int, on_network: bool) -> dict[str, str]:
+        from flowfile_core.configs import settings
+
+        monkeypatch.setattr(settings, "SERVER_PORT", port)
+        monkeypatch.delenv("FLOWFILE_CORE_URL", raising=False)
+        mgr = _bare_manager()
+        mgr._docker_network = "flowfile-network" if on_network else None
+        kernel = KernelInfo(id="k1", name="K", image_flavour=ImageFlavour.BASE)
+        return mgr._build_kernel_env("k1", kernel)
+
+    def test_host_gateway_branch_uses_the_bound_port(self, monkeypatch):
+        env = self._env(monkeypatch, port=63580, on_network=False)
+        assert env["FLOWFILE_CORE_URL"] == "http://host.docker.internal:63580"
+
+    def test_docker_network_branch_uses_the_bound_port(self, monkeypatch):
+        env = self._env(monkeypatch, port=63580, on_network=True)
+        assert env["FLOWFILE_CORE_URL"] == "http://flowfile-core:63580"
+
+    def test_default_port_is_unchanged(self, monkeypatch):
+        # Docker mode never sets CORE_PORT and passes no --port, so the emitted
+        # string must stay byte-identical to what shipped before.
+        assert self._env(monkeypatch, port=63578, on_network=True)["FLOWFILE_CORE_URL"] == (
+            "http://flowfile-core:63578"
+        )
+        assert self._env(monkeypatch, port=63578, on_network=False)["FLOWFILE_CORE_URL"] == (
+            "http://host.docker.internal:63578"
+        )
+
+    def test_explicit_override_still_wins(self, monkeypatch):
+        # kernel_fixtures.py sets this to point kernels at the test server.
+        from flowfile_core.configs import settings
+
+        monkeypatch.setattr(settings, "SERVER_PORT", 63580)
+        monkeypatch.setenv("FLOWFILE_CORE_URL", "http://somewhere-else:1234")
+        mgr = _bare_manager()
+        mgr._docker_network = "flowfile-network"
+        kernel = KernelInfo(id="k1", name="K", image_flavour=ImageFlavour.BASE)
+
+        env = mgr._build_kernel_env("k1", kernel)
+
+        assert env["FLOWFILE_CORE_URL"] == "http://somewhere-else:1234"
+
+    def test_api_and_log_callbacks_agree(self, monkeypatch):
+        """The two used to be built independently and could point at different
+        processes. Pin that they now resolve from the same base."""
+        from flowfile_core.configs import settings
+        from flowfile_core.kernel.execution import build_execute_request
+
+        monkeypatch.setattr(settings, "SERVER_PORT", 63580)
+        monkeypatch.delenv("FLOWFILE_CORE_URL", raising=False)
+        mgr = _bare_manager()
+        mgr._docker_network = "flowfile-network"
+        kernel = KernelInfo(id="k1", name="K", image_flavour=ImageFlavour.BASE)
+
+        api_url = mgr._build_kernel_env("k1", kernel)["FLOWFILE_CORE_URL"]
+        request = build_execute_request(
+            node_id=1,
+            code="",
+            input_paths={},
+            output_dir="/tmp",
+            flow_id=1,
+            manager=mgr,
+            source_registration_id=1,
+        )
+
+        assert request.log_callback_url == f"{api_url}/raw_logs"
+        assert "63580" in request.log_callback_url
