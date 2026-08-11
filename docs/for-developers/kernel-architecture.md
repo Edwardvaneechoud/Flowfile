@@ -77,7 +77,7 @@ Flowfile does **not** define compatibility *ranges* between app and kernel versi
 | Version | Where | Role |
 |---------|-------|------|
 | App / root | root `pyproject.toml` `version` | The Flowfile release |
-| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` — read the current value there) | The image the app pulls / runs |
+| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/images.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` — read the current value there) | The image the app pulls / runs |
 | Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | The kernel's HTTP API version, reported by `/health` |
 
 Read each value from its source rather than assuming a number — the three are decoupled. They evolve **independently**: bumping the app does not require bumping the kernel image, and vice versa.
@@ -95,8 +95,9 @@ So the practical contract is "use the pinned tag." An older kernel image is **no
 Because the app only re-pulls a kernel tag it doesn't already have locally (`images.get(tag)` pulls only on a miss), a fix to `kernel_runtime/` reaches users only when the image **tag changes**:
 
 1. Bump `version` in `kernel_runtime/pyproject.toml` (CI tags the published images from it).
-2. Bump the three `_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` tags in `manager.py` to match. CI enforces this pairing: `tools/check_kernel_version_sync.py` hard-fails the publish run when the pins and the kernel version drift.
-3. Merge — CI (`docker-publish.yml`) checks Docker Hub and builds/pushes `flowfile-kernel-{base,ml,lite}:<new>` only if that tag is absent, so published version tags stay immutable and a missed publish self-heals on the next kernel-path push. (A `workflow_dispatch` with `force_kernel` republishes an existing tag.) On the next kernel start the app requests the new tag, misses locally, and pulls it.
+2. Bump the three `_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` tags in `images.py` to match. CI enforces this pairing: `tools/check_kernel_version_sync.py` hard-fails the publish run when the pins and the kernel version drift.
+3. Regenerate the image dependency manifest with `make kernel_manifest` (`make bump-version-kernel` does this for you) and commit it. `make check_kernel_manifest` fails CI otherwise, and a stale manifest makes core report the wrong packages as present.
+4. Merge — CI (`docker-publish.yml`) checks Docker Hub and builds/pushes `flowfile-kernel-{base,ml,lite}:<new>` only if that tag is absent, so published version tags stay immutable and a missed publish self-heals on the next kernel-path push. (A `workflow_dispatch` with `force_kernel` republishes an existing tag.) On the next kernel start the app requests the new tag, misses locally, and pulls it.
 
 For local development, build the image yourself (`docker build -t flowfile-kernel-base:local kernel_runtime/`); the `:local` tag is preferred by the resolver when the pinned registry tag isn't present, and is excluded from the version comparison (so it shows as a **local** build, not "up to date" or "update available").
 

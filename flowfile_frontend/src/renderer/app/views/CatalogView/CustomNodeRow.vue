@@ -64,15 +64,19 @@ const emit = defineEmits<{ (e: "open"): void }>();
 
 const iconUrl = useNodeIconUrl(() => props.node.node_icon);
 
+// "unknown" needs its own branch in all three: falling through to the default
+// would relabel "we couldn't check" as "no matching kernel".
 const readinessChipClass = computed(() => {
   if (props.readiness?.level === "full") return "status-badge--success";
   if (props.readiness?.level === "partial") return "status-badge--warning";
+  if (props.readiness?.level === "unknown") return "status-badge--warning";
   return "readiness-chip--none";
 });
 
 const readinessLabel = computed(() => {
   if (props.readiness?.level === "full") return "✓ kernel ready";
   if (props.readiness?.level === "partial") return "kernel needs packages";
+  if (props.readiness?.level === "unknown") return "kernel unverified";
   return "no matching kernel";
 });
 
@@ -81,6 +85,8 @@ const readinessTitle = computed(() => {
   if (props.readiness?.level === "full") return `Kernel "${name}" has all required packages`;
   if (props.readiness?.level === "partial")
     return `Kernel "${name}" is missing some of the required packages`;
+  if (props.readiness?.level === "unknown")
+    return "This node's kernel packages could not be verified";
   return "No kernel has this node's required packages yet";
 });
 

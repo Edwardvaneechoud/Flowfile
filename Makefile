@@ -318,6 +318,24 @@ check_formula_docs: formula_docs
 	fi
 	@echo "Formula docs are in sync."
 
+# Regenerate the kernel image manifest that kernel dependency matching reads.
+# Run after changing kernel_runtime's pyproject/lockfile or its Dockerfile.
+kernel_manifest:
+	@echo "Generating kernel image manifest..."
+	$(POETRY_RUN) python tools/generate_kernel_manifest.py
+
+# Drift check: regenerate and fail if the committed manifest changed.
+check_kernel_manifest: kernel_manifest
+	@if ! git diff --exit-code -- flowfile_core/flowfile_core/kernel/kernel_image_manifest.json; then \
+		echo "ERROR: the kernel image manifest is out of sync with kernel_runtime. Run 'make kernel_manifest' and commit the result."; \
+		exit 1; \
+	fi
+	@echo "Kernel image manifest is in sync."
+
+# Regenerate + verify the manifest actually ships in every packaging manifest.
+check_kernel_data: check_kernel_manifest
+	$(POETRY_RUN) pytest flowfile_core/tests/test_kernel_packaging_gate.py -q
+
 # Bump the app version everywhere (pyproject / package.json / tauri.conf.json / Cargo.toml).
 # Usage: make bump-version VERSION=X.Y.Z
 bump-version:
@@ -334,6 +352,7 @@ check-version:
 bump-version-kernel:
 	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-version-kernel VERSION=X.Y.Z"; exit 1; fi
 	$(POETRY_RUN) python tools/bump_kernel_version.py $(VERSION)
+	@$(MAKE) kernel_manifest
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs bump-version check-version bump-version-kernel
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data bump-version check-version bump-version-kernel

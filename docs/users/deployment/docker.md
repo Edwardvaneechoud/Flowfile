@@ -49,7 +49,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `edwardvaneechoud/flowfile-kernel-ml` | Python-script kernel with sklearn / xgboost / lightgbm / statsmodels |
 | `edwardvaneechoud/flowfile-kernel-lite` | Slimmed Python-script kernel for constrained hosts |
 
-The application images (`flowfile-frontend`, `flowfile-core`, `flowfile-worker`) share the project version and are published once per release: each `v*` tag pushes `:<version>`, and stable releases also move `:latest` (prerelease tags with a `-` suffix, e.g. `-rc.1`, don't). The kernel images carry their own version so the kernel runtime can evolve independently of the rest of the application; they are published only when that version is new, and the tag core pulls by default is set in `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_*_DEFAULT`).
+The application images (`flowfile-frontend`, `flowfile-core`, `flowfile-worker`) share the project version and are published once per release: each `v*` tag pushes `:<version>`, and stable releases also move `:latest` (prerelease tags with a `-` suffix, e.g. `-rc.1`, don't). The kernel images carry their own version so the kernel runtime can evolve independently of the rest of the application; they are published only when that version is new, and the tag core pulls by default is set in `flowfile_core/flowfile_core/kernel/images.py` (`_KERNEL_IMAGE_*_DEFAULT`).
 
 ## docker-compose.yml
 
@@ -137,7 +137,7 @@ volumes:
 | `FLOWFILE_USER_DATA_DIR` | User data path | `/app/user_data` |
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
-| `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/manager.py`) |
+| `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/images.py`) |
 
 ### Git project tracking
 
@@ -224,7 +224,7 @@ Python-script nodes run inside short-lived kernel containers spawned by `flowfil
 
 ### 1. Pull the kernel image
 
-Kernel images are versioned independently of the app; the default tag lives in `flowfile_core/flowfile_core/kernel/manager.py`. Pull the matching tag:
+Kernel images are versioned independently of the app; the default tag lives in `flowfile_core/flowfile_core/kernel/images.py`. Pull the matching tag:
 
 ```bash
 docker pull edwardvaneechoud/flowfile-kernel-base:<tag>
