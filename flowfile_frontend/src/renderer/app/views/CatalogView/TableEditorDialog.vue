@@ -600,7 +600,7 @@ watch(
   font-weight: 400;
   padding: 2px 8px;
   border-radius: 10px;
-  background: var(--color-background-soft, #f0f2f5);
+  background: var(--color-background-soft);
   color: var(--color-text-secondary);
 }
 
@@ -627,7 +627,7 @@ watch(
 
 .editor-error i {
   font-size: 24px;
-  color: var(--color-warning, #e6a23c);
+  color: var(--color-warning-dark);
 }
 
 .editor-setup {
@@ -663,7 +663,7 @@ watch(
 }
 
 .setup-warning {
-  color: var(--color-warning, #e6a23c);
+  color: var(--color-warning-dark);
   font-size: var(--font-size-xs, 11px);
 }
 
@@ -686,7 +686,7 @@ watch(
   gap: var(--spacing-2, 8px);
   padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
   border-radius: 6px;
-  background: var(--color-background-soft, #f0f7ff);
+  background: var(--color-background-hover);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm, 13px);
 }
@@ -696,16 +696,30 @@ watch(
   width: 100%;
 }
 
+/* Balham ships a light surface; drive it from the theme tokens like dataPreview does. */
+.ag-theme-balham {
+  --ag-background-color: var(--color-background-primary);
+  --ag-odd-row-background-color: var(--color-background-primary);
+  --ag-row-background-color: var(--color-background-primary);
+  --ag-header-background-color: var(--color-background-secondary);
+  --ag-header-foreground-color: var(--color-text-primary);
+  --ag-foreground-color: var(--color-text-primary);
+  --ag-border-color: var(--color-border-primary);
+  --ag-secondary-foreground-color: var(--color-text-secondary);
+  --ag-row-hover-color: var(--color-background-hover);
+  --ag-selected-row-background-color: var(--color-background-selected);
+}
+
 :deep(.editor-row-deleted) {
   text-decoration: line-through;
   opacity: 0.5;
 }
 
 :deep(.editor-row-added) {
-  background-color: rgba(103, 194, 58, 0.08);
+  background-color: var(--color-success-light);
 }
 
 :deep(.editor-key-cell) {
-  background-color: rgba(64, 158, 255, 0.06);
+  background-color: var(--color-accent-subtle);
 }
 </style>
