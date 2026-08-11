@@ -271,7 +271,11 @@ class TestComputeExecutionPlan:
         assert staged_ids == {1, 2}
 
     def test_diamond_with_one_bad_branch(self):
-        """A → B(bad) → D and A → C → D: B and D skip, A and C stay runnable."""
+        """A → B(bad) → D and A → C → D: B and D skip, A and C stay runnable.
+
+        Skipped nodes must not leak back into the stages through their live
+        edges from runnable nodes — node_count is the run-progress denominator.
+        """
         n_d = _make_node(4)
         n_c = _make_node(3, leads_to=[n_d])
         n_b = _make_node(2, leads_to=[n_d], is_correct=False)
@@ -279,8 +283,9 @@ class TestComputeExecutionPlan:
         plan = compute_execution_plan([n_a, n_b, n_c, n_d], flow_starts=[n_a])
         skip_ids = {n.node_id for n in plan.skip_nodes}
         assert skip_ids == {2, 4}
-        runnable_ids = {node.node_id for stage in plan.stages for node in stage} - skip_ids
-        assert runnable_ids == {1, 3}
+        staged_ids = {node.node_id for stage in plan.stages for node in stage}
+        assert staged_ids == {1, 3}
+        assert plan.node_count == 2
 
 
 # max_parallel_workers setting
