@@ -172,6 +172,23 @@ def test_random_sample_requires_exactly_one_of_n_or_fraction():
 LEGACY_FLOW = (
     Path(__file__).parent.parent.parent.parent / "flowfile_frontend" / "tests" / "fixtures" / "complex-flow.yaml"
 )
+LEGACY_PICKLE = Path(__file__).parent.parent / "support_files" / "flows" / "test_cloud_local.flowfile"
+
+
+@pytest.mark.skipif(not LEGACY_PICKLE.exists(), reason="legacy pickle fixture not present")
+def test_legacy_pickle_flow_backfills_sampling_fields():
+    """A .flowfile pickle predates the fields and unpickles into the frozen
+    legacy NodeSample, so the compatibility pass has to add them."""
+    handler = FlowfileHandler()
+    graph = handler.get_flow(handler.import_flow(LEGACY_PICKLE))
+
+    sample_nodes = [n for n in graph.nodes if n.node_type == "sample"]
+    assert sample_nodes, "fixture is expected to contain a sample node"
+    for node in sample_nodes:
+        settings = node.setting_input
+        assert settings.sample_method == "first"
+        assert settings.fraction == 10.0
+        assert settings.seed is None
 
 
 @pytest.mark.skipif(not LEGACY_FLOW.exists(), reason="frontend fixture not present")
