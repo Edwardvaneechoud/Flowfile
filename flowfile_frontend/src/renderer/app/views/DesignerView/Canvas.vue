@@ -62,6 +62,7 @@ import {
 import { FlowApi } from "../../api";
 import {
   copyNodesToBuffer,
+  hasTextSelection,
   isCanvasClipboardTarget,
   isNodeBufferArmed,
   readNodeClipboardBuffer,
@@ -970,6 +971,7 @@ const keyboardPastePosition = (): CursorPosition => {
 const handleCopyEvent = (event: ClipboardEvent) => {
   if (event.defaultPrevented) return; // someone (e.g. the data grid) already handled it
   if (!isCanvasClipboardTarget(event.target, lastPointerDownEl)) return;
+  if (hasTextSelection()) return; // selected canvas text (node descriptions) — native copy wins
   if (flowStore.flowId <= 0) return; // parity with paste: never arm the buffer without a live flow
   const sentinel = copyNodesToBuffer(
     instance.getSelectedNodes.value,

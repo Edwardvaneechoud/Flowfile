@@ -203,6 +203,81 @@ test.describe("Canvas clipboard routing", () => {
     expect(copyRequests).toEqual([]);
   });
 
+  test("copy with text selected on the canvas defers to the native text copy", async ({
+    page,
+    request,
+  }) => {
+    // Node placed in open canvas (the default 120,140 sits under the palette
+    // overlay and is unclickable), with a description so the selectable
+    // <pre class="description-text"> actually renders.
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=Clipboard_E2E_Sel&register_in_catalog=false`,
+      authToken,
+    );
+    const flowId = await createResponse.json();
+    await authPost(
+      request,
+      `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=1&node_type=formula&pos_x=700&pos_y=400`,
+      authToken,
+    );
+    await request.post(`${API_URL}/node/description/?flow_id=${flowId}&node_id=1`, {
+      headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+      data: JSON.stringify("joins revenue per region"),
+    });
+    await openFlow(page, authToken, flowId);
+
+    // Canvas node text computes user-select:none, so a real mouse selection
+    // over it cannot exist (Chromium's selection.toString() is "" for such
+    // content even with a programmatic range) — the guard is parity/defense
+    // for any selectable canvas text. Exercise its wiring by stubbing
+    // getSelection the way genuinely selectable text would behave, then run
+    // an unstubbed control proving the same dispatch arms the buffer.
+    await page.locator(".vue-flow__node").first().click();
+    await page.waitForSelector("pre.description-text", { timeout: 10000 });
+    const bufferBefore = await page.evaluate(() => localStorage.getItem("flowfileNodeClipboard"));
+
+    const withSelection = await page.evaluate(() => {
+      const pre = document.querySelector("pre.description-text")!;
+      const original = window.getSelection.bind(window);
+      try {
+        (window as { getSelection: unknown }).getSelection = () => ({
+          toString: () => pre.textContent ?? "",
+        });
+        const event = new ClipboardEvent("copy", {
+          clipboardData: new DataTransfer(),
+          bubbles: true,
+          cancelable: true,
+        });
+        pre.dispatchEvent(event);
+        return { prevented: event.defaultPrevented };
+      } finally {
+        (window as { getSelection: unknown }).getSelection = original;
+      }
+    });
+    const bufferAfterGuarded = await page.evaluate(() =>
+      localStorage.getItem("flowfileNodeClipboard"),
+    );
+    expect(withSelection.prevented).toBe(false);
+    expect(bufferAfterGuarded).toBe(bufferBefore);
+
+    const control = await page.evaluate(() => {
+      const pre = document.querySelector("pre.description-text")!;
+      const event = new ClipboardEvent("copy", {
+        clipboardData: new DataTransfer(),
+        bubbles: true,
+        cancelable: true,
+      });
+      pre.dispatchEvent(event);
+      return { prevented: event.defaultPrevented };
+    });
+    const bufferAfterControl = await page.evaluate(() =>
+      localStorage.getItem("flowfileNodeClipboard"),
+    );
+    expect(control.prevented).toBe(true);
+    expect(bufferAfterControl).not.toBe(bufferBefore);
+  });
+
   test("copy aimed at overlay-panel chrome leaves the node buffer untouched", async ({
     page,
     request,

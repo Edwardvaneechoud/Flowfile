@@ -6,6 +6,7 @@ import {
   clearNodeClipboardBuffer,
   copyNodesToBuffer,
   copySingleNodeToBuffer,
+  hasTextSelection,
   isCanvasClipboardTarget,
   isNodeBufferArmed,
   matchSentinel,
@@ -293,5 +294,38 @@ describe("isCanvasClipboardTarget", () => {
     for (const cls of ["el-dialog", "el-drawer", "el-message-box", "el-overlay", "context-menu"]) {
       expect(CANVAS_PANEL_SELECTOR).toContain(cls);
     }
+  });
+});
+
+describe("hasTextSelection (copy-path guard)", () => {
+  it("true for non-whitespace selections, false for empty/whitespace/null", () => {
+    expect(hasTextSelection({ toString: () => "revenue per region" })).toBe(true);
+    expect(hasTextSelection({ toString: () => "   " })).toBe(false);
+    expect(hasTextSelection({ toString: () => "" })).toBe(false);
+    expect(hasTextSelection(null)).toBe(false);
+  });
+
+  it("catches a selection over a node-description <pre> that the target predicate accepts", () => {
+    // The reviewer's repro: description text is selectable, sits in the
+    // .vue-flow subtree (no overlay, not editable) — the target predicate
+    // says "canvas", so the copy handler must ALSO consult the selection.
+    document.body.innerHTML = `
+      <main><div class="vue-flow">
+        <div class="custom-node-header"><pre class="description-text">joins revenue per region</pre></div>
+      </div></main>
+    `;
+    const pre = document.querySelector(".description-text")!;
+    expect(isCanvasClipboardTarget(pre, null)).toBe(true);
+
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(hasTextSelection()).toBe(true);
+
+    selection.removeAllRanges();
+    expect(hasTextSelection()).toBe(false);
   });
 });

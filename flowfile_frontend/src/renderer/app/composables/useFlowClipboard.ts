@@ -235,6 +235,25 @@ export const resolvePasteIntent = (args: {
 };
 
 /**
+ * True when the user has real (non-whitespace) text selected anywhere.
+ *
+ * Copy-path guard: the canvas renders user-selectable text directly (node
+ * description <pre>s in NodeWrapper), outside any editable element or overlay
+ * panel — so an active selection means Cmd+C is a text copy and the canvas
+ * must not hijack it into a node copy. Deliberately NOT part of
+ * isCanvasClipboardTarget: a stray selection must not suppress paste (that
+ * coupling was half of the original bug — pane clicks clear selections, and
+ * non-editable targets have no native paste to defer to).
+ */
+export const hasTextSelection = (
+  selection?: { toString(): string } | null,
+): boolean => {
+  const sel =
+    selection !== undefined ? selection : typeof window !== "undefined" ? window.getSelection() : null;
+  return !!sel && sel.toString().trim().length > 0;
+};
+
+/**
  * Everything a paste can land on that is NOT the bare canvas. DraggableItem
  * (every floating panel incl. the node-settings drawer) carries
  * data-canvas-overlay; the rest are Element Plus overlays (poppers/selects
