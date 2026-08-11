@@ -10,11 +10,12 @@ import re
 
 import polars as pl
 
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, SERVER_PORT
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ExternalDfFetcher
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
+from flowfile_core.kernel.urls import core_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +146,11 @@ def build_execute_request(
     available_artifacts: dict[str, int] | None = None,
 ) -> ExecuteRequest:
     """Assemble the kernel ExecuteRequest with log callback URL and auth token."""
-    if manager._kernel_volume:
-        log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
-    else:
-        log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
+    # Keyed on the network, not the volume: the kernel can only resolve core by
+    # service name when it was actually joined to core's network. The two used
+    # to disagree, so a Docker setup with one but not the other sent the log
+    # callback somewhere the API callbacks did not go.
+    log_callback_url = f"{core_base_url(bool(manager._docker_network))}/raw_logs"
 
     internal_token: str | None = None
     try:

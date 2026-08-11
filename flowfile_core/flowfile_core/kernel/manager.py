@@ -47,6 +47,7 @@ from flowfile_core.kernel.models import (
     RecoveryStatus,
     ResolvedPackage,
 )
+from flowfile_core.kernel.urls import core_base_url
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
@@ -1274,14 +1275,7 @@ class KernelManager:
         # entrypoint's KERNEL_PACKAGES install loop must be a no-op.
         env = {"KERNEL_PACKAGES": ""}
         # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker.
-        # In Docker-in-Docker mode the kernel is on the same Docker network
-        # as core, so it can reach core by service name.
-        if self._docker_network:
-            default_core_url = "http://flowfile-core:63578"
-        else:
-            default_core_url = "http://host.docker.internal:63578"
-        core_url = os.environ.get("FLOWFILE_CORE_URL", default_core_url)
-        env["FLOWFILE_CORE_URL"] = core_url
+        env["FLOWFILE_CORE_URL"] = core_base_url(bool(self._docker_network))
         # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
         # Use get_internal_token() instead of reading env directly so that in
         # Electron mode the token is auto-generated before the kernel starts.
