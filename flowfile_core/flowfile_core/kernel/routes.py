@@ -350,6 +350,7 @@ async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Dep
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
+        request.exec_token = ""  # server-minted; a client must not address another cell
         manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
     except RuntimeError as exc:
@@ -370,6 +371,7 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
         request.interactive = True
+        request.exec_token = ""  # server-minted; a client must not address another cell
         manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
     except RuntimeError as exc:

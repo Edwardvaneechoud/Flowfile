@@ -68,6 +68,7 @@ def _bare_manager() -> KernelManager:
         mgr._build_locks_lock = threading.Lock()
         mgr._exec_locks = {}
         mgr._exec_locks_lock = threading.Lock()
+        mgr._active_execs = {}
     return mgr
 
 

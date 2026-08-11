@@ -155,6 +155,8 @@ User code runs in a dedicated thread so the FastAPI event loop stays responsive.
 - **HTTP interrupt:** `POST /interrupt` injects `KeyboardInterrupt` via `PyThreadState_SetAsyncExc()`
 - **Signal fallback:** Docker `kill -SIGUSR1` for blocking C extensions
 
+Cancellation is scoped to one execution, not to the kernel. Every `ExecuteRequest` carries an `exec_token`, and `POST /interrupt` takes an optional `{"exec_token": ...}` naming the cell to stop. Kernels are shared across flows, so this matters: without it, cancelling one flow would cancel whatever cell happened to be running. A token whose cell has already finished interrupts nothing — it never falls back to the newest cell. Core enforces the same rule on its side, refusing to send an interrupt unless that execution is the one currently holding the kernel's exec lock.
+
 ### Persistent Namespaces
 
 Each flow gets its own Python namespace dictionary (like a Jupyter kernel). Variables defined in one execution are available in subsequent executions of the same flow. Namespaces are stored in an LRU cache (default: 20 flows) to bound memory.
@@ -254,7 +256,7 @@ All endpoints require JWT authentication and enforce user ownership:
 | `GET /kernels/{id}/memory` | Get memory usage |
 | `GET /kernels/docker-status` | Check Docker availability |
 
-There is no core-side interrupt route. Cancellation is a kernel-runtime concern: the runtime container exposes `POST /interrupt` on its own port (see [Thread-based Execution](#thread-based-execution)), which Core reaches directly, not through a `/kernels/{id}/interrupt` proxy.
+There is no core-side interrupt route. Cancellation is a kernel-runtime concern: the runtime container exposes `POST /interrupt` on its own port (see [Thread-based Execution](#thread-based-execution)), which Core reaches directly, not through a `/kernels/{id}/interrupt` proxy. It is always addressed to one execution's `exec_token`, so cancelling a flow never touches another flow's cell on the same kernel.
 
 ### Database Persistence
 

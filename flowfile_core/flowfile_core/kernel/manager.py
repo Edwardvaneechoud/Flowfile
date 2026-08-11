@@ -356,6 +356,9 @@ class KernelManager:
         # lock first, then flight/leaf locks; interrupt takes no locks at all.
         self._exec_locks: dict[str, threading.Lock] = {}
         self._exec_locks_lock = threading.Lock()
+        # kernel_id -> exec_token of the cell holding that kernel's exec lock.
+        # Written only by the lock holder, read lock-free by interrupt.
+        self._active_execs: dict[str, str] = {}
         # resolve() so the kernel's host-path prefix translation matches the resolved paths core returns
         self._shared_volume = str(Path(shared_volume_path or storage.cache_directory).resolve())
         # Catalog tables (Delta-format) live outside the shared volume. The
@@ -1775,14 +1778,23 @@ class KernelManager:
         except (ValueError, ImportError):
             pass
 
+        # One identity per execution, so a cancel names a cell and not a kernel.
+        # The flow-run path mints it up front (the node needs it to cancel itself);
+        # every other caller — notebook cells, dry runs — gets one here.
+        if not request.exec_token:
+            request.exec_token = uuid.uuid4().hex
+
         lock = self._exec_lock_for(kernel_id)
         if not self._acquire_cancellable(lock, cancel_event):
             # Nothing was submitted — do NOT interrupt (that would kill the
             # cell another node is currently running on this kernel).
             return ExecuteResult(success=False, error="Execution cancelled by user")
         try:
+            self._active_execs[kernel_id] = request.exec_token
             return self._execute_locked(kernel_id, kernel, request, flow_logger, cancel_event)
         finally:
+            if self._active_execs.get(kernel_id) == request.exec_token:
+                del self._active_execs[kernel_id]
             lock.release()
 
     def _execute_locked(
@@ -1828,7 +1840,7 @@ class KernelManager:
                 t.join(timeout=0.5)
                 if cancel_event.is_set():
                     # Best-effort interrupt, then return immediately
-                    self.interrupt_execution_sync(kernel_id)
+                    self.interrupt_execution_sync(kernel_id, request.exec_token)
                     return ExecuteResult(success=False, error="Execution cancelled by user")
 
             if error_holder[0] is not None:
@@ -1859,7 +1871,7 @@ class KernelManager:
             if isinstance(exc, httpx.TimeoutException):
                 # Tell the kernel to interrupt the still-running cell, otherwise it
                 # keeps mutating the namespace and the next cell runs concurrently.
-                self.interrupt_execution_sync(kernel_id)
+                self.interrupt_execution_sync(kernel_id, request.exec_token)
                 return ExecuteResult(
                     success=False,
                     error=(
@@ -1872,8 +1884,15 @@ class KernelManager:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
 
-    def interrupt_execution_sync(self, kernel_id: str) -> bool:
+    def interrupt_execution_sync(self, kernel_id: str, exec_token: str | None = None) -> bool:
         """Interrupt running user code on a kernel.
+
+        *exec_token* names the execution to cancel. Kernels are shared, so an
+        interrupt is refused unless that execution is the one currently holding
+        the kernel — otherwise cancelling a queued or already-finished cell would
+        kill whichever flow happens to be running now. ``None`` means untargeted
+        (interrupt whatever is running) and is only for callers that own the
+        kernel outright.
 
         Tries the HTTP ``/interrupt`` endpoint first (works when the kernel
         runs user code in a background thread and keeps the event loop free).
@@ -1886,6 +1905,12 @@ class KernelManager:
             return False
         if kernel.state != KernelState.EXECUTING:
             return False
+        if exec_token is not None and self._active_execs.get(kernel_id) != exec_token:
+            logger.info(
+                "Skipping interrupt on kernel '%s': the cancelled execution is not the one running",
+                kernel_id,
+            )
+            return False
 
         # --- Try HTTP /interrupt (preferred) ---
         should_try_http = self._docker_network is not None or kernel.port is not None
@@ -1893,7 +1918,7 @@ class KernelManager:
             try:
                 url = f"{self._kernel_url(kernel)}/interrupt"
                 with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
-                    resp = client.post(url)
+                    resp = client.post(url, json={"exec_token": exec_token or ""})
                     if resp.status_code == 200:
                         logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
                         return True
@@ -1913,9 +1938,9 @@ class KernelManager:
             logger.error("Failed to send SIGUSR1 to kernel '%s': %s", kernel_id, exc)
             return False
 
-    async def interrupt_execution(self, kernel_id: str) -> bool:
+    async def interrupt_execution(self, kernel_id: str, exec_token: str | None = None) -> bool:
         """Async wrapper around :meth:`interrupt_execution_sync`."""
-        return self.interrupt_execution_sync(kernel_id)
+        return self.interrupt_execution_sync(kernel_id, exec_token)
 
     async def clear_artifacts(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
