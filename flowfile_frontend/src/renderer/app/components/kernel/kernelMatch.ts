@@ -20,6 +20,18 @@ export function describeMatch(match: KernelMatch | undefined, depCount: number):
     }
     return { label: "✓ has all packages", tone: "full" };
   }
+  // We couldn't look inside the image, so we know neither way. Saying "has all
+  // packages" here is the failure this state exists to prevent.
+  if (match.level === "unknown") {
+    return {
+      label: "? can't verify packages",
+      tone: "unknown",
+      title:
+        match.image_flavour === "custom"
+          ? `Custom image contents are unknown: ${match.unknown.join(", ")}`
+          : `No package list for this image: ${match.unknown.join(", ")}`,
+    };
+  }
   if (match.level === "partial") {
     const shown = match.missing.slice(0, 2).join(", ");
     const more = match.missing.length - 2;

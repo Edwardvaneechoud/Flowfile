@@ -180,6 +180,20 @@ def get_standard_icons_datas():
         return [(icons_dir, _os.path.join("flowfile_core", "flowfile", "community_nodes", "standard_icons"))]
     return []
 
+# Ship the kernel image manifest. kernel/flavours.py resolves it at
+# Path(__file__).parent / "kernel_image_manifest.json"; PyInstaller stores .py as
+# bytecode only, so without this the baseline is absent and every kernel
+# dependency reports as unknown instead of missing.
+def get_kernel_manifest_datas():
+    \"\"\"Collect the kernel image dependency manifest for PyInstaller bundling.\"\"\"
+    import os as _os
+    manifest = _os.path.join(
+        "flowfile_core", "flowfile_core", "kernel", "kernel_image_manifest.json"
+    )
+    if _os.path.isfile(manifest):
+        return [(manifest, _os.path.join("flowfile_core", "kernel"))]
+    return []
+
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
@@ -188,6 +202,7 @@ alembic_datas = get_alembic_datas()
 code_generator_datas = get_code_generator_datas()
 demo_flows_datas = get_demo_flows_datas()
 standard_icons_datas = get_standard_icons_datas()
+kernel_manifest_datas = get_kernel_manifest_datas()
 
 # Polars plugins that have subpackages or compiled extensions. The plain
 # `hiddenimports=['polars_ds']` directive only adds the top-level — it does
@@ -258,7 +273,9 @@ with open('connectorx_hook.py', 'w') as f:
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=plugin_binaries + ai_binaries,
-    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + code_generator_datas + demo_flows_datas + standard_icons_datas + plugin_datas + litellm_datas + ai_datas,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
+    + code_generator_datas + demo_flows_datas + standard_icons_datas
+    + kernel_manifest_datas + plugin_datas + litellm_datas + ai_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
     + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',

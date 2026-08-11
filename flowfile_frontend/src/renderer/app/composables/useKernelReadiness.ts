@@ -32,11 +32,22 @@ async function fetchMissing(items: Record<string, string[]>): Promise<void> {
   if (Object.keys(missing).length === 0) return;
   try {
     const response = await KernelApi.matchKernelsBatch(missing);
-    readiness.value = { ...readiness.value, ...response.results };
-    unavailable.value = false;
+    // A 200 is not automatically a trustworthy answer: with no kernel manager the
+    // backend still matches DB rows, for kernels that cannot start. These badges
+    // imply liveness, so show none at all rather than a verdict we can't stand behind.
+    // `!== false` rather than truthiness: an older core that omits the field
+    // should keep behaving as before, not lose every badge.
+    if (response.docker_available !== false) {
+      readiness.value = { ...readiness.value, ...response.results };
+      unavailable.value = false;
+    } else {
+      unavailable.value = true;
+    }
   } catch {
     unavailable.value = true;
   }
+  // Outside the branches on purpose: an early return here would leave lastLoaded
+  // at 0, so ensureReadiness's TTL check could never clear `unavailable` again.
   lastLoaded = Date.now();
 }
 
