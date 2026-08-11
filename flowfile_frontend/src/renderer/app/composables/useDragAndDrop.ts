@@ -952,6 +952,28 @@ export default function useDragAndDrop() {
 
       const response = await FlowApi.insertNode(flowId, nodeId, "manual_input", x, y);
 
+      // Ship the parsed data before showing the node — a settings failure must
+      // not leave a broken manual_input on the canvas (or in the backend).
+      try {
+        await NodeApi.updateSettingsDirectly("manual_input", {
+          flow_id: flowId,
+          node_id: nodeId,
+          pos_x: x,
+          pos_y: y,
+          cache_results: false,
+          is_setup: true,
+          raw_data_format: { columns, data },
+        });
+      } catch (error) {
+        console.error("Error creating manual input from clipboard:", error);
+        try {
+          await FlowApi.deleteNode(flowId, nodeId);
+        } catch {
+          // best-effort cleanup of the already-inserted backend node
+        }
+        return undefined;
+      }
+
       const newNode: Node = {
         id: String(nodeId),
         type: "custom-node",
@@ -967,16 +989,6 @@ export default function useDragAndDrop() {
       };
       addNodes(newNode);
       useTutorialStore().notify({ type: "node-added", nodeItem: "manual_input", nodeId });
-
-      await NodeApi.updateSettingsDirectly("manual_input", {
-        flow_id: flowId,
-        node_id: nodeId,
-        pos_x: x,
-        pos_y: y,
-        cache_results: false,
-        is_setup: true,
-        raw_data_format: { columns, data },
-      });
 
       return response;
     } catch (error) {

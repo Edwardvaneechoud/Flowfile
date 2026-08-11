@@ -164,6 +164,21 @@ export const desktop = {
   },
 
   /**
+   * Write text to the OS clipboard. Desktop goes through the clipboard-manager
+   * plugin (granted via `clipboard-manager:allow-write-text`); web mode falls
+   * back to navigator.clipboard (callers needing an insecure-context fallback
+   * should use clipboardUtils.copyToClipboard instead).
+   */
+  async writeClipboardText(text: string): Promise<void> {
+    if (!isDesktop) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+    await writeText(text);
+  },
+
+  /**
    * Filesystem paths of the drag currently over the window. WebKit blanks file://
    * URLs out of DataTransfer, so during a drop the renderer asks the shell to read
    * the macOS drag pasteboard instead. Empty in web mode and on platforms with no

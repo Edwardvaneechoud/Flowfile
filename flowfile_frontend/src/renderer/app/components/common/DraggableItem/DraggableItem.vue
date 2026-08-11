@@ -2,6 +2,7 @@
   <div
     :id="props.id"
     class="overlay"
+    data-canvas-overlay
     :class="{
       'no-transition': isResizing,
       minimized: isMinimized,

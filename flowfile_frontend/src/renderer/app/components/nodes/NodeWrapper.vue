@@ -286,9 +286,10 @@ import { useFlowStore } from "../../stores/flow-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useAiGhostNodeStore } from "../../stores/ai-ghost-node-store";
 import { VueFlowStore } from "@vue-flow/core";
-import { NodeCopyValue } from "../../views/DesignerView/types";
-import { toSnakeCase } from "../../views/DesignerView/utils";
-import { snapshotClipboard } from "../../utils/clipboardUtils";
+import {
+  copySingleNodeToBuffer,
+  writeSentinelToOsClipboard,
+} from "../../composables/useFlowClipboard";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import { CatalogApi } from "../../api/catalog.api";
 import { nodeDocsUrl } from "../../views/DesignerView/nodeDocsLinks";
@@ -433,6 +434,12 @@ const handleClickOutsideMenu = (event: MouseEvent) => {
   }
 };
 
+const handleWindowResize = () => {
+  if (showMenu.value) {
+    updateMenuPosition();
+  }
+};
+
 const closeContextMenu = () => {
   showMenu.value = false;
   window.removeEventListener("click", handleClickOutsideMenu);
@@ -503,24 +510,9 @@ const openTargetFlow = async () => {
 };
 
 const copyNode = () => {
-  const nodeCopyValue: NodeCopyValue = {
-    nodeIdToCopyFrom: props.data.id,
-    type: props.data.nodeTemplate?.item || props.data.component?.__name || "unknown",
-    label: props.data.label,
-    description: description.value,
-    numberOfInputs: props.data.inputs.length,
-    numberOfOutputs: props.data.outputs.length,
-    typeSnakeCase:
-      props.data.nodeTemplate?.item || toSnakeCase(props.data.component?.__name || "unknown"),
-    flowIdToCopyFrom: nodeStore.flow_id,
-    multi: props.data.nodeTemplate?.multi,
-    nodeTemplate: props.data.nodeTemplate,
-    inputHandles: props.data.inputs,
-    outputHandles: props.data.outputs,
-  };
-  localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
-  localStorage.removeItem("copiedMultiNodes");
-  snapshotClipboard();
+  // Shared writer with Canvas's copy path; this one knows the live description.
+  const sentinel = copySingleNodeToBuffer(props.data, nodeStore.flow_id, description.value);
+  void writeSentinelToOsClipboard(sentinel);
   closeContextMenu();
 };
 
@@ -577,8 +569,7 @@ const toggleCache = async () => {
 
 onUnmounted(() => {
   window.removeEventListener("click", handleClickOutsideMenu);
-  window.removeEventListener("resize", updateMenuPosition);
-  window.removeEventListener("keydown", handleKeyDown);
+  window.removeEventListener("resize", handleWindowResize);
 });
 
 const contextMenuStyle = computed(() => {
@@ -603,27 +594,6 @@ const descriptionTextStyle = computed(() => {
     minWidth: minWidth,
   };
 });
-
-const handleKeyDown = (event: KeyboardEvent) => {
-  // Normalize key to lowercase to handle Caps Lock being on
-  const key = event.key.toLowerCase();
-  if ((event.metaKey || event.ctrlKey) && key === "c") {
-    // Check if text is selected - if so, let browser handle copy natively
-    const selection = window.getSelection();
-    const hasTextSelected = selection && selection.toString().trim().length > 0;
-    if (hasTextSelected) {
-      return; // Let browser handle text copying
-    }
-
-    const isNodeSelected = nodeStore.node_id === props.data.id;
-    const target = event.target as HTMLElement;
-    const isTargetNodeButton = target.classList.contains("node-button");
-    if (isNodeSelected && isTargetNodeButton) {
-      copyNode();
-      event.preventDefault();
-    }
-  }
-};
 
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
@@ -723,13 +693,7 @@ onMounted(async () => {
   await nextTick();
   await getNodeDescription();
 
-  window.addEventListener("resize", () => {
-    if (showMenu.value) {
-      updateMenuPosition();
-    }
-  });
-
-  window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("resize", handleWindowResize);
 
   watch(
     () => {
