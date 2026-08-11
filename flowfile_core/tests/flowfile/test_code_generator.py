@@ -6263,9 +6263,13 @@ def test_new_nodes_unsupported_in_polars_export(node_type):
             )
         )
     elif node_type == "wait_for":
+        # wait_for requires both inputs wired; a half-connected node is skipped
+        # from the export (like the run path) instead of raising.
+        _create_predictions_dataframe_node(flow, node_id=3)
         flow.add_wait_for(
-            input_schema.NodeWaitFor(flow_id=flow.flow_id, node_id=2, depending_on_ids=[1])
+            input_schema.NodeWaitFor(flow_id=flow.flow_id, node_id=2, depending_on_ids=[1, 3])
         )
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 2, "right"))
     elif node_type == "dynamic_rename":
         flow.add_dynamic_rename(
             input_schema.NodeDynamicRename(

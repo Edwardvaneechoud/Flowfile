@@ -64,25 +64,53 @@ def determine_execution_order(all_nodes: list[FlowNode], flow_starts: list[FlowN
 
     Returns:
         A list of ExecutionStage objects in dependency order. Nodes within a stage have no
-        mutual dependencies and can run concurrently.
+        mutual dependencies and can run concurrently. Nodes unreachable from the flow
+        starts (e.g. after a connection was removed) are excluded with a warning.
 
     Raises:
         Exception: If a cycle is detected in the graph.
     """
     node_map = build_node_map(all_nodes)
     in_degree, adjacency_list = compute_in_degrees_and_adjacency_list(all_nodes, node_map)
+    raise_if_cycle(node_map, in_degree, adjacency_list)
 
     queue, visited_nodes = initialize_queue(flow_starts, all_nodes, in_degree)
 
     stages = perform_topological_sort(queue, node_map, in_degree, adjacency_list, visited_nodes)
     total_nodes = sum(len(stage) for stage in stages)
     if total_nodes != len(node_map):
-        raise Exception("Cycle detected in the graph. Execution order cannot be determined.")
+        unreachable = sorted(str(node_id) for node_id in node_map if node_id not in visited_nodes)
+        logger.warning(
+            f"{len(unreachable)} node(s) unreachable from the flow starts and excluded "
+            f"from execution: {', '.join(unreachable)}"
+        )
 
     all_nodes_flat = [node for stage in stages for node in stage if node.is_correct]
     logger.info(f"execution order: \n {all_nodes_flat}")
 
     return stages
+
+
+def raise_if_cycle(
+    node_map: dict[str, FlowNode], in_degree: dict[str, int], adjacency_list: dict[str, list[str]]
+) -> None:
+    """Raises when the graph contains a genuine cycle.
+
+    Runs Kahn's algorithm seeded from every zero-in-degree node, independent of
+    flow starts, so unreachable-but-acyclic subgraphs are not mistaken for cycles.
+    """
+    remaining_degree = {node_id: in_degree.get(node_id, 0) for node_id in node_map}
+    queue = deque(node_id for node_id, degree in remaining_degree.items() if degree == 0)
+    visited_count = 0
+    while queue:
+        node_id = queue.popleft()
+        visited_count += 1
+        for next_node_id in adjacency_list.get(node_id, []):
+            remaining_degree[next_node_id] -= 1
+            if remaining_degree[next_node_id] == 0:
+                queue.append(next_node_id)
+    if visited_count != len(node_map):
+        raise Exception("Cycle detected in the graph. Execution order cannot be determined.")
 
 
 def build_node_map(all_nodes: list[FlowNode]) -> dict[str, FlowNode]:

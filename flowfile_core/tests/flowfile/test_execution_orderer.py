@@ -168,15 +168,40 @@ class TestDetermineExecutionOrder:
     def test_flow_starts_respected(self):
         """When flow_starts is provided, only those zero-in-degree nodes seed the queue."""
         n1, n2 = _make_node(1), _make_node(2)
-        # If flow_starts omits an independent node, that node is unreachable
-        # and the cycle check raises. This is existing behaviour.
-        with pytest.raises(Exception, match="Cycle detected"):
-            determine_execution_order([n1, n2], flow_starts=[n1])
+        # If flow_starts omits an independent node, that node is unreachable and
+        # excluded from the stages — not misreported as a cycle.
+        stages = determine_execution_order([n1, n2], flow_starts=[n1])
+        assert len(stages) == 1
+        assert list(stages[0]) == [n1]
 
         # When flow_starts includes all independent nodes, both appear in stage 0
         stages = determine_execution_order([n1, n2], flow_starts=[n1, n2])
         assert len(stages) == 1
         assert set(stages[0]) == {n1, n2}
+
+    def test_unreachable_chain_excluded_without_cycle_error(self):
+        """A disconnected chain not in flow_starts is excluded, not reported as a cycle.
+
+        Mirrors a flow where an upstream connection was removed: the orphaned
+        nodes keep their internal edges but are unreachable from the starts.
+        """
+        n2 = _make_node(2)
+        n1 = _make_node(1, leads_to=[n2])
+        n5 = _make_node(5)
+        n4 = _make_node(4, leads_to=[n5])
+        n3 = _make_node(3, leads_to=[n4])
+        stages = determine_execution_order([n1, n2, n3, n4, n5], flow_starts=[n1])
+        staged_ids = {node.node_id for stage in stages for node in stage}
+        assert staged_ids == {1, 2}
+
+    def test_cycle_still_detected_with_flow_starts(self):
+        """A genuine cycle raises even when valid flow_starts are provided."""
+        n2, n3 = _make_node(2), _make_node(3)
+        n1 = _make_node(1, leads_to=[n2])
+        n2.leads_to_nodes = [n3]
+        n3.leads_to_nodes = [n2]
+        with pytest.raises(Exception, match="Cycle detected"):
+            determine_execution_order([n1, n2, n3], flow_starts=[n1])
 
     def test_flow_starts_with_chain(self):
         """flow_starts seeds the queue; downstream nodes are discovered normally."""
@@ -215,6 +240,47 @@ class TestComputeExecutionPlan:
         assert 10 in skip_ids
         assert 20 in skip_ids
         assert plan.node_count == 0
+
+    def test_skip_propagates_through_entire_downstream_chain(self):
+        """An incorrect node skips its whole downstream closure, not just one level."""
+        n4 = _make_node(4)
+        n3 = _make_node(3, leads_to=[n4])
+        n2 = _make_node(2, leads_to=[n3])
+        n_bad = _make_node(1, leads_to=[n2], is_correct=False)
+        plan = compute_execution_plan([n_bad, n2, n3, n4])
+        skip_ids = {n.node_id for n in plan.skip_nodes}
+        assert skip_ids == {1, 2, 3, 4}
+        staged_ids = {node.node_id for stage in plan.stages for node in stage}
+        assert staged_ids == set()
+
+    def test_disconnected_branch_skipped_while_connected_dag_runs(self):
+        """Repro of a mid-flow disconnect: the orphaned chain is skipped, the rest staged.
+
+        Chain 1 → 2 with a separate orphaned chain 3 → 4 → 5 whose head lost its
+        input (is_correct False). Previously this raised a false 'Cycle detected'.
+        """
+        n2 = _make_node(2)
+        n1 = _make_node(1, leads_to=[n2])
+        n5 = _make_node(5)
+        n4 = _make_node(4, leads_to=[n5])
+        n3 = _make_node(3, leads_to=[n4], is_correct=False)
+        plan = compute_execution_plan([n1, n2, n3, n4, n5], flow_starts=[n1])
+        skip_ids = {n.node_id for n in plan.skip_nodes}
+        assert skip_ids == {3, 4, 5}
+        staged_ids = {node.node_id for stage in plan.stages for node in stage}
+        assert staged_ids == {1, 2}
+
+    def test_diamond_with_one_bad_branch(self):
+        """A → B(bad) → D and A → C → D: B and D skip, A and C stay runnable."""
+        n_d = _make_node(4)
+        n_c = _make_node(3, leads_to=[n_d])
+        n_b = _make_node(2, leads_to=[n_d], is_correct=False)
+        n_a = _make_node(1, leads_to=[n_b, n_c])
+        plan = compute_execution_plan([n_a, n_b, n_c, n_d], flow_starts=[n_a])
+        skip_ids = {n.node_id for n in plan.skip_nodes}
+        assert skip_ids == {2, 4}
+        runnable_ids = {node.node_id for stage in plan.stages for node in stage} - skip_ids
+        assert runnable_ids == {1, 3}
 
 
 # max_parallel_workers setting
