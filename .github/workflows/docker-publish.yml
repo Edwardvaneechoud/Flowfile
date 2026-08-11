@@ -16,6 +16,7 @@ on:
     paths:
       - 'kernel_runtime/**'
       - 'flowfile_core/flowfile_core/kernel/manager.py'
+      - 'flowfile_core/flowfile_core/kernel/images.py'
       - 'tools/check_kernel_version_sync.py'
       - 'tools/docker_publish_matrix.py'
       - '.github/workflows/docker-publish.yml'

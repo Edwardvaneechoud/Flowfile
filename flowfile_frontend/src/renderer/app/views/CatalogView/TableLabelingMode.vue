@@ -1354,7 +1354,7 @@ onBeforeUnmount(() => {
   font-weight: 400;
   padding: 2px 8px;
   border-radius: 10px;
-  background: var(--color-background-soft, #f0f2f5);
+  background: var(--color-background-soft);
   color: var(--color-text-secondary);
 }
 
@@ -1363,8 +1363,8 @@ onBeforeUnmount(() => {
   font-weight: 400;
   padding: 2px 8px;
   border-radius: 10px;
-  border: 1px solid var(--color-primary, #409eff);
-  color: var(--color-primary, #409eff);
+  border: 1px solid var(--color-accent-dark);
+  color: var(--color-accent-dark);
 }
 
 .labeling-setup {
@@ -1430,7 +1430,7 @@ onBeforeUnmount(() => {
   gap: var(--spacing-2, 8px);
   margin: 0;
   font-size: var(--font-size-sm, 13px);
-  color: var(--color-warning, #e6a23c);
+  color: var(--color-warning-dark);
 }
 
 .start-row {
@@ -1450,10 +1450,10 @@ onBeforeUnmount(() => {
 }
 
 .labeling-card {
-  border: 1px solid var(--color-border, #dcdfe6);
+  border: 1px solid var(--color-border-primary);
   border-radius: 8px;
   padding: var(--spacing-4, 16px);
-  background: var(--color-background, #fff);
+  background: var(--color-background-primary);
 }
 
 .row-position {
@@ -1465,7 +1465,7 @@ onBeforeUnmount(() => {
 }
 
 .current-label {
-  color: var(--color-success, #67c23a);
+  color: var(--color-success-dark);
 }
 
 .fields-toolbar {
@@ -1485,7 +1485,7 @@ onBeforeUnmount(() => {
 }
 
 .text-btn:hover {
-  color: var(--color-primary, #409eff);
+  color: var(--color-accent-dark);
 }
 
 .text-btn-sep {
@@ -1518,7 +1518,7 @@ onBeforeUnmount(() => {
 }
 
 .field-toggle:hover {
-  color: var(--color-primary, #409eff);
+  color: var(--color-accent-dark);
 }
 
 .field-name {
@@ -1554,7 +1554,7 @@ onBeforeUnmount(() => {
 }
 
 .collapsed-field:hover {
-  color: var(--color-primary, #409eff);
+  color: var(--color-accent-dark);
 }
 
 .suggestion-line {
@@ -1564,9 +1564,9 @@ onBeforeUnmount(() => {
   gap: var(--spacing-2, 8px);
   margin-top: var(--spacing-3, 12px);
   padding-top: var(--spacing-2, 8px);
-  border-top: 1px solid var(--color-border, #dcdfe6);
+  border-top: 1px solid var(--color-border-primary);
   font-size: var(--font-size-sm, 13px);
-  color: var(--color-primary, #409eff);
+  color: var(--color-accent-dark);
 }
 
 .enter-hint {
@@ -1578,18 +1578,18 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-xs, 11px);
   padding: 2px 8px;
   border-radius: 10px;
-  background: var(--color-background-soft, #f0f2f5);
+  background: var(--color-background-soft);
   color: var(--color-text-secondary);
 }
 
 .mini-btn {
-  border: 1px solid var(--color-primary, #409eff);
+  border: 1px solid var(--color-accent-dark);
   border-radius: 4px;
   background: none;
   padding: 1px 6px;
   cursor: pointer;
   font-size: var(--font-size-xs, 11px);
-  color: var(--color-primary, #409eff);
+  color: var(--color-accent-dark);
 }
 
 .class-buttons {
@@ -1604,30 +1604,30 @@ onBeforeUnmount(() => {
   gap: var(--spacing-2, 8px);
   padding: 10px 16px;
   font-size: var(--font-size-md, 14px);
-  border: 1px solid var(--color-border, #dcdfe6);
+  border: 1px solid var(--color-border-primary);
   border-radius: 8px;
-  background: var(--color-background, #fff);
+  background: var(--color-background-secondary);
   color: var(--color-text-primary);
   cursor: pointer;
 }
 
 .class-btn:hover {
-  border-color: var(--color-primary, #409eff);
+  border-color: var(--color-accent);
 }
 
 .class-btn.active {
-  border-color: var(--color-success, #67c23a);
-  background: rgba(103, 194, 58, 0.08);
+  border-color: var(--color-success);
+  background: var(--color-success-light);
 }
 
 /* Pre-selected weight: the model's pick should be obvious without reading the line above. */
 .class-btn.suggested {
-  border-color: var(--color-primary, #409eff);
+  border-color: var(--color-accent);
   border-width: 2px;
   padding: 9px 15px;
-  background: rgba(64, 158, 255, 0.12);
+  background: var(--color-accent-subtle);
   font-weight: 600;
-  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.12);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-accent);
 }
 
 .class-btn.suggested .suggested-chip kbd {
@@ -1635,7 +1635,7 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-xs, 11px);
   padding: 0 3px;
   border-radius: 3px;
-  background: rgba(64, 158, 255, 0.2);
+  border: 1px solid var(--color-accent);
 }
 
 .discovered-classes {
@@ -1645,21 +1645,10 @@ onBeforeUnmount(() => {
   gap: var(--spacing-2, 8px);
 }
 
-.shortcut-key {
-  border-color: var(--color-primary, #409eff);
-  background: var(--color-primary, #409eff);
-  color: #fff;
-}
-
 .class-btn.suggested.active {
-  border-color: var(--color-success, #67c23a);
-  background: rgba(103, 194, 58, 0.08);
+  border-color: var(--color-success);
+  background: var(--color-success-light);
   box-shadow: none;
-}
-
-.class-btn.suggested.active .shortcut-key {
-  border-color: var(--color-success, #67c23a);
-  background: var(--color-success, #67c23a);
 }
 
 .class-prob {
@@ -1674,8 +1663,8 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-xs, 11px);
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(64, 158, 255, 0.14);
-  color: var(--color-primary, #409eff);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
 }
 
 .shortcut-key {
@@ -1685,10 +1674,25 @@ onBeforeUnmount(() => {
   width: 22px;
   height: 22px;
   border-radius: 4px;
-  border: 1px solid var(--color-border, #dcdfe6);
-  background: var(--color-background-soft, #f5f7fa);
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-background-soft);
+  color: var(--color-text-primary);
   font-size: var(--font-size-xs, 11px);
   font-weight: 700;
+}
+
+/* Tint rather than fill: a solid accent/success keycap only reads at one end of the
+   theme range, and the digit has to stay legible on both. */
+.class-btn.suggested .shortcut-key {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
+}
+
+.class-btn.active .shortcut-key {
+  border-color: var(--color-success);
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
 }
 
 .labeling-controls {
@@ -1727,7 +1731,7 @@ onBeforeUnmount(() => {
 
 .labeling-done i {
   font-size: 40px;
-  color: var(--color-success, #67c23a);
+  color: var(--color-success-dark);
 }
 
 .done-actions {

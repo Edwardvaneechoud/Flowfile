@@ -400,6 +400,9 @@ def test_dry_run_kernel_request_disables_log_callback():
     from flowfile_core.kernel.execution import build_execute_request
 
     class _FakeManager:
+        # The callback URL keys on the network, not the volume: a kernel can only
+        # resolve core by service name when it was joined to core's network.
+        _docker_network = None
         _kernel_volume = None
 
         def to_kernel_path(self, path):
@@ -426,6 +429,9 @@ def test_dry_run_kernel_request_sets_the_dry_run_flag():
     from flowfile_core.kernel.execution import build_execute_request
 
     class _FakeManager:
+        # The callback URL keys on the network, not the volume: a kernel can only
+        # resolve core by service name when it was joined to core's network.
+        _docker_network = None
         _kernel_volume = None
 
         def to_kernel_path(self, path):

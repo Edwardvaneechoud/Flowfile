@@ -150,7 +150,7 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Backend Server")
     parser.add_argument("--host", type=str, default=DEFAULT_SERVER_HOST, help="Host to bind to")
-    parser.add_argument("--port", type=int, default=DEFAULT_SERVER_PORT, help="Port to bind to")
+    parser.add_argument("--port", type=int, help="Port to bind to")
     parser.add_argument(
         "--worker-port",
         type=int,
@@ -198,7 +198,7 @@ def get_default_worker_url(worker_port=None):
 args = parse_args()
 
 SERVER_HOST = args.host if args.host is not None else DEFAULT_SERVER_HOST
-SERVER_PORT = args.port if args.port is not None else DEFAULT_SERVER_PORT
+SERVER_PORT = args.port if args.port is not None else int(os.getenv("CORE_PORT", DEFAULT_SERVER_PORT))
 WORKER_PORT = (
     args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
 )

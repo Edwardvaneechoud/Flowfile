@@ -59,6 +59,26 @@ jobs:
         run: |
           poetry build
 
+      # The kernel dependency baseline is package data, and a wheel without it
+      # silently reports every kernel dependency as satisfied. Fail the release
+      # rather than publish that.
+      - name: Verify the kernel image manifest is in the artifacts
+        run: |
+          python - <<'PY'
+          import glob, sys, tarfile, zipfile
+
+          target = "flowfile_core/kernel/kernel_image_manifest.json"
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert any(n.endswith(target) for n in names), f"{target} missing from {wheel}"
+
+          sdist = glob.glob("dist/*.tar.gz")[0]
+          with tarfile.open(sdist) as tar:
+              members = tar.getnames()
+          assert any(n.endswith("kernel_image_manifest.json") for n in members), f"manifest missing from {sdist}"
+          print("kernel image manifest present in both artifacts")
+          PY
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

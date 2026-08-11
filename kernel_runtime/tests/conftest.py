@@ -34,6 +34,7 @@ def _clear_global_state():
     main._running_execs.clear()
     main._exec_generation = 0
     main._interrupt_generation = None
+    main._exec_tokens.clear()
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
     artifact_store._loading_locks.clear()
@@ -52,6 +53,7 @@ def _clear_global_state():
     main._running_execs.clear()
     main._exec_generation = 0
     main._interrupt_generation = None
+    main._exec_tokens.clear()
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
     artifact_store._loading_locks.clear()

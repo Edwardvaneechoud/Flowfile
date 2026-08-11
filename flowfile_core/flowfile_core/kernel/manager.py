@@ -18,6 +18,20 @@ import docker.types
 import httpx
 
 from flowfile_core.configs.flow_logger import FlowLogger
+
+# Re-exported: the image tags moved to a docker-free module so matching.py can
+# read them, but manager stays their public home for existing callers/tests.
+from flowfile_core.kernel.images import (  # noqa: F401
+    _KERNEL_IMAGE_BASE_DEFAULT,
+    _KERNEL_IMAGE_LITE_DEFAULT,
+    _KERNEL_IMAGE_ML_DEFAULT,
+    _envvar_or_default,
+    _flavour_images,
+    _kernel_image_base,
+    _kernel_image_lite,
+    _kernel_image_ml,
+    parse_image_version,
+)
 from flowfile_core.kernel.models import (
     ArtifactPersistenceInfo,
     CleanupRequest,
@@ -33,13 +47,10 @@ from flowfile_core.kernel.models import (
     RecoveryStatus,
     ResolvedPackage,
 )
+from flowfile_core.kernel.urls import core_base_url
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
-
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.5.4"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.5.4"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.5.4"
 
 _KERNEL_DOWN_MSG = (
     "Kernel is not running — its container was stopped or removed (often after a "
@@ -47,45 +58,6 @@ _KERNEL_DOWN_MSG = (
 )
 
 _CELL_EXECUTION_TIMEOUT = 86_400.0
-
-
-def _envvar_or_default(name: str, default: str) -> str:
-    """Read an env var, treating unset OR empty/whitespace as 'use default'.
-
-    Compose's ``${VAR:-}`` writes an empty string into the container when the
-    host hasn't set the var; treat that the same as 'unset' so we fall back to
-    the registry default instead of trying to ``docker run ""``.
-    """
-    return (os.environ.get(name) or "").strip() or default
-
-
-# FLOWFILE_KERNEL_IMAGE is the legacy override for the base image (kept for
-# backwards compatibility). FLOWFILE_KERNEL_IMAGE_BASE / _ML let an operator
-# pin each flavour to a specific tag (or their own registry). Reads happen at
-# lookup time, not module-import time, so the env var can be set after Python
-# starts (e.g. by a container entrypoint, or a pytest step env block) without
-# poisoning the rest of the process with the default value.
-def _kernel_image_base() -> str:
-    return _envvar_or_default(
-        "FLOWFILE_KERNEL_IMAGE_BASE",
-        _envvar_or_default("FLOWFILE_KERNEL_IMAGE", _KERNEL_IMAGE_BASE_DEFAULT),
-    )
-
-
-def _kernel_image_ml() -> str:
-    return _envvar_or_default("FLOWFILE_KERNEL_IMAGE_ML", _KERNEL_IMAGE_ML_DEFAULT)
-
-
-def _kernel_image_lite() -> str:
-    return _envvar_or_default("FLOWFILE_KERNEL_IMAGE_LITE", _KERNEL_IMAGE_LITE_DEFAULT)
-
-
-def _flavour_images() -> dict[ImageFlavour, str]:
-    return {
-        ImageFlavour.BASE: _kernel_image_base(),
-        ImageFlavour.ML: _kernel_image_ml(),
-        ImageFlavour.LITE: _kernel_image_lite(),
-    }
 
 
 def _resolve_image(
@@ -156,22 +128,6 @@ def _resolve_local_image(
             if tag.startswith(f"{repo_name}:"):
                 return tag
     return None
-
-
-def parse_image_version(image_tag: str) -> tuple[int, ...] | None:
-    """Parse a numeric version tuple from an image tag's ``:version`` suffix.
-
-    Returns None for tags without a dotted-numeric version (e.g. ``:local``,
-    digests), so callers can skip update comparisons for non-release images.
-    """
-    if ":" not in image_tag:
-        return None
-    tag = image_tag.rsplit(":", 1)[1]
-    parts = tag.split(".")
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError:
-        return None
 
 
 def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, ...]] | None:
@@ -400,6 +356,9 @@ class KernelManager:
         # lock first, then flight/leaf locks; interrupt takes no locks at all.
         self._exec_locks: dict[str, threading.Lock] = {}
         self._exec_locks_lock = threading.Lock()
+        # kernel_id -> exec_token of the cell holding that kernel's exec lock.
+        # Written only by the lock holder, read lock-free by interrupt.
+        self._active_execs: dict[str, str] = {}
         # resolve() so the kernel's host-path prefix translation matches the resolved paths core returns
         self._shared_volume = str(Path(shared_volume_path or storage.cache_directory).resolve())
         # Catalog tables (Delta-format) live outside the shared volume. The
@@ -1319,14 +1278,7 @@ class KernelManager:
         # entrypoint's KERNEL_PACKAGES install loop must be a no-op.
         env = {"KERNEL_PACKAGES": ""}
         # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker.
-        # In Docker-in-Docker mode the kernel is on the same Docker network
-        # as core, so it can reach core by service name.
-        if self._docker_network:
-            default_core_url = "http://flowfile-core:63578"
-        else:
-            default_core_url = "http://host.docker.internal:63578"
-        core_url = os.environ.get("FLOWFILE_CORE_URL", default_core_url)
-        env["FLOWFILE_CORE_URL"] = core_url
+        env["FLOWFILE_CORE_URL"] = core_base_url(bool(self._docker_network))
         # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
         # Use get_internal_token() instead of reading env directly so that in
         # Electron mode the token is auto-generated before the kernel starts.
@@ -1826,14 +1778,23 @@ class KernelManager:
         except (ValueError, ImportError):
             pass
 
+        # One identity per execution, so a cancel names a cell and not a kernel.
+        # The flow-run path mints it up front (the node needs it to cancel itself);
+        # every other caller — notebook cells, dry runs — gets one here.
+        if not request.exec_token:
+            request.exec_token = uuid.uuid4().hex
+
         lock = self._exec_lock_for(kernel_id)
         if not self._acquire_cancellable(lock, cancel_event):
             # Nothing was submitted — do NOT interrupt (that would kill the
             # cell another node is currently running on this kernel).
             return ExecuteResult(success=False, error="Execution cancelled by user")
         try:
+            self._active_execs[kernel_id] = request.exec_token
             return self._execute_locked(kernel_id, kernel, request, flow_logger, cancel_event)
         finally:
+            if self._active_execs.get(kernel_id) == request.exec_token:
+                del self._active_execs[kernel_id]
             lock.release()
 
     def _execute_locked(
@@ -1879,7 +1840,7 @@ class KernelManager:
                 t.join(timeout=0.5)
                 if cancel_event.is_set():
                     # Best-effort interrupt, then return immediately
-                    self.interrupt_execution_sync(kernel_id)
+                    self.interrupt_execution_sync(kernel_id, request.exec_token)
                     return ExecuteResult(success=False, error="Execution cancelled by user")
 
             if error_holder[0] is not None:
@@ -1910,7 +1871,7 @@ class KernelManager:
             if isinstance(exc, httpx.TimeoutException):
                 # Tell the kernel to interrupt the still-running cell, otherwise it
                 # keeps mutating the namespace and the next cell runs concurrently.
-                self.interrupt_execution_sync(kernel_id)
+                self.interrupt_execution_sync(kernel_id, request.exec_token)
                 return ExecuteResult(
                     success=False,
                     error=(
@@ -1923,8 +1884,15 @@ class KernelManager:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
 
-    def interrupt_execution_sync(self, kernel_id: str) -> bool:
+    def interrupt_execution_sync(self, kernel_id: str, exec_token: str | None = None) -> bool:
         """Interrupt running user code on a kernel.
+
+        *exec_token* names the execution to cancel. Kernels are shared, so an
+        interrupt is refused unless that execution is the one currently holding
+        the kernel — otherwise cancelling a queued or already-finished cell would
+        kill whichever flow happens to be running now. ``None`` means untargeted
+        (interrupt whatever is running) and is only for callers that own the
+        kernel outright.
 
         Tries the HTTP ``/interrupt`` endpoint first (works when the kernel
         runs user code in a background thread and keeps the event loop free).
@@ -1937,6 +1905,12 @@ class KernelManager:
             return False
         if kernel.state != KernelState.EXECUTING:
             return False
+        if exec_token is not None and self._active_execs.get(kernel_id) != exec_token:
+            logger.info(
+                "Skipping interrupt on kernel '%s': the cancelled execution is not the one running",
+                kernel_id,
+            )
+            return False
 
         # --- Try HTTP /interrupt (preferred) ---
         should_try_http = self._docker_network is not None or kernel.port is not None
@@ -1944,7 +1918,7 @@ class KernelManager:
             try:
                 url = f"{self._kernel_url(kernel)}/interrupt"
                 with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
-                    resp = client.post(url)
+                    resp = client.post(url, json={"exec_token": exec_token or ""})
                     if resp.status_code == 200:
                         logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
                         return True
@@ -1964,9 +1938,9 @@ class KernelManager:
             logger.error("Failed to send SIGUSR1 to kernel '%s': %s", kernel_id, exc)
             return False
 
-    async def interrupt_execution(self, kernel_id: str) -> bool:
+    async def interrupt_execution(self, kernel_id: str, exec_token: str | None = None) -> bool:
         """Async wrapper around :meth:`interrupt_execution_sync`."""
-        return self.interrupt_execution_sync(kernel_id)
+        return self.interrupt_execution_sync(kernel_id, exec_token)
 
     async def clear_artifacts(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)

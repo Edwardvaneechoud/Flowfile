@@ -15,6 +15,24 @@ from flowfile_core.kernel.matching import (
 from flowfile_core.kernel.models import ImageFlavour, KernelInfo, KernelState, ResolvedPackage
 
 
+@pytest.fixture(autouse=True)
+def _clear_matching_caches():
+    """Drop the lru_caches around the image baseline before and after each test.
+
+    _image_contents / load_manifest are process-lifetime caches, so a test that
+    repoints the manifest or monkeypatches _image_contents would otherwise leave
+    a warm, half-patched baseline for whatever runs next.
+    """
+    from flowfile_core.kernel import flavours, matching
+
+    caches = (matching._image_contents, matching._ml_extra_names, flavours.load_manifest)
+    for cache in caches:
+        cache.cache_clear()
+    yield
+    for cache in caches:
+        cache.cache_clear()
+
+
 def make_kernel(
     kernel_id="k",
     name="Kernel",
@@ -109,6 +127,50 @@ class TestKernelProvides:
         assert "polars" in provides
 
 
+class TestImageBaseline:
+    """The baseline must be present in this interpreter, and honest when it isn't."""
+
+    def test_baseline_is_available(self):
+        from flowfile_core.kernel import matching
+
+        contents = matching._image_contents()
+        assert contents is not None, (
+            "no kernel image baseline — dependency detection cannot prove anything is missing. "
+            "See flowfile_core/tests/test_kernel_packaging_gate.py"
+        )
+        assert set(contents) >= {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE}
+        assert contents[ImageFlavour.BASE]["polars"]
+
+    def test_known_flavours_are_not_opaque(self):
+        for flavour in (ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE):
+            _, opaque = kernel_provides(make_kernel(flavour=flavour))
+            assert not opaque, f"{flavour} should be enumerable from the shipped manifest"
+
+    def test_repointed_flavour_becomes_unknown_without_touching_the_others(self, monkeypatch):
+        # An operator can pin a flavour to a different release; the shipped
+        # manifest then describes some other image, so that flavour alone must
+        # stop being authoritative.
+        from flowfile_core.kernel import flavours, matching
+
+        monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_BASE", "edwardvaneechoud/flowfile-kernel-base:0.4.0")
+        matching._image_contents.cache_clear()
+        flavours.load_manifest.cache_clear()
+
+        assert evaluate_kernel(["scikit-learn>=1.5"], make_kernel(flavour=ImageFlavour.BASE)).level == "unknown"
+        assert evaluate_kernel(["scikit-learn>=1.5"], make_kernel(flavour=ImageFlavour.ML)).level == "full"
+
+    def test_unparseable_tag_stays_trusted(self, monkeypatch):
+        # `:local` is the dev-built image from this same checkout — the manifest
+        # describes it, and we can't prove otherwise, so don't degrade.
+        from flowfile_core.kernel import flavours, matching
+
+        monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_BASE", "flowfile-kernel-base:local")
+        matching._image_contents.cache_clear()
+        flavours.load_manifest.cache_clear()
+
+        assert evaluate_kernel(["scikit-learn>=1.5"], make_kernel(flavour=ImageFlavour.BASE)).level == "none"
+
+
 class TestEvaluateKernel:
     def test_ml_flavour_satisfies_sklearn(self):
         entry = evaluate_kernel(["scikit-learn>=1.0"], make_kernel(flavour=ImageFlavour.ML))
@@ -139,35 +201,51 @@ class TestEvaluateKernel:
         assert entry.missing == []
         assert entry.unverified == ["numpy>=1.20"]
 
-    def test_custom_image_everything_unverified(self):
+    def test_custom_image_is_unknown_never_a_match(self):
+        # A user's own image can't be enumerated, so nothing is provably missing
+        # — but that must not read as "has all packages". `unknown` is the
+        # honest level; it never blocks a run and never auto-preselects.
         entry = evaluate_kernel(["anything>=1"], make_kernel(flavour=ImageFlavour.CUSTOM))
-        assert entry.level == "full"
-        assert entry.unverified == ["anything>=1"]
+        assert entry.level == "unknown"
+        assert entry.unknown == ["anything>=1"]
+        assert entry.unverified == []
+        assert entry.baseline == "unknown"
         assert entry.details["anything>=1"] == "image contents unknown"
 
-    def test_baked_but_unsurfaced_packages_are_not_missing(self):
+    def test_baked_but_unsurfaced_packages_are_satisfied(self):
         # The images install the full kernel_runtime main group, not just the
         # curated display list: deltalake/jedi are main deps, pydantic and
-        # friends arrive transitively via fastapi.
+        # friends arrive transitively via fastapi. The manifest carries a locked
+        # version for every one of them, so even a pinned spec resolves.
         entry = evaluate_kernel(["deltalake", "jedi", "pydantic>=2"], make_kernel(flavour=ImageFlavour.BASE))
         assert entry.missing == []
-        assert "deltalake" in entry.satisfied
-        assert "jedi" in entry.satisfied
-        assert entry.unverified == ["pydantic>=2"]
-        assert entry.details["pydantic>=2"] == "version unknown"
+        assert entry.unverified == []
+        assert set(entry.satisfied) == {"deltalake", "jedi", "pydantic>=2"}
+        assert entry.details["pydantic>=2"].startswith("installed 2.")
 
     def test_ml_transitives_satisfied_but_not_on_base(self):
         # pandas rides in via statsmodels on the ml image only.
         assert evaluate_kernel(["pandas"], make_kernel(flavour=ImageFlavour.ML)).missing == []
         assert evaluate_kernel(["pandas"], make_kernel(flavour=ImageFlavour.BASE)).missing == ["pandas"]
 
-    def test_unreadable_image_contents_degrades_to_unverified(self, monkeypatch):
+    def test_no_baseline_degrades_to_unknown_not_a_match(self, monkeypatch):
+        """No shipped manifest ⇒ absence is unprovable ⇒ `unknown`, never `full`.
+
+        The fallback itself is correct — an image we can't enumerate must not
+        produce false `missing` entries. Reaching this branch in a *shipped*
+        artifact was the bug: the manifest used to be resolved relative to the
+        repo, so wheels, Docker images and the desktop sidecar all landed here
+        and reported "has all packages" for kernels that had none.
+        test_kernel_packaging_gate.py is what keeps it unreachable.
+        """
         from flowfile_core.kernel import matching
 
         monkeypatch.setattr(matching, "_image_contents", lambda: None)
         entry = evaluate_kernel(["definitely-not-a-package"], make_kernel(flavour=ImageFlavour.BASE))
         assert entry.missing == []
-        assert entry.unverified == ["definitely-not-a-package"]
+        assert entry.level == "unknown"
+        assert entry.unknown == ["definitely-not-a-package"]
+        assert verify_kernel_for_node(make_kernel(flavour=ImageFlavour.BASE), ["definitely-not-a-package"]) == []
 
     def test_spaced_and_markered_specs_canonicalised(self):
         entry = evaluate_kernel(
@@ -237,13 +315,32 @@ class TestMatchKernels:
 
 class TestSuggestKernelConfig:
     def test_ml_inference_and_covered_dropping(self):
+        # Every one of these is already baked into the ml image at a version the
+        # pin accepts, so none of them should be re-installed on top of it.
         deps = ["scikit-learn>=1.0", "numpy", "pandas>=2.1"]
         config, covered = suggest_kernel_config(deps, set(), "K-Means Cluster")
         assert config.image_flavour == ImageFlavour.ML
-        assert config.packages == ["pandas>=2.1"]
-        assert covered == ["scikit-learn>=1.0", "numpy"]
+        assert config.packages == []
+        assert covered == ["scikit-learn>=1.0", "numpy", "pandas>=2.1"]
         assert config.id == "k-means-cluster-kernel"
         assert config.name == "K-Means Cluster kernel"
+
+    def test_unsatisfiable_pin_is_still_baked(self):
+        # numpy is pinned to 1.26.4 in the image, so a >=2 pin genuinely needs
+        # installing — only *provably satisfied* deps may be dropped.
+        config, covered = suggest_kernel_config(["numpy>=2"], set(), "Node")
+        assert config.packages == ["numpy>=2"]
+        assert covered == []
+
+    def test_without_a_baseline_every_dep_is_baked(self, monkeypatch):
+        # Nothing can be proven covered, so the seed stays conservative and bakes
+        # everything rather than assuming the image already has it.
+        from flowfile_core.kernel import matching
+
+        monkeypatch.setattr(matching, "_image_contents", lambda: None)
+        config, covered = suggest_kernel_config(["polars>=1.8", "scikit-learn>=1.5"], set(), "Node")
+        assert config.packages == ["polars>=1.8", "scikit-learn>=1.5"]
+        assert covered == []
 
     def test_base_when_no_ml_dep(self):
         config, covered = suggest_kernel_config(["requests>=2"], set(), "API Node")
