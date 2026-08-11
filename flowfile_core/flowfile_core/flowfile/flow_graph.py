@@ -2619,7 +2619,7 @@ class FlowGraph:
 
         cancel_event = threading.Event()
         if node is not None:
-            node._kernel_cancel_context = (kernel_id, manager)
+            node._kernel_cancel_context = (kernel_id, manager, request.exec_token)
             node._kernel_cancel_event = cancel_event
         try:
             result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)

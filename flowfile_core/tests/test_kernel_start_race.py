@@ -52,6 +52,7 @@ def _bare_manager() -> KernelManager:
         mgr._build_locks_lock = threading.Lock()
         mgr._exec_locks = {}
         mgr._exec_locks_lock = threading.Lock()
+        mgr._active_execs = {}
     return mgr
 
 
@@ -569,10 +570,11 @@ class TestExecuteSerialization:
         transport.behavior = _behavior
         monkeypatch.setattr(kernel_manager.httpx, "Client", transport.client_factory())
 
-        result = mgr.execute_sync("ml", _request())
+        request = _request()
+        result = mgr.execute_sync("ml", request)
         assert result.success is False
         assert f"{kernel_manager._CELL_EXECUTION_TIMEOUT:.0f}s" in (result.error or "")
-        mgr.interrupt_execution_sync.assert_called_once_with("ml")
+        mgr.interrupt_execution_sync.assert_called_once_with("ml", request.exec_token)
 
         follow_up = mgr.execute_sync("ml", _request())
         assert follow_up.success
