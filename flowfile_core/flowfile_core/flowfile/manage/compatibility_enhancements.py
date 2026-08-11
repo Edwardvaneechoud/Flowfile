@@ -366,6 +366,20 @@ def ensure_description(node: input_schema.NodeBase):
         node.description = ""
 
 
+def ensure_compatibility_node_sample(node_sample: input_schema.NodeSample):
+    """Add the sampling fields to nodes pickled before random sampling existed.
+
+    Unpickling restores __dict__ verbatim, so pydantic never applies the
+    defaults and reading these raises AttributeError. Written straight into
+    __dict__ because these pickles resolve to the frozen legacy NodeSample,
+    which has no such fields for normal setattr to accept.
+    """
+    defaults = {"sample_method": "first", "fraction": 10.0, "seed": None}
+    missing = {k: v for k, v in defaults.items() if k not in node_sample.__dict__}
+    if missing:
+        object.__setattr__(node_sample, "__dict__", {**node_sample.__dict__, **missing})
+
+
 def ensure_compatibility_node_manual_input(node_manual_input: input_schema.NodeManualInput):
     """Migrate old NodeManualInput structure:
     - raw_data (list of dicts) -> raw_data_format (RawData)
@@ -516,6 +530,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_catalog_writer(setting_input)
         elif class_name == "NodeCatalogReader":
             ensure_compatibility_node_catalog_reader(setting_input)
+        elif class_name == "NodeSample":
+            ensure_compatibility_node_sample(setting_input)
         ensure_description(setting_input)
 
     return flow_storage_obj

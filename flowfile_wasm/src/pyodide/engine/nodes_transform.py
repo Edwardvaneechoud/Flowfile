@@ -207,9 +207,26 @@ def execute_unique(node_id: int, input_id: int, settings: dict) -> dict:
 
 
 def build_head(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
-    """Build the head/limit LazyFrame (no store, no collect)."""
-    n = settings.get("head_input", {}).get("n", 10)
-    return input_lf.head(n)
+    """Build the sample LazyFrame (no store, no collect).
+
+    ``sample_method`` mirrors flowfile_core's NodeSample. The random methods
+    filter on a shuffled row rank because polars only offers ``sample`` on eager
+    DataFrames, keeping this node lazy like every other transform here.
+    """
+    n = settings.get("sample_size")
+    if n is None:
+        n = settings.get("head_input", {}).get("n", 10)
+    method = settings.get("sample_method", "first")
+    if method not in ("random", "random_fraction"):
+        return input_lf.head(n)
+
+    seed = settings.get("seed")
+    if method == "random_fraction":
+        fraction = settings.get("fraction", 10.0) / 100.0
+        threshold = (pl.len() * fraction).round().cast(pl.Int64)
+    else:
+        threshold = max(0, n)
+    return input_lf.filter(pl.int_range(0, pl.len()).shuffle(seed=seed) < threshold)
 
 
 @log_node

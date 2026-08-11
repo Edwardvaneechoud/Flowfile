@@ -983,8 +983,21 @@ class FlowToPolarsConverter {
   private handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const n = settings.sample_size || 10
+    const method = settings.sample_method || 'first'
 
-    this.addCode(`${varName} = ${inputDf}.head(${n})`)
+    if (method !== 'random' && method !== 'random_fraction') {
+      this.addCode(`${varName} = ${inputDf}.head(${n})`)
+      this.addCode('')
+      return
+    }
+
+    const seedArg = settings.seed === null || settings.seed === undefined ? '' : `seed=${settings.seed}`
+    const threshold =
+      method === 'random_fraction'
+        ? `(pl.len() * ${(settings.fraction ?? 10) / 100}).round().cast(pl.Int64)`
+        : `${Math.max(0, n)}`
+
+    this.addCode(`${varName} = ${inputDf}.filter(pl.int_range(0, pl.len()).shuffle(${seedArg}) < ${threshold})`)
     this.addCode('')
   }
 

@@ -2409,6 +2409,64 @@ def test_sample_operation(export_func):
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sample_random_rows_operation(export_func):
+    """A seeded random sample must export to code that picks the same rows as the flow."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    sample_node = input_schema.NodeSample(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        sample_method="random",
+        sample_size=3,
+        seed=42,
+    )
+    flow.add_sample(sample_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, "pl.int_range(0, pl.len()).shuffle(seed=42) < 3")
+    else:
+        verify_code_contains(code, ".sample(3, seed=42)")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sample_random_fraction_operation(export_func):
+    """A seeded fractional sample must export to code that picks the same rows as the flow."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    sample_node = input_schema.NodeSample(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        sample_method="random_fraction",
+        fraction=50.0,
+        seed=7,
+    )
+    flow.add_sample(sample_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, "(pl.len() * 0.5).round().cast(pl.Int64)")
+    else:
+        verify_code_contains(code, ".sample(fraction=0.5, seed=7)")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
 def test_empty_flow():
     """Test converting an empty flow"""
     flow = create_basic_flow()
