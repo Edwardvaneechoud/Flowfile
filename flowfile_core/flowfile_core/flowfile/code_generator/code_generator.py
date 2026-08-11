@@ -1173,6 +1173,21 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self.node_var_mapping[node_id] = split_vars[0]
         self._add_code("")
 
+    def _handle_sample(self, settings: input_schema.NodeSample, var_name: str, input_vars: dict[str, str]) -> None:
+        """Delegate to FlowFrame.head/sample instead of the polars rank-filter form."""
+        input_df = input_vars.get("main", "df")
+        if settings.sample_method == "first":
+            self._add_code(f"{var_name} = {input_df}.head({settings.sample_size})")
+            self._add_code("")
+            return
+        seed_arg = "" if settings.seed is None else f", seed={settings.seed}"
+        if settings.sample_method == "random_fraction":
+            size_arg = f"fraction={settings.fraction / 100.0}"
+        else:
+            size_arg = str(max(0, settings.sample_size))
+        self._add_code(f"{var_name} = {input_df}.sample({size_arg}{seed_arg})")
+        self._add_code("")
+
     def _handle_manual_input(
         self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
     ) -> None:

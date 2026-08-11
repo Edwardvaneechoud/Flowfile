@@ -129,9 +129,14 @@ class KernelMatchEntry(BaseModel):
     satisfied: list[str] = Field(default_factory=list)
     missing: list[str] = Field(default_factory=list)
     unverified: list[str] = Field(default_factory=list)
+    # Deps we couldn't check at all because the image's contents aren't
+    # enumerable. Distinct from `unverified`, which means we did enumerate the
+    # image and found the name — never collapse the two into a match.
+    unknown: list[str] = Field(default_factory=list)
     invalid: list[str] = Field(default_factory=list)
     details: dict[str, str] = Field(default_factory=dict)  # spec -> human-readable reason
-    level: Literal["full", "partial", "none"]
+    level: Literal["full", "unknown", "partial", "none"]
+    baseline: Literal["manifest", "declared", "unknown"] = "manifest"
 
 
 class KernelSuggestion(BaseModel):
@@ -157,7 +162,7 @@ class KernelMatchBatchRequest(BaseModel):
 class KernelMatchBatchSummary(BaseModel):
     """Best-match digest for one dependency list."""
 
-    level: Literal["full", "partial", "none"]
+    level: Literal["full", "unknown", "partial", "none"]
     best_kernel_id: str | None = None  # None when nothing useful matches
     best_kernel_name: str | None = None
 

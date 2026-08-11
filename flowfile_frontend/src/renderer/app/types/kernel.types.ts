@@ -106,7 +106,12 @@ export interface KernelInfo {
   kernel_version: string | null;
 }
 
-export type KernelMatchLevel = "full" | "partial" | "none";
+// "unknown" = the image's contents can't be enumerated, so nothing is provably
+// missing and nothing is provably present. It must never be presented as a match.
+export type KernelMatchLevel = "full" | "unknown" | "partial" | "none";
+
+// Where the backend's package inventory came from for this kernel.
+export type KernelMatchBaseline = "manifest" | "declared" | "unknown";
 
 export interface KernelMatch {
   kernel_id: string;
@@ -116,10 +121,14 @@ export interface KernelMatch {
   satisfied: string[];
   missing: string[];
   unverified: string[];
+  // Deps we couldn't check at all — distinct from `unverified`, where the image
+  // was enumerated and the package name was found.
+  unknown: string[];
   invalid: string[];
   // spec -> human-readable reason ("installed 1.4.2", "version unknown", ...)
   details: Record<string, string>;
   level: KernelMatchLevel;
+  baseline: KernelMatchBaseline;
 }
 
 // Prefill seed for kernel creation, derived by the backend from a node's deps.

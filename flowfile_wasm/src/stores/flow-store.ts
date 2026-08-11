@@ -2694,7 +2694,10 @@ result
       case 'head':
         return {
           ...base,
+          sample_method: 'first',
           sample_size: 10,
+          fraction: 10,
+          seed: null,
           head_input: {
             n: 10
           }

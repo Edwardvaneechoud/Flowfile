@@ -5,7 +5,7 @@ Keeps the two source-of-truth streams in sync: the image/package version in
 ``kernel_runtime/pyproject.toml`` and the runtime ``__version__`` in
 ``kernel_runtime/kernel_runtime/__init__.py`` (reported by ``/health`` and shown
 in the Kernel Manager). Independent from the app version (tools/bump_version.py);
-the pinned launch tags in ``flowfile_core/kernel/manager.py`` move only when a new
+the pinned launch tags in ``flowfile_core/kernel/images.py`` move only when a new
 image is actually published.
 """
 

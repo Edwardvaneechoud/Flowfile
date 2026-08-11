@@ -23,7 +23,9 @@ include = [
     { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "sdist" },
     { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "wheel" },
     { path = "flowfile_core/flowfile_core/flowfile/community_nodes/standard_icons/*.png", format = "sdist" },
-    { path = "flowfile_core/flowfile_core/flowfile/community_nodes/standard_icons/*.png", format = "wheel" }
+    { path = "flowfile_core/flowfile_core/flowfile/community_nodes/standard_icons/*.png", format = "wheel" },
+    { path = "flowfile_core/flowfile_core/kernel/kernel_image_manifest.json", format = "sdist" },
+    { path = "flowfile_core/flowfile_core/kernel/kernel_image_manifest.json", format = "wheel" }
 ]
 
 [tool.poetry.dependencies]

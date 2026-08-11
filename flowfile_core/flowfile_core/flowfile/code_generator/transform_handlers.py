@@ -169,9 +169,26 @@ class TransformHandlersMixin(ConverterMixinBase):
         self._add_code("")
 
     def _handle_sample(self, settings: input_schema.NodeSample, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle sample nodes."""
+        """Handle sample nodes.
+
+        Mirrors ``FlowDataEngine.random_sample``: the random methods filter on a
+        shuffled row rank rather than calling ``sample``, which only exists on
+        eager DataFrames, so the generated script stays lazy like the flow does.
+        The ``ff`` converter overrides this with native ``.sample()`` calls.
+        """
         input_df = input_vars.get("main", "df")
-        self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
+        if settings.sample_method == "first":
+            self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
+            self._add_code("")
+            return
+
+        self.imports.add("import polars as pl")
+        seed_arg = "" if settings.seed is None else f"seed={settings.seed}"
+        if settings.sample_method == "random_fraction":
+            threshold = f"(pl.len() * {settings.fraction / 100.0}).round().cast(pl.Int64)"
+        else:
+            threshold = str(max(0, settings.sample_size))
+        self._add_code(f"{var_name} = {input_df}.filter(pl.int_range(0, pl.len()).shuffle({seed_arg}) < {threshold})")
         self._add_code("")
 
     def _build_window_expr_code(

@@ -259,6 +259,8 @@ export interface DynamicRenameInput {
 
 // HEAD/SAMPLE SCHEMAS
 
+export type SampleMethod = 'first' | 'random' | 'random_fraction'
+
 export interface SampleInput {
   sample_size: number
 }
@@ -407,7 +409,10 @@ export interface NodeDynamicRenameSettings extends NodeSingleInput {
 }
 
 export interface NodeSampleSettings extends NodeSingleInput {
+  sample_method?: SampleMethod
   sample_size: number
+  fraction?: number
+  seed?: number | null
 }
 
 export interface NodePreviewSettings extends NodeSingleInput {
@@ -715,7 +720,10 @@ export interface HeadSettings extends NodeBase {
   head_input: {
     n: number
   }
+  sample_method?: SampleMethod
   sample_size?: number
+  fraction?: number
+  seed?: number | null
   depending_on_id?: number
 }
 

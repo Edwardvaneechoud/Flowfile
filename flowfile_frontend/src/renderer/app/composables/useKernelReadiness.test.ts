@@ -20,8 +20,11 @@ function summary(level: KernelMatchBatchSummary["level"]): KernelMatchBatchSumma
   };
 }
 
-function response(results: Record<string, KernelMatchBatchSummary>): KernelMatchBatchResponse {
-  return { results, docker_available: true };
+function response(
+  results: Record<string, KernelMatchBatchSummary>,
+  dockerAvailable = true,
+): KernelMatchBatchResponse {
+  return { results, docker_available: dockerAvailable };
 }
 
 beforeEach(() => {
@@ -138,6 +141,39 @@ describe("ensureReadiness", () => {
     await ensureReadiness({ [key]: ["numpy"] });
 
     expect(mocks.matchKernelsBatch).toHaveBeenCalledTimes(2);
+    expect(readiness.value[key].level).toBe("full");
+  });
+
+  it("shows no badge when Docker is down, even though the call succeeded", async () => {
+    // The backend degrades to matching DB rows and returns 200 with
+    // docker_available:false. Those kernels cannot start, and a readiness badge
+    // implies liveness — so the honest render is no badge at all.
+    const key = readinessKey(["numpy"]);
+    mocks.matchKernelsBatch.mockResolvedValue(response({ [key]: summary("full") }, false));
+
+    const { readiness, unavailable, ensureReadiness } = useKernelReadiness();
+    await ensureReadiness({ [key]: ["numpy"] });
+
+    expect(unavailable.value).toBe(true);
+    expect(readiness.value[key]).toBeUndefined();
+  });
+
+  it("recovers once Docker comes back", async () => {
+    // The flag must not latch: the TTL sweep has to be able to clear it, which
+    // it only can because lastLoaded is stamped even on an untrusted response.
+    vi.useFakeTimers();
+    const key = readinessKey(["numpy"]);
+    mocks.matchKernelsBatch.mockResolvedValue(response({ [key]: summary("full") }, false));
+
+    const { readiness, unavailable, ensureReadiness } = useKernelReadiness();
+    await ensureReadiness({ [key]: ["numpy"] });
+    expect(unavailable.value).toBe(true);
+
+    vi.advanceTimersByTime(31_000);
+    mocks.matchKernelsBatch.mockResolvedValue(response({ [key]: summary("full") }, true));
+    await ensureReadiness({ [key]: ["numpy"] });
+
+    expect(unavailable.value).toBe(false);
     expect(readiness.value[key].level).toBe("full");
   });
 

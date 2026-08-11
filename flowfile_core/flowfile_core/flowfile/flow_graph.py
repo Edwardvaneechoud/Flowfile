@@ -3841,14 +3841,22 @@ class FlowGraph:
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "FlowGraph":
         """Adds a node to take a random or top-N sample of the data.
 
+        Every method stays lazy, so the node needs no local/remote branch: the
+        sample is part of the plan the worker receives, not a materialised frame.
+
         Args:
-            sample_settings: The settings object specifying the size of the sample.
+            sample_settings: The settings object specifying the sampling method,
+                the size or fraction to keep, and an optional seed.
 
         Returns:
             The `FlowGraph` instance for method chaining.
         """
 
         def _func(table: FlowDataEngine) -> FlowDataEngine:
+            if sample_settings.sample_method == "random":
+                return table.random_sample(n=sample_settings.sample_size, seed=sample_settings.seed)
+            if sample_settings.sample_method == "random_fraction":
+                return table.random_sample(fraction=sample_settings.fraction / 100.0, seed=sample_settings.seed)
             return table.get_sample(sample_settings.sample_size)
 
         self.add_node_step(

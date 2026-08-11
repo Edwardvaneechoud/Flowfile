@@ -610,14 +610,40 @@ class NodeTextToRows(NodeSingleInput):
         return f"Split {t.column_to_split} by '{delim}'"
 
 
-class NodeSample(NodeSingleInput):
-    """Settings for a node that samples a subset of the data."""
+SampleMethod = Literal["first", "random", "random_fraction"]
 
+
+class NodeSample(NodeSingleInput):
+    """Settings for a node that samples a subset of the data.
+
+    ``sample_method`` selects between a cheap top-N slice and a uniform random
+    sample. It defaults to ``"first"`` so flows saved before random sampling
+    existed (which only carry ``sample_size``) keep their exact behaviour.
+    ``fraction`` is a percentage and only read by ``"random_fraction"``;
+    ``seed`` only by the two random methods, where ``None`` means a fresh
+    permutation on every run.
+    """
+
+    sample_method: SampleMethod = "first"
     sample_size: int = 1000
+    fraction: float = 10.0
+    seed: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_sample(self) -> "NodeSample":
+        # sample_size is deliberately unvalidated: the pre-existing UI allowed 0
+        # and saved flows carrying it must keep loading.
+        if self.sample_method == "random_fraction" and not 0 < self.fraction <= 100:
+            raise ValueError("fraction must be greater than 0 and at most 100")
+        return self
 
     def get_default_description(self) -> str:
-        """Describes the sample size."""
-        return f"Sample {self.sample_size} rows"
+        """Describes the sampling method and size."""
+        if self.sample_method == "random":
+            return f"Random {self.sample_size} rows"
+        if self.sample_method == "random_fraction":
+            return f"Random {self.fraction:g}% of rows"
+        return f"First {self.sample_size} rows"
 
 
 class RandomSplitGroup(BaseModel):
