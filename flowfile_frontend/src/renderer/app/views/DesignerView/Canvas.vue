@@ -970,6 +970,7 @@ const keyboardPastePosition = (): CursorPosition => {
 const handleCopyEvent = (event: ClipboardEvent) => {
   if (event.defaultPrevented) return; // someone (e.g. the data grid) already handled it
   if (!isCanvasClipboardTarget(event.target, lastPointerDownEl)) return;
+  if (flowStore.flowId <= 0) return; // parity with paste: never arm the buffer without a live flow
   const sentinel = copyNodesToBuffer(
     instance.getSelectedNodes.value,
     instance.getEdges.value,

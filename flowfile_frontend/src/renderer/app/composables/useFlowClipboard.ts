@@ -209,6 +209,11 @@ export const writeSentinelToOsClipboard = async (text: string): Promise<boolean>
 /**
  * Decide what a generic (Cmd+V / menu Paste) clipboard event means for the
  * canvas. Pure — feed it the buffer and the pasted text.
+ *
+ * isCanvasTarget is the caller's isCanvasClipboardTarget verdict. Canvas.vue
+ * early-returns on a non-canvas target before calling, so it always passes
+ * true there; the false branch keeps this contract total for any future
+ * caller and is pinned by the unit-test truth table.
  */
 export const resolvePasteIntent = (args: {
   buffer: NodeClipboardBuffer | null;
