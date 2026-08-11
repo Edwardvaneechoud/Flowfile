@@ -608,11 +608,13 @@ const windowKeyHandler = async (e: KeyboardEvent) => {
   const tsv = buildTsvFromRows(selected);
   if (!tsv) return;
 
+  // preventDefault must run before the await (post-await it's a no-op and the
+  // copy event would fall through to the canvas's document-level handler).
+  e.preventDefault();
   try {
     await navigator.clipboard.writeText(tsv);
-    e.preventDefault();
   } catch {
-    // Clipboard write rejected (permissions, insecure context); leave default behavior.
+    // Clipboard write rejected (permissions, insecure context).
   }
 };
 

@@ -224,6 +224,9 @@ const insertTextAtCursor = (text: string) => {
         insert: text,
       },
     });
+    // Return focus to the editor: the sidebar button that triggered the insert
+    // would otherwise keep it, sending the user's next keystrokes elsewhere.
+    view.value.focus();
   }
 };
 

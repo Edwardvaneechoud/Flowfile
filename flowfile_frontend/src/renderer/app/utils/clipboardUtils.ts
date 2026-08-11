@@ -1,5 +1,3 @@
-import { desktop } from "../../lib/desktop";
-
 /**
  * Writes text to the clipboard, with a fallback for insecure contexts.
  *
@@ -32,22 +30,6 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
     return ok;
   } catch {
     return false;
-  }
-};
-
-/**
- * Snapshots the current OS clipboard text into localStorage so paste handlers
- * can detect whether the user copied something externally after copying a node.
- *
- * Reads via desktop.readClipboardText() so the desktop shell uses the native
- * clipboard plugin — the WebKit async read API would pop macOS's "Paste" pill.
- */
-export const snapshotClipboard = async (): Promise<void> => {
-  try {
-    const text = await desktop.readClipboardText();
-    localStorage.setItem("clipboardAtNodeCopy", text);
-  } catch {
-    localStorage.setItem("clipboardAtNodeCopy", "");
   }
 };
 

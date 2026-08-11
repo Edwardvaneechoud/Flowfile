@@ -1,9 +1,9 @@
 <script setup lang="ts">
-// TODO(refactor): ~1170 LOC; bundles 7+ concerns. Plan to extract:
-//   - 6 draggable panel wrappers (~lines 927-1021) → individual *Panel components
-//   - clipboard/copy-paste logic (~lines 533-700) → useFlowClipboard composable
-//   - context menu handling (~lines 702-794) → useContextMenu composable
-//   - keyboard shortcuts (~lines 729-778) → useFlowHotkeys composable
+// TODO(refactor): bundles several concerns. Still to extract:
+//   - 6 draggable panel wrappers → individual *Panel components
+//   - context menu handling → useContextMenu composable
+// (clipboard/copy-paste now lives in composables/useFlowClipboard, keyboard
+//  shortcuts in composables/useFlowHotkeys.)
 import {
   ref,
   computed,
@@ -60,8 +60,17 @@ import {
   NodeConnection,
 } from "./backendInterface";
 import { FlowApi } from "../../api";
-import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
-import { snapshotClipboard } from "../../utils/clipboardUtils";
+import {
+  copyNodesToBuffer,
+  hasTextSelection,
+  isCanvasClipboardTarget,
+  isNodeBufferArmed,
+  readNodeClipboardBuffer,
+  resolvePasteIntent,
+  writeSentinelToOsClipboard,
+} from "../../composables/useFlowClipboard";
+import type { PasteIntent } from "../../composables/useFlowClipboard";
+import { useFlowHotkeys } from "../../composables/useFlowHotkeys";
 import { desktop, isDesktop } from "../../../lib/desktop";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
@@ -76,14 +85,7 @@ import { useFileDropImport } from "../../composables/useFileDropImport";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
-import {
-  NodeCopyInput,
-  NodeCopyValue,
-  MultiNodeCopyValue,
-  EdgeCopyValue,
-  ContextMenuAction,
-  CursorPosition,
-} from "./types";
+import { NodeCopyInput, ContextMenuAction, CursorPosition } from "./types";
 import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
@@ -292,6 +294,18 @@ const emit = defineEmits<{
   (e: "openSettings"): void;
   (e: "open"): void;
 }>();
+
+useFlowHotkeys({
+  flowId: () => flowStore.flowId,
+  selectAll: () => addSelectedNodes(instance.getNodes.value),
+  newFlow: () => emit("new"),
+  save: () => emit("save", flowStore.flowId),
+  run: () => emit("run", flowStore.flowId),
+  toggleCodeGenerator: () => nodeStore.toggleCodeGenerator(),
+  openFlowSettings: () => emit("openSettings"),
+  openFile: () => emit("open"),
+  toggleAiDrawer: () => editorStore.toggleAiDrawer(),
+});
 
 interface NodeChange {
   id: string;
@@ -742,131 +756,32 @@ const handleDragOver = (event: DragEvent) => {
   onDragOver(event);
 };
 
-const toSnakeCase = (str: string): string => {
-  return str
-    .replace(/([a-z])([A-Z])/g, "$1_$2")
-    .replace(/[\s-]+/g, "_")
-    .toLowerCase();
-};
+// Paste the node buffer at screen coordinates. The buffer only exists when a
+// copy armed it; failures (including cross-flow copies whose source flow is
+// gone) surface as a toast instead of silence.
+const pasteNodeFromBuffer = async (x: number, y: number) => {
+  const buffer = readNodeClipboardBuffer();
+  if (!buffer) return;
+  const flowPosition = screenToFlowCoordinate({ x, y });
 
-// Copy selected nodes (single or multiple) to localStorage
-const copySelectedNodes = () => {
-  const selectedNodes = instance.getSelectedNodes.value;
-  const allEdges = instance.getEdges.value;
-
-  if (selectedNodes.length === 0) {
-    return;
-  }
-
-  // Snapshot the current system clipboard so we can detect external copies on paste
-  snapshotClipboard();
-
-  if (selectedNodes.length === 1) {
-    // Single node copy - use existing format for backward compatibility
-    const node = selectedNodes[0];
-    const nodeCopyValue: NodeCopyValue = {
-      nodeIdToCopyFrom: node.data.id,
-      type: node.data.nodeTemplate?.item || node.data.component?.__name || "unknown",
-      label: node.data.label,
-      description: "",
-      numberOfInputs: node.data.inputs.length,
-      numberOfOutputs: node.data.outputs.length,
-      typeSnakeCase:
-        node.data.nodeTemplate?.item || toSnakeCase(node.data.component?.__name || "unknown"),
-      flowIdToCopyFrom: flowStore.flowId,
-      multi: node.data.nodeTemplate?.multi,
-      nodeTemplate: node.data.nodeTemplate,
-      inputHandles: node.data.inputs,
-      outputHandles: node.data.outputs,
-    };
-    localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
-    localStorage.removeItem("copiedMultiNodes");
-  } else {
-    // Multiple nodes copy - calculate bounding box and store relative positions
-    const selectedNodeIds = new Set(selectedNodes.map((n) => n.data.id));
-
-    // Find bounding box of selection
-    let minX = Infinity,
-      minY = Infinity;
-    for (const node of selectedNodes) {
-      minX = Math.min(minX, node.position.x);
-      minY = Math.min(minY, node.position.y);
-    }
-
-    // Store nodes with their relative positions from the top-left of the bounding box
-    const nodes: NodeCopyValue[] = selectedNodes.map((node) => ({
-      nodeIdToCopyFrom: node.data.id,
-      type: node.data.nodeTemplate?.item || node.data.component?.__name || "unknown",
-      label: node.data.label,
-      description: "",
-      numberOfInputs: node.data.inputs.length,
-      numberOfOutputs: node.data.outputs.length,
-      typeSnakeCase:
-        node.data.nodeTemplate?.item || toSnakeCase(node.data.component?.__name || "unknown"),
-      flowIdToCopyFrom: flowStore.flowId,
-      multi: node.data.nodeTemplate?.multi,
-      nodeTemplate: node.data.nodeTemplate,
-      inputHandles: node.data.inputs,
-      outputHandles: node.data.outputs,
-      relativeX: node.position.x - minX,
-      relativeY: node.position.y - minY,
-    }));
-
-    // Find edges that connect nodes within the selection
-    const edges: EdgeCopyValue[] = allEdges
-      .filter((edge) => {
-        const sourceId = parseInt(edge.source);
-        const targetId = parseInt(edge.target);
-        return selectedNodeIds.has(sourceId) && selectedNodeIds.has(targetId);
-      })
-      .map((edge) => ({
-        sourceNodeId: parseInt(edge.source),
-        targetNodeId: parseInt(edge.target),
-        sourceHandle: edge.sourceHandle || DEFAULT_OUTPUT_HANDLE,
-        targetHandle: edge.targetHandle || "input-0",
-      }));
-
-    const multiNodeCopyValue: MultiNodeCopyValue = {
-      nodes,
-      edges,
-      flowIdToCopyFrom: flowStore.flowId,
-    };
-
-    localStorage.setItem("copiedMultiNodes", JSON.stringify(multiNodeCopyValue));
-    localStorage.removeItem("copiedNode");
-  }
-};
-
-const copyValue = async (x: number, y: number) => {
-  const flowPosition = screenToFlowCoordinate({
-    x: x,
-    y: y,
-  });
-
-  // Check for multi-node copy first
-  const copiedMultiNodesStr = localStorage.getItem("copiedMultiNodes");
-  if (copiedMultiNodesStr) {
-    const multiNodeCopyValue: MultiNodeCopyValue = JSON.parse(copiedMultiNodesStr);
+  if (buffer.multi) {
     const response = await createMultiCopyNodes(
-      multiNodeCopyValue,
+      buffer.multi,
       flowPosition.x,
       flowPosition.y,
       flowStore.flowId,
     );
     if (response?.history) {
       flowStore.updateHistoryState(response.history);
+    } else if (!response) {
+      ElMessage.error("Failed to paste nodes");
     }
     return;
   }
 
-  // Fall back to single node copy
-  const copiedNodeStr = localStorage.getItem("copiedNode");
-  if (!copiedNodeStr) return;
-
-  const nodeCopyValue: NodeCopyValue = JSON.parse(copiedNodeStr);
-
+  if (!buffer.single) return;
   const nodeCopyInput: NodeCopyInput = {
-    ...nodeCopyValue,
+    ...buffer.single,
     posX: flowPosition.x,
     posY: flowPosition.y,
     flowId: flowStore.flowId,
@@ -874,60 +789,38 @@ const copyValue = async (x: number, y: number) => {
   const response = await createCopyNode(nodeCopyInput);
   if (response?.history) {
     flowStore.updateHistoryState(response.history);
+  } else if (!response) {
+    ElMessage.error("Failed to paste node");
   }
 };
 
-const handleCanvasPaste = async (x: number, y: number, clipboardText?: string | null) => {
+// Guards two fast Cmd+Vs from creating two nodes at identical coordinates
+// while the first request is still in flight.
+let pasteInFlight = false;
+
+const handleCanvasPaste = async (x: number, y: number, intent: PasteIntent) => {
   // The document-level ClipboardEvent listener bypasses the empty-state
   // overlay — never paste against a dead flow id.
   if (flowStore.flowId <= 0) return;
-  const hasCopiedNode =
-    localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
-
-  // Resolve the current system clipboard. The ClipboardEvent path passes it in;
-  // the context-menu "paste-node" action leaves it undefined and we read it via
-  // desktop.readClipboardText() (native plugin on desktop, navigator on web).
-  let currentClipboard: string | null = clipboardText ?? null;
-  if (currentClipboard === null) {
-    try {
-      // Desktop reads go through the native clipboard-manager plugin (no macOS
-      // "Paste" pill); web mode falls back to navigator.clipboard.
-      currentClipboard = await desktop.readClipboardText();
-    } catch {
-      currentClipboard = null;
-    }
-  }
-
-  if (hasCopiedNode) {
-    // A node was previously copied. If the clipboard is unchanged since then,
-    // paste the node; if it changed, the user copied something new externally
-    // (e.g. from Excel) and we try tabular paste below.
-    const snapshot = localStorage.getItem("clipboardAtNodeCopy") ?? "";
-    const clipboardChanged = currentClipboard !== null && currentClipboard !== snapshot;
-    if (!clipboardChanged) {
-      copyValue(x, y);
+  if (intent.kind === "none" || pasteInFlight) return;
+  pasteInFlight = true;
+  try {
+    if (intent.kind === "node") {
+      await pasteNodeFromBuffer(x, y);
       return;
     }
-  }
-
-  // Try clipboard tabular data
-  const flowPosition = screenToFlowCoordinate({ x, y });
-  const response = await createManualInputFromClipboard(
-    flowStore.flowId,
-    flowPosition.x,
-    flowPosition.y,
-    currentClipboard,
-  );
-  if (response) {
-    if (response.history) {
+    const flowPosition = screenToFlowCoordinate({ x, y });
+    const response = await createManualInputFromClipboard(
+      flowStore.flowId,
+      flowPosition.x,
+      flowPosition.y,
+      intent.text,
+    );
+    if (response?.history) {
       flowStore.updateHistoryState(response.history);
     }
-    return;
-  }
-
-  // Clipboard wasn't tabular — fall back to node paste if available
-  if (hasCopiedNode) {
-    copyValue(x, y);
+  } finally {
+    pasteInFlight = false;
   }
 };
 
@@ -965,7 +858,10 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   } else if (actionId === "zoom-out") {
     instance.zoomOut();
   } else if (actionId === "paste-node") {
-    handleCanvasPaste(position.x, position.y);
+    // Explicit intent: the user picked "Paste Node" from the menu, so the
+    // buffer pastes without any clipboard read or sentinel check (a read is
+    // impossible outside a paste event on web Firefox / insecure contexts).
+    handleCanvasPaste(position.x, position.y, { kind: "node" });
   } else if (actionId === "generate-documentation") {
     // — pull the canonical flow name server-side so the doc title
     // matches what the user sees in the title bar. Falsy → undefined so
@@ -1044,103 +940,67 @@ const handleResetLayoutGraph = async () => {
   saveViewportToSession();
 };
 
-// Shared editable-context check: when focus is in a text field / code editor or
-// there's a text selection, native copy/paste must win — only the bare canvas
-// gets node copy/paste.
-const isEditableContext = (target: EventTarget | null): boolean => {
-  const el = target as HTMLElement | null;
-  if (el) {
-    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable) {
-      return true;
-    }
-    if (typeof el.closest === "function" && el.closest(".cm-editor")) {
-      return true;
-    }
+// Clipboard events aimed at <body> carry no location information, so they are
+// classified by the last pointerdown target (see isCanvasClipboardTarget).
+let lastPointerDownEl: Element | null = null;
+const trackPointerDown = (event: PointerEvent) => {
+  if (event.target instanceof Element) {
+    lastPointerDownEl = event.target;
   }
-  const selection = window.getSelection();
-  return !!(selection && selection.toString().trim().length > 0);
+};
+
+// Live pointer position over the canvas: a keyboard paste drops the node under
+// the cursor (falling back to the canvas centre before any pointer movement).
+let lastPointerPosition: CursorPosition | null = null;
+const trackPointerMove = (event: PointerEvent) => {
+  lastPointerPosition = { x: event.clientX, y: event.clientY };
+};
+const keyboardPastePosition = (): CursorPosition => {
+  if (lastPointerPosition) return lastPointerPosition;
+  const bounds = mainContainerRef.value?.getBoundingClientRect();
+  return bounds
+    ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }
+    : { x: 0, y: 0 };
 };
 
 // Native `copy`/`paste` ClipboardEvents drive canvas node copy/paste. They fire
 // for both browser shortcuts (web mode) and the Tauri Edit-menu copy:/paste:
 // roles (desktop). Keydown can't be used on macOS desktop because the menu
 // accelerator consumes Cmd+C / Cmd+V before it reaches the keydown handler.
+// Both handlers decide intent first and only then cancel the native action.
 const handleCopyEvent = (event: ClipboardEvent) => {
-  if (isEditableContext(event.target)) return; // let the WebView copy text natively
-  copySelectedNodes();
-  event.preventDefault();
+  if (event.defaultPrevented) return; // someone (e.g. the data grid) already handled it
+  if (!isCanvasClipboardTarget(event.target, lastPointerDownEl)) return;
+  if (hasTextSelection()) return; // selected canvas text (node descriptions) — native copy wins
+  if (flowStore.flowId <= 0) return; // parity with paste: never arm the buffer without a live flow
+  const sentinel = copyNodesToBuffer(
+    instance.getSelectedNodes.value,
+    instance.getEdges.value,
+    flowStore.flowId,
+  );
+  if (!sentinel) return; // nothing selected — leave the native copy alone
+  if (event.clipboardData) {
+    event.clipboardData.setData("text/plain", sentinel);
+    event.preventDefault(); // required in the same handler, or setData is discarded
+  } else {
+    void writeSentinelToOsClipboard(sentinel);
+  }
 };
 
 const handlePasteEvent = (event: ClipboardEvent) => {
-  if (isEditableContext(event.target)) return; // let the WebView paste into the field
-  event.preventDefault();
+  if (event.defaultPrevented) return; // CodeMirror preventDefaults pastes it consumes
+  if (!isCanvasClipboardTarget(event.target, lastPointerDownEl)) return;
+  if (flowStore.flowId <= 0) return;
   const text = event.clipboardData?.getData("text/plain") ?? null;
-  handleCanvasPaste(clickedPosition.value.x, clickedPosition.value.y, text);
-};
-
-const handleKeyDown = (event: KeyboardEvent) => {
-  let eventKeyClicked = event.ctrlKey || event.metaKey;
-  // Normalize key to lowercase to handle Caps Lock being on
-  const key = event.key.toLowerCase();
-
-  // Skip if typing in an input field or code editor
-  const target = event.target as HTMLElement;
-  const isInputElement =
-    target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-  // Check if inside a CodeMirror editor
-  const isInCodeMirror = target.closest(".cm-editor") !== null;
-
-  if (eventKeyClicked && key === "a" && !isInputElement && !isInCodeMirror) {
-    // Select all nodes on canvas (prevent browser from selecting all page text)
-    event.preventDefault();
-    const allNodes = instance.getNodes.value;
-    addSelectedNodes(allNodes);
-    // Cmd/Ctrl+C and Cmd/Ctrl+V are handled by the document-level `copy`/`paste`
-    // ClipboardEvent listeners (handleCopyEvent/handlePasteEvent), not here — on
-    // macOS the native Edit menu's copy:/paste: accelerators are dispatched before
-    // the keystroke reaches this keydown handler, but they still fire DOM
-    // ClipboardEvents the page can intercept. This also unifies web + desktop.
-  } else if (eventKeyClicked && key === "n") {
-    // Create new flow
-    event.preventDefault();
-    emit("new");
-  } else if (eventKeyClicked && key === "s") {
-    if (flowStore.flowId > 0) {
-      event.preventDefault();
-      emit("save", flowStore.flowId);
-    }
-  } else if (eventKeyClicked && key === "e") {
-    if (flowStore.flowId > 0) {
-      event.preventDefault();
-      emit("run", flowStore.flowId);
-    }
-  } else if (eventKeyClicked && key === "g") {
-    if (flowStore.flowId > 0) {
-      event.preventDefault();
-      nodeStore.toggleCodeGenerator();
-    }
-  } else if (eventKeyClicked && key === ",") {
-    if (flowStore.flowId > 0) {
-      event.preventDefault();
-      emit("openSettings");
-    }
-  } else if (eventKeyClicked && key === "o" && !isInputElement && !isInCodeMirror) {
-    // Open file picker — guarded against input/CodeMirror so users typing
-    // "o" with a stuck modifier (or rapid macro) don't open the dialog.
-    event.preventDefault();
-    emit("open");
-  } else if (eventKeyClicked && key === "k" && !isInputElement && !isInCodeMirror) {
-    // Cmd+K / Ctrl+K toggles the AI assistant drawer. Originally
-    // wired to the AI command palette; rewired to the drawer because
-    // the palette UX confused users. Palette component, store, and
-    // route are kept intact — reversible by restoring
-    // `commandPalette.toggle()` here. Skipped when typing in any
-    // input or CodeMirror so plain k presses pass through.
-    if (flowStore.flowId && flowStore.flowId > 0) {
-      event.preventDefault();
-      editorStore.toggleAiDrawer();
-    }
-  }
+  const intent = resolvePasteIntent({
+    buffer: readNodeClipboardBuffer(),
+    clipboardText: text,
+    isCanvasTarget: true,
+  });
+  if (intent.kind === "none") return; // not ours — never swallow a paste we don't handle
+  event.preventDefault();
+  const position = keyboardPastePosition();
+  void handleCanvasPaste(position.x, position.y, intent);
 };
 
 const handleContextMenu = (event: Event) => {
@@ -1231,9 +1091,10 @@ onMounted(async () => {
     // derived drawer heights above).
     unregisterContainer = itemStore.registerContainer(mainContainerRef.value);
   }
-  window.addEventListener("keydown", handleKeyDown);
   document.addEventListener("copy", handleCopyEvent);
   document.addEventListener("paste", handlePasteEvent);
+  // Capture phase so panels that stopPropagation on pointerdown still register.
+  document.addEventListener("pointerdown", trackPointerDown, true);
 
   // Drive canvas zoom from the native View menu / Cmd+`+`/`-`/`0` (desktop only).
   if (isDesktop) {
@@ -1340,9 +1201,9 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  window.removeEventListener("keydown", handleKeyDown);
   document.removeEventListener("copy", handleCopyEvent);
   document.removeEventListener("paste", handlePasteEvent);
+  document.removeEventListener("pointerdown", trackPointerDown, true);
   unlistenViewZoom?.();
   unlistenViewZoom = null;
   unregisterContainer?.();
@@ -1368,6 +1229,7 @@ defineExpose({
       @dragleave="fileDrop.handleDragLeave"
       @dragend="fileDrop.handleDragEnd"
       @dblclick="handleMainDblClick"
+      @pointermove="trackPointerMove"
     >
       <VueFlow
         ref="vueFlow"
@@ -1414,6 +1276,7 @@ defineExpose({
         :target-type="contextMenuTarget.type"
         :target-id="contextMenuTarget.id"
         :target-in-group="contextMenuTargetInGroup"
+        :can-paste-node="isNodeBufferArmed()"
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />

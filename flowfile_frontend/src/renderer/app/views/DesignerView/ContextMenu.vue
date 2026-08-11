@@ -24,6 +24,11 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  // Whether the node-copy buffer is armed; "Paste Node" is hidden otherwise.
+  canPasteNode: {
+    type: Boolean,
+    default: false,
+  },
   onClose: {
     type: Function,
     required: true,
@@ -67,8 +72,10 @@ const getMenuActions = () => {
     { id: "fit-view", label: "Fit View", icon: "fitView" },
     { id: "zoom-in", label: "Zoom In", icon: "zoomIn" },
     { id: "zoom-out", label: "Zoom Out", icon: "zoomOut" },
-    { id: "paste-node", label: "Paste Node", icon: "paste" },
   ];
+  if (props.canPasteNode) {
+    baseActions.push({ id: "paste-node", label: "Paste Node", icon: "paste" });
+  }
   if (props.targetType === "pane") {
     baseActions.push({
       id: "group-selection",
