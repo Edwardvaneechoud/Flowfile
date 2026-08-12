@@ -46,6 +46,8 @@ def _bare_manager() -> KernelManager:
         mgr = KernelManager.__new__(KernelManager)
         mgr._docker = MagicMock()
         mgr._core_instance_id = "test-core-id"
+        mgr._runtime_id = "test-runtime-id"
+        mgr._started_here = set()
         mgr._kernels = {}
         mgr._kernel_owners = {}
         mgr._kernels_lock = threading.RLock()
@@ -399,6 +401,8 @@ def _image_with_tag(tag: str, labels: dict[str, str] | None = None) -> MagicMock
         else:
             labels = {}
     img.labels = labels
+    # Older than the GC grace window, so these stay reapable by default.
+    img.attrs = {"Created": "2020-01-01T00:00:00.000000000Z"}
     return img
 
 
@@ -754,12 +758,12 @@ class TestStartupSequence:
         monkeypatch.setattr(
             KernelManager,
             "_restore_kernels_from_db",
-            lambda self: called.append("restore"),
+            lambda self: (called.append("restore"), True)[1],
         )
         monkeypatch.setattr(
             KernelManager,
             "_reclaim_running_containers",
-            lambda self: called.append("reclaim"),
+            lambda self, prune_orphans=True: called.append(f"reclaim(prune={prune_orphans})"),
         )
         monkeypatch.setattr(
             KernelManager,
@@ -774,7 +778,7 @@ class TestStartupSequence:
 
         KernelManager(shared_volume_path="/tmp/x")
 
-        assert called == ["restore", "reclaim", "build_gc", "gc"]
+        assert called == ["restore", "reclaim(prune=True)", "build_gc", "gc"]
 
 
 # Registry-mutation concurrency (N3): _kernels_lock now guards the launch-path
@@ -1138,3 +1142,133 @@ class TestCoreCallbackUrl:
 
         assert request.log_callback_url == f"{api_url}/raw_logs"
         assert "63580" in request.log_callback_url
+
+
+class TestStartupGcSafety:
+    """A registry that failed to load must not be read as 'nothing should exist'.
+
+    One swallowed database error used to leave `_kernels` empty, and the three
+    GC passes then destroyed every kernel container and every derived image —
+    turning a transient DB fault into a multi-minute rebuild of every kernel.
+    """
+
+    def _stub_docker(self, monkeypatch):
+        docker_client = MagicMock()
+        container = MagicMock()
+        container.name = "flowfile-kernel-k1"
+        container.status = "running"
+        container.attrs = {"Created": "2020-01-01T00:00:00Z", "NetworkSettings": {"Ports": {}}}
+        container.labels = {}  # unlabelled legacy container: counts as ours
+        image = MagicMock()
+        image.tags = ["flowfile-kernel-derived-k1:latest"]
+        image.labels = {"flowfile_core_instance": "test-core-id", "flowfile_kernel_id": "k1"}
+        image.attrs = {"Created": "2020-01-01T00:00:00Z"}
+        docker_client.containers.list.return_value = [container]
+        docker_client.images.list.return_value = [image]
+
+        monkeypatch.setattr(kernel_manager.docker, "from_env", lambda: docker_client)
+        monkeypatch.setattr(KernelManager, "_detect_docker_network", lambda self: None)
+        monkeypatch.setattr(
+            KernelManager, "_discover_volume_for_path", lambda self, path: (None, None, None)
+        )
+        monkeypatch.setattr(KernelManager, "_remove_orphan_build_containers", lambda self: None)
+        monkeypatch.setattr(KernelManager, "_restore_kernels_from_db", lambda self: True)
+        return docker_client, container
+
+    def test_failed_restore_destroys_nothing(self, monkeypatch):
+        docker_client, container = self._stub_docker(monkeypatch)
+        monkeypatch.setattr(KernelManager, "_restore_kernels_from_db", lambda self: False)
+
+        KernelManager(shared_volume_path="/tmp/x")
+
+        container.stop.assert_not_called()
+        container.remove.assert_not_called()
+        docker_client.images.remove.assert_not_called()
+
+    def test_successful_restore_still_collects_orphans(self, monkeypatch):
+        """The control: the gate must not become 'never GC'."""
+        docker_client, container = self._stub_docker(monkeypatch)
+
+        KernelManager(shared_volume_path="/tmp/x")
+
+        container.stop.assert_called_once()
+        docker_client.images.remove.assert_called_once()
+
+    def test_kill_switch_disables_gc(self, monkeypatch):
+        docker_client, container = self._stub_docker(monkeypatch)
+        monkeypatch.setenv("FLOWFILE_KERNEL_GC", "0")
+
+        KernelManager(shared_volume_path="/tmp/x")
+
+        container.stop.assert_not_called()
+        docker_client.images.remove.assert_not_called()
+
+
+class TestReapGrace:
+    def test_recent_containers_are_left_alone(self):
+        from datetime import datetime, timezone
+
+        mgr = _bare_manager()
+        mgr._kernels = {}
+        container = MagicMock()
+        container.name = "flowfile-kernel-fresh"
+        container.status = "running"
+        container.labels = {"flowfile_core_instance": "test-core-id"}
+        container.attrs = {"Created": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+        mgr._docker.containers.list.return_value = [container]
+
+        mgr._reclaim_running_containers()
+
+        container.stop.assert_not_called()
+
+    def test_another_cores_container_is_left_alone(self):
+        mgr = _bare_manager()
+        mgr._kernels = {}
+        container = MagicMock()
+        container.name = "flowfile-kernel-theirs"
+        container.status = "running"
+        container.labels = {"flowfile_core_instance": "some-other-install"}
+        container.attrs = {"Created": "2020-01-01T00:00:00Z"}
+        mgr._docker.containers.list.return_value = [container]
+
+        mgr._reclaim_running_containers()
+
+        container.stop.assert_not_called()
+
+
+class TestShutdownOwnership:
+    """Quitting one core must not stop kernels another core is using."""
+
+    def _running_kernel(self, mgr, kernel_id="k1"):
+        kernel = _kernel(kernel_id)
+        kernel.state = KernelState.IDLE
+        kernel.container_id = "c-1"
+        mgr._kernels[kernel_id] = kernel
+        return kernel
+
+    def test_stops_only_what_this_process_started(self):
+        mgr = _bare_manager()
+        mgr._start_flights = {}
+        mgr._start_flights_lock = threading.Lock()
+        mine = self._running_kernel(mgr, "mine")
+        theirs = self._running_kernel(mgr, "theirs")
+        mgr._started_here = {"mine"}
+        mgr._cleanup_container = MagicMock()
+
+        mgr.shutdown_all()
+
+        mgr._cleanup_container.assert_called_once_with("mine")
+        assert mine.state == KernelState.STOPPED
+        assert theirs.state == KernelState.IDLE
+
+    def test_adopted_kernels_survive_shutdown(self):
+        mgr = _bare_manager()
+        mgr._start_flights = {}
+        mgr._start_flights_lock = threading.Lock()
+        self._running_kernel(mgr, "adopted")
+        mgr._started_here = set()
+        mgr._cleanup_container = MagicMock()
+
+        mgr.shutdown_all()
+
+        mgr._cleanup_container.assert_not_called()

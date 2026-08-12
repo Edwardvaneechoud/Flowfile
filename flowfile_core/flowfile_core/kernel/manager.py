@@ -10,6 +10,7 @@ import time
 import uuid
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import datetime, timezone
 from pathlib import Path
 
 import docker
@@ -197,6 +198,35 @@ _DIGEST_RE = re.compile(r"@sha256:[A-Fa-f0-9]{12,}$")
 # can coexist because GC only touches images carrying this Core's instance id.
 _IMAGE_LABEL_CORE_INSTANCE = "flowfile_core_instance"
 _IMAGE_LABEL_KERNEL_ID = "flowfile_kernel_id"
+# Which *process* started a container, as opposed to which install built an image.
+_CONTAINER_LABEL_CORE_RUNTIME = "flowfile_core_runtime"
+
+# Grace window before anything counts as an orphan.
+_GC_MIN_AGE_SECONDS = 600
+
+
+def _gc_enabled() -> bool:
+    """``FLOWFILE_KERNEL_GC=0`` disables startup container/image reclamation."""
+    return (os.environ.get("FLOWFILE_KERNEL_GC") or "").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _too_young_to_reap(created: str | None) -> bool:
+    """Whether a Docker ``Created`` timestamp is inside the grace window.
+
+    Unparseable or missing timestamps count as young: refusing to reap on bad
+    input leaks an orphan, while the alternative destroys a live kernel.
+    """
+    if not isinstance(created, str) or not created:
+        return True
+    text = created.rstrip("Z")
+    if "." in text:  # Docker reports nanoseconds; datetime accepts at most micro
+        head, _, frac = text.partition(".")
+        text = f"{head}.{frac[:6]}"
+    try:
+        stamp = datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+    return (datetime.now(timezone.utc) - stamp).total_seconds() < _GC_MIN_AGE_SECONDS
 
 
 def _load_or_create_core_instance_id() -> str:
@@ -319,6 +349,9 @@ class KernelManager:
         # Stable id for this Core install; stamped onto every derived image
         # so orphan GC only touches images this Core built.
         self._core_instance_id = _load_or_create_core_instance_id()
+        # Per-process, unlike the install id: only the starter may tear a container down.
+        self._runtime_id = uuid.uuid4().hex
+        self._started_here: set[str] = set()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
         # Serialises mutations of the in-memory kernel registry (_kernels /
@@ -417,10 +450,20 @@ class KernelManager:
                     self._catalog_tables_dir,
                 )
 
-        self._restore_kernels_from_db()
-        self._reclaim_running_containers()
+        # GC asks "is this in the registry?", so a registry that failed to load is not an answer.
+        restored = self._restore_kernels_from_db()
+        gc_enabled = _gc_enabled()
+        if not restored:
+            logger.error(
+                "Kernel registry could not be restored, so container/image GC is skipped this "
+                "start — a transient database failure must not destroy live kernels and their "
+                "derived images (each is a multi-minute rebuild). Fix the database error and "
+                "restart; run 'make clean_kernels' if orphans need clearing by hand."
+            )
+        self._reclaim_running_containers(prune_orphans=restored and gc_enabled)
         self._remove_orphan_build_containers()
-        self._remove_orphan_derived_images()
+        if restored and gc_enabled:
+            self._remove_orphan_derived_images()
 
     @property
     def shared_volume_path(self) -> str:
@@ -574,6 +617,12 @@ class KernelManager:
             "environment": env,
             "mem_limit": f"{kernel.memory_gb}g",
             "nano_cpus": int(kernel.cpu_cores * 1e9),
+            # Ownership, so GC and shutdown don't have to infer it from the name.
+            "labels": {
+                _IMAGE_LABEL_CORE_INSTANCE: self._core_instance_id,
+                _CONTAINER_LABEL_CORE_RUNTIME: self._runtime_id,
+                _IMAGE_LABEL_KERNEL_ID: _KERNEL_ID_TAG_RE.sub("-", kernel_id.lower()),
+            },
         }
 
         if self._kernel_volume:
@@ -618,8 +667,14 @@ class KernelManager:
 
     # Database persistence helpers
 
-    def _restore_kernels_from_db(self) -> None:
-        """Load persisted kernel configs from the database on startup."""
+    def _restore_kernels_from_db(self) -> bool:
+        """Load persisted kernel configs from the database on startup.
+
+        Returns whether the registry is authoritative. A failure here still
+        leaves the manager usable, but the empty registry it produces is
+        indistinguishable from "no kernels exist" — and the GC passes that
+        follow read it as ground truth, so they must know the difference.
+        """
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import get_all_kernel_scratch_ids, get_all_kernels
@@ -654,11 +709,13 @@ class KernelManager:
                 for kernel_id, scratch_id in scratch_ids.items():
                     if scratch_id is not None:
                         self._scratch_flow_ids[kernel_id] = scratch_id
+            return True
         except Exception:
             # Log with full traceback so a silently-swallowed schema-drift bug
             # can't lurk again (a missing column here used to disappear into a
             # one-line warning).
             logger.exception("Could not restore kernels from database")
+            return False
 
     def reconcile_configs_from_db(self, owner_id: int | None = None) -> None:
         """Sync the in-memory kernel registry with the persisted configs after a project import.
@@ -896,9 +953,28 @@ class KernelManager:
 
     # Port allocation
 
-    def _reclaim_running_containers(self) -> None:
+    @staticmethod
+    def _container_label(container, key: str) -> str | None:
+        labels = getattr(container, "labels", None)
+        return labels.get(key) if isinstance(labels, dict) else None
+
+    def _is_our_install_container(self, container) -> bool:
+        """Whether this install built the container — the scope startup GC uses.
+
+        Unlabelled containers count as ours: they predate labelling, and this
+        pass is the only thing that will ever clean them up.
+        """
+        label = self._container_label(container, _IMAGE_LABEL_CORE_INSTANCE)
+        return label is None or label == self._core_instance_id
+
+    def _reclaim_running_containers(self, prune_orphans: bool = True) -> None:
         """Adopt pre-existing flowfile-kernel containers on startup: running ones
-        become IDLE, stopped leftovers are recorded so the next start replaces them."""
+        become IDLE, stopped leftovers are recorded so the next start replaces them.
+
+        ``prune_orphans=False`` keeps the adoption half and skips destroying
+        containers the registry doesn't know about — correct when the registry
+        itself is untrustworthy.
+        """
         try:
             containers = self._docker.containers.list(all=True, filters={"name": "flowfile-kernel-"})
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
@@ -934,6 +1010,22 @@ class KernelManager:
                         kernel_id,
                         container.short_id,
                     )
+            elif not prune_orphans:
+                logger.warning(
+                    "Leaving kernel container '%s' alone: it has no registry entry, but the "
+                    "registry is not authoritative this start",
+                    kernel_id,
+                )
+            elif not self._is_our_install_container(container):
+                logger.info(
+                    "Leaving kernel container '%s' alone: it belongs to another core process",
+                    kernel_id,
+                )
+            elif _too_young_to_reap(container.attrs.get("Created")):
+                logger.info(
+                    "Leaving kernel container '%s' alone: created too recently to be an orphan",
+                    kernel_id,
+                )
             else:
                 # Orphan container with no DB record — stop it
                 logger.warning(
@@ -1222,6 +1314,10 @@ class KernelManager:
                         break
             if not safe_id or safe_id in expected:
                 continue
+            # A fresh image is more likely a bake still finishing elsewhere than an orphan.
+            if _too_young_to_reap((image.attrs or {}).get("Created")):
+                logger.info("Leaving derived image for '%s' alone: created too recently", safe_id)
+                continue
             # Prefer the canonical tag; fall back to the image id when the
             # image has no remaining tags.
             target = next(
@@ -1509,6 +1605,11 @@ class KernelManager:
             container = self._create_or_adopt_container(kernel_id, kernel, image, run_kwargs)
             created_id = container.id
             kernel.container_id = container.id
+            # An adopted container belongs to whoever started it; shutdown must leave it running.
+            if self._container_label(container, _CONTAINER_LABEL_CORE_RUNTIME) == self._runtime_id:
+                self._started_here.add(kernel_id)
+            else:
+                self._started_here.discard(kernel_id)
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
             if flow_logger:
@@ -1693,12 +1794,21 @@ class KernelManager:
         kernel_ids = list(self._kernels.keys())
         for kernel_id in kernel_ids:
             kernel = self._kernels.get(kernel_id)
-            if kernel and kernel.state in (KernelState.IDLE, KernelState.EXECUTING, KernelState.STARTING):
-                logger.info("Shutting down kernel '%s'", kernel_id)
-                self._cleanup_container(kernel_id)
-                kernel.state = KernelState.STOPPED
-                kernel.container_id = None
-        logger.info("All kernels have been shut down")
+            if not kernel or kernel.state not in (KernelState.IDLE, KernelState.EXECUTING, KernelState.STARTING):
+                continue
+            # The DB-shared registry also lists kernels another core started and this one adopted.
+            if kernel_id not in self._started_here:
+                logger.info(
+                    "Leaving kernel '%s' running: this process did not start it",
+                    kernel_id,
+                )
+                continue
+            logger.info("Shutting down kernel '%s'", kernel_id)
+            self._cleanup_container(kernel_id)
+            kernel.state = KernelState.STOPPED
+            kernel.container_id = None
+            self._started_here.discard(kernel_id)
+        logger.info("All kernels started by this process have been shut down")
 
     # Execution
 
