@@ -78,6 +78,7 @@ import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
+import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
 import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
@@ -140,7 +141,14 @@ const items = computed(() => {
       if (route.name === "project" && isMultiUser.value && !isAdmin) return false;
       return !route.requiresAdmin || isAdmin;
     })
-    .map((route) => (route.name === "project" ? { ...route, statusDot: projectDot } : route));
+    .map((route) => {
+      if (route.name === "project") return { ...route, statusDot: projectDot };
+      // The catalog icon resumes the last sub-page instead of always opening the tree.
+      if (route.name === "catalog" && lastCatalogQuery.value) {
+        return { ...route, query: lastCatalogQuery.value };
+      }
+      return route;
+    });
 });
 
 const showLogout = computed(() => !authService.isInDesktopMode());
