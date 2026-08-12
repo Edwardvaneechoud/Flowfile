@@ -1042,8 +1042,14 @@ function handleViewRun(runId: number) {
   router.push({ name: "catalog", query: q });
 }
 
+// Set by the route watcher below, so it is false only on the entry navigation.
+const navigatedWithinCatalog = ref(false);
+
 function handleCloseDetail() {
-  router.back();
+  // The sidebar can restore straight onto a detail panel, where the previous history entry
+  // belongs to another page — clear the selection rather than leaving the catalog.
+  if (navigatedWithinCatalog.value) router.back();
+  else router.push({ name: "catalog", query: { tab: catalogStore.activeTab } });
 }
 
 // Namespace-qualified reference so same-named models in other schemas can't bleed
@@ -1639,7 +1645,13 @@ function applyRouteToStore() {
 }
 
 // Watch route changes (handles browser back/forward)
-watch(() => route.query, applyRouteToStore);
+watch(
+  () => route.query,
+  () => {
+    navigatedWithinCatalog.value = true;
+    applyRouteToStore();
+  },
+);
 
 onMounted(async () => {
   await catalogStore.initialize();
