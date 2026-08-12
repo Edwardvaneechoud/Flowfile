@@ -4,6 +4,7 @@ import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
 import setupService from "../services/setup.service";
 import { useAuthStore } from "../stores/auth-store";
+import { rememberCatalogLocation } from "../views/CatalogView/catalogLastLocation";
 import { CHUNK_RELOAD_KEY, decideChunkRecovery } from "./chunkReload";
 
 const routes: Array<RouteRecordRaw> = [
@@ -252,6 +253,12 @@ router.beforeEach(async (to, _from, next) => {
 
 router.afterEach(() => {
   sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+});
+
+// Recorded here rather than in CatalogView so a navigation away mid-mount (its onMounted
+// awaits catalogStore.initialize()) can't record the destination's query instead.
+router.afterEach((to) => {
+  if (to.name === "catalog") rememberCatalogLocation(to.query);
 });
 
 export default router;
