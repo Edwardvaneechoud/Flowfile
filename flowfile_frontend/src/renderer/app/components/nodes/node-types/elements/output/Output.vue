@@ -407,6 +407,8 @@ async function loadNodeData(nodeId: number) {
   const nodeResult = await nodeStore.getNodeData(nodeId, false);
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeOutput.value = nodeResult.setting_input;
+    // Older flows may persist modes the current options no longer offer (e.g. excel "new file").
+    clampWriteMode(nodeResult.setting_input.output_settings.file_type);
   } else {
     nodeOutput.value = {
       output_settings: createDefaultOutputSettings(),
