@@ -30,6 +30,8 @@ def _bare_manager() -> KernelManager:
         mgr = KernelManager.__new__(KernelManager)
         mgr._docker = MagicMock()
         mgr._core_instance_id = "test-core-id"
+        mgr._runtime_id = "test-runtime-id"
+        mgr._started_here = set()
         mgr._kernels = {}
         mgr._kernel_owners = {}
         mgr._kernels_lock = threading.RLock()
@@ -89,7 +91,13 @@ def _fake_container(
     container.short_id = container_id[:10]
     container.status = status
     ports = {"9999/tcp": [{"HostPort": host_port}]} if host_port else {}
-    container.attrs = {"NetworkSettings": {"Ports": ports}, "Image": image_id}
+    # Older than the GC grace window, so these stay reapable by default.
+    container.attrs = {
+        "NetworkSettings": {"Ports": ports},
+        "Image": image_id,
+        "Created": "2020-01-01T00:00:00.000000000Z",
+    }
+    container.labels = {"flowfile_core_instance": "test-core-id"}
     return container
 
 
