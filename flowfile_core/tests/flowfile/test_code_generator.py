@@ -2740,6 +2740,28 @@ def test_excel_update_mode_export(tmp_path):
         export_flow_to_polars(create_excel_output_flow(tmp_path, "update"))
 
 
+def test_excel_create_mode_export(tmp_path):
+    """Excel 'create' refuses an existing file in both exports instead of overwriting it"""
+    flow = create_excel_output_flow(tmp_path, "create")
+    output_path = flow.get_node(2).setting_input.output_settings.abs_file_path
+
+    polars_code = export_flow_to_polars(flow)
+    verify_code_contains(polars_code,
+                         "import os",
+                         f'if os.path.exists("{output_path}"):',
+                         "raise FileExistsError(",
+                         "write_excel("
+                         )
+    verify_if_execute(polars_code)
+
+    original_bytes = Path(output_path).read_bytes()
+    with pytest.raises(FileExistsError):
+        get_result_from_generated_code(polars_code)
+    assert Path(output_path).read_bytes() == original_bytes
+
+    verify_code_contains(export_flow_to_flowframe(flow), 'write_mode="create"')
+
+
 def test_node_with_no_handler():
     """Test behavior when encountering a node type with no handler"""
     flow = create_basic_flow()

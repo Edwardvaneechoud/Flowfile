@@ -1103,8 +1103,15 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
         return code
 
     def _handle_output_excel(self, input_df: str, output_settings, node_id: int) -> None:
-        """Excel 'update' has no polars equivalent; every other mode emits today's code unchanged."""
-        if resolve_excel_write_mode(output_settings.write_mode) == "update":
+        """Emit the polars excel write, honouring the node's write mode instead of always overwriting.
+
+        ``create`` means "refuse to touch an existing file", which stdlib expresses exactly, so it
+        becomes an explicit guard and the export stays runnable. ``update`` needs an openpyxl
+        read-modify-write round trip that has no polars equivalent, so it aborts the export rather
+        than silently degrading into a destructive overwrite.
+        """
+        write_mode = resolve_excel_write_mode(output_settings.write_mode)
+        if write_mode == "update":
             self.unsupported_nodes.append(
                 (
                     node_id,
@@ -1114,8 +1121,14 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
                 )
             )
             return
+        path = output_settings.abs_file_path
+        if write_mode == "create":
+            self.imports.add("import os")
+            reason = f"Cannot write '{path}': the file already exists (write mode 'create')."
+            self._add_code(f'if os.path.exists("{path}"):')
+            self._add_code(f'    raise FileExistsError("{reason}")')
         self._add_code(f"{input_df}.collect().write_excel(")
-        self._add_code(f'    "{output_settings.abs_file_path}",')
+        self._add_code(f'    "{path}",')
         self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
         self._add_code(")")
 
