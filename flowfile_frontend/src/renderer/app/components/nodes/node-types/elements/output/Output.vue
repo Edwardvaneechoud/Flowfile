@@ -73,13 +73,10 @@
       >
         <i class="fa-solid fa-info-circle"></i>
         <div>
-          <p>
-            <strong>Update mode:</strong> Only the target sheet is written; every other sheet in the
-            workbook is kept, and the file is created if it does not exist yet.
-          </p>
-          <p>
-            Images placed on the workbook are dropped, and formula results stay blank until you open
-            the file in Excel again.
+          <p>Writes only this sheet; every other sheet in the workbook is kept.</p>
+          <p class="info-caveat">
+            Embedded images are dropped and formula results refresh when the file is next opened in
+            Excel.
           </p>
         </div>
       </div>
@@ -476,20 +473,21 @@ defineExpose({
 
 .info-box {
   display: flex;
-  gap: 0.75rem;
-  padding: 0.75rem;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
   background-color: #e6f7ff;
-  border-left: 4px solid #1890ff;
+  border-left: 3px solid #1890ff;
   border-radius: 4px;
-  margin-top: 1rem;
-  font-size: 0.875rem;
+  margin: 0.5rem 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
 }
 
 .info-box i {
   color: #1890ff;
-  font-size: 1.25rem;
+  font-size: 0.875rem;
   flex-shrink: 0;
-  padding-top: 2px;
+  padding-top: 3px;
 }
 
 .info-box p {
@@ -497,7 +495,9 @@ defineExpose({
   color: #4a5568;
 }
 
-.info-box p + p {
-  margin-top: 0.35rem;
+.info-box .info-caveat {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #718096;
 }
 </style>
