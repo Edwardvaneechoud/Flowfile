@@ -864,6 +864,43 @@ class TestFlowfileRoundTrip:
         assert loaded_output.setting_input.output_settings.write_mode == 'overwrite'
         assert loaded_output.setting_input.output_settings.table_settings.delimiter == ';'
 
+    def test_output_node_without_write_mode_defaults_to_overwrite(self, temp_dir: Path):
+        """A flow persisted without write_mode must load as the historical 'overwrite', never as a new mode."""
+        flow = create_graph(flow_id=210, execution_mode="Performance")
+
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        add_node_promise(flow, 'output', node_id=2)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(flow, connection)
+
+        output_settings = input_schema.NodeOutput(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            output_settings=input_schema.OutputSettings(
+                name='output.xlsx',
+                directory='/tmp',
+                file_type='excel',
+                write_mode='update',
+                table_settings=input_schema.OutputExcelTable(sheet_name='Results')
+            )
+        )
+        flow.add_output(output_settings)
+
+        path = temp_dir / 'test.yaml'
+        flow.save_flow(str(path))
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        persisted = next(n for n in data['nodes'] if n['type'] == 'output')['setting_input']['output_settings']
+        del persisted['write_mode']
+        with open(path, 'w') as f:
+            yaml.dump(data, f)
+
+        loaded_output = open_flow(path).get_node(2)
+        assert loaded_output.setting_input.output_settings.write_mode == 'overwrite'
+        assert loaded_output.setting_input.output_settings.table_settings.sheet_name == 'Results'
+
 
 class TestJsonRoundTrip:
     """Test JSON format produces same results as YAML."""

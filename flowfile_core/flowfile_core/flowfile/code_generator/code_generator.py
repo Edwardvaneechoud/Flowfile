@@ -28,6 +28,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.schemas import input_schema, transform_schema
+from shared.excel_writer import resolve_excel_write_mode
 
 
 class UnsupportedNodeError(Exception):
@@ -596,14 +597,19 @@ class FlowGraphCodeConverter(
         elif output_settings.file_type == "parquet":
             self._add_code(f'{input_df}.sink_parquet("{output_settings.abs_file_path}")')
         elif output_settings.file_type == "excel":
-            self._handle_output_excel(input_df, output_settings)
+            self._handle_output_excel(input_df, output_settings, settings.node_id)
 
         self._add_code("")
 
-    def _handle_output_excel(self, input_df: str, output_settings) -> None:
+    def _handle_output_excel(self, input_df: str, output_settings, node_id: int) -> None:
+        write_mode = resolve_excel_write_mode(output_settings.write_mode)
         self._add_code(f"{input_df}.write_excel(")
         self._add_code(f'    "{output_settings.abs_file_path}",')
-        self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
+        if write_mode == "overwrite":
+            self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
+        else:
+            self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}",')
+            self._add_code(f'    write_mode="{write_mode}"')
         self._add_code(")")
 
     def _handle_polars_code(
@@ -1096,7 +1102,18 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
             code = perf_note + code
         return code
 
-    def _handle_output_excel(self, input_df: str, output_settings) -> None:
+    def _handle_output_excel(self, input_df: str, output_settings, node_id: int) -> None:
+        """Excel 'update' has no polars equivalent; every other mode emits today's code unchanged."""
+        if resolve_excel_write_mode(output_settings.write_mode) == "update":
+            self.unsupported_nodes.append(
+                (
+                    node_id,
+                    "output",
+                    "Excel 'update' write mode cannot be expressed in standalone Polars code. "
+                    "Export as FlowFrame code instead.",
+                )
+            )
+            return
         self._add_code(f"{input_df}.collect().write_excel(")
         self._add_code(f'    "{output_settings.abs_file_path}",')
         self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')

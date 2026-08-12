@@ -660,6 +660,44 @@ class TestOutputSettingsSerialization:
         loaded_ts = loaded_flow.get_node(2).setting_input.output_settings.table_settings
         assert loaded_ts.compression == compression
 
+    def test_output_settings_excel_update_roundtrip(self, temp_dir: Path):
+        """The excel-only 'update' write mode is persisted verbatim and survives a save/load."""
+        flow = create_graph(flow_id=506)
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        add_node_promise(flow, 'output', node_id=2)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(flow, connection)
+
+        output_settings = input_schema.NodeOutput(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            output_settings=input_schema.OutputSettings(
+                name='output.xlsx',
+                directory='/tmp',
+                file_type='excel',
+                write_mode='update',
+                table_settings=input_schema.OutputExcelTable(sheet_name='Results')
+            )
+        )
+        flow.add_output(output_settings)
+
+        yaml_path = temp_dir / "output_test.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+        persisted = next(n for n in data['nodes'] if n['type'] == 'output')['setting_input']['output_settings']
+        assert persisted['write_mode'] == 'update', "the excel update mode must reach the YAML"
+        assert persisted['table_settings']['sheet_name'] == 'Results'
+
+        loaded_flow = open_flow(yaml_path)
+        loaded_settings = loaded_flow.get_node(2).setting_input.output_settings
+        assert loaded_settings.write_mode == 'update'
+        assert isinstance(loaded_settings.table_settings, input_schema.OutputExcelTable)
+        assert loaded_settings.table_settings.sheet_name == 'Results'
+
 
 # CROSS JOIN SERIALIZATION TESTS
 

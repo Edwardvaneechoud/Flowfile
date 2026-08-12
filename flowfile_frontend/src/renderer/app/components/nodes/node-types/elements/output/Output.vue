@@ -64,6 +64,26 @@
         />
       </el-select>
 
+      <div
+        v-if="
+          nodeOutput.output_settings.file_type === 'excel' &&
+          nodeOutput.output_settings.write_mode === 'update'
+        "
+        class="info-box"
+      >
+        <i class="fa-solid fa-info-circle"></i>
+        <div>
+          <p>
+            <strong>Update mode:</strong> Only the target sheet is written; every other sheet in the
+            workbook is kept, and the file is created if it does not exist yet.
+          </p>
+          <p>
+            Images placed on the workbook are dropped, and formula results stay blank until you open
+            the file in Excel again.
+          </p>
+        </div>
+      </div>
+
       <CsvTableConfig
         v-if="isOutputCsvTable(nodeOutput.output_settings.table_settings)"
         v-model="nodeOutput.output_settings.table_settings"
@@ -185,7 +205,21 @@ const selectedDirectoryExists = ref<boolean | null>(null);
 const localFileInfos = ref<LocalFileInfo[]>([]);
 
 function getWriteOptions(fileType: string): string[] {
-  return fileType === "csv" ? ["overwrite", "new file", "append"] : ["overwrite", "new file"];
+  if (fileType === "csv") return ["overwrite", "new file", "append"];
+  if (fileType === "excel") return ["overwrite", "update", "create"];
+  return ["overwrite", "new file"];
+}
+
+/**
+ * Keep the selected writing option valid for the file type: the options differ
+ * per format, so a mode the new format doesn't offer falls back to "overwrite".
+ */
+function clampWriteMode(fileType: string) {
+  if (!nodeOutput.value) return;
+  const settings = nodeOutput.value.output_settings;
+  if (!getWriteOptions(fileType).includes(settings.write_mode)) {
+    settings.write_mode = "overwrite";
+  }
 }
 
 async function fetchFiles() {
@@ -229,7 +263,7 @@ function detectFileType(fileName: string) {
 
   if (nodeOutput.value) {
     nodeOutput.value.output_settings.file_type = fileTypeMap[extension];
-    nodeOutput.value.output_settings.write_mode = "overwrite";
+    clampWriteMode(fileTypeMap[extension]);
 
     updateTableSettings(fileTypeMap[extension]);
   }
@@ -284,9 +318,7 @@ function handleFileTypeChange() {
   nodeOutput.value.output_settings.name =
     baseName + (fileExtMap[nodeOutput.value.output_settings.file_type] || "");
 
-  if (!nodeOutput.value.output_settings.write_mode) {
-    nodeOutput.value.output_settings.write_mode = "overwrite";
-  }
+  clampWriteMode(nodeOutput.value.output_settings.file_type);
 
   updateTableSettings(nodeOutput.value.output_settings.file_type);
 }
@@ -438,5 +470,32 @@ defineExpose({
   color: var(--color-danger);
   display: flex;
   align-items: center;
+}
+
+.info-box {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background-color: #e6f7ff;
+  border-left: 4px solid #1890ff;
+  border-radius: 4px;
+  margin-top: 1rem;
+  font-size: 0.875rem;
+}
+
+.info-box i {
+  color: #1890ff;
+  font-size: 1.25rem;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.info-box p {
+  margin: 0;
+  color: #4a5568;
+}
+
+.info-box p + p {
+  margin-top: 0.35rem;
 }
 </style>

@@ -9,6 +9,7 @@ from flowfile_frame.flow_frame_methods import (read_parquet, from_dict, concat,
 import tempfile
 from uuid import uuid4
 
+import fastexcel
 import polars as pl
 import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
@@ -517,6 +518,29 @@ def test_write_read_with_compression(tmpdir, ext, writer, reader, compression):
     result = reader(temp_path, flow_graph=df.flow_graph).collect()
     assert len(result) == 3
     assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+
+def test_write_excel_update_preserves_sheet(tmpdir):
+    """write_excel(write_mode='update') writes its own worksheet and keeps the pre-existing one."""
+    temp_path = os.path.join(tmpdir, "book.xlsx")
+    pl.DataFrame({"keep": ["a", "b"]}).write_excel(temp_path, worksheet="A")
+
+    FlowFrame({"id": [1, 2, 3]}).write_excel(temp_path, worksheet="B", write_mode="update")
+
+    assert fastexcel.read_excel(temp_path).sheet_names == ["A", "B"]
+    assert pl.read_excel(temp_path, sheet_name="A")["keep"].to_list() == ["a", "b"]
+    assert pl.read_excel(temp_path, sheet_name="B")["id"].to_list() == [1, 2, 3]
+
+
+def test_write_excel_update_rejects_polars_code_fallback(tmpdir):
+    """A non-overwrite write_mode is refused on the extra-kwargs Polars Code path instead of silently overwriting."""
+    temp_path = os.path.join(tmpdir, "book.xlsx")
+    pl.DataFrame({"keep": ["a"]}).write_excel(temp_path, worksheet="A")
+
+    with pytest.raises(TypeError):
+        FlowFrame({"id": [1]}).write_excel(temp_path, worksheet="B", write_mode="update", autofit=True)
+
+    assert fastexcel.read_excel(temp_path).sheet_names == ["A"]
 
 
 def test_save_flow_graph(tmpdir):
