@@ -26,7 +26,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.schemas import input_schema, transform_schema
 
 
@@ -248,12 +248,13 @@ class FlowGraphCodeConverter(
             UnsupportedNodeError: If the graph contains nodes that cannot be converted
                 to standalone code (e.g., database nodes, explore_data, external_source).
         """
-        stages = determine_execution_order(
-            all_nodes=[node for node in self.flow_graph.nodes if node.is_correct],
+        execution_plan = compute_execution_plan(
+            nodes=self.flow_graph.nodes,
             flow_starts=self.flow_graph._flow_starts + self.flow_graph.get_implicit_starter_nodes(),
         )
+        skip_ids = {node.node_id for node in execution_plan.skip_nodes}
 
-        for node in (node for stage in stages for node in stage):
+        for node in (node for stage in execution_plan.stages for node in stage if node.node_id not in skip_ids):
             self._generate_node_code(node)
 
         if self.unsupported_nodes:
