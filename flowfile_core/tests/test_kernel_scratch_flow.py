@@ -45,6 +45,8 @@ def _bare_manager() -> KernelManager:
         mgr = KernelManager.__new__(KernelManager)
         mgr._docker = MagicMock()
         mgr._core_instance_id = "test-core-id"
+        mgr._runtime_id = "test-runtime-id"
+        mgr._started_here = set()
         mgr._kernels = {}
         mgr._kernel_owners = {}
         mgr._scratch_flow_ids = {}
