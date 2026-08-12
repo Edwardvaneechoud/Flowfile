@@ -9,6 +9,13 @@ Two openpyxl round-trip caveats apply to ``update`` only:
 - embedded images anywhere in the workbook are dropped;
 - cached formula results are cleared (the formula text survives), so non-Excel readers see empty
   cells on preserved sheets until Excel recomputes and saves the workbook.
+
+Flows run nodes on a thread pool, so two output nodes can target the same workbook concurrently —
+with ``update`` that is the intended way to fill several tabs of one file. ``update`` and ``create``
+therefore serialize on a per-workbook advisory lock (a ``<path>.lock`` sidecar, removed on release),
+and every ``update`` write lands via an atomic ``os.replace``, so concurrent writers merge
+sequentially instead of losing sheets or corrupting the file. ``overwrite`` keeps its historical
+unlocked last-writer-wins behavior.
 """
 
 from __future__ import annotations
@@ -16,16 +23,76 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from openpyxl import Workbook
 
 EXCEL_WRITE_MODES: Final = ("overwrite", "create", "update")
 
 _NESTED_DTYPES: Final = (pl.List, pl.Array, pl.Struct, pl.Object)
+
+_LOCK_TIMEOUT_S: Final = 300.0
+_LOCK_POLL_S: Final = 0.05
+
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _workbook_lock(path: str) -> Iterator[None]:
+    """Serialize read-modify-write access to *path* across processes.
+
+    The OS releases the lock if the holder dies (the worker's cancel path terminates children),
+    so a killed write never wedges later runs. The sidecar is unlinked best-effort on release.
+    """
+    lock_path = os.path.abspath(path) + ".lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    try:
+        deadline = time.monotonic() + _LOCK_TIMEOUT_S
+        while not _try_lock(fd):
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"Timed out waiting for the excel write lock on '{path}'.")
+            time.sleep(_LOCK_POLL_S)
+        try:
+            yield
+        finally:
+            _unlock(fd)
+    finally:
+        os.close(fd)
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass
 
 
 def resolve_excel_write_mode(write_mode: str | None) -> str:
@@ -79,6 +146,22 @@ def _save_atomically(wb: Workbook, path: str) -> None:
             os.unlink(tmp_path)
 
 
+def _write_fresh_atomically(df: pl.DataFrame, path: str, sheet: str) -> None:
+    """Write a brand-new workbook via a temp file + ``os.replace``, matching a direct write's perms."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".xlsx.tmp")
+    os.close(fd)
+    try:
+        df.write_excel(tmp_path, worksheet=sheet)
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp_path, 0o666 & ~umask)  # mkstemp creates 0600, unlike a plain write_excel
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 def _update_sheet(df: pl.DataFrame, path: str, sheet_name: str) -> None:
     """Replace *sheet_name* inside the existing workbook at *path*, preserving everything else."""
     from openpyxl import load_workbook
@@ -118,13 +201,23 @@ def write_excel_output(
     ``overwrite`` replaces the whole workbook, ``create`` refuses to touch an existing file, and
     ``update`` replaces only ``sheet_name`` while keeping every other sheet — and its formatting,
     formulas and layout — intact. ``update`` against a missing file writes a fresh workbook.
+
+    ``update`` and ``create`` hold the per-workbook lock, so parallel nodes filling different
+    sheets of one file merge sequentially and a concurrent ``create`` fails instead of racing.
     """
     sheet = sheet_name or "Sheet1"
     mode = resolve_excel_write_mode(write_mode)
-    exists = os.path.exists(path)
-    if mode == "create" and exists:
-        raise FileExistsError(f"Cannot write '{path}': the file already exists (write mode 'create').")
-    if mode != "update" or not exists:
+    if mode == "overwrite":
         df.write_excel(path, worksheet=sheet)
         return
-    _update_sheet(df, path, sheet)
+    with _workbook_lock(path):
+        exists = os.path.exists(path)
+        if mode == "create":
+            if exists:
+                raise FileExistsError(f"Cannot write '{path}': the file already exists (write mode 'create').")
+            df.write_excel(path, worksheet=sheet)
+            return
+        if exists:
+            _update_sheet(df, path, sheet)
+        else:
+            _write_fresh_atomically(df, path, sheet)

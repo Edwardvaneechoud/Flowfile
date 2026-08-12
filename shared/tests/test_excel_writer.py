@@ -1,4 +1,5 @@
 import datetime
+import multiprocessing
 
 import fastexcel
 import openpyxl
@@ -7,6 +8,10 @@ import pytest
 from openpyxl.utils.exceptions import IllegalCharacterError
 
 from shared.excel_writer import write_excel_output
+
+
+def _parallel_update(path, sheet):
+    write_excel_output(pl.DataFrame({sheet: [1, 2]}), path, sheet_name=sheet, write_mode="update")
 
 
 def _seed(path, sheets):
@@ -109,3 +114,23 @@ def test_update_leaves_no_temp_file_and_preserves_original_on_failure(tmp_path):
     assert path.read_bytes() == before
     assert pl.read_excel(str(path), sheet_name="A").to_dicts() == [{"keep": "a"}]
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("preseeded", [True, False])
+def test_parallel_update_writers_keep_every_sheet(tmp_path, preseeded):
+    """Concurrent update writers to one workbook serialize instead of losing sheets or corrupting it."""
+    path = str(tmp_path / "parallel.xlsx")
+    names = [f"S{i}" for i in range(4)]
+    expected = set(names)
+    if preseeded:
+        write_excel_output(pl.DataFrame({"base": [1]}), path, sheet_name="Base")
+        expected.add("Base")
+    ctx = multiprocessing.get_context("spawn")
+    processes = [ctx.Process(target=_parallel_update, args=(path, name)) for name in names]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=120)
+    assert [process.exitcode for process in processes] == [0, 0, 0, 0]
+    assert set(fastexcel.read_excel(path).sheet_names) == expected
+    assert list(tmp_path.glob("*.lock")) == []
