@@ -15,6 +15,7 @@ from flowfile_core.catalog.constants import (
     MAX_PREVIEW_LIMIT,
     MAX_VISUALIZATION_ROWS,
 )
+from flowfile_core.catalog.delta_utils import get_live_delta_version
 from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
     NamespaceNotFoundError,
@@ -33,7 +34,6 @@ from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.text_utils import (
-    hash_source_versions,
     is_table_reference,
     rewrite_qualified_references,
 )
@@ -56,6 +56,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
     VizSourceDescriptor,
 )
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -449,9 +450,21 @@ class VisualizationService:
         return min(requested, MAX_VISUALIZATION_ROWS)
 
     def _session_key_for_table(self, table_id: int) -> str:
+        """Version-addressed session key for a physical table.
+
+        The worker child pins its ``scan_delta`` snapshot at spawn, so the key
+        must rotate whenever the Delta data changes — including out-of-band
+        writes the catalog row never sees. Falls back to the ``updated_at``
+        timestamp for legacy parquet / unreadable tables.
+        """
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+        if table.file_path:
+            try:
+                return f"tbl:{table_id}:v{get_live_delta_version(table.file_path)}"
+            except Exception:
+                pass
         ts = int(table.updated_at.timestamp()) if table.updated_at else 0
         return f"tbl:{table_id}:{ts}"
 
@@ -480,18 +493,19 @@ class VisualizationService:
                 }
 
             if table.sql_query:
-                spec = self._build_sql_worker_source(table.sql_query, user_id=user_id)
-                spec["session_key"] = self._session_key_for_table(table.id)
-                return spec
+                # The spec's own digest is version-aware; the table row's
+                # updated_at never moves when the underlying sources change.
+                return self._build_sql_worker_source(table.sql_query, user_id=user_id)
 
             from flowfile_core.catalog import service as _service_module
 
             lazy_frame = self._resolve_virtual_flow_table_via_facade(table.id, user_id=user_id, run_location="remote")
-            versions_hash = hash_source_versions(table.source_table_versions)
+            # Post-resolution read: resolution may have re-stamped source_table_versions.
+            versions_hash = self._virtual_tables.fresh_versions_hash(table.id)
             result = _service_module.trigger_resolve_virtual_table(table.id, lazy_frame.serialize(), versions_hash)
             return {
                 "kind": "ipc_path",
-                "session_key": f"fvt:{table.id}:{int(result['mtime'])}",
+                "session_key": f"fvt:{table.id}:{result['ipc_path']}:{result['mtime']}",
                 "ipc_path": result["ipc_path"],
                 "mtime": result["mtime"],
             }
@@ -530,8 +544,22 @@ class VisualizationService:
         # session key compact and the worker's SQLContext small.
         referenced_delta = {n: d for n, d in delta_map.items() if is_table_reference(n, rewritten)}
 
+        # Live delta versions rotate the digest when any referenced table's data
+        # changes; an unreadable table hashes as None (rotates again once readable).
+        delta_versions: dict[str, int | None] = {}
+        for name, dir_name in referenced_delta.items():
+            try:
+                delta_versions[name] = get_live_delta_version(storage.catalog_tables_directory / dir_name)
+            except Exception:
+                delta_versions[name] = None
+
         key_material = json.dumps(
-            {"q": rewritten, "d": sorted(referenced_delta.items()), "v": sorted(virtual_refs.items())},
+            {
+                "q": rewritten,
+                "d": sorted(referenced_delta.items()),
+                "dv": sorted(delta_versions.items()),
+                "v": sorted(virtual_refs.items()),
+            },
             sort_keys=True,
         )
         digest = hashlib.sha256(key_material.encode()).hexdigest()
@@ -548,7 +576,8 @@ class VisualizationService:
 
         vid = virtual_map[vname]
         lazy_frame = self._resolve_virtual_flow_table_via_facade(vid, user_id=user_id, run_location="remote")
-        versions_hash = hash_source_versions(self.repo.get_table(vid).source_table_versions)
+        # Post-resolution read: resolution may have re-stamped source_table_versions.
+        versions_hash = self._virtual_tables.fresh_versions_hash(vid)
         result = _service_module.trigger_resolve_virtual_table(vid, lazy_frame.serialize(), versions_hash)
         return result["ipc_path"]
 

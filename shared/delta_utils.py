@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Sentinel cache key for a virtual table with no recorded source-version
+# fingerprint. The worker must recognise it without importing core: a
+# "noversions" key can never prove freshness, so caches keyed on it must
+# always rebuild instead of serving the first snapshot forever.
+NO_VERSIONS_HASH = "noversions"
+
 
 # JSON serialisation helpers
 

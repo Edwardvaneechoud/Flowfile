@@ -152,3 +152,48 @@ def test_three_part_quoted_identifier_resolves(three_part_table):
     assert result["columns"] == ["pair", "rate"]
     assert result["total_rows"] == 2
     assert result["rows"] == [["EURUSD", 1.08], ["GBPUSD", 1.27]]
+
+
+def test_physical_table_query_sees_out_of_band_delta_write(delta_tables):
+    """Freshness regression tripwire: the raw SQL path must have NO cache.
+
+    Query → overwrite the Delta table out-of-band (new version) → query again
+    must return the new rows. If this ever fails, in-process state crept into
+    execute_sql_query / open_catalog_table.
+    """
+    first = execute_sql_query("SELECT city, COUNT(*) AS n FROM customers GROUP BY city", delta_tables)
+    assert first["total_rows"] == 2
+
+    catalog_dir = storage.catalog_tables_directory
+    pl.DataFrame({"id": [9], "name": ["Zed"], "city": ["ZZZ_TEST"]}).write_delta(
+        str(catalog_dir / "customers"), mode="overwrite"
+    )
+
+    second = execute_sql_query("SELECT city, COUNT(*) AS n FROM customers GROUP BY city", delta_tables)
+    assert second["total_rows"] == 1
+    assert second["rows"] == [["ZZZ_TEST", 1]]
+
+
+def test_physical_table_route_sees_out_of_band_delta_write(delta_tables):
+    """Same tripwire through the FastAPI route (runs execute_sql_query in-process)."""
+    from fastapi.testclient import TestClient
+
+    from flowfile_worker import main
+
+    client = TestClient(main.app)
+    payload = {"query": "SELECT city, COUNT(*) AS n FROM customers GROUP BY city", "tables": delta_tables}
+
+    r1 = client.post("/catalog/sql_query", json=payload)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["total_rows"] == 2
+
+    catalog_dir = storage.catalog_tables_directory
+    pl.DataFrame({"id": [9], "name": ["Zed"], "city": ["ZZZ_TEST"]}).write_delta(
+        str(catalog_dir / "customers"), mode="overwrite"
+    )
+
+    r2 = client.post("/catalog/sql_query", json=payload)
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    assert body["total_rows"] == 1
+    assert body["rows"] == [["ZZZ_TEST", 1]]

@@ -31,6 +31,7 @@ from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.catalog.text_utils import (
+    hash_source_versions,
     is_table_reference,
     rewrite_qualified_references,
 )
@@ -48,6 +49,10 @@ if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
 
 logger = logging.getLogger(__name__)
+
+# Explicit-clear sentinel: distinguishes "leave source_table_versions untouched"
+# (argument omitted) from "clear it" (None passed).
+_UNSET: str = "\x00unset\x00"
 
 _ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
 
@@ -147,9 +152,15 @@ class VirtualTableService:
         is_optimized: bool | None = None,
         schema_json: str | None = None,
         polars_plan: str | None = None,
-        source_table_versions: str | None = None,
+        source_table_versions: str | None = _UNSET,
     ) -> CatalogTableOut:
-        """Update a virtual flow table's metadata or producer."""
+        """Update a virtual flow table's metadata or producer.
+
+        ``source_table_versions`` uses an explicit-clear sentinel: passing None
+        clears the stored fingerprint (a write whose sources can no longer be
+        fingerprinted must not leave a stale one behind); omitting the argument
+        leaves it untouched.
+        """
         table = self.repo.get_table(table_id)
         if table is None or getattr(table, "table_type", "physical") != "virtual":
             raise TableNotFoundError(table_id=table_id)
@@ -173,7 +184,7 @@ class VirtualTableService:
             table.schema_json = schema_json
         if polars_plan is not None:
             table.polars_plan = polars_plan
-        if source_table_versions is not None:
+        if source_table_versions is not _UNSET:
             table.source_table_versions = source_table_versions
 
         table = self.repo.update_table(table)
@@ -472,6 +483,18 @@ class VirtualTableService:
         # Do not mutate the shared memoized engine; .lazy() is an identity on
         # LazyFrames and a cheap wrap on eager frames.
         return flowframe.data_frame.lazy()
+
+    def fresh_versions_hash(self, table_id: int) -> str:
+        """Cache key for a virtual table's worker IPC snapshot, read post-resolution.
+
+        Resolution may re-run the producer flow, whose write re-stamps
+        ``source_table_versions`` in a separate session — so this bypasses the
+        session identity map. Callers must invoke it AFTER resolution, or they
+        key the cache on the pre-resolution fingerprint and the worker serves
+        the old snapshot while the fresh compute is discarded.
+        """
+        table = self.repo.get_table_fresh(table_id)
+        return hash_source_versions(table.source_table_versions if table is not None else None)
 
     def materialize_virtual_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
         """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file.

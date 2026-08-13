@@ -579,6 +579,135 @@ class TestVisualizationCompute:
         assert captured["source"]["kind"] == "ipc_path"
         assert captured["source"]["ipc_path"].startswith(f"fvt-{tid}-")
         assert captured["source"]["mtime"] == 1234.5
-        assert captured["source"]["session_key"] == f"fvt:{tid}:1234"
+        # ipc filename + full-float mtime: rotates on every noversions rebuild.
+        assert captured["source"]["session_key"] == f"fvt:{tid}:fvt-{tid}-noversions00000.arrow:1234.5"
         assert captured["resolve"]["table_id"] == tid
         assert captured["resolve"]["hash"] == "noversions"
+
+
+class TestVersionAddressedSessionKeys:
+    """Session keys must rotate when the underlying Delta data changes."""
+
+    @staticmethod
+    def _make_delta_table(dir_name: str) -> int:
+        import polars as pl
+        from shared.storage_config import storage
+
+        target = storage.catalog_tables_directory / dir_name
+        pl.DataFrame({"category": ["a", "b"], "value": [1, 2]}).write_delta(str(target))
+        with get_db_context() as db:
+            ns = CatalogNamespace(name="VerNs", parent_id=None, level=0, owner_id=1)
+            db.add(ns)
+            db.commit()
+            db.refresh(ns)
+            table = CatalogTable(
+                name=dir_name,
+                namespace_id=ns.id,
+                owner_id=1,
+                file_path=str(target),
+                storage_format="delta",
+                schema_json=json.dumps([{"name": "value", "dtype": "Int64"}]),
+                table_type="physical",
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+            return table.id
+
+    @staticmethod
+    def _overwrite_delta_table(dir_name: str) -> None:
+        import polars as pl
+        from shared.storage_config import storage
+
+        target = storage.catalog_tables_directory / dir_name
+        pl.DataFrame({"category": ["z"], "value": [99]}).write_delta(str(target), mode="overwrite")
+
+    @staticmethod
+    def _cleanup_delta_dir(dir_name: str) -> None:
+        import shutil
+
+        from shared.storage_config import storage
+
+        shutil.rmtree(storage.catalog_tables_directory / dir_name, ignore_errors=True)
+
+    def _capture_session_key(self, client, source: dict) -> str:
+        from flowfile_core.catalog import service as svc_module
+
+        captured: dict = {}
+
+        def fake_trigger(worker_source, payload, max_rows):
+            captured["source"] = worker_source
+            return {"rows": [], "total_rows": 0, "truncated": False, "elapsed_ms": 0.0, "cache_hit": False}
+
+        with patch.object(svc_module, "trigger_visualize_query", side_effect=fake_trigger):
+            resp = client.post(
+                "/catalog/visualizations/compute",
+                json={
+                    "source": source,
+                    "payload": {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]},
+                },
+            )
+        assert resp.status_code == 200, resp.text
+        return captured["source"]["session_key"]
+
+    def test_table_session_key_rotates_with_delta_version(self, client):
+        dir_name = "viz_ver_tbl"
+        table_id = self._make_delta_table(dir_name)
+        try:
+            source = {"source_type": "table", "table_id": table_id}
+            key_v0 = self._capture_session_key(client, source)
+            assert key_v0 == f"tbl:{table_id}:v0"
+
+            self._overwrite_delta_table(dir_name)
+
+            key_v1 = self._capture_session_key(client, source)
+            assert key_v1 == f"tbl:{table_id}:v1"
+        finally:
+            self._cleanup_delta_dir(dir_name)
+
+    def test_sql_session_key_rotates_after_table_change(self, client):
+        dir_name = "viz_ver_sql"
+        self._make_delta_table(dir_name)
+        try:
+            source = {"source_type": "sql", "sql_query": f"SELECT * FROM {dir_name}"}
+            key_before = self._capture_session_key(client, source)
+            assert key_before.startswith("sql:")
+
+            self._overwrite_delta_table(dir_name)
+
+            key_after = self._capture_session_key(client, source)
+            assert key_after.startswith("sql:")
+            assert key_after != key_before
+        finally:
+            self._cleanup_delta_dir(dir_name)
+
+    def test_virtual_sql_table_key_is_sql_digest_and_rotates(self, client):
+        """A query-backed virtual table keys on its (version-aware) SQL digest,
+        not the table row's updated_at, which never moves on source writes."""
+        dir_name = "viz_ver_vsql"
+        self._make_delta_table(dir_name)
+        try:
+            with get_db_context() as db:
+                ns = db.query(CatalogNamespace).filter_by(name="VerNs").first()
+                vtable = CatalogTable(
+                    name="v_over_sql",
+                    namespace_id=ns.id,
+                    owner_id=1,
+                    table_type="virtual",
+                    sql_query=f"SELECT * FROM {dir_name}",
+                )
+                db.add(vtable)
+                db.commit()
+                db.refresh(vtable)
+                vid = vtable.id
+
+            source = {"source_type": "table", "table_id": vid}
+            key_before = self._capture_session_key(client, source)
+            assert key_before.startswith("sql:")
+
+            self._overwrite_delta_table(dir_name)
+
+            key_after = self._capture_session_key(client, source)
+            assert key_after != key_before
+        finally:
+            self._cleanup_delta_dir(dir_name)

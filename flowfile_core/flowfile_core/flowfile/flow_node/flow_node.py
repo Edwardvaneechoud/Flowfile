@@ -1748,7 +1748,7 @@ class FlowNode:
             self._execution_state.result_schema = None
             self._execution_state.predicted_schema = None
             self._execution_state.execution_hash = None
-            # Note: source_file_info NOT reset - needed for change detection
+            # Note: source_file_info / source_version_info NOT reset - needed for change detection
 
             if self.is_correct:
                 self._schema_callback = None

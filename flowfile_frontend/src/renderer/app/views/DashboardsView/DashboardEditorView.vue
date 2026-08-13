@@ -17,6 +17,9 @@
         <SaveStatusIndicator v-else :state="autosaveState" mode="draft" :draft-saved="draftDirty" />
       </div>
       <div class="editor-toolbar-right">
+        <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
+          <el-icon><Refresh /></el-icon> Refresh
+        </el-button>
         <el-button
           v-if="!isNew"
           :disabled="!canRevert || reverting"
@@ -84,6 +87,7 @@
             :tiles-by-datasource="tilesByDatasource"
             :tile-label="tileLabel"
             :get-column-stats="getColumnStats"
+            :stats-refresh-nonce="statsRefreshNonce"
             @update:filters="onFiltersChange"
           />
           <DashboardCanvas
@@ -146,12 +150,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { ArrowLeft } from "@element-plus/icons-vue";
+import { ArrowLeft, Refresh } from "@element-plus/icons-vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useDashboardsStore } from "../../stores/dashboards-store";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
+import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
 import { useAutosave } from "../../composables/useAutosave";
 import { classifyAutosaveError } from "../../composables/autosaveEngine";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
@@ -291,7 +297,7 @@ const startAutosaveSession = (dashboard: Dashboard) => {
 };
 
 const layoutRef = computed<DashboardLayout>(() => store.current?.layout ?? EMPTY_DASHBOARD_LAYOUT);
-const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats } =
+const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats, refresh } =
   useDashboardDatasources(layoutRef);
 
 const addedVizIds = computed(() => {
@@ -328,6 +334,23 @@ const vizDialogOpen = ref(false);
 const vizRefreshNonces = ref<Record<number, number>>({});
 const vizViewerRef = ref<InstanceType<typeof VisualizationViewer> | null>(null);
 const vizPendingRefresh = ref(false);
+
+// Refresh-all shares the nonce map with the single-viz bump in onCloseVizDialog.
+const catalogStore = useCatalogStore();
+const { refreshing, statsRefreshNonce, refreshAll } = useDashboardRefresh({
+  layout: layoutRef,
+  vizRefreshNonces,
+  refreshDatasources: refresh,
+  invalidateFields: catalogStore.invalidateVisualizationFields,
+});
+
+const onRefresh = async () => {
+  try {
+    await refreshAll();
+  } catch {
+    ElMessage.error("Failed to refresh dashboard data");
+  }
+};
 
 // Remember the change and refresh tiles once at close, not per autosave tick.
 const onVizUpdated = () => {

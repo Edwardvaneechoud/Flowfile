@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 def check_source_versions_current(source_table_versions_json: str | None) -> bool:
     """Return True if all source delta tables are still at their recorded versions.
 
-    Returns True when no versions are recorded (backward compat for existing virtual tables).
+    Returns False when no versions are recorded: without a fingerprint currency
+    can't be proven, and a serialized plan pins the Delta file set at
+    scan-construction time — trusting it replays the first snapshot forever.
+    Callers fall back to re-executing the producer flow, whose write re-stamps
+    a proper fingerprint when the sources allow one.
     Returns False if any source table has been updated, deleted, or is unreadable.
 
     Note: There is a known TOCTOU (time-of-check-time-of-use) race condition here.
@@ -32,7 +36,7 @@ def check_source_versions_current(source_table_versions_json: str | None) -> boo
     are possible in rare concurrent-write scenarios.
     """
     if not source_table_versions_json:
-        return True
+        return False
     try:
         raw = json.loads(source_table_versions_json)
         versions = [SourceTableVersion(**entry) for entry in raw]
@@ -56,6 +60,16 @@ def check_source_versions_current(source_table_versions_json: str | None) -> boo
             logger.warning("Could not read delta version for source table %d at %s", sv.table_id, sv.file_path)
             return False
     return True
+
+
+def get_live_delta_version(path: str | Path, storage_options: dict | None = None) -> int:
+    """Current version of the Delta table at *path* — metadata-only, no data I/O.
+
+    Works for local directories and cloud URIs (pass *storage_options* for the
+    latter). Raises on unreadable/missing tables; callers decide the failure
+    semantics (fail-open re-run vs cache fallback).
+    """
+    return DeltaTable(str(path), without_files=True, storage_options=storage_options).version()
 
 
 def is_delta_table(path: str | Path) -> bool:

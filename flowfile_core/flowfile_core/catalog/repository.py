@@ -180,6 +180,8 @@ class CatalogRepository(Protocol):
 
     def get_table(self, table_id: int) -> CatalogTable | None: ...
 
+    def get_table_fresh(self, table_id: int) -> CatalogTable | None: ...
+
     def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None: ...
 
     def list_tables_by_name(self, name: str) -> list[CatalogTable]: ...
@@ -803,6 +805,15 @@ class SQLAlchemyCatalogRepository:
 
     def get_table(self, table_id: int) -> CatalogTable | None:
         return self._db.get(CatalogTable, table_id)
+
+    def get_table_fresh(self, table_id: int) -> CatalogTable | None:
+        """Re-read the row from the DB, bypassing the session identity map.
+
+        Virtual-table resolution re-stamps ``source_table_versions`` in a
+        separate session; a plain ``get`` here would return the stale
+        pre-resolution attributes.
+        """
+        return self._db.get(CatalogTable, table_id, populate_existing=True)
 
     def get_table_by_name(
         self, name: str, namespace_id: int | None, owner_id: int | None = None

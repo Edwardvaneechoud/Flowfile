@@ -170,11 +170,17 @@ class TestCloudCacheReadGuard:
         assert result is expected
 
     def test_resolve_virtual_table_uses_local_blob(self):
-        """A local serialized plan is still deserialized directly (no regression)."""
+        """A local serialized plan with a current fingerprint is deserialized directly
+        (no regression). "[]" is the provably-complete no-sources fingerprint; a missing
+        fingerprint (None) deliberately falls back to flow execution instead."""
         buf = io.BytesIO()
         pl.LazyFrame({"x": [1, 2, 3]}).serialize(buf)
         result = _resolve_virtual_table(
-            is_optimized=True, serialized_lf=buf.getvalue(), catalog_table_id=-1, run_location="local"
+            is_optimized=True,
+            serialized_lf=buf.getvalue(),
+            catalog_table_id=-1,
+            run_location="local",
+            source_table_versions="[]",
         )
         assert result.collect()["x"].to_list() == [1, 2, 3]
 

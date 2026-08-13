@@ -87,6 +87,10 @@ class NodeExecutionState:
     # Source tracking (for read nodes)
     source_file_info: SourceFileInfo | None = None
 
+    # Source tracking (for catalog_reader nodes): canonical JSON fingerprint of
+    # the Delta versions read at the last run, compared at run_graph start.
+    source_version_info: str | None = None
+
     # Hash for cache lookup
     execution_hash: str | None = None
 
@@ -102,7 +106,8 @@ class NodeExecutionState:
         self.warnings = None
         self.result_schema = None
         self.predicted_schema = None
-        # Note: source_file_info intentionally NOT reset - needed for change detection
+        # Note: source_file_info / source_version_info intentionally NOT reset -
+        # needed for change detection across runs
         self.execution_hash = None
 
     def reset_results_only(self) -> None:
@@ -139,6 +144,7 @@ class NodeExecutionState:
             "warnings": self.warnings,
             "execution_hash": self.execution_hash,
             "source_file_info": self.source_file_info.to_dict() if self.source_file_info else None,
+            "source_version_info": self.source_version_info,
         }
 
     @classmethod
@@ -152,6 +158,7 @@ class NodeExecutionState:
             example_data_path=data.get("example_data_path"),
             warnings=data.get("warnings"),
             execution_hash=data.get("execution_hash"),
+            source_version_info=data.get("source_version_info"),
         )
         if data.get("source_file_info"):
             state.source_file_info = SourceFileInfo.from_dict(data["source_file_info"])

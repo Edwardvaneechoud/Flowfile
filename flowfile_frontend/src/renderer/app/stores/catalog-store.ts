@@ -1006,6 +1006,11 @@ export const useCatalogStore = defineStore("catalog", {
       return result.fields;
     },
 
+    /** Clear-all: SQL-source descriptor keys make per-table invalidation impossible. */
+    invalidateVisualizationFields() {
+      this.visualizationFieldsBySource = {};
+    },
+
     async loadVisualizationLibrary() {
       this.loadingVisualizationLibrary = true;
       try {
