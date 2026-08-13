@@ -8,6 +8,8 @@ subprocess.
 
 from __future__ import annotations
 
+import signal
+
 import pytest
 
 from flowfile_core.ai.local_model import manager
@@ -287,14 +289,23 @@ def test_set_active_model_recycles_running_server(_tmp_storage, monkeypatch):  #
 # _spawn failure diagnostics                                                  #
 
 
-def test_describe_exit_decodes_signals_and_127():
-    import signal as s
+@pytest.mark.skipif(
+    not hasattr(signal, "SIGKILL"),
+    reason="POSIX signal decoding; Windows has no SIGKILL and returncode is never negative",
+)
+def test_describe_exit_decodes_posix_signals():
+    assert "SIGKILL" in manager._describe_exit(-int(signal.SIGKILL))
+    assert "out of memory" in manager._describe_exit(-int(signal.SIGKILL))
+    assert "SIGILL" in manager._describe_exit(-int(signal.SIGILL))
 
-    assert "SIGKILL" in manager._describe_exit(-int(s.SIGKILL))
-    assert "out of memory" in manager._describe_exit(-int(s.SIGKILL))
-    assert "SIGILL" in manager._describe_exit(-int(s.SIGILL))
+
+def test_describe_exit_decodes_127_and_plain_codes():
     assert "libgomp" in manager._describe_exit(127)
     assert manager._describe_exit(1) == "exit code 1"
+
+
+def test_describe_exit_falls_back_for_unknown_signal_numbers():
+    assert manager._describe_exit(-999) == "killed by signal 999"
 
 
 def test_spawn_reports_exit_code_with_empty_stderr(monkeypatch):  # type: ignore[no-untyped-def]

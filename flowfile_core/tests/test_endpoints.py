@@ -3130,7 +3130,7 @@ def test_editor_create_flow_only_name():
     response = client.post("/editor/create_flow/", params={"name": "test_flow_1"})
     assert response.status_code == 200, "Flow not created"
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert "flows/unnamed_flows/test_flow_1.yaml" in flow_info.path
+    assert "flows/unnamed_flows/test_flow_1.yaml" in Path(flow_info.path).as_posix()
     assert Path(flow_info.path).exists()
 
 
@@ -3138,7 +3138,7 @@ def test_editor_create_flow_no_params():
     response = client.post("/editor/create_flow/")
     assert response.status_code == 200, "Flow not created"
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert "flows/unnamed_flows/" in flow_info.path
+    assert "flows/unnamed_flows/" in Path(flow_info.path).as_posix()
     assert Path(flow_info.path).exists()
 
 
