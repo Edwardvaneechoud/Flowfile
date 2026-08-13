@@ -2702,6 +2702,66 @@ def test_multiple_output_formats(tmp_path, export_func):
             raise Exception("Could not read the parquet file that should have been written")
 
 
+def create_excel_output_flow(tmp_path, write_mode: str) -> FlowGraph:
+    """Build a manual_input -> excel output flow carrying the given write_mode"""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    excel_output = input_schema.NodeOutput(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        output_settings=input_schema.OutputSettings(
+            name="output.xlsx",
+            directory=str(tmp_path),
+            file_type="excel",
+            write_mode=write_mode,
+            table_settings=input_schema.OutputExcelTable(sheet_name="Results")
+        )
+    )
+    flow.add_output(excel_output)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return flow
+
+
+def test_excel_update_mode_export(tmp_path):
+    """Excel 'update' survives the FlowFrame export, stays out of overwrite exports, and blocks the Polars export"""
+    update_code = export_flow_to_flowframe(create_excel_output_flow(tmp_path, "update"))
+    verify_code_contains(update_code,
+                         "write_excel(",
+                         'worksheet="Results"',
+                         'write_mode="update"'
+                         )
+    verify_if_execute(update_code)
+
+    overwrite_code = export_flow_to_flowframe(create_excel_output_flow(tmp_path, "overwrite"))
+    assert "write_mode=" not in overwrite_code
+
+    with pytest.raises(UnsupportedNodeError):
+        export_flow_to_polars(create_excel_output_flow(tmp_path, "update"))
+
+
+def test_excel_create_mode_export(tmp_path):
+    """Excel 'create' refuses an existing file in both exports instead of overwriting it"""
+    flow = create_excel_output_flow(tmp_path, "create")
+    output_path = flow.get_node(2).setting_input.output_settings.abs_file_path
+
+    polars_code = export_flow_to_polars(flow)
+    verify_code_contains(polars_code,
+                         "import os",
+                         f'if os.path.exists("{output_path}"):',
+                         "raise FileExistsError(",
+                         "write_excel("
+                         )
+    verify_if_execute(polars_code)
+
+    original_bytes = Path(output_path).read_bytes()
+    with pytest.raises(FileExistsError):
+        get_result_from_generated_code(polars_code)
+    assert Path(output_path).read_bytes() == original_bytes
+
+    verify_code_contains(export_flow_to_flowframe(flow), 'write_mode="create"')
+
+
 def test_node_with_no_handler():
     """Test behavior when encountering a node type with no handler"""
     flow = create_basic_flow()

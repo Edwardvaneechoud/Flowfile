@@ -327,7 +327,7 @@ export interface OutputSettings {
   directory: string;
   file_type: "parquet" | "csv" | "excel" | "ipc" | "ndjson" | "avro";
   fields?: string[];
-  write_mode: "overwrite" | "append" | "error";
+  write_mode: "overwrite" | "append" | "new file" | "create" | "update";
   table_settings: OutputTableSettings;
 }
 
