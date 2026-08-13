@@ -192,7 +192,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -200,7 +200,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_worker/tests --disable-warnings
+        run: poetry run pytest flowfile_worker/tests --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Stop Mock Database
         run: poetry run stop_postgres
@@ -380,7 +380,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -389,7 +389,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_worker/tests --disable-warnings
+        run: poetry run pytest flowfile_worker/tests --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Stop Mock Database
         shell: pwsh
