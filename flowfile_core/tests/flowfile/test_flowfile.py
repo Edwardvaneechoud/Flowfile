@@ -2571,6 +2571,7 @@ class TestOutputExecution:
     def test_write_excel(self, execution_location):
         """Excel has no sink_excel method so local_write_output always falls
         back to collecting into a DataFrame and calling `write_excel`."""
+        import fastexcel
         with tempfile.TemporaryDirectory() as tmp_dir:
             graph = self._build_output_graph(
                 tmp_dir, "output_data.xlsx", "excel", execution_location,
@@ -2580,6 +2581,24 @@ class TestOutputExecution:
             handle_run_info(run_info)
             output_path = os.path.join(tmp_dir, "output_data.xlsx")
             assert os.path.exists(output_path), f"Output file not created at {output_path}"
+            assert fastexcel.read_excel(output_path).sheet_names == ["Sheet1"]
+
+    def test_write_excel_update_preserves_existing_sheet(self, execution_location):
+        """update must add the target sheet to an existing workbook in both execution modes."""
+        import fastexcel
+        import polars as pl
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = os.path.join(tmp_dir, "book.xlsx")
+            pl.DataFrame({"keep": ["a"]}).write_excel(output_path, worksheet="Existing")
+            graph = self._build_output_graph(
+                tmp_dir, "book.xlsx", "excel", execution_location,
+                write_mode="update", sheet_name="New",
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            assert fastexcel.read_excel(output_path).sheet_names == ["Existing", "New"]
+            assert pl.read_excel(output_path, sheet_name="Existing").to_dicts() == [{"keep": "a"}]
+            assert pl.read_excel(output_path, sheet_name="New").shape == (3, 1)
 
     def test_write_ipc(self, execution_location):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -2686,6 +2705,39 @@ class TestLocalWriteOutputUnit:
                 data, data_type="excel", path=path, write_mode="overwrite", sheet_name="Sheet1"
             )
             assert os.path.exists(path), f"excel not written for shape={shape}"
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_excel_update_preserves_other_sheets(self, shape: str):
+        """update replaces only the target sheet, leaving every other sheet in the workbook readable."""
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import fastexcel
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"book_{shape}.xlsx")
+            pl.DataFrame({"keep": ["a"]}).write_excel(path, worksheet="A")
+            utils.local_write_output(
+                data, data_type="excel", path=path, write_mode="update", sheet_name="B"
+            )
+            assert fastexcel.read_excel(path).sheet_names == ["A", "B"], f"sheets lost for shape={shape}"
+            assert pl.read_excel(path, sheet_name="A").to_dicts() == [{"keep": "a"}]
+            assert pl.read_excel(path, sheet_name="B").shape == (3, 2)
+
+    def test_excel_create_raises_when_file_exists(self):
+        """create over an existing workbook raises instead of silently no-opping, and touches no byte."""
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "book.xlsx")
+            pl.DataFrame({"keep": ["a"]}).write_excel(path, worksheet="A")
+            before = Path(path).read_bytes()
+            with pytest.raises(FileExistsError):
+                utils.local_write_output(
+                    pl.DataFrame({"a": [1]}), data_type="excel", path=path,
+                    write_mode="create", sheet_name="B",
+                )
+            assert Path(path).read_bytes() == before
 
     @pytest.mark.parametrize("shape", ["lazy", "eager"])
     def test_ipc(self, shape: str):

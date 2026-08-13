@@ -1,6 +1,7 @@
 from logging import getLogger
 from multiprocessing import Queue
 
+import fastexcel
 import polars as pl
 import pytest
 
@@ -83,6 +84,84 @@ def test_write_output_new_formats(tmp_path, data_type, ext, compression):
     assert progress.value == 100, error_message[:].decode(errors="replace")
     assert out.exists() and out.stat().st_size > 0, f"{data_type} file not written"
     assert getattr(pl, f"read_{data_type}")(str(out)).shape == (3, 2)
+
+
+def test_write_output_excel_update_preserves_other_sheets(tmp_path):
+    """The worker's excel update path must add its sheet to an existing workbook without dropping sheet A."""
+    from flowfile_worker.funcs import write_output
+
+    out = tmp_path / "book.xlsx"
+    pl.DataFrame({"keep": ["a"]}).write_excel(str(out), worksheet="A")
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+
+    write_output(
+        polars_serializable_object=pl.LazyFrame({"value": [1, 2, 3]}).serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        data_type="excel",
+        path=str(out),
+        write_mode="update",
+        sheet_name="B",
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    assert fastexcel.read_excel(str(out)).sheet_names == ["A", "B"]
+    assert pl.read_excel(str(out), sheet_name="A").to_dicts() == [{"keep": "a"}]
+    assert pl.read_excel(str(out), sheet_name="B")["value"].to_list() == [1, 2, 3]
+
+
+def test_write_output_excel_overwrite_replaces_whole_workbook(tmp_path):
+    """overwrite keeps its historical meaning: the previous workbook and every sheet in it are gone."""
+    from flowfile_worker.funcs import write_output
+
+    out = tmp_path / "book.xlsx"
+    pl.DataFrame({"keep": ["a"]}).write_excel(str(out), worksheet="A")
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+
+    write_output(
+        polars_serializable_object=pl.LazyFrame({"value": [1, 2, 3]}).serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        data_type="excel",
+        path=str(out),
+        write_mode="overwrite",
+        sheet_name="B",
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    assert fastexcel.read_excel(str(out)).sheet_names == ["B"]
+
+
+def test_write_output_excel_create_reports_error_message(tmp_path):
+    """A refused excel create must surface as progress=-1 plus an error message, not a silent progress-0 hang."""
+    from flowfile_worker.funcs import write_output
+
+    out = tmp_path / "book.xlsx"
+    pl.DataFrame({"keep": ["a"]}).write_excel(str(out), worksheet="A")
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+
+    write_output(
+        polars_serializable_object=pl.LazyFrame({"value": [1, 2, 3]}).serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        data_type="excel",
+        path=str(out),
+        write_mode="create",
+        sheet_name="B",
+    )
+
+    assert progress.value == -1
+    assert "already exists" in error_message[:].decode(errors="replace")
+    assert fastexcel.read_excel(str(out)).sheet_names == ["A"]
 
 
 def test_table_creator_factory_new_formats():

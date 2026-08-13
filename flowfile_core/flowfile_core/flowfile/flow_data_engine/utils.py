@@ -8,6 +8,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.settings import AVAILABLE_RAM
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.utils.utils import standardize_col_dtype
+from shared.excel_writer import write_excel_output
 
 
 def get_data_type(vals: Iterable[Any]):
@@ -95,10 +96,7 @@ def execute_write_method(
     write_mode: str = "create",
     compression: str = None,
 ):
-    if data_type == "excel":
-        logger.info("Writing as excel file")
-        write_method(path, worksheet=sheet_name)
-    elif data_type == "csv":
+    if data_type == "csv":
         logger.info("Writing as csv file")
         if write_mode == "append":
             with open(path, "ab") as f:
@@ -129,6 +127,10 @@ def local_write_output(
     node_id: int | str = -1,
 ):
     is_lazy = isinstance(_df, pl.LazyFrame)
+    if data_type == "excel":
+        frame = _df.collect() if is_lazy else _df
+        write_excel_output(frame, path=path, sheet_name=sheet_name, write_mode=write_mode)
+        return None
     sink_method_str = "sink_" + data_type
     write_method_str = "write_" + data_type
     has_sink_method = hasattr(_df, sink_method_str)

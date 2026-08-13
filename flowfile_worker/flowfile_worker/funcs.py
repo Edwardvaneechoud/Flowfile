@@ -31,6 +31,7 @@ from shared.delta_utils import (
     validate_catalog_path,
     validate_catalog_uri,
 )
+from shared.excel_writer import write_excel_output
 from shared.storage_config import storage
 
 
@@ -428,10 +429,7 @@ def execute_write_method(
     flowfile_logger: Logger = None,
 ):
     flowfile_logger.info("executing write method")
-    if data_type == "excel":
-        logger.info("Writing as excel file")
-        write_method(path, worksheet=sheet_name)
-    elif data_type == "csv":
+    if data_type == "csv":
         logger.info("Writing as csv file")
         if write_mode == "append":
             with open(path, "ab") as f:
@@ -546,6 +544,13 @@ def write_output(
         if isinstance(df, pl.LazyFrame):
             flowfile_logger.info(f'Execution plan explanation:\n{df.explain(format="plain")}')
         flowfile_logger.info("Successfully deserialized dataframe")
+        if data_type == "excel":
+            frame = collect_lazy_frame(df) if isinstance(df, pl.LazyFrame) else df
+            write_excel_output(frame, path=path, sheet_name=sheet_name, write_mode=write_mode)
+            flowfile_logger.info(f"Number of records written: {frame.height}")
+            with progress.get_lock():
+                progress.value = 100
+            return
         sink_method_str = "sink_" + data_type
         write_method_str = "write_" + data_type
         has_sink_method = hasattr(df, sink_method_str)
@@ -579,8 +584,12 @@ def write_output(
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
-        logger.info(f"Error during write operation: {str(e)}")
-        error_message[: len(str(e))] = str(e).encode()
+        flowfile_logger.error(f"Error during write operation: {e}")
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
 
 
 def write_parquet(

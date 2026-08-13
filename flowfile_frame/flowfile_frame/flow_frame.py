@@ -2064,6 +2064,7 @@ class FlowFrame:
         path: str | os.PathLike,
         *,
         worksheet: str = "Sheet1",
+        write_mode: Literal["overwrite", "update", "create"] = "overwrite",
         description: str = None,
         convert_to_absolute_path: bool = True,
         **kwargs: Any,
@@ -2074,6 +2075,9 @@ class FlowFrame:
         Args:
             path: Path or filename for the Excel file.
             worksheet: Name of the worksheet, defaults to 'Sheet1'.
+            write_mode: How to treat an existing file. 'overwrite' replaces the whole workbook,
+                'update' replaces only the target worksheet and keeps every other sheet,
+                'create' refuses to write when the file already exists. Defaults to 'overwrite'.
             description: Description of this operation for the ETL graph.
             convert_to_absolute_path: If the path needs to be set to a fixed location.
             **kwargs: Additional keyword arguments for polars.DataFrame.write_excel.
@@ -2101,6 +2105,7 @@ class FlowFrame:
             file_type="excel",
             name=file_name,
             directory=file_str if is_path_input else str(file_str),
+            write_mode=write_mode,
             table_settings=input_schema.OutputExcelTable(sheet_name=worksheet),
         )
         if is_path_input:
@@ -2126,6 +2131,11 @@ class FlowFrame:
                     f"Input 'path' must be a string or Path-like object when using advanced "
                     f"write_excel options (kwargs={kwargs}), got {type(path)}."
                     " File-like objects are not supported with the Polars Code fallback."
+                )
+            if write_mode != "overwrite":
+                raise TypeError(
+                    f"write_mode={write_mode!r} cannot be combined with advanced write_excel options "
+                    f"(kwargs={kwargs}): polars.DataFrame.write_excel always overwrites the whole workbook."
                 )
 
             path_arg_repr = repr(output_settings.directory)
