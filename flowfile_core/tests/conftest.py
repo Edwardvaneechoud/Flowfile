@@ -124,7 +124,13 @@ def setup_test_db():
     if os.environ.get("TESTING") == "True" and "sqlite" in get_database_url():
         logger.info(f"Trying to cleanup: {get_database_url()}")
         try:
+            from sqlalchemy import text
+
             Base.metadata.drop_all(bind=engine)
+            # drop_all leaves alembic_version; without dropping it a failed unlink (WinError 32) strands a stamped but table-less DB.
+            with engine.begin() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+            engine.dispose()
 
             db_path = get_database_url().replace("sqlite:///", "")
             if db_path != ":memory:" and os.path.exists(db_path):
@@ -464,9 +470,21 @@ def execution_location(request):
     Tests receive this fixture as a parameter, and pytest runs them once per
     param. The `remote` variant is skipped automatically when no worker is
     running, so this is safe for contributors without a worker.
+
+    A live worker is necessary but not sufficient: the worker fixture is
+    independent of the offload flag, so with ``FLOWFILE_OFFLOAD_TO_WORKER=0`` a
+    worker is still listening while ``get_prio_execution_location`` silently
+    downgrades "remote" to "local". Both params would then exercise the same
+    path and report twice the passes while proving nothing about remote.
     """
-    if request.param == "remote" and not is_worker_running():
-        pytest.skip("Worker not running")
+    from flowfile_core.schemas.schemas import (
+        is_valid_execution_location_in_current_global_settings,
+    )
+
+    if request.param == "remote" and not (
+        is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")
+    ):
+        pytest.skip("Remote execution not active")
     return request.param
 
 
