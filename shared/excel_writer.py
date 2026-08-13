@@ -99,7 +99,7 @@ def _workbook_lock(path: str) -> Iterator[None]:
         except BaseException:
             os.close(fd)
             raise
-        if True:  # MUTATION: validation disabled (reproduces the CI split-domain race)
+        if _is_live_lockfile(fd, lock_path):
             break
         _unlock(fd)
         os.close(fd)
