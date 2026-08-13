@@ -1,5 +1,7 @@
 import datetime
 import multiprocessing
+import os
+import time
 
 import fastexcel
 import openpyxl
@@ -10,7 +12,9 @@ from openpyxl.utils.exceptions import IllegalCharacterError
 from shared.excel_writer import write_excel_output
 
 
-def _parallel_update(path, sheet):
+def _parallel_update(path, sheet, barrier, delay):
+    barrier.wait()
+    time.sleep(delay)
     write_excel_output(pl.DataFrame({sheet: [1, 2]}), path, sheet_name=sheet, write_mode="update")
 
 
@@ -120,17 +124,24 @@ def test_update_leaves_no_temp_file_and_preserves_original_on_failure(tmp_path):
 def test_parallel_update_writers_keep_every_sheet(tmp_path, preseeded):
     """Concurrent update writers to one workbook serialize instead of losing sheets or corrupting it."""
     path = str(tmp_path / "parallel.xlsx")
-    names = [f"S{i}" for i in range(4)]
+    names = [f"S{i}" for i in range(6)]
     expected = set(names)
     if preseeded:
         write_excel_output(pl.DataFrame({"base": [1]}), path, sheet_name="Base")
         expected.add("Base")
     ctx = multiprocessing.get_context("spawn")
-    processes = [ctx.Process(target=_parallel_update, args=(path, name)) for name in names]
+    barrier = ctx.Barrier(len(names))
+    # Staggered starts on a shared epoch: arrivals spread across several lock hand-offs,
+    # which is the interleaving that loses sheets when the locking is broken.
+    processes = [
+        ctx.Process(target=_parallel_update, args=(path, name, barrier, index * 0.03))
+        for index, name in enumerate(names)
+    ]
     for process in processes:
         process.start()
     for process in processes:
         process.join(timeout=120)
-    assert [process.exitcode for process in processes] == [0, 0, 0, 0]
+    assert [process.exitcode for process in processes] == [0] * len(names)
     assert set(fastexcel.read_excel(path).sheet_names) == expected
-    assert list(tmp_path.glob("*.lock")) == []
+    if os.name != "nt":
+        assert list(tmp_path.glob("*.lock")) == []

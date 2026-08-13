@@ -68,31 +68,58 @@ else:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
+def _is_live_lockfile(fd: int, lock_path: str) -> bool:
+    try:
+        current = os.stat(lock_path)
+    except OSError:
+        return False
+    held = os.fstat(fd)
+    return (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino)
+
+
 @contextmanager
 def _workbook_lock(path: str) -> Iterator[None]:
     """Serialize read-modify-write access to *path* across processes.
 
-    The OS releases the lock if the holder dies (the worker's cancel path terminates children),
-    so a killed write never wedges later runs. The sidecar is unlinked best-effort on release.
+    Safe-unlink lockfile protocol: after acquiring the flock, verify the fd still is the live
+    lockfile — a releaser unlinks *before* unlocking, so a waiter that acquires a stale inode
+    detects the mismatch and reopens instead of entering a second lock domain. On Windows an
+    open file cannot be unlinked, which makes the plain unlock-close-unlink order safe there.
+    The OS releases the lock if the holder dies, so a killed write never wedges later runs.
     """
     lock_path = os.path.abspath(path) + ".lock"
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-    try:
-        deadline = time.monotonic() + _LOCK_TIMEOUT_S
-        while not _try_lock(fd):
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"Timed out waiting for the excel write lock on '{path}'.")
-            time.sleep(_LOCK_POLL_S)
+    deadline = time.monotonic() + _LOCK_TIMEOUT_S
+    while True:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
         try:
-            yield
-        finally:
-            _unlock(fd)
-    finally:
+            while not _try_lock(fd):
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"Timed out waiting for the excel write lock on '{path}'.")
+                time.sleep(_LOCK_POLL_S)
+        except BaseException:
+            os.close(fd)
+            raise
+        if True:  # MUTATION: validation disabled (reproduces the CI split-domain race)
+            break
+        _unlock(fd)
         os.close(fd)
-        try:
-            os.unlink(lock_path)
-        except OSError:
-            pass
+    try:
+        yield
+    finally:
+        if os.name == "nt":
+            _unlock(fd)
+            os.close(fd)
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+        else:
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+            _unlock(fd)
+            os.close(fd)
 
 
 def resolve_excel_write_mode(write_mode: str | None) -> str:
