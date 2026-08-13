@@ -9,6 +9,7 @@ tests on their own can't verify cheaply.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -1272,3 +1273,81 @@ class TestShutdownOwnership:
         mgr.shutdown_all()
 
         mgr._cleanup_container.assert_not_called()
+
+
+class TestAdoptedOwnership:
+    """A core killed without cleaning up hands its kernels to whoever restarts.
+
+    Without this, every hard kill leaks a container forever: the next core
+    adopts it, reuses it, and then refuses to stop it at exit because it wasn't
+    the one that started it.
+    """
+
+    def _adopted(self, mgr, *, labels: dict[str, str]):
+        mgr._kernels["k1"] = _kernel("k1")
+        container = MagicMock()
+        container.name = "flowfile-kernel-k1"
+        container.status = "running"
+        container.id = "c-1"
+        container.labels = labels
+        container.attrs = {"Created": "2020-01-01T00:00:00Z", "NetworkSettings": {"Ports": {}}}
+        mgr._docker.containers.list.return_value = [container]
+        return container
+
+    def test_dead_owner_transfers_shutdown_duty(self):
+        mgr = _bare_manager()
+        # pid 1 is init: alive. Use a pid that cannot be running.
+        self._adopted(mgr, labels={
+            "flowfile_core_instance": "test-core-id",
+            "flowfile_core_runtime": "a-previous-boot",
+            "flowfile_core_pid": "2147483646",
+        })
+
+        mgr._reclaim_running_containers()
+
+        assert "k1" in mgr._started_here
+
+    def test_live_owner_keeps_its_kernel(self):
+        mgr = _bare_manager()
+        self._adopted(mgr, labels={
+            "flowfile_core_instance": "test-core-id",
+            "flowfile_core_runtime": "another-live-core",
+            "flowfile_core_pid": str(os.getpid()),
+        })
+
+        mgr._reclaim_running_containers()
+
+        assert "k1" not in mgr._started_here
+
+    def test_other_install_is_never_claimed(self):
+        mgr = _bare_manager()
+        self._adopted(mgr, labels={
+            "flowfile_core_instance": "some-other-install",
+            "flowfile_core_pid": "2147483646",
+        })
+
+        mgr._reclaim_running_containers()
+
+        assert "k1" not in mgr._started_here
+
+    def test_prelabel_container_is_not_claimed(self):
+        mgr = _bare_manager()
+        self._adopted(mgr, labels={})
+
+        mgr._reclaim_running_containers()
+
+        assert "k1" not in mgr._started_here
+
+    def test_claimed_kernel_is_stopped_at_shutdown(self):
+        mgr = _bare_manager()
+        container = self._adopted(mgr, labels={
+            "flowfile_core_instance": "test-core-id",
+            "flowfile_core_pid": "2147483646",
+        })
+        container.id = "c-1"
+        mgr._reclaim_running_containers()
+        mgr._cleanup_container = MagicMock()
+
+        mgr.shutdown_all()
+
+        mgr._cleanup_container.assert_called_once_with("k1")

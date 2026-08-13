@@ -49,6 +49,7 @@ from flowfile_core.kernel.models import (
     ResolvedPackage,
 )
 from flowfile_core.kernel.urls import core_base_url
+from shared.run_completion import _pid_is_alive  # cross-platform; os.kill(pid, 0) kills on Windows
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,8 @@ _IMAGE_LABEL_CORE_INSTANCE = "flowfile_core_instance"
 _IMAGE_LABEL_KERNEL_ID = "flowfile_kernel_id"
 # Which *process* started a container, as opposed to which install built an image.
 _CONTAINER_LABEL_CORE_RUNTIME = "flowfile_core_runtime"
+# That process's pid, so a later core can tell whether the owner is still alive.
+_CONTAINER_LABEL_CORE_PID = "flowfile_core_pid"
 
 # Grace window before anything counts as an orphan.
 _GC_MIN_AGE_SECONDS = 600
@@ -621,6 +624,7 @@ class KernelManager:
             "labels": {
                 _IMAGE_LABEL_CORE_INSTANCE: self._core_instance_id,
                 _CONTAINER_LABEL_CORE_RUNTIME: self._runtime_id,
+                _CONTAINER_LABEL_CORE_PID: str(os.getpid()),
                 _IMAGE_LABEL_KERNEL_ID: _KERNEL_ID_TAG_RE.sub("-", kernel_id.lower()),
             },
         }
@@ -967,6 +971,31 @@ class KernelManager:
         label = self._container_label(container, _IMAGE_LABEL_CORE_INSTANCE)
         return label is None or label == self._core_instance_id
 
+    def _claims_ownership(self, container) -> bool:
+        """Whether this process may shut *container* down at exit.
+
+        Ours outright, or this install started it from a process that has since
+        died — a core killed without cleaning up hands its kernels to whoever
+        restarts, otherwise every hard kill leaks a container forever. A live
+        owner keeps its own kernels, which is what stops one core from tearing
+        down another's mid-run.
+
+        A pid can be recycled across a reboot, so a stale label may read as
+        alive; that direction only leaks, never kills someone else's kernel.
+        """
+        if self._container_label(container, _CONTAINER_LABEL_CORE_RUNTIME) == self._runtime_id:
+            return True
+        if not self._is_our_install_container(container):
+            return False
+        pid_label = self._container_label(container, _CONTAINER_LABEL_CORE_PID)
+        if pid_label is None:
+            return False  # predates the label — can't tell, so don't touch it
+        try:
+            pid = int(pid_label)
+        except (TypeError, ValueError):
+            return False
+        return not _pid_is_alive(pid)
+
     def _reclaim_running_containers(self, prune_orphans: bool = True) -> None:
         """Adopt pre-existing flowfile-kernel containers on startup: running ones
         become IDLE, stopped leftovers are recorded so the next start replaces them.
@@ -996,6 +1025,9 @@ class KernelManager:
                     if port is not None:
                         kernel.port = port
                     kernel.state = KernelState.IDLE
+                    # Inherit shutdown duty from a dead owner, or the container outlives every restart.
+                    if self._claims_ownership(container):
+                        self._started_here.add(kernel_id)
                     logger.info(
                         "Reclaimed running kernel '%s' (container %s)",
                         kernel_id,
