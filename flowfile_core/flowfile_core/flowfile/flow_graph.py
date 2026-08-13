@@ -1,8 +1,10 @@
 import datetime
 import functools
+import hashlib
 import io as _io
 import json
 import os
+import re
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,7 +23,12 @@ from pyarrow.parquet import ParquetFile
 
 from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
-from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
+from flowfile_core.catalog.delta_utils import (
+    check_source_versions_current,
+    delete_table_storage,
+    get_live_delta_version,
+    is_delta_table,
+)
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.configs import logger
@@ -992,13 +999,24 @@ def _register_catalog_table(
 
 
 def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
-    """Collect delta versions of upstream physical catalog tables used by this flow.
+    """Collect delta versions of upstream catalog tables used by this flow.
 
     For each catalog_reader node that reads a physical delta table, records
     the current delta version. For optimized virtual table sources, includes
     their transitive source_table_versions.
 
-    Returns a JSON string of SourceTableVersion entries, or None if no sources found.
+    Complete-or-nothing: returns None as soon as any catalog source can't be
+    fingerprinted (SQL reader, missing record, virtual source without its own
+    versions, cloud/non-delta path, probe failure). A partial fingerprint would
+    let version checks pass while the unfingerprinted source changed, so plan
+    replay and the worker's IPC cache would serve stale data. None degrades to
+    fall-back-to-flow-execution / always-rebuild, which is correct.
+
+    A flow with no catalog sources at all returns "[]" — provably complete
+    (the serialized plan embeds all its data), so plan replay stays valid.
+
+    Returns a JSON string of SourceTableVersion entries ("[]" when none), or
+    None when unfingerprintable.
     """
     from deltalake import DeltaTable as _DeltaTable
 
@@ -1012,6 +1030,8 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
+        if getattr(setting, "sql_query", None):
+            return None
         table_id = getattr(setting, "catalog_table_id", None)
         if not table_id or table_id in seen_table_ids:
             continue
@@ -1025,16 +1045,17 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
             for table_id in table_ids:
                 table_record = repo.get_table(table_id)
                 if table_record is None:
-                    continue
+                    return None
                 if table_record.table_type == "virtual":
                     # Include transitive versions from optimized virtual sources
-                    if table_record.source_table_versions:
-                        existing = json.loads(table_record.source_table_versions)
-                        for entry in existing:
-                            sv = SourceTableVersion(**entry)
-                            if sv.table_id not in seen_table_ids:
-                                seen_table_ids.add(sv.table_id)
-                                versions.append(sv)
+                    if not table_record.source_table_versions:
+                        return None
+                    existing = json.loads(table_record.source_table_versions)
+                    for entry in existing:
+                        sv = SourceTableVersion(**entry)
+                        if sv.table_id not in seen_table_ids:
+                            seen_table_ids.add(sv.table_id)
+                            versions.append(sv)
                 elif table_record.file_path and is_delta_table(table_record.file_path):
                     try:
                         current_version = _DeltaTable(table_record.file_path, without_files=True).version()
@@ -1047,12 +1068,120 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
                         )
                     except Exception:
                         logger.warning("Could not read delta version for source table %d", table_id, exc_info=True)
+                        return None
+                else:
+                    return None
     except Exception:
         logger.warning("Could not collect source table versions", exc_info=True)
-
-    if not versions:
         return None
+
     return json.dumps([v.model_dump() for v in versions])
+
+
+def _probe_version_entry(path: str, storage_options: dict | None, version_cache: dict[str, int]) -> int:
+    """Live Delta version for *path*, memoized per refresh pass."""
+    if path not in version_cache:
+        version_cache[path] = get_live_delta_version(path, storage_options=storage_options)
+    return version_cache[path]
+
+
+def _fingerprint_virtual_source(
+    is_optimized: bool,
+    serialized_lf: bytes | None,
+    source_table_versions: str | None,
+    version_cache: dict[str, int],
+) -> tuple[list[dict], bool]:
+    """Fingerprint entries for a virtual-table source, or force=True.
+
+    An optimized virtual is identified by its stored plan (rotates when the
+    producer re-writes) plus live versions of its recorded Delta sources
+    (rotate on out-of-band writes). A non-optimized or fingerprint-less
+    virtual re-runs its producer flow at resolution, so its output can change
+    with nothing observable here — always invalidate, like run_flow nodes.
+    """
+    if not is_optimized or not serialized_lf or source_table_versions is None:
+        return [], True
+    entries: list[dict] = [{"plan": hashlib.sha256(serialized_lf).hexdigest()}]
+    for entry in json.loads(source_table_versions):
+        entries.append(
+            {
+                "table_id": entry["table_id"],
+                "path": entry["file_path"],
+                "version": _probe_version_entry(entry["file_path"], None, version_cache),
+            }
+        )
+    return entries, False
+
+
+def _catalog_reader_source_fingerprint(
+    settings: "input_schema.NodeCatalogReader",
+    version_cache: dict[str, int],
+    opts_by_namespace: dict[int | None, dict | None],
+) -> tuple[str | None, bool]:
+    """Canonical freshness fingerprint for a catalog_reader node's sources.
+
+    Returns ``(fingerprint_json, force)``. ``force=True`` means the node must
+    be invalidated unconditionally (unfingerprintable source). Raises on probe
+    failures — the caller treats that as force (fail-open re-run, so the real
+    error surfaces instead of a silently-served stale snapshot).
+    """
+    entries: list[dict] = []
+
+    if settings.sql_query:
+        resolved = _resolve_catalog_sql_tables(settings.node_id, settings.user_id)
+
+        def _referenced(name: str) -> bool:
+            return re.search(rf"\b{re.escape(name)}\b", settings.sql_query, re.IGNORECASE) is not None
+
+        physical = {n: p for n, p in resolved.table_paths.items() if _referenced(n)}
+        virtual = {n: v for n, v in resolved.virtual_tables.items() if _referenced(n)}
+        if not physical and not virtual:
+            # Conservative: no name matched the query text — treat every
+            # registered table as a potential source (over-fresh, never stale).
+            physical, virtual = resolved.table_paths, resolved.virtual_tables
+
+        for name, path in sorted(physical.items()):
+            ns = resolved.table_namespaces.get(name)
+            opts = None
+            if _is_cloud_uri(path):
+                if ns not in opts_by_namespace:
+                    opts_by_namespace[ns] = resolve_for_namespace(ns).storage_options or None
+                opts = opts_by_namespace[ns]
+            entries.append({"name": name, "path": path, "version": _probe_version_entry(path, opts, version_cache)})
+        for name, (is_optimized, serialized_lf, _vid, versions_json) in sorted(virtual.items()):
+            sub_entries, force = _fingerprint_virtual_source(is_optimized, serialized_lf, versions_json, version_cache)
+            if force:
+                return None, True
+            entries.append({"name": name, "virtual": sub_entries})
+        return json.dumps(entries, sort_keys=True), False
+
+    info = _resolve_catalog_table_info(settings)
+    if not info.authorized:
+        return None, True
+    if info.table_type == "virtual":
+        sub_entries, force = _fingerprint_virtual_source(
+            info.is_optimized, info.serialized_lf, info.source_table_versions, version_cache
+        )
+        if force:
+            return None, True
+        return json.dumps({"table_id": info.table_id, "virtual": sub_entries}, sort_keys=True), False
+    if not info.file_path:
+        return None, True
+    if _is_cloud_uri(info.file_path):
+        ns = info.namespace_id
+        if ns not in opts_by_namespace:
+            opts_by_namespace[ns] = resolve_for_namespace(ns).storage_options or None
+        version = _probe_version_entry(info.file_path, opts_by_namespace[ns], version_cache)
+        return json.dumps({"path": info.file_path, "version": version}, sort_keys=True), False
+    if is_delta_table(info.file_path):
+        version = _probe_version_entry(info.file_path, None, version_cache)
+        return json.dumps({"path": info.file_path, "version": version}, sort_keys=True), False
+    # Legacy parquet: the SourceFileInfo idiom (mtime+size).
+    stat = os.stat(info.file_path)
+    return (
+        json.dumps({"path": info.file_path, "mtime": stat.st_mtime, "size": stat.st_size}, sort_keys=True),
+        False,
+    )
 
 
 def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
@@ -6045,6 +6174,43 @@ class FlowGraph:
                 self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
 
+    def _refresh_catalog_reader_freshness(self) -> None:
+        """Invalidate catalog_reader nodes whose Delta sources changed since their last run.
+
+        The node hash is source-blind (settings + upstream hashes only), so in
+        Development mode an unchanged-settings reader is skipped and downstream
+        keeps reading a frozen worker snapshot. This probes the live Delta
+        versions once per run and bumps the node's cache epoch on drift — which
+        rotates the hash, defeats the dev-mode skip AND the explicit
+        cache_results worker lookup, and cascades resets downstream.
+
+        Pinned ``delta_version`` readers are deliberate time travel and are
+        never probed. Probe failures fail open (invalidate) so the real error
+        surfaces on the canvas instead of a silently-served stale snapshot.
+        """
+        version_cache: dict[str, int] = {}
+        opts_by_namespace: dict[int | None, dict | None] = {}
+        for node in self.nodes:
+            if node.node_type != "catalog_reader":
+                continue
+            settings = node.setting_input
+            if not isinstance(settings, input_schema.NodeCatalogReader):
+                continue
+            if not settings.sql_query and settings.delta_version is not None:
+                continue
+            try:
+                fingerprint, force = _catalog_reader_source_fingerprint(settings, version_cache, opts_by_namespace)
+            except Exception:
+                self.flow_logger.warning(
+                    f"Node {node.node_id}: could not probe catalog source freshness; re-running to be safe"
+                )
+                fingerprint, force = None, True
+            recorded = node._execution_state.source_version_info
+            if force or (recorded is not None and fingerprint != recorded):
+                node.invalidate_cache()
+                self.flow_logger.info(f"Node {node.node_id}: catalog source changed; invalidating cached result")
+            node._execution_state.source_version_info = fingerprint
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -6064,6 +6230,8 @@ class FlowGraph:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
+
+            self._refresh_catalog_reader_freshness()
 
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()

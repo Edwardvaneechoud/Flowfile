@@ -400,8 +400,10 @@ class VizWorkerSource(BaseModel):
     """Source descriptor for a viz session.
 
     The ``session_key`` is the cache key in ``VizSessionRegistry``; core builds
-    it deterministically (table_id+updated_at, sql hash, etc.) so successive
-    requests against the same source skip the load step.
+    it deterministically and version-addressed (``tbl:{id}:v{delta_version}``,
+    a sql digest over query + referenced-table versions, fvt ipc path+mtime) so
+    successive requests against the same source data skip the load step while
+    any Delta write rotates the key and spawns a fresh child.
     """
 
     kind: Literal["physical", "sql", "ipc_path", "plan"]

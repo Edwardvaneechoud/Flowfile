@@ -232,6 +232,8 @@ const props = defineProps<{
     column: string,
     limit?: number,
   ) => Promise<ColumnStatsResponse>;
+  /** Bump to re-run fetchStats for every bound filter (manual dashboard refresh). */
+  statsRefreshNonce?: number;
 }>();
 
 const emit = defineEmits<{
@@ -282,7 +284,10 @@ const fetchStats = async (filterId: string, tableId: number, column: string) => 
 };
 
 watch(
-  () => props.filters.map((f) => `${f.id}:${f.datasource_id ?? ""}:${f.field_name}` as const),
+  () => [
+    props.statsRefreshNonce ?? 0,
+    ...props.filters.map((f) => `${f.id}:${f.datasource_id ?? ""}:${f.field_name}` as const),
+  ],
   () => {
     // Refresh stats whenever a filter's binding changes.
     for (const f of props.filters) {

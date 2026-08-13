@@ -464,18 +464,6 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
     return data
 
 
-def trigger_visualize_evict(session_key: str) -> None:
-    """Ask the worker to drop a cached viz session (e.g. after a table update)."""
-    logger.info("[viz] -> worker /catalog/visualize_evict session_key=%s", session_key)
-    response = requests.post(
-        f"{WORKER_URL}/catalog/visualize_evict",
-        params={"session_key": session_key},
-        timeout=10,
-    )
-    if not response.ok:
-        raise RuntimeError(f"Worker visualize_evict failed: {response.text}")
-
-
 def trigger_read_table_metadata(table_name: str, storage: dict | None = None) -> dict:
     """Ask the worker to read table metadata (schema, row_count, size_bytes).
 
