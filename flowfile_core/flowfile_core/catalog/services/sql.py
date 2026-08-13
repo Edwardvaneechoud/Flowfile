@@ -19,7 +19,6 @@ from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.text_utils import (
     friendly_relation_error,
-    hash_source_versions,
     is_table_reference,
     rewrite_qualified_references,
 )
@@ -155,7 +154,8 @@ class SqlService:
     def _materialise_virtual_for_sql(self, virtual_id: int, user_id: int | None) -> str:
         """Resolve a virtual table to an IPC path for the SQL worker call."""
         lazy_frame = self._resolve_virtual_flow_table_via_facade(virtual_id, user_id=user_id, run_location="remote")
-        versions_hash = hash_source_versions(self.repo.get_table(virtual_id).source_table_versions)
+        # Post-resolution read: resolution may have re-stamped source_table_versions.
+        versions_hash = self._require_virtual_tables().fresh_versions_hash(virtual_id)
         result = trigger_resolve_virtual_table(virtual_id, lazy_frame.serialize(), versions_hash)
         return result["ipc_path"]
 

@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterable
 
 from flowfile_core.schemas.catalog_schema import DeltaVersionCommit
-from shared.delta_utils import format_delta_timestamp
+from shared.delta_utils import NO_VERSIONS_HASH, format_delta_timestamp
 
 _TABLE_INTRODUCERS = r"\b(?:FROM|JOIN|INTO|UPDATE)\b|,"
 
@@ -105,5 +105,5 @@ def parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
 def hash_source_versions(versions_json: str | None) -> str:
     """Stable cache key for a virtual table's source-version state."""
     if not versions_json:
-        return "noversions"
+        return NO_VERSIONS_HASH
     return hashlib.sha256(versions_json.encode()).hexdigest()

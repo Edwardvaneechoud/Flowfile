@@ -1,3 +1,4 @@
+import hashlib
 import io
 import logging
 import os
@@ -23,6 +24,7 @@ from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSett
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 from shared.delta_utils import (
+    NO_VERSIONS_HASH,
     format_delta_timestamp,
     get_delta_size_bytes,
     make_json_safe,
@@ -1320,7 +1322,7 @@ _SUPERSEDED_MIN_AGE_S = 3600
 
 
 def _drop_superseded_results(target_dir: Path, table_id: int, keep: str) -> None:
-    """Drop old kernel_shared snapshots of a table, sparing recent ones a concurrent request may still scan."""
+    """Drop old snapshots of a table, sparing recent ones a concurrent request may still scan."""
     cutoff = time.time() - _SUPERSEDED_MIN_AGE_S
     for stale in target_dir.glob(f"fvt-{table_id}-*.arrow"):
         try:
@@ -1333,20 +1335,27 @@ def _drop_superseded_results(target_dir: Path, table_id: int, keep: str) -> None
 def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
     """Materialise a virtual flow table to disk.
 
-    The default target is an idempotent cache on (table_id, source_versions_hash).
-    The kernel_shared target always rebuilds: a serialised plan records table
-    paths, not data snapshots, so its hash does not change when the underlying
-    data does — an exists() check would serve the first snapshot forever.
+    The default target is an idempotent cache keyed on (table_id, plan bytes,
+    source_versions_hash): the plan bytes rotate the file when the producer's
+    output plan changes (e.g. a manual-input edit), the versions hash when a
+    fingerprinted Delta source changes. A NO_VERSIONS_HASH key and the
+    kernel_shared target always rebuild: without a source-version fingerprint
+    an exists() check could serve a stale snapshot. kernel_shared keeps its
+    caller-provided name (same-name overwrite is its re-point contract).
+    Superseded same-table snapshots are pruned for both targets (age-guarded
+    so concurrent readers can finish).
     """
     if req.target == "kernel_shared":
         target_dir = storage.shared_virtual_results_directory
+        name_fp = req.source_versions_hash[:16]
     else:
         target_dir = storage.catalog_virtual_results_directory
+        name_fp = hashlib.sha256(req.plan_bytes + req.source_versions_hash.encode()).hexdigest()[:16]
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
-    if req.target == "kernel_shared":
-        _drop_superseded_results(target_dir, req.table_id, keep=target.name)
-    elif target.exists():
+    target = target_dir / f"fvt-{req.table_id}-{name_fp}.arrow"
+    _drop_superseded_results(target_dir, req.table_id, keep=target.name)
+    cacheable = req.target != "kernel_shared" and req.source_versions_hash != NO_VERSIONS_HASH
+    if cacheable and target.exists():
         return models.ResolveVirtualTableResponse(
             ipc_path=target.name,
             mtime=target.stat().st_mtime,

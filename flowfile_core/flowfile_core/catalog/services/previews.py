@@ -26,7 +26,7 @@ from flowfile_core.catalog.storage_backend import (
     _is_cloud_uri,
     resolve_for_namespace,
 )
-from flowfile_core.catalog.text_utils import hash_source_versions, parse_delta_history
+from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
@@ -95,7 +95,9 @@ class TablePreviewService:
         Honours the core-never-collects rule — the plan is shipped to the
         worker, written as IPC, then read back via ``read_top_n``.
         """
-        versions_hash = hash_source_versions(table.source_table_versions)
+        # Post-resolution read: resolution may have re-stamped source_table_versions,
+        # and *table* was fetched before it ran.
+        versions_hash = self._virtual_tables.fresh_versions_hash(table.id)
         result = trigger_resolve_virtual_table(table.id, lazy_frame.serialize(), versions_hash)
         ipc_path = validate_catalog_path(result["ipc_path"], storage.catalog_virtual_results_directory)
         pa_table = read_top_n(str(ipc_path), n=limit)

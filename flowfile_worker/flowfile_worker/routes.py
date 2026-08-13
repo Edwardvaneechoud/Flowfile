@@ -497,8 +497,9 @@ def create_table(
 def resolve_virtual_table(payload: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
     """Materialise a flow-virtual table from a serialised polars plan.
 
-    Idempotent on ``(table_id, source_versions_hash)`` — repeated calls return
-    the same IPC file without re-executing the producer plan.
+    Idempotent on ``(table_id, source_versions_hash)`` for real fingerprints —
+    repeated calls return the same IPC file without re-executing the producer
+    plan. A ``noversions`` hash always rebuilds (no fingerprint, no freshness proof).
     """
     try:
         return funcs.resolve_virtual_table(payload)

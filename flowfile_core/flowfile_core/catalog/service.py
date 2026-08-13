@@ -58,6 +58,7 @@ from flowfile_core.catalog.services.tables import (
     CatalogMaterializationResult,
     TableService,
 )
+from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UNSET
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
 
@@ -1121,9 +1122,13 @@ class CatalogService:
         is_optimized: bool | None = None,
         schema_json: str | None = None,
         polars_plan: str | None = None,
-        source_table_versions: str | None = None,
+        source_table_versions: str | None = _VERSIONS_UNSET,
     ) -> CatalogTableOut:
-        """Update a virtual flow table's metadata or producer."""
+        """Update a virtual flow table's metadata or producer.
+
+        ``source_table_versions=None`` clears the stored fingerprint; omitting
+        the argument leaves it untouched (explicit-clear sentinel).
+        """
         self._require_manage("catalog_table", table_id)
         if namespace_id is not None:
             self._require_namespace_writable(namespace_id)
@@ -1139,6 +1144,10 @@ class CatalogService:
             polars_plan,
             source_table_versions,
         )
+
+    def fresh_versions_hash(self, table_id: int) -> str:
+        """Post-resolution cache key for a virtual table's worker IPC snapshot."""
+        return self._virtual_tables.fresh_versions_hash(table_id)
 
     def create_query_virtual_table(
         self,

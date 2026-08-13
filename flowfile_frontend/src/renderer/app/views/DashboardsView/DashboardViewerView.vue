@@ -11,6 +11,9 @@
         }}</span>
       </div>
       <div class="viewer-toolbar-right">
+        <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
+          <el-icon><Refresh /></el-icon> Refresh
+        </el-button>
         <el-button v-if="store.current" type="primary" @click="onEdit">
           <el-icon><Edit /></el-icon> Edit
         </el-button>
@@ -31,12 +34,14 @@
         :tiles-by-datasource="tilesByDatasource"
         :tile-label="tileLabel"
         :get-column-stats="getColumnStats"
+        :stats-refresh-nonce="statsRefreshNonce"
         @update:filters="onFiltersChange"
       />
       <DashboardCanvas
         :layout="liveLayout"
         mode="view"
         :appearance="appearance"
+        :viz-refresh-nonces="vizRefreshNonces"
         :tile-datasource="tileDatasource"
         @edit-viz="onEditVizFromTile"
       />
@@ -48,10 +53,12 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { ArrowLeft, Edit } from "@element-plus/icons-vue";
+import { ArrowLeft, Edit, Refresh } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
+import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import type { DashboardFilter, DashboardLayout } from "../../types";
@@ -71,8 +78,25 @@ const liveLayout = computed<DashboardLayout>(() => {
   }
   return { ...store.current.layout, filters: liveFilters.value };
 });
-const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats } =
+const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats, refresh } =
   useDashboardDatasources(liveLayout);
+
+const catalogStore = useCatalogStore();
+const vizRefreshNonces = ref<Record<number, number>>({});
+const { refreshing, statsRefreshNonce, refreshAll } = useDashboardRefresh({
+  layout: liveLayout,
+  vizRefreshNonces,
+  refreshDatasources: refresh,
+  invalidateFields: catalogStore.invalidateVisualizationFields,
+});
+
+const onRefresh = async () => {
+  try {
+    await refreshAll();
+  } catch {
+    ElMessage.error("Failed to refresh dashboard data");
+  }
+};
 
 watch(
   () => store.current?.layout.filters,

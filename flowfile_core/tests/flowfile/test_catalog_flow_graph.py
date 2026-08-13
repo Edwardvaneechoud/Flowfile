@@ -1180,18 +1180,44 @@ class TestResolveVirtualTable:
     """Test _resolve_virtual_table helper."""
 
     def test_resolve_optimized_virtual_table(self):
-        """An optimized virtual table should deserialize the stored LazyFrame."""
+        """An optimized virtual table with a current fingerprint deserializes the stored LazyFrame."""
         lf = pl.LazyFrame({"x": [1, 2, 3]})
         buf = _io.BytesIO()
         lf.serialize(buf)
         serialized = buf.getvalue()
         result = _resolve_virtual_table(
-            is_optimized=True, serialized_lf=serialized, catalog_table_id=-1, run_location="local"
+            is_optimized=True,
+            serialized_lf=serialized,
+            catalog_table_id=-1,
+            run_location="local",
+            source_table_versions="[]",
         )
 
         assert isinstance(result, pl.LazyFrame)
         df = result.collect()
         assert df["x"].to_list() == [1, 2, 3]
+
+    def test_resolve_optimized_without_fingerprint_falls_back(self):
+        """No recorded source versions → the pinned stored plan can't be trusted;
+        resolution must fall back to re-executing the producer flow."""
+        lf = pl.LazyFrame({"x": [1, 2, 3]})
+        buf = _io.BytesIO()
+        lf.serialize(buf)
+        serialized = buf.getvalue()
+
+        with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
+            mock_db = MagicMock()
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
+                mock_svc_instance = MagicMock()
+                mock_svc_instance.resolve_virtual_flow_table.return_value = pl.LazyFrame({"y": [1]})
+                MockSvc.return_value = mock_svc_instance
+
+                _resolve_virtual_table(is_optimized=True, serialized_lf=serialized, catalog_table_id=42)
+
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once()
 
     def test_resolve_non_optimized_virtual_table(self):
         """A non-optimized virtual table should call CatalogService.resolve_virtual_flow_table."""
@@ -1850,3 +1876,191 @@ class TestCatalogScd2Guards:
         _add_manual_input(graph, [{"id": 1}, {"id": 2}], node_id=1)
         _add_scd2_writer(graph, 2, 1, "dim_keys_only", ns_id)
         self._run_expecting_error(graph, "no columns to compare")
+
+
+class TestCatalogReaderFreshness:
+    """catalog_reader nodes must see new Delta data on re-run (Development mode included)."""
+
+    @staticmethod
+    def _register_delta_table(ns_id: int, tmp_dir: str, name: str = "fresh_delta") -> tuple[int, str]:
+        from shared.delta_utils import write_delta
+
+        delta_path = f"{tmp_dir}/{name}"
+        write_delta(pl.DataFrame(SAMPLE_DATA), delta_path, mode="overwrite")
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            table = svc.register_table_from_data(
+                name=name,
+                table_path=delta_path,
+                owner_id=1,
+                namespace_id=ns_id,
+                storage_format="delta",
+                schema=[{"name": "name", "dtype": "Utf8"}, {"name": "age", "dtype": "Int64"}],
+                row_count=3,
+                column_count=3,
+                size_bytes=100,
+            )
+            return table.id, delta_path
+
+    @staticmethod
+    def _add_reader(graph, table_id: int, node_id: int = 1, **kwargs):
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            catalog_table_id=table_id,
+            **kwargs,
+        )
+        graph.add_catalog_reader(reader)
+        return graph.get_node(node_id)
+
+    def test_dev_mode_rerun_sees_out_of_band_write(self, execution_location):
+        from shared.delta_utils import write_delta
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ns_id = _create_namespace()
+            table_id, delta_path = self._register_delta_table(ns_id, tmp_dir)
+
+            graph = _create_graph(execution_location=execution_location)
+            node = self._add_reader(graph, table_id)
+
+            _run_graph(graph)
+            hash_run1 = node.hash
+            assert len(node.get_resulting_data().collect()) == 3
+
+            write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="overwrite")
+
+            _run_graph(graph)
+            hash_run2 = node.hash
+            assert hash_run2 != hash_run1
+            assert len(node.get_resulting_data().collect()) == 1
+
+            epoch_after_run2 = node._cache_epoch
+            _run_graph(graph)
+            assert node._cache_epoch == epoch_after_run2
+            assert node.hash == hash_run2
+
+    def test_cache_results_lookup_hash_rotates_on_version_bump(self):
+        """Explicit cache_results caches are keyed by node hash on the worker;
+        a Delta version bump must rotate the lookup hash so the stale entry
+        becomes unreachable."""
+        from shared.delta_utils import write_delta
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ns_id = _create_namespace()
+            table_id, delta_path = self._register_delta_table(ns_id, tmp_dir, name="cached_delta")
+
+            graph = _create_graph(execution_location="remote")
+            node = self._add_reader(graph, table_id, cache_results=True)
+
+            looked_up: list[str] = []
+
+            def fake_results_exists(node_hash: str) -> bool:
+                looked_up.append(node_hash)
+                return True
+
+            with patch(
+                "flowfile_core.flowfile.flow_node.executor.results_exists",
+                side_effect=fake_results_exists,
+            ):
+                graph.run_graph()
+                write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="overwrite")
+                graph.run_graph()
+
+            assert len(looked_up) >= 2
+            assert looked_up[0] != looked_up[-1]
+
+    def test_pinned_delta_version_never_invalidated(self):
+        from shared.delta_utils import write_delta
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ns_id = _create_namespace()
+            table_id, delta_path = self._register_delta_table(ns_id, tmp_dir, name="pinned_delta")
+
+            graph = _create_graph(execution_location="local")
+            node = self._add_reader(graph, table_id, delta_version=0)
+
+            _run_graph(graph)
+            hash_run1 = node.hash
+
+            write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="append")
+
+            _run_graph(graph)
+            assert node.hash == hash_run1
+            assert node._execution_state.source_version_info is None
+            assert len(node.get_resulting_data().collect()) == 3
+
+    def test_probe_failure_fails_open(self):
+        """A vanished table re-runs (and errors) instead of serving the frozen snapshot."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ns_id = _create_namespace()
+            table_id, delta_path = self._register_delta_table(ns_id, tmp_dir, name="doomed_delta")
+
+            graph = _create_graph(execution_location="local")
+            node = self._add_reader(graph, table_id)
+
+            _run_graph(graph)
+            epoch_before = node._cache_epoch
+
+            shutil.rmtree(delta_path)
+
+            run_info = graph.run_graph()
+            assert node._cache_epoch == epoch_before + 1
+            assert not run_info.success
+
+    def test_sql_reader_invalidates_only_on_referenced_table_change(self):
+        from shared.delta_utils import write_delta
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ns_id = _create_namespace()
+            _, path_a = self._register_delta_table(ns_id, tmp_dir, name="sql_tbl_a")
+            _, path_b = self._register_delta_table(ns_id, tmp_dir, name="sql_tbl_b")
+
+            graph = _create_graph(execution_location="local")
+            promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+            graph.add_node_promise(promise)
+            reader = input_schema.NodeCatalogReader(
+                flow_id=graph.flow_id,
+                node_id=1,
+                sql_query="SELECT * FROM sql_tbl_a",
+            )
+            graph.add_catalog_reader(reader)
+            node = graph.get_node(1)
+
+            _run_graph(graph)
+            epoch_start = node._cache_epoch
+
+            write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), path_b, mode="overwrite")
+            _run_graph(graph)
+            assert node._cache_epoch == epoch_start
+
+            write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), path_a, mode="overwrite")
+            _run_graph(graph)
+            assert node._cache_epoch == epoch_start + 1
+            assert len(node.get_resulting_data().collect()) == 1
+
+    def test_fingerprint_is_canonical_and_stable(self):
+        from flowfile_core.flowfile.flow_graph import _catalog_reader_source_fingerprint
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ns_id = _create_namespace()
+            table_id, _ = self._register_delta_table(ns_id, tmp_dir, name="stable_delta")
+            settings = input_schema.NodeCatalogReader(flow_id=1, node_id=1, catalog_table_id=table_id)
+
+            fp1, force1 = _catalog_reader_source_fingerprint(settings, {}, {})
+            fp2, force2 = _catalog_reader_source_fingerprint(settings, {}, {})
+            assert force1 is force2 is False
+            assert fp1 == fp2
+            assert fp1 is not None
+
+    def test_execution_state_round_trips_source_version_info(self):
+        from flowfile_core.flowfile.flow_node.state import NodeExecutionState
+
+        state = NodeExecutionState()
+        state.source_version_info = '{"path": "/x", "version": 3}'
+        restored = NodeExecutionState.from_dict(state.to_dict())
+        assert restored.source_version_info == state.source_version_info
+        restored.reset()
+        assert restored.source_version_info == state.source_version_info

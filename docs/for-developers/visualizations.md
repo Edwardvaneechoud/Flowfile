@@ -71,7 +71,7 @@ Each child holds a real, live dataset, so left alone they accumulate and the wor
 - **Idle children expire.** A reaper thread runs every 30s and tears down anything that hasn't been used in roughly five minutes.
 - **Old children rotate out.** After a long lifetime (~30 minutes) or enough requests served (~500), the next request gets a fresh child. This catches slow memory drift inside Polars and polars-gw — the kind that doesn't surface in any single query.
 - **The pool itself is capped.** Beyond ~32 concurrent sessions the least-recently-used one is evicted.
-- **Catalog edits evict.** Deleting a saved visualization, or changing the source table, fires an explicit evict so stale data isn't returned.
+- **Data changes rotate the key, not the child.** Session keys are version-addressed — a physical table keys on its live Delta version, a SQL source's digest folds in the versions of every referenced table, and a flow-virtual source keys on its materialized snapshot file. A write to the underlying data means the next request computes a different key and spawns a fresh child; the old one simply idles out. No explicit evict is needed for freshness (a manual `/catalog/visualize_evict` endpoint exists for ops).
 - **Shutdown reaps everyone.** The worker's FastAPI lifespan hook drains queues and kills every child on exit.
 
 Every one of these paths runs the child through the same shutdown sequence: send a graceful stop, wait briefly, terminate, kill if it's still alive, drop references. Nothing is kept around on the assumption it might be needed later.

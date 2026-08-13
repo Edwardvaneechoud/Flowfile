@@ -140,6 +140,37 @@ def test_second_request_hits_same_child(tmp_path):
         reg.shutdown()
 
 
+def test_rotated_session_key_sees_new_delta_version(tmp_path):
+    """A version-addressed key rotation spawns a fresh child that sees the new data.
+
+    The old key's child pins its scan_delta snapshot at spawn (documented
+    behavior); core rotates the key on any Delta write, so the next request
+    lands on a fresh child.
+    """
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    try:
+        src_v0 = _physical_source("tbl:1:v0", table_dir)
+        rows_v0, _ = reg.execute(src_v0, "execute", _RAW_PAYLOAD, 100)
+        assert len(rows_v0["rows"]) == 5
+
+        pl.DataFrame({"category": ["z"], "value": [99]}).write_delta(
+            str(storage.catalog_tables_directory / table_dir), mode="overwrite"
+        )
+
+        stale_rows, hit = reg.execute(src_v0, "execute", _RAW_PAYLOAD, 100)
+        assert hit is True
+        assert len(stale_rows["rows"]) == 5
+
+        src_v1 = _physical_source("tbl:1:v1", table_dir)
+        fresh_rows, hit = reg.execute(src_v1, "execute", _RAW_PAYLOAD, 100)
+        assert hit is False
+        assert len(fresh_rows["rows"]) == 1
+    finally:
+        reg.shutdown()
+
+
 def test_eviction_kills_os_process(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)

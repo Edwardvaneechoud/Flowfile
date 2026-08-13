@@ -197,8 +197,8 @@ def test_resolve_virtual_table_kernel_shared_removes_only_aged_superseded_siblin
 
 
 @pytest.mark.worker
-def test_resolve_virtual_table_default_target_keeps_superseded_siblings():
-    """The worker-private cache keeps older hashes (preview/SQL idempotency contract)."""
+def test_resolve_virtual_table_default_target_keeps_recent_superseded_siblings():
+    """Recent superseded hashes survive the min-age guard (a concurrent request may still scan them)."""
 
     def _request(versions_hash: str) -> models.ResolveVirtualTableResponse:
         return funcs.resolve_virtual_table(
@@ -216,3 +216,89 @@ def test_resolve_virtual_table_default_target_keeps_superseded_siblings():
     assert (results_dir / first.ipc_path).exists()
     assert (results_dir / second.ipc_path).exists()
     assert not (storage.shared_virtual_results_directory / first.ipc_path).exists()
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_default_target_noversions_always_rebuilds():
+    """A NO_VERSIONS_HASH key must never be served from the exists() cache.
+
+    Without a source-version fingerprint identical plan bytes cannot prove
+    freshness (the plan records paths, not data), so a repeated identical
+    request must re-execute instead of returning the existing file.
+    """
+    plan = _plan_bytes()
+
+    def _request() -> models.ResolveVirtualTableResponse:
+        return funcs.resolve_virtual_table(
+            models.ResolveVirtualTableRequest(
+                table_id=29,
+                plan_bytes=plan,
+                source_versions_hash="noversions",
+            )
+        )
+
+    first = _request()
+    target = storage.catalog_virtual_results_directory / first.ipc_path
+    assert target.exists()
+
+    with patch("flowfile_worker.funcs.mp_context", wraps=funcs.mp_context) as mock_mp:
+        second = _request()
+        assert mock_mp.Process.call_count == 1
+
+    assert second.ipc_path == first.ipc_path
+    assert second.row_count == 3
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_default_target_plan_change_rotates_file():
+    """Changed plan bytes under the same versions hash produce a fresh snapshot.
+
+    This is what keeps a manual-input edit (new plan, unchanged '[]' sources)
+    from being served the previous materialisation.
+    """
+    key = "beefcafe" * 4
+
+    def _request(lf: pl.LazyFrame) -> models.ResolveVirtualTableResponse:
+        return funcs.resolve_virtual_table(
+            models.ResolveVirtualTableRequest(
+                table_id=37,
+                plan_bytes=lf.serialize(),
+                source_versions_hash=key,
+            )
+        )
+
+    first = _request(pl.LazyFrame({"a": [1, 2, 3]}))
+    second = _request(pl.LazyFrame({"a": [1, 2, 3, 4]}))
+
+    assert second.ipc_path != first.ipc_path
+    assert second.row_count == 4
+    target = storage.catalog_virtual_results_directory / second.ipc_path
+    assert pl.read_ipc(target)["a"].to_list() == [1, 2, 3, 4]
+
+
+@pytest.mark.worker
+def test_resolve_virtual_table_default_target_prunes_aged_superseded_siblings():
+    """A rotated versions hash drops the table's aged snapshots; recent and other-table files survive."""
+
+    def _request(versions_hash: str, table_id: int = 31) -> models.ResolveVirtualTableResponse:
+        return funcs.resolve_virtual_table(
+            models.ResolveVirtualTableRequest(
+                table_id=table_id,
+                plan_bytes=_plan_bytes(),
+                source_versions_hash=versions_hash,
+            )
+        )
+
+    results_dir = storage.catalog_virtual_results_directory
+    other = _request("0badf00d" * 4, table_id=98)
+    aged = _request("aaaaaaaa" * 4)
+    recent = _request("bbbbbbbb" * 4)
+    old = time.time() - funcs._SUPERSEDED_MIN_AGE_S - 60
+    os.utime(results_dir / aged.ipc_path, (old, old))
+
+    latest = _request("cccccccc" * 4)
+
+    assert not (results_dir / aged.ipc_path).exists()
+    assert (results_dir / recent.ipc_path).exists()
+    assert (results_dir / latest.ipc_path).exists()
+    assert (results_dir / other.ipc_path).exists()

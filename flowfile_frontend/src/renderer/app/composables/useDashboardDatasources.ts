@@ -29,8 +29,10 @@ export function useDashboardDatasources(
   const tableCache = ref<Record<number, DashboardDatasource>>({});
   const loading = ref(false);
 
-  const fetchViz = async (vizId: number) => {
-    if (vizId in vizToTable.value) return;
+  // Force refetches assign on resolve (never clear-then-fetch): a transient
+  // null datasource would change tiles' filterKey and double-remount them.
+  const fetchViz = async (vizId: number, force = false) => {
+    if (!force && vizId in vizToTable.value) return;
     try {
       const viz = await CatalogApi.getVisualization(vizId);
       vizToTable.value[vizId] =
@@ -38,12 +40,12 @@ export function useDashboardDatasources(
       vizNameById.value[vizId] = viz.name;
     } catch (err) {
       console.warn(`[dashboard] could not fetch viz ${vizId}:`, err);
-      vizToTable.value[vizId] = null;
+      if (!(vizId in vizToTable.value)) vizToTable.value[vizId] = null;
     }
   };
 
-  const fetchTable = async (tableId: number) => {
-    if (tableId in tableCache.value) return;
+  const fetchTable = async (tableId: number, force = false) => {
+    if (!force && tableId in tableCache.value) return;
     try {
       const table = await CatalogApi.getTable(tableId);
       tableCache.value[tableId] = {
@@ -56,7 +58,14 @@ export function useDashboardDatasources(
     }
   };
 
-  const refresh = async () => {
+  // (table_id, column_name) -> stats. Promise caching dedupes concurrent
+  // requests; the resolved Promise stays in the cache so subsequent
+  // lookups are synchronous.
+  const statsCache = new Map<string, Promise<ColumnStatsResponse>>();
+  const statsKey = (tableId: number, column: string) => `${tableId}:${column}`;
+
+  const refresh = async (force = false) => {
+    if (force) statsCache.clear();
     const vizIds = Array.from(
       new Set(
         layout.value.tiles.map((t) => t.viz_id).filter((id): id is number => id != null),
@@ -64,7 +73,7 @@ export function useDashboardDatasources(
     );
     loading.value = true;
     try {
-      await Promise.all(vizIds.map(fetchViz));
+      await Promise.all(vizIds.map((id) => fetchViz(id, force)));
       const tableIds = Array.from(
         new Set(
           vizIds
@@ -72,7 +81,7 @@ export function useDashboardDatasources(
             .filter((id): id is number => id != null),
         ),
       );
-      await Promise.all(tableIds.map(fetchTable));
+      await Promise.all(tableIds.map((id) => fetchTable(id, force)));
     } finally {
       loading.value = false;
     }
@@ -121,12 +130,6 @@ export function useDashboardDatasources(
 
   const getDatasource = (tableId: number): DashboardDatasource | null =>
     tableCache.value[tableId] ?? null;
-
-  // (table_id, column_name) -> stats. Promise caching dedupes concurrent
-  // requests; the resolved Promise stays in the cache so subsequent
-  // lookups are synchronous.
-  const statsCache = new Map<string, Promise<ColumnStatsResponse>>();
-  const statsKey = (tableId: number, column: string) => `${tableId}:${column}`;
 
   const getColumnStats = (
     tableId: number,
