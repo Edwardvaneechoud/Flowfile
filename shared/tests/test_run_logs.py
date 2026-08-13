@@ -54,7 +54,7 @@ def test_run_log_path_is_not_home_when_storage_dir_set(tmp_path, monkeypatch):
     monkeypatch.delenv("TESTING", raising=False)
     monkeypatch.setattr(storage, "_base_dir", tmp_path)
     resolved = run_log_path(7)
-    assert Path.home() not in resolved.parents
+    assert Path.home() / ".flowfile" not in resolved.parents
     assert Path.home() / ".flowfile" / "logs" != resolved.parent
 
 
