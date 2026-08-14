@@ -56,36 +56,6 @@ from tests.core_log_sink import CoreLogSink, session_claims_core_port
 from tests.flowfile_core_test_utils import is_docker_available
 from tests.kernel_fixtures import managed_kernel
 
-
-def _pin_default_execution_location_to_local() -> None:
-    """Make flows that never asked for a location run local, and only those.
-
-    ``FlowGraphConfig.execution_location``'s default_factory is the single seam that
-    turns an ordinary test flow *incidentally* remote (it resolves to "remote" whenever
-    the worker offload flag is on), and each remote node costs a worker round-trip.
-    Repointing only that factory leaves ``get_global_execution_location`` itself
-    untouched, so an explicit ``execution_location="remote"`` still validates to remote
-    and the ``execution_location`` fixture's [remote] param keeps running genuinely
-    remote — the offload contract's only coverage.
-    """
-    from flowfile_core.schemas.schemas import FlowGraphConfig
-
-    def _model_tree(model):
-        yield model
-        for sub in model.__subclasses__():
-            yield from _model_tree(sub)
-
-    for model in _model_tree(FlowGraphConfig):
-        field = model.model_fields.get("execution_location")
-        if field is None or field.default_factory is None:
-            continue
-        field.default_factory = lambda: "local"
-        model.model_rebuild(force=True)
-
-
-_pin_default_execution_location_to_local()
-
-
 _NOT_ISOLATED_MSG = (
     'Secure store NOT isolated: a flowfile_worker is already running, so tests use the real '
     '~/.config/flowfile store (core and that worker must share a master key, or every '
