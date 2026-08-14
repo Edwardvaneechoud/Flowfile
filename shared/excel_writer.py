@@ -20,9 +20,9 @@ unlocked last-writer-wins behavior.
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
-import tempfile
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Final
@@ -41,6 +41,10 @@ _NESTED_DTYPES: Final = (pl.List, pl.Array, pl.Struct, pl.Object)
 _LOCK_TIMEOUT_S: Final = 300.0
 _LOCK_POLL_S: Final = 0.05
 
+# Contention looks like EACCES/EAGAIN (msvcrt) or EWOULDBLOCK==EAGAIN (flock); anything else
+# (ENOLCK/EOPNOTSUPP on network filesystems, EBADF) means locking is broken and must fail fast.
+_CONTENTION_ERRNOS: Final = frozenset({errno.EACCES, errno.EAGAIN, errno.EDEADLK})
+
 if os.name == "nt":
     import msvcrt
 
@@ -48,8 +52,10 @@ if os.name == "nt":
         try:
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             return True
-        except OSError:
-            return False
+        except OSError as exc:
+            if exc.errno in _CONTENTION_ERRNOS:
+                return False
+            raise
 
     def _unlock(fd: int) -> None:
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
@@ -61,8 +67,10 @@ else:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
-        except OSError:
-            return False
+        except OSError as exc:
+            if exc.errno in _CONTENTION_ERRNOS:
+                return False
+            raise
 
     def _unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -71,9 +79,9 @@ else:
 def _is_live_lockfile(fd: int, lock_path: str) -> bool:
     try:
         current = os.stat(lock_path)
+        held = os.fstat(fd)
     except OSError:
         return False
-    held = os.fstat(fd)
     return (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino)
 
 
@@ -87,20 +95,26 @@ def _workbook_lock(path: str) -> Iterator[None]:
     open file cannot be unlinked, which makes the plain unlock-close-unlink order safe there.
     The OS releases the lock if the holder dies, so a killed write never wedges later runs.
     """
-    lock_path = os.path.abspath(path) + ".lock"
+    lock_path = os.path.realpath(path) + ".lock"
     deadline = time.monotonic() + _LOCK_TIMEOUT_S
     while True:
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"Timed out waiting for the excel write lock on '{path}'.")
         fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
         try:
             while not _try_lock(fd):
                 if time.monotonic() > deadline:
                     raise TimeoutError(f"Timed out waiting for the excel write lock on '{path}'.")
                 time.sleep(_LOCK_POLL_S)
+            if _is_live_lockfile(fd, lock_path):
+                break
         except BaseException:
+            try:
+                _unlock(fd)
+            except OSError:
+                pass
             os.close(fd)
             raise
-        if _is_live_lockfile(fd, lock_path):
-            break
         _unlock(fd)
         os.close(fd)
     try:
@@ -160,10 +174,12 @@ def _next_table_name(wb: Workbook) -> str:
 
 
 def _save_atomically(wb: Workbook, path: str) -> None:
-    """Save *wb* over *path* via a same-directory temp file so a killed process cannot destroy it."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".xlsx.tmp")
-    os.close(fd)
+    """Save *wb* over *path* via a temp file + ``os.replace`` so a killed process cannot destroy it.
+
+    The temp name is deterministic and only ever touched under the workbook lock, so an orphan
+    left by a killed writer is bounded to one per workbook and reclaimed by the next write.
+    """
+    tmp_path = path + ".tmp"
     try:
         wb.save(tmp_path)
         shutil.copymode(path, tmp_path)
@@ -174,15 +190,10 @@ def _save_atomically(wb: Workbook, path: str) -> None:
 
 
 def _write_fresh_atomically(df: pl.DataFrame, path: str, sheet: str) -> None:
-    """Write a brand-new workbook via a temp file + ``os.replace``, matching a direct write's perms."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".xlsx.tmp")
-    os.close(fd)
+    """Write a brand-new workbook via a temp file + ``os.replace`` (same bounded temp-name scheme)."""
+    tmp_path = path + ".tmp"
     try:
         df.write_excel(tmp_path, worksheet=sheet)
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp_path, 0o666 & ~umask)  # mkstemp creates 0600, unlike a plain write_excel
         os.replace(tmp_path, path)
     finally:
         if os.path.exists(tmp_path):
@@ -230,19 +241,23 @@ def write_excel_output(
     formulas and layout — intact. ``update`` against a missing file writes a fresh workbook.
 
     ``update`` and ``create`` hold the per-workbook lock, so parallel nodes filling different
-    sheets of one file merge sequentially and a concurrent ``create`` fails instead of racing.
+    sheets of one file merge sequentially and a concurrent ``create`` fails instead of racing;
+    both resolve symlinks first so every spelling of one workbook shares one lock and writes
+    through to the real file. Mixing an ``overwrite`` node with locked writers on one file is
+    unsupported — the unlocked overwrite can make a concurrent update fail loudly (BadZipFile).
     """
     sheet = sheet_name or "Sheet1"
     mode = resolve_excel_write_mode(write_mode)
     if mode == "overwrite":
         df.write_excel(path, worksheet=sheet)
         return
+    path = os.path.realpath(path)
     with _workbook_lock(path):
         exists = os.path.exists(path)
         if mode == "create":
             if exists:
                 raise FileExistsError(f"Cannot write '{path}': the file already exists (write mode 'create').")
-            df.write_excel(path, worksheet=sheet)
+            _write_fresh_atomically(df, path, sheet)
             return
         if exists:
             _update_sheet(df, path, sheet)
