@@ -52,6 +52,7 @@ import socket
 from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
+from tests.core_log_sink import CoreLogSink, session_claims_core_port
 from tests.flowfile_core_test_utils import is_docker_available
 from tests.kernel_fixtures import managed_kernel
 
@@ -108,6 +109,14 @@ def pytest_configure(config):
     # The header is suppressed under -q; a config-time warning still shows.
     if not _secure_store_is_isolated():
         config.issue_config_time_warning(pytest.PytestConfigWarning(_NOT_ISOLATED_MSG), stacklevel=2)
+
+
+_core_port_claimed_by_tests = False
+
+
+def pytest_collection_modifyitems(config, items):
+    global _core_port_claimed_by_tests
+    _core_port_claimed_by_tests = session_claims_core_port(items)
 
 
 def is_port_in_use(port, host='localhost'):
@@ -341,7 +350,38 @@ def managed_worker() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def flowfile_worker(request):
+def core_log_sink():
+    """Serve ``/raw_logs`` on the core port so worker log shipping stays fast.
+
+    Worker children POST every node log line to core; here core is in-process
+    behind TestClient, so nothing listens and each POST eats the handler's 2s
+    connect timeout on Windows (~7 lines x 2s per worker-backed test). The sink
+    keeps the real delivery path running at loopback speed.
+
+    Never starts when the port is already bound (a real core wins), when the
+    session collected a test that binds the port itself, or when
+    FLOWFILE_TEST_LOG_SINK=0.
+    """
+    disabled = os.environ.get("FLOWFILE_TEST_LOG_SINK", "1").lower() in ("0", "false", "no", "off")
+    if disabled or os.environ.get("SKIP_WORKER_TESTS") == "1" or _core_port_claimed_by_tests:
+        yield None
+        return
+
+    sink = CoreLogSink()
+    if not sink.start():
+        logger.info("Core port %s already in use, not starting the log sink", sink.port)
+        yield None
+        return
+
+    logger.info("Serving worker log shipping at http://%s:%s/raw_logs", sink.host, sink.port)
+    try:
+        yield sink
+    finally:
+        sink.stop()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def flowfile_worker(request, core_log_sink):
     """
     Pytest fixture that ensures flowfile_worker is running for the test session.
     Uses the managed_worker context manager for proper resource management.
