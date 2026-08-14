@@ -319,14 +319,32 @@ jobs:
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: windows-latest
+    # setup-python's `cache: pip` does not cover poetry-installed packages, so a
+    # cold `poetry install` costs ~4.5 min here (vs ~25s on Linux). Putting the
+    # venv in-project makes it land on the workspace drive at a stable path the
+    # cache step below can key on.
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: 'pip'  # Enable pip caching
+
+      # Exact-match key with no restore-keys on purpose: `poetry install` does not
+      # prune extraneous packages, so a venv restored from a different lock could
+      # keep stale ones and silently diverge from poetry.lock. A miss just costs
+      # today's cold install. The interpreter patch version is in the key because
+      # the venv's shims and pyvenv.cfg are bound to it.
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install Poetry
         shell: pwsh
@@ -334,36 +352,20 @@ jobs:
           (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
           echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      # Always runs, cache hit or not — it is fast against a warm venv and self-heals
+      # any drift between the restored env and poetry.lock.
       - name: Install Dependencies
         shell: pwsh
         run: |
           poetry install --no-interaction --no-ansi --with dev
 
       # Backend tests do not need the built Vue UI (see note in backend-tests).
-      - name: Start Mock Database with Sample Data
-        shell: pwsh
-        run: poetry run start_postgres
-
-      - name: Start Mock MySQL Database with Sample Data
-        shell: pwsh
-        run: poetry run start_mysql
-
-      - name: Start Mock SQL Server Database with Sample Data
-        shell: pwsh
-        run: poetry run start_mssql
-
-      - name: Start Mock S3 bucket with Sample Data
-        shell: pwsh
-        run: poetry run start_minio
-
-      - name: Start Mock Azure Blob Storage (Azurite)
-        shell: pwsh
-        run: poetry run start_azurite
-
-      - name: Start Mock Google Cloud Storage
-        shell: pwsh
-        run: poetry run start_gcs
-
+      #
+      # No mock-service steps here (unlike backend-tests / coverage): every
+      # test_utils fixture returns is_docker_available() == False on Windows under
+      # CI, and the runner's Docker daemon is in Windows-container mode anyway, so
+      # each start_*/stop_* step was a guaranteed no-op that still paid a full
+      # poetry + interpreter spin-up. Tests needing those services skip themselves.
       - name: Run pytest for flowfile_frame
         if: |
           needs.detect-changes.outputs.backend_frame == 'true' ||
@@ -390,26 +392,6 @@ jobs:
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_worker/tests --disable-warnings --durations=300 --durations-min=0.05
-
-      - name: Stop Mock Database
-        shell: pwsh
-        run: poetry run stop_postgres
-
-      - name: Stop Mock MySQL Database
-        shell: pwsh
-        run: poetry run stop_mysql
-
-      - name: Stop Mock S3 bucket
-        shell: pwsh
-        run: poetry run stop_minio
-
-      - name: Stop Mock Azure Blob Storage (Azurite)
-        shell: pwsh
-        run: poetry run stop_azurite
-
-      - name: Stop Mock Google Cloud Storage
-        shell: pwsh
-        run: poetry run stop_gcs
 
       - name: Run pytest for flowfile
         if: |
