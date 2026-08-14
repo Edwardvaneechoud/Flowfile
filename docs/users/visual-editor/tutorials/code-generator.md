@@ -2,6 +2,8 @@
 
 The Code Generator exports a visually designed flow as executable Python. Use it to inspect the transformation logic behind a flow, integrate a Flowfile pipeline into an existing Python project, or extend a workflow with custom scripts.
 
+The Code panel offers four modes. **FlowFrame**, **Polars** and **Project** produce production code and are described below. **Plain Python** is different in kind: it rewrites the flow using nothing but lists, dicts and `for` loops, to show how you would implement each step by hand. See [Plain Python](#plain-python).
+
 For pure transformation flows (filter, join, group by, etc.), the generated code is Polars — usually just `import polars as pl`, and never an `import flowfile`. A few nodes add a small standalone helper package instead of native Polars: formula and advanced-filter expressions that can't be lowered to native Polars pull in `polars_expr_transformer`, fuzzy match pulls in `pl_fuzzy_frame_match`, and the graph solver pulls in `polars_grouper` — each a lightweight PyPI package, not Flowfile. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) additionally use `import flowfile as ff` for connection-aware operations. The transformation logic is Polars in every case.
 
 ![code_generator](../../../assets/images/guides/code_generator/code_generator.gif)
@@ -159,6 +161,99 @@ if __name__ == "__main__":
 
 !!! note "`.data` accessor"
     The generated code calls `.data` on FlowFrame results to extract the underlying Polars `LazyFrame`. This keeps the rest of the pipeline as standard Polars operations.
+
+## Plain Python
+
+The **Plain Python** mode answers a different question from the other three: not "how do I run this in production", but "how would I write this myself?". It rewrites the flow with no dataframe library at all — every table becomes a `list[dict]` (one dict per row, keyed by column name) and every node becomes an explicit loop.
+
+It exists to make the transferable patterns visible. A group by becomes the accumulator-dict pattern, a join becomes a hash index, a duplicate-drop becomes a `seen` set, a sort becomes a key function. Those are the shapes you would write in any language, and they are exactly what a dataframe library hides.
+
+**Flowfile Pipeline:** Manual Input → Group By (sum `revenue` per `product`)
+
+<details markdown="1">
+<summary>Generated Plain Python</summary>
+
+```python
+def run_etl_pipeline():
+    """
+    Sales by product
+    Generated from Flowfile — plain Python, no dataframe library.
+
+    Every table here is a list of dicts: one dict per row, keyed by column
+    name. Read it top to bottom; each block is one node on the canvas.
+    """
+
+    # --- Manual input --------------------------------------------------
+    # A table is a list of dicts: one dict per row, keyed by column name.
+    # That is the only data structure this whole script uses.
+    source = [
+        {'product': 'Widget', 'revenue': 100.0},
+        {'product': 'Gadget', 'revenue': 200.0},
+        {'product': 'Widget', 'revenue': 150.0},
+    ]
+
+    # --- Group by ------------------------------------------------------
+    # The accumulator-dict pattern: walk the rows once and file each one
+    # under its key. Then walk the groups and summarise each one.
+    groups = {}
+    for row in source:
+        key = (row["product"],)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(row)
+
+    grouped = []
+    for key, rows_in_group in groups.items():
+        grouped.append({
+            "product": key[0],
+            "total_revenue": sum(r["revenue"] for r in rows_in_group if r["revenue"] is not None),
+        })
+
+    return grouped
+
+
+if __name__ == "__main__":
+    pipeline_output = run_etl_pipeline()
+    for row in pipeline_output:
+        print(row)
+```
+
+</details>
+
+### What it covers
+
+Nodes with a plain-Python form: manual input, CSV read, filter (basic mode), select, sort, unique, group by, join (inner, left, semi and anti), union, record count, and subflow input/output.
+
+Anything driven by the formula expression language — the formula node, a filter in advanced mode, and the Polars-code, SQL and Python-script nodes — has no loop equivalent, because reproducing it in general means writing an expression evaluator. A right, full or outer join is also left out, on the grounds that "a right join is a left join with the tables swapped" is the lesson and a subtly wrong replay of the engine's column bookkeeping is not. Those nodes become **exercise stubs** instead:
+
+```python
+# --- formula (node 4) — over to you --------------------------------
+# Flowfile evaluates this with its expression engine.
+# The rule it applies is:
+#     [total_revenue] * 1.21
+# Writing this one by hand is the exercise. Replace the raise below with
+# a loop that returns the new list of rows, and the rest of the script runs.
+def formula_4(rows_0):
+    raise NotImplementedError("Flowfile evaluates this with its expression engine")
+
+computed = formula_4(grouped)
+```
+
+!!! info "One unsupported node does not fail the export"
+    Unlike the Polars and FlowFrame modes, Plain Python never refuses a whole flow. It generates everything it can and leaves a stub where it cannot, so a single formula node still leaves you a readable script.
+
+!!! warning "It is a teaching output, not a production one"
+    The generated script runs and produces the same rows as the canvas, but it is deliberately not optimised, does not stream, and does not round-trip back into the visual editor. It holds the whole table in memory as a list, so it is unsuitable for data that does not comfortably fit there.
+
+!!! info "Where the loops look fussier than you'd write by hand"
+    Some of the generated code carries guards a first draft would omit, because matching the engine requires them. Missing values sort first in both directions and are never equal to each other in a join key; an aggregate over an all-empty group is empty rather than an error (except `sum`, which is `0`); and a value read from a CSV is text until something converts it. Each of those is a place where a dataframe library quietly makes a decision on your behalf, so seeing the decision written out is the point.
+
+### Per-node explainer
+
+The same machinery powers the **"How would I write this myself?"** panel in every node's settings drawer. It shows a plain-English description of what the node does plus the plain-Python form of *that node's actual settings* — your columns, your operators — rather than a generic example. The panel is collapsed by default and remembers whether you left it open.
+
+!!! tip "In Flowfile Lite the script also runs where you read it"
+    [Flowfile Lite](../../deployment/lite.md#learning-mode-plain-python) has the same Plain Python mode, plus a ▶ button: because the browser already has a Python runtime, the generated script executes right there against the same files and prints its rows underneath. That turns an exercise stub into something you can fill in and immediately re-run.
 
 ## Project Export
 

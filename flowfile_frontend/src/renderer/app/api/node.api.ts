@@ -1,5 +1,11 @@
 import axios from "../services/axios.config";
-import type { NodeData, FileColumn, TableExample, NodeDescriptionResponse } from "../types";
+import type {
+  NodeData,
+  FileColumn,
+  TableExample,
+  NodeDescriptionResponse,
+  NodeExplanation,
+} from "../types";
 
 export class NodeApi {
   /**
@@ -176,6 +182,17 @@ export class NodeApi {
         params: { node_type: nodeType },
       },
     );
+    return response.data;
+  }
+
+  /**
+   * Plain-English description of a node plus the plain-Python equivalent of its
+   * current settings. Used by the "How would I write this myself?" drawer panel.
+   */
+  static async explainNode(flowId: number, nodeId: number): Promise<NodeExplanation> {
+    const response = await axios.get<NodeExplanation>("/editor/explain_node", {
+      params: { flow_id: flowId, node_id: nodeId },
+    });
     return response.data;
   }
 }

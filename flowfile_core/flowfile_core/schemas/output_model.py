@@ -215,3 +215,13 @@ class ProjectSaveResponse(BaseModel):
 
     saved_to: str
     file_count: int
+
+
+class NodeExplanation(BaseModel):
+    """Plain-English description of a node plus its plain-Python equivalent."""
+
+    node_id: int
+    node_type: str
+    supported: bool
+    explanation: str | None = None
+    code: str | None = None

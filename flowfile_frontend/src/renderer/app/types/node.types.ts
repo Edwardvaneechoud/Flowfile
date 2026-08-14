@@ -117,6 +117,18 @@ export interface NodeTitleInfo {
   // Node reference section for the drawer's "Read more" link; absent for
   // drawers opened outside the node palette.
   docsUrl?: string;
+  // Node-type string (NodeTemplate.item), so drawer chrome can ask the backend
+  // about this node type without going back to the canvas for it.
+  item?: string;
+}
+
+/** Plain-English description of a node plus the plain-Python form of its settings. */
+export interface NodeExplanation {
+  node_id: number;
+  node_type: string;
+  supported: boolean;
+  explanation: string | null;
+  code: string | null;
 }
 
 // Expression Types
