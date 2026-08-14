@@ -2177,6 +2177,9 @@ def test_instant_function_result_after_run():
     flow = flow_file_handler.get_flow(flow_id)
     _ = flow._flow_starts
     flow.flow_settings.execution_mode = "Development"
+    # The after-run branch reads the run's sampled artifact (results.example_data_path),
+    # which only the worker-backed paths produce — a local run has no artifact to serve.
+    flow.execution_location = "remote"
     flow.run_graph()
     response = client.get(
         "/custom_functions/instant_result", params={"flow_id": flow_id, "node_id": 2, "func_string": "[name]"}
@@ -2517,6 +2520,9 @@ def test_add_database_input():
     )
     assert r.status_code == 200, "Settings not added"
     flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    # needs_run defaults to the remote branch, which clears only once the worker holds a
+    # completed result for the node hash — so the run that fills it has to be remote too.
+    flow_file_handler.get_flow(flow_id).execution_location = "remote"
     flow_file_handler.get_flow(flow_id).run_graph()
     assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), "Node should not need to run"
 
