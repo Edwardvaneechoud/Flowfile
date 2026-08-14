@@ -87,7 +87,7 @@ describe('plain-Python generation', () => {
     expect(PLAIN_PYTHON_NODE_TYPES.has('filter')).toBe(true)
     expect(PLAIN_PYTHON_NODE_TYPES.has('formula')).toBe(false)
     expect(PLAIN_PYTHON_NODE_TYPES.has('polars_code')).toBe(false)
-    expect(PLAIN_PYTHON_NODE_TYPES.has('pivot')).toBe(false)
+    expect(PLAIN_PYTHON_NODE_TYPES.has('pivot')).toBe(true)
   })
 
   it('leaves an unsupported node as an exercise instead of failing the export', () => {

@@ -29,6 +29,7 @@ import type {
   NodeRecordIdSettings,
   NodeSampleSettings,
   NodeDynamicRenameSettings,
+  NodePivotSettings,
   NodeUnpivotSettings,
   NodeOutputSettings,
   NodeWriteToCatalogSettings,
@@ -44,6 +45,13 @@ class PlainPythonUnsupported extends Error {}
 
 /** Join strategies with an honest loop form. `right`/`full`/`outer` are left as exercises. */
 const JOIN_HOWS_SUPPORTED = new Set(['inner', 'left', 'semi', 'anti'])
+
+/**
+ * The aggregations pivot really implements. The settings panel also offers
+ * n_unique and concat, but the engine has no case for them and quietly sums
+ * instead — so those become an exercise rather than a lie.
+ */
+const PIVOT_AGGS_SUPPORTED = new Set(['sum', 'mean', 'min', 'max', 'count', 'first', 'last', 'median'])
 
 /** Plain-English "what this node does", shown above the snippet in the settings drawer. */
 export const NODE_EXPLANATIONS: Record<string, string> = {
@@ -92,7 +100,7 @@ export const NODE_EXPLANATIONS: Record<string, string> = {
   polars_code:
     'Runs Polars code you wrote yourself. It is already Python, and it is already a dataframe library, so there is nothing to translate.',
   pivot:
-    'Turns long data into wide data, inventing one column per distinct value. It is left as an exercise: the loop is not hard, but the column bookkeeping is fiddly and worth doing yourself.'
+    'Turns long data into wide data, inventing one column per distinct value. It is a group-by with two keys instead of one — which row, and which column — so the accumulator gains a second level, and the column names have to be collected before any row can be written.'
 }
 
 export interface PlainStep {
@@ -103,6 +111,9 @@ export interface PlainStep {
   /** The variables this step reads, after boundary renaming. */
   inputVars: string[]
   concept: string
+  /** 1-based inclusive line range of this step's block in the finished script. */
+  lineStart: number
+  lineEnd: number
 }
 
 /**
@@ -191,24 +202,35 @@ export const CONCEPTS: Record<string, Concept> = {
     ]
   },
   'key-function': {
-    title: 'Sorting takes a key, not a comparison',
+    title: 'Sorting by a key, not a comparison',
     body: [
-      'You never write "is this row bigger than that one". You hand sorted() a function that turns a row into the value it should be ordered by, and it does the comparing.',
-      'For several columns, return a tuple: Python compares the first item, and only looks at the second when the first ties.',
-      'Missing values come first because that is simply what the engine does by default. Reproducing it needs the True/False flag at the front of the key, because Python refuses to compare None with a number at all — so the flag does the ordering and the value is never asked.',
-      'If the columns sorted in different directions, one key function could not express it. The script would then sort once per column, least significant first — which works only because Python\'s sort is stable: equal rows keep the order they already had.'
+      'Most languages make you supply a comparator: given two rows, work out which comes first, and return -1, 0 or 1. It is tedious and easy to get subtly wrong. Python asks for something smaller — a function that turns one row into the value it should be ordered by. You say what to sort on; the sort does the comparing.',
+      'Because the key can return anything, several columns cost nothing extra. Return a tuple and you are done: Python compares tuples left to right and only looks at the next item when the previous one ties. No nesting, no comparator.',
+      'The "is None" in the key looks like noise until you delete it. None < 5 does not come back False — it raises TypeError, because Python refuses to order a missing value against a number. Booleans, though, compare happily: False < True. So the key puts the flag first, the flag decides, and the value is never asked.',
+      'Stability is the quiet one. Python never reorders rows whose keys tie, so a sort by name followed by a sort by department leaves each department alphabetical. That is what lets you build any ordering you like out of one-line sorts — and it is the only reason sorting one column at a time works at all.'
     ],
     sketch: [
-      'sorted(rows, key=lambda r: r["age"])',
+      'one column',
+      '    sorted(rows, key=lambda r: r["age"])',
       '',
-      'two columns:',
-      'sorted(rows, key=lambda r: (r["city"], r["age"]))',
-      '               compares city, breaks ties on age',
+      'two columns — free, because a tuple is a value',
+      '    sorted(rows, key=lambda r: (r["city"], r["age"]))',
+      '    ties on city?  then compare age',
       '',
-      'stable means:  [B1, A1, B2]  sorted by letter',
-      '            -> [A1, B1, B2]   B1 still before B2'
+      'why the flag is there',
+      '    None < 5      TypeError: \'<\' not supported',
+      '    False < True  True            <- booleans do compare',
+      '    key=lambda r: (r["age"] is None, r["age"])',
+      '',
+      'stability, and what it buys you',
+      '    [b1, a1, b2]  sorted by letter',
+      ' -> [a1, b1, b2]  b1 is still before b2',
+      '',
+      '    so: sort by age, then by city',
+      '     -> cities in order, ages in order within each city'
     ],
-    takeaway: 'Stability is what lets you build a complicated sort out of simple ones.'
+    takeaway:
+      'Sort by the least important column first and the most important last. Stability preserves the earlier passes, so you never need a comparator.'
   },
   'seen-set': {
     title: 'The `seen` set',
@@ -253,6 +275,36 @@ export const CONCEPTS: Record<string, Concept> = {
       '    "Gadget" ->       200 = 200'
     ],
     takeaway: 'setdefault(key, []).append(x) is the one-liner for "add to the list at this key, making it if needed".'
+  },
+  'nested-accumulator': {
+    title: 'A dict of dicts is a grid',
+    body: [
+      'A group-by files each row under one key. A pivot files it under two — the row it belongs to and the column it belongs to — so the accumulator grows a second level: a dict of rows, each holding a dict of cells, each cell the list of rows that landed on that square.',
+      'You cannot write the first output row until you have read the last input row. Any row is free to invent a column no earlier row mentioned, and every row of a table has to carry the same keys, so the labels get a pass of their own before a single output row is built.',
+      'An empty cell and an absent cell are different answers. Summing no values gives 0; a combination that never occurred is not 0 but unknown, and comes back as None. The loop can only tell the two apart by asking whether the key is there — never by counting what is under it.',
+      'The column names depend on how many boxes you ticked. One aggregation names each column after the value alone; ask for two and the names have to say which is which, so they become value_sum and value_mean.'
+    ],
+    sketch: [
+      'rows:  r1 colour 3 | r1 size 5 | r2 size 1 | r2 size 7 | r3 colour -',
+      '       one row per id, one column per label, each cell = sum',
+      '',
+      '1. collect the labels first — any row may invent one',
+      '       labels = ["colour", "size"]',
+      '',
+      '2. file every row under both of its keys',
+      '       cells = {"r1": {"colour": [3], "size": [5]},',
+      '                "r2": {               "size": [1, 7]},',
+      '                "r3": {"colour": [-]}}',
+      '',
+      '3. now every row can be written, and they all line up',
+      '            colour   size',
+      '       r1        3      5',
+      '       r2     None      8   <- 1 + 7; r2 never mentioned colour',
+      '       r3        0   None   <- a cell holding nothing sums to 0,',
+      '                               a cell that was never there is None'
+    ],
+    takeaway:
+      'Collect the column labels in a pass of their own. A table whose rows disagree about their keys is not a table.'
   },
   'hash-index': {
     title: 'A join is a hash index',
@@ -392,6 +444,7 @@ export const CONCEPT_FOR_NODE: Record<string, string> = {
   sort: 'key-function',
   unique: 'seen-set',
   group_by: 'accumulator-dict',
+  pivot: 'nested-accumulator',
   join: 'hash-index',
   cross_join: 'nested-loop',
   union: 'column-union',
@@ -407,8 +460,7 @@ export const CONCEPT_FOR_NODE: Record<string, string> = {
 /** Why a node type has no loop form, quoted into its exercise stub. */
 const STUB_REASONS: Record<string, string> = {
   formula: 'Flowfile evaluates this with its expression engine, so there is no fixed loop to show.',
-  polars_code: 'This node is already Python — and already a dataframe library.',
-  pivot: 'Pivoting invents one column per distinct value; the column bookkeeping is the fiddly part.'
+  polars_code: 'This node is already Python — and already a dataframe library.'
 }
 
 /** Module-level helper functions, emitted only when a node actually needs one. */
@@ -634,15 +686,22 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const rename = this.planBoundaryNames(asEmissions, survivors, nodeById)
 
     const final = (name: string): string => rename.get(name) ?? name
-    this.steps = emissions.map(emission => ({
-      nodeId: emission.nodeId,
-      nodeType: emission.node.type,
-      varName: final(emission.varName),
-      inputVars: (this.stepInputs.get(emission.nodeId) ?? []).map(final),
-      concept: this.stubbed.has(emission.nodeId)
-        ? 'exercise'
-        : (CONCEPT_FOR_NODE[emission.node.type] ?? 'exercise')
-    }))
+    this.steps = emissions.map(emission => {
+      const span = this.renderedSpans.get(emission.nodeId) ?? [0, 0]
+      return {
+        nodeId: emission.nodeId,
+        nodeType: emission.node.type,
+        varName: final(emission.varName),
+        inputVars: (this.stepInputs.get(emission.nodeId) ?? []).map(final),
+        concept: this.stubbed.has(emission.nodeId)
+          ? 'exercise'
+          : (CONCEPT_FOR_NODE[emission.node.type] ?? 'exercise'),
+        // Resolved against the finished script in buildFinalCode, once the
+        // header above the body is known.
+        lineStart: span[0],
+        lineEnd: span[1]
+      }
+    })
 
     return this.applyRenames(body, rename)
   }
@@ -706,6 +765,14 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     lines.push('    Every table here is a list of dicts: one dict per row, keyed by column')
     lines.push('    name. Read it top to bottom; each block is one node on the canvas.')
     lines.push('    """')
+
+    // Body line i lands on script line (offset + i), 1-based — which is what
+    // lets the walkthrough highlight a step inside the whole script.
+    const offset = lines.length + 1
+    for (const step of this.steps) {
+      step.lineStart += offset
+      step.lineEnd += offset - 1
+    }
 
     for (const line of body) lines.push(line ? `    ${line}` : '')
 
@@ -776,12 +843,13 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const settings = node.settings as any
     if (node.type === 'formula') return settings?.function?.function?.trim() || null
     if (node.type === 'polars_code') return settings?.polars_code_input?.polars_code?.trim()?.split('\n')[0] || null
+    // Only reached by a pivot the emitter refused (an aggregation it will not fake).
     if (node.type === 'pivot') {
       const pivot = settings?.pivot_input
       if (!pivot?.pivot_column) return null
       // Without the index and the aggregation the exercise cannot be solved.
       const index = pivot.index_columns?.length ? pivot.index_columns.join(', ') : '(none — one output row)'
-      const aggregations = pivot.aggregations?.length ? pivot.aggregations.join(', ') : 'sum'
+      const aggregations = pivot.aggregations?.length ? pivot.aggregations.join(', ') : '(none selected)'
       return [
         `one row per: ${index}`,
         `one column per distinct value of: ${pivot.pivot_column}`,
@@ -1314,6 +1382,106 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     }
   }
 
+  plainPivot(node: FlowNode, varName: string, inputVars: InputVars): void {
+    const pivot = (node.settings as NodePivotSettings).pivot_input
+    const input = inputVars.main || 'rows'
+    if (!pivot?.pivot_column) {
+      throw new PlainPythonUnsupported('This pivot has no pivot column yet — nothing to turn into columns.')
+    }
+    if (!pivot.value_col) {
+      throw new PlainPythonUnsupported('This pivot has no value column yet — nothing to put in the cells.')
+    }
+    const aggregations = pivot.aggregations || []
+    if (aggregations.length === 0) {
+      throw new PlainPythonUnsupported('This pivot has no aggregation selected yet.')
+    }
+    for (const aggregation of aggregations) {
+      if (!PIVOT_AGGS_SUPPORTED.has(aggregation)) {
+        throw new PlainPythonUnsupported(
+          `Pivot has no case for the "${aggregation}" aggregation — the canvas quietly sums instead of applying it.`
+        )
+      }
+    }
+
+    const indexColumns = pivot.index_columns || []
+    const labels = this.temp('labels', node.id)
+    const cells = this.temp('cells', node.id)
+    const out = this.temp('out', node.id)
+    this.useHelper('as_text')
+
+    /** One cell of the output. An absent cell is None; an empty one still aggregates. */
+    const cellValue = (aggregation: string): string => {
+      const expression = this.aggExpression({ old_name: pivot.value_col, agg: aggregation as AggType }, 'cell')
+      // first / last already guard on `cell`; the rest would trip over a missing one.
+      return aggregation === 'first' || aggregation === 'last' ? expression : `${expression} if cell else None`
+    }
+    /** The engine only spells the aggregation out when there is more than one. */
+    const columnName = (aggregation: string): string =>
+      aggregations.length > 1 ? `str(label) + ${toPythonValue(`_${aggregation}`)}` : 'str(label)'
+
+    this.section('Pivot')
+    this.teach(
+      'One row per index key, one column per distinct value — which needs two',
+      'levels of bookkeeping: a dict of rows, each holding a dict of cells.',
+      'The labels get a pass of their own, because any row can invent a column',
+      'and every output row has to end up carrying the same keys.'
+    )
+    // Polars takes the labels as text, sorted, nulls first — and Python refuses
+    // to order None against a string, so the key leads with a flag.
+    this.addCode(`${labels} = []`)
+    this.addCode(`for row in ${input}:`)
+    this.addCode(`    label = as_text(${this.cell('row', pivot.pivot_column)})`)
+    this.addCode(`    if label not in ${labels}:`)
+    this.addCode(`        ${labels}.append(label)`)
+    this.addCode(`${labels}.sort(key=lambda label: (label is not None, label))`)
+    this.addCode('')
+
+    if (indexColumns.length === 0) {
+      this.teach('No index columns, so every row lands in the same single output row.')
+      this.addCode(`${cells} = {}`)
+      this.addCode(`for row in ${input}:`)
+      this.addCode(`    label = as_text(${this.cell('row', pivot.pivot_column)})`)
+      this.addCode('    if label is None:')
+      this.addCode('        continue')
+      this.addCode(`    ${cells}.setdefault(label, []).append(row)`)
+      this.addCode('')
+      this.addCode(`${out} = {}`)
+      this.addCode(`for label in ${labels}:`)
+      this.addCode(`    cell = ${cells}.get(label)`)
+      for (const aggregation of aggregations) {
+        this.addCode(`    ${out}[${columnName(aggregation)}] = ${cellValue(aggregation)}`)
+      }
+      this.addCode(`${varName} = [${out}] if ${input} else []`)
+      this.addCode('')
+      return
+    }
+
+    this.addCode(`${cells} = {}`)
+    this.addCode(`for row in ${input}:`)
+    this.addCode(`    key = ${this.keyTuple('row', indexColumns)}`)
+    this.addCode(`    row_cells = ${cells}.setdefault(key, {})`)
+    this.addCode(`    label = as_text(${this.cell('row', pivot.pivot_column)})`)
+    this.addCode('    if label is None:')
+    // The row still earns an output row; it just belongs to no column.
+    this.addCode('        continue')
+    this.addCode('    row_cells.setdefault(label, []).append(row)')
+    this.addCode('')
+    this.addCode(`${varName} = []`)
+    this.addCode(`for key, row_cells in ${cells}.items():`)
+    this.addCode(`    ${out} = {`)
+    indexColumns.forEach((column, index) => {
+      this.addCode(`        ${toPythonValue(column)}: key[${index}],`)
+    })
+    this.addCode('    }')
+    this.addCode(`    for label in ${labels}:`)
+    this.addCode('        cell = row_cells.get(label)')
+    for (const aggregation of aggregations) {
+      this.addCode(`        ${out}[${columnName(aggregation)}] = ${cellValue(aggregation)}`)
+    }
+    this.addCode(`    ${varName}.append(${out})`)
+    this.addCode('')
+  }
+
   plainUnpivot(node: FlowNode, varName: string, inputVars: InputVars): void {
     const settings = node.settings as NodeUnpivotSettings
     const input = inputVars.main || 'rows'
@@ -1567,6 +1735,7 @@ const PLAIN_HANDLERS = {
   sample: 'plainHead',
   dynamic_rename: 'plainDynamicRename',
   group_by: 'plainGroupBy',
+  pivot: 'plainPivot',
   unpivot: 'plainUnpivot',
   join: 'plainJoin',
   cross_join: 'plainCrossJoin',

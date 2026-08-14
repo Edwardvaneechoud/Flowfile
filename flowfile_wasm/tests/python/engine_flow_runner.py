@@ -64,6 +64,15 @@ def run(spec: dict) -> list[dict]:
             frames[node_id] = TWO_INPUT_BUILDERS[node_type](
                 frames[int(step["left"])], frames[int(step["right"])], settings
             )
+        elif node_type == "pivot":
+            # Pivot has no build_* form: it collects, so it only exists as an
+            # executor over engine state. Stage the input, run it, read it back.
+            input_id = int(step["inputs"][0])
+            engine.store_lazyframe(input_id, frames[input_id])
+            result = engine.execute_pivot(node_id, input_id, settings)
+            if not result.get("success"):
+                raise RuntimeError(result.get("error"))
+            frames[node_id] = engine.get_lazyframe(node_id)
         elif node_type == "union":
             frames[node_id] = engine.build_union([frames[int(i)] for i in step["inputs"]], settings)
         elif node_type in ("explore_data", "external_output"):

@@ -13,8 +13,10 @@ import {
   usePlainPythonGeneration,
   CONCEPTS,
   CONCEPT_FOR_NODE,
+  HELPER_NAMES,
   PLAIN_PYTHON_NODE_TYPES
 } from '../../src/composables/usePlainPythonGeneration'
+import { PYTHON_GLOSSARY } from '../../src/composables/usePythonGlossary'
 import type { FlowNode, FlowEdge } from '../../src/types'
 
 const { buildWalkthrough } = usePlainPythonGeneration()
@@ -153,6 +155,43 @@ describe('walkthrough step metadata', () => {
   })
 })
 
+describe('step line ranges', () => {
+  // The walkthrough highlights the step inside the whole script, so these
+  // numbers are what makes the feature point at the right thing.
+  it('points at the lines that actually belong to each step', () => {
+    const { script, steps } = buildWalkthrough(flowOf([SOURCE, FILTER, GROUP]))
+    const lines = script.split('\n')
+
+    for (const step of steps) {
+      const block = lines.slice(step.lineStart - 1, step.lineEnd).join('\n')
+      expect(block, `${step.nodeType} range is off`).toContain(`${step.varName} `)
+    }
+    expect(lines[steps[1].lineStart - 1]).toContain('--- Filter')
+    expect(lines.slice(steps[1].lineStart - 1, steps[1].lineEnd).join('\n')).toContain('for row in source:')
+  })
+
+  it('keeps the ranges in order and non-overlapping', () => {
+    const { steps } = buildWalkthrough(flowOf([SOURCE, FILTER, GROUP]))
+    for (let i = 0; i < steps.length; i++) {
+      expect(steps[i].lineEnd).toBeGreaterThanOrEqual(steps[i].lineStart)
+      if (i > 0) expect(steps[i].lineStart).toBeGreaterThan(steps[i - 1].lineEnd)
+    }
+  })
+
+  it('stays correct when helpers push the body further down the file', () => {
+    // A CSV read emits two helper functions above run_etl_pipeline; the offset
+    // has to account for them or every highlight lands in the wrong place.
+    const read = node(1, 'read', {
+      file_name: 'x.csv',
+      received_file: { name: 'x.csv', path: 'x.csv', file_type: 'csv', table_settings: { file_type: 'csv' } }
+    })
+    const { script, steps } = buildWalkthrough(flowOf([read]))
+    const lines = script.split('\n')
+    expect(script).toContain('def read_csv_file(')
+    expect(lines.slice(steps[0].lineStart - 1, steps[0].lineEnd).join('\n')).toContain('read_csv_file("x.csv")')
+  })
+})
+
 describe('concept coverage', () => {
   it('has a concept for every node type that emits a loop', () => {
     const missing = [...PLAIN_PYTHON_NODE_TYPES].filter(
@@ -170,6 +209,42 @@ describe('concept coverage', () => {
     for (const [key, concept] of Object.entries(CONCEPTS)) {
       expect(concept.title, `${key} has no title`).toBeTruthy()
       expect(concept.body.length, `${key} has no body`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('hover glossary', () => {
+  /** Every helper the generator can define is a name a reader will meet. */
+  it('explains every generated helper', () => {
+    const missing = HELPER_NAMES.filter(name => !PYTHON_GLOSSARY[name])
+    expect(missing).toEqual([])
+  })
+
+  it('explains the names that actually turn up in generated code', () => {
+    // Build a flow touching most emitters, then check the vocabulary it emits
+    // is covered. This is what stops the glossary drifting from the codegen.
+    const wide = flowOf([
+      SOURCE,
+      FILTER,
+      GROUP,
+      node(4, 'sort', { sort_input: [{ column: 'total', how: 'desc' }] }, [3]),
+      node(5, 'unique', { unique_input: { subset: ['product'], keep: 'first' } }, [4]),
+      node(6, 'record_id', { record_id_input: { name: 'nr', offset: 1 } }, [5])
+    ])
+    const { script } = buildWalkthrough(wide)
+
+    const EXPECTED = [
+      'sorted', 'lambda', 'enumerate', 'setdefault', 'append', 'set', 'len', 'sum', 'continue', 'values_of'
+    ]
+    for (const term of EXPECTED) {
+      if (!new RegExp(`\\b${term}\\b`).test(script)) continue
+      expect(PYTHON_GLOSSARY, `${term} is emitted but unexplained`).toHaveProperty(term)
+    }
+  })
+
+  it('gives every entry a summary', () => {
+    for (const [term, entry] of Object.entries(PYTHON_GLOSSARY)) {
+      expect(entry.summary, `${term} has no summary`).toBeTruthy()
     }
   })
 })

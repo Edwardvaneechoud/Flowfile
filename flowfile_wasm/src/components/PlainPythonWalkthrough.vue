@@ -33,19 +33,23 @@
           <p v-if="concept.takeaway" class="concept-takeaway">{{ concept.takeaway }}</p>
         </section>
 
-        <!-- The loop for this node's own settings. -->
-        <section class="snippet">
-          <h5 class="section-label">Your {{ stepLabel(steps[current]).toLowerCase() }} node, as code</h5>
+        <!-- The whole script, with this step's block lit up in place. Seeing it
+             in context is the point; an isolated snippet tells you nothing about
+             where the step sits or what it is handed. -->
+        <section class="script">
+          <div class="section-head">
+            <h5 class="section-label">
+              The whole script — lines {{ steps[current].lineStart }}–{{ steps[current].lineEnd }} are this step
+            </h5>
+            <span class="section-hint">hover any name for what it does</span>
+          </div>
           <Codemirror
-            :model-value="snippet"
-            :extensions="readOnlyExtensions"
+            :model-value="script"
+            :extensions="scriptExtensions"
             :disabled="true"
-            class="snippet-editor"
+            class="script-editor"
+            @ready="onScriptReady"
           />
-          <p v-if="usedHelpers.length" class="snippet-note">
-            Calls {{ usedHelpers.join(", ") }} — small helpers written out in full at the top of the
-            script, on the <strong>Plain Python</strong> tab.
-          </p>
         </section>
 
         <!-- The rows going in and coming out, at this exact point. -->
@@ -90,20 +94,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import RowTable from './RowTable.vue'
-import { CONCEPTS, HELPER_NAMES } from '../composables/usePlainPythonGeneration'
+import { glossaryTooltip } from '../composables/usePythonGlossary'
+import { stepHighlight, showStep } from '../composables/useStepHighlight'
+import { CONCEPTS } from '../composables/usePlainPythonGeneration'
 import type { PlainStep } from '../composables/usePlainPythonGeneration'
 import { getNodeDescription } from '../config/nodeDescriptions'
 
 const props = defineProps<{
   steps: PlainStep[]
-  snippets: Record<number, string>
+  /** The full generated script; the current step is highlighted inside it. */
+  script: string
   current: number
   /** varName -> the rows it held, from the trace run. */
   captured: Record<string, Record<string, unknown>[]> | null
@@ -113,23 +120,38 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:current': [number]; trace: []; select: [number] }>()
 
-const readOnlyExtensions = [
+const scriptExtensions = [
   python(),
   oneDark,
   EditorView.editable.of(false),
   EditorState.readOnly.of(true),
   EditorView.lineWrapping,
+  stepHighlight(),
+  glossaryTooltip(),
   EditorView.theme({
     '&': { fontSize: '12px' },
-    '.cm-content': { padding: '10px' },
+    '.cm-content': { padding: '10px 0' },
     '.cm-focused': { outline: 'none' }
   })
 ]
 
+let scriptView: EditorView | null = null
+const onScriptReady = (payload: { view: EditorView }) => {
+  scriptView = payload.view
+  syncHighlight()
+}
+
+const syncHighlight = () => {
+  const step = props.steps[props.current]
+  if (!scriptView) return
+  showStep(scriptView, step ? { from: step.lineStart, to: step.lineEnd } : null)
+}
+
+watch([() => props.current, () => props.script], () => nextTick(syncHighlight))
+
 const stepLabel = (step: PlainStep): string => getNodeDescription(step.nodeType).title
 
 const concept = computed(() => CONCEPTS[props.steps[props.current]?.concept ?? ''] ?? null)
-const snippet = computed(() => props.snippets[props.steps[props.current]?.nodeId] ?? '')
 
 /** The tables to show: each input this step reads, then what it produced. */
 const tables = computed(() => {
@@ -182,11 +204,6 @@ const delta = computed(() => {
   return `${before.length} rows in, ${after.length} out — this step produced ${after.length - before.length} more.`
 })
 
-/** Helpers the snippet calls but does not define; they live in the full script. */
-const usedHelpers = computed(() => {
-  const code = snippet.value
-  return HELPER_NAMES.filter(name => code.includes(`${name}(`))
-})
 
 function goTo(index: number) {
   const clamped = Math.max(0, Math.min(props.steps.length - 1, index))
@@ -338,9 +355,34 @@ watch(
   color: var(--color-text-secondary);
 }
 
-.snippet-editor {
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.section-hint {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  opacity: 0.85;
+}
+
+/* Tall enough that the highlighted block has context above and below it —
+   the whole reason for showing the script rather than a snippet. */
+.script-editor {
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   overflow: hidden;
+}
+
+.script-editor :deep(.cm-editor) {
+  max-height: 340px;
+}
+
+.script-editor :deep(.cm-scroller) {
+  overflow: auto;
 }
 
 .data {

@@ -31,6 +31,8 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useFlowStore } from '../../stores/flow-store'
 import { usePlainPythonGeneration } from '../../composables/usePlainPythonGeneration'
+import { glossaryTooltip } from '../../composables/usePythonGlossary'
+import { stepHighlight } from '../../composables/useStepHighlight'
 
 const props = defineProps<{ nodeId: number }>()
 
@@ -46,6 +48,8 @@ const copied = ref(false)
 const extensions = [
   python(),
   oneDark,
+  glossaryTooltip(),
+  stepHighlight(), // carries the tooltip theme
   EditorView.editable.of(false),
   EditorState.readOnly.of(true),
   EditorView.lineWrapping,

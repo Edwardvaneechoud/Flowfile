@@ -193,6 +193,19 @@ const SALES = source(
   ]
 )
 
+/** Long-format survey answers: not every respondent answered every question. */
+const SURVEY = source(
+  1,
+  ['respondent', 'question', 'rating'],
+  [
+    [1, 1, 2, 2, 3],
+    ['clarity', 'speed', 'clarity', 'value', 'speed'],
+    [4, 5, 3, 2, 1]
+  ]
+)
+
+const pivotStep = (pivot_input: any): Step => ({ id: 2, type: 'pivot', inputs: [1], settings: { pivot_input } })
+
 const filterFixture = (name: string, basic: any, ordered = true): Fixture => ({
   name,
   ordered,
@@ -469,6 +482,116 @@ const FIXTURES: Fixture[] = [
           unpivot_input: { index_columns: ['id'], value_columns: ['q1', 'q2'], data_type_selector_mode: 'column' }
         }
       }
+    ],
+    output: 2
+  },
+
+  // Pivot's output row order comes out of a Polars group_by, which does not
+  // promise one — hence ordered: false on every pivot fixture below.
+  {
+    name: 'pivot with one index column and one aggregation',
+    ordered: false,
+    steps: [
+      SURVEY,
+      pivotStep({ index_columns: ['respondent'], pivot_column: 'question', value_col: 'rating', aggregations: ['mean'] })
+    ],
+    output: 2
+  },
+  {
+    name: 'pivot over every aggregation it implements, named value_agg',
+    ordered: false,
+    steps: [
+      SURVEY,
+      pivotStep({
+        index_columns: ['respondent'],
+        pivot_column: 'question',
+        value_col: 'rating',
+        aggregations: ['sum', 'mean', 'min', 'max', 'count', 'first', 'last', 'median']
+      })
+    ],
+    output: 2
+  },
+  {
+    name: 'pivot with two index columns',
+    ordered: false,
+    steps: [
+      source(
+        1,
+        ['team', 'respondent', 'question', 'rating'],
+        [
+          ['red', 'red', 'blue'],
+          [1, 1, 2],
+          ['Speed', 'clarity', 'Speed'],
+          [4, 5, 3]
+        ]
+      ),
+      pivotStep({
+        index_columns: ['team', 'respondent'],
+        pivot_column: 'question',
+        value_col: 'rating',
+        aggregations: ['sum']
+      })
+    ],
+    output: 2
+  },
+  {
+    name: 'pivot with no index columns collapses to a single row',
+    ordered: false,
+    steps: [
+      SURVEY,
+      pivotStep({ index_columns: [], pivot_column: 'question', value_col: 'rating', aggregations: ['sum'] })
+    ],
+    output: 2
+  },
+  {
+    name: 'pivot with no index columns over an empty table',
+    ordered: false,
+    // No rows means no single row either: the one-row case still has to be empty.
+    steps: [
+      source(1, ['k', 'q', 'v'], [[], [], []]),
+      pivotStep({ index_columns: [], pivot_column: 'q', value_col: 'v', aggregations: ['sum'] })
+    ],
+    output: 2
+  },
+  {
+    name: 'pivot over a value column full of nulls',
+    ordered: false,
+    // (a,x) exists but holds only nulls; (a,y) never happened. sum 0 vs None.
+    steps: [
+      source(
+        1,
+        ['k', 'q', 'v'],
+        [
+          ['a', 'a', 'b', 'b'],
+          ['x', 'x', 'x', 'y'],
+          [null, null, 3, null]
+        ]
+      ),
+      pivotStep({
+        index_columns: ['k'],
+        pivot_column: 'q',
+        value_col: 'v',
+        aggregations: ['sum', 'count', 'mean', 'min', 'first']
+      })
+    ],
+    output: 2
+  },
+  {
+    name: 'pivot over a pivot column with nulls',
+    ordered: false,
+    // The engine invents a column literally called None and leaves it empty —
+    // and k=2, whose only row has no label, still gets an output row.
+    steps: [
+      source(
+        1,
+        ['k', 'q', 'v'],
+        [
+          [1, 1, 2],
+          ['a', null, null],
+          [1, 2, 3]
+        ]
+      ),
+      pivotStep({ index_columns: ['k'], pivot_column: 'q', value_col: 'v', aggregations: ['sum'] })
     ],
     output: 2
   },

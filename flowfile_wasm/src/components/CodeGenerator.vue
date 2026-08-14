@@ -124,7 +124,7 @@
         v-if="mode === 'walkthrough'"
         v-model:current="stepIndex"
         :steps="walkthrough.steps"
-        :snippets="walkthrough.snippets"
+        :script="walkthrough.script"
         :captured="captured"
         :data-state="traceState"
         :can-run="pyodideStore.isReady"
@@ -196,6 +196,8 @@ import { usePyodideStore } from '../stores/pyodide-store'
 import { useCodeGeneration } from '../composables/useCodeGeneration'
 import { usePlainPythonGeneration } from '../composables/usePlainPythonGeneration'
 import type { PlainWalkthrough } from '../composables/usePlainPythonGeneration'
+import { glossaryTooltip } from '../composables/usePythonGlossary'
+import { stepHighlight } from '../composables/useStepHighlight'
 import { useLearningStore } from '../stores/learning-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { Z_INDEX } from './common/DraggableItem/zIndex'
@@ -305,6 +307,8 @@ const scrollToPipeline = async () => {
 const extensions = [
   python(),
   oneDark,
+  glossaryTooltip(),
+  stepHighlight(), // brings the tooltip theme with it
   EditorView.theme({
     '&': { height: '100%' },
     '.cm-scroller': { overflow: 'auto' },
