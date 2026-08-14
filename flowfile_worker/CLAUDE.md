@@ -38,8 +38,9 @@ Standalone FastAPI compute service that offloads heavy Polars/data work from `fl
 - `secrets.py`'s store dir honors `FLOWFILE_SECURE_STORAGE_PATH` (else `$APPDATA`/`~/.config` + `flowfile`), matching `flowfile_core/auth/secrets.py`. The two resolvers must stay in lockstep: core encrypts `$ffsec$` with the master key in that dir and the worker re-derives it, so a split store turns every secret-touching offloaded job into "Task failed".
 
 ## Running / entry points
-- Poetry script: `poetry run flowfile_worker` → `flowfile_worker.main:run`.
-- Module: `python -m flowfile_worker.main` (Docker `CMD`).
+- Poetry script: `poetry run flowfile_worker` → `flowfile_worker.cli:run` (a thin shim; `main.py`'s imports stay out of the launcher module).
+- Module: `python -m flowfile_worker` → `__main__.py` (Docker `CMD`).
+- **Never point either entry point back at `main.py` directly.** A launcher whose `__main__` has no `__spec__` (console script) or a non-`.__main__` spec (`-m flowfile_worker.main`) makes spawn re-execute it in *every* child, re-importing the whole FastAPI app: 1249 modules and ~2390ms per round trip vs 513 and ~878ms. `__init__.py` stamps a `flowfile_worker.__main__` spec in the parent to force spawn's free path; `tests/test_import_purity.py::test_spawned_child_does_not_reexecute_launcher` locks it in.
 - Flags: `--host`, `--port` (default 63579), `--core-host`, `--core-port` (default 63578); also `CORE_HOST`/`CORE_PORT` env (Docker).
 - Docker: `flowfile_worker/Dockerfile` (python:3.12-slim, `FLOWFILE_MODE=docker`, EXPOSE 63579, healthcheck on `/docs`).
 

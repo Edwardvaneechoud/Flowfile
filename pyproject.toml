@@ -88,7 +88,7 @@ packaging = ">=24.0"
 
 
 [tool.poetry.scripts]
-flowfile_worker = "flowfile_worker.main:run"
+flowfile_worker = "flowfile_worker.cli:run"
 flowfile_core = "flowfile_core.main:run"
 build_backends = "build_backends.main:main"
 build_backends_prd = "build_backends.main_prd:main"
