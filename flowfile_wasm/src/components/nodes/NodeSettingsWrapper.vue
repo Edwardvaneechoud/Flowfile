@@ -2,6 +2,8 @@
   <div class="node-settings-wrapper">
     <slot></slot>
 
+    <NodeExplainer v-if="teachingMode" :node-id="nodeId" />
+
     <div class="general-settings-section">
       <div class="section-header" @click="isExpanded = !isExpanded">
         <span class="section-title">General Settings</span>
@@ -38,12 +40,18 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
+import NodeExplainer from './NodeExplainer.vue'
 import type { NodeBase } from '../../types'
 
-const props = defineProps<{
-  nodeId: number
-  settings: NodeBase
-}>()
+const props = withDefaults(
+  defineProps<{
+    nodeId: number
+    settings: NodeBase
+    /** Show the plain-Python "how would I write this myself?" panel. */
+    teachingMode?: boolean
+  }>(),
+  { teachingMode: true }
+)
 
 const flowStore = useFlowStore()
 

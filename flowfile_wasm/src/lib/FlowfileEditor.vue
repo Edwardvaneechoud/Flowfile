@@ -18,6 +18,7 @@
       :toolbar-config="toolbarConfigMerged"
       :node-categories-config="props.nodeCategories"
       :readonly="props.readonly"
+      :teaching-mode="props.teachingMode"
       @execution-complete="onExecutionComplete"
       @output="onOutput"
     />
@@ -46,6 +47,7 @@ import { detectBinaryFormat } from '../utils/binary-format'
 
 const props = withDefaults(defineProps<FlowfileEditorProps>(), {
   readonly: false,
+  teachingMode: true,
   height: '100%',
   width: '100%'
 })

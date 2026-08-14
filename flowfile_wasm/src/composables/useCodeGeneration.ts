@@ -33,7 +33,7 @@ import type {
   AggType
 } from '../types'
 
-interface CodeGenerationOptions {
+export interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
   edges: FlowEdge[]
   flowName?: string
@@ -57,7 +57,10 @@ function isJoinInputVars(input: unknown): input is JoinInputVars {
   );
 }
 
-function toPythonValue(value: any): string {
+export function toPythonValue(value: any): string {
+  if (value === null || value === undefined) {
+    return 'None'
+  }
   if (typeof value === 'boolean') {
     return value ? 'True' : 'False'
   }
@@ -229,21 +232,23 @@ const RESERVED_NAMES = new Set<string>([
   'slice', 'sorted', 'str', 'sum', 'tuple', 'type', 'vars', 'zip'
 ])
 
-class FlowToPolarsConverter {
-  private nodes: Map<number, FlowNode>
-  private edges: FlowEdge[]
-  private flowName: string
-  private nodeVarMapping: Map<number, string>
-  private imports: Set<string>
-  private codeLines: string[]
-  private lastNodeVar: string | null
-  private unsupportedNodes: Array<{ id: number; type: string; reason: string }>
-  private formulaCode: Record<number, string>
+// Members are `protected` rather than `private` because usePlainPythonGeneration.ts
+// subclasses this to emit the teaching flavour; see that file for the seam it uses.
+export class FlowToPolarsConverter {
+  protected nodes: Map<number, FlowNode>
+  protected edges: FlowEdge[]
+  protected flowName: string
+  protected nodeVarMapping: Map<number, string>
+  protected imports: Set<string>
+  protected codeLines: string[]
+  protected lastNodeVar: string | null
+  protected unsupportedNodes: Array<{ id: number; type: string; reason: string }>
+  protected formulaCode: Record<number, string>
   // (node, effectiveVar, start, end) per emitting node; (start, end) slices codeLines.
-  private nodeSpans: Array<{ node: FlowNode; effectiveVar: string; start: number; end: number }>
+  protected nodeSpans: Array<{ node: FlowNode; effectiveVar: string; start: number; end: number }>
   // node_id -> upstream node_id for nodes that emit nothing (passthroughs).
-  private passthrough: Map<number, number>
-  private currentNodeId: number
+  protected passthrough: Map<number, number>
+  protected currentNodeId: number
 
   constructor(options: CodeGenerationOptions) {
     this.nodes = options.nodes
@@ -282,7 +287,7 @@ class FlowToPolarsConverter {
     return this.buildFinalCode()
   }
 
-  private determineExecutionOrder(): number[] {
+  protected determineExecutionOrder(): number[] {
     const order: number[] = []
     const visited = new Set<number>()
 
@@ -331,7 +336,7 @@ class FlowToPolarsConverter {
     return order
   }
 
-  private generateNodeCode(node: FlowNode): void {
+  protected generateNodeCode(node: FlowNode): void {
     const nodeReference = node.node_reference || (node.settings as any)?.node_reference
     const varName = nodeReference || `df_${node.id}`
     this.nodeVarMapping.set(node.id, varName)
@@ -359,7 +364,7 @@ class FlowToPolarsConverter {
     }
   }
 
-  private dispatchNodeCode(node: FlowNode, varName: string, inputVars: Record<string, string>): void {
+  protected dispatchNodeCode(node: FlowNode, varName: string, inputVars: Record<string, string>): void {
     switch (node.type) {
       case 'read':
         this.handleReadCsv(node.settings as NodeReadSettings, varName)
@@ -446,7 +451,7 @@ class FlowToPolarsConverter {
     }
   }
 
-  private getInputVars(node: FlowNode): Record<string, string> {
+  protected getInputVars(node: FlowNode): Record<string, string> {
     const inputVars: Record<string, string> = {}
 
     // For join nodes: leftInputId maps to 'main', rightInputId maps to 'right'
@@ -471,7 +476,7 @@ class FlowToPolarsConverter {
     return inputVars
   }
 
-  private handleReadCsv(settings: NodeReadSettings, varName: string): void {
+  protected handleReadCsv(settings: NodeReadSettings, varName: string): void {
     const table = settings.received_file
     const fileName = settings.file_name || table?.name || 'data.csv'
     // Files loaded from a URL keep it as received_file.path — generated code
@@ -541,7 +546,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleManualInput(settings: NodeManualInputSettings, varName: string): void {
+  protected handleManualInput(settings: NodeManualInputSettings, varName: string): void {
     const rawData = settings.raw_data_format
     if (!rawData) {
       this.addComment(`# Manual input node ${varName} has no data`)
@@ -559,13 +564,14 @@ class FlowToPolarsConverter {
 
     this.addCode(`${varName} = pl.LazyFrame({`)
     for (const [colName, values] of Object.entries(dataDict)) {
-      this.addCode(`    "${colName}": ${JSON.stringify(values)},`)
+      // Not JSON.stringify: JSON's null/true/false are not Python literals.
+      this.addCode(`    "${colName}": ${toPythonValue(values)},`)
     }
     this.addCode(`})`)
     this.addCode('')
   }
 
-  private handleExternalData(settings: NodeExternalDataSettings, varName: string): void {
+  protected handleExternalData(settings: NodeExternalDataSettings, varName: string): void {
     const datasetName = settings.dataset_name || 'external_data'
     const fileName = `${datasetName}.csv`
 
@@ -575,14 +581,14 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleExternalOutput(varName: string, inputVars: { main?: string }): void {
+  protected handleExternalOutput(varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     this.addComment(`# External output — collect result for downstream use`)
     this.addCode(`${varName} = ${inputDf}.collect()`)
     this.addCode('')
   }
 
-  private handleWriteToCatalog(settings: NodeWriteToCatalogSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleWriteToCatalog(settings: NodeWriteToCatalogSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const name = (settings.dataset_name || '').trim() || 'catalog_table'
     // The browser Catalog has no standalone equivalent; the closest is writing
@@ -593,7 +599,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleFilter(settings: NodeFilterSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleFilter(settings: NodeFilterSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const filterInput = settings.filter_input
 
@@ -611,7 +617,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private createBasicFilterExpr(field: string, operator: FilterOperator, value: string, value2?: string): string {
+  protected createBasicFilterExpr(field: string, operator: FilterOperator, value: string, value2?: string): string {
     const col = `pl.col("${field}")`
     
     const formatValue = (v: string) => {
@@ -662,7 +668,7 @@ class FlowToPolarsConverter {
     }
   }
 
-  private handleSelect(settings: NodeSelectSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleSelect(settings: NodeSelectSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const selectExprs: string[] = []
 
@@ -696,7 +702,7 @@ class FlowToPolarsConverter {
     }
   }
 
-  private handleGroupBy(settings: NodeGroupBySettings, varName: string, inputVars: { main?: string }): void {
+  protected handleGroupBy(settings: NodeGroupBySettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const groupCols: string[] = []
     const aggExprs: string[] = []
@@ -718,7 +724,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private getAggFunction(agg: AggType): string {
+  protected getAggFunction(agg: AggType): string {
     const mapping: Record<AggType, string> = {
       'groupby': '',
       'sum': 'sum',
@@ -735,7 +741,7 @@ class FlowToPolarsConverter {
     return mapping[agg] || 'sum'
   }
 
-  private handleJoin(settings: NodeJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
+  protected handleJoin(settings: NodeJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
     const leftDf = inputVars.main
     const rightDf = inputVars.right
     const joinInput = settings.join_input
@@ -752,7 +758,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleCrossJoin(settings: NodeCrossJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
+  protected handleCrossJoin(settings: NodeCrossJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
     const leftDf = inputVars.main
     const rightDf = inputVars.right
     const suffix = settings.cross_join_input?.right_suffix || '_right'
@@ -764,14 +770,14 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private collectMainInputs(inputVars: Record<string, string>): string[] {
+  protected collectMainInputs(inputVars: Record<string, string>): string[] {
     return Object.keys(inputVars)
       .filter(k => k === 'main' || k.startsWith('main_'))
       .sort((a, b) => (a === 'main' ? -1 : parseInt(a.slice(5))) - (b === 'main' ? -1 : parseInt(b.slice(5))))
       .map(k => inputVars[k])
   }
 
-  private handleUnion(settings: NodeUnionSettings, varName: string, inputVars: Record<string, string>): void {
+  protected handleUnion(settings: NodeUnionSettings, varName: string, inputVars: Record<string, string>): void {
     const dfs = this.collectMainInputs(inputVars)
     const how = (settings.union_input?.mode || 'diagonal') === 'vertical' ? 'vertical_relaxed' : 'diagonal_relaxed'
     if (dfs.length <= 1) {
@@ -783,7 +789,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleFormula(
+  protected handleFormula(
     settings: NodeFormulaSettings,
     varName: string,
     inputVars: { main?: string },
@@ -816,7 +822,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleRecordId(settings: NodeRecordIdSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleRecordId(settings: NodeRecordIdSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const name = settings.record_id_input?.name || 'record_id'
     const offset = settings.record_id_input?.offset ?? 1
@@ -825,7 +831,7 @@ class FlowToPolarsConverter {
   }
 
   // Python expression (over `df`) for the columns a dynamic-rename rule targets.
-  private renameTargetsExpr(dr: DynamicRenameInput, df: string): string {
+  protected renameTargetsExpr(dr: DynamicRenameInput, df: string): string {
     if (dr.selection_mode === 'list') {
       return `[c for c in ${toPythonValue(dr.selected_columns || [])} if c in ${df}.columns]`
     }
@@ -848,7 +854,7 @@ class FlowToPolarsConverter {
     return `${df}.columns`
   }
 
-  private handleDynamicRename(settings: NodeDynamicRenameSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleDynamicRename(settings: NodeDynamicRenameSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const dr = settings.dynamic_rename_input
     if (!dr) {
@@ -888,7 +894,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleSort(settings: NodeSortSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleSort(settings: NodeSortSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     // sort_input is now a flat array matching flowfile_core: [{column, how}]
     const sortInput = settings.sort_input || []
@@ -902,7 +908,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleUnique(settings: NodeUniqueSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleUnique(settings: NodeUniqueSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const uniqueInput = settings.unique_input
 
@@ -917,7 +923,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handlePivot(settings: NodePivotSettings, varName: string, inputVars: { main?: string }): void {
+  protected handlePivot(settings: NodePivotSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const pivotInput = settings.pivot_input
     
@@ -946,41 +952,41 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-        private handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
-          const inputDf = inputVars.main || 'df'
-          const unpivotInput = settings.unpivot_input
+  protected handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const unpivotInput = settings.unpivot_input
 
-      this.addCode(`${varName} = ${inputDf}.unpivot(`)
+    this.addCode(`${varName} = ${inputDf}.unpivot(`)
 
-      if (unpivotInput.index_columns?.length > 0) {
-        this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
-      }
-
-      if (unpivotInput.data_type_selector_mode === 'data_type' && unpivotInput.data_type_selector) {
-        this.imports.add('import polars.selectors as cs')
-
-        const selectorMap: Record<string, string> = {
-          'numeric': 'cs.numeric()',
-          'string': 'cs.string()',
-          'float': 'cs.float()',
-          'date': 'cs.temporal()',  // Note: 'date' maps to temporal() in Polars
-          'all': 'cs.all()'
-        }
-
-        const selector = selectorMap[unpivotInput.data_type_selector] || 'cs.all()'
-
-        this.addCode(`    on=${selector},`)
-      } else if (unpivotInput.value_columns?.length > 0) {
-        this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
-      }
-
-      this.addCode(`    variable_name="variable",`)
-      this.addCode(`    value_name="value"`)
-      this.addCode(`)`)
-      this.addCode('')
+    if (unpivotInput.index_columns?.length > 0) {
+      this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
     }
 
-  private handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
+    if (unpivotInput.data_type_selector_mode === 'data_type' && unpivotInput.data_type_selector) {
+      this.imports.add('import polars.selectors as cs')
+
+      const selectorMap: Record<string, string> = {
+        'numeric': 'cs.numeric()',
+        'string': 'cs.string()',
+        'float': 'cs.float()',
+        'date': 'cs.temporal()',  // Note: 'date' maps to temporal() in Polars
+        'all': 'cs.all()'
+      }
+
+      const selector = selectorMap[unpivotInput.data_type_selector] || 'cs.all()'
+
+      this.addCode(`    on=${selector},`)
+    } else if (unpivotInput.value_columns?.length > 0) {
+      this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
+    }
+
+    this.addCode(`    variable_name="variable",`)
+    this.addCode(`    value_name="value"`)
+    this.addCode(`)`)
+    this.addCode('')
+  }
+
+  protected handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const n = settings.sample_size || 10
     const method = settings.sample_method || 'first'
@@ -1001,7 +1007,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handlePolarsCode(settings: PolarsCodeSettings, varName: string, inputVars: { main?: string; left?: string; right?: string }): void {
+  protected handlePolarsCode(settings: PolarsCodeSettings, varName: string, inputVars: { main?: string; left?: string; right?: string }): void {
     const code = (settings.polars_code_input?.polars_code || '').trim()
     
     let params: string
@@ -1077,13 +1083,13 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handlePreview(_varName: string, inputVars: { main?: string }): void {
+  protected handlePreview(_varName: string, inputVars: { main?: string }): void {
     // explore_data is interactive-only: remap to its input and emit nothing, so
     // no dead `var = input` passthrough appears in the exported script.
     this.nodeVarMapping.set(this.currentNodeId, inputVars.main || 'df')
   }
 
-  private handleOutput(settings: NodeOutputSettings, varName: string, inputVars: { main?: string }): void {
+  protected handleOutput(settings: NodeOutputSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
 
     // Handle both nested format (from UI) and flat format (from YAML import)
@@ -1132,7 +1138,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private getPolarsType(dataType: string): string {
+  protected getPolarsType(dataType: string): string {
     const mapping: Record<string, string> = {
       'String': 'pl.Utf8',
       'Integer': 'pl.Int64',
@@ -1149,16 +1155,16 @@ class FlowToPolarsConverter {
     return mapping[dataType] || 'pl.Utf8'
   }
 
-  private addCode(line: string): void {
+  protected addCode(line: string): void {
     this.codeLines.push(line)
   }
 
-  private addComment(comment: string): void {
+  protected addComment(comment: string): void {
     this.codeLines.push(comment)
   }
 
   // Upstream node ids feeding `node` (main + left + right).
-  private rawProducerIds(node: FlowNode): number[] {
+  protected rawProducerIds(node: FlowNode): number[] {
     const ids = [...(node.inputIds || [])]
     if (node.leftInputId !== undefined) ids.push(node.leftInputId)
     if (node.rightInputId !== undefined) ids.push(node.rightInputId)
@@ -1166,7 +1172,7 @@ class FlowToPolarsConverter {
   }
 
   // Hop through elided passthrough nodes to the real producing node.
-  private resolveProducer(nodeId: number): number {
+  protected resolveProducer(nodeId: number): number {
     const seen = new Set<number>()
     while (this.passthrough.has(nodeId) && !seen.has(nodeId)) {
       seen.add(nodeId)
@@ -1175,12 +1181,12 @@ class FlowToPolarsConverter {
     return nodeId
   }
 
-  private varLabel(node: FlowNode): string {
+  protected varLabel(node: FlowNode): string {
     return NODE_TYPE_VAR_LABEL[node.type] || 'df'
   }
 
   // Fuse linear single-use chains, then give the surviving boundaries clean names.
-  private renderBody(): string[] {
+  protected renderBody(): string[] {
     const emissions: NodeEmission[] = []
     const nodeById = new Map<number, FlowNode>()
     for (const { node, effectiveVar, start, end } of this.nodeSpans) {
@@ -1214,14 +1220,14 @@ class FlowToPolarsConverter {
 
   // Renameable boundaries: single-output provisional `df_N` assignments (not pinned,
   // and only node types with a known operation label).
-  private isRenameable(em: NodeEmission, node: FlowNode): boolean {
+  protected isRenameable(em: NodeEmission, node: FlowNode): boolean {
     if (em.pinned) return false
     if (!(node.type in NODE_TYPE_VAR_LABEL)) return false
     return em.varName === `df_${em.nodeId}`
   }
 
   // Map provisional `df_N` tokens to clean labels; suffix only on collision.
-  private planBoundaryNames(
+  protected planBoundaryNames(
     emissions: NodeEmission[], survivors: Set<number>, nodeById: Map<number, FlowNode>
   ): Map<string, string> {
     const ordered = emissions.filter(em => survivors.has(em.nodeId))
@@ -1253,7 +1259,7 @@ class FlowToPolarsConverter {
   }
 
   // Names bound by imports so generated vars never shadow an import alias.
-  private importedNames(): Set<string> {
+  protected importedNames(): Set<string> {
     const names = new Set<string>()
     for (const statement of this.imports) {
       let m = statement.match(/^import\s+(.+?)(?:\s+as\s+(\w+))?$/)
@@ -1272,7 +1278,7 @@ class FlowToPolarsConverter {
     return names
   }
 
-  private uniquify(name: string, used: Set<string>): string {
+  protected uniquify(name: string, used: Set<string>): string {
     let candidate = name
     let bump = 2
     while (used.has(candidate)) {
@@ -1288,7 +1294,7 @@ class FlowToPolarsConverter {
   // Only real code is rewritten — string literals and comments are left verbatim
   // (mirrors flowfile_core's _rename_tokens, which renames NAME tokens only), so a
   // column/filter value like "df_2" is never mangled into a renamed variable.
-  private applyRenames(body: string[], rename: Map<string, string>): string[] {
+  protected applyRenames(body: string[], rename: Map<string, string>): string[] {
     if (rename.size === 0) return body
     const patterns = Array.from(rename.entries()).map(
       ([oldName, newName]) => [new RegExp(`\\b${oldName}\\b(?!=)`, 'g'), newName] as const
@@ -1309,7 +1315,7 @@ class FlowToPolarsConverter {
   // literals and comments. The line is walked once, splitting it into code runs
   // vs. protected spans (quoted strings, `# ...` comments); only code runs are
   // rewritten. Generated code never emits f-strings, so string bodies are opaque.
-  private renameCodeSegments(line: string, patterns: ReadonlyArray<readonly [RegExp, string]>): string {
+  protected renameCodeSegments(line: string, patterns: ReadonlyArray<readonly [RegExp, string]>): string {
     let out = ''
     let i = 0
     const n = line.length
@@ -1349,7 +1355,7 @@ class FlowToPolarsConverter {
     return out
   }
 
-  private buildFinalCode(): string {
+  protected buildFinalCode(): string {
     const lines: string[] = []
 
     lines.push(...Array.from(this.imports).sort())

@@ -176,6 +176,7 @@
       <NodeSettingsWrapper
         :node-id="selectedNode.id"
         :settings="selectedNode.settings"
+        :teaching-mode="props.teachingMode"
       >
         <component
           :is="getSettingsComponent(selectedNode.type)"
@@ -330,6 +331,7 @@
     <!-- Code Generator Modal -->
     <CodeGenerator
       :is-visible="uiStore.showCodeGenerator"
+      :teaching-mode="props.teachingMode"
       @close="uiStore.showCodeGenerator = false"
     />
     <!-- Missing Files Modal -->
@@ -455,9 +457,13 @@ const props = withDefaults(defineProps<{
   // App mode hides the in-canvas toolbar and drives actions from the header;
   // the embeddable library keeps the toolbar (default true).
   showToolbar?: boolean
+  // Offer the plain-Python teaching flavour: the Code panel's second mode and
+  // the "How would I write this myself?" panel in node settings.
+  teachingMode?: boolean
 }>(), {
   readonly: false,
-  showToolbar: true
+  showToolbar: true,
+  teachingMode: true
 })
 
 const emit = defineEmits<{

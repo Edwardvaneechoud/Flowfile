@@ -86,6 +86,7 @@ app.use(FlowfileEditorPlugin)
 | `theme` | `ThemeConfig` | — | `{ mode: 'light' \| 'dark' \| 'system' }` |
 | `toolbar` | `ToolbarConfig` | — | Show/hide toolbar buttons |
 | `nodeCategories` | `NodeCategoryConfig[]` | — | Control which node types are available |
+| `teachingMode` | `boolean` | `true` | Offer the plain-Python flavour: a second mode in the Code panel and a "How would I write this myself?" panel in node settings. Set `false` to hide both |
 | `pyodide` | `PyodideConfig` | — | `{ autoInit: boolean }` |
 
 ## Events

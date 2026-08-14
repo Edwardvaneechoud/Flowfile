@@ -3,7 +3,41 @@
     <div class="code-generator-panel">
       <div class="code-header">
         <h3>Generated Python Code</h3>
+        <div v-if="teachingMode" class="mode-switch" role="tablist" aria-label="Code flavour">
+          <button
+            role="tab"
+            class="mode-button"
+            :class="{ active: mode === 'polars' }"
+            :aria-selected="mode === 'polars'"
+            title="Production code using the Polars dataframe library"
+            @click="setMode('polars')"
+          >
+            Polars
+          </button>
+          <button
+            role="tab"
+            class="mode-button"
+            :class="{ active: mode === 'plain' }"
+            :aria-selected="mode === 'plain'"
+            title="The same flow written with lists, dicts and for loops — no dataframe library"
+            @click="setMode('plain')"
+          >
+            Plain Python
+          </button>
+        </div>
         <div class="header-actions">
+          <button
+            v-if="mode === 'plain'"
+            class="icon-button run-button"
+            :disabled="running || !pyodideStore.isReady"
+            :title="pyodideStore.isReady ? 'Run this script here in the browser' : 'Python is still starting up'"
+            @click="runScript"
+          >
+            <svg v-if="!running" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="6 4 20 12 6 20 6 4"></polygon>
+            </svg>
+            <span v-if="running" class="spinner"></span>
+          </button>
           <button class="icon-button refresh-button" :disabled="loading" @click="refreshCode" title="Refresh code">
             <svg
               v-if="!loading"
@@ -59,20 +93,47 @@
         <span>{{ error }}</span>
       </div>
 
+      <div v-if="mode === 'plain'" class="mode-note">
+        The same flow with no dataframe library — every table is a list of dicts and every node is a
+        loop. Press ▶ to run it right here and check it against the canvas.
+      </div>
+
       <div class="code-editor-container">
         <Codemirror
           v-model="code"
           :extensions="extensions"
           :disabled="true"
           :style="{ height: '100%', fontSize: '13px' }"
+          @ready="onEditorReady"
         />
+      </div>
+
+      <div v-if="mode === 'plain' && runResult" class="run-output" :class="{ failed: runResult.failed }">
+        <div class="run-output-header">
+          <span>{{ runResult.failed ? "The script raised" : `Returned ${runResult.rows.length} row(s)` }}</span>
+          <button class="run-output-close" title="Hide output" @click="runResult = null">✕</button>
+        </div>
+        <pre v-if="runResult.failed" class="run-error">{{ runResult.error }}</pre>
+        <table v-else-if="runResult.rows.length" class="run-table">
+          <thead>
+            <tr>
+              <th v-for="column in runColumns" :key="column">{{ column }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, index) in runResult.rows.slice(0, 50)" :key="index">
+              <td v-for="column in runColumns" :key="column">{{ formatCell(row[column]) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="run-empty">No rows.</div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -80,11 +141,17 @@ import { EditorView } from '@codemirror/view'
 import { useFlowStore } from '../stores/flow-store'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useCodeGeneration } from '../composables/useCodeGeneration'
-import type { NodeFormulaSettings } from '../types'
+import { usePlainPythonGeneration } from '../composables/usePlainPythonGeneration'
+import type { NodeFormulaSettings, NodeReadSettings } from '../types'
 
-const props = defineProps<{
-  isVisible: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    isVisible: boolean
+    /** Offer the plain-Python teaching flavour alongside the Polars one. */
+    teachingMode?: boolean
+  }>(),
+  { teachingMode: true }
+)
 
 const emit = defineEmits<{
   close: []
@@ -93,10 +160,52 @@ const emit = defineEmits<{
 const flowStore = useFlowStore()
 const pyodideStore = usePyodideStore()
 const { generateCode } = useCodeGeneration()
+const { generatePlainPython } = usePlainPythonGeneration()
+
+type CodeMode = 'polars' | 'plain'
+const MODE_KEY = 'flowfile-codegen-mode'
 
 const code = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
+// Polars is the default; the teaching flavour is something you switch into.
+const mode = ref<CodeMode>(localStorage.getItem(MODE_KEY) === 'plain' ? 'plain' : 'polars')
+const running = ref(false)
+const runResult = ref<{ rows: Record<string, unknown>[]; failed: boolean; error?: string } | null>(null)
+
+const runColumns = computed(() => {
+  const seen: string[] = []
+  for (const row of runResult.value?.rows.slice(0, 50) ?? []) {
+    for (const column of Object.keys(row)) if (!seen.includes(column)) seen.push(column)
+  }
+  return seen
+})
+
+const formatCell = (value: unknown): string =>
+  value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)
+
+const setMode = (next: CodeMode) => {
+  if (mode.value === next) return
+  mode.value = next
+  localStorage.setItem(MODE_KEY, next)
+  runResult.value = null
+  generateCodeFromFlow()
+}
+
+let editorView: EditorView | null = null
+const onEditorReady = (payload: { view: EditorView }) => {
+  editorView = payload.view
+}
+
+/** Open the plain flavour on the pipeline, not on the helper functions above it. */
+const scrollToPipeline = async () => {
+  await nextTick()
+  if (!editorView || mode.value !== 'plain') return
+  const offset = code.value.indexOf('def run_etl_pipeline')
+  if (offset <= 0) return
+  const line = editorView.state.doc.lineAt(offset)
+  editorView.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start' }) })
+}
 
 const extensions = [
   python(),
@@ -139,19 +248,84 @@ const generateCodeFromFlow = async () => {
   error.value = null
 
   try {
+    if (mode.value === 'plain') {
+      // The plain flavour never refuses a flow: unsupported nodes become exercises.
+      code.value = generatePlainPython({
+        nodes: flowStore.nodes,
+        edges: flowStore.edges,
+        flowName: 'WASM Flow'
+      })
+      void scrollToPipeline()
+      return
+    }
     const formulaCode = await translateFormulaNodes()
-    const generatedCode = generateCode({
+    code.value = generateCode({
       nodes: flowStore.nodes,
       edges: flowStore.edges,
       flowName: 'WASM Flow',
       formulaCode
     })
-    code.value = generatedCode
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to generate code'
     code.value = '# Failed to generate code. Please check your flow configuration.'
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * Run the generated script in Pyodide, in its own namespace.
+ *
+ * This deliberately avoids the engine entirely — no `execute_*` bridge call, no
+ * `_lazyframes` entry — so it cannot disturb canvas state. It is a run in the
+ * explicit-run-only sense: it only ever happens on this button.
+ */
+const runScript = async () => {
+  if (!pyodideStore.isReady || running.value) return
+  running.value = true
+  runResult.value = null
+  try {
+    stageReadFiles()
+    pyodideStore.setGlobal('_plain_script', code.value)
+    const rows = await pyodideStore.runPythonWithResult(
+      [
+        'import json, traceback',
+        '_plain_ns = {}',
+        'try:',
+        // compile() with a filename so traceback line numbers match the editor.
+        '    exec(compile(_plain_script, "pipeline.py", "exec"), _plain_ns)',
+        '    _plain_out = {"ok": True, "rows": json.dumps(_plain_ns["run_etl_pipeline"](), default=str)}',
+        'except Exception:',
+        '    _plain_out = {"ok": False, "error": traceback.format_exc()}',
+        '_plain_out'
+      ].join('\n')
+    )
+    runResult.value = rows?.ok
+      ? { rows: JSON.parse(rows.rows), failed: false }
+      : { rows: [], failed: true, error: rows?.error ?? 'Unknown error' }
+  } catch (err) {
+    runResult.value = { rows: [], failed: true, error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    pyodideStore.deleteGlobal('_plain_script')
+    running.value = false
+  }
+}
+
+/** Put each Read File node's text content where the generated script looks for it. */
+const stageReadFiles = () => {
+  const fs = pyodideStore.pyodide?.FS
+  if (!fs) return
+  for (const node of flowStore.nodes.values()) {
+    if (node.type !== 'read') continue
+    const content = flowStore.getFileContent(node.id)
+    if (content?.kind !== 'text') continue
+    const settings = node.settings as NodeReadSettings
+    const name = settings.file_name || settings.received_file?.name || 'data.csv'
+    try {
+      fs.writeFile(name, content.data)
+    } catch {
+      // A path the virtual FS will not take just surfaces as a Python error below.
+    }
   }
 }
 
@@ -164,7 +338,7 @@ const exportCode = () => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'flowfile_pipeline.py'
+  a.download = mode.value === 'plain' ? 'pipeline_plain_python.py' : 'flowfile_pipeline.py'
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -229,6 +403,121 @@ watch(() => props.isVisible, (isVisible) => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.mode-switch {
+  display: flex;
+  margin-left: auto;
+  margin-right: 12px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mode-button {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mode-button:hover:not(.active) {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+.mode-button.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.mode-note {
+  padding: 10px 20px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.run-button:hover:not(:disabled) {
+  background: var(--color-success, #2e9e5b) !important;
+  border-color: var(--color-success, #2e9e5b) !important;
+  color: #fff;
+}
+
+.run-output {
+  flex-shrink: 0;
+  max-height: 34%;
+  overflow: auto;
+  border-top: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+}
+
+.run-output-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.run-output.failed .run-output-header {
+  color: var(--color-danger);
+}
+
+.run-output-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.run-error {
+  margin: 0;
+  padding: 12px 20px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--color-danger);
+}
+
+.run-empty {
+  padding: 12px 20px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.run-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.run-table th,
+.run-table td {
+  padding: 5px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.run-table th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 .icon-button {

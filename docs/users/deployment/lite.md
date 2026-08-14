@@ -43,6 +43,28 @@ It also supports **exporting a flow to a Python/Polars script** and a lightweigh
 
 ---
 
+## Learning mode: plain Python
+
+The Code panel has a second mode, **Plain Python**, that rewrites the flow with no dataframe library at all. Every table becomes a `list[dict]` — one dict per row, keyed by column name — and every node becomes an explicit loop. Polars stays the default; this is a mode you switch into.
+
+It answers a different question from the other export: not "how do I run this in production" but "how would I write this myself?". A group by becomes the accumulator-dict pattern, a join becomes a hash index, a duplicate-drop becomes a `seen` set, a sort becomes a key function. Those are the shapes you would write in any language, and they are exactly what a dataframe library hides.
+
+Lite is the one place where that script can also **run where you are reading it**. Press ▶ and the generated code executes in the same in-browser Python that runs the canvas, against the same files, and prints its rows underneath — so you can check the loop against the flow without leaving the page or installing anything.
+
+Nodes with a plain-Python form: manual input, CSV read, filter (basic mode), select, sort, unique, group by, join (inner, left, semi and anti), cross join, union, record ID, take sample, rename (prefix/suffix), unpivot, and the write nodes.
+
+Anything driven by the formula expression language — the Formula node, a filter in advanced mode, the Polars Code node — plus Pivot become **exercise stubs**: a function that quotes the rule it is supposed to apply and raises `NotImplementedError`. Fill it in and the rest of the script runs. A single one of them never fails the export.
+
+Every node's settings panel carries the same thing at a smaller scale: a **"How would I write this myself?"** section with a plain-English description plus the loop for *that node's actual settings* — your columns, your operators — rather than a generic example.
+
+!!! warning "It is a teaching output, not a production one"
+    The generated script produces the same rows as the canvas, but it is deliberately not optimised and holds the whole table in memory as a list. Reading a CSV also leaves dates as text, where the engine recognises them — the generated helper flags that as an exercise.
+
+!!! info "Embedders can turn it off"
+    Set `teachingMode: false` on the `FlowfileEditor` component to hide both the Plain Python mode and the per-node panel.
+
+---
+
 ## What's *not* included
 
 Everything that depends on the Python backend, worker, or kernel containers is **unavailable** in Flowfile Lite; those nodes appear greyed-out in the palette so the full breadth stays discoverable. The [feature comparison](#feature-comparison) below lists what's excluded; the **Window Functions** node is also unavailable.
@@ -74,6 +96,7 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 | Catalog | Delta-backed, versioned, virtual tables | Lightweight (CSV-only) |
 | Secrets & connections manager | ✓ | ✗ |
 | Export flow to Python | ✓ | ✓ |
+| Plain-Python (learning) export | ✓ | ✓, and it runs in the browser |
 | Graphic Walker visualization | ✓ | ✓ |
 | Python API (`flowfile_frame`) | ✓ | ✗ |
 | Data privacy | Sent to your backend/services as configured | Never leaves your browser |
