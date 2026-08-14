@@ -22,6 +22,9 @@ export interface DesignerActions {
 export const useDesignerUiStore = defineStore('designerUi', () => {
   // Shared so the header button, Canvas toolbar (lib), and the modal agree.
   const showCodeGenerator = ref(false)
+  // The walkthrough docks beside the canvas instead of covering it, so Canvas
+  // needs to know: its bottom-right widget would end up under the panel.
+  const codePanelMode = ref<'polars' | 'plain' | 'walkthrough'>('polars')
   // App-shell modals shared across IconRail / Home / AppLayout.
   const showAbout = ref(false)
   const showDocs = ref(false)
@@ -35,5 +38,5 @@ export const useDesignerUiStore = defineStore('designerUi', () => {
     actions.value = null
   }
 
-  return { showCodeGenerator, showAbout, showDocs, actions, registerActions, clearActions }
+  return { showCodeGenerator, codePanelMode, showAbout, showDocs, actions, registerActions, clearActions }
 })

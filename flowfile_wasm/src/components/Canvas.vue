@@ -343,7 +343,9 @@
     />
 
     <!-- Layout Controls Button -->
-    <LayoutControls @reset-layout="handleResetLayout" />
+    <!-- The docked walkthrough sits over this corner, leaving it visible but
+         unclickable. Hiding it is less confusing than a half-covered control. -->
+    <LayoutControls v-if="!walkthroughDocked" @reset-layout="handleResetLayout" />
 
     <!-- Teleport target for context menus (inside CSS variable scope, outside VueFlow transforms) -->
     <div id="flowfile-context-menu-container"></div>
@@ -482,6 +484,9 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 const flowStore = useFlowStore()
 const itemStore = useItemStore()
 const uiStore = useDesignerUiStore()
+const walkthroughDocked = computed(
+  () => uiStore.showCodeGenerator && uiStore.codePanelMode === 'walkthrough'
+)
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, showSettings, showTablePreview, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 

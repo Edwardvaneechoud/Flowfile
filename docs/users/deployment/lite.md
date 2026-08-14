@@ -43,17 +43,27 @@ It also supports **exporting a flow to a Python/Polars script** and a lightweigh
 
 ---
 
-## Learning mode: plain Python
+## Learning mode
 
-The Code panel has a second mode, **Plain Python**, that rewrites the flow with no dataframe library at all. Every table becomes a `list[dict]` — one dict per row, keyed by column name — and every node becomes an explicit loop. Polars stays the default; this is a mode you switch into.
+Turn on **Learning mode** with the graduation-cap button in the left icon rail. It adds two things and changes where the Code panel opens.
 
-It answers a different question from the other export: not "how do I run this in production" but "how would I write this myself?". A group by becomes the accumulator-dict pattern, a join becomes a hash index, a duplicate-drop becomes a `seen` set, a sort becomes a key function. Those are the shapes you would write in any language, and they are exactly what a dataframe library hides.
+### Walkthrough
 
-Lite is the one place where that script can also **run where you are reading it**. Press ▶ and the generated code executes in the same in-browser Python that runs the canvas, against the same files, and prints its rows underneath — so you can check the loop against the flow without leaving the page or installing anything.
+The Code panel gains a third mode that steps through the flow one node at a time. Each step shows three things: **what pattern you are looking at**, the loop for **your** node's settings, and the **actual rows** going in and coming out at that point.
+
+The background is the part a code comment cannot carry. A group by is the accumulator-dict pattern, and the panel explains why it takes two passes and where else you will write that shape. A join is a hash index, and the panel shows why building a dictionary first turns rows×rows of work into rows+rows. A sort takes a key function, and the panel explains why stability is what lets you build a complicated sort out of simple ones.
+
+Press **Show the data at each step** and the whole pipeline runs once in your browser, recording every intermediate table — so you can watch 1000 rows become 8 and read the loop that did it. The panel docks beside the canvas rather than covering it, and the node you are reading about stays highlighted in the graph.
+
+### Plain Python
+
+The second Code-panel mode is the same flow as one standalone script with no dataframe library: every table a `list[dict]`, every node an explicit loop. Polars stays the default; this is a mode you switch into.
+
+The editor is **editable**, and Lite is the one place where the script can **run where you are reading it**. Change a loop, press ▶, and the generated code executes in the same in-browser Python that runs the canvas, against the same files, with the rows printed underneath. **Compare to canvas** checks your version against what the flow produced.
 
 Nodes with a plain-Python form: manual input, CSV read, filter (basic mode), select, sort, unique, group by, join (inner, left, semi and anti), cross join, union, record ID, take sample, rename (prefix/suffix), unpivot, and the write nodes.
 
-Anything driven by the formula expression language — the Formula node, a filter in advanced mode, the Polars Code node — plus Pivot become **exercise stubs**: a function that quotes the rule it is supposed to apply and raises `NotImplementedError`. Fill it in and the rest of the script runs. A single one of them never fails the export.
+Anything driven by the formula expression language — the Formula node, a filter in advanced mode, the Polars Code node — plus Pivot become **exercise stubs**: a function that quotes the rule it is supposed to apply and raises `NotImplementedError`. Fill it in, press ▶, and the rest of the script runs. A single one of them never fails the export, and the walkthrough still shows the data for every step before it.
 
 Every node's settings panel carries the same thing at a smaller scale: a **"How would I write this myself?"** section with a plain-English description plus the loop for *that node's actual settings* — your columns, your operators — rather than a generic example.
 
@@ -96,7 +106,9 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 | Catalog | Delta-backed, versioned, virtual tables | Lightweight (CSV-only) |
 | Secrets & connections manager | ✓ | ✗ |
 | Export flow to Python | ✓ | ✓ |
-| Plain-Python (learning) export | ✓ | ✓, and it runs in the browser |
+| Plain-Python (learning) export | ✓ | ✓ |
+| Step-by-step Walkthrough with live data | ✗ | ✓ |
+| Edit + re-run the generated script | ✗ | ✓ |
 | Graphic Walker visualization | ✓ | ✓ |
 | Python API (`flowfile_frame`) | ✓ | ✗ |
 | Data privacy | Sent to your backend/services as configured | Never leaves your browser |

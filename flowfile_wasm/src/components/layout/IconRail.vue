@@ -34,6 +34,19 @@
         </div>
       </div>
 
+      <button
+        class="rail-item"
+        :class="{ active: learning.enabled }"
+        :title="
+          learning.enabled
+            ? 'Learning mode is on — the Code panel opens on the walkthrough'
+            : 'Learning mode: see every node as plain Python, step by step'
+        "
+        @click="learning.toggle()"
+      >
+        <i class="fa-solid fa-graduation-cap"></i>
+      </button>
+
       <button class="rail-item" :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'" @click="toggleTheme">
         <i v-if="isDark" class="fa-solid fa-sun"></i>
         <i v-else class="fa-solid fa-moon"></i>
@@ -59,6 +72,7 @@ import { storeToRefs } from 'pinia'
 import { useTheme } from '../../composables/useTheme'
 import { useDemo } from '../../composables/useDemo'
 import { useDesignerUiStore } from '../../stores/designer-ui-store'
+import { useLearningStore } from '../../stores/learning-store'
 import { usePyodideStore } from '../../stores/pyodide-store'
 
 const route = useRoute()
@@ -66,6 +80,7 @@ const router = useRouter()
 const { isDark, toggleTheme } = useTheme()
 const { loadDemo } = useDemo()
 const uiStore = useDesignerUiStore()
+const learning = useLearningStore()
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
 const helpOpen = ref(false)

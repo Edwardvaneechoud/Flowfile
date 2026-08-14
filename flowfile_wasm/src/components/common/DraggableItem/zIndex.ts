@@ -18,6 +18,11 @@ export const Z_INDEX = {
   // system (panels, fullscreen, context menu) so Reset Layout / Fit stay
   // reachable, but below app-level tooltips/toasts.
   FLOATING_WIDGET: 20000,
+
+  // An app-level panel docked beside the canvas (the plain-Python walkthrough).
+  // It deliberately shares the screen with the canvas rather than covering it,
+  // so it has to clear the floating widget too or they overlap in the corner.
+  DOCKED_PANEL: 30000,
 } as const
 
 export type ZIndexKey = keyof typeof Z_INDEX
