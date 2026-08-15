@@ -392,7 +392,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=0 --durations-min=0.05
 
       - name: Run pytest for flowfile_worker
         if: |
