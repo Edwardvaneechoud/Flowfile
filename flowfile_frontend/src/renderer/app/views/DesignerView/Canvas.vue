@@ -22,7 +22,6 @@ import {
   NodeComponent,
   EdgeComponent,
   Node,
-  NodeMouseEvent,
   useVueFlow,
   ConnectionMode,
 } from "@vue-flow/core";
@@ -62,14 +61,16 @@ import {
 import { FlowApi } from "../../api";
 import {
   copyNodesToBuffer,
+  copySingleNodeToBuffer,
   hasTextSelection,
   isCanvasClipboardTarget,
-  isNodeBufferArmed,
   readNodeClipboardBuffer,
   resolvePasteIntent,
   writeSentinelToOsClipboard,
 } from "../../composables/useFlowClipboard";
-import type { PasteIntent } from "../../composables/useFlowClipboard";
+import type { CopyableNodeData, PasteIntent } from "../../composables/useFlowClipboard";
+import { useContextMenu } from "../../composables/useContextMenu";
+import { useFlowExecution } from "../../composables/useFlowExecution";
 import { useFlowHotkeys } from "../../composables/useFlowHotkeys";
 import { desktop, isDesktop } from "../../../lib/desktop";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
@@ -85,8 +86,12 @@ import { useFileDropImport } from "../../composables/useFileDropImport";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
+import { useAiGhostNodeStore } from "../../stores/ai-ghost-node-store";
+import { CatalogApi } from "../../api/catalog.api";
+import { nodeDocsUrl } from "./nodeDocsLinks";
 import { NodeCopyInput, ContextMenuAction, CursorPosition } from "./types";
 import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
+import type { RunFlowReference } from "../../types/node.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -281,12 +286,39 @@ const dataActionsWidth = computed(() => {
 });
 const drawerLeftOverride = (d: DrawerDef): number | undefined =>
   d.id === "bottomDock" ? dataActionsWidth.value : undefined;
-const showContextMenu = ref(false);
-const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
-const contextMenuTarget = ref({ type: "pane", id: "" });
-// Whether the right-clicked node is currently inside a group (drives Group vs
-// Remove-from-group in the node context menu).
-const contextMenuTargetInGroup = ref(false);
+// Node-level "Run Now" from the context menu. No custom pollingKey: Canvas
+// mounts once and outlives flow switches, so a key baked at setup would stop
+// tracking the active flow — the default key derives from the live flow id
+// per call, keeping run bookkeeping namespaced per flow.
+const { triggerNodeFetch, isPollingActive } = useFlowExecution(
+  () => flowStore.flowId,
+  { interval: 2000, enabled: true },
+  { persistPolling: true },
+);
+
+const ghostStore = useAiGhostNodeStore();
+
+const {
+  showContextMenu,
+  menuPosition: contextMenuPosition,
+  target: contextMenuTarget,
+  targetInGroup: contextMenuTargetInGroup,
+  canPasteNode,
+  targetIsRunFlow,
+  targetIsRunning,
+  targetCacheResults,
+  openForPane: handleContextMenu,
+  openForNode: handleNodeContextMenu,
+  openForSelection: handleSelectionContextMenu,
+  closeMenu,
+  fetchNodeSettingsSnapshot,
+} = useContextMenu({
+  onNodeTargeted: (node) => {
+    // Ensure the right-clicked node participates in the selection-based group action.
+    if (!node.selected) addSelectedNodes([node]);
+  },
+  isNodeRunning: (nodeId) => isPollingActive(`node_${nodeId}`),
+});
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -341,16 +373,12 @@ interface EdgeChange {
   type: "remove" | "add" | "update";
 }
 
-const handleCanvasClick = (event: any | PointerEvent) => {
+const handleCanvasClick = () => {
   drawerStore.clearPreview();
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
   ghostNode.onViewportClick();
-  clickedPosition.value = {
-    x: event.x,
-    y: event.y,
-  };
   window.getSelection()?.removeAllRanges();
 };
 
@@ -928,6 +956,118 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     await groupSelectedNodes();
   } else if (actionId === "remove-from-group") {
     await removeSelectedFromGroup();
+  } else if (actionId === "open-node-settings") {
+    await openNodeSettings(Number(targetId));
+  } else if (actionId === "view-node-data") {
+    openNodeData(Number(targetId));
+  } else if (actionId === "run-node") {
+    await runNodeFromMenu(Number(targetId));
+  } else if (actionId === "toggle-cache") {
+    await toggleNodeCache(Number(targetId));
+  } else if (actionId === "copy-node") {
+    copyNodeFromMenu(targetId);
+  } else if (actionId === "delete-node") {
+    instance.removeNodes(targetId, true);
+  } else if (actionId === "open-node-docs") {
+    const node = instance.findNode(targetId);
+    const template = (node?.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
+    void desktop.openExternal(nodeDocsUrl(template));
+  } else if (actionId === "suggest-next-node") {
+    suggestNextNodeFromMenu(targetId, position);
+  } else if (actionId === "open-target-flow") {
+    await openTargetFlow(Number(targetId));
+  }
+};
+
+// ---- node-target context-menu actions (the per-node menu lives here now) ----
+
+const runNodeFromMenu = async (nodeId: number) => {
+  if (!Number.isFinite(nodeId) || isPollingActive(`node_${nodeId}`)) return;
+  try {
+    await triggerNodeFetch(nodeId);
+  } catch (error) {
+    console.error("Error running node:", error);
+  }
+};
+
+// Optimistic: the menu is already closed when this runs — reconcile in the
+// background, surface and revert on failure.
+const toggleNodeCache = async (nodeId: number) => {
+  if (!Number.isFinite(nodeId)) return;
+  const next = !(targetCacheResults.value ?? false);
+  targetCacheResults.value = next;
+  try {
+    const nodeData = await fetchNodeSettingsSnapshot(nodeId);
+    if (!nodeData?.setting_input) throw new Error("node settings unavailable");
+    nodeData.setting_input.cache_results = next;
+    await nodeStore.updateSettingsDirectly(nodeData.setting_input);
+  } catch (error) {
+    console.error("Error toggling cache:", error);
+    // Revert only if the menu still targets this node — a menu re-opened for
+    // another node owns targetCacheResults by then (and re-hydrates anyway).
+    if (contextMenuTarget.value.id === String(nodeId)) {
+      targetCacheResults.value = !next;
+    }
+    ElMessage.error("Could not update the node's cache setting.");
+  }
+};
+
+const copyNodeFromMenu = (targetId: string) => {
+  const node = instance.findNode(targetId);
+  if (!node) return;
+  const description =
+    nodeStore.nodeDescriptions[flowStore.flowId]?.[Number(targetId)]?.description ?? "";
+  const sentinel = copySingleNodeToBuffer(
+    node.data as CopyableNodeData,
+    flowStore.flowId,
+    description,
+  );
+  void writeSentinelToOsClipboard(sentinel);
+};
+
+const suggestNextNodeFromMenu = (targetId: string, position: CursorPosition) => {
+  const flowId = flowStore.flowId;
+  if (!flowId || flowId <= 0) return;
+  const node = instance.findNode(targetId);
+  if (!node) return;
+  // Popover anchors at the menu's screen position; the materialised node is
+  // placed relative to the source node's own flow-coords position.
+  const pos = node.computedPosition ?? node.position ?? { x: 0, y: 0 };
+  ghostStore.beginIntent(
+    {
+      upstreamNodeId: Number(targetId),
+      screenX: position.x,
+      screenY: position.y,
+      nodeX: pos.x,
+      nodeY: pos.y,
+    },
+    flowId,
+  );
+};
+
+const openTargetFlow = async (nodeId: number) => {
+  try {
+    const nodeData = await fetchNodeSettingsSnapshot(nodeId);
+    const flowRef = nodeData?.setting_input?.flow_reference as RunFlowReference | undefined;
+    const registrationId = flowRef?.registration_id ?? 0;
+    let flowPath = flowRef?.flow_path ?? null;
+    let name: string | undefined;
+    if (registrationId > 0) {
+      try {
+        const reg = await CatalogApi.getFlow(registrationId);
+        flowPath = reg?.flow_path ?? flowPath;
+        name = reg?.name;
+      } catch {
+        // Registration lookup failed (e.g. deleted) — fall back to stored path.
+      }
+    }
+    if (!flowPath) {
+      ElMessage.warning("No target flow is selected for this node.");
+      return;
+    }
+    editorStore.requestOpenFlow(flowPath, name);
+  } catch (error) {
+    console.error("Error opening target flow:", error);
   }
 };
 
@@ -1003,47 +1143,8 @@ const handlePasteEvent = (event: ClipboardEvent) => {
   void handleCanvasPaste(position.x, position.y, intent);
 };
 
-const handleContextMenu = (event: Event) => {
-  event.preventDefault();
-  let pointerEvent = event as PointerEvent;
-
-  contextMenuTarget.value = { type: "pane", id: "" };
-  contextMenuTargetInGroup.value = false;
-  clickedPosition.value = {
-    x: pointerEvent.x,
-    y: pointerEvent.y,
-  };
-  showContextMenu.value = true;
-};
-
-// Right-click on a node opens the context menu with node-target actions (incl.
-// grouping). The container "group" node has its own affordances, so skip it here.
-const handleNodeContextMenu = ({ event, node }: NodeMouseEvent) => {
-  event.preventDefault();
-  if (node.type === "group") return;
-  // Ensure the right-clicked node participates in the selection-based group action.
-  if (!node.selected) {
-    addSelectedNodes([node]);
-  }
-  const mouseEvent = event as MouseEvent;
-  contextMenuTarget.value = { type: "node", id: node.id };
-  contextMenuTargetInGroup.value = Boolean(node.parentNode);
-  clickedPosition.value = { x: mouseEvent.clientX, y: mouseEvent.clientY };
-  showContextMenu.value = true;
-};
-
-// Right-click on the multi-selection rectangle (the highlighted box around several
-// selected nodes) — VueFlow routes this here rather than to pane/node menus.
-const handleSelectionContextMenu = ({ event }: { event: MouseEvent }) => {
-  event.preventDefault();
-  contextMenuTarget.value = { type: "selection", id: "" };
-  contextMenuTargetInGroup.value = false;
-  clickedPosition.value = { x: event.clientX, y: event.clientY };
-  showContextMenu.value = true;
-};
-
 const closeContextMenu = () => {
-  showContextMenu.value = false;
+  closeMenu();
   nodeStore.setCodeGeneratorVisibility(false);
 };
 
@@ -1271,12 +1372,15 @@ defineExpose({
       <FileDropUploadDialog :controller="fileDrop" />
       <context-menu
         v-if="showContextMenu"
-        :x="clickedPosition.x"
-        :y="clickedPosition.y"
+        :x="contextMenuPosition.x"
+        :y="contextMenuPosition.y"
         :target-type="contextMenuTarget.type"
         :target-id="contextMenuTarget.id"
         :target-in-group="contextMenuTargetInGroup"
-        :can-paste-node="isNodeBufferArmed()"
+        :can-paste-node="canPasteNode"
+        :is-run-flow-node="targetIsRunFlow"
+        :is-running="targetIsRunning"
+        :cache-results="targetCacheResults"
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />

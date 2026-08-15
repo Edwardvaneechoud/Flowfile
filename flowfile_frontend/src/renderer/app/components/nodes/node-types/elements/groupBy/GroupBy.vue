@@ -26,25 +26,13 @@
           </template>
         </ul>
       </div>
-      <div
-        v-if="showContextMenu"
-        ref="contextMenuRef"
-        class="context-menu"
-        :style="{
-          top: contextMenuPosition.y + 'px',
-          left: contextMenuPosition.x + 'px',
-        }"
-      >
-        <button @click="setAggregations('groupby', selectedColumns)">Group by</button>
-        <template v-for="option in singleColumnAggOptions" :key="option.value">
-          <button
-            v-if="singleColumnSelected"
-            @click="setAggregations(option.value, selectedColumns)"
-          >
-            {{ option.label }}
-          </button>
-        </template>
-      </div>
+      <context-menu
+        v-if="activeMenu"
+        :position="contextMenuPosition"
+        :options="menuOptions"
+        @select="onMenuSelect"
+        @close="activeMenu = null"
+      />
 
       <div class="listbox-subtitle">Settings</div>
 
@@ -59,7 +47,7 @@
           </thead>
           <tbody>
             <template v-for="(item, index) in groupByInput.agg_cols" :key="index">
-              <tr @contextmenu.prevent="openRowContextMenu($event, index)">
+              <tr @contextmenu="openRowContextMenu($event, index)">
                 <td>{{ item.old_name }}</td>
                 <td>
                   <el-select v-model="item.agg" size="small">
@@ -84,23 +72,13 @@
           </tbody>
         </table>
       </div>
-      <div
-        v-if="showContextMenuRemove"
-        class="context-menu"
-        :style="{
-          top: contextMenuPosition.y + 'px',
-          left: contextMenuPosition.x + 'px',
-        }"
-      >
-        <button @click="removeRow">Remove</button>
-      </div>
     </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
+import { ref, computed } from "vue";
 import { GroupByInput, NodeGroupBy, AggOption, GroupByOption } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -108,6 +86,8 @@ import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NO_AUTOFILL } from "../../../../../utils/noAutofill";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { ContextMenu } from "../../../../common";
+import type { ContextMenuOption } from "../../../../common";
 
 const nodeStore = useNodeStore();
 const nodeGroupBy = ref<null | NodeGroupBy>(null);
@@ -118,12 +98,11 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     validateConfig();
   },
 });
-const showContextMenu = ref(false);
-const showContextMenuRemove = ref(false);
+// One menu at a time: the column menu and the agg-row menu are mutually
+// exclusive by construction (a single enum instead of two booleans).
+const activeMenu = ref<"column" | "row" | null>(null);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
-const contextMenuColumn = ref<string | null>(null);
-const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
 const nodeData = ref<null | NodeData>(null);
 const aggOptions: (AggOption | GroupByOption)[] = [
@@ -182,17 +161,19 @@ const onDropInTable = () => {
 };
 
 const openRowContextMenu = (event: MouseEvent, index: number) => {
+  // Right-clicks on the row's editable fields keep the native menu (paste).
+  const el = event.target as HTMLElement | null;
+  if (el?.closest?.("input, textarea")) return;
   event.preventDefault();
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
   contextMenuRowIndex.value = index;
-  showContextMenuRemove.value = true;
+  activeMenu.value = "row";
 };
 
 const removeRow = () => {
   if (contextMenuRowIndex.value !== null) {
     groupByInput.value.agg_cols.splice(contextMenuRowIndex.value, 1);
   }
-  showContextMenuRemove.value = false;
   contextMenuRowIndex.value = null;
 };
 
@@ -207,7 +188,27 @@ const openContextMenu = (clickedIndex: number, columnName: string, event: MouseE
     selectedColumns.value = [columnName];
   }
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
-  showContextMenu.value = true;
+  activeMenu.value = "column";
+};
+
+const menuOptions = computed<ContextMenuOption[]>(() => {
+  if (activeMenu.value === "row") {
+    return [{ label: "Remove", action: "remove", danger: true }];
+  }
+  return [
+    { label: "Group by", action: "groupby" },
+    ...(singleColumnSelected.value
+      ? singleColumnAggOptions.map((option) => ({ label: option.label, action: option.value }))
+      : []),
+  ];
+});
+
+const onMenuSelect = (action: string) => {
+  if (activeMenu.value === "row") {
+    if (action === "remove") removeRow();
+    return;
+  }
+  setAggregations(action as AggOption | GroupByOption, selectedColumns.value);
 };
 
 const setAggregations = (aggType: AggOption | GroupByOption, columns: string[] | null) => {
@@ -222,8 +223,6 @@ const setAggregations = (aggType: AggOption | GroupByOption, columns: string[] |
       });
     });
   }
-  showContextMenu.value = false;
-  contextMenuColumn.value = null;
 };
 
 const handleItemMouseDown = (event: MouseEvent) => {
@@ -294,14 +293,6 @@ const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = true;
 };
 
-const handleClickOutside = (event: MouseEvent) => {
-  if (!contextMenuRef.value?.contains(event.target as Node)) {
-    showContextMenu.value = false;
-    contextMenuColumn.value = null;
-    showContextMenuRemove.value = false;
-  }
-};
-
 // Missing-column warnings come from the backend settings validation; this only
 // covers configuration completeness the backend does not check.
 const validateConfig = () => {
@@ -323,15 +314,6 @@ defineExpose({
   loadNodeData,
   pushNodeData,
   saveSettings,
-});
-
-onMounted(async () => {
-  await nextTick();
-  window.addEventListener("click", handleClickOutside);
-});
-
-onUnmounted(() => {
-  window.removeEventListener("click", handleClickOutside);
 });
 </script>
 

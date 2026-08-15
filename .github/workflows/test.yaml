@@ -364,6 +364,15 @@ jobs:
         shell: pwsh
         run: poetry run start_gcs
 
+      # Kafka tests need a broker; they run in test-kafka-integration.yml
+      - name: Run pytest for shared
+        if: |
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
+        shell: pwsh
+        run: poetry run pytest shared/tests --ignore=shared/tests/kafka --disable-warnings
+
       - name: Run pytest for flowfile_frame
         if: |
           needs.detect-changes.outputs.backend_frame == 'true' ||
