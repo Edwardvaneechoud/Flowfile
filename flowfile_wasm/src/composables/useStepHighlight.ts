@@ -183,10 +183,15 @@ export function showStep(view: EditorView, index: number): void {
     read: () => stepVisible(view),
     write: visible => {
       if (visible) return
-      const again = view.state.field(stepState, false)?.anchors[index]
-      if (again) {
-        view.dispatch({ effects: EditorView.scrollIntoView(again.from, { y: 'center', yMargin: 24 }) })
-      }
+      // Dispatching inside the measure cycle is refused ("update in progress"),
+      // so hop out of it before retrying.
+      requestAnimationFrame(() => {
+        if (!view.dom.isConnected) return
+        const again = view.state.field(stepState, false)?.anchors[index]
+        if (again) {
+          view.dispatch({ effects: EditorView.scrollIntoView(again.from, { y: 'center', yMargin: 24 }) })
+        }
+      })
     }
   })
 }

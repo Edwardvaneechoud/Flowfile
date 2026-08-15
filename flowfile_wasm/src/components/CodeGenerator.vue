@@ -1,92 +1,70 @@
 <template>
-  <div
+  <DraggableItem
     v-if="isVisible"
-    class="code-generator-overlay"
-    :class="{ docked: isDocked }"
-    :style="isDocked ? { zIndex: Z_INDEX.DOCKED_PANEL } : undefined"
-    @click.self="closePanel"
+    id="code-panel"
+    title="Code"
+    :tabs="tabs"
+    :active-tab="mode"
+    :show-right="true"
+    initial-position="right"
+    :initial-width="620"
+    :initial-top="topOffset"
+    height-behaviour="scale"
+    :allow-full-screen="true"
+    :flush-content="true"
+    :on-close="closePanel"
+    @update:active-tab="setMode($event as CodeMode)"
   >
-    <div ref="panelEl" class="code-generator-panel">
-      <header class="code-header">
-        <h3 class="panel-title">Code</h3>
-        <nav v-if="teachingMode" class="mode-switch" role="tablist" aria-label="Code flavour">
-          <button
-            role="tab"
-            class="mode-button"
-            :class="{ active: mode === 'polars' }"
-            :aria-selected="mode === 'polars'"
-            title="Production code using the Polars dataframe library"
-            @click="setMode('polars')"
-          >
-            Polars
-          </button>
-          <button
-            role="tab"
-            class="mode-button"
-            :class="{ active: isWalkthrough }"
-            :aria-selected="isWalkthrough"
-            title="Step through the flow one node at a time, in plain Python — no dataframe library"
-            @click="setMode('walkthrough')"
-          >
-            Python walkthrough
-          </button>
-        </nav>
-        <div class="header-actions">
-          <button
-            v-if="isWalkthrough"
-            class="icon-button run-button"
-            :disabled="running || !pyodideStore.isReady"
-            :title="pyodideStore.isReady ? 'Run this script here in the browser' : 'Python is still starting up'"
-            @click="runScript"
-          >
-            <svg v-if="!running" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <polygon points="6 4 20 12 6 20 6 4"></polygon>
-            </svg>
-            <span v-if="running" class="spinner"></span>
-          </button>
-          <button
-            v-if="isWalkthrough && edited"
-            class="icon-button reset-button"
-            title="Discard your edits and regenerate"
-            @click="resetEdits"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
-              <path d="M3 3v5h5"></path>
-            </svg>
-          </button>
-          <button class="icon-button refresh-button" :disabled="loading" title="Refresh code" @click="refreshCode">
-            <svg
-              v-if="!loading"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d="M23 4v6h-6"></path>
-              <path d="M1 20v-6h6"></path>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-            <span v-if="loading" class="spinner"></span>
-          </button>
-          <button class="icon-button export-button" title="Export as .py file" @click="exportCode">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-          </button>
-          <button class="icon-button close-button" title="Close" @click="closePanel">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-      </header>
+    <template #actions>
+      <button
+        v-if="isWalkthrough"
+        class="icon-button run-button"
+        :disabled="running || !pyodideStore.isReady"
+        :title="pyodideStore.isReady ? 'Run this script here in the browser' : 'Python is still starting up'"
+        @click="runScript"
+      >
+        <svg v-if="!running" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="6 4 20 12 6 20 6 4"></polygon>
+        </svg>
+        <span v-if="running" class="spinner"></span>
+      </button>
+      <button
+        v-if="isWalkthrough && edited"
+        class="icon-button reset-button"
+        title="Discard your edits and regenerate"
+        @click="resetEdits"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
+          <path d="M3 3v5h5"></path>
+        </svg>
+      </button>
+      <button class="icon-button refresh-button" :disabled="loading" title="Refresh code" @click="refreshCode">
+        <svg
+          v-if="!loading"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M23 4v6h-6"></path>
+          <path d="M1 20v-6h6"></path>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+        <span v-if="loading" class="spinner"></span>
+      </button>
+      <button class="icon-button export-button" title="Export as .py file" @click="exportCode">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+      </button>
+    </template>
 
+    <div ref="bodyEl" class="code-body">
       <div v-if="error" class="error-message">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"></circle>
@@ -196,7 +174,7 @@
         />
       </div>
     </div>
-  </div>
+  </DraggableItem>
 </template>
 
 <script setup lang="ts">
@@ -221,8 +199,7 @@ import {
   type StepRange
 } from '../composables/useStepHighlight'
 import { useLearningStore } from '../stores/learning-store'
-import { useDesignerUiStore } from '../stores/designer-ui-store'
-import { Z_INDEX } from './common/DraggableItem/zIndex'
+import DraggableItem from './common/DraggableItem/DraggableItem.vue'
 import StepMargin, { type MarginTab } from './StepMargin.vue'
 import type { NodeFormulaSettings, NodeReadSettings } from '../types'
 
@@ -231,8 +208,10 @@ const props = withDefaults(
     isVisible: boolean
     /** Offer the plain-Python teaching flavour alongside the Polars one. */
     teachingMode?: boolean
+    /** Container-local top edge, so the panel clears the in-canvas toolbar. */
+    topOffset?: number
   }>(),
-  { teachingMode: true }
+  { teachingMode: true, topOffset: 0 }
 )
 
 const emit = defineEmits<{
@@ -242,7 +221,6 @@ const emit = defineEmits<{
 const flowStore = useFlowStore()
 const pyodideStore = usePyodideStore()
 const learning = useLearningStore()
-const uiStore = useDesignerUiStore()
 const { generateCode } = useCodeGeneration()
 const { buildWalkthrough } = usePlainPythonGeneration()
 
@@ -277,6 +255,20 @@ const comparison = ref<{ match: boolean; message: string } | null>(null)
 
 const isWalkthrough = computed(() => mode.value === 'walkthrough')
 
+// Header tab strip. Empty ⇒ DraggableItem shows the plain "Code" title.
+const tabs = computed(() =>
+  props.teachingMode
+    ? [
+        { id: 'polars', label: 'Polars', title: 'Production code using the Polars dataframe library' },
+        {
+          id: 'walkthrough',
+          label: 'Python walkthrough',
+          title: 'Step through the flow one node at a time, in plain Python — no dataframe library'
+        }
+      ]
+    : []
+)
+
 // Editing the generated script is the point in walkthrough mode, so track
 // whether the buffer still matches what we generated — that is what "reset" undoes.
 const generated = ref('')
@@ -294,7 +286,7 @@ const scriptRevision = ref(0)
 
 const { concept, tables, delta, deltaCounts, blockedReason } = usePlainStep(steps, stepIndex, captured)
 
-const panelEl = ref<HTMLElement | null>(null)
+const bodyEl = ref<HTMLElement | null>(null)
 const workbenchEl = ref<HTMLElement | null>(null)
 const benchEl = ref<HTMLElement | null>(null)
 const railEl = ref<HTMLElement | null>(null)
@@ -330,13 +322,6 @@ try {
 const persistSplit = () => localStorage.setItem(SPLIT_KEY, JSON.stringify({ x: split.x, y: split.y }))
 
 const isWide = ref(false)
-const mediaQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 1241px)') : null
-const wideViewport = ref(mediaQuery?.matches ?? true)
-const onViewportChange = (event: MediaQueryListEvent) => (wideViewport.value = event.matches)
-mediaQuery?.addEventListener('change', onViewportChange)
-
-// One geometry for both tabs: switching Polars↔walkthrough must not teleport it.
-const isDocked = computed(() => props.isVisible && wideViewport.value)
 
 const setMode = (next: CodeMode) => {
   if (mode.value === next) return
@@ -383,6 +368,11 @@ const onEditorReady = (payload: { view: EditorView }) => {
   editorView = payload.view
   payload.view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
   void seedNow()
+}
+
+const releaseEditor = () => {
+  editorView?.scrollDOM.removeEventListener('scroll', onEditorScroll)
+  editorView = null
 }
 
 const extensions = [
@@ -460,19 +450,23 @@ const observer =
     ? null
     : new ResizeObserver(entries => {
         for (const entry of entries) {
-          if (entry.target === panelEl.value) isWide.value = entry.contentRect.width >= WIDE_AT
+          if (entry.target === bodyEl.value) isWide.value = entry.contentRect.width >= WIDE_AT
         }
         cancelAnimationFrame(resizeRaf)
         resizeRaf = requestAnimationFrame(() => {
+          // CodeMirror caches geometry, so a resized panel renders stale until asked.
+          editorView?.requestMeasure()
           if (editorView && isWalkthrough.value) showStep(editorView, stepIndex.value)
           syncReadouts()
         })
       })
 
-watch([panelEl, benchEl], ([panel, bench]) => {
+watch([bodyEl, benchEl], ([body, bench]) => {
+  // Minimizing unmounts the body, taking CodeMirror with it.
+  if (!body) releaseEditor()
   if (!observer) return
   observer.disconnect()
-  if (panel) observer.observe(panel)
+  if (body) observer.observe(body)
   if (bench) observer.observe(bench)
 })
 
@@ -764,147 +758,30 @@ watch(
   }
 )
 
-// Canvas hides its bottom-right widget while the panel is docked over it.
-watch(
-  [isDocked, mode, () => props.isVisible],
-  () => {
-    uiStore.codePanelDocked = isDocked.value
-    uiStore.codePanelMode = props.isVisible ? mode.value : 'polars'
-  },
-  { immediate: true }
-)
-
 onBeforeUnmount(() => {
-  mediaQuery?.removeEventListener('change', onViewportChange)
   observer?.disconnect()
   cancelAnimationFrame(resizeRaf)
   cancelAnimationFrame(scrollRaf)
-  editorView?.scrollDOM.removeEventListener('scroll', onEditorScroll)
+  releaseEditor()
 })
 </script>
 
 <style scoped>
-.code-generator-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Above the canvas's floating widgets (demo bubble, layout controls), which
-     sit at --z-index-dropdown and would otherwise paint over the panel. */
-  z-index: var(--z-index-modal, 1050);
-  backdrop-filter: blur(2px);
-}
-
 /* A flex column that never scrolls: the editor and the margin body own the
-   only two scrollers in here. */
-.code-generator-panel {
-  background: var(--color-background-primary);
-  border-radius: 8px;
-  width: 90%;
-  max-width: 1200px;
-  height: 85vh;
+   only two scrollers in here. Geometry (dock, size, fullscreen) belongs to
+   DraggableItem — see layoutGeometry.ts. */
+.code-body {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   overflow: hidden;
+  background: var(--color-background-primary);
 }
 
-/* Docked beside the canvas: the whole point is watching the node you are
-   reading about, so the canvas has to stay visible and clickable behind it. */
-.code-generator-overlay.docked {
-  background: transparent;
-  backdrop-filter: none;
-  justify-content: flex-end;
-  align-items: stretch;
-  /* Clear the app header and tab strip: docking beside the canvas is pointless
-     if it buries the Run and Code buttons you need to drive it. */
-  padding: 100px 12px 12px;
-  pointer-events: none;
-}
-
-.code-generator-overlay.docked .code-generator-panel {
-  pointer-events: auto;
-  width: min(620px, 45vw);
-  max-width: none;
-  height: 100%;
-}
-
-/* Below this the canvas is too narrow to be worth keeping visible, so the
-   panel goes back to being an ordinary modal. */
-@media (max-width: 1240px) {
-  .code-generator-overlay.docked {
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(2px);
-    pointer-events: auto;
-    padding: 24px;
-  }
-
-  .code-generator-overlay.docked .code-generator-panel {
-    width: 100%;
-  }
-}
-
-.code-header,
 .error-message,
 .step-rail {
   flex: 0 0 auto;
-}
-
-.code-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--color-border-primary);
-  background: var(--color-background-secondary);
-}
-
-.panel-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.header-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.mode-switch {
-  display: flex;
-  margin-left: auto;
-  border: 1px solid var(--color-border-primary);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.mode-button {
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.mode-button:hover:not(.active) {
-  background: var(--color-background-tertiary);
-  color: var(--color-text-primary);
-}
-
-.mode-button.active {
-  background: var(--color-accent);
-  color: #fff;
 }
 
 /* Constant 44px for any number of steps: chips scroll sideways rather than
@@ -1147,16 +1024,17 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+/* Sized for the 35px DraggableItem header. */
 .icon-button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 26px;
+  height: 26px;
   background: var(--color-background-tertiary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-primary);
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1169,11 +1047,6 @@ onBeforeUnmount(() => {
 .icon-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.close-button:hover {
-  background: var(--color-danger) !important;
-  border-color: var(--color-danger) !important;
 }
 
 .error-message {
@@ -1193,8 +1066,8 @@ onBeforeUnmount(() => {
 
 .spinner {
   display: inline-block;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border: 2px solid currentColor;
   border-radius: 50%;
   border-top-color: transparent;

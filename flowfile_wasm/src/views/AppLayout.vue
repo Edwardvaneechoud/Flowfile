@@ -73,9 +73,10 @@
 
     <!-- Prominent demo button for first-time visitors on Home and the designer
          canvas (mirrors the original app's prominent demo). Loads then opens the
-         designer. -->
+         designer. Hidden while the Code panel is open: this CTA is fixed to the
+         viewport corner and would paint over the panel's header buttons. -->
     <DemoButton
-      v-if="(route.name === 'home' || route.name === 'designer') && !shouldAutoLoadDemo && !hasSeenDemo && !hasDismissedDemo && pyodideReady"
+      v-if="(route.name === 'home' || route.name === 'designer') && !shouldAutoLoadDemo && !hasSeenDemo && !hasDismissedDemo && pyodideReady && !uiStore.showCodeGenerator"
       prominent
       @loaded="onDemoLoaded"
     />

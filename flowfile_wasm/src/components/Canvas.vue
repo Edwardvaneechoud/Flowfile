@@ -328,10 +328,11 @@
       style="display: none"
     />
 
-    <!-- Code Generator Modal -->
+    <!-- Code panel (an overlay panel like the others: docked right, resizable) -->
     <CodeGenerator
       :is-visible="uiStore.showCodeGenerator"
       :teaching-mode="props.teachingMode"
+      :top-offset="toolbarHeight"
       @close="uiStore.showCodeGenerator = false"
     />
     <!-- Missing Files Modal -->
@@ -343,9 +344,7 @@
     />
 
     <!-- Layout Controls Button -->
-    <!-- The docked code panel sits over this corner, leaving it visible but
-         unclickable. Hiding it is less confusing than a half-covered control. -->
-    <LayoutControls v-if="!codePanelDocked" @reset-layout="handleResetLayout" />
+    <LayoutControls @reset-layout="handleResetLayout" />
 
     <!-- Teleport target for context menus (inside CSS variable scope, outside VueFlow transforms) -->
     <div id="flowfile-context-menu-container"></div>
@@ -484,7 +483,6 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 const flowStore = useFlowStore()
 const itemStore = useItemStore()
 const uiStore = useDesignerUiStore()
-const codePanelDocked = computed(() => uiStore.showCodeGenerator && uiStore.codePanelDocked)
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, showSettings, showTablePreview, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
