@@ -253,7 +253,7 @@ computed = formula_4(grouped)
 The same machinery powers the **"How would I write this myself?"** panel in every node's settings drawer. It shows a plain-English description of what the node does plus the plain-Python form of *that node's actual settings* — your columns, your operators — rather than a generic example. The panel is collapsed by default and remembers whether you left it open.
 
 !!! tip "Flowfile Lite goes further"
-    [Flowfile Lite](../../deployment/lite.md#learning-mode) has the same Plain Python mode plus a **Learning mode** the full build does not: a step-by-step Walkthrough that pairs each node with the pattern behind it and the real rows going in and out, and an editable script you can run in the browser. Because Lite already has a Python runtime, an exercise stub is something you fill in and immediately re-run.
+    [Flowfile Lite](../../deployment/lite.md#learning-mode) goes further than the full build: its **Python walkthrough** tab pairs the same script with step-by-step navigation, the real rows going in and out at each step, opt-in background on the pattern behind each node, and an editable script you can run in the browser. Because Lite already has a Python runtime, an exercise stub is something you fill in and immediately re-run.
 
 ## Project Export
 

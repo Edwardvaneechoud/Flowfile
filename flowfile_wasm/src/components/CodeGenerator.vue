@@ -2,14 +2,14 @@
   <div
     v-if="isVisible"
     class="code-generator-overlay"
-    :class="{ docked: mode === 'walkthrough' }"
-    :style="mode === 'walkthrough' ? { zIndex: Z_INDEX.DOCKED_PANEL } : undefined"
+    :class="{ docked: isDocked }"
+    :style="isDocked ? { zIndex: Z_INDEX.DOCKED_PANEL } : undefined"
     @click.self="closePanel"
   >
-    <div class="code-generator-panel">
-      <div class="code-header">
-        <h3>{{ mode === "walkthrough" ? "Walkthrough" : "Generated Python Code" }}</h3>
-        <div v-if="teachingMode" class="mode-switch" role="tablist" aria-label="Code flavour">
+    <div ref="panelEl" class="code-generator-panel">
+      <header class="code-header">
+        <h3 class="panel-title">Code</h3>
+        <nav v-if="teachingMode" class="mode-switch" role="tablist" aria-label="Code flavour">
           <button
             role="tab"
             class="mode-button"
@@ -23,27 +23,17 @@
           <button
             role="tab"
             class="mode-button"
-            :class="{ active: mode === 'plain' }"
-            :aria-selected="mode === 'plain'"
-            title="The same flow written with lists, dicts and for loops — no dataframe library"
-            @click="setMode('plain')"
-          >
-            Plain Python
-          </button>
-          <button
-            role="tab"
-            class="mode-button"
-            :class="{ active: mode === 'walkthrough' }"
-            :aria-selected="mode === 'walkthrough'"
-            title="Step through the flow one node at a time, with the data at each point"
+            :class="{ active: isWalkthrough }"
+            :aria-selected="isWalkthrough"
+            title="Step through the flow one node at a time, in plain Python — no dataframe library"
             @click="setMode('walkthrough')"
           >
-            Walkthrough
+            Python walkthrough
           </button>
-        </div>
+        </nav>
         <div class="header-actions">
           <button
-            v-if="mode === 'plain'"
+            v-if="isWalkthrough"
             class="icon-button run-button"
             :disabled="running || !pyodideStore.isReady"
             :title="pyodideStore.isReady ? 'Run this script here in the browser' : 'Python is still starting up'"
@@ -55,8 +45,8 @@
             <span v-if="running" class="spinner"></span>
           </button>
           <button
-            v-if="mode === 'plain' && edited"
-            class="icon-button"
+            v-if="isWalkthrough && edited"
+            class="icon-button reset-button"
             title="Discard your edits and regenerate"
             @click="resetEdits"
           >
@@ -65,7 +55,7 @@
               <path d="M3 3v5h5"></path>
             </svg>
           </button>
-          <button class="icon-button refresh-button" :disabled="loading" @click="refreshCode" title="Refresh code">
+          <button class="icon-button refresh-button" :disabled="loading" title="Refresh code" @click="refreshCode">
             <svg
               v-if="!loading"
               width="16"
@@ -81,35 +71,21 @@
             </svg>
             <span v-if="loading" class="spinner"></span>
           </button>
-          <button class="icon-button export-button" @click="exportCode" title="Export as .py file">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
+          <button class="icon-button export-button" title="Export as .py file" @click="exportCode">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
           </button>
-          <button class="icon-button close-button" @click="closePanel" title="Close">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
+          <button class="icon-button close-button" title="Close" @click="closePanel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
           </button>
         </div>
-      </div>
+      </header>
 
       <div v-if="error" class="error-message">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -120,73 +96,111 @@
         <span>{{ error }}</span>
       </div>
 
-      <PlainPythonWalkthrough
-        v-if="mode === 'walkthrough'"
-        v-model:current="stepIndex"
-        :steps="walkthrough.steps"
-        :script="walkthrough.script"
-        :captured="captured"
-        :data-state="traceState"
-        :can-run="pyodideStore.isReady"
-        class="walkthrough-slot"
-        @trace="runTrace"
-        @select="onStepSelect"
-      />
-
-      <template v-else>
-        <div v-if="mode === 'plain'" class="mode-note">
-          The same flow with no dataframe library — every table is a list of dicts and every node is
-          a loop. Edit it if you like, then press ▶ to run it right here.
-        </div>
-
-        <div class="code-editor-container">
-          <Codemirror
-            v-model="code"
-            :extensions="extensions"
-            :disabled="mode !== 'plain'"
-            :style="{ height: '100%', fontSize: '13px' }"
-            @ready="onEditorReady"
-          />
-        </div>
-      </template>
-
-      <div v-if="mode === 'plain' && runResult" class="run-output" :class="{ failed: runResult.failed }">
-        <div class="run-output-header">
-          <span>{{ runResult.failed ? "The script raised" : `Returned ${runResult.rows.length} row(s)` }}</span>
-          <span v-if="comparison" class="comparison" :class="{ match: comparison.match }">
-            {{ comparison.message }}
-          </span>
+      <!-- The flow as chips: a constant-height rail, so stepping never resizes the editor. -->
+      <nav v-if="isWalkthrough && steps.length" class="step-rail" aria-label="Steps">
+        <button class="rail-arrow" :disabled="stepIndex === 0" title="Previous step" @click="goTo(stepIndex - 1)">
+          ‹
+        </button>
+        <div ref="railEl" class="rail-track">
           <button
-            v-if="!runResult.failed"
-            class="run-output-compare"
-            title="Check this against what the canvas produced"
-            @click="compareToCanvas"
+            v-for="(step, index) in steps"
+            :key="step.nodeId"
+            :ref="element => setChipRef(element, index)"
+            class="chip"
+            :class="{ current: index === stepIndex, exercise: step.concept === 'exercise' }"
+            :title="stepLabel(step)"
+            @click="goTo(index)"
           >
-            Compare to canvas
+            <span class="chip-index">{{ index + 1 }}</span>
+            <span class="chip-name">{{ stepLabel(step) }}</span>
+            <span v-if="step.concept === 'exercise'" class="chip-exercise" title="Left as an exercise">✎</span>
           </button>
-          <button class="run-output-close" title="Hide output" @click="runResult = null">✕</button>
         </div>
-        <pre v-if="runResult.failed" class="run-error">{{ runResult.error }}</pre>
-        <table v-else-if="runResult.rows.length" class="run-table">
-          <thead>
-            <tr>
-              <th v-for="column in runColumns" :key="column">{{ column }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, index) in runResult.rows.slice(0, 50)" :key="index">
-              <td v-for="column in runColumns" :key="column">{{ formatCell(row[column]) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-else class="run-empty">No rows.</div>
+        <button
+          class="rail-arrow"
+          :disabled="stepIndex === steps.length - 1"
+          title="Next step"
+          @click="goTo(stepIndex + 1)"
+        >
+          ›
+        </button>
+        <span class="rail-count">{{ stepIndex + 1 }} / {{ steps.length }}</span>
+      </nav>
+
+      <div v-if="isWalkthrough && !steps.length" class="empty-state">
+        Add a node or two to the canvas and this becomes a step-by-step walkthrough of the code
+        behind them.
+      </div>
+
+      <div
+        v-else
+        ref="workbenchEl"
+        class="workbench"
+        :class="{ split: isWalkthrough, 'is-wide': isWide }"
+        :style="{ '--split-x': `${split.x}%`, '--split-y': `${split.y}%` }"
+      >
+        <section ref="benchEl" class="bench">
+          <div v-if="isWalkthrough" class="bench-head">
+            <span class="bench-label">
+              step {{ stepIndex + 1 }}<template v-if="labelLines">
+                · lines {{ labelLines.from }}–{{ labelLines.to }}</template>
+            </span>
+            <button v-if="highlightOffScreen" class="bench-recentre" @click="recentre">
+              ↩ step {{ stepIndex + 1 }}
+            </button>
+            <span class="bench-hint">hover any name for what it does</span>
+          </div>
+          <div class="bench-editor">
+            <Codemirror
+              v-model="code"
+              :extensions="extensions"
+              :disabled="!isWalkthrough"
+              :style="{ height: '100%', fontSize: '13px' }"
+              @ready="onEditorReady"
+            />
+          </div>
+        </section>
+
+        <div
+          v-if="isWalkthrough"
+          class="split-divider"
+          role="separator"
+          tabindex="0"
+          :aria-orientation="isWide ? 'vertical' : 'horizontal'"
+          title="Drag to resize — double-click to reset"
+          @pointerdown="startDrag"
+          @dblclick="resetSplit"
+          @keydown="nudgeSplit"
+        ></div>
+
+        <StepMargin
+          v-if="isWalkthrough"
+          ref="marginEl"
+          v-model:tab="marginTab"
+          :concept="concept"
+          :tables="tables"
+          :delta="delta"
+          :delta-counts="deltaCounts"
+          :blocked-reason="blockedReason"
+          :data-state="traceState"
+          :can-run="pyodideStore.isReady"
+          :edited="edited"
+          :show-background="learning.showBackground"
+          :run-result="runResult"
+          :comparison="comparison"
+          @trace="runTrace"
+          @reset="resetEdits"
+          @compare="compareToCanvas"
+          @close-run="runResult = null"
+          @toggle-background="toggleBackground"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -196,12 +210,20 @@ import { usePyodideStore } from '../stores/pyodide-store'
 import { useCodeGeneration } from '../composables/useCodeGeneration'
 import { usePlainPythonGeneration } from '../composables/usePlainPythonGeneration'
 import type { PlainWalkthrough } from '../composables/usePlainPythonGeneration'
+import { usePlainStep, stepLabel, type PlainRunResult } from '../composables/usePlainStep'
 import { glossaryTooltip } from '../composables/usePythonGlossary'
-import { stepHighlight } from '../composables/useStepHighlight'
+import {
+  seedStepsIn,
+  showStep,
+  stepHighlight,
+  stepLines,
+  stepVisible,
+  type StepRange
+} from '../composables/useStepHighlight'
 import { useLearningStore } from '../stores/learning-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { Z_INDEX } from './common/DraggableItem/zIndex'
-import PlainPythonWalkthrough from './PlainPythonWalkthrough.vue'
+import StepMargin, { type MarginTab } from './StepMargin.vue'
 import type { NodeFormulaSettings, NodeReadSettings } from '../types'
 
 const props = withDefaults(
@@ -222,14 +244,25 @@ const pyodideStore = usePyodideStore()
 const learning = useLearningStore()
 const uiStore = useDesignerUiStore()
 const { generateCode } = useCodeGeneration()
-const { generatePlainPython, buildWalkthrough } = usePlainPythonGeneration()
+const { buildWalkthrough } = usePlainPythonGeneration()
 
-type CodeMode = 'polars' | 'plain' | 'walkthrough'
+type CodeMode = 'polars' | 'walkthrough'
 const MODE_KEY = 'flowfile-codegen-mode'
+const MARGIN_TAB_KEY = 'flowfile-codegen-margin-tab'
+const SPLIT_KEY = 'flowfile-codegen-split'
+/** Panel width at which the bench and the margin sit side by side. */
+const WIDE_AT = 880
+const DEFAULT_SPLIT = { x: 60, y: 64 }
+const FLOORS = { bench: 200, margin: 120, benchX: 460, marginX: 340 }
 
 function initialMode(): CodeMode {
   const saved = localStorage.getItem(MODE_KEY)
-  if (saved === 'plain' || saved === 'walkthrough' || saved === 'polars') return saved
+  // 'plain' and 'walkthrough' were the two halves of what is now one tab.
+  if (saved === 'plain') {
+    localStorage.setItem(MODE_KEY, 'walkthrough')
+    return 'walkthrough'
+  }
+  if (saved === 'walkthrough' || saved === 'polars') return saved
   // Learning mode is what decides where a first-time visitor lands.
   return learning.enabled ? 'walkthrough' : 'polars'
 }
@@ -239,37 +272,77 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const mode = ref<CodeMode>('polars')
 const running = ref(false)
-const runResult = ref<{ rows: Record<string, unknown>[]; failed: boolean; error?: string } | null>(null)
+const runResult = ref<PlainRunResult | null>(null)
 const comparison = ref<{ match: boolean; message: string } | null>(null)
 
-// Editing the generated script is the point in plain mode, so track whether the
-// buffer still matches what we generated — that is what "reset" undoes.
+const isWalkthrough = computed(() => mode.value === 'walkthrough')
+
+// Editing the generated script is the point in walkthrough mode, so track
+// whether the buffer still matches what we generated — that is what "reset" undoes.
 const generated = ref('')
 // Survives a trip to another tab; cleared by Reset or by regenerating.
 const draft = ref<string | null>(null)
-const edited = computed(() => mode.value === 'plain' && code.value !== generated.value)
+const edited = computed(() => isWalkthrough.value && code.value !== generated.value)
 
 const walkthrough = ref<PlainWalkthrough>({ script: '', traceScript: '', steps: [], snippets: {} })
+const steps = computed(() => walkthrough.value.steps)
 const stepIndex = ref(0)
 const captured = ref<Record<string, Record<string, unknown>[]> | null>(null)
 const traceState = ref<'idle' | 'running' | 'ready' | 'failed'>('idle')
+// Bumped whenever the document is replaced programmatically; drives re-seeding.
+const scriptRevision = ref(0)
 
-const runColumns = computed(() => {
-  const seen: string[] = []
-  for (const row of runResult.value?.rows.slice(0, 50) ?? []) {
-    for (const column of Object.keys(row)) if (!seen.includes(column)) seen.push(column)
-  }
-  return seen
-})
+const { concept, tables, delta, deltaCounts, blockedReason } = usePlainStep(steps, stepIndex, captured)
 
-const formatCell = (value: unknown): string =>
-  value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)
+const panelEl = ref<HTMLElement | null>(null)
+const workbenchEl = ref<HTMLElement | null>(null)
+const benchEl = ref<HTMLElement | null>(null)
+const railEl = ref<HTMLElement | null>(null)
+const marginEl = ref<InstanceType<typeof StepMargin> | null>(null)
+const chipRefs: (HTMLElement | null)[] = []
+const setChipRef = (element: unknown, index: number) => {
+  chipRefs[index] = (element as HTMLElement | null) ?? null
+}
+
+function initialTab(): MarginTab {
+  const saved = localStorage.getItem(MARGIN_TAB_KEY)
+  if (saved === 'why') return learning.showBackground ? 'why' : 'data'
+  if (saved === 'data' || saved === 'output') return saved
+  return 'data'
+}
+const marginTab = ref<MarginTab>(initialTab())
+watch(marginTab, tab => localStorage.setItem(MARGIN_TAB_KEY, tab))
+
+const toggleBackground = () => {
+  learning.toggleBackground()
+  if (learning.showBackground) marginTab.value = 'why'
+  else if (marginTab.value === 'why') marginTab.value = 'data'
+}
+
+const split = reactive({ ...DEFAULT_SPLIT })
+try {
+  const saved = JSON.parse(localStorage.getItem(SPLIT_KEY) ?? 'null')
+  if (saved && typeof saved.x === 'number') split.x = Math.min(85, Math.max(20, saved.x))
+  if (saved && typeof saved.y === 'number') split.y = Math.min(85, Math.max(20, saved.y))
+} catch {
+  /* a corrupt ratio is not worth a broken panel */
+}
+const persistSplit = () => localStorage.setItem(SPLIT_KEY, JSON.stringify({ x: split.x, y: split.y }))
+
+const isWide = ref(false)
+const mediaQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 1241px)') : null
+const wideViewport = ref(mediaQuery?.matches ?? true)
+const onViewportChange = (event: MediaQueryListEvent) => (wideViewport.value = event.matches)
+mediaQuery?.addEventListener('change', onViewportChange)
+
+// One geometry for both tabs: switching Polars↔walkthrough must not teleport it.
+const isDocked = computed(() => props.isVisible && wideViewport.value)
 
 const setMode = (next: CodeMode) => {
   if (mode.value === next) return
   // Whatever they typed is often an exercise solution; losing it on a tab
   // click is the one unforgivable thing this panel could do.
-  if (mode.value === 'plain' && edited.value) draft.value = code.value
+  if (isWalkthrough.value && edited.value) draft.value = code.value
   mode.value = next
   localStorage.setItem(MODE_KEY, next)
   runResult.value = null
@@ -282,41 +355,173 @@ const resetEdits = () => {
   code.value = generated.value
   runResult.value = null
   comparison.value = null
-}
-
-/** Selecting the node behind the panel keeps the canvas in step with the walkthrough. */
-const onStepSelect = (nodeId: number) => {
-  flowStore.selectedNodeId = nodeId
+  scriptRevision.value++
 }
 
 let editorView: EditorView | null = null
-const onEditorReady = (payload: { view: EditorView }) => {
-  editorView = payload.view
+const labelLines = ref<StepRange | null>(null)
+const highlightOffScreen = ref(false)
+
+const syncReadouts = () => {
+  const view = editorView
+  if (!view || !isWalkthrough.value) {
+    labelLines.value = null
+    highlightOffScreen.value = false
+    return
+  }
+  labelLines.value = stepLines(view.state)
+  highlightOffScreen.value = !stepVisible(view)
 }
 
-/** Open the plain flavour on the pipeline, not on the helper functions above it. */
-const scrollToPipeline = async () => {
-  await nextTick()
-  if (!editorView || mode.value !== 'plain') return
-  const offset = code.value.indexOf('def run_etl_pipeline')
-  if (offset <= 0) return
-  const line = editorView.state.doc.lineAt(offset)
-  editorView.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start' }) })
+let scrollRaf = 0
+const onEditorScroll = () => {
+  cancelAnimationFrame(scrollRaf)
+  scrollRaf = requestAnimationFrame(syncReadouts)
+}
+
+const onEditorReady = (payload: { view: EditorView }) => {
+  editorView = payload.view
+  payload.view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
+  void seedNow()
 }
 
 const extensions = [
   python(),
   oneDark,
   glossaryTooltip(),
-  stepHighlight(), // brings the tooltip theme with it
+  stepHighlight(),
+  EditorView.updateListener.of(update => {
+    if (update.docChanged || update.geometryChanged || update.transactions.length > 0) syncReadouts()
+  }),
   EditorView.theme({
     '&': { height: '100%' },
-    '.cm-scroller': { overflow: 'auto' },
+    '.cm-scroller': { overflow: 'auto', overscrollBehavior: 'contain' },
     '.cm-content': { padding: '16px' },
-    '.cm-focused': { outline: 'none' },
+    '.cm-focused': { outline: 'none' }
   }),
   EditorView.lineWrapping
 ]
+
+/** Re-derive the anchors from the generator's line numbers after a doc swap. */
+const seedNow = async () => {
+  await nextTick()
+  const view = editorView
+  if (!view) return
+  if (!isWalkthrough.value) {
+    seedStepsIn(view, [], -1)
+    syncReadouts()
+    return
+  }
+  // vue-codemirror pushes model-value on its own tick.
+  if (view.state.doc.length !== code.value.length) await nextTick()
+  seedStepsIn(
+    view,
+    steps.value.map(step => ({ from: step.lineStart, to: step.lineEnd })),
+    stepIndex.value
+  )
+  showStep(view, stepIndex.value)
+  syncReadouts()
+}
+
+watch(scriptRevision, seedNow, { flush: 'post' })
+
+const goTo = (index: number) => {
+  stepIndex.value = Math.max(0, Math.min(steps.value.length - 1, index))
+}
+
+const recentre = () => {
+  if (editorView) showStep(editorView, stepIndex.value)
+}
+
+watch(stepIndex, index => {
+  const chip = chipRefs[index]
+  const rail = railEl.value
+  // scrollIntoView would drag ancestors along with it; this only moves the rail.
+  if (chip && rail) {
+    rail.scrollTo({ left: chip.offsetLeft - (rail.clientWidth - chip.offsetWidth) / 2, behavior: 'smooth' })
+  }
+  if (editorView) showStep(editorView, index)
+  marginEl.value?.resetScroll()
+})
+
+// Keep the canvas selection in step, so the node being explained is the one
+// highlighted behind the docked panel.
+watch(
+  () => steps.value[stepIndex.value]?.nodeId,
+  nodeId => {
+    if (nodeId !== undefined && props.isVisible && isWalkthrough.value) flowStore.selectedNodeId = nodeId
+  },
+  { immediate: true }
+)
+
+let resizeRaf = 0
+const observer =
+  typeof ResizeObserver === 'undefined'
+    ? null
+    : new ResizeObserver(entries => {
+        for (const entry of entries) {
+          if (entry.target === panelEl.value) isWide.value = entry.contentRect.width >= WIDE_AT
+        }
+        cancelAnimationFrame(resizeRaf)
+        resizeRaf = requestAnimationFrame(() => {
+          if (editorView && isWalkthrough.value) showStep(editorView, stepIndex.value)
+          syncReadouts()
+        })
+      })
+
+watch([panelEl, benchEl], ([panel, bench]) => {
+  if (!observer) return
+  observer.disconnect()
+  if (panel) observer.observe(panel)
+  if (bench) observer.observe(bench)
+})
+
+const startDrag = (event: PointerEvent) => {
+  const element = workbenchEl.value
+  if (!element) return
+  const box = element.getBoundingClientRect()
+  const wide = isWide.value
+  ;(event.target as Element).setPointerCapture(event.pointerId)
+  const move = (moved: PointerEvent) => {
+    // Clamp in px, not percent: that is what holds the floors on a short window.
+    if (wide) {
+      const px = Math.min(box.width - 8 - FLOORS.marginX, Math.max(FLOORS.benchX, moved.clientX - box.left))
+      split.x = (px / box.width) * 100
+    } else {
+      const px = Math.min(box.height - 8 - FLOORS.margin, Math.max(FLOORS.bench, moved.clientY - box.top))
+      split.y = (px / box.height) * 100
+    }
+  }
+  const up = () => {
+    window.removeEventListener('pointermove', move)
+    persistSplit()
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up, { once: true })
+}
+
+const resetSplit = () => {
+  split.x = DEFAULT_SPLIT.x
+  split.y = DEFAULT_SPLIT.y
+  persistSplit()
+}
+
+const nudgeSplit = (event: KeyboardEvent) => {
+  if (event.key === 'Home') {
+    event.preventDefault()
+    resetSplit()
+    return
+  }
+  const axis = isWide.value ? 'x' : 'y'
+  const keys: Record<string, number> = isWide.value
+    ? { ArrowLeft: -1, ArrowRight: 1 }
+    : { ArrowUp: -1, ArrowDown: 1 }
+  const direction = keys[event.key]
+  if (!direction) return
+  event.preventDefault()
+  split[axis] = Math.min(85, Math.max(20, split[axis] + direction * (event.shiftKey ? 5 : 2)))
+  persistSplit()
+}
 
 // Translate each formula node's expression to Polars code (to_polars_code).
 // Best-effort: the handler falls back to runtime translation on failure.
@@ -331,8 +536,8 @@ const translateFormulaNodes = async (): Promise<Record<number, string>> => {
       if (!expr) continue
       const polars = await pyodideStore.runPythonWithResult(
         'import json\n' +
-        'from polars_expr_transformer.process.polars_expr_transformer import to_polars_code\n' +
-        `to_polars_code(json.loads(${JSON.stringify(JSON.stringify(expr))}))`
+          'from polars_expr_transformer.process.polars_expr_transformer import to_polars_code\n' +
+          `to_polars_code(json.loads(${JSON.stringify(JSON.stringify(expr))}))`
       )
       if (typeof polars === 'string' && polars.trim()) out[node.id] = polars.trim()
     }
@@ -347,27 +552,21 @@ const generateCodeFromFlow = async () => {
   error.value = null
 
   try {
-    if (mode.value === 'walkthrough') {
+    if (isWalkthrough.value) {
+      // One conversion: buildWalkthrough's script is what generatePlainPython
+      // would have produced, so the editable buffer and the steps agree.
       walkthrough.value = buildWalkthrough({
         nodes: flowStore.nodes,
         edges: flowStore.edges,
         flowName: 'WASM Flow'
       })
+      generated.value = walkthrough.value.script
+      code.value = draft.value ?? generated.value
       stepIndex.value = Math.min(stepIndex.value, Math.max(0, walkthrough.value.steps.length - 1))
       // The captured tables belong to the previous shape of the flow.
       captured.value = null
       traceState.value = 'idle'
-      return
-    }
-    if (mode.value === 'plain') {
-      // The plain flavour never refuses a flow: unsupported nodes become exercises.
-      generated.value = generatePlainPython({
-        nodes: flowStore.nodes,
-        edges: flowStore.edges,
-        flowName: 'WASM Flow'
-      })
-      code.value = draft.value ?? generated.value
-      void scrollToPipeline()
+      scriptRevision.value++
       return
     }
     const formulaCode = await translateFormulaNodes()
@@ -377,6 +576,7 @@ const generateCodeFromFlow = async () => {
       flowName: 'WASM Flow',
       formulaCode
     })
+    scriptRevision.value++
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to generate code'
     code.value = '# Failed to generate code. Please check your flow configuration.'
@@ -386,7 +586,7 @@ const generateCodeFromFlow = async () => {
 }
 
 /**
- * Run the generated script in Pyodide, in its own namespace.
+ * Run the buffer in Pyodide, in its own namespace.
  *
  * This deliberately avoids the engine entirely — no `execute_*` bridge call, no
  * `_lazyframes` entry — so it cannot disturb canvas state. It is a run in the
@@ -398,6 +598,7 @@ const runScript = async () => {
   runResult.value = null
   // Otherwise last run's verdict sits next to this run's result and contradicts it.
   comparison.value = null
+  marginTab.value = 'output'
   try {
     stageReadFiles()
     pyodideStore.setGlobal('_plain_script', code.value)
@@ -451,6 +652,7 @@ const cleanTraceback = (text: string): string => {
 const runTrace = async () => {
   if (!pyodideStore.isReady || traceState.value === 'running') return
   traceState.value = 'running'
+  marginTab.value = 'data'
   try {
     stageReadFiles()
     pyodideStore.setGlobal('_trace_script', walkthrough.value.traceScript)
@@ -538,7 +740,7 @@ const exportCode = () => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = mode.value === 'plain' ? 'pipeline_plain_python.py' : 'flowfile_pipeline.py'
+  a.download = isWalkthrough.value ? 'pipeline_plain_python.py' : 'flowfile_pipeline.py'
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -548,6 +750,8 @@ const exportCode = () => {
 const closePanel = () => {
   emit('close')
 }
+
+const teachingModeAvailable = computed(() => props.teachingMode)
 
 watch(
   () => props.isVisible,
@@ -560,11 +764,22 @@ watch(
   }
 )
 
-const teachingModeAvailable = computed(() => props.teachingMode)
+// Canvas hides its bottom-right widget while the panel is docked over it.
+watch(
+  [isDocked, mode, () => props.isVisible],
+  () => {
+    uiStore.codePanelDocked = isDocked.value
+    uiStore.codePanelMode = props.isVisible ? mode.value : 'polars'
+  },
+  { immediate: true }
+)
 
-// Canvas hides its bottom-right widget while the walkthrough is docked over it.
-watch([mode, () => props.isVisible], ([current, visible]) => {
-  uiStore.codePanelMode = visible ? (current as 'polars' | 'plain' | 'walkthrough') : 'polars'
+onBeforeUnmount(() => {
+  mediaQuery?.removeEventListener('change', onViewportChange)
+  observer?.disconnect()
+  cancelAnimationFrame(resizeRaf)
+  cancelAnimationFrame(scrollRaf)
+  editorView?.scrollDOM.removeEventListener('scroll', onEditorScroll)
 })
 </script>
 
@@ -585,6 +800,8 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
   backdrop-filter: blur(2px);
 }
 
+/* A flex column that never scrolls: the editor and the margin body own the
+   only two scrollers in here. */
 .code-generator-panel {
   background: var(--color-background-primary);
   border-radius: 8px;
@@ -597,7 +814,7 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
   overflow: hidden;
 }
 
-/* Walkthrough docks to the side: the whole point is watching the node you are
+/* Docked beside the canvas: the whole point is watching the node you are
    reading about, so the canvas has to stay visible and clickable behind it. */
 .code-generator-overlay.docked {
   background: transparent;
@@ -618,8 +835,7 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
 }
 
 /* Below this the canvas is too narrow to be worth keeping visible, so the
-   walkthrough goes back to being an ordinary modal. The breakpoint also has to
-   clear the mode switch, which stops fitting beside the title around here. */
+   panel goes back to being an ordinary modal. */
 @media (max-width: 1240px) {
   .code-generator-overlay.docked {
     background: rgba(0, 0, 0, 0.5);
@@ -633,37 +849,24 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
   }
 }
 
-/* The three tabs need room; let them wrap under the title rather than clip. */
-@media (max-width: 1400px) {
-  .code-generator-overlay.docked .code-header {
-    flex-wrap: wrap;
-    row-gap: 8px;
-  }
-
-  .code-generator-overlay.docked .mode-switch {
-    order: 3;
-    width: 100%;
-    margin: 0;
-  }
-}
-
-.walkthrough-slot {
-  flex: 1;
-  min-height: 0;
+.code-header,
+.error-message,
+.step-rail {
+  flex: 0 0 auto;
 }
 
 .code-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
+  gap: 12px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--color-border-primary);
   background: var(--color-background-secondary);
 }
 
-.code-header h3 {
+.panel-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -677,7 +880,6 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
 .mode-switch {
   display: flex;
   margin-left: auto;
-  margin-right: 12px;
   border: 1px solid var(--color-border-primary);
   border-radius: 6px;
   overflow: hidden;
@@ -687,6 +889,7 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
   padding: 6px 14px;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   border: none;
   background: transparent;
   color: var(--color-text-secondary);
@@ -704,115 +907,244 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
   color: #fff;
 }
 
-.mode-note {
-  padding: 10px 20px;
+/* Constant 44px for any number of steps: chips scroll sideways rather than
+   wrapping, which is what stops a step change from resizing the editor. */
+.step-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+}
+
+.rail-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+}
+
+.chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.chip:hover:not(.current) {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+.chip.current {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+/* A dashed border alone is nearly invisible; the glyph carries the meaning. */
+.chip.exercise:not(.current) {
+  border-style: dashed;
+}
+
+.chip-exercise {
+  font-size: 10px;
+  opacity: 0.9;
+}
+
+.chip-index {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-arrow {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rail-arrow:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.rail-arrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.rail-count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
-  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.empty-state {
+  flex: 1 1 auto;
+  padding: 32px 24px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+/* The split container. Never scrolls; min-height: 0 is what lets it shrink. */
+.workbench {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.bench {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 200px;
+  flex: 0 0 var(--split-y, 64%);
+}
+
+/* Polars tab: no margin, so the bench is everything. */
+.workbench:not(.split) .bench {
+  flex: 1 1 auto;
+}
+
+.bench-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  height: 26px;
+  padding: 0 14px;
+  overflow: hidden;
+  font-size: 11px;
   color: var(--color-text-secondary);
   background: var(--color-background-secondary);
   border-bottom: 1px solid var(--color-border-primary);
+}
+
+.bench-label {
+  flex: 0 0 auto;
+  min-width: 0;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.bench-recentre {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border: 1px solid var(--color-accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.bench-hint {
+  margin-left: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.bench-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-code-bg);
+}
+
+/* Height, not max-height: the editor's box comes from the split, never from
+   its content, so CodeMirror always measures a settled box. */
+.bench-editor :deep(.cm-editor) {
+  height: 100%;
+}
+
+/* SCROLLER #1. */
+.bench-editor :deep(.cm-scroller) {
+  overflow: auto;
+}
+
+.split-divider {
+  flex: 0 0 8px;
+  cursor: row-resize;
+  touch-action: none;
+  background: var(--color-background-secondary);
+  border-block: 1px solid var(--color-border-primary);
+}
+
+.split-divider:hover,
+.split-divider:focus-visible {
+  background: var(--color-accent);
+  outline: none;
+}
+
+/* Wide: columns. Driven by a Vue-bound class, not @container — container-type
+   would make this a containing block for the glossary's fixed tooltips. */
+.workbench.is-wide {
+  flex-direction: row;
+}
+
+.workbench.is-wide .bench {
+  flex: 0 0 var(--split-x, 60%);
+  min-width: 460px;
+  min-height: 0;
+}
+
+.workbench.is-wide .split-divider {
+  cursor: col-resize;
+  border-block: none;
+  border-inline: 1px solid var(--color-border-primary);
+}
+
+.workbench.is-wide :deep(.margin) {
+  min-width: 340px;
+  min-height: 0;
+  border-left: 1px solid var(--color-border-primary);
 }
 
 .run-button:hover:not(:disabled) {
   background: var(--color-success, #2e9e5b) !important;
   border-color: var(--color-success, #2e9e5b) !important;
   color: #fff;
-}
-
-.run-output {
-  flex-shrink: 0;
-  max-height: 34%;
-  overflow: auto;
-  border-top: 1px solid var(--color-border-primary);
-  background: var(--color-background-secondary);
-}
-
-.run-output-header {
-  position: sticky;
-  top: 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 20px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  background: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-primary);
-}
-
-.run-output.failed .run-output-header {
-  color: var(--color-danger);
-}
-
-.run-output-close {
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.run-output-compare {
-  margin-left: auto;
-  padding: 2px 10px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.run-output-compare:hover {
-  border-color: var(--color-accent);
-  color: var(--color-text-primary);
-}
-
-.comparison {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-danger);
-}
-
-.comparison.match {
-  color: var(--color-success, #2e9e5b);
-}
-
-.run-error {
-  margin: 0;
-  padding: 12px 20px;
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  color: var(--color-danger);
-}
-
-.run-empty {
-  padding: 12px 20px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.run-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.run-table th,
-.run-table td {
-  padding: 5px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--color-border-primary);
-  color: var(--color-text-primary);
-  white-space: nowrap;
-}
-
-.run-table th {
-  font-weight: 600;
-  color: var(--color-text-secondary);
 }
 
 .icon-button {
@@ -857,12 +1189,6 @@ watch([mode, () => props.isVisible], ([current, visible]) => {
 
 .error-message svg {
   flex-shrink: 0;
-}
-
-.code-editor-container {
-  flex: 1;
-  overflow: hidden;
-  background: var(--color-code-bg);
 }
 
 .spinner {

@@ -1,5 +1,5 @@
 <template>
-  <div class="row-table-wrap">
+  <div class="row-table-wrap" :class="{ flush }">
     <table v-if="rows.length" class="row-table">
       <thead>
         <tr>
@@ -22,9 +22,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = withDefaults(defineProps<{ rows: Record<string, unknown>[]; limit?: number }>(), {
-  limit: 8
-})
+const props = withDefaults(
+  defineProps<{
+    rows: Record<string, unknown>[]
+    limit?: number
+    /** Inside an already-scrolling region: no second Y-scroller, no sticky header. */
+    flush?: boolean
+  }>(),
+  { limit: 8, flush: false }
+)
 
 const shown = computed(() => props.rows.slice(0, props.limit))
 const hidden = computed(() => Math.max(0, props.rows.length - props.limit))
@@ -53,6 +59,19 @@ const format = (value: unknown): string =>
   border-radius: 4px;
   overflow: auto;
   max-height: 220px;
+}
+
+/* `limit` bounds the row count instead, so the parent scroller stays the only one. */
+.row-table-wrap.flush {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* A sticky header would pin against the parent scroller and float table 1's
+   header over table 2. With a handful of rows there is nothing to stick for. */
+.row-table-wrap.flush .row-table th {
+  position: static;
 }
 
 .row-table {

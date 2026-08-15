@@ -426,7 +426,7 @@ export const CONCEPTS: Record<string, Concept> = {
     title: 'Over to you',
     body: [
       'This node has no short loop equivalent, so the script leaves you a function that raises, plus the rule it is supposed to apply.',
-      'The steps before this one still show their data, so you can see exactly what is coming in. To write the function, switch to the Plain Python tab — that editor is editable and has a Run button.',
+      'The steps before this one still show their data, so you can see exactly what is coming in. The script above is editable — fill in the function, then press ▶ to run it.',
       'Everything downstream of here has no data yet, for the obvious reason: the script stopped at this line.'
     ],
     takeaway: 'Return a new list of dicts. The rest of the script does not care how you build it.'

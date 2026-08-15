@@ -13,7 +13,7 @@
       <p v-else class="explainer-hint">Connect this node to see the code for your own settings.</p>
       <p v-if="explanation?.helpers.length" class="explainer-hint">
         Calls {{ explanation.helpers.join(", ") }} — defined for you in the full script under Code ▸
-        Plain Python.
+        Python walkthrough.
       </p>
       <div v-if="explanation?.code" class="explainer-actions">
         <button class="explainer-copy" @click="copySnippet">{{ copied ? 'Copied ✓' : 'Copy' }}</button>

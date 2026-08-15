@@ -86,7 +86,7 @@ app.use(FlowfileEditorPlugin)
 | `theme` | `ThemeConfig` | — | `{ mode: 'light' \| 'dark' \| 'system' }` |
 | `toolbar` | `ToolbarConfig` | — | Show/hide toolbar buttons |
 | `nodeCategories` | `NodeCategoryConfig[]` | — | Control which node types are available |
-| `teachingMode` | `boolean` | `true` | Offer the learning surfaces: the **Plain Python** and **Walkthrough** modes in the Code panel, and the "How would I write this myself?" panel in node settings. Set `false` to hide them all. Whether the user is *in* learning mode is their own setting (the graduation-cap toggle); this prop decides whether it is on offer at all |
+| `teachingMode` | `boolean` | `true` | Offer the learning surfaces: the **Python walkthrough** tab in the Code panel, and the "How would I write this myself?" panel in node settings. Set `false` to hide both. The background prose inside the walkthrough is separately opt-in and collapsed by default, so leaving this on still gives an embedded editor a plain code view |
 | `pyodide` | `PyodideConfig` | — | `{ autoInit: boolean }` |
 
 ## Events

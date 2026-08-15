@@ -45,23 +45,25 @@ It also supports **exporting a flow to a Python/Polars script** and a lightweigh
 
 ## Learning mode
 
-Turn on **Learning mode** with the graduation-cap button in the left icon rail. It adds two things and changes where the Code panel opens.
+The Code panel has two tabs: **Polars** and **Python walkthrough**. Turning on **Learning mode** with the graduation-cap button in the left icon rail decides which one it opens on.
 
-### Walkthrough
+### The Python walkthrough
 
-The Code panel gains a third mode that steps through the flow one node at a time. Each step shows three things: **what pattern you are looking at**, **where that step sits in the whole script**, and the **actual rows** going in and coming out at that point.
+The same flow as one standalone script with no dataframe library — every table a `list[dict]`, every node an explicit loop — and a way to walk it a node at a time.
 
-The background is the part a code comment cannot carry. A group by is the accumulator-dict pattern, and the panel explains why it takes two passes and where else you will write that shape. A join is a hash index, and the panel shows why building a dictionary first turns rows×rows of work into rows+rows. A sort takes a key function — and the panel shows you that `None < 5` does not return `False`, it raises, which is why the key carries a `True`/`False` flag in front of the value.
+The script is the centre of the view and stays there. Step chips along the top move a highlight through it, so you always see the block you are reading about *in place*, with what came before it and what happens next still on screen. **Hover any name** — `sorted`, `setdefault`, `lambda`, one of the generated helpers — for a one-line explanation and a small example.
 
-The code pane shows the **entire script** with the current step's lines lit up, not an isolated fragment, so you can always see what came before and what happens next. Stepping moves the highlight. **Hover any name** — `sorted`, `setdefault`, `lambda`, one of the generated helpers — for a one-line explanation and a small example.
+Underneath, **Data** shows the actual rows going in and coming out at the current step. Press **Show the data at each step** and the whole pipeline runs once in your browser, recording every intermediate table, so you can watch 1000 rows become 8 and read the loop that did it.
 
-Press **Show the data at each step** and the whole pipeline runs once in your browser, recording every intermediate table — so you can watch 1000 rows become 8 and read the loop that did it. The panel docks beside the canvas rather than covering it, and the node you are reading about stays highlighted in the graph.
+The editor is **editable**, and Lite is the one place where the script can **run where you are reading it**. Change a loop, press ▶, and the code executes in the same in-browser Python that runs the canvas, against the same files, with the rows shown in **Output**. **Compare to canvas** checks your version against what the flow produced.
 
-### Plain Python
+At a wide enough window the panel docks beside the canvas rather than covering it, and the node you are reading about stays highlighted in the graph.
 
-The second Code-panel mode is the same flow as one standalone script with no dataframe library: every table a `list[dict]`, every node an explicit loop. Polars stays the default; this is a mode you switch into.
+### Background, if you want it
 
-The editor is **editable**, and Lite is the one place where the script can **run where you are reading it**. Change a loop, press ▶, and the generated code executes in the same in-browser Python that runs the canvas, against the same files, with the rows printed underneath. **Compare to canvas** checks your version against what the flow produced.
+By default there is no prose — just the code, the steps and the data. Press **Why does it look like this?** and a **Why** tab appears explaining the *pattern* behind the current step. It stays open as you step, and is remembered next time.
+
+That is the part a code comment cannot carry. A group by is the accumulator-dict pattern, and it explains why that takes two passes and where else you will write the shape. A join is a hash index, and it shows why building a dictionary first turns rows×rows of work into rows+rows. A sort takes a key function — and it shows you that `None < 5` does not return `False`, it raises, which is why the key carries a `True`/`False` flag in front of the value.
 
 Nodes with a plain-Python form: manual input, CSV read, filter (basic mode), select, sort, unique, group by, join (inner, left, semi and anti), cross join, union, record ID, take sample, rename (prefix/suffix), pivot, unpivot, and the write nodes.
 
@@ -73,7 +75,7 @@ Every node's settings panel carries the same thing at a smaller scale: a **"How 
     The generated script produces the same rows as the canvas, but it is deliberately not optimised and holds the whole table in memory as a list. Reading a CSV also leaves dates as text, where the engine recognises them — the generated helper flags that as an exercise.
 
 !!! info "Embedders can turn it off"
-    Set `teachingMode: false` on the `FlowfileEditor` component to hide both the Plain Python mode and the per-node panel.
+    Set `teachingMode: false` on the `FlowfileEditor` component to hide the Python walkthrough tab and the per-node panel. The background prose is opt-in and collapsed by default, so an embedded editor stays a plain code view unless someone asks for more.
 
 ---
 
@@ -109,7 +111,7 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 | Secrets & connections manager | ✓ | ✗ |
 | Export flow to Python | ✓ | ✓ |
 | Plain-Python (learning) export | ✓ | ✓ |
-| Step-by-step Walkthrough with live data | ✗ | ✓ |
+| Step-by-step Python walkthrough with live data | ✗ | ✓ |
 | Edit + re-run the generated script | ✗ | ✓ |
 | Graphic Walker visualization | ✓ | ✓ |
 | Python API (`flowfile_frame`) | ✓ | ✗ |

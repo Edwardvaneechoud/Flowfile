@@ -9,31 +9,44 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 
 const STORAGE_KEY = 'flowfile-learning-mode'
+const BACKGROUND_KEY = 'flowfile-codegen-background'
 
-function saved(): boolean {
+function saved(key: string): boolean {
   if (typeof localStorage === 'undefined') return false
-  return localStorage.getItem(STORAGE_KEY) === '1'
+  return localStorage.getItem(key) === '1'
 }
 
-export const useLearningStore = defineStore('learning', () => {
-  const enabled = ref(saved())
-
-  // Sync flush: a setting should be on disk the moment it changes, not a tick
-  // later, in case the click that changed it also navigates away.
+// Sync flush: a setting should be on disk the moment it changes, not a tick
+// later, in case the click that changed it also navigates away.
+function persist(source: Ref<boolean>, key: string) {
   watch(
-    enabled,
+    source,
     value => {
-      if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, value ? '1' : '0')
+      if (typeof localStorage !== 'undefined') localStorage.setItem(key, value ? '1' : '0')
     },
     { flush: 'sync' }
   )
+}
+
+export const useLearningStore = defineStore('learning', () => {
+  const enabled = ref(saved(STORAGE_KEY))
+  // The concept prose is opt-in: plenty of people want the code and the rows
+  // and nothing else. Off by default, and it stays however they left it.
+  const showBackground = ref(saved(BACKGROUND_KEY))
+
+  persist(enabled, STORAGE_KEY)
+  persist(showBackground, BACKGROUND_KEY)
 
   function toggle() {
     enabled.value = !enabled.value
   }
 
-  return { enabled, toggle }
+  function toggleBackground() {
+    showBackground.value = !showBackground.value
+  }
+
+  return { enabled, showBackground, toggle, toggleBackground }
 })
