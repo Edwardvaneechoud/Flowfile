@@ -15,19 +15,6 @@ on:
         required: false
         default: false
         type: boolean
-      # TEMPORARY CANARY - proves the backend-tests-windows fan-in fails in both
-      # wrong directions (a shard that fails, and a shard that is skipped while
-      # its siblings run). Remove this input and its two guards below once the
-      # canary dispatches have been recorded.
-      canary:
-        description: 'TEMPORARY CANARY: force a Windows shard to fail or skip'
-        required: false
-        default: 'none'
-        type: choice
-        options:
-          - 'none'
-          - 'fail-shard-a'
-          - 'skip-shard-a'
 
 # Cancel superseded in-progress runs for the same PR. Main-branch runs are never
 # cancelled (docker-publish / release pipelines key off completed main builds).
@@ -368,26 +355,14 @@ jobs:
   backend-tests-windows-core-a:
     name: backend-tests-windows-shard (core-a)
     needs: detect-changes
-    # The parenthesised group is the monolithic job's condition verbatim. The
-    # leading clause is a TEMPORARY CANARY that lets a dispatch skip this shard
-    # while its siblings run, proving the fan-in treats that as a failure.
     if: |
-      github.event.inputs.canary != 'skip-shard-a' && (
       needs.detect-changes.outputs.any_backend == 'true' ||
       needs.detect-changes.outputs.test_workflow == 'true' ||
-      github.event.inputs.run_all_tests == 'true')
+      github.event.inputs.run_all_tests == 'true'
     runs-on: windows-latest
     env:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
-      # TEMPORARY CANARY - fails before any setup so the dispatch is cheap.
-      - name: Canary - fail this shard deliberately
-        if: github.event.inputs.canary == 'fail-shard-a'
-        shell: pwsh
-        run: |
-          Write-Host "TEMPORARY CANARY: failing backend-tests-windows-shard (core-a) on purpose"
-          exit 1
-
       - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
