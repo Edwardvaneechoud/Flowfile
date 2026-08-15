@@ -144,6 +144,9 @@ class FlowNode:
     _state_needs_reset: bool
     # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
     _on_flow_complete: Callable[[bool], None] | None
+    # set per run by the graph on ANY-rule nodes (union): inputs deliberately
+    # skipped this run, replaced by schema-stable empty frames at assembly
+    _skipped_input_ids_this_run: frozenset
 
     user_provided_schema_callback: Callable | None
     _schema_callback: SingleExecutionFuture | None
@@ -236,6 +239,7 @@ class FlowNode:
         self._execution_lock = threading.RLock()
         self._state_needs_reset = False
         self._on_flow_complete = None
+        self._skipped_input_ids_this_run = frozenset()
 
         self.user_provided_schema_callback = None
         self._schema_callback = None
@@ -568,9 +572,20 @@ class FlowNode:
         """
         if isinstance(self.setting_input, input_schema.NodePromise):
             return False
+        connected = len(self.node_inputs.get_all_inputs())
+        min_inputs = self.node_template.min_inputs
+        # min_inputs marks trailing inputs optional (gate's control input) — the
+        # main (data) input must still be wired, or the control frame would be
+        # passed through as if it were the data.
+        min_inputs_satisfied = (
+            min_inputs is not None
+            and min_inputs <= connected <= self.node_template.input
+            and bool(self.node_inputs.main_inputs)
+        )
         return (
-            self.node_template.input == len(self.node_inputs.get_all_inputs())
-            or (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0)
+            self.node_template.input == connected
+            or min_inputs_satisfied
+            or (self.node_template.multi and connected > 0)
             or (self.node_template.multi and self.node_template.can_be_start)
             or self.accepts_dynamic_inputs
         )
@@ -1029,6 +1044,27 @@ class FlowNode:
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
+    def _substitute_for_skipped_input(self, input_node: "FlowNode") -> FlowDataEngine | None:
+        """Schema-stable stand-in for a deliberately-skipped (gated-off) input.
+
+        A zero-row frame with the input's predicted schema keeps this node's
+        output schema identical to the edit-time prediction across gate flips —
+        the gated branch behaves exactly as if it produced zero rows. Reading
+        the input's real data instead would lazily execute the gated branch;
+        returns None (drop the input) when no schema can be predicted.
+        """
+        try:
+            schema = input_node.schema
+        except Exception:
+            schema = None
+        if schema:
+            return FlowDataEngine.create_from_schema(schema)
+        logger.warning(
+            f"Node {self.node_id}: deliberately-skipped input {input_node.node_id} has no "
+            f"predictable schema; dropping it from the input set"
+        )
+        return None
+
     def _slot_input_pairs(self) -> list[tuple[Optional["FlowNode"], str]]:
         """Positional inputs for the node function, as (source_node, source_handle).
 
@@ -1125,6 +1161,11 @@ class FlowNode:
                                     continue
                                 if self._execution_state.is_canceled:
                                     raise Exception("Node execution canceled")
+                                if v.node_id in self._skipped_input_ids_this_run:
+                                    substitute = self._substitute_for_skipped_input(v)
+                                    if substitute is not None:
+                                        input_data.append(substitute)
+                                    continue
                                 self.print(f"Getting resulting data from input {i} (node {v.node_id})")
                                 # Read the upstream via its own get_resulting_data(), which
                                 # single-flights materialization under the upstream's own

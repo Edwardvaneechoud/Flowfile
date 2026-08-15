@@ -2111,6 +2111,30 @@ class NodeApplyModel(NodeSingleInput):
         return "Apply Model"
 
 
+class NodeGate(NodeSingleInput):
+    """Pass-through node gated on a flow-parameter rule or a flowfile formula.
+
+    When the condition holds the input flows through unchanged. When it does
+    not, the gate itself still succeeds ("ran and decided") but every node
+    downstream of it is deliberately skipped — reported as skipped, not
+    failed, so the run stays green and source callbacks (e.g. Kafka offset
+    commits) still fire.
+    """
+
+    gate_input: transform_schema.GateInput = Field(default_factory=transform_schema.GateInput)
+
+    def get_default_description(self) -> str:
+        gate = self.gate_input
+        if gate.condition_source == "formula":
+            return f"Gate: {gate.formula}" if gate.formula.strip() else "Gate"
+        if not gate.parameter:
+            return "Gate"
+        condition = f"${{{gate.parameter}}} {gate.operator.replace('_', ' ')}"
+        if gate.operator in ("equals", "not_equals", "in", "not_in"):
+            condition = f"{condition} {gate.value}"
+        return f"Gate: {condition}"
+
+
 class NodeWaitFor(NodeMultiInput):
     """Pass-through node that enforces ordering on extra dependency inputs.
 

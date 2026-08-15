@@ -1,9 +1,9 @@
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.node_skipper import determine_nodes_to_skip
+from flowfile_core.flowfile.util.skip_rules import NodeRunStatus, classify_graph
 
 
 @dataclass(frozen=True)
@@ -21,10 +21,18 @@ class ExecutionStage:
 
 @dataclass(frozen=True)
 class ExecutionPlan:
-    """Complete execution plan: nodes to skip and ordered stages of parallelizable nodes."""
+    """Complete execution plan: nodes to skip and ordered stages of parallelizable nodes.
+
+    ``skip_nodes`` holds the statically unrunnable nodes (misconfiguration and
+    its downstream) — the meaning it always had. ``deliberate_skip_nodes``
+    holds nodes gated off by design (closed gates' downstream): excluded from
+    the stages like skip nodes, but reported as skipped-and-green rather than
+    treated as unrunnable.
+    """
 
     skip_nodes: list[FlowNode]
     stages: list[ExecutionStage]
+    deliberate_skip_nodes: list[FlowNode] = field(default_factory=list)
 
     @property
     def all_nodes(self) -> list[FlowNode]:
@@ -36,21 +44,34 @@ class ExecutionPlan:
         return sum(len(stage) for stage in self.stages)
 
 
-def compute_execution_plan(nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> ExecutionPlan:
+def compute_execution_plan(
+    nodes: list[FlowNode],
+    flow_starts: list[FlowNode] = None,
+    closed_gate_ids: set[str | int] | None = None,
+) -> ExecutionPlan:
     """Computes the execution plan: nodes to skip and parallelizable execution stages.
 
     Args:
         nodes: All nodes in the flow.
         flow_starts: Explicit starting nodes for the flow.
+        closed_gate_ids: Gates whose parameter condition evaluated false; their
+            downstream is deliberately skipped. Omitted by gate-blind callers
+            (code export, fetch validation), which therefore keep planning as
+            if every gate were open.
 
     Returns:
-        An ExecutionPlan containing skip_nodes and ordered execution stages.
+        An ExecutionPlan with skip_nodes, deliberate_skip_nodes and stages.
     """
-    skip_nodes = determine_nodes_to_skip(nodes=nodes)
+    status = classify_graph(nodes, closed_gate_ids=closed_gate_ids)
+    skip_nodes = [node for node in nodes if status.get(node.node_id) == NodeRunStatus.SKIPPED_ERROR]
+    deliberate_skip_nodes = [
+        node for node in nodes if status.get(node.node_id) == NodeRunStatus.SKIPPED_DELIBERATE
+    ]
+    excluded_ids = {node.node_id for node in skip_nodes} | {node.node_id for node in deliberate_skip_nodes}
     stages = determine_execution_order(
-        all_nodes=[node for node in nodes if node not in skip_nodes], flow_starts=flow_starts
+        all_nodes=[node for node in nodes if node.node_id not in excluded_ids], flow_starts=flow_starts
     )
-    return ExecutionPlan(skip_nodes=skip_nodes, stages=stages)
+    return ExecutionPlan(skip_nodes=skip_nodes, stages=stages, deliberate_skip_nodes=deliberate_skip_nodes)
 
 
 def determine_execution_order(all_nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> list[ExecutionStage]:

@@ -84,6 +84,9 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "apply_model": "static",
     "evaluate_model": "static",
     "wait_for": "static",
+    # gate is an identity passthrough of its data input — the condition only
+    # decides whether downstream nodes run, never the output schema.
+    "gate": "static",
     # Flow-in-flow authoring primitives. flow_input has no input port (source);
     # flow_output is a passthrough sink; run_flow's output schema only exists
     # after the referenced subflow is run, so it's dynamic.

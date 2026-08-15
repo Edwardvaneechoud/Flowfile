@@ -134,7 +134,13 @@ class TransformHandlersMixin(ConverterMixinBase):
         self._add_code("")
 
     def _handle_union(self, settings: input_schema.NodeUnion, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle union nodes."""
+        """Handle union nodes.
+
+        In a gated flow, inputs living behind a closed gate are None (their
+        branch's block did not run), so the concat list filters Nones —
+        matching the engine's ANY rule where the union outputs whichever
+        branches survived.
+        """
         dfs = []
         if "main" in input_vars:
             dfs.append(input_vars["main"])
@@ -147,6 +153,33 @@ class TransformHandlersMixin(ConverterMixinBase):
             how = "diagonal_relaxed"
         else:
             how = "diagonal"
+
+        if getattr(self, "_gate_exprs", None):
+            # Inputs whose edge carries gates beyond the union's own condition
+            # (e.g. a gate wired straight into the union) contribute their
+            # zero-row schema-typed frame when that gate is closed — matching
+            # the engine's schema-stable union semantics.
+            edge_guards = self._any_input_edge_conds.get(settings.node_id, {})
+            if edge_guards:
+                union_node = self.flow_graph.get_node(settings.node_id)
+                producers = list(union_node.node_inputs.main_inputs or [])
+                guarded: list[str] = []
+                for producer, df_var in zip(producers, dfs, strict=False):
+                    extra = edge_guards.get(producer.node_id)
+                    if extra:
+                        empty = self._empty_frame_schema_expr(producer) or "None"
+                        guarded.append(f"({df_var} if {self._render_gate_cond(extra)} else {empty})")
+                    else:
+                        guarded.append(df_var)
+                if len(guarded) == len(dfs):
+                    dfs = guarded
+            candidates = ", ".join(dfs)
+            self._add_code(
+                f"{var_name} = {self.framework}.concat("
+                f"[df for df in [{candidates}] if df is not None], how='{how}')"
+            )
+            self._add_code("")
+            return
 
         self._add_code(f"{var_name} = {self.framework}.concat([")
         for df in dfs:

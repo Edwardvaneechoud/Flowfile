@@ -226,7 +226,12 @@ def _aggregate_node_results(
             success = raw.get("success")
             error = raw.get("error") or ""
             run_time_ms = raw.get("run_time_ms")
-            if success is True:
+            if raw.get("skipped") is True:
+                # Deliberate (gated-off) skip: success=True on the wire so the
+                # run stays green, but it is not an execution — keep it out of
+                # the success count and the 0ms out of the run-time median.
+                agg.skip_count += 1
+            elif success is True:
                 agg.success_count += 1
                 if isinstance(run_time_ms, int) and run_time_ms >= 0:
                     agg.run_times_ms.append(run_time_ms)

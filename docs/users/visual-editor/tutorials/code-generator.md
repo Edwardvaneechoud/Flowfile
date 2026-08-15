@@ -160,6 +160,57 @@ if __name__ == "__main__":
 !!! note "`.data` accessor"
     The generated code calls `.data` on FlowFrame results to extract the underlying Polars `LazyFrame`. This keeps the rest of the pipeline as standard Polars operations.
 
+### Example 5: A Gated If/Else Branch
+
+A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. Branch variables are pre-initialized as empty schema-typed frames, and the Union that re-converges the branches concatenates whichever ones are defined.
+
+**Flowfile Pipeline:**
+
+1.  **Manual Input** (`region`, `amount`)
+2.  Two **Gate** nodes on the flow parameter `env` — one `equals`, one `not equals`
+3.  A **Formula** behind each gate, tagging the rows with a `channel`
+4.  **Union Data** merging both branches
+
+<details markdown="1">
+<summary>Generated Polars Code</summary>
+
+```python
+import polars as pl
+
+
+def run_etl_pipeline(*, env: str = 'dev'):
+    """
+    ETL Pipeline: gated
+    Generated from Flowfile
+    """
+
+    df_4 = pl.LazyFrame(schema={'region': pl.String, 'amount': pl.Int64, 'channel': pl.String})
+    df_5 = pl.LazyFrame(schema={'region': pl.String, 'amount': pl.Int64, 'channel': pl.String})
+
+    df_1 = pl.LazyFrame([['north', 'south'], [10, 5]], schema=pl.Schema([("region", pl.String), ("amount", pl.Int64)]), strict=False)
+
+    if env == 'prod':
+        df_4 = df_1.with_columns([(pl.lit("prod")).alias("channel").cast(pl.String)])
+
+    if not (env == 'prod'):
+        df_5 = df_1.with_columns([(pl.lit("dev")).alias("channel").cast(pl.String)])
+
+    df_6 = pl.concat([df for df in [df_4, df_5] if df is not None], how='diagonal_relaxed')
+
+    return df_6
+
+
+if __name__ == "__main__":
+    pipeline_output = run_etl_pipeline()
+```
+
+</details>
+
+A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
+
+!!! warning "Polars export only"
+    Gates are supported by the Polars export. The FlowFrame and Project export modes refuse a flow that contains one rather than silently dropping the condition.
+
 ## Project Export
 
 For more complex flows — especially flows that contain **notebook (Python script) nodes** or **custom user-defined nodes** — a single generated script becomes hard to read. The third export mode, **Project**, exports the flow as a structured multi-file Python project instead:

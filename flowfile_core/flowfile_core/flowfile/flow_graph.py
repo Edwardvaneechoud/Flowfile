@@ -19,6 +19,7 @@ import fastexcel
 import polars as pl
 import yaml
 from fastapi.exceptions import HTTPException
+from polars_expr_transformer import simple_function_to_expr as to_expr
 from pyarrow.parquet import ParquetFile
 
 from flowfile_core.auth import sharing
@@ -95,6 +96,7 @@ from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import (
     apply_parameters_in_place,
     find_unresolved_in_model,
+    resolve_parameters,
     restore_parameters,
 )
 from flowfile_core.flowfile.schema_callbacks import (
@@ -128,6 +130,13 @@ from flowfile_core.flowfile.user_defined.registry import (
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
+from flowfile_core.flowfile.util.skip_rules import (
+    GATE_NODE_TYPE,
+    NodeRunStatus,
+    classify_from_inputs,
+    effective_input_status,
+    uses_any_rule,
+)
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
@@ -289,6 +298,24 @@ def get_xlsx_schema(
     except Exception as e:
         logger.error(e)
         return []
+
+
+def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
+    """True when at least one row of *source* satisfies the gate's formula.
+
+    The formula is the Filter node's flowfile expression language applied as
+    a row predicate; matching is existence — ``filter(pred).head(1)`` — so
+    only a bounded single-row collect happens in core. An empty formula, a
+    formula that does not parse, or one referencing unknown columns raises,
+    failing the gate visibly instead of silently picking a branch. An empty
+    input (zero rows) is simply "no match": the gate closes.
+    """
+    if not formula.strip():
+        raise ValueError("Gate is set to route on a formula, but no formula is configured")
+    predicate = to_expr(formula)
+    data_frame = source.data_frame
+    lazy_frame = data_frame.lazy() if isinstance(data_frame, pl.DataFrame) else data_frame
+    return lazy_frame.filter(predicate).head(1).collect().height > 0
 
 
 def skip_node_message(flow_logger: FlowLogger, nodes: list[FlowNode]) -> None:
@@ -1626,6 +1653,12 @@ class FlowGraph:
         self._output_cols = [] if output_cols is None else output_cols
         self._node_ids = []
         self._node_db = {}
+        # Last run's surviving-input signature per ANY-rule node (union). A gate
+        # flip changes which inputs survive without changing any hash, so a
+        # signature change must invalidate the node or dev-mode serves the
+        # previous run's partial concat. In-memory only: a fresh graph instance
+        # rotates parent_uuid, so caches are cold anyway.
+        self._any_input_liveness: dict[str | int, frozenset] = {}
         # Visual node groups: organizational only, never read by the executor.
         # Membership lives on each node's setting_input.group_id; this is the box registry.
         self._groups: dict[int, schemas.GroupInformation] = {}
@@ -1814,6 +1847,11 @@ class FlowGraph:
         self._flow_starts.clear()
         self._groups.clear()
         self._results = None
+        # Rebuilt nodes restart at _cache_epoch 0 while keeping parent_uuid, so
+        # their hashes revert to pre-invalidation values; a remembered liveness
+        # signature would then suppress the union invalidation that guards a
+        # worker cache written under a different gate topology.
+        self._any_input_liveness.clear()
 
         self._flow_settings = flow_info.flow_settings
         identity.restore_onto(self)
@@ -3787,6 +3825,50 @@ class FlowGraph:
             setting_input=evaluate_settings,
             schema_callback=schema_callback,
             input_node_ids=[depending_on_id] if depending_on_id is not None else None,
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_gate(self, gate_settings: input_schema.NodeGate) -> "FlowGraph":
+        """Adds a Gate node — a passthrough whose downstream only runs when its condition holds.
+
+        Parameter-mode conditions are evaluated before the run starts (all
+        parameters are known at plan time); the node function only re-validates
+        them so a broken condition fails the gate visibly. Formula conditions
+        are decided when the gate executes: the flowfile formula is applied as
+        a row predicate to the optional control input (else the data input) —
+        open iff at least one row matches (a bounded one-row collect) — and
+        the stage loop classifies the gate's downstream as deliberately
+        skipped. The data input always passes through unchanged — single-node
+        fetch deliberately ignores gates.
+        """
+
+        def _func(main: FlowDataEngine, control: FlowDataEngine | None = None) -> FlowDataEngine:
+            del control  # only read at routing time, from the control node's result
+            node = self.get_node(gate_settings.node_id)
+            gate_input = node.setting_input.gate_input
+            if gate_input.condition_source == "formula":
+                if not gate_input.formula.strip():
+                    raise ValueError("Gate is set to route on a formula, but no formula is configured")
+            else:
+                parameters_by_name = {p.name: p for p in self.flow_settings.parameters}
+                gate_input.evaluate(parameters_by_name)
+            return main
+
+        def schema_callback():
+            node = self.get_node(gate_settings.node_id)
+            if node.node_inputs.main_inputs:
+                return node.node_inputs.main_inputs[0].schema
+            return []
+
+        self.add_node_step(
+            node_id=gate_settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="gate",
+            setting_input=gate_settings,
+            schema_callback=schema_callback,
+            input_node_ids=[gate_settings.depending_on_id],
         )
         return self
 
@@ -6087,92 +6169,352 @@ class FlowGraph:
         performance_mode: bool,
         params: dict[str, ParamValue],
         skip_node_ids: set[str | int],
+        deliberate_skip_ids: set[str | int] | None = None,
+        closed_gate_ids: set[str | int] | None = None,
     ) -> set[str | int]:
         """Execute all stages in the plan, running independent nodes in parallel.
 
         Iterates through stages sequentially. Within each stage, independent
         nodes are executed in parallel (or sequentially if parallelism is
-        disabled). Failed nodes cause their dependents to be skipped.
+        disabled). Because stages are topological, each node is decided from its
+        immediate inputs' statuses via the trigger rules (skip_rules) right
+        before its stage runs — a failure skips its dependents stage by stage
+        instead of via a blind transitive closure.
+
+        ``skip_node_ids`` arrives holding the static (misconfiguration) skips
+        and is mutated in place to accumulate every skipped node, preserving
+        the caller's view. ``deliberate_skip_ids`` holds gate-driven skips and
+        is likewise mutated when the rules propagate one. ``closed_gate_ids``
+        holds parameter-mode gates already known to be closed; gates routed by
+        their control input join it as they execute and evaluate.
 
         Returns:
             Set of node IDs that failed during execution.
         """
         run_info_lock = threading.Lock()
         failed_node_ids: set[str | int] = set()
+        if deliberate_skip_ids is None:
+            deliberate_skip_ids = set()
+        if closed_gate_ids is None:
+            closed_gate_ids = set()
 
-        for stage in execution_plan.stages:
-            if self.flow_settings.is_canceled:
-                self.flow_logger.info("Flow canceled")
-                break
+        statuses: dict[str | int, NodeRunStatus] = {}
+        for node_id in skip_node_ids:
+            statuses[node_id] = NodeRunStatus.SKIPPED_ERROR
+        for node_id in deliberate_skip_ids:
+            statuses[node_id] = NodeRunStatus.SKIPPED_DELIBERATE
+            skip_node_ids.add(node_id)
 
-            nodes_to_run = [n for n in stage.nodes if n.node_id not in skip_node_ids]
+        any_rule_nodes_touched: list[FlowNode] = []
+        try:
+            for stage in execution_plan.stages:
+                if self.flow_settings.is_canceled:
+                    self.flow_logger.info("Flow canceled")
+                    break
 
-            for skipped in stage.nodes:
-                if skipped.node_id in skip_node_ids:
-                    node_logger = self.flow_logger.get_node_logger(skipped.node_id)
-                    node_logger.info(f"Skipping node {skipped.node_id}")
-
-            if not nodes_to_run:
-                continue
-
-            is_local = self.flow_settings.execution_location == "local"
-            max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
-            if len(nodes_to_run) == 1 or max_workers == 1:
-                stage_results = [
-                    self._execute_single_node(node, performance_mode, run_info_lock, params or None)
-                    for node in nodes_to_run
-                ]
-            else:
-                stage_results: list[tuple[NodeResult, FlowNode]] = []
-                workers = min(max_workers, len(nodes_to_run))
-                with ThreadPoolExecutor(max_workers=workers) as executor:
-                    futures = {
-                        executor.submit(
-                            self._execute_single_node, node, performance_mode, run_info_lock, params or None
-                        ): node
-                        for node in nodes_to_run
-                    }
-                    for future in as_completed(futures):
-                        stage_results.append(future.result())
-
-            for node_result, node in stage_results:
-                if not node_result.success:
-                    failed_node_ids.add(node.node_id)
+                nodes_to_run: list[FlowNode] = []
+                for node in stage.nodes:
+                    already_decided = statuses.get(node.node_id)
+                    if already_decided is not None and already_decided != NodeRunStatus.RUN:
+                        skip_node_ids.add(node.node_id)
+                        if already_decided == NodeRunStatus.SKIPPED_DELIBERATE:
+                            self._record_deliberate_skips({node.node_id}, count_toward_total=False)
+                        else:
+                            self.flow_logger.get_node_logger(node.node_id).info(f"Skipping node {node.node_id}")
+                        continue
+                    input_statuses = [
+                        effective_input_status(statuses, input_node.node_id, closed_gate_ids)
+                        for input_node in node.all_inputs
+                        if input_node is not None
+                    ]
+                    decision = classify_from_inputs(node, input_statuses)
+                    if decision == NodeRunStatus.RUN:
+                        if uses_any_rule(node):
+                            self._apply_any_input_liveness(node, statuses, closed_gate_ids)
+                            any_rule_nodes_touched.append(node)
+                        nodes_to_run.append(node)
+                        continue
+                    statuses[node.node_id] = decision
                     skip_node_ids.add(node.node_id)
-                    for dep in node.get_all_dependent_nodes():
-                        skip_node_ids.add(dep.node_id)
+                    if decision == NodeRunStatus.SKIPPED_DELIBERATE:
+                        deliberate_skip_ids.add(node.node_id)
+                        self._record_deliberate_skips({node.node_id}, count_toward_total=False)
+                    else:
+                        self.flow_logger.get_node_logger(node.node_id).info(f"Skipping node {node.node_id}")
+
+                if not nodes_to_run:
+                    continue
+
+                is_local = self.flow_settings.execution_location == "local"
+                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
+                if len(nodes_to_run) == 1 or max_workers == 1:
+                    stage_results = [
+                        self._execute_single_node(node, performance_mode, run_info_lock, params or None)
+                        for node in nodes_to_run
+                    ]
+                else:
+                    stage_results: list[tuple[NodeResult, FlowNode]] = []
+                    workers = min(max_workers, len(nodes_to_run))
+                    with ThreadPoolExecutor(max_workers=workers) as executor:
+                        futures = {
+                            executor.submit(
+                                self._execute_single_node, node, performance_mode, run_info_lock, params or None
+                            ): node
+                            for node in nodes_to_run
+                        }
+                        for future in as_completed(futures):
+                            stage_results.append(future.result())
+
+                for node_result, node in stage_results:
+                    if node_result.success:
+                        statuses[node.node_id] = NodeRunStatus.RUN
+                        if node.node_type == GATE_NODE_TYPE and self._gate_routes_on_formula(node):
+                            # Evaluate routing from the source node's actual
+                            # result, never from state stashed during the gate's
+                            # own execution — executor/worker cache branches can
+                            # legitimately skip the gate's function, and a stale
+                            # stash would replay last run's routing decision.
+                            try:
+                                closed = self._formula_gate_is_closed(node, params or None)
+                            except Exception as e:
+                                node_result.success = False
+                                node_result.error = f"Gate formula evaluation failed: {e}"
+                                statuses[node.node_id] = NodeRunStatus.FAILED
+                                failed_node_ids.add(node.node_id)
+                                skip_node_ids.add(node.node_id)
+                                continue
+                            if closed:
+                                closed_gate_ids.add(node.node_id)
+                                self.flow_logger.get_node_logger(node.node_id).info(
+                                    f"Gate {node.node_id} closed by its control input; downstream will be skipped"
+                                )
+                    else:
+                        statuses[node.node_id] = NodeRunStatus.FAILED
+                        failed_node_ids.add(node.node_id)
+                        skip_node_ids.add(node.node_id)
+        finally:
+            # A node that did not execute this run has not run: clear the run
+            # flags of every skipped node so the next run re-executes it instead
+            # of serving the previous run's frame from the dev-mode cache.
+            # Failed nodes are already handled by mark_failed.
+            for node_id in skip_node_ids - failed_node_ids:
+                node = self.get_node(node_id)
+                if node is None:
+                    continue
+                node.node_stats.has_run_with_current_setup = False
+                node.node_stats.has_completed_last_run = False
+                node._execution_state.has_run_with_current_setup = False
+                node._execution_state.has_completed_last_run = False
+            for node in any_rule_nodes_touched:
+                node._skipped_input_ids_this_run = frozenset()
 
         return failed_node_ids
+
+    def _apply_any_input_liveness(
+        self,
+        node: FlowNode,
+        statuses: dict[str | int, NodeRunStatus],
+        closed_gate_ids: set[str | int] | None = None,
+    ) -> None:
+        """Prepare an ANY-rule node (union) to run with a partial input set.
+
+        Stashes which inputs were deliberately skipped this run so input
+        assembly can substitute schema-stable empty frames for them, and
+        invalidates the node when the surviving-input set differs from the
+        previous run — the node's hash only folds settings and input hashes,
+        so a gate flip would otherwise serve the previous run's partial result
+        from the dev-mode cache (and the worker's cache_results lookup).
+        """
+        surviving = frozenset(
+            input_node.node_id
+            for input_node in node.all_inputs
+            if input_node is not None
+            and effective_input_status(statuses, input_node.node_id, closed_gate_ids) == NodeRunStatus.RUN
+        )
+        node._skipped_input_ids_this_run = frozenset(
+            input_node.node_id
+            for input_node in node.all_inputs
+            if input_node is not None and input_node.node_id not in surviving
+        )
+        previous = self._any_input_liveness.get(node.node_id)
+        if previous is not None and previous != surviving:
+            self.flow_logger.info(
+                f"Node {node.node_id}: surviving inputs changed since last run "
+                f"({sorted(map(str, previous))} -> {sorted(map(str, surviving))}); invalidating cached result"
+            )
+            node.invalidate_cache()
+        elif previous is None and node._skipped_input_ids_this_run:
+            # No liveness history (fresh graph, undo-rebuilt nodes) but running
+            # with a partial input set: any surviving cache may hold a concat
+            # built under a different gate topology — invalidate to be safe.
+            node.invalidate_cache()
+        self._any_input_liveness[node.node_id] = surviving
+
+    @staticmethod
+    def _gate_routes_on_formula(node: FlowNode) -> bool:
+        gate_input = getattr(node.setting_input, "gate_input", None)
+        return gate_input is not None and gate_input.condition_source == "formula"
+
+    def _formula_gate_is_closed(self, node: FlowNode, params: dict[str, Any] | None = None) -> bool:
+        """Fresh routing decision for a formula gate, from its source node's result.
+
+        The predicate runs against the control input when one is connected,
+        else against the gate's own data input. Reads the source node's
+        memoized result (it ran in an earlier stage); falls back to a lazy
+        pull when the gate's own cache branch short-cut input assembly.
+        ``${param}`` refs in the formula resolve with the run's parameters —
+        the stage loop sees the restored (unsubstituted) settings. Raises on
+        a missing/unparsable formula — the caller fails the gate visibly.
+        """
+        gate_input = node.setting_input.gate_input
+        source_node = node.node_inputs.right_input
+        if source_node is None and node.node_inputs.main_inputs:
+            source_node = node.node_inputs.main_inputs[0]
+        if source_node is None:
+            raise ValueError("gate has no input to evaluate its formula against")
+        source_result = source_node.results.resulting_data
+        if source_result is None:
+            source_result = source_node.get_resulting_data()
+        formula = resolve_parameters(gate_input.formula, params or {})
+        return not _gate_formula_matches(source_result, formula)
+
+    def _evaluate_gate_conditions(self) -> set[str | int]:
+        """Evaluate parameter-mode gates before the run; returns the closed ones.
+
+        Formula gates are decided when they execute (stage loop). A gate
+        whose condition cannot be evaluated (unknown parameter, un-coercible
+        value) is left open here so it fails visibly at execution and its
+        downstream error-skips — fail-closed either way, but with the error
+        on the canvas instead of a silently-picked branch.
+        """
+        closed: set[str | int] = set()
+        parameters_by_name = {p.name: p for p in self.flow_settings.parameters}
+        typed_params = {p.name: p.typed_default() for p in self.flow_settings.parameters}
+        for node in self.nodes:
+            if node.node_type != "gate" or not node.is_correct:
+                continue
+            gate_input = getattr(node.setting_input, "gate_input", None)
+            if gate_input is None or gate_input.condition_source != "parameter":
+                continue
+            try:
+                effective = gate_input
+                if "${" in gate_input.value:
+                    # ${refs} in the comparison value resolve before coercion,
+                    # matching the exported code (where they become live
+                    # parameter-to-parameter comparisons).
+                    effective = gate_input.model_copy(
+                        update={"value": resolve_parameters(gate_input.value, typed_params)}
+                    )
+                if not effective.evaluate(parameters_by_name):
+                    closed.add(node.node_id)
+            except ValueError:
+                # A broken condition must fail loudly, and the gate's own hash
+                # does not fold flow parameters — after one green run the
+                # dev-mode cache would skip its function and silently treat
+                # the gate as open. Invalidate so it re-executes (defeating
+                # the dev-mode skip and any cache_results hit) and raises the
+                # validation error on the canvas.
+                node.invalidate_cache()
+                continue
+        return closed
 
     def _run_post_execution_callbacks(
         self,
         failed_node_ids: set[str | int],
         skip_node_ids: set[str | int],
+        deliberate_skip_ids: set[str | int] | None = None,
     ) -> None:
         """Invoke _on_flow_complete callbacks registered by source nodes.
 
         Each callback receives ``success=True`` when the node and all its
-        downstream dependents completed without failure or skip.
+        downstream dependents completed without failure or error-driven skip.
         Used e.g. by Kafka sources to commit offsets only on full success.
+
+        A *deliberate* skip (a branch gated off by design) counts as complete:
+        a Kafka source upstream of a closed gate must still commit its offsets,
+        otherwise it would re-read the same messages on every run. Skips caused
+        by a failure or misconfiguration keep blocking the callback.
 
         Note: the caller must guard against cancellation — this method is
         only invoked when ``is_canceled`` is False.
         """
-        incomplete_node_ids = failed_node_ids | skip_node_ids
+        deliberate_skip_ids = deliberate_skip_ids or set()
+        incomplete_node_ids = (failed_node_ids | skip_node_ids) - deliberate_skip_ids
 
         for n in self.nodes:
             callback = n._on_flow_complete
             if callback is None:
                 continue
+            downstream = list(n.get_all_dependent_nodes())
             downstream_incomplete = n.node_id in incomplete_node_ids or any(
-                dep.node_id in incomplete_node_ids for dep in n.get_all_dependent_nodes()
+                dep.node_id in incomplete_node_ids for dep in downstream
             )
             success = not downstream_incomplete
+            if success and deliberate_skip_ids:
+                gated_outputs = [
+                    dep.node_id
+                    for dep in downstream
+                    if dep.node_id in deliberate_skip_ids and dep.node_template.node_group == "output"
+                ]
+                if gated_outputs:
+                    self.flow_logger.warning(
+                        f"Node {n.node_id}: committing source progress while output node(s) "
+                        f"{gated_outputs} were deliberately skipped by a gate"
+                    )
             try:
                 callback(success)
             except Exception as e:
                 self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
+
+    def _record_deliberate_skips(
+        self, deliberate_skip_ids: set[str | int], count_toward_total: bool = True
+    ) -> None:
+        """Record deliberately-skipped nodes as green, zero-work results.
+
+        Deliberate skips (closed-gate branches) are part of a successful run:
+        each gets a ``NodeResult(skipped=True, success=True)`` row so the run
+        report and canvas can show the state, and counts as completed so
+        progress reaches the denominator. Their run flags are cleared so the
+        next run re-executes them if the gate opens — a node that did not
+        execute this run has not run.
+
+        ``count_toward_total`` is True for plan-level skips (excluded from
+        ``ExecutionPlan.node_count``, so the denominator must grow) and False
+        for skips decided mid-run on nodes the plan already counted. Only ever
+        called single-threaded — before the stages start or between stage
+        executions — so the bare ``node_step_result.append`` is safe.
+        """
+        if not deliberate_skip_ids or self.latest_run_info is None:
+            return
+        already_recorded = {nr.node_id for nr in self.latest_run_info.node_step_result if nr.skipped}
+        for node_id in sorted(deliberate_skip_ids, key=str):
+            node = self.get_node(node_id)
+            if node is None or node.node_id in already_recorded:
+                continue
+            now = time()
+            self.latest_run_info.node_step_result.append(
+                NodeResult(
+                    node_id=node.node_id,
+                    node_name=node.name,
+                    success=True,
+                    skipped=True,
+                    start_timestamp=now,
+                    end_timestamp=now,
+                    run_time_ms=0,
+                    is_running=False,
+                )
+            )
+            self.latest_run_info.nodes_completed += 1
+            if count_toward_total:
+                self.latest_run_info.number_of_nodes += 1
+            node.node_stats.has_run_with_current_setup = False
+            node.node_stats.has_completed_last_run = False
+            node._execution_state.has_run_with_current_setup = False
+            node._execution_state.has_completed_last_run = False
+            self.flow_logger.get_node_logger(node.node_id).info(
+                f"Node {node.node_id} deliberately skipped (gated off); marked as skipped, not failed"
+            )
 
     def _refresh_catalog_reader_freshness(self) -> None:
         """Invalidate catalog_reader nodes whose Delta sources changed since their last run.
@@ -6233,23 +6575,34 @@ class FlowGraph:
 
             self._refresh_catalog_reader_freshness()
 
+            params: dict[str, ParamValue] = {p.name: p.typed_default() for p in self.flow_settings.parameters}
+            # Parameter-mode gates are decided before anything runs; the plan
+            # classifies their downstream as deliberately skipped (green, not
+            # failed). Control-input gates are decided when they execute.
+            closed_gate_ids = self._evaluate_gate_conditions()
+
             execution_plan = compute_execution_plan(
-                nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
+                nodes=self.nodes,
+                flow_starts=self._flow_starts + self.get_implicit_starter_nodes(),
+                closed_gate_ids=closed_gate_ids,
             )
 
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
-            self._prepare_rerun_artifacts(plan_skip_ids)
+            deliberate_skip_ids: set[str | int] = {n.node_id for n in execution_plan.deliberate_skip_nodes}
+            self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids)
 
             self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
             skip_node_message(self.flow_logger, execution_plan.skip_nodes)
             execution_order_message(self.flow_logger, execution_plan.stages)
 
             performance_mode = self.flow_settings.execution_mode == "Performance"
-            params: dict[str, ParamValue] = {p.name: p.typed_default() for p in self.flow_settings.parameters}
+            self._record_deliberate_skips(deliberate_skip_ids)
 
-            failed_node_ids = self._execute_stages(execution_plan, performance_mode, params, plan_skip_ids)
+            failed_node_ids = self._execute_stages(
+                execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_ids
+            )
             if not self.flow_settings.is_canceled:
-                self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids)
+                self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")

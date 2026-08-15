@@ -51,6 +51,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "record_count": input_schema.NodeRecordCount,
     "explore_data": input_schema.NodeExploreData,
     "union": input_schema.NodeUnion,
+    "gate": input_schema.NodeGate,
     "output": input_schema.NodeOutput,
     "api_response": input_schema.NodeApiResponse,
     "read": input_schema.NodeRead,
@@ -532,6 +533,10 @@ class NodeTag(str, Enum):
     APPEND = "append"
     WAIT = "wait"
     DEPENDENCY = "dependency"
+    GATE = "gate"
+    CONDITION = "condition"
+    BRANCH = "branch"
+    SKIP = "skip"
 
     # Reshape
     PIVOT = "pivot"
@@ -640,6 +645,9 @@ class NodeTemplate(BaseModel):
     # reads them at execution time. Distinct from NodeInput.input_names, which is
     # the per-instance dynamic-handle list (run_flow) with a reserved index 0.
     input_labels: list[str] | None = None
+    # When set, the arity check accepts min_inputs..input connections instead of
+    # exactly `input` — for nodes with optional inputs (gate's control input).
+    min_inputs: int | None = None
     # Per-instance input handles (run_flow): connections are keyed by target
     # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
     dynamic_inputs: bool = False

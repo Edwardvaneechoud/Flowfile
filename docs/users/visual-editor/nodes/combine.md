@@ -3,7 +3,7 @@
 **Combine nodes** merge multiple datasets by **matching values**, **stacking rows**, **finding similar records**, **generating all possible combinations**, or **grouping related elements in a network**.
 
 !!! info "Some combine nodes are not in Flowfile Lite"
-    The browser-only [Flowfile Lite](../../deployment/lite.md) build supports **Join**, **Cross Join**, and **Union Data**. **Fuzzy Match** and **Graph Solver** require the full desktop/server build.
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build supports **Join**, **Cross Join**, and **Union Data**. **Fuzzy Match**, **Graph Solver**, and **Gate** require the full desktop/server build.
 
 ## Node Details
 
@@ -102,6 +102,97 @@ The **Union Data** node merges multiple datasets by stacking rows together.
 
 1. Connect multiple input datasets.  
 2. The node will automatically align and stack the data.  
+
+Union is also the re-convergence point for conditional branches: it runs as long as at least one of its inputs survived, so a branch that was gated off contributes nothing. A branch that *failed* still blocks it. See [Gate](#gate).
+
+---
+
+### ![Gate](../../../assets/images/nodes/gate.svg){ width="50" height="50" } Gate
+
+The **Gate** node decides whether a branch runs at all. Its data input passes through unchanged while the gate's condition holds. When the condition does not hold, the gate itself still succeeds — but every node downstream of it is **skipped**, not failed. The run stays green, progress still reaches its total, and sources upstream of the gate still finish their post-run work (a Kafka Source commits its offsets as usual).
+
+Where [Filter](transform.md#filter-data) decides which *rows* continue, Gate decides whether the *rest of the branch* executes.
+
+---
+
+#### Inputs
+
+| Handle | Purpose |
+|---|---|
+| **Data (passes through)** | The dataset the gate forwards. Required. |
+| **Control (optional)** | Read only when the condition source is **Formula**; when connected, the formula is checked against this input instead of the data input. |
+
+---
+
+#### Condition source: flow parameter
+
+The default. Pick a flow parameter (defined in **Flow settings**), an operator, and — for the comparing operators — a value. The value you type is coerced using the parameter's declared type, so an `integer` parameter compares as a number, not as text.
+
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Gate settings drawer in parameter mode — the Condition source toggle (Flow parameter / Formula) and the Parameter / Operator / Value row -->
+
+
+| Operator | Gate opens when |
+|---|---|
+| **equals** | The parameter's value equals the value you typed. |
+| **not equals** | It does not equal that value. |
+| **is one of** | It appears in the comma-separated list you typed. |
+| **is not one of** | It does not appear in that list. |
+| **is true** | It reads as boolean true (`true`, `1`, `yes`, `on`). |
+| **is false** | It does not read as true. |
+| **is set** | It is not empty. |
+
+Parameter conditions are resolved before the run starts, so the execution plan already knows which branches are live. Overriding the parameter is what flips the gate — including on a [headless run](../../deployment/cli.md): `flowfile run flow my_flow.yaml --param env=prod`.
+
+---
+
+#### Condition source: formula
+
+Write a flowfile formula — the same expression language as the [Filter](transform.md#filter-data) node's advanced mode. The gate applies it as a row predicate and opens when **at least one row matches**. An empty result closes the gate — no matching rows means don't run the branch. A formula that cannot run (a typo, an unknown column) fails the gate visibly rather than silently picking a branch, and `${param}` references resolve inside the formula like in any other node.
+
+The formula is checked against the **control input when one is connected, otherwise against the data input itself**:
+
+- *Gate on the data:* leave the control handle unconnected and write the condition over the data's own columns — `[status] = 'error'` runs the branch only when error rows exist.
+- *Gate on a signal:* wire any node to the control handle and the formula reads that frame instead — a Group By producing `null_rate` feeding the control handle with formula `[null_rate] < 0.05` gates the write on a quality verdict computed elsewhere.
+
+A formula gate re-evaluates on every run even when nothing else in the flow changed, because the data it checks can change without any setting changing.
+
+---
+
+#### The if/else pattern
+
+The canonical branch is two gates with *complementary* conditions — `equals` and `not equals` on the same parameter, or a formula and its negation — with the branches re-converging on a **Union**:
+
+```mermaid
+graph LR
+    R[Read data] --> G1["Gate: env equals prod"]
+    R --> G2["Gate: env not equals prod"]
+    G1 --> P[Enrich for prod]
+    G2 --> D[Sample for dev]
+    P --> U[Union data]
+    D --> U
+    U --> W[Write data]
+```
+
+Exactly one side runs. The skipped side contributes a zero-row frame carrying its predicted schema, so the Union's output columns are the same whichever way the condition falls — a column that exists only on the branch that was skipped comes out as nulls rather than disappearing. That stability is what lets everything downstream of the Union stay configured against one schema.
+
+---
+
+#### Skipped is not failed
+
+A deliberately skipped node shows a hollow grey ring on the canvas ("Skipped (gated off) — condition not met") and appears as **Skipped** in the run report with no runtime. It is a successful outcome: the flow's overall status stays green and the completed-node count still reaches its total.
+
+Skips caused by a *failure* or by invalid settings are unchanged — they still block everything downstream, including a Union that has other healthy inputs.
+
+!!! warning "A closed gate does not stop the upstream"
+    A gate only prevents its **downstream** from running. Everything between the source and the gate still executes, so an expensive read placed above a gate is paid for even when the branch is off. Put the gate as early in the branch as the condition allows.
+
+---
+
+#### Export to Python
+
+Gates survive the [Polars export](../tutorials/code-generator.md): each one becomes a real `if` block over the generated function's keyword arguments, gated branch variables are pre-initialized as empty schema-typed frames, and the Union emits a `None`-guarded `concat`. The FlowFrame and Project export modes refuse a flow containing gates rather than silently dropping the condition.
+
+Single-node preview ignores gates entirely — fetching one node's data plans as if every gate were open, so you can inspect a branch that this run's condition would skip.
 
 ---
 

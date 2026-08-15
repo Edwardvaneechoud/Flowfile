@@ -16,6 +16,10 @@ class NodeResult(BaseModel):
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
     success: bool | None = None
+    # True when the node was deliberately skipped (e.g. a closed gate upstream).
+    # Deliberate skips carry success=True so a gated run stays green; nodes
+    # skipped because of an upstream *failure* still produce no result at all.
+    skipped: bool = False
     error: str = ""
     run_time_ms: int = Field(
         default=-1,

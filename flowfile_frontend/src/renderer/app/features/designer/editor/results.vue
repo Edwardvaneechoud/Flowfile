@@ -38,7 +38,7 @@
           v-for="node in runInformation?.node_step_result"
           :key="node.node_id"
           :timestamp="formatTimestamp(node.start_timestamp)"
-          :color="calculateColor(node.success)"
+          :color="calculateColor(node)"
           @click="navigateToNode(`node-${node.node_id}`)"
         >
           <el-card class="node-card">
@@ -61,13 +61,15 @@
                 Status:
                 <span
                   :class="{
-                    running: node.success === null,
-                    success: node.success === true,
-                    failure: node.success === false,
+                    running: !node.skipped && node.success === null,
+                    success: !node.skipped && node.success === true,
+                    failure: !node.skipped && node.success === false,
+                    skipped: node.skipped,
                   }"
                 >
-                  {{ node.success === null ? "Running" : node.success ? "Success" : "Failure" }}
+                  {{ statusLabel(node) }}
                 </span>
+                <span v-if="node.skipped" class="skipped-hint">gated off, not run</span>
               </p>
               <p v-if="node.success === false" class="failure">Error: {{ node.error }}</p>
               <el-button
@@ -103,6 +105,8 @@ interface RunNode {
   node_name?: string;
   error?: string;
   success?: boolean;
+  // Deliberately skipped behind a closed gate: succeeds without running.
+  skipped?: boolean;
 }
 
 const nodeStore = useNodeStore();
@@ -172,9 +176,16 @@ const formatTimestamp = (timestamp: number) => {
   return format(new Date(timestamp * 1000), "yyyy-MM-dd HH:mm:ss");
 };
 
-const calculateColor = (success: boolean | undefined) => {
-  if (success === null) return "var(--color-info)";
-  return success ? "var(--color-success)" : "var(--color-danger)";
+const statusLabel = (node: RunNode) => {
+  if (node.skipped) return "Skipped";
+  if (node.success === null) return "Running";
+  return node.success ? "Success" : "Failure";
+};
+
+const calculateColor = (node: RunNode) => {
+  if (node.skipped) return "var(--color-text-tertiary)";
+  if (node.success === null) return "var(--color-info)";
+  return node.success ? "var(--color-success)" : "var(--color-danger)";
 };
 const formatRunTime = (runTimeMs: number, startTimestamp: number, isRunning: boolean) => {
   let ms = runTimeMs;
@@ -291,6 +302,14 @@ const navigateToNode = (nodeId: string) => {
 }
 .failure {
   color: var(--color-danger);
+}
+.skipped {
+  color: var(--color-text-tertiary);
+}
+.skipped-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }
 .fix-with-ai-btn {
   margin-top: 6px;
