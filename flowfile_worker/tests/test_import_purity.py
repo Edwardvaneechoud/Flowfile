@@ -244,6 +244,9 @@ def test_spawned_child_does_not_reexecute_launcher(tmp_path):
         f"spawned child eagerly loaded modules the tasks must import at use: {leaked_modules} "
         f"({len(child_modules)} modules loaded)"
     )
-    assert len(child_modules) <= CHILD_MODULE_CEILING, (
-        f"spawned child loaded {len(child_modules)} modules, ceiling is {CHILD_MODULE_CEILING}"
-    )
+    # pytest-cov's .pth bootstraps the tracer into every subprocess (~200 unrelated modules), so
+    # the ceiling is enforced on the uninstrumented legs only -- the purity checks above stay on.
+    if "coverage" not in roots:
+        assert len(child_modules) <= CHILD_MODULE_CEILING, (
+            f"spawned child loaded {len(child_modules)} modules, ceiling is {CHILD_MODULE_CEILING}"
+        )
