@@ -1,7 +1,7 @@
 import logging
 
 from flowfile_worker.configs import FLOWFILE_CORE_URI
-from flowfile_worker.models import RawLogInput
+from flowfile_worker.log_models import RawLogInput
 
 LOGGING_URL = FLOWFILE_CORE_URI + "/raw_logs"
 

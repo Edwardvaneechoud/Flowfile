@@ -4,10 +4,11 @@
    child, so heavy cloud/db deps must never load at import time.
 2. The bare packages (`shared`, `flowfile_worker`) that every process boot pays for.
 
-These are NOT the same surface. The child still loads pydantic, pl_fuzzy_frame_match,
-shared.sql_utils and shared.delta_utils -- funcs.py pulls all four through its own
-module-top imports (and unconditionally via flow_logger -> models). Deferring those is
-Phase 2b; nothing here claims the child gets lighter.
+These are NOT the same surface, but both are now lean. funcs.py keeps only polars and the
+logger at module top, and flow_logger takes RawLogInput from the pydantic-free
+`log_models` instead of `models` -- so a spawned child loads none of models, pydantic,
+pl_fuzzy_frame_match, shared.sql_utils or shared.delta_utils. Tasks that genuinely need
+them import them at use, which moves the cost off every spawn and onto those tasks alone.
 """
 
 import ast
@@ -24,7 +25,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # requests is loaded on demand by flow_logger.emit; if a future transitive dep
 # legitimately pulls one of these at import time, reassess before relaxing.
-FORBIDDEN = ("gcsfs", "boto3", "botocore", "connectorx", "deltalake", "requests")
+FORBIDDEN = (
+    "gcsfs",
+    "boto3",
+    "botocore",
+    "connectorx",
+    "deltalake",
+    "requests",
+    "pydantic",
+    "pl_fuzzy_frame_match",
+)
 
 
 def _probe_env(tmp_path):
@@ -62,8 +72,8 @@ def _modules_after(stmt: str, tmp_path) -> set[str]:
 
 
 # shared/__init__ re-exports the sql/delta/cloud helpers lazily (PEP 562), so importing
-# `shared` never pulls the pydantic-backed dialect registry. This is a boot-path win for
-# core, the scheduler and the CLI -- it does not reach the spawned child (see docstring).
+# `shared` never pulls the pydantic-backed dialect registry -- a boot-path win for core,
+# the scheduler and the CLI.
 SHARED_MUST_STAY_LAZY = (
     "shared.sql_utils",
     "shared.db_dialects",
@@ -100,7 +110,7 @@ def test_shared_storage_config_has_no_module_level_sql_or_delta_import():
 def test_worker_package_init_does_not_pull_models(tmp_path):
     # flowfile_worker/__init__ needs models.Status only as a type annotation. This covers
     # `import flowfile_worker` alone -- consumers such as flowfile/web that want mp_context
-    # or CACHE_DIR. The spawned child imports funcs, which still pulls all of these.
+    # or CACHE_DIR; the spawned child's own surface is pinned further down.
     loaded = _modules_after("import flowfile_worker", tmp_path)
     leaked = sorted({"flowfile_worker.models", "pydantic", "pl_fuzzy_frame_match"} & loaded)
     assert leaked == [], f"flowfile_worker/__init__ eagerly loaded: {leaked}"
@@ -143,10 +153,26 @@ def test_worker_funcs_import_is_lean(tmp_path):
 # A console-script launch leaves __main__.__spec__ as None, which makes spawn pass
 # init_main_from_path and re-execute the launcher (and the whole FastAPI app) in every
 # child. flowfile_worker/__init__.py stamps a ".__main__" spec to take spawn's free path.
-FORBIDDEN_IN_SPAWNED_CHILD = ("fastapi", "uvicorn", "openpyxl", "faker", "httpx", "sqlalchemy")
-# A ratchet, not a win: the child loads 513 modules, unchanged since Phase 1 -- the lazy
-# `shared` / `flowfile_worker` exports don't reach it. 700 was just stale headroom.
-CHILD_MODULE_CEILING = 550
+FORBIDDEN_IN_SPAWNED_CHILD = (
+    "fastapi",
+    "uvicorn",
+    "openpyxl",
+    "faker",
+    "httpx",
+    "sqlalchemy",
+    "pydantic",
+    "pl_fuzzy_frame_match",
+)
+# Submodules of packages the child does legitimately load, so they need an exact-name check.
+FORBIDDEN_MODULES_IN_SPAWNED_CHILD = (
+    "flowfile_worker.models",
+    "shared.sql_utils",
+    "shared.db_dialects",
+    "shared.delta_utils",
+)
+# Measured 345 after Phase 2b (513 before). Headroom is deliberately small: re-eagerizing
+# models costs ~161 modules and pl_fuzzy_frame_match ~62, so either trips this.
+CHILD_MODULE_CEILING = 380
 
 _PROBE_TARGET = '''
 import json
@@ -211,6 +237,11 @@ def test_spawned_child_does_not_reexecute_launcher(tmp_path):
     leaked = sorted(roots & set(FORBIDDEN_IN_SPAWNED_CHILD))
     assert leaked == [], (
         f"spawned child re-executed the launcher and imported the app: {leaked} "
+        f"({len(child_modules)} modules loaded)"
+    )
+    leaked_modules = sorted(set(FORBIDDEN_MODULES_IN_SPAWNED_CHILD) & set(child_modules))
+    assert leaked_modules == [], (
+        f"spawned child eagerly loaded modules the tasks must import at use: {leaked_modules} "
         f"({len(child_modules)} modules loaded)"
     )
     assert len(child_modules) <= CHILD_MODULE_CEILING, (
