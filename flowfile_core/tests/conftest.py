@@ -84,6 +84,9 @@ def pytest_configure(config):
 _core_port_claimed_by_tests = False
 
 
+# trylast: pytest's own -m/-k deselection runs after a plain conftest hook, so
+# without this the claim still sees items the session will never run.
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     global _core_port_claimed_by_tests
     _core_port_claimed_by_tests = session_claims_core_port(items)

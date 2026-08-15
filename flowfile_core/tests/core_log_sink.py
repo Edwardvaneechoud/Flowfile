@@ -9,12 +9,13 @@ instantly — roughly 7 log lines x 2s of dead time on every worker-backed test.
 Serving the port keeps the real delivery path running end to end, at loopback
 speed.
 
-Stdlib only, and imported by conftest before anything reaches flowfile_core, so
-it must stay free of import-time side effects.
+Stdlib only at import time, and imported by conftest before anything reaches
+flowfile_core, so it must stay free of import-time side effects.
 """
 
 from __future__ import annotations
 
+import importlib
 import os
 import platform
 import threading
@@ -27,9 +28,15 @@ SINK_HOST = "127.0.0.1"
 
 _ACCEPTED_PATHS = frozenset({"/raw_logs"})
 
-# Tests that bind the core port themselves; the sink must stay out of their way.
-_PORT_CLAIMING_FIXTURES = frozenset({"kernel_manager_with_core"})
-_PORT_CLAIMING_MODULES = frozenset({"test_auth_e2e.py"})
+# Tests that bind the core port themselves; the sink must stay out of their way —
+# but only when they will actually run. Each entry points at the claimer's own skip
+# predicate (True = it runs) so the claim and the skip can never drift apart.
+# conftest's kernel_manager_with_core skips on exactly this function.
+_PORT_CLAIMING_FIXTURES = {
+    "kernel_manager_with_core": ("tests.flowfile_core_test_utils", "is_docker_available"),
+}
+# Read off the collected item's own module, so there is nothing to keep in sync.
+_PORT_CLAIMING_MODULES = {"test_auth_e2e.py": "is_docker_available"}
 
 
 class _LogSinkHandler(BaseHTTPRequestHandler):
@@ -103,11 +110,38 @@ class CoreLogSink:
             self._thread = None
 
 
+def _imported_predicate(module_name: str, attr: str):
+    try:
+        return getattr(importlib.import_module(module_name), attr, None)
+    except Exception:
+        return None
+
+
+def _claimer_runs(predicate) -> bool:
+    """Fail closed: an unresolvable or raising predicate counts as "will run"."""
+    if predicate is None:
+        return True
+    try:
+        return bool(predicate())
+    except Exception:
+        return True
+
+
 def session_claims_core_port(items) -> bool:
-    """True when a collected test binds the core port itself."""
+    """True when a collected test that will really run binds the core port.
+
+    ``items`` must be the post-deselection list — conftest calls this from a
+    ``trylast`` hook, because pytest's own ``-m``/``-k`` deselection runs after a
+    plain conftest hook and would otherwise leave deselected claimers visible.
+    """
+    predicates = {}
     for item in items:
-        if _PORT_CLAIMING_FIXTURES.intersection(getattr(item, "fixturenames", ())):
-            return True
-        if os.path.basename(str(getattr(item, "fspath", ""))) in _PORT_CLAIMING_MODULES:
-            return True
-    return False
+        fixturenames = getattr(item, "fixturenames", ())
+        for name, (module_name, attr) in _PORT_CLAIMING_FIXTURES.items():
+            if name in fixturenames and name not in predicates:
+                predicates[name] = _imported_predicate(module_name, attr)
+        basename = os.path.basename(str(getattr(item, "fspath", "")))
+        module_attr = _PORT_CLAIMING_MODULES.get(basename)
+        if module_attr is not None and basename not in predicates:
+            predicates[basename] = getattr(getattr(item, "module", None), module_attr, None)
+    return any(_claimer_runs(predicate) for predicate in predicates.values())
