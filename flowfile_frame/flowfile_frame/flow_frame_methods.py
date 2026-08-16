@@ -15,6 +15,7 @@ from flowfile_frame.config import logger
 from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.utils import create_flow_graph, generate_node_id
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern
 
 
 def sum(expr):
@@ -52,6 +53,21 @@ def count(expr):
     return expr.count()
 
 
+def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_file", "directory"]:
+    """Infer whether ``source`` names one file or a set of files read as a single table.
+
+    Mirrors the engine's glob-anywhere rule: a metacharacter anywhere in the path counts. The
+    cloud readers only inspect the last character, which misses ``data/*.csv``; that narrower
+    check is deliberately not reproduced here. A trailing separator or an existing directory
+    also reads as a directory scan, so a bare folder works without a hand-written pattern.
+    """
+    if not glob:
+        return "single_file"
+    if is_glob_pattern(source) or source.endswith(("/", os.sep)):
+        return "directory"
+    return "directory" if Path(source).expanduser().is_dir() else "single_file"
+
+
 def read_csv(
     source: str | Path | IO[bytes] | bytes | list[str | Path | IO[bytes] | bytes],
     *,
@@ -59,6 +75,8 @@ def read_csv(
     separator: str = ",",
     convert_to_absolute_path: bool = True,
     description: str | None = None,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
     has_header: bool = True,
     new_columns: list[str] | None = None,
     comment_prefix: str | None = None,
@@ -103,6 +121,10 @@ def read_csv(
         separator: Single byte character to use as separator in the file.
         convert_to_absolute_path: If the path needs to be set to a fixed location
         description: if you want to add a readable name in the frontend (advised)
+        scan_mode: 'single_file' or 'directory'. Auto-detected from path if None. In 'directory'
+            mode every matching file is read as one table (requires glob=True).
+        include_file_paths: Name of a column holding each row's source file path. None (or a
+            blank string) adds no column.
 
         # Polars.scan_csv aligned parameters
         has_header: Indicate if the first row of the dataset is a header or not.
@@ -131,7 +153,8 @@ def read_csv(
         raise_if_empty: Raise error if file is empty.
         truncate_ragged_lines: Truncate lines with too many values.
         decimal_comma: Parse floats with decimal comma.
-        glob: Use glob pattern for file path (if source is a string).
+        glob: Allow glob expansion of a string source; False treats the path literally via the
+            polars fallback and forbids scan_mode='directory'.
         cache: Cache the result after reading (Polars default True).
         with_column_names: Apply a function over the column names.
         other_options: Any other options to pass to polars.scan_csv (e.g. retries, file_cache_ttl).
@@ -155,6 +178,12 @@ def read_csv(
     elif isinstance(source, io.BytesIO | io.StringIO):
         logger.warning("Read from bytes io from csv not supported, converting data to raw data")
         return from_dict(pl.read_csv(source), flow_graph=flow_graph, description=description)
+    include_file_paths = (include_file_paths or "").strip() or None
+    # Only a single path is inferred from; a list source keeps its existing single-file handling.
+    if scan_mode is None and isinstance(source, str | os.PathLike):
+        scan_mode = _resolve_scan_mode(current_source_path_for_native, glob=glob)
+    if scan_mode == "directory" and glob is False:
+        raise ValueError("scan_mode='directory' requires glob=True")
     actual_infer_schema_length: int | None
     if not infer_schema:
         actual_infer_schema_length = 0
@@ -186,6 +215,8 @@ def read_csv(
             file_type="csv",
             path=current_source_path_for_native,
             name=Path(current_source_path_for_native).name,
+            scan_mode=scan_mode or "single_file",
+            include_file_paths=include_file_paths,
             table_settings=input_schema.InputCsvTable(
                 delimiter=separator,
                 has_headers=has_header,
@@ -226,6 +257,9 @@ def read_csv(
         return result_frame
     else:
         polars_source_arg = source
+        if scan_mode == "directory" and isinstance(source, str | os.PathLike):
+            # A bare directory is not a pattern polars understands; hand it a real glob.
+            polars_source_arg = ensure_glob_pattern(current_source_path_for_native, default_scan_extension("csv"))
         polars_code = _build_polars_code_args(
             source=polars_source_arg,
             separator=separator,
@@ -257,6 +291,7 @@ def read_csv(
             glob=glob,
             cache=cache,
             with_column_names=with_column_names,
+            include_file_paths=include_file_paths,
             **other_options,
         )
         polars_code_node_description = description or "Read CSV with Polars scan_csv"
@@ -313,6 +348,7 @@ def _build_polars_code_args(
     glob: bool,
     cache: bool,
     with_column_names: Callable[[list[str]], list[str]] | None,
+    include_file_paths: str | None = None,
     **other_options: Any,
 ) -> str:
     source_repr: str
@@ -367,6 +403,10 @@ def _build_polars_code_args(
         formatted_value = format_func(value)
         kwargs_list.append(f"{param_name_key}={formatted_value}")
 
+    # Emitted only when set: adding it to param_mapping would rewrite every existing fallback string.
+    if include_file_paths:
+        kwargs_list.append(f"include_file_paths={include_file_paths!r}")
+
     if other_options:
         for k, v in other_options.items():
             kwargs_list.append(f"{k}={repr(v)}")
@@ -382,16 +422,27 @@ def _build_polars_code_args(
 
 
 def read_parquet(
-    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+    source,
+    *,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
+    **options,
 ) -> FlowFrame:
     """
     Read a Parquet file into a FlowFrame.
 
     Args:
-        source: Path to Parquet file
+        source: Path to Parquet file (a directory or glob pattern in 'directory' scan mode)
         flow_graph: if you want to add it to an existing graph
         description: if you want to add a readable name in the frontend (advised)
         convert_to_absolute_path: If the path needs to be set to a fixed location
+        scan_mode: 'single_file' or 'directory'. Auto-detected from path if None. In 'directory'
+            mode every matching file is read as one table.
+        include_file_paths: Name of a column holding each row's source file path. None (or a
+            blank string) adds no column.
         **options: Options for polars.read_parquet
 
     Returns:
@@ -407,7 +458,12 @@ def read_parquet(
     flow_id = flow_graph.flow_id
 
     received_table = input_schema.ReceivedTable(
-        file_type="parquet", path=source, name=Path(source).name, table_settings=input_schema.InputParquetTable()
+        file_type="parquet",
+        path=source,
+        name=Path(source).name,
+        scan_mode=scan_mode or _resolve_scan_mode(str(source)),
+        include_file_paths=include_file_paths,
+        table_settings=input_schema.InputParquetTable(),
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path
@@ -437,8 +493,14 @@ def _read_simple_file(
     flow_graph: FlowGraph = None,
     description: str = None,
     convert_to_absolute_path: bool = True,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
 ) -> FlowFrame:
-    """Shared reader for option-less file formats (ipc/ndjson/avro)."""
+    """Shared reader for option-less file formats (ipc/ndjson/avro).
+
+    Only directory-capable formats pass ``scan_mode``/``include_file_paths``; the rest leave them
+    at their single-file defaults.
+    """
     if isinstance(source, str) and "~" in source:
         source = os.path.expanduser(source)
     node_id = generate_node_id()
@@ -449,7 +511,12 @@ def _read_simple_file(
     flow_id = flow_graph.flow_id
 
     received_table = input_schema.ReceivedTable(
-        file_type=file_type, path=source, name=Path(source).name, table_settings=table_settings
+        file_type=file_type,
+        path=source,
+        name=Path(source).name,
+        scan_mode=scan_mode or "single_file",
+        include_file_paths=include_file_paths,
+        table_settings=table_settings,
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path
@@ -472,16 +539,27 @@ def _read_simple_file(
 
 
 def read_ipc(
-    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+    source,
+    *,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
+    **options,
 ) -> FlowFrame:
     """
     Read an Arrow IPC/Feather file into a FlowFrame.
 
     Args:
-        source: Path to the IPC/Arrow file
+        source: Path to the IPC/Arrow file (a directory or glob pattern in 'directory' scan mode)
         flow_graph: if you want to add it to an existing graph
         description: if you want to add a readable name in the frontend (advised)
         convert_to_absolute_path: If the path needs to be set to a fixed location
+        scan_mode: 'single_file' or 'directory'. Auto-detected from path if None. In 'directory'
+            mode every matching file is read as one table.
+        include_file_paths: Name of a column holding each row's source file path. None (or a
+            blank string) adds no column.
 
     Returns:
         A FlowFrame with the IPC data
@@ -493,6 +571,8 @@ def read_ipc(
         flow_graph=flow_graph,
         description=description,
         convert_to_absolute_path=convert_to_absolute_path,
+        scan_mode=scan_mode or _resolve_scan_mode(str(source)),
+        include_file_paths=include_file_paths,
     )
 
 
@@ -717,6 +797,8 @@ def scan_csv(
     separator: str = ",",
     convert_to_absolute_path: bool = True,
     description: str | None = None,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
     has_header: bool = True,
     new_columns: list[str] | None = None,
     comment_prefix: str | None = None,
@@ -762,6 +844,8 @@ def scan_csv(
         separator=separator,
         convert_to_absolute_path=convert_to_absolute_path,
         description=description,
+        scan_mode=scan_mode,
+        include_file_paths=include_file_paths,
         has_header=has_header,
         new_columns=new_columns,
         comment_prefix=comment_prefix,
@@ -796,7 +880,14 @@ def scan_csv(
 
 
 def scan_parquet(
-    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+    source,
+    *,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
+    **options,
 ) -> FlowFrame:
     """
     Scan a Parquet file into a FlowFrame. This function is an alias for read_parquet.
@@ -811,12 +902,21 @@ def scan_parquet(
         flow_graph=flow_graph,
         description=description,
         convert_to_absolute_path=convert_to_absolute_path,
+        scan_mode=scan_mode,
+        include_file_paths=include_file_paths,
         **options,
     )
 
 
 def scan_ipc(
-    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+    source,
+    *,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+    scan_mode: Literal["single_file", "directory"] | None = None,
+    include_file_paths: str | None = None,
+    **options,
 ) -> FlowFrame:
     """
     Scan an Arrow IPC/Feather file into a FlowFrame. Alias for read_ipc, provided
@@ -829,6 +929,8 @@ def scan_ipc(
         flow_graph=flow_graph,
         description=description,
         convert_to_absolute_path=convert_to_absolute_path,
+        scan_mode=scan_mode,
+        include_file_paths=include_file_paths,
         **options,
     )
 

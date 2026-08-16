@@ -8,9 +8,22 @@ import type {
   InputNdjsonTable,
   InputParquetTable,
   ReceivedTable,
+  ScanMode,
 } from "../types/node.types";
 
 export type ReadFileType = "csv" | "excel" | "parquet" | "ipc" | "ndjson" | "avro";
+
+// TS mirror of shared/path_utils.py DIRECTORY_SCAN_FILE_TYPES; ndjson/avro are deliberately excluded.
+export const DIRECTORY_CAPABLE_TYPES: ReadonlySet<ReadFileType> = new Set<ReadFileType>([
+  "csv",
+  "parquet",
+  "ipc",
+]);
+
+// Predicate, not a plain boolean: ReceivedTable.file_type is the wider engine union.
+export function isDirectoryCapable(fileType?: string | null): fileType is ReadFileType {
+  return !!fileType && (DIRECTORY_CAPABLE_TYPES as ReadonlySet<string>).has(fileType);
+}
 
 export type ReadTableSettings =
   | InputCsvTable
@@ -52,6 +65,14 @@ export function detectFileType(path: string): ReadFileType | null {
   // ${...} collapses to a stand-in, not to nothing: "${date}.csv" must keep its extension.
   const ext = extensionOf(path.replace(/\$\{[^}]*\}/g, "_"));
   return ext ? (READ_EXTENSION_MAP[ext] ?? null) : null;
+}
+
+/** Best-effort seed only — the renderer cannot stat the path, so a bare directory reads as a file. */
+export function inferScanModeFromPath(path: string): ScanMode {
+  // Same ${...} masking as detectFileType: a parameter reference is not a glob.
+  const masked = path.replace(/\$\{[^}]*\}/g, "_");
+  if (/[*?[]/.test(masked)) return "directory";
+  return /[/\\]$/.test(masked) ? "directory" : "single_file";
 }
 
 function createDefaultCsvSettings(delimiter = ","): InputCsvTable {
@@ -124,5 +145,7 @@ export function buildReceivedTable({
     path,
     file_type: fileType,
     table_settings: createDefaultSettings(fileType, ext),
+    scan_mode: "single_file",
+    include_file_paths: null,
   };
 }

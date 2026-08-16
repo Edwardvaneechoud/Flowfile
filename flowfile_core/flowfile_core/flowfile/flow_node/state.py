@@ -12,9 +12,31 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from shared.path_utils import expand_glob_pattern
+
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
     from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+
+def _aggregate_stats(pattern: str) -> tuple[int, float, int]:
+    """Return (file count, newest mtime, total size) over every file matching *pattern*.
+
+    Files that vanish between expansion and stat are skipped; their disappearance still
+    shows up as a lower count.
+    """
+    count = 0
+    newest_mtime = 0.0
+    total_size = 0
+    for path in expand_glob_pattern(pattern):
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        count += 1
+        newest_mtime = max(newest_mtime, stat.st_mtime)
+        total_size += stat.st_size
+    return count, newest_mtime, total_size
 
 
 @dataclass
@@ -27,6 +49,7 @@ class SourceFileInfo:
     path: str
     mtime: float
     size: int
+    file_count: int | None = None  # None marks a legacy single-file snapshot
 
     @classmethod
     def from_path(cls, path: str) -> SourceFileInfo | None:
@@ -37,8 +60,20 @@ class SourceFileInfo:
         except OSError:
             return None
 
+    @classmethod
+    def from_pattern(cls, pattern: str) -> SourceFileInfo:
+        """Create an aggregate snapshot of every file matching *pattern* (directory scan mode).
+
+        Never returns None: zero matches are a valid state that must still be recorded, so a
+        file appearing later reads as a change.
+        """
+        count, newest_mtime, total_size = _aggregate_stats(pattern)
+        return cls(path=pattern, mtime=newest_mtime, size=total_size, file_count=count)
+
     def has_changed(self) -> bool:
-        """Check if file has changed since this info was recorded."""
+        """Check if the source has changed since this info was recorded."""
+        if self.file_count is not None:
+            return _aggregate_stats(self.path) != (self.file_count, self.mtime, self.size)
         try:
             stat = os.stat(self.path)
             return stat.st_mtime != self.mtime or stat.st_size != self.size
@@ -47,12 +82,12 @@ class SourceFileInfo:
 
     def to_dict(self) -> dict:
         """Serialize for external storage."""
-        return {"path": self.path, "mtime": self.mtime, "size": self.size}
+        return {"path": self.path, "mtime": self.mtime, "size": self.size, "file_count": self.file_count}
 
     @classmethod
     def from_dict(cls, data: dict) -> SourceFileInfo:
         """Deserialize from external storage."""
-        return cls(path=data["path"], mtime=data["mtime"], size=data["size"])
+        return cls(path=data["path"], mtime=data["mtime"], size=data["size"], file_count=data.get("file_count"))
 
 
 @dataclass

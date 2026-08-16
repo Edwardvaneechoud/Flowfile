@@ -70,7 +70,7 @@ from shared.cloud_storage import (
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
 from shared.db_writer import write_dataframe_to_database
-from shared.path_utils import is_url
+from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported, is_url
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -1253,6 +1253,12 @@ class FlowDataEngine:
             A new `FlowDataEngine` instance with data from the file.
         """
         received_table.set_absolute_filepath()
+        if received_table.scan_mode == "directory":
+            assert_directory_scan_supported(
+                received_table.file_type,
+                getattr(received_table.table_settings, "encoding", None),
+                received_table.path,
+            )
         file_type_handlers = {
             "csv": create_funcs.create_from_path_csv,
             "parquet": create_funcs.create_from_path_parquet,
@@ -2864,6 +2870,8 @@ class FlowDataEngine:
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
         """Creates a FlowDataEngine from a path in a worker process."""
         received_table.set_absolute_filepath()
+        if received_table.scan_mode == "directory":
+            raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
 
         external_fetcher = ExternalCreateFetcher(
             received_table=received_table, file_type=received_table.file_type, flow_id=flow_id, node_id=node_id

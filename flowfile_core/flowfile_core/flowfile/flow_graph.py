@@ -175,6 +175,7 @@ from shared.google_analytics.models import (
 )
 from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
+from shared.path_utils import assert_directory_scan_supported, expand_glob_pattern
 from shared.storage_config import storage
 
 __version__ = get_version()
@@ -354,6 +355,35 @@ def get_xlsx_schema_callback(
         end_column=end_column,
         has_headers=has_headers,
     )
+
+
+def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
+    """Directory-mode schema callback: probe the first matched file as a single-file read.
+
+    Under strict-native semantics the run errors on column-set divergence anyway, so the first
+    file's schema is right whenever the run can succeed (known gap: csv dtype widening across
+    files is not predicted). Zero matches yield an empty schema so settings saves stay tolerant.
+    """
+
+    def schema_callback():
+        matches = expand_glob_pattern(received_file.abs_file_path)
+        if not matches:
+            return []
+        probe = received_file.model_copy(deep=True)
+        probe.scan_mode = "single_file"
+        probe.name = None
+        probe.path = matches[0]
+        probe.abs_file_path = None
+        probe.include_file_paths = None  # appended below instead, so the probe cannot emit it twice
+        probe.set_absolute_filepath()
+        schema = FlowDataEngine.create_from_path(probe).schema
+        existing_names = {column.name for column in schema}
+        # A collision fails the run with polars' own DuplicateError; never predict a duplicate.
+        if received_file.include_file_paths and received_file.include_file_paths not in existing_names:
+            schema = [*schema, FlowfileColumn.from_input(received_file.include_file_paths, "String")]
+        return schema
+
+    return schema_callback
 
 
 def get_cloud_connection_settings(
@@ -5473,6 +5503,12 @@ class FlowGraph:
         Args:
             input_file: The settings for the read operation.
         """
+        received = input_file.received_file
+        if received.scan_mode == "directory":
+            assert_directory_scan_supported(
+                received.file_type, getattr(received.table_settings, "encoding", None), received.path
+            )
+
         if (
             input_file.received_file.file_type in ("xlsx", "excel")
             and input_file.received_file.table_settings.sheet_name == ""
@@ -5491,7 +5527,8 @@ class FlowGraph:
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif (
                 input_file.received_file.file_type == "csv"
-                and "utf" in input_file.received_file.table_settings.encoding
+                # Lowercased to match the directory gate; uppercase UTF spellings went to the worker.
+                and "utf" in input_file.received_file.table_settings.encoding.lower()
             ):
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
@@ -5517,6 +5554,9 @@ class FlowGraph:
 
                     def schema_callback():
                         return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+
+                elif input_file.received_file.scan_mode == "directory":
+                    schema_callback = get_directory_schema_callback(input_file.received_file)
 
                 elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
