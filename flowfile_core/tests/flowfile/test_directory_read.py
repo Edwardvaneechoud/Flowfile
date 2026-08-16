@@ -1,7 +1,8 @@
 """Directory / glob read-node behaviour (slice 1 of the multi-file Read feature).
 
 Everything here works on real files under ``tmp_path`` and runs real graphs — the only
-patched symbol is a call counter that proves a function was *not* invoked.
+patches are call recorders that prove a function was *not* invoked, plus a synchronous
+``SingleExecutionFuture.start`` that makes the eager schema prefetch observable.
 """
 
 import os
@@ -13,6 +14,7 @@ from openpyxl import Workbook
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import FlowParameter
 from shared.path_utils import DirectoryScanUnsupportedError, NoFilesMatchedError, expand_glob_pattern
@@ -471,3 +473,84 @@ def test_param_pattern_run_skips_when_unchanged(tmp_path):
 
     handle_run_info(graph.run_graph())
     assert _collect(node).height == 3
+
+
+# The eager schema prefetch must stay on the cheap single-file probe
+
+
+def _synchronous_prefetch(monkeypatch) -> None:
+    """Run ``SingleExecutionFuture.start`` inline so the eager schema prefetch that
+    ``FlowNode.reset`` launches happens before ``add_read`` returns, making it assertable
+    instead of racing on a background thread."""
+
+    def start(self):
+        with self._lock:
+            if self._has_started:
+                return
+            self._has_started = True
+        try:
+            self._func_wrapper(self._generation)
+        except Exception:
+            pass
+
+    monkeypatch.setattr(SingleExecutionFuture, "start", start)
+
+
+def _record_create_from_path(monkeypatch) -> list[str]:
+    """Record the scan_mode of every ``FlowDataEngine.create_from_path`` call."""
+    seen: list[str] = []
+    original = FlowDataEngine.create_from_path.__func__
+
+    def recording(cls, received_table):
+        seen.append(received_table.scan_mode)
+        return original(cls, received_table)
+
+    monkeypatch.setattr(FlowDataEngine, "create_from_path", classmethod(recording))
+    return seen
+
+
+def test_configure_prefetch_probes_single_file_only(tmp_path, monkeypatch):
+    """Configuring a directory read (which opening a saved flow replays per node) must prefetch
+    the schema via the single-file probe — never a throwaway full build over every matched file."""
+    _synchronous_prefetch(monkeypatch)
+    seen = _record_create_from_path(monkeypatch)
+    _three_csvs(tmp_path)
+
+    graph = create_graph(execution_location="local")
+    node = _add_read(graph, _directory_table(tmp_path))
+
+    assert seen == ["single_file"]
+    assert [column.name for column in node.get_predicted_schema()] == ["id", "val"]
+    assert seen == ["single_file"], "prediction must reuse the prefetched result, not probe again"
+
+
+def test_configure_with_saved_fields_touches_no_files(tmp_path, monkeypatch):
+    """With a saved schema (``fields``) the prefetch must answer from it without any file I/O."""
+    _synchronous_prefetch(monkeypatch)
+    seen = _record_create_from_path(monkeypatch)
+    _three_csvs(tmp_path)
+
+    saved_fields = [
+        input_schema.MinimalFieldInfo(name="id", data_type="Int64"),
+        input_schema.MinimalFieldInfo(name="val", data_type="String"),
+    ]
+    graph = create_graph(execution_location="local")
+    node = _add_read(graph, _directory_table(tmp_path, fields=saved_fields))
+
+    assert [column.name for column in node.get_predicted_schema()] == ["id", "val"]
+    assert seen == []
+
+
+def test_add_read_without_promise_probes_single_file_only(tmp_path, monkeypatch):
+    """``add_read`` without a prior node promise (the FlowNode-constructor path) gets the same
+    cheap prefetch as the promise path."""
+    _synchronous_prefetch(monkeypatch)
+    seen = _record_create_from_path(monkeypatch)
+    _three_csvs(tmp_path)
+
+    graph = create_graph(execution_location="local")
+    graph.add_read(input_schema.NodeRead(flow_id=1, node_id=1, received_file=_directory_table(tmp_path)))
+    node = graph.get_node(1)
+
+    assert seen == ["single_file"]
+    assert [column.name for column in node.get_predicted_schema()] == ["id", "val"]

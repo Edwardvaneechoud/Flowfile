@@ -471,7 +471,7 @@ that's what you're debugging). Both flags default off; production runs stay sile
 - Do not commit `master_key.txt`, `.env`, or credential files (`.gitignore` also blocks `*.key`, `*.pem`)
 - Do not use pandas for data operations; this project uses Polars throughout (pandas is a dev/test-only dependency, never imported in package source)
 - Do not call `.collect()` in flowfile_core — core ships paths/JSON; the worker holds dataset memory in spawned subprocesses
-- Polars is pinned `>=1.8.2, <1.43` (one cross-platform pin — the old Windows `<=1.25.2` ceiling was removed); polars 1.43.0 deadlocks `SQLContext.execute` over `scan_delta` frames (hangs every catalog SQL reader/view — verify the 5-line repro passes before raising the ceiling), and any bump must be coordinated with the version-coupled `polars-*` plugin packages and `kernel_runtime`
+- Polars is pinned `>=1.8.2, !=1.43.0, !=1.43.1, <1.44` (one cross-platform pin — the old Windows `<=1.25.2` ceiling was removed); polars 1.43.0/1.43.1 deadlock `SQLContext.execute` over `scan_delta` frames (hangs every catalog SQL reader/view — fixed in 1.43.2; verify the 5-line repro passes before raising the ceiling), and any bump must be coordinated with the version-coupled `polars-*` plugin packages and `kernel_runtime`
 - Tests and test_utils are excluded from Ruff linting (except specific per-file rules)
 - The `kernel`, `docker_integration`, and `kafka` pytest markers all require Docker
 - Do not "fix" the SHA-256 API-key hash (`flowfile_core/auth/api_key.py`) — it is deliberate for 256-bit tokens; the CodeQL weak-hash alert is a false positive

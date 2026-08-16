@@ -5538,6 +5538,16 @@ class FlowGraph:
             input_data.name = input_file.received_file.name
             return input_data
 
+        directory_schema_callback = None
+        if received.scan_mode == "directory":
+            if len(received_file.fields) > 0:
+
+                def directory_schema_callback():
+                    return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+
+            else:
+                directory_schema_callback = get_directory_schema_callback(received_file)
+
         node = self.get_node(input_file.node_id)
         schema_callback = None
         if node:
@@ -5545,18 +5555,22 @@ class FlowGraph:
             node.node_type = "read"
             node.name = "read"
             node.function = _func
+            if directory_schema_callback is not None:
+                # Must land before setting_input: its setter's reset() eagerly background-starts
+                # the schema callback, and without a user-provided one the start-node fallback
+                # wraps _func — a throwaway full directory build (glob + per-file schema probe).
+                node.user_provided_schema_callback = directory_schema_callback
             node.setting_input = input_file
             self.add_node_to_starting_list(node)
 
             if start_hash != node.hash:
                 logger.info("Hash changed, updating schema")
-                if len(received_file.fields) > 0:
+                if directory_schema_callback is not None:
+                    pass  # installed above; reinstalling would discard the started prefetch
+                elif len(received_file.fields) > 0:
 
                     def schema_callback():
                         return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
-
-                elif input_file.received_file.scan_mode == "directory":
-                    schema_callback = get_directory_schema_callback(input_file.received_file)
 
                 elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
@@ -5585,6 +5599,9 @@ class FlowGraph:
                 name="read",
                 node_type="read",
                 parent_uuid=self.uuid,
+                # update_node installs this before assigning setting_input, keeping the eager
+                # schema prefetch on the cheap single-file probe instead of the full _func build.
+                schema_callback=directory_schema_callback,
             )
             self._node_db[input_file.node_id] = node
             self.add_node_to_starting_list(node)
