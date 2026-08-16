@@ -208,8 +208,8 @@ if __name__ == "__main__":
 
 A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
 
-!!! warning "Polars export only"
-    Gates are supported by the Polars export. The FlowFrame and Project export modes refuse a flow that contains one rather than silently dropping the condition.
+!!! note "All export modes"
+    The FlowFrame and Project exports emit the same `if` blocks. The gated-off branch variable is pre-initialized as an empty `ff.FlowFrame` carrying the branch's schema, and a formula gate probes the frame's underlying LazyFrame via `.data`.
 
 ## Project Export
 
@@ -233,6 +233,7 @@ Key points:
 * **Notebook nodes are exported** (they are not supported by the single-file modes). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
 * **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
 * The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`).
+* **Gates land in `pipeline.py` as real `if` blocks** over the function's parameter arguments, exactly like the single-file exports.
 * Server-backed `flowfile_ctx` APIs (global artifacts, catalog access) raise `NotImplementedError` in the exported project; the export panel and the generated README list these limitations per node.
 
 From the Code panel you can either **download the project as a .zip** or **save it directly into a folder** using the built-in file browser.

@@ -68,12 +68,14 @@
         <template v-else>
           <div class="listbox-subtitle section-gap">Formula</div>
           <div v-if="hasControlInput" class="source-banner">
-            Checking the <strong>control input (C)</strong> — use the control's columns; the data
-            input (D) only passes through.
+            The gate opens when <strong>at least one row</strong> of the
+            <strong>control input (C)</strong> matches this formula, and closes when none do. Use
+            the control's columns here — the data input (D) only passes through.
           </div>
           <div v-else class="source-banner">
-            Checking the <strong>data input (D)</strong> — connect a node to the C handle to check
-            that frame instead.
+            The gate opens when <strong>at least one row</strong> of the
+            <strong>data input (D)</strong> matches this formula, and closes when none do. Connect
+            a node to the C handle to check that frame instead.
           </div>
           <main-editor-ref
             :key="String(nodeGate.node_id)"
@@ -81,10 +83,9 @@
             :editor-string="editorString"
           />
           <div class="help-text">
-            The formula filters the checked input like a Filter node would, row by row. If
-            <strong>any row</strong> matches, the gate opens; if none do (or the input is empty), it
-            closes and downstream is skipped. It is not just the first value — e.g.
-            <code>[status] = 'error'</code> opens on a single error row anywhere in the data.
+            Write it like a Filter condition — e.g. <code>[status] = 'error'</code> opens on a
+            single error row anywhere in the data, not just the first value. An empty input closes
+            the gate.
           </div>
         </template>
 

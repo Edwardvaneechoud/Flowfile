@@ -724,7 +724,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             "    elif isinstance(result, dict):\n"
             "        for name, frame in result.items():\n"
             '            print(f"=== {name} ===")\n'
-            "            print(frame.collect())\n"
+            "            # None: the output sat behind a closed gate and its schema\n"
+            "            # could not be predicted, so there is nothing to collect.\n"
+            '            print(frame.collect() if frame is not None else "(branch skipped)")\n'
             "    else:\n"
             "        print(result.collect())\n"
             "\n"

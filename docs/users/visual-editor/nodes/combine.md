@@ -190,7 +190,7 @@ Skips caused by a *failure* or by invalid settings are unchanged — they still 
 
 #### Export to Python
 
-Gates survive the [Polars export](../tutorials/code-generator.md): each one becomes a real `if` block over the generated function's keyword arguments, gated branch variables are pre-initialized as empty schema-typed frames, and the Union emits a `None`-guarded `concat`. The FlowFrame and Project export modes refuse a flow containing gates rather than silently dropping the condition.
+Gates survive all three [code export modes](../tutorials/code-generator.md) — Polars, FlowFrame, and Project: each gate becomes a real `if` block over the generated function's keyword arguments, gated branch variables are pre-initialized as empty schema-typed frames, and the Union simply concatenates the branch variables — a gated-off branch contributes its zero-row stand-in. A formula gate exports as a small row-probe helper evaluated when the pipeline function runs.
 
 Single-node preview ignores gates entirely — fetching one node's data plans as if every gate were open, so you can inspect a branch that this run's condition would skip.
 

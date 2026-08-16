@@ -695,6 +695,99 @@ def test_project_executes_end_to_end(tmp_path):
     assert "age_doubled" in result.stdout
 
 
+# ==================== gate project export ====================
+
+
+def _connect(flow: FlowGraph, from_id: int, to_id: int, input_type: str = "main") -> None:
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(from_id, to_id, input_type=input_type),
+    )
+
+
+def _add_rename_select(flow: FlowGraph, node_id: int, depending_on_id: int, old: str, new: str) -> None:
+    flow.add_select(
+        input_schema.NodeSelect(
+            flow_id=flow.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            select_input=[transform_schema.SelectInput(old_name=old, new_name=new)],
+            keep_missing=True,
+        )
+    )
+    _connect(flow, depending_on_id, node_id)
+
+
+def _build_gated_diamond(flow_id: int = 1) -> FlowGraph:
+    """Two complementary parameter gates re-converging on a union."""
+    from flowfile_core.flowfile.param_types import FlowParameter
+
+    flow = create_basic_flow(flow_id=flow_id, name="gated_flow")
+    flow.flow_settings.parameters.append(FlowParameter(name="env", default_value="prod", type="string"))
+    add_sample_input(flow, node_id=1)
+    for gate_id, operator, select_id, renamed in [(2, "equals", 3, "age_prod"), (4, "not_equals", 5, "age_dev")]:
+        flow.add_gate(
+            input_schema.NodeGate(
+                flow_id=flow_id,
+                node_id=gate_id,
+                depending_on_id=1,
+                is_setup=True,
+                gate_input=transform_schema.GateInput(parameter="env", operator=operator, value="prod"),
+            )
+        )
+        _connect(flow, 1, gate_id)
+        _add_rename_select(flow, node_id=select_id, depending_on_id=gate_id, old="age", new=renamed)
+    flow.add_union(input_schema.NodeUnion(flow_id=flow_id, node_id=6, depending_on_ids=[3, 5]))
+    _connect(flow, 3, 6)
+    _connect(flow, 5, 6)
+    return flow
+
+
+def test_project_export_supports_parameter_gates(tmp_path):
+    """A gated flow exports as a runnable project with real if-blocks in pipeline.py."""
+    flow = _build_gated_diamond()
+
+    manifest = export_flow_to_project(flow)
+
+    pipeline = get_file(manifest, "pipeline.py")
+    assert "if env == 'prod':" in pipeline
+    assert "if env != 'prod':" in pipeline
+    assert "ff.FlowFrame(pl.LazyFrame(schema=" in pipeline
+    ast.parse(pipeline)
+
+    project_dir = write_project(manifest, tmp_path)
+    result = subprocess.run(
+        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+    )
+    assert result.returncode == 0, result.stderr
+    assert "age_prod" in result.stdout
+
+
+def test_project_export_formula_gate_pipeline_contains_helper():
+    flow = create_basic_flow(name="formula_gated_flow")
+    add_sample_input(flow, node_id=1)
+    flow.add_gate(
+        input_schema.NodeGate(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            is_setup=True,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[age] > 20"),
+        )
+    )
+    _connect(flow, 1, 2)
+    _add_rename_select(flow, node_id=3, depending_on_id=2, old="age", new="age_kept")
+
+    manifest = export_flow_to_project(flow)
+
+    pipeline = get_file(manifest, "pipeline.py")
+    assert "import polars as pl" in pipeline
+    assert ".data, simple_function_to_expr" in pipeline
+    helper_pos = pipeline.index("_flowfile_gate_formula_matches")
+    assert helper_pos < pipeline.index("def run_etl_pipeline")
+    ast.parse(pipeline)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

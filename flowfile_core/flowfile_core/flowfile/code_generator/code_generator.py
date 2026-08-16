@@ -439,6 +439,12 @@ class FlowGraphCodeConverter(
         self._gate_conds = conds
         if self._runtime_gate_flags:
             self._module_helpers.append(_GATE_FORMULA_HELPER)
+        if self._gate_exprs:
+            # Registered here, not during body rendering: _build_final_code
+            # serializes imports before _render_body runs, so an import added
+            # while emitting gated pre-inits/helpers would be dropped. The
+            # gate machinery emits pl-based literals in every framework.
+            self.imports.add("import polars as pl")
 
     @staticmethod
     def _gate_condition_expr(gate_input, parameters_by_name, codegen_param_names) -> str | None:
@@ -498,14 +504,21 @@ class FlowGraphCodeConverter(
             return parts[0]
         return " and ".join(f"({part})" for part in parts)
 
+    def _gate_probe_expr(self, input_var: str) -> str:
+        """The frame expression handed to the gate formula helper (a polars frame)."""
+        return input_var
+
     def _handle_gate(self, settings: input_schema.NodeGate, var_name: str, input_vars: dict[str, str]) -> None:
         """Gates are passthroughs: remap downstream references to the data input.
 
-        Parameter-mode gates emit nothing here — their condition becomes the
-        if-block guarding downstream nodes. Formula gates emit their routing
-        flag: the formula applied as a row predicate to the control (right)
-        input when wired, else to the data input — open iff any row matches,
-        mirroring flow_graph._formula_gate_is_closed.
+        Shared by the Polars and FlowFrame exports. Parameter-mode gates emit
+        nothing here — their condition becomes the if-block guarding
+        downstream nodes. Formula gates emit their routing flag: the formula
+        applied as a row predicate to the control (right) input when wired,
+        else to the data input — open iff any row matches, mirroring
+        flow_graph._formula_gate_is_closed. The probed frame goes through
+        ``_gate_probe_expr`` so the FlowFrame export can hand the helper the
+        underlying LazyFrame instead of the FlowFrame wrapper.
         """
         main_df = input_vars.get("main", "df")
         self.node_var_mapping[settings.node_id] = main_df
@@ -524,7 +537,7 @@ class FlowGraphCodeConverter(
         flag = self._runtime_gate_flags[settings.node_id]
         self._add_code(
             f"{flag} = _flowfile_gate_formula_matches("
-            f"{source_df}, simple_function_to_expr({self._py_str(gate_input.formula)}))"
+            f"{self._gate_probe_expr(source_df)}, simple_function_to_expr({self._py_str(gate_input.formula)}))"
         )
         self._add_code("")
 
@@ -1410,20 +1423,24 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
 
     framework = "ff"
 
-    def _handle_gate(self, settings: input_schema.NodeGate, var_name: str, input_vars: dict[str, str]) -> None:
-        """FlowFrame export has no gate method yet — refuse rather than silently drop the condition."""
-        self.unsupported_nodes.append(
-            (
-                settings.node_id,
-                "gate",
-                "Gate nodes are exported as real if-blocks in the Polars export only; "
-                "FlowFrame/project export does not support them yet",
-            )
-        )
-
     def __init__(self, flow_graph: FlowGraph):
         super().__init__(flow_graph)
         self.imports.add("import flowfile as ff")
+
+    def _gate_probe_expr(self, input_var: str) -> str:
+        """Bridge the FlowFrame down to its pl.LazyFrame for the gate row-probe helper.
+
+        Probing the FlowFrame itself would route filter/head through FlowFrame
+        methods, appending spurious nodes to the rebuilt graph.
+        """
+        return f"{input_var}.data"
+
+    def _empty_frame_schema_expr(self, node: FlowNode) -> str | None:
+        """Wrap the zero-row stand-in so gated branches hold a FlowFrame, not a bare LazyFrame."""
+        expr = FlowGraphCodeConverter._empty_frame_schema_expr(node)
+        if expr is None:
+            return None
+        return f"ff.FlowFrame({expr})"
 
     def _custom_node_input_expr(self, input_var: str) -> str:
         """Bridge a FlowFrame input down to the polars LazyFrame ``process()`` expects."""

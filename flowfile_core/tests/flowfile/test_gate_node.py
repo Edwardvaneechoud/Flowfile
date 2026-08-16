@@ -16,7 +16,7 @@ C. Control-input gates: routing on the first value of a second input, decided
 D. Failure modes: an unknown parameter must fail the gate loudly.
 E. Gate-blind callers (single-node fetch, code export) must plan as if every
    gate were open.
-F. Polars code export parity, and the FlowFrame export's deliberate refusal.
+F. Code export parity across the Polars and FlowFrame exports.
 G. YAML round-trip of the gate's settings.
 
 Run with an isolated DB:
@@ -784,7 +784,9 @@ def run_generated(code: str, **kwargs) -> pl.DataFrame:
     namespace: dict = {}
     exec(code, namespace)
     result = namespace["run_etl_pipeline"](**kwargs)
-    if isinstance(result, pl.LazyFrame):
+    # Duck-typed: a Polars module returns a pl.LazyFrame, a FlowFrame module a
+    # FlowFrame — both collect to a pl.DataFrame.
+    if hasattr(result, "collect"):
         return result.collect()
     return result
 
@@ -798,6 +800,8 @@ class TestPolarsExport:
         assert "if env == 'prod':" in code
         assert "if env != 'prod':" in code
         assert "def run_etl_pipeline(*, env" in code
+        # Pre-initialized branch vars make inline union guards unnecessary.
+        assert "if df is not None" not in code
 
     @pytest.mark.parametrize("env", ["prod", "dev"])
     def test_generated_code_matches_the_engine_for_both_parameter_values(self, env):
@@ -891,13 +895,125 @@ class TestPolarsExport:
         assert graph.get_node(3).results.resulting_data is None
         assert run_generated(code).height == 0
 
-    def test_flowframe_export_refuses_gates(self):
-        graph = build_diamond(env="prod", flow_id=22)
+class TestFlowFrameExport:
+    """The FlowFrame export emits the same real if-blocks as the Polars export.
+
+    A ``df.gate(...)`` emission would be wrong here: the generated module
+    returns a FlowFrame whose ``collect()`` deliberately ignores gates, so the
+    condition has to live in the exported Python itself. Gated-off branch vars
+    pre-initialize as ``ff.FlowFrame(pl.LazyFrame(schema=...))`` stand-ins and
+    the formula helper probes the FlowFrame's underlying LazyFrame via
+    ``.data``.
+    """
+
+    def test_diamond_export_emits_real_if_blocks(self):
+        graph = build_diamond(env="prod", flow_id=40)
+
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+
+        assert "if env == 'prod':" in code
+        assert "if env != 'prod':" in code
+        assert "def run_etl_pipeline(*, env" in code
+        assert "import flowfile as ff" in code
+        assert "import polars as pl" in code
+        assert "ff.FlowFrame(pl.LazyFrame(schema=" in code
+        # Pre-initialized branch vars keep the union a plain multi-line concat.
+        assert "if df is not None" not in code
+        assert "ff.concat([" in code
+
+    @pytest.mark.parametrize("env", ["prod", "dev"])
+    def test_generated_code_matches_the_engine_for_both_parameter_values(self, env):
+        graph = build_diamond(env=env, flow_id=41)
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+        graph.run_graph()
+        engine_df = collect_node(graph, 7)
+
+        generated_df = run_generated(code, env=env)
+
+        assert set(generated_df.columns) == set(engine_df.columns)
+        generated_df = generated_df.select(engine_df.columns)
+        assert generated_df.to_dicts() == engine_df.to_dicts()
+
+    def test_one_exported_module_serves_both_parameter_values(self):
+        graph = build_diamond(env="prod", flow_id=42)
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+
+        prod_df = run_generated(code, env="prod")
+        dev_df = run_generated(code, env="dev")
+
+        assert prod_df["a_prod"].to_list() == [1, 2, 3]
+        assert prod_df["a_dev"].null_count() == prod_df.height
+        assert dev_df["a_dev"].to_list() == [1, 2, 3]
+        assert dev_df["a_prod"].null_count() == dev_df.height
+
+    @pytest.mark.parametrize("flag, expect_rows", [(True, 3), (False, 0)])
+    def test_formula_gate_export_probes_the_lazyframe(self, flag, expect_rows):
+        graph = build_formula_gate_graph([{"flag": flag}], flow_id=43)
+
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+
+        assert "_flowfile_gate_formula_matches" in code
+        assert ".data, simple_function_to_expr" in code
+        assert "if _gate_2_open:" in code
+        result = run_generated(code)
+        assert result.columns == ["a_kept"]
+        assert result.height == expect_rows
+
+    def test_parameter_ref_inside_a_formula_survives_export(self):
+        graph = build_self_gate_graph(flow_id=44, formula="[a] > ${threshold}")
+        graph.flow_settings.parameters.append(
+            FlowParameter(name="threshold", default_value="2", type="integer")
+        )
+
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+
+        assert run_generated(code, threshold=2).height == 3
+        assert run_generated(code, threshold=100).height == 0
+
+    @pytest.mark.parametrize("formula, expect_rows", [("[a] > 2", 3), ("[a] > 100", 0)])
+    def test_self_gate_export_checks_the_data_input(self, formula, expect_rows):
+        graph = build_self_gate_graph(flow_id=45, formula=formula)
+
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+
+        assert run_generated(code).height == expect_rows
+
+    def test_gated_passthrough_terminal_returns_the_empty_stand_in(self):
+        graph = create_graph(flow_id=46)
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_manual_input(graph, [{"flag": False}], node_id=10)
+        add_gate(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            control_id=10,
+            condition_source="formula",
+            formula="[flag]",
+        )
+        add_passthrough_select(graph, node_id=3, depending_on_id=2)
+
+        code = FlowGraphToFlowFrameConverter(graph).convert()
+
+        assert run_generated(code).height == 0
+
+    def test_empty_formula_still_refuses(self):
+        graph = build_self_gate_graph(flow_id=47, formula="")
 
         with pytest.raises(UnsupportedNodeError) as exc_info:
             FlowGraphToFlowFrameConverter(graph).convert()
 
-        assert "gate" in str(exc_info.value).lower()
+        assert "formula" in str(exc_info.value).lower()
+
+    def test_unknown_parameter_still_refuses(self):
+        graph = create_graph(flow_id=48)
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="ghost", operator="equals", value="x")
+        add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_kept")
+
+        with pytest.raises(UnsupportedNodeError) as exc_info:
+            FlowGraphToFlowFrameConverter(graph).convert()
+
+        assert "ghost" in str(exc_info.value)
 
 
 # G. YAML round-trip
@@ -997,6 +1113,9 @@ class TestAdversarialReviewRegressions:
         add_union(graph, node_id=6, depending_on_ids=[2, 4])
 
         code = FlowGraphToPolarsConverter(graph).convert()
+        # The load-bearing guard is hoisted to a named assignment, not inlined.
+        assert "df_2 = df_1 if env == 'prod' else pl.LazyFrame(schema=" in code
+        assert "df_4 = df_1 if env != 'prod' else pl.LazyFrame(schema=" in code
         for env_value in ("prod", "dev"):
             generated = run_generated(code, env=env_value)
             graph.flow_settings.parameters[0].default_value = env_value

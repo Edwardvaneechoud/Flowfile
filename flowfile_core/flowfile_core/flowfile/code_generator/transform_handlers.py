@@ -155,31 +155,50 @@ class TransformHandlersMixin(ConverterMixinBase):
             how = "diagonal"
 
         if getattr(self, "_gate_exprs", None):
-            # Inputs whose edge carries gates beyond the union's own condition
-            # (e.g. a gate wired straight into the union) contribute their
-            # zero-row schema-typed frame when that gate is closed — matching
-            # the engine's schema-stable union semantics.
+            # Gated flow. Producers with their own condition set were
+            # pre-initialized to a zero-row schema-typed stand-in (or None) and
+            # reassigned inside their if-block, so they need no guard here. The
+            # one case needing an explicit guard is a gate wired straight into
+            # the union: its variable is the ungated upstream frame, so the
+            # closed case gets a hoisted stand-in assignment — matching the
+            # engine's schema-stable union semantics.
             edge_guards = self._any_input_edge_conds.get(settings.node_id, {})
-            if edge_guards:
-                union_node = self.flow_graph.get_node(settings.node_id)
-                producers = list(union_node.node_inputs.main_inputs or [])
-                guarded: list[str] = []
-                for producer, df_var in zip(producers, dfs, strict=False):
+            union_node = self.flow_graph.get_node(settings.node_id)
+            producers = list(union_node.node_inputs.main_inputs or [])
+            handle_vars = set(self.node_handle_var_mapping.values())
+            may_be_none = False
+            hoisted_any = False
+            if len(producers) == len(dfs):
+                resolved: list[str] = []
+                for producer, df_var in zip(producers, dfs, strict=True):
+                    producer_cond = self._gate_conds.get(producer.node_id, frozenset())
                     extra = edge_guards.get(producer.node_id)
-                    if extra:
+                    if extra and not extra <= producer_cond:
                         empty = self._empty_frame_schema_expr(producer) or "None"
-                        guarded.append(f"({df_var} if {self._render_gate_cond(extra)} else {empty})")
-                    else:
-                        guarded.append(df_var)
-                if len(guarded) == len(dfs):
-                    dfs = guarded
-            candidates = ", ".join(dfs)
-            self._add_code(
-                f"{var_name} = {self.framework}.concat("
-                f"[df for df in [{candidates}] if df is not None], how='{how}')"
-            )
-            self._add_code("")
-            return
+                        hoisted = f"df_{producer.node_id}"
+                        self._add_code(f"{hoisted} = {df_var} if {self._render_gate_cond(extra)} else {empty}")
+                        hoisted_any = True
+                        if empty == "None":
+                            may_be_none = True
+                        resolved.append(hoisted)
+                        continue
+                    if producer_cond and (df_var in handle_vars or self._empty_frame_schema_expr(producer) is None):
+                        may_be_none = True
+                    resolved.append(df_var)
+                dfs = resolved
+            else:
+                # Inputs can't be attributed to producers; keep the safe filtering form.
+                may_be_none = True
+            if hoisted_any:
+                self._add_code("")
+            if may_be_none:
+                candidates = ", ".join(dfs)
+                self._add_code(
+                    f"{var_name} = {self.framework}.concat("
+                    f"[df for df in [{candidates}] if df is not None], how='{how}')"
+                )
+                self._add_code("")
+                return
 
         self._add_code(f"{var_name} = {self.framework}.concat([")
         for df in dfs:
