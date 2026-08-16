@@ -40,6 +40,7 @@ package. Paths in those docs are relative to the package's own directory.
 Deep runbooks live in `.claude/skills/` (raw discovery evidence in
 `.claude/investigation/`). Load the matching skill before working in its area:
 
+- `flowfile-coding-discipline` — the four Karpathy behavioral principles (think first, simplicity, surgical changes, goal-driven execution) grounded in this repo's norms; load at the start of any non-trivial implementation task.
 - `flowfile-change-control` — version bumps, Alembic migrations, dependency pins, release tags, CI gates.
 - `flowfile-architecture-contract` — system map + cross-service contracts; deciding where new code belongs.
 - `flowfile-debugging-playbook` — symptom→cause triage for live breakage (DB cascades, 307s, stale nodes, kernels, AI loops).
@@ -468,6 +469,7 @@ that's what you're debugging). Both flags default off; production runs stay sile
 
 ## Things to Avoid
 
+- Never run `git commit` (or `git stash`, or anything else that rewrites working-tree state) unless the user explicitly asks for it in the current conversation — finishing a task is not an invitation to commit it
 - Do not commit `master_key.txt`, `.env`, or credential files (`.gitignore` also blocks `*.key`, `*.pem`)
 - Do not use pandas for data operations; this project uses Polars throughout (pandas is a dev/test-only dependency, never imported in package source)
 - Do not call `.collect()` in flowfile_core — core ships paths/JSON; the worker holds dataset memory in spawned subprocesses
