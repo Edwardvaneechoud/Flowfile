@@ -20,25 +20,13 @@
           </li>
         </ul>
       </div>
-      <div
-        v-if="showContextMenu"
-        ref="contextMenuRef"
-        class="context-menu"
-        :style="{
-          top: contextMenuPosition.y + 'px',
-          left: contextMenuPosition.x + 'px',
-        }"
-      >
-        <button v-if="!singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
-          Ascending
-        </button>
-        <button v-if="singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
-          Ascending
-        </button>
-        <button v-if="singleColumnSelected" @click="setSortSettings('Descending', selectedColumns)">
-          Descending
-        </button>
-      </div>
+      <context-menu
+        v-if="activeMenu"
+        :position="contextMenuPosition"
+        :options="menuOptions"
+        @select="onMenuSelect"
+        @close="activeMenu = null"
+      />
 
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Settings</div>
@@ -55,7 +43,7 @@
               <tr
                 v-for="(item, index) in nodeSort.sort_input"
                 :key="index"
-                @contextmenu.prevent="openRowContextMenu($event, index)"
+                @contextmenu="openRowContextMenu($event, index)"
               >
                 <td>{{ item.column }}</td>
                 <td>
@@ -72,16 +60,6 @@
             </tbody>
           </table>
         </div>
-        <div
-          v-if="showContextMenuRemove"
-          class="context-menu"
-          :style="{
-            top: contextMenuPosition.y + 'px',
-            left: contextMenuPosition.x + 'px',
-          }"
-        >
-          <button @click="removeRow">Remove</button>
-        </div>
       </div>
     </generic-node-settings>
   </div>
@@ -96,6 +74,8 @@ import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CodeLoader } from "vue-content-loader";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { ContextMenu } from "../../../../common";
+import type { ContextMenuOption } from "../../../../common";
 
 const nodeStore = useNodeStore();
 const nodeSort = ref<null | NodeSort>(null);
@@ -103,29 +83,30 @@ const nodeSort = ref<null | NodeSort>(null);
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSort,
 });
-const showContextMenu = ref(false);
-const showContextMenuRemove = ref(false);
+// One menu at a time: the column menu and the sort-row menu are mutually
+// exclusive by construction (a single enum instead of two booleans).
+const activeMenu = ref<"column" | "row" | null>(null);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
-const contextMenuColumn = ref<string | null>(null);
-const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
 const nodeData = ref<null | NodeData>(null);
 const sortOptions = ["Ascending", "Descending"];
 const firstSelectedIndex = ref<number | null>(null);
 
 const openRowContextMenu = (event: MouseEvent, index: number) => {
+  // Right-clicks on the row's editable fields keep the native menu (paste).
+  const el = event.target as HTMLElement | null;
+  if (el?.closest?.("input, textarea")) return;
   event.preventDefault();
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
   contextMenuRowIndex.value = index;
-  showContextMenuRemove.value = true;
+  activeMenu.value = "row";
 };
 
 const removeRow = () => {
   if (contextMenuRowIndex.value !== null) {
     nodeSort.value?.sort_input.splice(contextMenuRowIndex.value, 1);
   }
-  showContextMenuRemove.value = false;
   contextMenuRowIndex.value = null;
 };
 
@@ -140,7 +121,25 @@ const openContextMenu = (clickedIndex: number, columnName: string, event: MouseE
     selectedColumns.value = [columnName];
   }
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
-  showContextMenu.value = true;
+  activeMenu.value = "column";
+};
+
+const menuOptions = computed<ContextMenuOption[]>(() => {
+  if (activeMenu.value === "row") {
+    return [{ label: "Remove", action: "remove", danger: true }];
+  }
+  return [
+    { label: "Ascending", action: "Ascending" },
+    ...(singleColumnSelected.value ? [{ label: "Descending", action: "Descending" }] : []),
+  ];
+});
+
+const onMenuSelect = (action: string) => {
+  if (activeMenu.value === "row") {
+    if (action === "remove") removeRow();
+    return;
+  }
+  setSortSettings(action, selectedColumns.value);
 };
 
 const setSortSettings = (sortType: string, columns: string[] | null) => {
@@ -149,8 +148,6 @@ const setSortSettings = (sortType: string, columns: string[] | null) => {
       nodeSort.value?.sort_input.push({ column: column, how: sortType });
     });
   }
-  showContextMenu.value = false;
-  contextMenuColumn.value = null;
 };
 
 const handleItemMouseDown = (event: MouseEvent) => {

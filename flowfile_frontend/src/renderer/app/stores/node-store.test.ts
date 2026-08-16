@@ -84,6 +84,44 @@ describe("node-store getNodeData flow-aware cache", () => {
     expect(refetched?.setting_input?.description).toBe("flow-2");
   });
 
+  it("keys the cache on the stored payload's node id, not the selected node", async () => {
+    const store = useNodeStore();
+    mocks.getNodeData.mockImplementation((flowId: number, id: number) =>
+      Promise.resolve(nodeData(id, `node-${id}`)),
+    );
+
+    // Node 3 is selected (its drawer is open) and cached.
+    store.nodeId = 3;
+    await store.getNodeData(3, true);
+    expect(mocks.getNodeData).toHaveBeenCalledTimes(1);
+
+    // A fetch for node 4 (selection unchanged) misses the cache and
+    // overwrites the slot with node 4's payload.
+    const other = await store.getNodeData(4, true);
+    expect(mocks.getNodeData).toHaveBeenCalledTimes(2);
+    expect(other?.node_id).toBe(4);
+
+    // Node 3 is still the *selected* node, but the slot now holds node 4 —
+    // a cached read for node 3 must refetch, never hand back node 4's blob.
+    const refetched = await store.getNodeData(3, true);
+    expect(mocks.getNodeData).toHaveBeenCalledTimes(3);
+    expect(refetched?.node_id).toBe(3);
+    expect(refetched?.setting_input?.description).toBe("node-3");
+  });
+
+  it("serves the cache regardless of which node is selected", async () => {
+    const store = useNodeStore();
+    mocks.getNodeData.mockImplementation((flowId: number, id: number) =>
+      Promise.resolve(nodeData(id, `node-${id}`)),
+    );
+
+    // Nothing selected: the cache must still work for repeat reads.
+    store.nodeId = -1;
+    await store.getNodeData(3, true);
+    await store.getNodeData(3, true);
+    expect(mocks.getNodeData).toHaveBeenCalledTimes(1);
+  });
+
   it("resets the flow stamp when a fetch fails", async () => {
     const store = useNodeStore();
     mocks.getNodeData.mockRejectedValueOnce(new Error("boom"));
