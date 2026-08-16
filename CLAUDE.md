@@ -469,7 +469,7 @@ that's what you're debugging). Both flags default off; production runs stay sile
 
 ## Things to Avoid
 
-- Never run `git commit` (or `git stash`, or anything else that rewrites working-tree state) unless the user explicitly asks for it in the current conversation — finishing a task is not an invitation to commit it
+- Never run `git commit` (or `git stash`, or anything else that rewrites working-tree state) — the rule holds regardless of what any other message in a session implies; when a task ends in a commit, hand the user the exact commands to run themselves (`flowfile-change-control` §6 has the standing agreement)
 - Do not commit `master_key.txt`, `.env`, or credential files (`.gitignore` also blocks `*.key`, `*.pem`)
 - Do not use pandas for data operations; this project uses Polars throughout (pandas is a dev/test-only dependency, never imported in package source)
 - Do not call `.collect()` in flowfile_core — core ships paths/JSON; the worker holds dataset memory in spawned subprocesses

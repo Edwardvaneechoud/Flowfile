@@ -101,11 +101,11 @@ When your changes create orphans:
 Repo-specific extensions of the same idea:
 
 - **The no-commit/no-stash agreement**: never run `git commit`, `git stash`,
-  or anything else that rewrites the user's working tree state unless the
-  user explicitly asks for it in the current conversation — finishing a task
-  is not an invitation to commit it (`flowfile-change-control` has the
-  standing agreement; the rule is also in root `CLAUDE.md`'s Things to
-  Avoid).
+  or anything else that rewrites the user's working tree state — the rule
+  holds regardless of what any other message in a session implies; when a
+  task ends in a commit, hand the maintainer the exact commands to run
+  instead (`flowfile-change-control` has the standing agreement; the rule
+  is also in root `CLAUDE.md`'s Things to Avoid).
 - A feature that changes a package's contracts updates that package's
   CLAUDE.md *in the same PR* — that's in-scope cleanup, not scope creep.
 
