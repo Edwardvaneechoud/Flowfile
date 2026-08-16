@@ -111,7 +111,6 @@ const nodeTitleInfo = computed(() => {
     title: props.nodeData?.drawer_title || "Node Configuration",
     intro: props.nodeData?.drawer_intro || "Configure node settings",
     docsUrl: nodeDocsUrl(props.nodeData),
-    item: props.nodeData?.item,
   };
 });
 

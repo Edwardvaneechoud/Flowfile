@@ -72,10 +72,6 @@ from flowfile_core.flowfile.code_generator.code_generator import (
     export_flow_to_flowframe,
     export_flow_to_polars,
 )
-from flowfile_core.flowfile.code_generator.plain_python import (
-    explain_node_in_plain_python,
-    export_flow_to_plain_python,
-)
 from flowfile_core.flowfile.code_generator.project_exporter import (
     export_flow_to_project,
     project_to_zip_bytes,
@@ -1011,35 +1007,6 @@ def get_generated_flowframe_code(flow_id: int) -> str:
         return export_flow_to_flowframe(flow)
     except UnsupportedNodeError as e:
         raise HTTPException(422, str(e)) from e
-
-
-@router.get("/editor/code_to_plain_python", tags=[], response_model=str)
-def get_generated_plain_python_code(flow_id: int) -> str:
-    """Generates a dependency-free Python script (lists, dicts and loops) for the flow.
-
-    Unlike the other export modes this one never raises for an unsupported node:
-    nodes it cannot express become exercise stubs, so one expression-engine node
-    doesn't cost the reader the rest of the script.
-    """
-    flow = flow_file_handler.get_flow(int(flow_id))
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
-    return export_flow_to_plain_python(flow)
-
-
-@router.get("/editor/explain_node", tags=[], response_model=output_model.NodeExplanation)
-def get_node_explanation(flow_id: int, node_id: int) -> output_model.NodeExplanation:
-    """Plain-English description of one node plus its plain-Python equivalent.
-
-    The snippet is generated from the node's actual settings, so it shows the
-    columns and operators the user configured rather than a generic example.
-    """
-    flow = flow_file_handler.get_flow(int(flow_id))
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
-    if flow.get_node(int(node_id)) is None:
-        raise HTTPException(404, "could not find the node")
-    return output_model.NodeExplanation(**explain_node_in_plain_python(flow, int(node_id)))
 
 
 def _export_project_manifest(flow_id: int) -> output_model.ProjectExportManifest:

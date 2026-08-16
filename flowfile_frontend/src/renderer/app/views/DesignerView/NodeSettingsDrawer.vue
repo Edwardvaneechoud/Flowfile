@@ -5,7 +5,6 @@
       :intro="nodeStore.drawerProps.intro"
       :docs-url="nodeStore.drawerProps.docsUrl"
     />
-    <NodeExplainer :node-id="nodeStore.node_id" />
     <div class="node-settings-body">
       <component
         :is="nodeStore.activeDrawerComponent"
@@ -26,7 +25,6 @@ import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
-import NodeExplainer from "../../components/nodes/baseNode/nodeExplainer.vue";
 
 interface DrawerComponentInstance {
   loadNodeData: (nodeId: number) => void;

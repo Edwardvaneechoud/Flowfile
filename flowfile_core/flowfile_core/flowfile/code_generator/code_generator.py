@@ -4,8 +4,6 @@ import io
 import keyword
 import re
 import tokenize
-from collections.abc import Callable
-from typing import Any
 
 import polars as pl
 from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code
@@ -287,6 +285,7 @@ class FlowGraphCodeConverter(
         from ``node_var_mapping`` so passthrough/remap handlers are honoured. A
         handler that emits nothing is recorded as a passthrough to its input.
         """
+        node_type = node.node_type
         settings = node.setting_input
         if isinstance(settings, input_schema.NodePromise):
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
@@ -297,11 +296,20 @@ class FlowGraphCodeConverter(
         input_vars = self._get_input_vars(node)
 
         start = len(self.code_lines)
-        handler = self._resolve_handler(node)
-        if handler is not None:
-            handler(settings, var_name, input_vars)
+        if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
+            self._handle_user_defined(node, var_name, input_vars)
         else:
-            self._handle_unsupported(node, var_name, input_vars)
+            handler = getattr(self, f"_handle_{node_type}", None)
+            if handler:
+                handler(settings, var_name, input_vars)
+            else:
+                self.unsupported_nodes.append(
+                    (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
+                )
+                self._add_comment(
+                    f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})"
+                )
+                self._add_comment("# This node type is not supported for code export")
         end = len(self.code_lines)
 
         effective_var = self.node_var_mapping[node.node_id]
@@ -315,27 +323,6 @@ class FlowGraphCodeConverter(
                 self._passthrough[node.node_id] = main_inputs[0].node_id
         else:
             self._node_spans.append((node, effective_var, start, end))
-
-    def _resolve_handler(self, node: FlowNode) -> Callable[[Any, str, dict[str, str]], None] | None:
-        """Resolve the emitter for a node, or None when this converter cannot emit it.
-
-        Subclasses that only cover part of the node catalogue narrow this so an
-        unsupported type reaches ``_handle_unsupported`` instead of silently
-        falling through to an inherited handler for the wrong framework.
-        """
-        settings = node.setting_input
-        if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
-            return lambda _settings, var_name, input_vars: self._handle_user_defined(node, var_name, input_vars)
-        return getattr(self, f"_handle_{node.node_type}", None)
-
-    def _handle_unsupported(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
-        """Record a node this converter cannot emit; the walk raises once at the end."""
-        node_type = node.node_type
-        self.unsupported_nodes.append(
-            (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
-        )
-        self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
-        self._add_comment("# This node type is not supported for code export")
 
     def _resolve_upstream_var(self, downstream: FlowNode, upstream_id: int, default: str) -> str:
         """Resolve the variable name for an upstream node, honouring its output handle.
@@ -968,7 +955,10 @@ class FlowGraphCodeConverter(
             lines.append("")
 
         lines.append(self._function_def_line())
-        lines.extend(self._docstring_lines())
+        lines.append('    """')
+        lines.append(f"    ETL Pipeline: {self.flow_graph.__name__}")
+        lines.append("    Generated from Flowfile")
+        lines.append('    """')
         lines.append("    ")
 
         for line in self._render_body():
@@ -981,14 +971,6 @@ class FlowGraphCodeConverter(
         self._append_module_epilogue(lines)
 
         return "\n".join(lines)
-
-    def _docstring_lines(self) -> list[str]:
-        return [
-            '    """',
-            f"    ETL Pipeline: {self.flow_graph.__name__}",
-            "    Generated from Flowfile",
-            '    """',
-        ]
 
     def _function_def_line(self) -> str:
         if not self._codegen_params:

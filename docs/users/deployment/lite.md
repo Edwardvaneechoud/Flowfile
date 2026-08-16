@@ -55,7 +55,7 @@ The script is the centre of the view and stays there. Step chips along the top m
 
 Underneath, **Data** shows the actual rows going in and coming out at the current step. Press **Show the data at each step** and the whole pipeline runs once in your browser, recording every intermediate table, so you can watch 1000 rows become 8 and read the loop that did it.
 
-The editor is **editable**, and Lite is the one place where the script can **run where you are reading it**. Change a loop, press ▶, and the code executes in the same in-browser Python that runs the canvas, against the same files, with the rows shown in **Output**. **Compare to canvas** checks your version against what the flow produced.
+The editor is **editable**, and the script **runs where you are reading it**. Change a loop, press ▶, and the code executes in the same in-browser Python that runs the canvas, against the same files, with the rows shown in **Output**. **Compare to canvas** checks your version against what the flow produced.
 
 At a wide enough window the panel docks beside the canvas rather than covering it, and the node you are reading about stays highlighted in the graph.
 
@@ -110,7 +110,7 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 | Catalog | Delta-backed, versioned, virtual tables | Lightweight (CSV-only) |
 | Secrets & connections manager | ✓ | ✗ |
 | Export flow to Python | ✓ | ✓ |
-| Plain-Python (learning) export | ✓ | ✓ |
+| Plain-Python (learning) export | ✗ | ✓ |
 | Step-by-step Python walkthrough with live data | ✗ | ✓ |
 | Edit + re-run the generated script | ✗ | ✓ |
 | Graphic Walker visualization | ✓ | ✓ |

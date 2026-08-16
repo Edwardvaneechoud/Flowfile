@@ -16,13 +16,6 @@
           Polars
         </button>
         <button
-          :class="['toggle-button', { active: codeMode === 'plain' }]"
-          title="No dataframe library — just lists, dicts and loops"
-          @click="setMode('plain')"
-        >
-          Plain Python
-        </button>
-        <button
           :class="['toggle-button', { active: codeMode === 'project' }]"
           @click="setMode('project')"
         >
@@ -47,20 +40,6 @@
         </svg>
         <span v-if="loading" class="spinner"></span>
         {{ loading ? "Loading..." : "Refresh" }}
-      </button>
-      <button class="action-btn" @click="copyCode">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-        </svg>
-        {{ copied ? "Copied ✓" : "Copy" }}
       </button>
       <button class="action-btn primary" @click="exportCode">
         <svg
@@ -95,17 +74,15 @@ import { EditorView } from "@codemirror/view";
 import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-import { copyToClipboard } from "../../../utils/clipboardUtils";
 
 // `active` = this is the visible tab. CodeMirror must not be created while its
 // pane is display:none, so the editor renders (and code fetches) only when active.
 const props = defineProps<{ active?: boolean }>();
 
-type CodeMode = "flowframe" | "polars" | "plain" | "project";
+type CodeMode = "flowframe" | "polars" | "project";
 
 const code = ref("");
 const loading = ref(false);
-const copied = ref(false);
 const codeMode = ref<CodeMode>("flowframe");
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
@@ -124,7 +101,6 @@ const extensions = [
 const endpointMap: Partial<Record<CodeMode, string>> = {
   flowframe: "/editor/code_to_flowframe",
   polars: "/editor/code_to_polars",
-  plain: "/editor/code_to_plain_python",
 };
 
 const fetchCode = async () => {
@@ -184,22 +160,12 @@ const refreshCode = () => {
   }
 };
 
-const copyCode = async () => {
-  if (!code.value) return;
-  const ok = await copyToClipboard(code.value);
-  if (!ok) return;
-  copied.value = true;
-  setTimeout(() => {
-    copied.value = false;
-  }, 1500);
-};
-
 const exportCode = () => {
   const blob = new Blob([code.value], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = codeMode.value === "plain" ? "pipeline_plain_python.py" : "pipeline_code.py";
+  a.download = "pipeline_code.py";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
