@@ -13,6 +13,7 @@ import pytest
 
 import flowfile_frame as ff
 from flowfile_core.schemas.input_schema import NodePolarsCode
+from shared.path_utils import ensure_glob_pattern
 
 # Helpers
 
@@ -155,10 +156,12 @@ def test_directory_scan_mode_requires_glob(tmp_path):
 def test_directory_fallback_emits_glob_and_file_paths(tmp_path):
     """A non-native option (n_rows) routes to generated polars code, which must still get a real
     glob for a bare directory plus the include_file_paths kwarg."""
-    frame = ff.read_csv(str(_csv_dir(tmp_path)), n_rows=5, include_file_paths="src")
+    directory = str(_csv_dir(tmp_path))
+    frame = ff.read_csv(directory, n_rows=5, include_file_paths="src")
 
     code = _polars_code(frame)
-    assert f"**{os.sep}*.csv" in code
+    # repr() because that is how the builder embeds the source (doubles Windows backslashes).
+    assert repr(ensure_glob_pattern(directory, "csv")) in code
     assert "include_file_paths='src'" in code
     assert frame.collect().columns == ["a", "b", "src"]
 

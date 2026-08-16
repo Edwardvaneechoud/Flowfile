@@ -191,7 +191,9 @@ def test_include_file_paths_omitted_when_unset(tmp_path, export_func):
     directory = make_parquet_dir(tmp_path)
     flow = add_read(create_flow(), str(directory), "parquet", input_schema.InputParquetTable())
 
-    assert "include_file_paths" not in export_func(flow)
+    # The kwarg form, not the bare word: pytest's tmp dir is named after this test and
+    # would otherwise match inside the emitted path.
+    assert "include_file_paths=" not in export_func(flow)
 
 
 def test_polars_export_expands_the_pattern_itself(tmp_path):
@@ -233,7 +235,7 @@ def test_single_file_emission_is_unchanged(tmp_path, export_func, file_type):
 
     code = export_func(flow)
     assert "scan_mode" not in code
-    assert "include_file_paths" not in code
+    assert "include_file_paths=" not in code
     assert "glob.glob(" not in code
     assert_matches_flow(code, flow)
 

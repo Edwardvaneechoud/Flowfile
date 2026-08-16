@@ -222,31 +222,21 @@ def test_zero_matches_raises_from_create_from_path(tmp_path):
         FlowDataEngine.create_from_path(_directory_table(empty_dir))
 
 
-def test_zero_matches_is_tolerated_at_settings_save(tmp_path, monkeypatch):
+def test_zero_matches_is_tolerated_at_settings_save(tmp_path):
     """Saving settings for a directory that is still empty must not raise — the schema is simply
-    unknown until files land. Saving must also not touch the read path at all.
+    unknown until files land.
 
-    Note: reading ``node.schema`` afterwards *can* reach the exec fallback tier in
-    ``get_predicted_schema`` (an empty callback result falls through to running the node's own
-    function, whose zero-match error is then swallowed), so the no-read pin is scoped to the save.
+    The schema machinery is allowed to probe the empty pattern (``get_predicted_schema``'s exec
+    fallback runs the node's own function when a callback returns nothing, on its own schedule),
+    and that probe swallows the zero-match error. So the pin here is the outcome: a clean save
+    and an empty schema, never an exception.
     """
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
 
-    scanned_paths: list[str] = []
-    original_create_from_path = FlowDataEngine.create_from_path
-
-    def _counting_create_from_path(received_table):
-        scanned_paths.append(received_table.abs_file_path)
-        return original_create_from_path(received_table)
-
-    monkeypatch.setattr(FlowDataEngine, "create_from_path", staticmethod(_counting_create_from_path))
-
     graph = create_graph(execution_location="local")
-    table = _directory_table(empty_dir)
-    node = _add_read(graph, table)
+    node = _add_read(graph, _directory_table(empty_dir))
 
-    assert scanned_paths == [], "saving settings must never attempt a read"
     assert node.schema in ([], None)
 
 

@@ -46,6 +46,26 @@ def _scan_extra_kwargs(received_table: input_schema.ReceivedTable) -> dict:
     return {}
 
 
+def _assert_uniform_columns(matches: list[str], scan_single) -> None:
+    """Fail a directory scan up front when its files disagree on column names.
+
+    Polars only surfaces parquet/ipc schema divergence when the divergent file is physically
+    read, which a lazy run may never do — the run would "succeed" and poison every later
+    collect. Checking the (cheap, metadata-only) per-file schemas here turns that into an
+    attributable build-time error. csv needs no equivalent: ``pl.scan_csv`` resolves the
+    multi-file schema eagerly and raises on its own. Name-set only — dtype unification is
+    left to polars, mirroring the csv widening behaviour.
+    """
+    expected = scan_single(matches[0]).collect_schema().names()
+    for path in matches[1:]:
+        names = scan_single(path).collect_schema().names()
+        if set(names) != set(expected):
+            raise ValueError(
+                f"Directory scan column mismatch: '{path}' has columns {sorted(names)}, "
+                f"but '{matches[0]}' has {sorted(expected)}."
+            )
+
+
 def create_from_json(received_table: input_schema.ReceivedTable):
     f = received_table.abs_file_path
     low_mem = _low_memory_scan(received_table, 10)
@@ -226,6 +246,8 @@ def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.L
         raise ValueError("Received table settings are not of type InputParquetTable")
     low_mem = _low_memory_scan(received_table, 2)
     source = _resolve_scan_source(received_table)
+    if isinstance(source, list):
+        _assert_uniform_columns(source, pl.scan_parquet)
     return pl.scan_parquet(source=source, low_memory=low_mem, **_scan_extra_kwargs(received_table))
 
 
@@ -233,6 +255,8 @@ def create_from_path_ipc(received_table: input_schema.ReceivedTable) -> pl.LazyF
     if not isinstance(received_table.table_settings, input_schema.InputIpcTable):
         raise ValueError("Received table settings are not of type InputIpcTable")
     source = _resolve_scan_source(received_table)
+    if isinstance(source, list):
+        _assert_uniform_columns(source, pl.scan_ipc)
     return pl.scan_ipc(source, **_scan_extra_kwargs(received_table))
 
 
