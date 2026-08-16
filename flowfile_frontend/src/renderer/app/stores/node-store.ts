@@ -102,6 +102,16 @@ export const useNodeStore = defineStore("node", {
 
   actions: {
     // ========== Node Data Management ==========
+    /**
+     * Fetch a node's data, serving the single-slot cache when it already holds
+     * this exact node's payload for the current flow.
+     *
+     * The cache is keyed on the payload actually stored (`nodeData.node_id` +
+     * `nodeDataFlowId`), never on `this.nodeId` — that field tracks the
+     * *selected* node (the open settings drawer) and says nothing about what
+     * the slot holds. Gating on the selection used to let a fetch for node B
+     * poison later cached reads for node A while A stayed selected.
+     */
     async getNodeData(
       nodeId: number,
       useCache = true,
@@ -110,11 +120,14 @@ export const useNodeStore = defineStore("node", {
       const flowStore = useFlowStore();
       const flowId = flowStore.flowId;
 
-      if (this.nodeId === nodeId && this.nodeDataFlowId === flowId && useCache) {
-        if (this.nodeData) {
-          this.isLoaded = true;
-          return this.nodeData;
-        }
+      if (
+        useCache &&
+        this.nodeData &&
+        Number(this.nodeData.node_id) === nodeId &&
+        this.nodeDataFlowId === flowId
+      ) {
+        this.isLoaded = true;
+        return this.nodeData;
       }
 
       try {

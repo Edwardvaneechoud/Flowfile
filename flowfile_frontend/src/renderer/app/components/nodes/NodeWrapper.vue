@@ -1,12 +1,7 @@
 <!-- CustomNode.vue -->
 <template>
   <div v-bind="$attrs">
-    <div
-      class="custom-node-header"
-      data="description_display"
-      @contextmenu="onTitleClick"
-      @click.stop
-    >
+    <div class="custom-node-header" data="description_display" @dblclick="onTitleClick" @click.stop>
       <div>
         <div v-if="!editMode" class="description-display" :style="descriptionTextStyle" @click.stop>
           <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
@@ -48,7 +43,9 @@
         </div>
       </div>
     </div>
-    <div ref="nodeEl" class="custom-node" @contextmenu.prevent="showContextMenu">
+    <!-- Right-click bubbles to VueFlow's node handler → the canvas ContextMenu
+         (Canvas.vue @node-context-menu). This component no longer owns a menu. -->
+    <div ref="nodeEl" class="custom-node">
       <generic-node
         v-if="data.nodeTemplate"
         :node-id="data.id"
@@ -107,227 +104,29 @@
           {{ output.label }}
         </span>
       </div>
-
-      <!-- Teleport Context Menu to body -->
-      <Teleport v-if="showMenu" to="body">
-        <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
-          <div class="context-menu-item" @click="openSettings">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="3"></circle>
-              <path
-                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-              ></path>
-            </svg>
-            <span>Edit</span>
-          </div>
-          <div class="context-menu-item" @click="viewData">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="3" y1="9" x2="21" y2="9"></line>
-              <line x1="3" y1="15" x2="21" y2="15"></line>
-              <line x1="9" y1="3" x2="9" y2="21"></line>
-            </svg>
-            <span>View Data</span>
-          </div>
-          <div v-if="isRunFlowNode" class="context-menu-item" @click="openTargetFlow">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-              <polyline points="15 3 21 3 21 9"></polyline>
-              <line x1="10" y1="14" x2="21" y2="3"></line>
-            </svg>
-            <span>Go to Flow</span>
-          </div>
-          <div class="context-menu-item" @click="suggestNextNode">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M5 12h14"></path>
-              <path d="m12 5 7 7-7 7"></path>
-            </svg>
-            <span>Suggest next node…</span>
-          </div>
-          <div class="context-menu-item" @click="openNodeDocs">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <path d="M14 2v6h6"></path>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <line x1="10" y1="9" x2="8" y2="9"></line>
-            </svg>
-            <span>Read more</span>
-          </div>
-          <div class="context-menu-divider"></div>
-          <div class="context-menu-item" @click="runNode">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-            <span>{{ isRunning ? "Running..." : "Run Now" }}</span>
-          </div>
-          <div class="context-menu-item" @click="toggleCache">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-              <path d="M3 3v5h5"></path>
-              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
-              <path d="M16 21h5v-5"></path>
-            </svg>
-            <span>{{ isCached ? "Disable Cache" : "Enable Cache" }}</span>
-          </div>
-          <div class="context-menu-divider"></div>
-          <div class="context-menu-item" @click="copyNode">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            <span>Copy</span>
-          </div>
-          <div class="context-menu-item context-menu-item-danger" @click="deleteNode">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M3 6h18"></path>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-            <span>Delete</span>
-          </div>
-        </div>
-      </Teleport>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-// TODO(refactor): ~709 LOC. Plan to extract:
-//   - NodeContextMenu.vue (~lines 92-161, with positioning at ~263-283)
+// TODO(refactor): Plan to extract:
 //   - NodeDescriptionEditor.vue (~lines 11-48)
 //   - NodeHandles.vue: handle rendering loops (~lines 64-89)
-import { Handle, useNode } from "@vue-flow/core";
+// (The per-node context menu moved to the canvas ContextMenu —
+//  Canvas.vue @node-context-menu + composables/useContextMenu.)
+import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
-import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
-import { useFlowStore } from "../../stores/flow-store";
-import { useEditorStore } from "../../stores/editor-store";
-import { useAiGhostNodeStore } from "../../stores/ai-ghost-node-store";
-import { VueFlowStore } from "@vue-flow/core";
-import {
-  copySingleNodeToBuffer,
-  writeSentinelToOsClipboard,
-} from "../../composables/useFlowClipboard";
-import { useFlowExecution } from "../../composables/useFlowExecution";
-import { CatalogApi } from "../../api/catalog.api";
-import { nodeDocsUrl } from "../../views/DesignerView/nodeDocsLinks";
-import { desktop } from "../../../lib/desktop";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
-import type { NodeTemplate, NodeHandle, RunFlowReference } from "../../types";
+import type { NodeTemplate, NodeHandle } from "../../types";
 
 const nodeStore = useNodeStore();
-const flowStore = useFlowStore();
-const editorStore = useEditorStore();
-const ghostStore = useAiGhostNodeStore();
-// This component is the registered "custom-node", so VueFlow injects its node
-// context — read the node's own live position from it rather than a lookup.
-const currentVueFlowNode = useNode();
 const nodeEl = ref<HTMLElement | null>(null);
-const menuEl = ref<HTMLElement | null>(null);
-
-// Use the flow execution composable with persistent polling.
-// Getter form (not a snapshot number) so Save As doesn't leave the node
-// polling against the old flow id.
-const { triggerNodeFetch, isPollingActive } = useFlowExecution(
-  () => flowStore.flowId,
-  { interval: 2000, enabled: true },
-  {
-    persistPolling: true,
-    pollingKey: `node_wrapper_${flowStore.flowId}`,
-  },
-);
 
 const mouseX = ref<number>(0);
 const mouseY = ref<number>(0);
 const editMode = ref<boolean>(false);
-const showMenu = ref<boolean>(false);
-const contextMenuX = ref<number>(0);
-const contextMenuY = ref<number>(0);
-const isCached = ref<boolean>(false);
-const isRunning = ref<boolean>(false);
 
 const CHAR_LIMIT = 100;
 
@@ -368,218 +167,11 @@ const parameterInput = computed(() =>
   props.data.inputs.find((input) => input.kind === "parameter"),
 );
 
-const isRunFlowNode = computed(() => props.data.nodeTemplate?.item === "run_flow");
-
 const onTitleClick = (event: MouseEvent) => {
   toggleEditMode(true);
   mouseX.value = event.clientX;
   mouseY.value = event.clientY;
 };
-
-const showContextMenu = async (event: MouseEvent) => {
-  event.preventDefault();
-  event.stopPropagation();
-
-  if (editMode.value) {
-    toggleEditMode(false);
-  }
-
-  contextMenuX.value = event.clientX;
-  contextMenuY.value = event.clientY;
-  showMenu.value = true;
-
-  try {
-    const nodeData = await nodeStore.getNodeData(props.data.id, true);
-    if (nodeData && nodeData.setting_input) {
-      isCached.value = nodeData.setting_input.cache_results || false;
-    }
-  } catch (error) {
-    console.error("Error loading node data:", error);
-  }
-
-  setTimeout(() => {
-    window.addEventListener("click", handleClickOutsideMenu);
-  }, 0);
-
-  nextTick(() => {
-    updateMenuPosition();
-  });
-};
-
-const updateMenuPosition = () => {
-  if (!menuEl.value) return;
-
-  const menuRect = menuEl.value.getBoundingClientRect();
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-
-  let left = contextMenuX.value;
-  let top = contextMenuY.value;
-
-  if (left + menuRect.width > viewportWidth - 10) {
-    left = viewportWidth - menuRect.width - 10;
-  }
-
-  if (top + menuRect.height > viewportHeight - 10) {
-    top = viewportHeight - menuRect.height - 10;
-  }
-
-  contextMenuX.value = left;
-  contextMenuY.value = top;
-};
-
-const handleClickOutsideMenu = (event: MouseEvent) => {
-  if (menuEl.value && !menuEl.value.contains(event.target as Node)) {
-    closeContextMenu();
-  }
-};
-
-const handleWindowResize = () => {
-  if (showMenu.value) {
-    updateMenuPosition();
-  }
-};
-
-const closeContextMenu = () => {
-  showMenu.value = false;
-  window.removeEventListener("click", handleClickOutsideMenu);
-};
-
-const openSettings = () => {
-  editorStore.requestNodeSettings(props.data.id);
-  closeContextMenu();
-};
-
-const viewData = () => {
-  editorStore.requestNodeData(props.data.id);
-  closeContextMenu();
-};
-
-const suggestNextNode = () => {
-  closeContextMenu();
-  const flowId = flowStore.flowId;
-  if (flowId === null) return;
-  // Popover anchors at the menu's screen position; the materialised node is
-  // placed relative to this node's own flow-coords position.
-  const pos = currentVueFlowNode.node.computedPosition ??
-    currentVueFlowNode.node.position ?? { x: 0, y: 0 };
-  ghostStore.beginIntent(
-    {
-      upstreamNodeId: props.data.id,
-      screenX: contextMenuX.value,
-      screenY: contextMenuY.value,
-      nodeX: pos.x,
-      nodeY: pos.y,
-    },
-    flowId,
-  );
-};
-
-// nodeTemplate is optional (a stale copy/paste blob can lack it); nodeDocsUrl
-// falls back to the node reference index rather than failing.
-const openNodeDocs = () => {
-  closeContextMenu();
-  void desktop.openExternal(nodeDocsUrl(props.data.nodeTemplate));
-};
-
-const openTargetFlow = async () => {
-  closeContextMenu();
-  try {
-    const nodeData = await nodeStore.getNodeData(props.data.id, false);
-    const flowRef = nodeData?.setting_input?.flow_reference as RunFlowReference | undefined;
-    const registrationId = flowRef?.registration_id ?? 0;
-    let flowPath = flowRef?.flow_path ?? null;
-    let name: string | undefined;
-    if (registrationId > 0) {
-      try {
-        const reg = await CatalogApi.getFlow(registrationId);
-        flowPath = reg?.flow_path ?? flowPath;
-        name = reg?.name;
-      } catch {
-        // Registration lookup failed (e.g. deleted) — fall back to stored path.
-      }
-    }
-    if (!flowPath) {
-      ElMessage.warning("No target flow is selected for this node.");
-      return;
-    }
-    editorStore.requestOpenFlow(flowPath, name);
-  } catch (error) {
-    console.error("Error opening target flow:", error);
-  }
-};
-
-const copyNode = () => {
-  // Shared writer with Canvas's copy path; this one knows the live description.
-  const sentinel = copySingleNodeToBuffer(props.data, nodeStore.flow_id, description.value);
-  void writeSentinelToOsClipboard(sentinel);
-  closeContextMenu();
-};
-
-const deleteNode = () => {
-  if (nodeStore.vueFlowInstance) {
-    const vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
-    vueFlow.removeNodes(props.data.id.toLocaleString(), true);
-  }
-  closeContextMenu();
-};
-
-const runNode = async () => {
-  closeContextMenu();
-
-  if (isPollingActive(`node_${props.data.id}`)) {
-    return;
-  }
-
-  isRunning.value = true;
-  try {
-    await triggerNodeFetch(props.data.id);
-
-    const checkInterval = setInterval(() => {
-      if (!isPollingActive(`node_${props.data.id}`)) {
-        clearInterval(checkInterval);
-        isRunning.value = false;
-      }
-    }, 1000);
-
-    setTimeout(() => {
-      clearInterval(checkInterval);
-      isRunning.value = false;
-    }, 60000);
-  } catch (error) {
-    console.error("Error running node:", error);
-    isRunning.value = false;
-  }
-};
-
-const toggleCache = async () => {
-  try {
-    const nodeData = await nodeStore.getNodeData(props.data.id, false);
-    if (nodeData && nodeData.setting_input) {
-      const newCacheValue = !nodeData.setting_input.cache_results;
-      nodeData.setting_input.cache_results = newCacheValue;
-      isCached.value = newCacheValue;
-      await nodeStore.updateSettingsDirectly(nodeData.setting_input);
-    }
-  } catch (error) {
-    console.error("Error toggling cache:", error);
-  }
-  closeContextMenu();
-};
-
-onUnmounted(() => {
-  window.removeEventListener("click", handleClickOutsideMenu);
-  window.removeEventListener("resize", handleWindowResize);
-});
-
-const contextMenuStyle = computed(() => {
-  return {
-    position: "fixed" as const,
-    zIndex: 10000,
-    top: `${contextMenuY.value}px`,
-    left: `${contextMenuX.value}px`,
-  };
-});
 
 const descriptionTextStyle = computed(() => {
   const textLength = description.value.length;
@@ -609,14 +201,22 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
+// Baseline captured on entering edit mode: leaving without a change must not
+// POST — an untouched auto-generated description would otherwise be pinned as
+// a user description and stop regenerating.
+let descriptionAtEditStart = "";
+
 const toggleEditMode = (state: boolean) => {
+  if (state === editMode.value) return;
   editMode.value = state;
   if (state) {
+    descriptionAtEditStart = description.value;
     window.addEventListener("click", handleClickOutside);
-  }
-  if (!state) {
+  } else {
     window.removeEventListener("click", handleClickOutside);
-    nodeStore.setNodeDescription(props.data.id, description.value);
+    if (description.value !== descriptionAtEditStart) {
+      nodeStore.setNodeDescription(props.data.id, description.value);
+    }
   }
 };
 
@@ -689,24 +289,28 @@ function getHandleStyle(index: number, total: number) {
   }
 }
 
+// Registered at setup level (not inside onMounted's async body) so Vue ties it
+// to the component's effect scope and stops it on unmount.
+watch(
+  () => {
+    const flowId = nodeStore.flow_id;
+    const nodeId = props.data.id;
+    return nodeStore.nodeDescriptions[flowId]?.[nodeId];
+  },
+  (newEntry) => {
+    if (newEntry !== undefined) {
+      description.value = newEntry.description;
+    }
+  },
+);
+
 onMounted(async () => {
   await nextTick();
   await getNodeDescription();
+});
 
-  window.addEventListener("resize", handleWindowResize);
-
-  watch(
-    () => {
-      const flowId = nodeStore.flow_id;
-      const nodeId = props.data.id;
-      return nodeStore.nodeDescriptions[flowId]?.[nodeId];
-    },
-    (newEntry) => {
-      if (newEntry !== undefined) {
-        description.value = newEntry.description;
-      }
-    },
-  );
+onUnmounted(() => {
+  window.removeEventListener("click", handleClickOutside);
 });
 </script>
 
@@ -860,59 +464,5 @@ onMounted(async () => {
 
 .handle-label--output {
   right: 13px;
-}
-
-.context-menu {
-  position: fixed;
-  z-index: var(--z-index-canvas-context-menu, 100002);
-  background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-  box-shadow: var(--shadow-lg);
-  padding: 4px 0;
-  min-width: 120px;
-  font-family: var(--font-family-base);
-}
-
-.context-menu-item {
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: background-color 0.2s;
-  font-family: var(--font-family-base);
-  color: var(--color-text-primary);
-}
-
-.context-menu-item:hover {
-  background-color: var(--color-background-hover);
-}
-
-.context-menu-item svg {
-  color: var(--color-text-secondary);
-}
-
-.context-menu-item span {
-  font-family: var(--font-family-base);
-}
-
-.context-menu-divider {
-  height: 1px;
-  background-color: var(--color-border-primary);
-  margin: 4px 0;
-}
-
-.context-menu-item-danger {
-  color: #dc3545;
-}
-
-.context-menu-item-danger:hover {
-  background-color: rgba(220, 53, 69, 0.1);
-}
-
-.context-menu-item-danger svg {
-  color: #dc3545;
 }
 </style>
