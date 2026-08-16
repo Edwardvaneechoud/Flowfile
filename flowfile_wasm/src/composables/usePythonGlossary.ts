@@ -7,9 +7,9 @@
  * generator actually emits, so there is nothing here you will not meet.
  */
 
-import { hoverTooltip, tooltips } from '@codemirror/view'
+import { hoverTooltip, showTooltip, tooltips, type Tooltip } from '@codemirror/view'
 import type { EditorView } from '@codemirror/view'
-import type { Extension } from '@codemirror/state'
+import { StateField, type EditorState, type Extension } from '@codemirror/state'
 
 export interface GlossaryEntry {
   /** What it is, in one line. */
@@ -19,6 +19,59 @@ export interface GlossaryEntry {
 }
 
 export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
+  // --- keywords and structure ---
+  def: {
+    summary: 'Defines a function: a named block you can call later. Nothing runs until it is called.',
+    example: 'def run_etl_pipeline():'
+  },
+  return: { summary: 'Hands a value back to whoever called the function, and ends it.' },
+  for: {
+    summary: 'Walks a sequence one item at a time, running the indented block for each.',
+    example: 'for row in rows:'
+  },
+  if: { summary: 'Runs the indented block only when the condition is true.' },
+  else: { summary: 'The branch taken when the if (or the loop) did not fire.' },
+  in: {
+    summary: 'Two jobs: "walk this sequence" in a for loop, and "is this a member?" as a test.',
+    example: 'if key in seen:'
+  },
+  not: { summary: 'Flips a truth value. `not matches` is true when the list is empty.' },
+  and: { summary: 'True when both sides are. Python stops at the first false side, so the left test can guard the right one.' },
+  or: { summary: 'True when either side is. `rows or []` also means "rows, unless it is empty/None".' },
+  is: {
+    summary: 'Identity test. `x is None` is THE way to check for a missing value — == can lie.',
+    example: 'row["age"] is not None'
+  },
+  import: { summary: 'Loads a module so its names can be used, written once at the top of the file.' },
+  with: {
+    summary: 'Runs a block and guarantees the cleanup after it — here: the file is closed even if something raises.',
+    example: 'with open(path) as handle:'
+  },
+  as: { summary: 'Names the thing just introduced — the opened file in "with open(...) as handle".' },
+  try: { summary: 'Attempt the block; if it raises, jump to the except instead of crashing.' },
+  except: {
+    summary: 'What to do when the try block raised. Naming an error type catches only that kind.',
+    example: 'except ValueError:'
+  },
+  pass: { summary: 'Do nothing. A placeholder where Python demands a statement.' },
+  raise: {
+    summary: 'Throws an error on purpose, stopping the function right here.',
+    example: 'raise NotImplementedError("...")'
+  },
+  NotImplementedError: {
+    summary: 'The error meaning "this part is not written yet". In this script: your exercise — replace the raise with your own loop.'
+  },
+  ValueError: { summary: 'Raised when the type is right but the value is not — int("4.2") for instance.' },
+  True: { summary: 'The boolean yes. Capitalised — true is a NameError.' },
+  False: { summary: 'The boolean no. Note False < True, which is why True/False flags can be sorted.' },
+  __name__: {
+    summary: 'The module\'s name — "__main__" when the file is run directly, so this guard means "only when run as a script, not when imported".',
+    example: 'if __name__ == "__main__":'
+  },
+  __main__: {
+    summary: 'The name Python gives the file you actually ran. The guard around the bottom of this script tests for it.'
+  },
+
   // --- the shapes this script is built from ---
   sorted: {
     summary: 'Returns a NEW list in order. Give it key= to say what to order by.',
@@ -87,6 +140,14 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
   int: { summary: 'The whole-number type. int("42") converts; int("4.2") raises ValueError.' },
   float: { summary: 'The decimal-number type. float("4.2") converts.' },
   bool: { summary: 'True or False. Note that bool is a kind of int, so check it before int in a type test.' },
+  list: { summary: 'An ordered sequence. list(x) also copies — handy before sorting in place.' },
+  range: { summary: 'The numbers 0, 1, 2, … up to (not including) the end you give it.', example: 'range(3)  ->  0, 1, 2' },
+  any: {
+    summary: 'True if at least one element is truthy. Empty in, False out.',
+    example: 'any(value is None for value in key)'
+  },
+  all: { summary: 'True only if every element is truthy. Empty in, True out.' },
+  print: { summary: 'Writes a value to the terminal. How the bottom of this script shows its rows.' },
 
   // --- modules ---
   csv: { summary: 'The standard library CSV reader/writer. Handles the quoting rules you would get wrong by hand.' },
@@ -96,6 +157,16 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
   median: { summary: 'The middle value once sorted. Raises on an empty sequence, hence the wrapper.' },
   startswith: { summary: 'Literal prefix test on a string — not a regex.' },
   endswith: { summary: 'Literal suffix test on a string.' },
+  strip: { summary: 'A copy of the string with the whitespace shaved off both ends.' },
+  lower: { summary: 'A copy of the string in lowercase — the usual first step of a case-insensitive compare.' },
+  reader: { summary: 'csv.reader walks a CSV file handing you each row as a list of strings.' },
+  DictWriter: {
+    summary: 'csv writer that takes each row as a dict. fieldnames fixes the column order, so header and rows cannot drift apart.',
+    example: 'csv.DictWriter(handle, fieldnames=[...])'
+  },
+  writeheader: { summary: 'Writes the header row, taken from the fieldnames the writer was given.' },
+  writerows: { summary: 'Writes every row in the list, one CSV line each.' },
+  fieldnames: { summary: 'The column names the CSV writer will use, in the order they should appear.' },
   join: {
     summary: 'Glues a sequence of strings together with this string between them.',
     example: '",".join(["a", "b"])  ->  "a,b"'
@@ -143,40 +214,77 @@ const editorSpace = (view: EditorView) => ({
   right: window.innerWidth
 })
 
-/** A CodeMirror extension that explains a known identifier on hover. */
+/** Hover never fires on a touch screen, so there the glossary rides the cursor instead. */
+export const COARSE_POINTER =
+  typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+
+function glossaryDom(word: string, entry: GlossaryEntry): HTMLElement {
+  const dom = document.createElement('div')
+  dom.className = 'cm-glossary'
+  const name = document.createElement('div')
+  name.className = 'cm-glossary-name'
+  name.textContent = word
+  const summary = document.createElement('div')
+  summary.className = 'cm-glossary-summary'
+  summary.textContent = entry.summary
+  dom.append(name, summary)
+  if (entry.example) {
+    const example = document.createElement('pre')
+    example.className = 'cm-glossary-example'
+    example.textContent = entry.example
+    dom.append(example)
+  }
+  return dom
+}
+
+function entryAt(state: EditorState, pos: number): { word: string; from: number; to: number; entry: GlossaryEntry } | null {
+  const line = state.doc.lineAt(pos)
+  const hit = wordAt(line.text, pos - line.from)
+  if (!hit) return null
+  // hasOwnProperty guard: a plain object lookup would also "find" inherited
+  // names like constructor or toString in a user-edited script.
+  if (!Object.prototype.hasOwnProperty.call(PYTHON_GLOSSARY, hit.word)) return null
+  return { word: hit.word, from: line.from + hit.from, to: line.from + hit.to, entry: PYTHON_GLOSSARY[hit.word] }
+}
+
+// Tapping a word puts the cursor in it; that is the touch equivalent of hover.
+const cursorGlossary = StateField.define<Tooltip | null>({
+  create: state => cursorTooltipAt(state),
+  update(value, tr) {
+    if (!tr.docChanged && !tr.selection) return value
+    return cursorTooltipAt(tr.state)
+  },
+  provide: field => showTooltip.from(field)
+})
+
+function cursorTooltipAt(state: EditorState): Tooltip | null {
+  const range = state.selection.main
+  if (!range.empty) return null
+  const hit = entryAt(state, Math.min(range.head, Math.max(0, state.doc.length - 1)))
+  if (!hit) return null
+  return {
+    pos: hit.from,
+    end: hit.to,
+    above: true,
+    create: () => ({ dom: glossaryDom(hit.word, hit.entry) })
+  }
+}
+
+/** A CodeMirror extension that explains a known identifier on hover — or, on touch devices, at the tap. */
 export function glossaryTooltip(): Extension {
   const hover = hoverTooltip((view, pos) => {
-    const line = view.state.doc.lineAt(pos)
-    const hit = wordAt(line.text, pos - line.from)
+    const hit = entryAt(view.state, pos)
     if (!hit) return null
-    const entry = PYTHON_GLOSSARY[hit.word]
-    if (!entry) return null
-
     return {
-      pos: line.from + hit.from,
-      end: line.from + hit.to,
+      pos: hit.from,
+      end: hit.to,
       above: true,
-      create() {
-        const dom = document.createElement('div')
-        dom.className = 'cm-glossary'
-        const name = document.createElement('div')
-        name.className = 'cm-glossary-name'
-        name.textContent = hit.word
-        const summary = document.createElement('div')
-        summary.className = 'cm-glossary-summary'
-        summary.textContent = entry.summary
-        dom.append(name, summary)
-        if (entry.example) {
-          const example = document.createElement('pre')
-          example.className = 'cm-glossary-example'
-          example.textContent = entry.example
-          dom.append(example)
-        }
-        return { dom }
-      }
+      create: () => ({ dom: glossaryDom(hit.word, hit.entry) })
     }
   })
-  return [tooltips({ tooltipSpace: editorSpace }), hover]
+  const extensions: Extension[] = [tooltips({ tooltipSpace: editorSpace }), hover]
+  if (COARSE_POINTER) extensions.push(cursorGlossary)
+  return extensions
 }
 
 /** Identifiers the glossary can explain — used to tell the reader it is there. */

@@ -14,8 +14,10 @@ import {
   CONCEPTS,
   CONCEPT_FOR_NODE,
   HELPER_NAMES,
-  PLAIN_PYTHON_NODE_TYPES
+  PLAIN_PYTHON_NODE_TYPES,
+  type PlainStep
 } from '../../src/composables/usePlainPythonGeneration'
+import { instrumentScript } from '../../src/composables/usePlainTrace'
 import { PYTHON_GLOSSARY } from '../../src/composables/usePythonGlossary'
 import type { FlowNode, FlowEdge } from '../../src/types'
 
@@ -278,5 +280,76 @@ describe('trace build', () => {
   it('keeps the trace script free of Polars, like the script it mirrors', () => {
     const { traceScript } = buildWalkthrough(flowOf([SOURCE, FILTER, GROUP]))
     expect(traceScript).not.toMatch(/\bimport polars\b|\bpl\./)
+  })
+})
+
+/**
+ * The browser no longer runs traceScript: it instruments whatever is in the
+ * editor via instrumentScript() and execs it with __steps__ pre-seeded in the
+ * namespace — replayed here byte-for-byte against real CPython.
+ */
+function runInstrumentedBuffer(buffer: string, walk: { steps: PlainStep[] }, label: string): Record<string, unknown[]> {
+  const instrumented = instrumentScript(
+    buffer,
+    walk.steps.map(step => ({ fromLine: step.lineStart, toLine: step.lineEnd, varName: step.varName }))
+  )
+  const scriptPath = join(workdir, `${label}-buffer.py`)
+  writeFileSync(scriptPath, instrumented)
+  const harnessPath = join(workdir, `${label}-harness.py`)
+  writeFileSync(
+    harnessPath,
+    [
+      'import json',
+      `_src = open(${JSON.stringify(scriptPath)}).read()`,
+      '_ns = {"__steps__": {}}',
+      'try:',
+      '    exec(compile(_src, "pipeline.py", "exec"), _ns)',
+      '    _ns["run_etl_pipeline"]()',
+      'except Exception:',
+      '    pass',
+      'print("@@@" + json.dumps(_ns["__steps__"], default=str))'
+    ].join('\n')
+  )
+  const output = execFileSync(python!, [harnessPath], { encoding: 'utf-8', timeout: 120_000 })
+  return JSON.parse(output.slice(output.lastIndexOf('@@@') + 3))
+}
+
+describe('instrumented-buffer trace (the browser path)', () => {
+  it('captures the same tables from the generated buffer as the reference trace', ctx => {
+    if (!python) ctx.skip('no CPython found (set FLOWFILE_TEST_PYTHON)')
+    const walk = buildWalkthrough(flowOf([SOURCE, FILTER, GROUP]))
+    const reference = runTrace(walk.traceScript, 'ref')
+    const buffered = runInstrumentedBuffer(walk.script, walk, 'same')
+    expect(buffered).toEqual(reference)
+  })
+
+  it('traces the learner\'s SOLVED exercise: the stub filled in, downstream steps get data', ctx => {
+    if (!python) ctx.skip('no CPython found (set FLOWFILE_TEST_PYTHON)')
+    const formula = node(3, 'formula', { function: { field: { name: 'doubled' }, function: '[revenue] * 2' } }, [2])
+    const walk = buildWalkthrough(flowOf([SOURCE, FILTER, formula, { ...GROUP, id: 4, inputIds: [3] }]))
+
+    // The learner replaces the raise with a working loop — same line count, so
+    // the step ranges the highlight tracks still hold.
+    const solved = walk.script.replace(
+      /^(\s*)raise NotImplementedError\(.*\)$/m,
+      '$1return [{**row, "doubled": row["revenue"] * 2} for row in rows]'
+    )
+    expect(solved).not.toBe(walk.script)
+
+    const captured = runInstrumentedBuffer(solved, walk, 'solved')
+    expect(captured.computed).toHaveLength(2)
+    expect((captured.computed as any)[0].doubled).toBe(400)
+    // The step AFTER the solved exercise now has data too — the whole point.
+    expect(captured.grouped).toBeDefined()
+  })
+
+  it('still yields the pre-stub tables when the exercise is left unsolved', ctx => {
+    if (!python) ctx.skip('no CPython found (set FLOWFILE_TEST_PYTHON)')
+    const formula = node(3, 'formula', { function: { field: { name: 'x' }, function: '[revenue] * 2' } }, [2])
+    const walk = buildWalkthrough(flowOf([SOURCE, FILTER, formula]))
+    const captured = runInstrumentedBuffer(walk.script, walk, 'unsolved')
+    expect(captured.source).toHaveLength(3)
+    expect(captured.filtered).toHaveLength(2)
+    expect(captured.computed).toBeUndefined()
   })
 })

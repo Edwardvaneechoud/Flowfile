@@ -8,7 +8,13 @@
     <div v-if="isExpanded" class="section-content">
       <p v-if="explanation?.explanation" class="explainer-prose">{{ explanation.explanation }}</p>
       <div v-if="explanation?.code" class="explainer-code">
-        <Codemirror :model-value="explanation.code" :extensions="extensions" :disabled="true" />
+        <!-- indent-with-tab off: even a read-only editor must not trap Tab. -->
+        <Codemirror
+          :model-value="explanation.code"
+          :extensions="extensions"
+          :disabled="true"
+          :indent-with-tab="false"
+        />
       </div>
       <p v-else class="explainer-hint">Connect this node to see the code for your own settings.</p>
       <p v-if="explanation?.helpers.length" class="explainer-hint">

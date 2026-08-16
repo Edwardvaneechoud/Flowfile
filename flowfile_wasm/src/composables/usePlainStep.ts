@@ -11,7 +11,9 @@ import { getNodeDescription } from '../config/nodeDescriptions'
 
 export interface StepTable {
   label: string
+  /** The rows that crossed the bridge — capped, so `total` is the real count. */
   rows: Record<string, unknown>[]
+  total: number
 }
 
 /** What ▶ came back with: the buffer's own output, not the traced tables. */
@@ -21,7 +23,16 @@ export interface PlainRunResult {
   error?: string
 }
 
-type Captured = Record<string, Record<string, unknown>[]> | null
+/**
+ * What a trace run captured: per-variable tables capped at the bridge, plus
+ * the true row counts — so the counts never lie about a big table.
+ */
+export interface CapturedTrace {
+  tables: Record<string, Record<string, unknown>[]>
+  counts: Record<string, number>
+}
+
+type Captured = CapturedTrace | null
 
 /** Steps that collapse rows rather than discarding them. */
 const AGGREGATING = new Set(['accumulator-dict'])
@@ -36,17 +47,22 @@ export function usePlainStep(steps: Ref<PlainStep[]>, current: Ref<number>, capt
   /** The tables to show: each input this step reads, then what it produced. */
   const tables = computed<StepTable[]>(() => {
     const active = step.value
-    if (!active || !captured.value) return []
+    const trace = captured.value
+    if (!active || !trace) return []
     const out: StepTable[] = []
     for (const name of active.inputVars) {
-      const rows = captured.value[name]
-      if (rows) out.push({ label: `in · ${name}`, rows })
+      const rows = trace.tables[name]
+      if (rows) out.push({ label: `in · ${name}`, rows, total: trace.counts[name] ?? rows.length })
     }
-    const produced = captured.value[active.varName]
+    const produced = trace.tables[active.varName]
     // A sink (write to file) binds its input straight through, so showing the
     // same table twice as "in" and "out" is noise, not a before/after.
     if (produced && !out.some(table => table.rows === produced)) {
-      out.push({ label: `out · ${active.varName}`, rows: produced })
+      out.push({
+        label: `out · ${active.varName}`,
+        rows: produced,
+        total: trace.counts[active.varName] ?? produced.length
+      })
     }
     return out
   })
@@ -54,10 +70,11 @@ export function usePlainStep(steps: Ref<PlainStep[]>, current: Ref<number>, capt
   /** The headline row-count fact, small enough to live on a tab label. */
   const deltaCounts = computed<{ before: number; after: number } | null>(() => {
     const active = step.value
-    if (!active || !captured.value || active.inputVars.length !== 1) return null
-    const before = captured.value[active.inputVars[0]]
-    const after = captured.value[active.varName]
-    return before && after ? { before: before.length, after: after.length } : null
+    const trace = captured.value
+    if (!active || !trace || active.inputVars.length !== 1) return null
+    const before = trace.counts[active.inputVars[0]]
+    const after = trace.counts[active.varName]
+    return before !== undefined && after !== undefined ? { before, after } : null
   })
 
   /** A plain-English "what just happened to the row count". */
@@ -78,7 +95,7 @@ export function usePlainStep(steps: Ref<PlainStep[]>, current: Ref<number>, capt
 
   /** Why this step has no data, when an earlier one does. */
   const blockedReason = computed(() => {
-    const stopped = steps.value.findIndex(entry => !captured.value?.[entry.varName])
+    const stopped = steps.value.findIndex(entry => !captured.value?.tables[entry.varName])
     if (stopped > 0 && steps.value[stopped]?.concept === 'exercise') {
       return `The script stopped at step ${stopped + 1}, which is still an unfilled exercise — so nothing past it has run yet.`
     }

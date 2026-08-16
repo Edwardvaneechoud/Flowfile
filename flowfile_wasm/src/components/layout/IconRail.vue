@@ -39,7 +39,7 @@
         :class="{ active: learning.enabled }"
         :title="
           learning.enabled
-            ? 'Learning mode is on — the Code panel opens on the walkthrough'
+            ? 'Learning mode is on — the Python walkthrough and per-node explanations are shown'
             : 'Learning mode: see every node as plain Python, step by step'
         "
         @click="learning.toggle()"

@@ -78,6 +78,20 @@ describe('plain-Python generation', () => {
     expect(code.split('\n')[0]).toBe('def run_etl_pipeline():')
   })
 
+  it('opens on the pipeline and keeps the helpers below it', () => {
+    const filter = makeNode(
+      2,
+      'filter',
+      { filter_input: { mode: 'basic', basic_filter: { field: 'a', operator: 'greater_than', value: '1' } } },
+      [1]
+    )
+    const code = generatePlainPython(flowWith(SOURCE, filter))
+    // Newspaper order: the reader's flow first, the scaffolding after it.
+    expect(code).toContain('def match_type_of(')
+    expect(code.indexOf('def run_etl_pipeline():')).toBeLessThan(code.indexOf('def match_type_of('))
+    expect(code.trimEnd().endsWith('print(row)')).toBe(true)
+  })
+
   it('derives the supported set from the emitter table', () => {
     // Every explained node type is either emitted or deliberately an exercise —
     // there is no third state, and no hand-maintained second list to drift.
@@ -97,7 +111,8 @@ describe('plain-Python generation', () => {
     expect(code).toContain('over to you')
     expect(code).toContain('raise NotImplementedError')
     expect(code).toContain('[a] * 2') // the rule is quoted back for you to implement
-    expect(code).toContain('def formula_2(rows_0):')
+    // A person's names: a bare function name and a `rows` parameter.
+    expect(code).toContain('def formula(rows):')
     // The rest of the flow still generated.
     expect(code).toContain('source = [')
   })
@@ -144,15 +159,33 @@ describe('plain-Python generation', () => {
     expect(code).toContain('return big_rows')
   })
 
-  it('keeps loop temporaries from colliding with a node_reference', () => {
+  it('names loop temporaries plainly, falling back only on a collision', () => {
     const source = makeNode(1, 'manual_input', {
       raw_data_format: { columns: [{ name: 'a' }], data: [[1, 1, 2]] }
     })
     const unique = makeNode(2, 'unique', { unique_input: { subset: ['a'], keep: 'first' } }, [1])
-    unique.node_reference = 'seen_2' // exactly the temp name the emitter would pick
-    const code = generatePlainPython(flowWith(source, unique))
-    expect(code).toContain('_seen_2 = set()')
-    expect(code).toContain('seen_2 = []')
+
+    // The common case: no collision, so the temp is just `seen`.
+    expect(generatePlainPython(flowWith(source, unique))).toContain('seen = set()')
+
+    // A node_reference claims the plain name; the temp steps aside.
+    const pinned = { ...unique, node_reference: 'seen' }
+    const code = generatePlainPython(flowWith(source, pinned))
+    expect(code).toContain('seen_2 = set()')
+    expect(code).toContain('seen = []')
+  })
+
+  it('never lets an exercise stub shadow a Python builtin', () => {
+    const advanced = makeNode(
+      2,
+      'filter',
+      { filter_input: { mode: 'advanced', advanced_filter: 'pl.col("a") > 1' } },
+      [1]
+    )
+    // `filter` is a builtin, so the stub keeps its node-id suffix.
+    const code = generatePlainPython(flowWith(SOURCE, advanced))
+    expect(code).toContain('def filter_2(rows):')
+    expect(code).not.toContain('def filter(')
   })
 
   it('emits an empty pipeline rather than throwing on an empty flow', () => {

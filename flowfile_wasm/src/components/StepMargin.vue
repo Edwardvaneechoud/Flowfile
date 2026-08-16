@@ -61,29 +61,39 @@
       </section>
 
       <section v-show="tab === 'data'" class="step-data">
-        <p v-if="edited && dataState === 'ready'" class="data-stale">
-          These rows come from the generated script. Your edits ran under ▶ — see Output.
-          <button class="data-relink" @click="$emit('reset')">Discard edits</button>
+        <p v-if="stale && dataState === 'ready'" class="data-stale">
+          The script changed since these rows were captured.
+          <button class="data-relink" @click="$emit('trace')">Trace it again</button>
         </p>
         <div v-if="dataState === 'idle'" class="data-hint">
           <button class="data-run" :disabled="!canRun" @click="$emit('trace')">
             {{ canRun ? "Show the data at each step" : "Waiting for Python…" }}
           </button>
-          <span class="data-note">Runs this script in your browser — nothing leaves the page.</span>
+          <span class="data-note">Runs the script as it is now, here in your browser — nothing leaves the page.</span>
         </div>
         <div v-else-if="dataState === 'running'" class="data-hint">Working it out…</div>
-        <div v-else-if="dataState === 'failed'" class="data-hint failed">
-          The script raised before this step, so there is nothing to show here yet.
+        <div v-else-if="dataState === 'failed'" class="data-failed">
+          <p class="data-hint failed">
+            {{ traceError ? "The script raised before any step finished:" : "The trace did not produce any data." }}
+          </p>
+          <pre v-if="traceError" class="run-error">{{ traceError }}</pre>
+          <button class="data-run" :disabled="!canRun" @click="$emit('trace')">Try again</button>
         </div>
-        <div v-else-if="!tables.length" class="data-hint">{{ blockedReason }}</div>
+        <div v-else-if="!tables.length" class="data-hint-block">
+          <p class="data-hint">{{ blockedReason }}</p>
+          <pre v-if="traceError" class="run-error">{{ traceError }}</pre>
+        </div>
         <template v-else>
           <div class="tables">
             <div v-for="table in tables" :key="table.label" class="table-wrap">
               <div class="table-head">
                 <span class="table-label">{{ table.label }}</span>
-                <span class="table-count">{{ table.rows.length }} row{{ table.rows.length === 1 ? "" : "s" }}</span>
+                <span class="table-count">
+                  {{ table.total }} row{{ table.total === 1 ? "" : "s"
+                  }}<template v-if="table.total > table.rows.length"> · first {{ table.rows.length }} captured</template>
+                </span>
               </div>
-              <RowTable :rows="table.rows" :limit="6" flush />
+              <RowTable :rows="table.rows" :limit="6" :total="table.total" flush />
             </div>
           </div>
           <p v-if="delta" class="delta">{{ delta }}</p>
@@ -96,19 +106,19 @@
             <span class="run-summary">
               {{ runResult.failed ? "The script raised" : `Returned ${runResult.rows.length} row(s)` }}
             </span>
-            <span v-if="comparison" class="comparison" :class="{ match: comparison.match }">
-              {{ comparison.message }}
-            </span>
             <button
               v-if="!runResult.failed"
               class="run-compare"
-              title="Check this against what the canvas produced"
+              title="Check this result's rows and values against what the canvas produced"
               @click="$emit('compare')"
             >
               Compare to canvas
             </button>
             <button class="run-close" title="Hide output" @click="$emit('close-run')">✕</button>
           </div>
+          <p v-if="comparison" class="comparison" :class="comparison.status">
+            {{ comparison.message }}
+          </p>
           <pre v-if="runResult.failed" class="run-error">{{ runResult.error }}</pre>
           <div v-else-if="runResult.rows.length" class="run-table-wrap">
             <table class="run-table">
@@ -137,6 +147,7 @@ import { computed, ref } from 'vue'
 import RowTable from './RowTable.vue'
 import type { Concept } from '../composables/usePlainPythonGeneration'
 import type { PlainRunResult, StepTable } from '../composables/usePlainStep'
+import type { CompareResult } from '../composables/usePlainTrace'
 
 export type MarginTab = 'why' | 'data' | 'output'
 
@@ -150,16 +161,17 @@ const props = defineProps<{
   dataState: 'idle' | 'running' | 'ready' | 'failed'
   canRun: boolean
   /** The buffer no longer matches the script the tables were traced from. */
-  edited: boolean
+  stale: boolean
+  /** Cleaned traceback of the last trace's failure, if it raised unexpectedly. */
+  traceError: string | null
   showBackground: boolean
   runResult: PlainRunResult | null
-  comparison: { match: boolean; message: string } | null
+  comparison: CompareResult | null
 }>()
 
 defineEmits<{
   'update:tab': [MarginTab]
   trace: []
-  reset: []
   compare: []
   'close-run': []
   'toggle-background': []
@@ -397,6 +409,14 @@ defineExpose({
   color: var(--color-danger);
 }
 
+.data-failed,
+.data-hint-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
 .data-run {
   padding: 6px 14px;
   border: 1px solid var(--color-accent);
@@ -467,14 +487,26 @@ defineExpose({
   color: var(--color-danger);
 }
 
+/* The verdict gets a full line: the messages now name rows, columns and cells. */
 .comparison {
-  font-size: 11px;
+  margin: 0 0 10px;
+  font-size: 12px;
   font-weight: 500;
+  line-height: 1.5;
+}
+
+.comparison.mismatch {
   color: var(--color-danger);
 }
 
 .comparison.match {
   color: var(--color-success, #2e9e5b);
+}
+
+/* Guidance, not a verdict — neutral on purpose. */
+.comparison.info {
+  color: var(--color-text-secondary);
+  font-weight: 400;
 }
 
 .run-compare {
@@ -510,6 +542,7 @@ defineExpose({
   color: var(--color-danger);
   overflow-x: auto;
   overflow-y: hidden;
+  max-width: 100%;
 }
 
 .run-table-wrap {

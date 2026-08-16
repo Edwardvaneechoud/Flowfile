@@ -126,6 +126,7 @@
         :edge-types="edgeTypes"
         :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
+        :zoom-on-double-click="!uiStore.showCodeGenerator && !suppressDblClickZoom"
         class="custom-node-flow"
         fit-view-on-init
         @connect="onConnect"
@@ -334,6 +335,7 @@
       :teaching-mode="props.teachingMode"
       :top-offset="toolbarHeight"
       @close="uiStore.showCodeGenerator = false"
+      @focus-node="panToNode"
     />
     <!-- Missing Files Modal -->
     <MissingFilesModal
@@ -512,7 +514,8 @@ const tablePreviewHeight = computed(() =>
 const settingsPanelHeight = computed(() =>
   Math.max(220, availableHeight.value - toolbarHeight.value - tablePreviewHeight.value),
 )
-const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut, findNode, setCenter, viewport } =
+  useVueFlow()
 
 useStaleModifierGuard()
 
@@ -866,11 +869,36 @@ function onNodeDoubleClick(event: { node: Node }) {
   })
 }
 
-function onPaneClick() {
+// Closing the panel re-enables zoomOnDoubleClick BEFORE the browser delivers
+// the native dblclick, so d3-zoom would still zoom on the closing gesture.
+// Hold the zoom off long enough for that dblclick to pass.
+const suppressDblClickZoom = ref(false)
+
+function onPaneClick(event: MouseEvent) {
+  // The second click of a double-click on empty canvas closes the Code panel
+  // (event.detail counts consecutive clicks; node double-clicks never reach
+  // the pane handler).
+  if (event.detail >= 2 && uiStore.showCodeGenerator) {
+    suppressDblClickZoom.value = true
+    window.setTimeout(() => (suppressDblClickZoom.value = false), 300)
+    uiStore.showCodeGenerator = false
+    return
+  }
   flowStore.selectNode(null)
   showSettings.value = false
   showTablePreview.value = false
   closePaneMenu()
+}
+
+/** Smooth-pan the viewport to a node, keeping the current zoom (walkthrough sync). */
+function panToNode(nodeId: number) {
+  const node = findNode(String(nodeId))
+  if (!node) return
+  setCenter(
+    node.position.x + (node.dimensions?.width || 0) / 2,
+    node.position.y + (node.dimensions?.height || 0) / 2,
+    { zoom: viewport.value.zoom, duration: 300 }
+  )
 }
 
 function onPaneContextMenu(event: MouseEvent) {

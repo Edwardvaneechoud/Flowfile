@@ -17,6 +17,18 @@
   >
     <template #actions>
       <button
+        v-if="teachingMode && !learning.enabled"
+        class="icon-button learn-button"
+        title="Learning Python? Rebuild this flow as plain Python, step by step"
+        @click="enableLearning"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21.4 10.9a1 1 0 0 0 0-1.83L12.8 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.83l8.57 3.91a2 2 0 0 0 1.66 0z"></path>
+          <path d="M22 10v6"></path>
+          <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"></path>
+        </svg>
+      </button>
+      <button
         v-if="isWalkthrough"
         class="icon-button run-button"
         :disabled="running || !pyodideStore.isReady"
@@ -74,6 +86,12 @@
         <span>{{ error }}</span>
       </div>
 
+      <!-- The premise is "this code IS your flow" — never let them drift silently. -->
+      <div v-if="flowChanged" class="flow-changed" role="status">
+        <span>The flow changed — this code describes the previous version.</span>
+        <button class="flow-changed-refresh" @click="refreshCode">Refresh</button>
+      </div>
+
       <!-- The flow as chips: a constant-height rail, so stepping never resizes the editor. -->
       <nav v-if="isWalkthrough && steps.length" class="step-rail" aria-label="Steps">
         <button class="rail-arrow" :disabled="stepIndex === 0" title="Previous step" @click="goTo(stepIndex - 1)">
@@ -126,13 +144,16 @@
             <button v-if="highlightOffScreen" class="bench-recentre" @click="recentre">
               ↩ step {{ stepIndex + 1 }}
             </button>
-            <span class="bench-hint">hover any name for what it does</span>
+            <span class="bench-hint">{{ glossaryHint }}</span>
           </div>
           <div class="bench-editor">
+            <!-- indent-with-tab off: Tab must move focus, not indent — the
+                 vue-codemirror default is a keyboard trap (WCAG 2.1.2). -->
             <Codemirror
               v-model="code"
               :extensions="extensions"
               :disabled="!isWalkthrough"
+              :indent-with-tab="false"
               :style="{ height: '100%', fontSize: '13px' }"
               @ready="onEditorReady"
             />
@@ -162,12 +183,12 @@
           :blocked-reason="blockedReason"
           :data-state="traceState"
           :can-run="pyodideStore.isReady"
-          :edited="edited"
+          :stale="traceStale"
+          :trace-error="visibleTraceError"
           :show-background="learning.showBackground"
           :run-result="runResult"
           :comparison="comparison"
           @trace="runTrace"
-          @reset="resetEdits"
           @compare="compareToCanvas"
           @close-run="runResult = null"
           @toggle-background="toggleBackground"
@@ -188,9 +209,16 @@ import { usePyodideStore } from '../stores/pyodide-store'
 import { useCodeGeneration } from '../composables/useCodeGeneration'
 import { usePlainPythonGeneration } from '../composables/usePlainPythonGeneration'
 import type { PlainWalkthrough } from '../composables/usePlainPythonGeneration'
-import { usePlainStep, stepLabel, type PlainRunResult } from '../composables/usePlainStep'
-import { glossaryTooltip } from '../composables/usePythonGlossary'
+import { usePlainStep, stepLabel, type PlainRunResult, type CapturedTrace } from '../composables/usePlainStep'
+import { COARSE_POINTER, glossaryTooltip } from '../composables/usePythonGlossary'
 import {
+  compareTables,
+  instrumentScript,
+  type CompareResult,
+  type StepCapture
+} from '../composables/usePlainTrace'
+import {
+  allStepLines,
   seedStepsIn,
   showStep,
   stepHighlight,
@@ -216,6 +244,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   close: []
+  /** The walkthrough moved to this node — the canvas should bring it into view. */
+  'focus-node': [nodeId: number]
 }>()
 
 const flowStore = useFlowStore()
@@ -234,6 +264,9 @@ const DEFAULT_SPLIT = { x: 60, y: 64 }
 const FLOORS = { bench: 200, margin: 120, benchX: 460, marginX: 340 }
 
 function initialMode(): CodeMode {
+  // The walkthrough is opt-in: without Learning mode the panel is a plain
+  // Polars view, whatever tab an earlier learning session left behind.
+  if (!learning.enabled) return 'polars'
   const saved = localStorage.getItem(MODE_KEY)
   // 'plain' and 'walkthrough' were the two halves of what is now one tab.
   if (saved === 'plain') {
@@ -241,8 +274,7 @@ function initialMode(): CodeMode {
     return 'walkthrough'
   }
   if (saved === 'walkthrough' || saved === 'polars') return saved
-  // Learning mode is what decides where a first-time visitor lands.
-  return learning.enabled ? 'walkthrough' : 'polars'
+  return 'walkthrough'
 }
 
 const code = ref('')
@@ -251,13 +283,16 @@ const error = ref<string | null>(null)
 const mode = ref<CodeMode>('polars')
 const running = ref(false)
 const runResult = ref<PlainRunResult | null>(null)
-const comparison = ref<{ match: boolean; message: string } | null>(null)
+const comparison = ref<CompareResult | null>(null)
+const glossaryHint = COARSE_POINTER ? 'tap any name for what it does' : 'hover any name for what it does'
 
 const isWalkthrough = computed(() => mode.value === 'walkthrough')
 
 // Header tab strip. Empty ⇒ DraggableItem shows the plain "Code" title.
+// The walkthrough tab exists only after the user opts into Learning mode, so
+// the default panel stays a plain code view.
 const tabs = computed(() =>
-  props.teachingMode
+  props.teachingMode && learning.enabled
     ? [
         { id: 'polars', label: 'Polars', title: 'Production code using the Polars dataframe library' },
         {
@@ -272,19 +307,64 @@ const tabs = computed(() =>
 // Editing the generated script is the point in walkthrough mode, so track
 // whether the buffer still matches what we generated — that is what "reset" undoes.
 const generated = ref('')
-// Survives a trip to another tab; cleared by Reset or by regenerating.
+// Survives a trip to another tab; cleared by Reset only.
 const draft = ref<string | null>(null)
+// The step ranges as the highlight field last mapped them through the edits.
+// Stashed with the draft, because reseeding a draft from the generator's
+// pristine line numbers would misplace every highlight below an edit.
+const draftRanges = ref<StepRange[] | null>(null)
 const edited = computed(() => isWalkthrough.value && code.value !== generated.value)
+
+const stashDraft = () => {
+  draft.value = code.value
+  if (editorView) draftRanges.value = allStepLines(editorView.state)
+}
+const clearDraft = () => {
+  draft.value = null
+  draftRanges.value = null
+}
 
 const walkthrough = ref<PlainWalkthrough>({ script: '', traceScript: '', steps: [], snippets: {} })
 const steps = computed(() => walkthrough.value.steps)
 const stepIndex = ref(0)
-const captured = ref<Record<string, Record<string, unknown>[]> | null>(null)
+const captured = ref<CapturedTrace | null>(null)
 const traceState = ref<'idle' | 'running' | 'ready' | 'failed'>('idle')
+// The exact buffer text the last trace instrumented — staleness is "buffer ≠ this".
+const tracedCode = ref<string | null>(null)
+const traceError = ref<string | null>(null)
 // Bumped whenever the document is replaced programmatically; drives re-seeding.
 const scriptRevision = ref(0)
 
+const traceStale = computed(
+  () => traceState.value === 'ready' && tracedCode.value !== null && code.value !== tracedCode.value
+)
+// A raising exercise stub is the expected way a trace ends — not an error to show.
+const visibleTraceError = computed(() =>
+  traceError.value && !traceError.value.includes('NotImplementedError') ? traceError.value : null
+)
+
 const { concept, tables, delta, deltaCounts, blockedReason } = usePlainStep(steps, stepIndex, captured)
+
+/**
+ * A cheap identity of the flow's shape and settings. updateNodeSettings
+ * replaces the settings object, so this recomputes only when something real
+ * changed — and Lite flows are small enough to stringify.
+ */
+const flowFingerprint = computed(() => {
+  const nodes = [...flowStore.nodes.values()]
+    .map(node => `${node.id}:${node.type}:${JSON.stringify(node.settings ?? null)}`)
+    .join('|')
+  return `${nodes}§${flowStore.edges.map(edge => edge.id).join(',')}`
+})
+const generatedFingerprint = ref<string | null>(null)
+// The generated code no longer describes the canvas. A banner, not an
+// auto-regenerate: regenerating on its own would fight draft preservation.
+const flowChanged = computed(
+  () =>
+    props.isVisible &&
+    generatedFingerprint.value !== null &&
+    flowFingerprint.value !== generatedFingerprint.value
+)
 
 const bodyEl = ref<HTMLElement | null>(null)
 const workbenchEl = ref<HTMLElement | null>(null)
@@ -327,7 +407,7 @@ const setMode = (next: CodeMode) => {
   if (mode.value === next) return
   // Whatever they typed is often an exercise solution; losing it on a tab
   // click is the one unforgivable thing this panel could do.
-  if (isWalkthrough.value && edited.value) draft.value = code.value
+  if (isWalkthrough.value && edited.value) stashDraft()
   mode.value = next
   localStorage.setItem(MODE_KEY, next)
   runResult.value = null
@@ -336,12 +416,28 @@ const setMode = (next: CodeMode) => {
 }
 
 const resetEdits = () => {
-  draft.value = null
+  clearDraft()
   code.value = generated.value
   runResult.value = null
   comparison.value = null
   scriptRevision.value++
 }
+
+/** The panel's own opt-in: turn Learning mode on and land on the walkthrough. */
+const enableLearning = () => {
+  if (!learning.enabled) learning.toggle()
+  setMode('walkthrough')
+}
+
+// Learning mode can also be flipped from the icon rail while the panel is
+// open; follow it, so the toggle always has a visible effect.
+watch(
+  () => learning.enabled,
+  enabled => {
+    if (!props.isVisible || !props.teachingMode) return
+    setMode(enabled ? 'walkthrough' : 'polars')
+  }
+)
 
 let editorView: EditorView | null = null
 const labelLines = ref<StepRange | null>(null)
@@ -371,6 +467,11 @@ const onEditorReady = (payload: { view: EditorView }) => {
 }
 
 const releaseEditor = () => {
+  // The field's edit-mapped anchors die with the view (minimize unmounts the
+  // body); keep them so the remount can reseed an edited buffer correctly.
+  if (isWalkthrough.value && edited.value && editorView) {
+    draftRanges.value = allStepLines(editorView.state)
+  }
   editorView?.scrollDOM.removeEventListener('scroll', onEditorScroll)
   editorView = null
 }
@@ -404,11 +505,13 @@ const seedNow = async () => {
   }
   // vue-codemirror pushes model-value on its own tick.
   if (view.state.doc.length !== code.value.length) await nextTick()
-  seedStepsIn(
-    view,
-    steps.value.map(step => ({ from: step.lineStart, to: step.lineEnd })),
-    stepIndex.value
-  )
+  // An edited buffer must be seeded from the ranges the field last mapped for
+  // it, not from the generator's line numbers — those describe a different doc.
+  const ranges =
+    edited.value && draftRanges.value && draftRanges.value.length === steps.value.length
+      ? draftRanges.value
+      : steps.value.map(step => ({ from: step.lineStart, to: step.lineEnd }))
+  seedStepsIn(view, ranges, stepIndex.value)
   showStep(view, stepIndex.value)
   syncReadouts()
 }
@@ -434,15 +537,22 @@ watch(stepIndex, index => {
   marginEl.value?.resetScroll()
 })
 
-// Keep the canvas selection in step, so the node being explained is the one
-// highlighted behind the docked panel.
-watch(
-  () => steps.value[stepIndex.value]?.nodeId,
-  nodeId => {
-    if (nodeId !== undefined && props.isVisible && isWalkthrough.value) flowStore.selectedNodeId = nodeId
-  },
-  { immediate: true }
-)
+// Keep the canvas in step: the node being explained is selected AND panned
+// into view behind the docked panel. selectNode (not a bare assignment) keeps
+// the store's preview memory management and the Table panel's gated fetch
+// working; it never executes anything.
+const syncCanvasToStep = () => {
+  const nodeId = steps.value[stepIndex.value]?.nodeId
+  if (nodeId === undefined || !props.isVisible || !isWalkthrough.value) return
+  // A step can outlive its node until the next refresh regenerates the script.
+  if (!flowStore.nodes.has(nodeId)) return
+  flowStore.selectNode(nodeId)
+  emit('focus-node', nodeId)
+}
+// The watcher alone is not enough: reopening the panel rebuilds the steps but
+// often lands on the SAME nodeId, which a value-keyed watcher ignores —
+// generateCodeFromFlow calls syncCanvasToStep explicitly for that case.
+watch(() => steps.value[stepIndex.value]?.nodeId, syncCanvasToStep, { immediate: true })
 
 let resizeRaf = 0
 const observer =
@@ -560,7 +670,10 @@ const generateCodeFromFlow = async () => {
       // The captured tables belong to the previous shape of the flow.
       captured.value = null
       traceState.value = 'idle'
+      tracedCode.value = null
+      traceError.value = null
       scriptRevision.value++
+      syncCanvasToStep()
       return
     }
     const formulaCode = await translateFormulaNodes()
@@ -575,6 +688,7 @@ const generateCodeFromFlow = async () => {
     error.value = err instanceof Error ? err.message : 'Failed to generate code'
     code.value = '# Failed to generate code. Please check your flow configuration.'
   } finally {
+    generatedFingerprint.value = flowFingerprint.value
     loading.value = false
   }
 }
@@ -637,35 +751,64 @@ const cleanTraceback = (text: string): string => {
   return kept.filter(line => line !== '').join('\n')
 }
 
+/** How many rows of each intermediate table cross the JS bridge. The counts stay exact. */
+const TRACE_ROW_CAP = 50
+
 /**
- * Run the instrumented build once and keep every intermediate table.
+ * Instrument the buffer AS IT IS and keep every intermediate table.
  *
- * A raising exercise stub is expected, not exceptional: __steps__ is populated
- * as the script goes, so the steps before the stub still have their data.
+ * The captures are inserted into the live text at the step ranges the
+ * highlight has been mapping through the learner's edits — so a solved
+ * exercise gets per-step data, not just the generated script. `__steps__` is
+ * pre-seeded in the exec namespace, which is what keeps everything captured
+ * before a raising exercise stub readable; the raise itself is expected, and
+ * any other exception is kept to show.
  */
 const runTrace = async () => {
   if (!pyodideStore.isReady || traceState.value === 'running') return
+  const view = editorView
+  if (!view) return
   traceState.value = 'running'
   marginTab.value = 'data'
+  const source = code.value
+  const ranges = allStepLines(view.state)
+  const captures: StepCapture[] = steps.value
+    .map((step, index) => ({
+      fromLine: ranges[index]?.from ?? 0,
+      toLine: ranges[index]?.to ?? 0,
+      varName: step.varName
+    }))
+    .filter(capture => capture.toLine > 0)
   try {
     stageReadFiles()
-    pyodideStore.setGlobal('_trace_script', walkthrough.value.traceScript)
+    pyodideStore.setGlobal('_trace_script', instrumentScript(source, captures))
     const result = await pyodideStore.runPythonWithResult(
       [
-        'import json',
-        '_trace_ns = {}',
+        'import json, traceback',
+        '_trace_ns = {"__steps__": {}}',
+        '_trace_error = None',
         'try:',
         '    exec(compile(_trace_script, "pipeline.py", "exec"), _trace_ns)',
         '    _trace_ns["run_etl_pipeline"]()',
         'except Exception:',
-        '    pass',
-        'json.dumps(_trace_ns.get("__steps__", {}), default=str)'
+        '    _trace_error = traceback.format_exc()',
+        '_tables = {k: v for k, v in _trace_ns.get("__steps__", {}).items() if isinstance(v, list)}',
+        'json.dumps({',
+        `    "tables": {k: v[:${TRACE_ROW_CAP}] for k, v in _tables.items()},`,
+        '    "counts": {k: len(v) for k, v in _tables.items()},',
+        '    "error": _trace_error,',
+        '}, default=str)'
       ].join('\n')
     )
-    captured.value = JSON.parse(result)
-    traceState.value = Object.keys(captured.value ?? {}).length > 0 ? 'ready' : 'failed'
-  } catch {
+    const parsed = JSON.parse(result)
+    captured.value = { tables: parsed.tables ?? {}, counts: parsed.counts ?? {} }
+    traceError.value = parsed.error ? cleanTraceback(parsed.error) : null
+    tracedCode.value = source
+    traceState.value = Object.keys(captured.value.tables).length > 0 ? 'ready' : 'failed'
+  } catch (err) {
     captured.value = null
+    traceError.value = err instanceof Error ? err.message : String(err)
+    tracedCode.value = source
     traceState.value = 'failed'
   } finally {
     pyodideStore.deleteGlobal('_trace_script')
@@ -673,7 +816,10 @@ const runTrace = async () => {
 }
 
 /**
- * Check the script's own output against what the canvas already produced.
+ * Check the script's own output against what the canvas already produced —
+ * by VALUES, not just row count, so a wrong answer with the right cardinality
+ * cannot pass. The target is the node whose table the script returns: the last
+ * walkthrough step, not whichever terminal node happens to iterate first.
  *
  * Reads an existing result only — running the flow is the user's call, so this
  * never reaches an execute_* bridge (see the no-auto-run contract).
@@ -683,26 +829,24 @@ const compareToCanvas = async () => {
   const rows = runResult.value?.rows
   if (!rows) return
 
-  const terminal = [...flowStore.nodes.values()].find(node => {
-    const consumers = flowStore.edges.filter(edge => Number(edge.source) === node.id)
-    return consumers.length === 0
-  })
-  const result = terminal ? flowStore.nodeResults.get(terminal.id) : undefined
-  if (!terminal || !result?.success) {
-    comparison.value = { match: false, message: 'Run the flow first, then compare.' }
+  const targetId = steps.value.length > 0 ? steps.value[steps.value.length - 1].nodeId : null
+  const result = targetId === null ? undefined : flowStore.nodeResults.get(targetId)
+  if (targetId === null || !result?.success) {
+    comparison.value = { status: 'info', message: 'Run the flow first, then compare.' }
     return
   }
 
-  const preview = await flowStore.fetchNodePreview(terminal.id).catch(() => null)
-  const canvasRows = preview?.data?.total_rows ?? result.data?.total_rows ?? null
-  if (canvasRows === null || canvasRows === undefined) {
-    comparison.value = { match: false, message: 'No canvas result to compare against yet.' }
+  const preview = await flowStore.fetchNodePreview(targetId).catch(() => null)
+  const data = preview?.data ?? result.data
+  if (!data?.columns || data.total_rows === null || data.total_rows === undefined) {
+    comparison.value = { status: 'info', message: 'No canvas result to compare against yet.' }
     return
   }
-  comparison.value =
-    rows.length === canvasRows
-      ? { match: true, message: `Matches the canvas — ${canvasRows} rows.` }
-      : { match: false, message: `Canvas produced ${canvasRows} rows; this produced ${rows.length}.` }
+  comparison.value = compareTables(rows, {
+    columns: data.columns,
+    rows: data.data ?? [],
+    totalRows: data.total_rows
+  })
 }
 
 /** Put each Read File node's text content where the generated script looks for it. */
@@ -724,8 +868,14 @@ const stageReadFiles = () => {
 }
 
 const refreshCode = () => {
-  // Refresh means "regenerate from the flow", so it supersedes any edits.
-  draft.value = null
+  // Regenerate from the flow — but never over the learner's typing: an
+  // in-progress exercise solution survives as the draft, and the explicit
+  // Reset button stays the only path that discards it. Refreshing from the
+  // Polars tab must not touch a draft stashed by an earlier tab switch.
+  if (isWalkthrough.value) {
+    if (edited.value) stashDraft()
+    else clearDraft()
+  }
   generateCodeFromFlow()
 }
 
@@ -780,8 +930,37 @@ onBeforeUnmount(() => {
 }
 
 .error-message,
+.flow-changed,
 .step-rail {
   flex: 0 0 auto;
+}
+
+/* Informational, not alarming: the code is still valid, just for the old flow. */
+.flow-changed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.flow-changed-refresh {
+  margin-left: auto;
+  padding: 2px 12px;
+  border: 1px solid var(--color-accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.flow-changed-refresh:hover {
+  background: var(--color-accent);
+  color: #fff;
 }
 
 /* Constant 44px for any number of steps: chips scroll sideways rather than

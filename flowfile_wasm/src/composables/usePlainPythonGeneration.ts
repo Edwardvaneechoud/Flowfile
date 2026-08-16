@@ -10,8 +10,9 @@
  * suffixing, unique strategies), and the engine is what the canvas actually ran.
  */
 
-import { FlowToPolarsConverter, toPythonValue } from './useCodeGeneration'
+import { FlowToPolarsConverter, RESERVED_NAMES, toPythonValue } from './useCodeGeneration'
 import type { CodeGenerationOptions } from './useCodeGeneration'
+import { getNodeDescription } from '../config/nodeDescriptions'
 import type {
   FlowNode,
   NodeReadSettings,
@@ -43,8 +44,16 @@ type InputVars = Record<string, string>
 /** Thrown by an emitter that cannot honour this particular configuration. */
 class PlainPythonUnsupported extends Error {}
 
-/** Join strategies with an honest loop form. `right`/`full`/`outer` are left as exercises. */
+/** Join strategies with an honest loop form. right/full/outer/cross become exercises. */
 const JOIN_HOWS_SUPPORTED = new Set(['inner', 'left', 'semi', 'anti'])
+
+/** Honest exercise text per unsupported join — a full join is NOT a swapped left join. */
+const JOIN_EXERCISE_REASONS: Record<string, string> = {
+  right: 'A "right" join is a left join with the two tables swapped — worth writing out yourself.',
+  full: 'A "full" join is a left join plus the right-hand rows that found no match — worth writing out yourself.',
+  outer: 'An "outer" join is a left join plus the right-hand rows that found no match — worth writing out yourself.',
+  cross: 'A cross join pairs every row with every row — two nested loops, like the Cross join node.'
+}
 
 /**
  * The aggregations pivot really implements. The settings panel also offers
@@ -56,51 +65,51 @@ const PIVOT_AGGS_SUPPORTED = new Set(['sum', 'mean', 'min', 'max', 'count', 'fir
 /** Plain-English "what this node does", shown above the snippet in the settings drawer. */
 export const NODE_EXPLANATIONS: Record<string, string> = {
   manual_input:
-    'Holds a small table you typed in by hand. In plain Python that is just a list of dictionaries written out as a literal — the starting point for everything below it.',
+    'Holds a small table you typed in by hand. In plain Python that is a list of dictionaries, written out literally — one dict per row, ready for everything below it.',
   read:
-    'Reads a file into rows. A CSV has no types: every cell arrives as text, and something has to decide that "age" is a number. That decision is normally made for you; here it is written out.',
+    'Reads a CSV file into a list of rows. Everything in a CSV is text, so the code also has to work out which columns are really numbers — a guess that other tools make silently, written out here as a function you can read.',
   external_data:
-    'Takes a table the host application handed to the editor. Standalone code has no host, so the generated script reads the same data from a CSV file next to it.',
+    'Takes a table the host application handed to the editor. A standalone script has no host, so the generated code reads the same data from a CSV file next to it.',
   read_from_catalog:
-    'Reads a table you saved in the Catalog. Standalone code has no Catalog, so the generated script reads the same data from a CSV file next to it.',
+    'Reads a table you saved in the Catalog. A standalone script has no Catalog, so the generated code reads the same data from a CSV file next to it.',
   filter:
-    'Keeps the rows that match a condition and drops the rest. The loop form is the one every language shares: walk the rows, test each one, collect the keepers.',
+    'Keeps the rows that match a condition and drops the rest. In plain Python that is a loop: test each row, and append the ones that pass to a new list.',
   select:
-    'Chooses which columns survive, renames them, and fixes their order. Each row is rebuilt as a new dictionary with only the keys you asked for.',
+    'Chooses which columns to keep, renames them, and sets their order. Each row is rebuilt as a new dictionary holding only the keys you asked for.',
   sort:
-    'Puts the rows in order. Rather than comparing rows by hand, you hand the sort a *key function* that reduces each row to the value it should be ordered by.',
+    "Puts the rows in order. Python's sorted() takes a key function — it turns each row into the value to sort it by, and the sort does the comparing.",
   unique:
-    'Drops duplicate rows. The pattern is a `seen` set: remember every key you have already emitted, and skip a row whose key is in it.',
+    'Drops duplicate rows. The code keeps a set of the row keys it has already kept, and skips any row whose key is already in it.',
   group_by:
-    'Collapses many rows into one row per group. Two passes: file every row under its key in a dictionary, then walk the groups and summarise each one. This accumulator-dict pattern is worth knowing by heart.',
+    'Collapses many rows into one row per group, in two passes: first put every row into the bucket for its group key, then turn each bucket into one summary row.',
   join:
-    'Matches rows in one table against rows in another. Doing it with nested loops is O(n×m); building a dictionary from the right-hand table first — a hash index — makes it O(n+m). That difference is the lesson.',
+    'Matches rows in one table against rows in another. Instead of scanning the right table once per left row, the code puts the right table into a dictionary first, so each left row is a single lookup — the same trick databases call a hash join.',
   cross_join:
-    'Pairs every row on the left with every row on the right. This is the one join that really is just two nested loops, and it is why the result gets big so fast.',
+    'Pairs every row on the left with every row on the right. That really is just two nested loops — and the reason the output grows so fast: the row counts multiply.',
   union:
-    'Stacks the rows of several tables into one. The only real question is what to do about columns that not every table has.',
+    'Stacks the rows of several tables into one. Columns that only some tables have are filled with None in the rows that lack them.',
   record_id:
-    'Numbers the rows. `enumerate` gives you the counter and the row together, so you never have to maintain an index variable yourself.',
+    'Numbers the rows. enumerate() hands you the number and the row together on every pass of the loop, so there is no counter variable to maintain.',
   head:
-    'Takes a sample of the rows. Set to "first", that is a Python slice — and slicing a list never raises when you ask for more rows than exist. Set to one of the random methods it has no plain-Python form, because the engine uses a seeded shuffle this script cannot reproduce row for row.',
+    'Takes a sample of the rows. Set to "first", that is a Python slice — rows[:n] — and a slice never complains when you ask for more rows than exist. The random methods have no plain-Python form, because the canvas samples with a seeded shuffle this script cannot reproduce row for row.',
   sample:
-    'Takes a sample of the rows. Set to "first", that is a Python slice — and slicing a list never raises when you ask for more rows than exist. Set to one of the random methods it has no plain-Python form, because the engine uses a seeded shuffle this script cannot reproduce row for row.',
+    'Takes a sample of the rows. Set to "first", that is a Python slice — rows[:n] — and a slice never complains when you ask for more rows than exist. The random methods have no plain-Python form, because the canvas samples with a seeded shuffle this script cannot reproduce row for row.',
   dynamic_rename:
-    'Renames many columns with one rule instead of one at a time. The rows are rebuilt with new keys; the values are untouched.',
+    'Renames many columns with one rule instead of one at a time. Each row is rebuilt with the new keys; the values are copied through untouched.',
   unpivot:
-    'Turns wide data into long data: one row per (row, column) pair. Note the loop order — column first, then rows — which is what fixes the order of the output.',
+    'Turns wide data into long data: one output row for each row-and-column pair. The column loop sits outside the row loop, which is what groups the output by column.',
   explore_data: 'Opens the table in the data explorer. It changes nothing, so it generates no code.',
   output:
-    'Writes the rows to a file. Python ships a `csv` module for exactly this, and it handles the quoting rules you would otherwise get wrong.',
+    "Writes the rows to a file. Python's csv module handles the quoting and escaping rules you would otherwise get wrong.",
   external_output: 'Hands the rows back to the host application. It changes nothing, so it generates no code.',
   write_to_catalog:
-    'Saves the rows as a Catalog table. Standalone code has no Catalog, so the generated script writes the same rows to a CSV file.',
+    'Saves the rows as a Catalog table. A standalone script has no Catalog, so the generated code writes the same rows to a CSV file.',
   formula:
-    'Evaluates a Flowfile expression against every row. There is no short loop equivalent, because reproducing it in general means writing an expression evaluator — so this node becomes an exercise instead.',
+    'Evaluates a Flowfile expression on every row. Translating any possible expression would mean writing a whole expression evaluator, so the script leaves this node as an exercise for you to fill in instead.',
   polars_code:
-    'Runs Polars code you wrote yourself. It is already Python, and it is already a dataframe library, so there is nothing to translate.',
+    'Runs Polars code you wrote yourself. It is already Python, and it already uses a dataframe library, so there is nothing to translate.',
   pivot:
-    'Turns long data into wide data, inventing one column per distinct value. It is a group-by with two keys instead of one — which row, and which column — so the accumulator gains a second level, and the column names have to be collected before any row can be written.'
+    'Turns long data into wide data, creating one column per distinct value. It works like a group-by with two keys per row: which output row, and which output column. So the dictionary of buckets gains a second level, and the column names are collected before any row is built.'
 }
 
 export interface PlainStep {
@@ -136,8 +145,8 @@ export const CONCEPTS: Record<string, Concept> = {
   'list-of-dicts': {
     title: 'A table is a list of dicts',
     body: [
-      'Every table in this script is a list, and every row in it is a dictionary keyed by column name. That is the whole data structure — there is nothing else to learn.',
-      'A dataframe stores each column together instead. That is what makes it fast, and it is why its operations are described a column at a time rather than a row at a time.'
+      'In this script a table is a Python list, and each row in it is a dictionary: the column names are the keys, the cell contents are the values. rows[0] is the first row, and rows[0]["product"] is one cell. That is the only data structure the whole script uses.',
+      'A dataframe library like Polars stores the same table the other way around — one array per column — which is far faster on big data. But row by row is easier to read and to write loops over, so that is the shape this script uses.'
     ],
     sketch: [
       'rows = [',
@@ -148,13 +157,15 @@ export const CONCEPTS: Record<string, Concept> = {
       'rows[0]["product"]   ->  "Widget"',
       'len(rows)            ->  2'
     ],
-    takeaway: 'Row-shaped data is easy to read and slow to compute on. That trade is the reason dataframes exist.'
+    takeaway: 'A list of dicts is easy to read but slow at scale. That trade-off is why dataframe libraries exist.'
   },
   'csv-typing': {
-    title: 'A CSV has no types',
+    title: 'A CSV file is all text',
     body: [
-      'Every cell in a CSV file is text. The number 42 arrives as the two characters "4" and "2". Something has to decide it is a number, and that something is normally hidden from you.',
-      'The decision belongs to the whole column, not to one cell: a single stray word in a column of numbers makes the entire column text. That is why the helper scans every value before choosing.'
+      'Open a CSV file in a text editor and you can see it: everything in it is text. The cell that looks like the number 42 is really just the characters "4" and "2" — the file has no way to say "this column holds numbers".',
+      'Text compares badly as numbers: Python compares strings character by character, so "9" sorts after "41" — and strings cannot be summed at all. Before the script can filter or total a column, the values have to be converted to real numbers.',
+      'The conversion is done per column, not per cell. If the "age" column held "30", "41" and "n/a", converting only the numeric ones would leave a column that is half numbers and half text — and the first comparison would crash. So pick_column_type checks every value in the column first: if they all convert, the whole column becomes numbers; otherwise it stays text. (One case in between: a column that is entirely "true"/"false" becomes booleans.)',
+      'Every tool that reads CSVs — Polars, pandas, a spreadsheet import — makes this same guess. They just do it silently. Here it is a function you can read.'
     ],
     sketch: [
       'file:      age',
@@ -164,16 +175,16 @@ export const CONCEPTS: Record<string, Concept> = {
       'as text:   ["30", "41"]       "30" < "41"  ...but "9" > "41"',
       'as ints:   [30, 41]           correct ordering',
       '',
-      'one bad cell changes everything:',
+      'a value like "n/a" keeps the whole column text:',
       '           ["30", "41", "n/a"]  ->  stays text'
     ],
-    takeaway: 'Reading a file is never just reading. Somebody guessed the types for you.'
+    takeaway: 'When a CSV loads with wrong types — numbers as text, IDs as numbers — this guessing step is where it happened.'
   },
   'guard-loop': {
-    title: 'Filtering is walk, test, keep',
+    title: 'A filter is a loop with a test',
     body: [
-      'Start with an empty list. Walk the rows one at a time, test each one, and append the ones that pass. Three lines, and the same three lines in every language you will ever use.',
-      'The fiddly part is missing values. In Python None > 5 is an error and None != 5 is True; in a dataframe both quietly produce "unknown", and the row is dropped. Where the loop above carries an extra "is not None" test, that rule is what put it there — and where the comparison is already safe, it does not.'
+      'A filter takes three moves: start with an empty list, loop over the rows, and append every row that passes the test. This is how a filter looks in every programming language — a dataframe library just runs the same loop for you, out of sight.',
+      'Missing values need one extra guard. If row["revenue"] is None, then None > 100 raises an error in Python — it refuses to order "no value" against a number. Polars instead treats that comparison as unknown and drops the row. To give the same answer, the loop checks is not None before comparing. Where a test is already safe with None (like equals on text), the guard is left out.'
     ],
     sketch: [
       'kept = []',
@@ -184,13 +195,13 @@ export const CONCEPTS: Record<string, Concept> = {
       'same thing, shorter:',
       'kept = [r for r in rows if r["revenue"] > 100]'
     ],
-    takeaway: 'Build a new list rather than deleting from the one you are walking. Mutating a list while looping over it skips elements.'
+    takeaway: 'Always build a new list instead of deleting from the one you are looping over — removing items mid-loop makes Python skip elements.'
   },
   'rebuild-row': {
-    title: 'Selecting rebuilds each row',
+    title: 'Selecting builds a new row',
     body: [
-      'You are not deleting columns; you are making a new dictionary that holds only the keys you asked for. Renaming comes free, because you simply write a different key.',
-      'It also fixes the order. A dict remembers the order you inserted keys, so the order you write them here is the order they come out.'
+      'To keep only some columns, the loop does not delete anything. It builds a fresh dictionary for each row, holding just the keys you asked for — every column you did not name is simply not copied over.',
+      'Renaming costs nothing extra: write the new name as the key, read the value from the old one. And because Python dicts keep their keys in insertion order, the order the keys are written here is the column order that comes out.'
     ],
     sketch: [
       'out = []',
@@ -202,27 +213,28 @@ export const CONCEPTS: Record<string, Concept> = {
     ]
   },
   'key-function': {
-    title: 'Sorting by a key, not a comparison',
+    title: 'Sorting with a key function',
     body: [
-      'Most languages make you supply a comparator: given two rows, work out which comes first, and return -1, 0 or 1. It is tedious and easy to get subtly wrong. Python asks for something smaller — a function that turns one row into the value it should be ordered by. You say what to sort on; the sort does the comparing.',
-      'Because the key can return anything, several columns cost nothing extra. Return a tuple and you are done: Python compares tuples left to right and only looks at the next item when the previous one ties. No nesting, no comparator.',
-      'The "is None" in the key looks like noise until you delete it. None < 5 does not come back False — it raises TypeError, because Python refuses to order a missing value against a number. Booleans, though, compare happily: False < True. So the key puts the flag first, the flag decides, and the value is never asked.',
-      'Stability is the quiet one. Python never reorders rows whose keys tie, so a sort by name followed by a sort by department leaves each department alphabetical. That is what lets you build any ordering you like out of one-line sorts — and it is the only reason sorting one column at a time works at all.'
+      'sorted() does not ask you to compare two rows. It asks for something simpler: a key function that turns one row into the value to sort it by. You point at the column; Python does all the comparing.',
+      'Sorting by two columns costs nothing extra — return a tuple. key=lambda r: (r["city"], r["age"]) means "sort by city, break ties by age", because Python compares tuples left to right and only looks at the next item when the earlier ones are equal.',
+      'The (row["age"] is not None, row["age"]) pattern handles missing values. None < 5 does not return False in Python — it raises an error, because "no value" cannot be ordered against a number. But False < True compares fine. So the key leads with a True/False flag: missing rows get False and sort together at the front — which is also where Polars puts them — and the real values are only compared between rows that have one.',
+      "One more property does real work here: Python's sort is stable, meaning rows with equal keys keep the order they already had. Sort by name, then sort by department, and each department's names stay alphabetical. That is what lets the script sort mixed ascending/descending columns one pass at a time."
     ],
     sketch: [
       'one column',
       '    sorted(rows, key=lambda r: r["age"])',
       '',
-      'two columns — free, because a tuple is a value',
+      'two columns — a tuple compares left to right',
       '    sorted(rows, key=lambda r: (r["city"], r["age"]))',
       '    ties on city?  then compare age',
       '',
       'why the flag is there',
       '    None < 5      TypeError: \'<\' not supported',
       '    False < True  True            <- booleans do compare',
-      '    key=lambda r: (r["age"] is None, r["age"])',
+      '    key=lambda r: (r["age"] is not None, r["age"])',
+      '    missing rows -> False -> they sort first',
       '',
-      'stability, and what it buys you',
+      'stable: equal keys keep their order',
       '    [b1, a1, b2]  sorted by letter',
       ' -> [a1, b1, b2]  b1 is still before b2',
       '',
@@ -230,13 +242,13 @@ export const CONCEPTS: Record<string, Concept> = {
       '     -> cities in order, ages in order within each city'
     ],
     takeaway:
-      'Sort by the least important column first and the most important last. Stability preserves the earlier passes, so you never need a comparator.'
+      'To sort by several columns one pass at a time: sort by the least important column first and the most important last. Stability keeps the earlier passes intact.'
   },
   'seen-set': {
     title: 'The `seen` set',
     body: [
-      'To drop duplicates, remember what you have already emitted. A set is the right container because asking "is this in it" costs the same whether it holds ten items or ten million.',
-      'A list would also work and would be catastrophically slower: checking membership in a list means looking at every element. On 100k rows that is the difference between instant and a coffee break.'
+      'To drop duplicates, keep a set of the row keys you have already kept. For each row: if its key is in seen, skip it; otherwise add the key and keep the row.',
+      'A set, not a list, because of speed. Asking a set "is this in it?" takes the same tiny time whether it holds ten keys or ten million; the same question to a list means reading the whole list, every time. On 100k rows that is the difference between instant and a coffee break.'
     ],
     sketch: [
       'seen = set()',
@@ -248,21 +260,21 @@ export const CONCEPTS: Record<string, Concept> = {
       '    seen.add(key)',
       '    out.append(row)'
     ],
-    takeaway: 'set for "have I seen this", dict for "what did I see with it". Both are ~instant lookups; a list is not.'
+    takeaway: 'Use a set for "have I seen this?" and a dict for "what did I see with it?". Both answer instantly; a list does not.'
   },
   'accumulator-dict': {
-    title: 'The accumulator dict',
+    title: 'Group by: sort into buckets, then summarise',
     body: [
-      'You have many rows and you want one row per group. You cannot know a group is finished until you have looked at every row — so you make two passes.',
-      'First pass: file each row under its key in a dictionary. Second pass: walk the keys and summarise each list. Nothing clever, and it is the shape of every group-by, word count and tally you will ever write.',
-      'Most aggregates skip missing values, which is why they run over values_of() rather than the rows. The positional ones do not: first and last hand back whatever is actually there, missing or not, and n_unique counts "missing" as one of the distinct values.',
-      'Summing an empty list gives 0, but the average of nothing is not 0 — it is undefined, so it comes back as None.',
-      'The key is a tuple — note the trailing comma in (row["x"],), which is what makes a one-item tuple rather than just brackets. Tuples are used because they can be dictionary keys and lists cannot, and because grouping by two columns then needs no extra code at all.'
+      'A group-by cannot finish any group early — the last row of the input might still belong to the first group. So the code makes two passes over the data.',
+      'Pass one puts each row into the bucket for its group: a dictionary where each key is a group and each value is the list of rows in it. groups.setdefault(key, []).append(row) does this in one line — "get the list for this key, creating an empty one if this is its first row, and append". Pass two walks the finished buckets and turns each one into a single summary row.',
+      'This two-pass shape comes up constantly: word counts, tallies, and any "one result per category" problem all use this same code.',
+      'Most aggregates ignore missing values — that is why they run over values_of(...), which drops the Nones, rather than the raw rows. first and last are positional, so they return whatever sits there, None included; and n_unique counts "missing" as one of the distinct values.',
+      'Two small details: sum of an empty list is 0, but the average of nothing is undefined, so it comes back as None. And the group key is a tuple like (row["x"],) — the trailing comma is what makes a one-item tuple. Tuples can be dictionary keys (lists cannot), and grouping by two columns then just means a longer tuple.'
     ],
     sketch: [
       'rows:  Widget 100 | Gadget 200 | Widget 150',
       '',
-      'pass 1 — file every row under its key',
+      'pass 1 — put every row into its bucket',
       '    groups = {}',
       '    for row in rows:',
       '        groups.setdefault(row["product"], []).append(row)',
@@ -270,19 +282,19 @@ export const CONCEPTS: Record<string, Concept> = {
       '    "Widget" -> [Widget 100, Widget 150]',
       '    "Gadget" -> [Gadget 200]',
       '',
-      'pass 2 — summarise each list',
+      'pass 2 — summarise each bucket',
       '    "Widget" -> 100 + 150 = 250',
       '    "Gadget" ->       200 = 200'
     ],
-    takeaway: 'setdefault(key, []).append(x) is the one-liner for "add to the list at this key, making it if needed".'
+    takeaway: 'setdefault(key, []).append(x) is the one-liner for "add to the list at this key, creating the list if needed".'
   },
   'nested-accumulator': {
-    title: 'A dict of dicts is a grid',
+    title: 'Pivot: a grid of buckets',
     body: [
-      'A group-by files each row under one key. A pivot files it under two — the row it belongs to and the column it belongs to — so the accumulator grows a second level: a dict of rows, each holding a dict of cells, each cell the list of rows that landed on that square.',
-      'You cannot write the first output row until you have read the last input row. Any row is free to invent a column no earlier row mentioned, and every row of a table has to carry the same keys, so the labels get a pass of their own before a single output row is built.',
-      'An empty cell and an absent cell are different answers. Summing no values gives 0; a combination that never occurred is not 0 but unknown, and comes back as None. The loop can only tell the two apart by asking whether the key is there — never by counting what is under it.',
-      'The column names depend on how many boxes you ticked. One aggregation names each column after the value alone; ask for two and the names have to say which is which, so they become value_sum and value_mean.'
+      'A pivot is a group-by with two keys per row: which output ROW it belongs to, and which output COLUMN. So the dictionary of buckets from the group-by pattern gains a second level — a dict of rows, each holding a dict of cells, each cell collecting the input rows that landed on that spot of the grid.',
+      'The column names have to be collected before any output row can be built. Any input row may bring a value nobody has seen yet, and every row of a table must end up with the same keys — so the loop gathers all the labels first, then builds each output row against that full list.',
+      'Two kinds of "nothing" come out differently. A cell that exists but sums no values is 0; a row-and-column combination that never occurred is unknown, and comes back as None. The code tells them apart by asking whether the cell\'s key exists — not by looking at what is stored under it.',
+      'The column names depend on how many aggregations you picked. One aggregation names each column after the pivot value alone ("colour", "size"); pick two and the names must say which is which ("colour_sum", "colour_mean").'
     ],
     sketch: [
       'rows:  r1 colour 3 | r1 size 5 | r2 size 1 | r2 size 7 | r3 colour -',
@@ -291,7 +303,7 @@ export const CONCEPTS: Record<string, Concept> = {
       '1. collect the labels first — any row may invent one',
       '       labels = ["colour", "size"]',
       '',
-      '2. file every row under both of its keys',
+      '2. put every row under both of its keys',
       '       cells = {"r1": {"colour": [3], "size": [5]},',
       '                "r2": {               "size": [1, 7]},',
       '                "r3": {"colour": [-]}}',
@@ -304,14 +316,14 @@ export const CONCEPTS: Record<string, Concept> = {
       '                               a cell that was never there is None'
     ],
     takeaway:
-      'Collect the column labels in a pass of their own. A table whose rows disagree about their keys is not a table.'
+      'Collect all the column names first. Every row of a table has to end up with the same keys.'
   },
   'hash-index': {
-    title: 'A join is a hash index',
+    title: 'The fast way to join: a dict',
     body: [
-      'The obvious way to match two tables is a loop inside a loop: for every row on the left, scan the whole right table. That is rows x rows of work — 1000 against 1000 is a million comparisons.',
-      'Instead, walk the right table once and file it into a dictionary by its key. Now each left row is a single lookup. That is rows + rows: 2000 instead of 1000000. Same answer, and it is the reason real databases talk about "hash joins".',
-      'Missing keys match nothing at all — not even another missing key. Two unknowns are not the same unknown, so the loop skips them on both sides.'
+      'The obvious join is a loop inside a loop: for every row on the left, scan the whole right table for matches. It works, but the cost multiplies — 1,000 rows against 1,000 rows is a million comparisons.',
+      'The fast join walks the right table once first, putting each of its rows into a dictionary under its join key. Now each left row finds its matches with one dictionary lookup. Cost: about 2,000 steps instead of a million, for the same answer. Databases use the same trick and call it a hash join.',
+      'Missing join keys match nothing — not even each other. Polars treats two unknowns as not equal, so the loop skips None keys on both sides.'
     ],
     sketch: [
       'slow — rows x rows',
@@ -330,18 +342,18 @@ export const CONCEPTS: Record<string, Concept> = {
     takeaway: 'When you catch yourself scanning one list inside a loop over another, build a dict instead.'
   },
   'nested-loop': {
-    title: 'The one join that really is two loops',
+    title: 'Cross join: every pair',
     body: [
-      'A cross join pairs every row on the left with every row on the right, so there is no key to index and nothing to be clever about. Two nested loops is the honest implementation.',
-      'It is also the one to be careful with: 1000 rows against 1000 rows is a million rows out. The output size is the product, not the sum.'
+      'A cross join pairs every row on the left with every row on the right. There is no key to match on, so two nested loops is exactly the right code — nothing here to speed up.',
+      'Watch the output size: it multiplies. 1,000 rows against 1,000 rows makes 1,000,000 rows out.'
     ],
     sketch: ['for row in left:          # 3 rows', '    for other in right:   # 4 rows', '        ...               # 12 rows out']
   },
   'column-union': {
     title: 'Stacking tables that disagree',
     body: [
-      'If both tables have the same columns, stacking them is just list addition. The interesting case is when they do not.',
-      'Then you collect every column name that appears anywhere, and rebuild each row against that full set — filling in None wherever a table had nothing to say. row.get(column) does the work, because .get returns None instead of raising when a key is missing.'
+      'When every table has the same columns, stacking them is just adding the lists together.',
+      'When they do not, the code first collects every column name that appears in any table, then rebuilds each row against that full list. row.get(column) fills the gaps: .get returns None for a key the row does not have, where row[column] would raise an error.'
     ],
     sketch: [
       'table A: id, name',
@@ -352,13 +364,13 @@ export const CONCEPTS: Record<string, Concept> = {
       'A row ->  {"id": 1, "name": "x", "score": None}',
       'B row ->  {"id": 2, "name": None, "score": 10}'
     ],
-    takeaway: 'row["k"] raises when the key is missing; row.get("k") returns None. Pick deliberately.'
+    takeaway: 'row["k"] raises an error if the key is missing; row.get("k") returns None instead. Choose on purpose.'
   },
   enumerate: {
-    title: 'enumerate, not a counter',
+    title: 'enumerate counts for you',
     body: [
-      'You could keep an integer, add one at the bottom of the loop, and hope you never forget. enumerate() hands you the counter and the item together, so there is nothing to keep in step.',
-      'It takes a start value, which is how the numbering begins wherever the node says it should.'
+      'You could number rows with a counter variable — set it to 1, add 1 at the bottom of the loop, and hope you never forget. enumerate(rows, start=1) removes the bookkeeping: each pass of the loop hands you the number and the row together.',
+      'start= sets where the numbering begins.'
     ],
     sketch: [
       "for i, row in enumerate(rows, start=1):",
@@ -368,18 +380,18 @@ export const CONCEPTS: Record<string, Concept> = {
     ]
   },
   slice: {
-    title: 'Slicing never overruns',
+    title: 'A slice takes what is there',
     body: [
-      'rows[:5] gives the first five. If there are only two, you get two — asking a slice for more than exists is not an error, unlike indexing past the end.',
-      'That forgiving behaviour is why "take a sample" needs no length check.'
+      'rows[:5] means "the first five rows". If the list only has two, you get two — asking a slice for more than exists is not an error. A single index is stricter: rows[5] raises IndexError when there is no row 5.',
+      'That forgiving behaviour is why taking a sample needs no length check.'
     ],
     sketch: ['rows[:5]    first five (or fewer)', 'rows[-5:]   last five', 'rows[5]     IndexError if it is not there']
   },
   'key-rewrite': {
-    title: 'Renaming is rewriting keys',
+    title: 'Renaming rewrites the keys',
     body: [
-      'The values never move. You walk each row and build a new dictionary where some keys have been rewritten and the rest are copied through.',
-      'A dict comprehension says that in one line: for every key and value, decide what the key should be, keep the value as it is.'
+      'Renaming columns never touches the values. The loop rebuilds each row as a new dictionary: every key that matches the rule gets its new name, every other key is copied through unchanged — and each value comes along as it was.',
+      'The {key: value for ...} form is a dict comprehension: a one-line loop that builds a dictionary. Here it reads "for each column and value in the row, decide what the column should now be called, and keep the value".'
     ],
     sketch: [
       '{',
@@ -391,8 +403,8 @@ export const CONCEPTS: Record<string, Concept> = {
   'wide-to-long': {
     title: 'Wide to long',
     body: [
-      'One row with four quarterly columns becomes four rows, each naming the quarter it came from. The identifying columns are repeated on every one.',
-      'Watch the loop order: columns on the outside, rows on the inside. That is what puts all of Q1 together before any of Q2, and it is the only reason the output order is what it is.'
+      'Unpivot turns one wide row into several long ones: a row with four quarter columns becomes four rows, each naming its quarter under "variable" and carrying its number under "value". The id columns repeat on every one.',
+      'The loop order decides the output order. With columns on the outside and rows on the inside, all of Q1 comes out before any of Q2 — swap the two loops and the output would be grouped by row instead.'
     ],
     sketch: [
       'before:  id  q1  q2',
@@ -407,10 +419,10 @@ export const CONCEPTS: Record<string, Concept> = {
     ]
   },
   'write-csv': {
-    title: 'Writing a CSV is not print',
+    title: 'Writing a CSV needs the csv module',
     body: [
-      'You could join values with commas, and it would work until a value contains a comma, a quote or a newline. Then it silently produces a broken file.',
-      'The csv module knows the quoting rules. DictWriter also takes the column order from the fieldnames you give it, so the header and the rows cannot drift apart.'
+      'It is tempting to write a CSV by joining values with commas. That works right up until a value contains a comma, a quote or a newline — then the file is silently broken, and whatever reads it next sees the wrong columns.',
+      "Python's csv module exists for exactly this. DictWriter quotes and escapes the tricky values correctly, and it takes the column order from the fieldnames you give it — so the header and the data rows can never disagree."
     ],
     sketch: [
       'writer = csv.DictWriter(handle, fieldnames=list(rows[0]))',
@@ -420,14 +432,14 @@ export const CONCEPTS: Record<string, Concept> = {
       'value:   he said "hi", loudly',
       'written: "he said ""hi"", loudly"'
     ],
-    takeaway: 'Never hand-roll CSV output. The edge cases are not worth it.'
+    takeaway: 'Never write CSV by joining strings yourself — the edge cases will break the file.'
   },
   exercise: {
     title: 'Over to you',
     body: [
-      'This node has no short loop equivalent, so the script leaves you a function that raises, plus the rule it is supposed to apply.',
-      'The steps before this one still show their data, so you can see exactly what is coming in. The script above is editable — fill in the function, then press ▶ to run it.',
-      'Everything downstream of here has no data yet, for the obvious reason: the script stopped at this line.'
+      'This node has no ready-made loop, so the script leaves it to you: a function that currently just raises an error, with the rule it should apply quoted in the comment above it.',
+      'Everything before this step already ran, so its data is there to look at. Edit the function right here in the editor — replace the raise with a loop that returns a new list of rows — then press ▶ to run your version, or "Show the data at each step" to trace it.',
+      'The steps after this one have no data yet, because the script stops here until your function returns something.'
     ],
     takeaway: 'Return a new list of dicts. The rest of the script does not care how you build it.'
   }
@@ -459,8 +471,8 @@ export const CONCEPT_FOR_NODE: Record<string, string> = {
 
 /** Why a node type has no loop form, quoted into its exercise stub. */
 const STUB_REASONS: Record<string, string> = {
-  formula: 'Flowfile evaluates this with its expression engine, so there is no fixed loop to show.',
-  polars_code: 'This node is already Python — and already a dataframe library.'
+  formula: 'The canvas evaluates this with its expression engine, so there is no fixed loop to show.',
+  polars_code: 'This node is already Python, and it already uses a dataframe library — there is nothing to translate.'
 }
 
 /** Module-level helper functions, emitted only when a node actually needs one. */
@@ -488,11 +500,13 @@ const HELPER_SOURCES: Record<string, string[]> = {
   ],
   pick_column_type: [
     'def pick_column_type(values):',
-    '    """Pick one converter for a whole column, the way a CSV reader does.',
+    '    """Work out one type for a whole column, the way a CSV reader does.',
     '',
-    '    The type belongs to the column, not to a single cell: one stray word in a',
-    '    column of numbers makes the entire column text. Flowfile also recognises',
-    '    dates here — adding that is a good exercise.',
+    '    If every filled cell converts to a number, the column becomes numbers;',
+    '    if every cell is "true"/"false", it becomes booleans; anything else',
+    '    keeps the entire column text, because a half-converted column would',
+    '    crash on its first comparison. Flowfile also recognises dates here;',
+    '    adding that is a good exercise.',
     '    """',
     '    filled = [value for value in values if value != ""]',
     '    if not filled:',
@@ -510,11 +524,11 @@ const HELPER_SOURCES: Record<string, string[]> = {
   ],
   match_type_of: [
     'def match_type_of(text, rows, column):',
-    '    """Read a filter value written as text as the same type the column holds.',
+    '    """Convert a filter value written as text to the type the column holds.',
     '',
     '    The settings panel stores every filter value as a string, but the column',
-    '    may hold numbers — and in Python 5 != "5". A dataframe library converts',
-    '    for you; this is that conversion, made visible.',
+    '    may hold numbers — and in Python 5 != "5". This does the conversion a',
+    '    dataframe library would do for you silently.',
     '    """',
     '    sample = next((row[column] for row in rows if row.get(column) is not None), None)',
     '    if isinstance(sample, bool):',
@@ -536,21 +550,21 @@ const HELPER_SOURCES: Record<string, string[]> = {
   ],
   values_of: [
     'def values_of(rows, column):',
-    '    """Every non-null value of one column.',
+    '    """One column\'s values, with the missing ones (None) dropped.',
     '',
-    '    Aggregates skip missing values rather than tripping over them, so this',
-    '    filtering step happens on your behalf every time you sum a column.',
+    '    Aggregations like sum and mean skip missing values — this function is',
+    '    where that happens.',
     '    """',
     '    return [row[column] for row in rows if row[column] is not None]'
   ],
   average: [
     'def average(values):',
-    '    """Mean of the values given, or None when there are none left."""',
+    '    """Mean of the values given, or None when the list is empty."""',
     '    return sum(values) / len(values) if values else None'
   ],
   middle_value: [
     'def middle_value(values):',
-    '    """Median of the values given, or None when there are none left."""',
+    '    """Median of the values given, or None when the list is empty."""',
     '    return statistics.median(values) if values else None'
   ],
   write_csv_file: [
@@ -594,10 +608,18 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
 
   // --- small helpers -------------------------------------------------------
 
-  /** A loop-local name that cannot collide with a user's node_reference. */
+  /**
+   * A loop-local name that cannot collide with a node_reference or another temp.
+   *
+   * The plain name wherever possible — `groups`, not `groups_4`. A node-id
+   * suffix appears only when a second node needs the same base, because a
+   * machine-looking name is exactly what this flavour is trying not to emit.
+   */
   protected temp(base: string, nodeId: number): string {
-    let name = `${base}_${nodeId}`
-    while (this.takenNames.has(name)) name = `_${name}`
+    const taken = (name: string) => this.takenNames.has(name) || RESERVED_NAMES.has(name)
+    let name = taken(base) ? `${base}_${nodeId}` : base
+    while (taken(name)) name = `_${name}`
+    this.takenNames.add(name)
     return name
   }
 
@@ -714,7 +736,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
    * case the walkthrough needs to keep working.
    */
   buildTraceCode(): string {
-    const full = this.buildFinalCode()
+    // Renders the body and finalises imports/helpers; the text itself is unused.
+    void this.buildFinalCode()
     const body = this.renderedBody
 
     const spans = [...this.renderedSpans.entries()].sort((a, b) => a[1][0] - b[1][0])
@@ -728,34 +751,35 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     }
     traced.push(...body.slice(cursor))
 
-    const header = full.slice(0, full.indexOf('def run_etl_pipeline():'))
-    const lines = [header + '__steps__ = {}', '', '', 'def run_etl_pipeline():']
+    const lines: string[] = []
+    lines.push(...Array.from(this.imports).sort())
+    if (this.imports.size > 0) lines.push('', '')
+    lines.push('__steps__ = {}', '', '')
+    lines.push('def run_etl_pipeline():')
     for (const line of traced) lines.push(line ? `    ${line}` : '')
     lines.push('')
     lines.push(this.lastNodeVar ? `    return ${this.lastNodeVar}` : '    return []')
+    for (const helper of this.orderedHelpers()) {
+      lines.push('', '')
+      lines.push(...HELPER_SOURCES[helper])
+    }
     return lines.join('\n')
   }
 
+  /**
+   * Newspaper order: the reader's own pipeline first, the helpers it calls
+   * after it. Python resolves names when the pipeline *runs*, not when it is
+   * defined, so nothing is used before it exists — and the file opens on the
+   * flow the reader built rather than on CSV-parsing scaffolding.
+   */
   protected buildFinalCode(): string {
     // renderBody() remaps lastNodeVar to its final name, so it has to run first.
     const body = this.renderBody()
     this.renderedBody = body
 
     const lines: string[] = []
-    const helpers = this.orderedHelpers()
-    if (helpers.length > 0) {
-      // Otherwise the reader opens the file on CSV-parsing scaffolding and has
-      // to go looking for their own flow.
-      lines.push('# Your pipeline is in run_etl_pipeline() below.')
-      lines.push('# Everything above it is the handful of helpers it leans on.')
-      lines.push('')
-    }
     lines.push(...Array.from(this.imports).sort())
     if (this.imports.size > 0) lines.push('', '')
-
-    for (const helper of helpers) {
-      lines.push(...HELPER_SOURCES[helper], '', '')
-    }
 
     lines.push('def run_etl_pipeline():')
     lines.push('    """')
@@ -779,6 +803,16 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     lines.push('')
     lines.push(this.lastNodeVar ? `    return ${this.lastNodeVar}` : '    return []')
     lines.push('', '')
+
+    const helpers = this.orderedHelpers()
+    if (helpers.length > 0) {
+      lines.push('# The helper functions the pipeline calls. Python only looks these names up')
+      lines.push('# when the pipeline runs, so it is fine that they live below their callers.')
+      for (const helper of helpers) {
+        lines.push(...HELPER_SOURCES[helper], '', '')
+      }
+    }
+
     lines.push('if __name__ == "__main__":')
     lines.push('    pipeline_output = run_etl_pipeline()')
     lines.push('    for row in pipeline_output or []:')
@@ -819,11 +853,16 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const inputs = this.collectMainInputs(inputVars)
     const right = inputVars.right
     const args = right ? [inputVars.main || 'rows_left', right] : inputs
-    const parameters = args.map((_, index) => `rows_${index}`)
+    // `rows`, or `left_rows`/`right_rows` — a person's parameter names, not a machine's.
+    const parameters = right
+      ? ['left_rows', 'right_rows']
+      : args.length === 1
+        ? ['rows']
+        : args.map((_, index) => `rows_${index + 1}`)
     const functionName = this.temp(node.type, node.id)
-    const why = reason || STUB_REASONS[node.type] || `Flowfile runs this node with a library, so there is no loop to show.`
+    const why = reason || STUB_REASONS[node.type] || `The canvas runs this node with a library, so there is no loop to show.`
 
-    this.section(`${node.type} (node ${node.id}) — over to you`)
+    this.section(`${getNodeDescription(node.type).title} — over to you`)
     this.teach(why)
     const detail = this.stubDetail(node)
     if (detail) this.teach('The rule it applies is:', ...detail.split('\n').map(line => `    ${line}`))
@@ -892,7 +931,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const table = settings.received_file
     if (table?.file_type && table.file_type !== 'csv') {
       throw new PlainPythonUnsupported(
-        `Reading ${table.file_type} needs a library that understands the format; only CSV is plain Python.`
+        `Reading ${table.file_type} needs a library that understands the format. CSV is the only format plain Python can read on its own.`
       )
     }
     const path = table?.path ?? ''
@@ -906,8 +945,9 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
 
     this.section('Read CSV')
     this.teach(
-      'Every cell in a CSV file is text. read_csv_file (above) decides which',
-      'columns are really numbers — that guess is normally hidden from you.'
+      'Everything in a CSV file is text. read_csv_file (defined below the',
+      'pipeline) works out which columns are really numbers — the same guess',
+      'other tools make silently.'
     )
     const args = [toPythonValue(settings.file_name || table?.name || 'data.csv')]
     if (csvSettings?.delimiter && csvSettings.delimiter !== ',') {
@@ -936,7 +976,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     this.section(`Read "${datasetName}"`)
     this.teach(
       `On the canvas this table comes from ${origin}, which a standalone`,
-      'script has no access to. Export it once and this line reads the same rows.'
+      'script cannot reach. Download it as a CSV once, put it next to this',
+      'script, and this line reads the same rows.'
     )
     this.addCode(`${varName} = read_csv_file(${toPythonValue(`${datasetName}.csv`)})`)
     this.addCode('')
@@ -964,8 +1005,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const condition = this.filterCondition(node, basic.field, basic.operator, basic.value, basic.value2, input, setup)
     this.section('Filter')
     this.teach(
-      'Walk every row, test it, keep the ones that pass. This is the shape of',
-      'a filter in any language — a dataframe library just hides the loop.'
+      'Test every row, append the ones that pass to a new list. A filter looks',
+      'like this in every language — a dataframe library just runs the loop for you.'
     )
     for (const line of setup) this.addCode(line)
     this.addCode(`${varName} = []`)
@@ -995,11 +1036,9 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     if (operator === 'is_not_null') return present
 
     // Read the filter value once, before the loop — not once per row.
-    let literals = 0
-    const literal = (text: string): string => {
+    const literal = (text: string, base = 'wanted'): string => {
       this.useHelper('match_type_of')
-      const name = this.temp(literals === 0 ? 'wanted' : `wanted_${literals}`, node.id)
-      literals += 1
+      const name = this.temp(base, node.id)
       setup.push(`${name} = match_type_of(${toPythonValue(text)}, ${input}, ${toPythonValue(field)})`)
       return name
     }
@@ -1043,7 +1082,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
         return operator === 'in' ? `${present} and ${test}` : `${present} and not (${test})`
       }
       case 'between':
-        return `${present} and ${literal(value)} <= ${target} <= ${literal(value2 ?? value)}`
+        return `${present} and ${literal(value, 'lower')} <= ${target} <= ${literal(value2 ?? value, 'upper')}`
       default:
         throw new PlainPythonUnsupported(`The "${operator}" filter has no plain-Python form yet.`)
     }
@@ -1104,10 +1143,10 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
         return [nullFlag(target, reverse), target]
       })
       this.teach(
-        'sorted() takes a *key function*: reduce each row to the value it should',
-        'be ordered by, and let the sort do the comparing.',
-        'Missing values sort first either way, which is what the "is None" flag',
-        'at the front of the key reproduces.'
+        'sorted() takes a key function: it turns each row into the value to',
+        'sort it by, and the sort does the comparing.',
+        'Missing values sort first either way (as they do in Polars) — that is',
+        'what the True/False flag at the front of the key is for.'
       )
       this.addCode(`${varName} = sorted(`)
       this.addCode(`    ${input},`)
@@ -1122,7 +1161,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     // which works only because Python's sort is stable.
     this.teach(
       'The columns sort in different directions, so one key function will not do.',
-      'Instead: sort once per column, least significant first. That works only',
+      'Instead: sort once per column, least important first. That works only',
       "because Python's sort is *stable* — equal rows keep the order they had.",
       'Read the passes bottom to top to see the priority.'
     )
@@ -1153,7 +1192,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     if (keep === 'first' || keep === 'any') {
       this.teach(
         'The `seen` set is the whole trick: remember each key you have already',
-        'emitted, and skip a row whose key is in it.'
+        'kept, and skip any row whose key is already in it.'
       )
       this.addCode(`${seen} = set()`)
       this.addCode(`${varName} = []`)
@@ -1172,7 +1211,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
       this.teach(
         'Keeping the *last* of each key: a dict remembers insertion order, and',
         'overwriting a key does NOT move it to the end — so drop the old entry',
-        'first. That puts each row where its kept copy actually sits.'
+        'first. Each row then ends up in the position of its last occurrence.'
       )
       this.addCode(`${byKey} = {}`)
       this.addCode(`for row in ${input}:`)
@@ -1211,7 +1250,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     this.section('Record ID')
     this.teach(
       'enumerate() hands you the counter and the row together, so there is no',
-      'index variable to keep in step by hand. The new column goes first.'
+      'counter variable to update yourself. The new column goes first.'
     )
     this.addCode(`${varName} = []`)
     this.addCode(`for number, row in enumerate(${input}, start=${offset}):`)
@@ -1225,7 +1264,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const method = settings.sample_method || 'first'
     if (method !== 'first') {
       throw new PlainPythonUnsupported(
-        'Random sampling uses a seeded shuffle, which plain Python cannot reproduce row-for-row.'
+        "Random sampling shuffles with a fixed seed, and plain Python cannot reproduce the canvas's exact shuffle — the rows would not match."
       )
     }
     const size = settings.sample_size ?? (settings as any).head_input?.n ?? 10
@@ -1246,7 +1285,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     }
     if (rule.rename_mode !== 'prefix' && rule.rename_mode !== 'suffix') {
       throw new PlainPythonUnsupported(
-        `The "${rule.rename_mode}" rename mode needs Flowfile's expression engine or the data itself.`
+        `The "${rule.rename_mode}" rename mode works its new names out at run time — from a formula or from the data — which a pre-written script cannot do.`
       )
     }
     if (rule.selection_mode === 'data_type') {
@@ -1263,7 +1302,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     this.section('Rename columns')
     this.teach(
       'One rule applied to many columns. The rows are rebuilt with new keys;',
-      'the values never move.'
+      'the values are copied through untouched.'
     )
     if (rule.selection_mode === 'list') {
       this.addCode(`${targets} = set(${toPythonValue(rule.selected_columns || [])})`)
@@ -1310,8 +1349,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     }
 
     this.teach(
-      'The accumulator-dict pattern, in two passes: file every row under its',
-      'key, then walk the groups and summarise each one. Worth knowing by heart.'
+      'Two passes: put every row into the bucket for its group key, then turn',
+      'each bucket into one summary row. This pattern comes up constantly.'
     )
     this.addCode(`${groups} = {}`)
     this.addCode(`for row in ${input}:`)
@@ -1398,7 +1437,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     for (const aggregation of aggregations) {
       if (!PIVOT_AGGS_SUPPORTED.has(aggregation)) {
         throw new PlainPythonUnsupported(
-          `Pivot has no case for the "${aggregation}" aggregation — the canvas quietly sums instead of applying it.`
+          `The canvas does not truly support the "${aggregation}" aggregation in a pivot — it quietly sums instead — so this script will not pretend to.`
         )
       }
     }
@@ -1423,8 +1462,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     this.teach(
       'One row per index key, one column per distinct value — which needs two',
       'levels of bookkeeping: a dict of rows, each holding a dict of cells.',
-      'The labels get a pass of their own, because any row can invent a column',
-      'and every output row has to end up carrying the same keys.'
+      'The column names are collected first, because any row may introduce a',
+      'new one and every output row must end up with the same keys.'
     )
     // Polars takes the labels as text, sorted, nulls first — and Python refuses
     // to order None against a string, so the key leads with a flag.
@@ -1531,7 +1570,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
 
     if (!JOIN_HOWS_SUPPORTED.has(how)) {
       throw new PlainPythonUnsupported(
-        `A "${how}" join is a left join with the tables the other way round — worth writing out yourself.`
+        JOIN_EXERCISE_REASONS[how] ?? `A "${how}" join has no plain-Python form here yet — worth writing out yourself.`
       )
     }
     if (mapping.length === 0) {
@@ -1547,8 +1586,9 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
 
     this.section(`Join (${how})`)
     this.teach(
-      'Index the right-hand table by its key first, then walk the left table',
-      'once. Nested loops would be rows x rows; this is rows + rows.',
+      'Put each right-hand row into a dictionary under its key first; then each',
+      'left row finds its matches with one lookup. Nested loops would cost',
+      'rows x rows of work; this costs rows + rows.',
       'A missing key matches nothing at all — not even another missing key.'
     )
     const extras = this.temp('right_columns', node.id)
@@ -1589,14 +1629,19 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     this.addCode('        for column, value in other.items():')
     this.addCode(`            if column in ${rightKeys}:`)
     this.addCode('                continue')
-    this.addCode(`            combined[column + ${toPythonValue(suffix)} if column in row else column] = value`)
+    this.addCode(`            new_column = column + ${toPythonValue(suffix)} if column in row else column`)
+    this.addCode('            combined[new_column] = value')
     this.addCode(`        ${varName}.append(combined)`)
 
     if (how === 'left') {
+      // A left row with no partner still comes through, with the right-hand
+      // columns filled in as None — spelled out as a loop, not a one-liner.
       this.addCode('    if not matches:')
-      this.addCode(
-        `        ${varName}.append({**row, **{column + ${toPythonValue(suffix)} if column in row else column: None for column in ${extras}}})`
-      )
+      this.addCode('        combined = dict(row)')
+      this.addCode(`        for column in ${extras}:`)
+      this.addCode(`            new_column = column + ${toPythonValue(suffix)} if column in row else column`)
+      this.addCode('            combined[new_column] = None')
+      this.addCode(`        ${varName}.append(combined)`)
     }
     this.addCode('')
   }
@@ -1609,15 +1654,16 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
 
     this.section('Cross join')
     this.teach(
-      'Every row on the left paired with every row on the right. This is the',
-      'one join that really is two nested loops — and why the output gets big.'
+      'Every row on the left paired with every row on the right — two nested',
+      'loops, no key to match. The output size multiplies: rows x rows.'
     )
     this.addCode(`${varName} = []`)
     this.addCode(`for row in ${left}:`)
     this.addCode(`    for other in ${right}:`)
     this.addCode('        combined = dict(row)')
     this.addCode('        for column, value in other.items():')
-    this.addCode(`            combined[column + ${toPythonValue(suffix)} if column in row else column] = value`)
+    this.addCode(`            new_column = column + ${toPythonValue(suffix)} if column in row else column`)
+    this.addCode('            combined[new_column] = value')
     this.addCode(`        ${varName}.append(combined)`)
     this.addCode('')
   }
@@ -1646,8 +1692,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
 
     const columns = this.temp('all_columns', node.id)
     this.teach(
-      'The tables need not share columns. Collect every column name first, then',
-      'rebuild each row with None wherever its table had nothing to say.'
+      "The tables don't have to share columns. Collect every column name first,",
+      'then rebuild each row with None wherever it lacks one of the columns.'
     )
     this.addCode(`${columns} = []`)
     this.addCode(`for table in (${inputs.join(', ')}):`)
@@ -1676,7 +1722,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const fileType = output?.file_type || 'csv'
     if (fileType !== 'csv') {
       throw new PlainPythonUnsupported(
-        `Writing ${fileType} needs a library that understands the format; only CSV is plain Python.`
+        `Writing ${fileType} needs a library that understands the format. CSV is the only format plain Python can write on its own.`
       )
     }
     const fileName = output?.name || 'output.csv'

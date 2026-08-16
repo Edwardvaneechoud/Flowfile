@@ -140,6 +140,20 @@ export function stepHighlight(): Extension {
   return [stepState, stepDecorations, stepTheme]
 }
 
+/**
+ * Every step's live line range, in step order — the ranges as they exist NOW,
+ * after any edits. This is what the trace instruments, so the captures land in
+ * the learner's actual buffer rather than where the generator left them.
+ */
+export function allStepLines(state: EditorState): StepRange[] {
+  const field = state.field(stepState, false)
+  if (!field) return []
+  return field.anchors.map(anchor => {
+    const [from, to] = lineSpan(state, anchor)
+    return { from, to }
+  })
+}
+
 /** The line range currently PAINTED. The header label reads this, never PlainStep. */
 export function stepLines(state: EditorState, index?: number): StepRange | null {
   const field = state.field(stepState, false)

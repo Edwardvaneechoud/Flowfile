@@ -221,7 +221,8 @@ const NODE_TYPE_VAR_LABEL: Record<string, string> = {
 }
 
 // Python keywords + common builtins that generated names must never shadow.
-const RESERVED_NAMES = new Set<string>([
+// Exported for the plain-Python flavour, whose loop temporaries obey the same rule.
+export const RESERVED_NAMES = new Set<string>([
   'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class',
   'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global',
   'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return',

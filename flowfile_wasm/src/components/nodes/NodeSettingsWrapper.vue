@@ -2,7 +2,8 @@
   <div class="node-settings-wrapper">
     <slot></slot>
 
-    <NodeExplainer v-if="teachingMode" :node-id="nodeId" />
+    <!-- Both gates: the host offers the capability, the user asked to learn. -->
+    <NodeExplainer v-if="teachingMode && learning.enabled" :node-id="nodeId" />
 
     <div class="general-settings-section">
       <div class="section-header" @click="isExpanded = !isExpanded">
@@ -40,6 +41,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
+import { useLearningStore } from '../../stores/learning-store'
 import NodeExplainer from './NodeExplainer.vue'
 import type { NodeBase } from '../../types'
 
@@ -54,6 +56,7 @@ const props = withDefaults(
 )
 
 const flowStore = useFlowStore()
+const learning = useLearningStore()
 
 const isExpanded = ref(false)
 const localReference = ref('')

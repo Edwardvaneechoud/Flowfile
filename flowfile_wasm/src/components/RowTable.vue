@@ -26,14 +26,16 @@ const props = withDefaults(
   defineProps<{
     rows: Record<string, unknown>[]
     limit?: number
+    /** True row count when `rows` is itself a capped sample — keeps "…and N more" honest. */
+    total?: number
     /** Inside an already-scrolling region: no second Y-scroller, no sticky header. */
     flush?: boolean
   }>(),
-  { limit: 8, flush: false }
+  { limit: 8, total: undefined, flush: false }
 )
 
 const shown = computed(() => props.rows.slice(0, props.limit))
-const hidden = computed(() => Math.max(0, props.rows.length - props.limit))
+const hidden = computed(() => Math.max(0, (props.total ?? props.rows.length) - props.limit))
 
 const columns = computed(() => {
   const seen: string[] = []
