@@ -12,64 +12,20 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { usePlainPythonGeneration } from '../../src/composables/usePlainPythonGeneration'
+import { makeNode, flowWith } from '../helpers/flow-builder'
+import { findPython } from '../helpers/python-runtime'
 import type { FlowNode, FlowEdge } from '../../src/types'
 
 const RUNNER = resolve(__dirname, '../python/engine_flow_runner.py')
 
-/** The Poetry venv for whichever checkout we are in, if Poetry is installed. */
-function poetryPython(): string | null {
-  try {
-    return execFileSync('poetry', ['env', 'info', '--executable'], {
-      cwd: resolve(__dirname, '../../..'),
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim()
-  } catch {
-    return null
-  }
-}
-
-/**
- * Any monorepo Poetry venv. A git worktree gets its own (often empty) venv, so
- * `poetry env info` alone can point at an interpreter with no Polars while the
- * main checkout's venv has one.
- */
-function poetryVenvPythons(): string[] {
-  const root = join(process.env.HOME ?? '', '.cache/pypoetry/virtualenvs')
-  if (!existsSync(root)) return []
-  return readdirSync(root)
-    .filter(name => name.startsWith('flowfile-'))
-    .map(name => join(root, name, 'bin', 'python'))
-    .filter(existsSync)
-}
-
-function findPython(): string | null {
-  const candidates = [
-    process.env.FLOWFILE_TEST_PYTHON,
-    'python3',
-    'python',
-    poetryPython(),
-    ...poetryVenvPythons()
-  ].filter(Boolean) as string[]
-  for (const candidate of candidates) {
-    try {
-      execFileSync(candidate, ['-c', 'import polars'], { stdio: 'ignore' })
-      return candidate
-    } catch {
-      /* try the next one */
-    }
-  }
-  return null
-}
-
 let python: string | null = null
 let workdir = ''
 beforeAll(() => {
-  python = findPython()
+  python = findPython({ requirePolars: true })
   workdir = mkdtempSync(join(tmpdir(), 'flowfile-plain-'))
 })
 
@@ -93,40 +49,14 @@ interface Fixture {
 }
 
 function toFlow(fixture: Fixture): { nodes: Map<number, FlowNode>; edges: FlowEdge[] } {
-  const nodes = new Map<number, FlowNode>()
-  const edges: FlowEdge[] = []
-  for (const step of fixture.steps) {
-    const inputIds = step.left !== undefined ? [] : (step.inputs ?? [])
-    nodes.set(step.id, {
-      id: step.id,
-      type: step.type,
-      x: 0,
-      y: 0,
-      settings: {
-        node_id: step.id,
-        is_setup: true,
-        cache_results: true,
-        pos_x: 0,
-        pos_y: 0,
-        description: '',
-        ...(step.settings ?? {})
-      } as any,
-      inputIds,
-      leftInputId: step.left,
-      rightInputId: step.right
-    })
-    for (const source of [...(step.inputs ?? []), step.left, step.right]) {
-      if (source === undefined) continue
-      edges.push({
-        id: `e${source}-${step.id}`,
-        source: String(source),
-        target: String(step.id),
-        sourceHandle: 'output-0',
-        targetHandle: 'input-0'
+  return flowWith(
+    ...fixture.steps.map(step =>
+      makeNode(step.id, step.type, step.settings ?? {}, step.left !== undefined ? [] : (step.inputs ?? []), {
+        leftInputId: step.left,
+        rightInputId: step.right
       })
-    }
-  }
-  return { nodes, edges }
+    )
+  )
 }
 
 /** Numbers compare by value (2 == 2.0); everything else by canonical JSON. */

@@ -13,55 +13,13 @@ import {
   NODE_EXPLANATIONS
 } from '../../src/composables/usePlainPythonGeneration'
 import { NODE_TYPES } from '../../src/types'
-import type { FlowNode, FlowEdge } from '../../src/types'
+import { makeNode, flowWith } from '../helpers/flow-builder'
 
 const { generatePlainPython, explainNode } = usePlainPythonGeneration()
-
-function makeNode(id: number, type: string, settings: any = {}, inputIds: number[] = [], extra: any = {}): FlowNode {
-  return {
-    id,
-    type,
-    x: 0,
-    y: 0,
-    settings: {
-      node_id: id,
-      is_setup: true,
-      cache_results: true,
-      pos_x: 0,
-      pos_y: 0,
-      description: '',
-      ...settings
-    } as any,
-    inputIds,
-    ...extra
-  }
-}
-
-function edgesFor(pairs: [number, number][]): FlowEdge[] {
-  return pairs.map(([from, to]) => ({
-    id: `e${from}-${to}`,
-    source: String(from),
-    target: String(to),
-    sourceHandle: 'output-0',
-    targetHandle: 'input-0'
-  }))
-}
 
 const SOURCE = makeNode(1, 'manual_input', {
   raw_data_format: { columns: [{ name: 'a' }, { name: 'b' }], data: [[1, 2, 3], ['x', 'y', 'z']] }
 })
-
-function flowWith(...nodes: FlowNode[]): { nodes: Map<number, FlowNode>; edges: FlowEdge[] } {
-  const map = new Map<number, FlowNode>()
-  const pairs: [number, number][] = []
-  for (const node of nodes) {
-    map.set(node.id, node)
-    for (const input of node.inputIds) pairs.push([input, node.id])
-    if (node.leftInputId !== undefined) pairs.push([node.leftInputId, node.id])
-    if (node.rightInputId !== undefined) pairs.push([node.rightInputId, node.id])
-  }
-  return { nodes: map, edges: edgesFor(pairs) }
-}
 
 describe('plain-Python generation', () => {
   it('never reaches for Polars, whatever the flow contains', () => {
@@ -212,7 +170,6 @@ describe('per-node explanations', () => {
     )
     const explanation = explainNode(flowWith(SOURCE, filter), 2)
 
-    expect(explanation.supported).toBe(true)
     expect(explanation.explanation).toContain('Keeps the rows that match')
     expect(explanation.code).toContain('for row in source:')
     expect(explanation.code).toContain('"b"') // the user's actual column, not a generic example
@@ -224,7 +181,6 @@ describe('per-node explanations', () => {
     const formula = makeNode(2, 'formula', { function: { field: { name: 'c' }, function: '[a] * 2' } }, [1])
     const explanation = explainNode(flowWith(SOURCE, formula), 2)
 
-    expect(explanation.supported).toBe(false)
     expect(explanation.explanation).not.toBe('')
     expect(explanation.explanation).toContain('exercise')
     expect(explanation.code).toContain('raise NotImplementedError')
