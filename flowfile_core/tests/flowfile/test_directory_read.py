@@ -509,9 +509,10 @@ def _record_create_from_path(monkeypatch) -> list[str]:
     return seen
 
 
-def test_configure_prefetch_probes_single_file_only(tmp_path, monkeypatch):
+def test_configure_prefetch_probes_first_file_only(tmp_path, monkeypatch):
     """Configuring a directory read (which opening a saved flow replays per node) must prefetch
-    the schema via the single-file probe — never a throwaway full build over every matched file."""
+    the schema via a one-file probe — never a throwaway full build over every matched file.
+    The probe stays in directory mode so a matched path with glob metacharacters still scans."""
     _synchronous_prefetch(monkeypatch)
     seen = _record_create_from_path(monkeypatch)
     _three_csvs(tmp_path)
@@ -519,9 +520,9 @@ def test_configure_prefetch_probes_single_file_only(tmp_path, monkeypatch):
     graph = create_graph(execution_location="local")
     node = _add_read(graph, _directory_table(tmp_path))
 
-    assert seen == ["single_file"]
+    assert seen == ["directory"]
     assert [column.name for column in node.get_predicted_schema()] == ["id", "val"]
-    assert seen == ["single_file"], "prediction must reuse the prefetched result, not probe again"
+    assert seen == ["directory"], "prediction must reuse the prefetched result, not probe again"
 
 
 def test_configure_with_saved_fields_touches_no_files(tmp_path, monkeypatch):
@@ -552,5 +553,96 @@ def test_add_read_without_promise_probes_single_file_only(tmp_path, monkeypatch)
     graph.add_read(input_schema.NodeRead(flow_id=1, node_id=1, received_file=_directory_table(tmp_path)))
     node = graph.get_node(1)
 
-    assert seen == ["single_file"]
+    assert seen == ["directory"]
     assert [column.name for column in node.get_predicted_schema()] == ["id", "val"]
+
+
+# Review fixes: glob metacharacters, case-insensitive extensions, dtype divergence
+
+
+def test_directory_read_filename_with_glob_metacharacters(tmp_path):
+    """Literal ``[``/``]`` in a filename must not be re-globbed away: the engine expands the
+    pattern itself and hands polars the literal file list with ``glob=False``."""
+    _write_csv(tmp_path / "report[2024].csv", [{"id": 1, "val": "bracketed"}])
+    _write_csv(tmp_path / "ok.csv", [{"id": 2, "val": "plain"}])
+
+    graph = create_graph(execution_location="local")
+    node = _add_read(graph, _directory_table(tmp_path))
+    handle_run_info(graph.run_graph())
+
+    assert sorted(_collect(node)["id"].to_list()) == [1, 2]
+
+
+def test_directory_mode_pointed_at_bracketed_file(tmp_path):
+    """A directory-mode node aimed at one concrete file still works when its name contains
+    glob metacharacters — the synthesized pattern escapes them."""
+    target = tmp_path / "report[1].csv"
+    _write_csv(target, [{"id": 1, "val": "a"}])
+
+    graph = create_graph(execution_location="local")
+    node = _add_read(graph, _directory_table(target))
+    handle_run_info(graph.run_graph())
+
+    assert _collect(node)["id"].to_list() == [1]
+
+
+def test_directory_read_extension_matching_is_case_insensitive(tmp_path):
+    """A.CSV and b.csv are the same data drop; the scan must read both on every platform, not
+    only on Windows where fnmatch happens to fold case."""
+    _write_csv(tmp_path / "A.CSV", [{"id": 1, "val": "upper"}])
+    _write_csv(tmp_path / "b.csv", [{"id": 2, "val": "lower"}])
+
+    graph = create_graph(execution_location="local")
+    node = _add_read(graph, _directory_table(tmp_path))
+    handle_run_info(graph.run_graph())
+
+    assert sorted(_collect(node)["id"].to_list()) == [1, 2]
+
+
+def test_directory_read_parquet_dtype_mismatch_is_attributable(tmp_path):
+    """Divergent dtypes poison a later collect if unchecked (polars raises only when the
+    divergent file is physically read); the build must fail naming the offending file."""
+    pl.DataFrame({"id": [1], "amount": [10]}).write_parquet(tmp_path / "a.parquet")
+    pl.DataFrame({"id": [2], "amount": ["ten"]}).write_parquet(tmp_path / "b.parquet")
+
+    with pytest.raises(ValueError, match="dtype mismatch.*amount"):
+        FlowDataEngine.create_from_path(_directory_table(tmp_path, file_type="parquet"))
+
+
+def test_probe_survives_glob_metacharacters_in_the_directory_name(tmp_path, monkeypatch):
+    """The schema probe must not re-glob the matched path: a directory literally named
+    ``[archive]`` used to make the probe expand to nothing and fall back to a full build."""
+    _synchronous_prefetch(monkeypatch)
+    directory = tmp_path / "[archive]"
+    directory.mkdir()
+    _write_csv(directory / "one.csv", [{"id": 1, "val": "a"}])
+
+    graph = create_graph(execution_location="local")
+    node = _add_read(graph, _directory_table(directory))
+
+    assert [column.name for column in node.get_predicted_schema()] == ["id", "val"]
+
+
+def test_directory_read_parquet_struct_field_order_is_not_a_mismatch(tmp_path):
+    """polars aligns struct fields by name across files; the up-front schema check must not be
+    stricter than the engine it protects."""
+    pl.DataFrame({"id": [1], "payload": [{"a": 10, "b": "x"}]}).write_parquet(tmp_path / "d1.parquet")
+    pl.DataFrame({"id": [2], "payload": [{"b": "y", "a": 20}]}).write_parquet(tmp_path / "d2.parquet")
+
+    df = FlowDataEngine.create_from_path(_directory_table(tmp_path, file_type="parquet")).collect()
+
+    assert df.height == 2
+    assert sorted(row["a"] for row in df["payload"].to_list()) == [10, 20]
+
+
+def test_directory_read_parquet_timezone_divergence_is_not_a_mismatch(tmp_path):
+    """Naive vs tz-aware datetimes coerce on scan; the up-front check must let polars decide."""
+    from datetime import datetime, timezone
+
+    pl.DataFrame({"t": [datetime(2024, 1, 1)]}).write_parquet(tmp_path / "a.parquet")
+    tz_frame = pl.DataFrame({"t": pl.Series([datetime(2024, 1, 1, tzinfo=timezone.utc)])})
+    tz_frame.write_parquet(tmp_path / "b.parquet")
+
+    df = FlowDataEngine.create_from_path(_directory_table(tmp_path, file_type="parquet")).collect()
+
+    assert df.height == 2

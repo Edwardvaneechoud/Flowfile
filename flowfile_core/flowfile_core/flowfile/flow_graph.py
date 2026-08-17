@@ -175,7 +175,7 @@ from shared.google_analytics.models import (
 )
 from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
-from shared.path_utils import assert_directory_scan_supported, expand_glob_pattern
+from shared.path_utils import assert_directory_scan_supported, expand_glob_pattern, is_utf8_encoding
 from shared.storage_config import storage
 
 __version__ = get_version()
@@ -358,11 +358,13 @@ def get_xlsx_schema_callback(
 
 
 def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
-    """Directory-mode schema callback: probe the first matched file as a single-file read.
+    """Directory-mode schema callback: probe only the first matched file.
 
     Under strict-native semantics the run errors on column-set divergence anyway, so the first
     file's schema is right whenever the run can succeed (known gap: csv dtype widening across
     files is not predicted). Zero matches yield an empty schema so settings saves stay tolerant.
+    The probe stays in directory mode over that one file: single-file mode would let polars
+    re-glob a matched path containing ``[``/``*``/``?`` (a bracketed directory name is enough).
     """
 
     def schema_callback():
@@ -370,7 +372,6 @@ def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
         if not matches:
             return []
         probe = received_file.model_copy(deep=True)
-        probe.scan_mode = "single_file"
         probe.name = None
         probe.path = matches[0]
         probe.abs_file_path = None
@@ -5525,10 +5526,8 @@ class FlowGraph:
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
-            elif (
-                input_file.received_file.file_type == "csv"
-                # Lowercased to match the directory gate; uppercase UTF spellings went to the worker.
-                and "utf" in input_file.received_file.table_settings.encoding.lower()
+            elif input_file.received_file.file_type == "csv" and is_utf8_encoding(
+                input_file.received_file.table_settings.encoding
             ):
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
@@ -5538,13 +5537,18 @@ class FlowGraph:
             input_data.name = input_file.received_file.name
             return input_data
 
+        def schema_from_fields():
+            schema = [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+            # Saved fields may predate the source-path column; the engine adds it in every scan mode.
+            existing_names = {f.name for f in received_file.fields}
+            if received_file.include_file_paths and received_file.include_file_paths not in existing_names:
+                schema.append(FlowfileColumn.from_input(received_file.include_file_paths, "String"))
+            return schema
+
         directory_schema_callback = None
         if received.scan_mode == "directory":
             if len(received_file.fields) > 0:
-
-                def directory_schema_callback():
-                    return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
-
+                directory_schema_callback = schema_from_fields
             else:
                 directory_schema_callback = get_directory_schema_callback(received_file)
 
@@ -5558,6 +5562,11 @@ class FlowGraph:
             if directory_schema_callback is not None:
                 # Before setting_input, so reset()'s eager prefetch runs this instead of a throwaway full _func build.
                 node.user_provided_schema_callback = directory_schema_callback
+            else:
+                previous_file = getattr(node.setting_input, "received_file", None)
+                if getattr(previous_file, "scan_mode", "single_file") == "directory":
+                    # Leaving directory mode: the directory callback must not outlive it.
+                    node.user_provided_schema_callback = None
             node.setting_input = input_file
             self.add_node_to_starting_list(node)
 
@@ -5566,10 +5575,7 @@ class FlowGraph:
                 if directory_schema_callback is not None:
                     pass  # installed above; reinstalling would discard the started prefetch
                 elif len(received_file.fields) > 0:
-
-                    def schema_callback():
-                        return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
-
+                    schema_callback = schema_from_fields
                 elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
                     def schema_callback():
@@ -6265,6 +6271,32 @@ class FlowGraph:
                 self.flow_logger.info(f"Node {node.node_id}: catalog source changed; invalidating cached result")
             node._execution_state.source_version_info = fingerprint
 
+    def _refresh_read_source_freshness(self) -> None:
+        """Invalidate read nodes whose source files changed since their last run.
+
+        Same rationale as the catalog pass above: the node hash is source-blind, so a changed
+        or added file would let Development mode and cache_results serve stale results — and
+        because downstream hashes fold in this node's, the whole chain would skip. The epoch
+        bump must happen here, before the stages run: a rotation done inside the executor is
+        reverted by _execute_single_node's hash save/restore. The stale worker entry is purged
+        first, while the hash it was stored under is still current, and reset() must follow
+        invalidate_cache() immediately — any hash access in between re-memoizes the hash and
+        the downstream reset cascade never fires.
+        """
+        for node in self.nodes:
+            if node.node_type != "read":
+                continue
+            info = node._execution_state.source_file_info
+            if info is None or not info.has_changed():
+                continue
+            try:
+                node.remove_cache()
+            except Exception:
+                self.flow_logger.warning(f"Node {node.node_id}: could not purge the stale worker cache entry")
+            node.invalidate_cache()
+            node.reset()
+            self.flow_logger.info(f"Node {node.node_id}: source files changed; invalidating cached result")
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -6286,6 +6318,7 @@ class FlowGraph:
             self.flow_logger.info("Starting to run flowfile flow...")
 
             self._refresh_catalog_reader_freshness()
+            self._refresh_read_source_freshness()
 
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()

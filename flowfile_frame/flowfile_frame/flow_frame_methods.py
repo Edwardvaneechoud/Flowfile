@@ -15,7 +15,7 @@ from flowfile_frame.config import logger
 from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.utils import create_flow_graph, generate_node_id
-from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern, is_url
 
 
 def sum(expr):
@@ -60,8 +60,10 @@ def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_fil
     cloud readers only inspect the last character, which misses ``data/*.csv``; that narrower
     check is deliberately not reproduced here. A trailing separator or an existing directory
     also reads as a directory scan, so a bare folder works without a hand-written pattern.
+    URLs are always single-file: polars reads them natively, and their query strings
+    (``?raw=true``) are not glob metacharacters.
     """
-    if not glob:
+    if not glob or is_url(source):
         return "single_file"
     if is_glob_pattern(source) or source.endswith(("/", os.sep)):
         return "directory"

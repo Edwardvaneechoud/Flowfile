@@ -5,6 +5,8 @@ the Polars export repeats the engine's sorted glob expansion, the FlowFrame expo
 the path back to the reader with ``scan_mode="directory"`` and lets it re-derive the glob.
 """
 
+import json
+import os
 from pathlib import Path
 
 import polars as pl
@@ -166,8 +168,9 @@ def test_explicit_pattern_is_emitted_verbatim(tmp_path, export_func):
 
     code = export_func(flow)
     # Only the leading /var vs /private/var spelling can differ (the Polars export emits the
-    # resolved path, the FlowFrame export the node's own), so match on the pattern's tail.
-    assert f"{directory.name}/*.csv" in code
+    # resolved path, the FlowFrame export the node's own), so match on the pattern's tail —
+    # json-encoded, because the emitted literal escapes Windows backslashes.
+    assert json.dumps(f"{directory.name}{os.sep}*.csv")[1:-1] in code
     result = assert_matches_flow(code, flow)
     assert result["a"].to_list() == [1, 2, 3], "a non-recursive pattern must not pull in the nested file"
 
@@ -216,7 +219,8 @@ def test_flowframe_export_keeps_the_read_node_shape(tmp_path):
     code = export_flow_to_flowframe(flow)
     assert 'scan_mode="directory"' in code
     assert "glob.glob(" not in code
-    assert str(directory) in code
+    # The whole emitted string literal, quotes included (escapes Windows backslashes).
+    assert json.dumps(str(directory)) in code
 
 
 @EXPORTERS
@@ -290,3 +294,55 @@ def test_unsupported_directory_read_is_refused(tmp_path, export_func, file_type,
     with pytest.raises(UnsupportedNodeError) as exc_info:
         export_func(flow)
     assert expected in str(exc_info.value)
+
+
+# Review fixes: single-file include_file_paths, no re-globbing, loud refusal
+
+
+@EXPORTERS
+def test_single_file_include_file_paths_is_emitted(tmp_path, export_func):
+    """The engine adds the source-path column in single-file mode too; the export must match."""
+    path = tmp_path / "single.parquet"
+    pl.DataFrame({"a": [1, 2]}).write_parquet(path)
+    flow = add_read(
+        create_flow(),
+        str(path),
+        "parquet",
+        input_schema.InputParquetTable(),
+        scan_mode="single_file",
+        include_file_paths="source_file",
+    )
+
+    code = export_func(flow)
+    assert 'include_file_paths="source_file"' in code
+    result = assert_matches_flow(code, flow)
+    assert "source_file" in result.columns
+
+
+def test_directory_scan_does_not_reglob_literal_filenames(tmp_path):
+    """A filename containing ``[``/``]`` survives: the expanded file list is passed with
+    ``glob=False`` so polars cannot reinterpret literal names as patterns."""
+    directory = tmp_path / "plain"
+    directory.mkdir()
+    pl.DataFrame({"a": [1]}).write_csv(directory / "report[2024].csv")
+    pl.DataFrame({"a": [2]}).write_csv(directory / "ok.csv")
+    flow = add_read(create_flow(), str(directory), "csv", csv_settings())
+
+    code = export_flow_to_polars(flow)
+    assert "glob=False" in code
+    result = assert_matches_flow(code, flow)
+    assert sorted(result["a"].to_list()) == [1, 2]
+
+
+@EXPORTERS
+def test_unsupported_single_file_type_is_refused_loudly(tmp_path, export_func):
+    """ndjson has no emission; the export must refuse instead of producing a script that dies
+    with NameError on an unbound variable."""
+    path = tmp_path / "data.ndjson"
+    path.write_text('{"a": 1}\n')
+    flow = add_read(
+        create_flow(), str(path), "ndjson", input_schema.InputNdjsonTable(), scan_mode="single_file"
+    )
+
+    with pytest.raises(UnsupportedNodeError):
+        export_func(flow)

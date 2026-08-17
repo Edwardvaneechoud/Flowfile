@@ -25,6 +25,13 @@ export function isDirectoryCapable(fileType?: string | null): fileType is ReadFi
   return !!fileType && (DIRECTORY_CAPABLE_TYPES as ReadonlySet<string>).has(fileType);
 }
 
+// TS mirror of shared/path_utils.py _UTF8_ENCODINGS; a directory-mode csv read rejects the rest.
+const UTF8_ENCODINGS: ReadonlySet<string> = new Set(["UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"]);
+
+export function isUtf8Encoding(encoding?: string | null): boolean {
+  return !!encoding && UTF8_ENCODINGS.has(encoding.toUpperCase());
+}
+
 export type ReadTableSettings =
   | InputCsvTable
   | InputExcelTable
@@ -67,11 +74,12 @@ export function detectFileType(path: string): ReadFileType | null {
   return ext ? (READ_EXTENSION_MAP[ext] ?? null) : null;
 }
 
-/** Best-effort seed only — the renderer cannot stat the path, so a bare directory reads as a file. */
+/** Best-effort seed only — the renderer cannot stat the path, so a bare directory reads as a file.
+ *  Only `*`/`?` promote: `[` is legal in real names, so bracket patterns need the explicit select. */
 export function inferScanModeFromPath(path: string): ScanMode {
   // Same ${...} masking as detectFileType: a parameter reference is not a glob.
   const masked = path.replace(/\$\{[^}]*\}/g, "_");
-  if (/[*?[]/.test(masked)) return "directory";
+  if (/[*?]/.test(masked)) return "directory";
   return /[/\\]$/.test(masked) ? "directory" : "single_file";
 }
 

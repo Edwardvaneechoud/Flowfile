@@ -20,7 +20,7 @@ class NoFilesMatchedError(FileNotFoundError):
 
 DIRECTORY_SCAN_FILE_TYPES = frozenset({"csv", "parquet", "ipc"})
 
-_DIRECTORY_SCAN_UTF8_ENCODINGS = frozenset({"UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"})
+_UTF8_ENCODINGS = frozenset({"UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"})
 
 # Duplicated from flowfile_core.flowfile.parameter_resolver._PARAM_PATTERN; shared cannot import core.
 _PARAM_PATTERN = re.compile(r"\$\{[a-zA-Z_][a-zA-Z0-9_]*\}")
@@ -57,6 +57,15 @@ def is_glob_pattern(path: str) -> bool:
     return any(char in masked for char in ("*", "?", "["))
 
 
+def is_utf8_encoding(encoding: str | None) -> bool:
+    """True when ``encoding`` names the UTF-8 family (any casing), which polars scans natively.
+
+    Everything else (UTF-16, latin-1, ...) routes to the worker's separate csv reader, so
+    callers deciding local-vs-worker and directory-scan eligibility must agree on this test.
+    """
+    return encoding is not None and encoding.upper() in _UTF8_ENCODINGS
+
+
 def default_scan_extension(file_type: str) -> str:
     """Return the on-disk extension used when synthesising a glob for ``file_type``.
 
@@ -66,22 +75,29 @@ def default_scan_extension(file_type: str) -> str:
     return _DEFAULT_SCAN_EXTENSIONS.get(file_type, file_type)
 
 
+def _case_insensitive_ext(ext: str) -> str:
+    """Render ``ext`` as a glob matching any casing: fnmatch only folds case on Windows, and a
+    scan must read the same files on every platform."""
+    return "".join(f"[{char.lower()}{char.upper()}]" if char.isalpha() else glob.escape(char) for char in ext)
+
+
 def ensure_glob_pattern(path: str, ext: str) -> str:
     """Turn a directory ``path`` into a recursive glob for ``ext``, leaving real patterns alone.
 
     What exists on disk is checked before the path is sniffed for glob metacharacters, so a real
     directory called ``[archive]`` is a directory rather than a character class. An explicit
-    pattern is honoured verbatim, and a concrete existing file reads as itself so a
-    directory-mode node pointed at a single file still works.
+    pattern is honoured verbatim, and a concrete existing file reads as itself (escaped, so a
+    ``report[1].csv`` still expands to that one file) — a directory-mode node pointed at a
+    single file works. Idempotent: every returned pattern round-trips through the glob branch.
     """
     if os.path.isfile(path):
-        return path
+        return glob.escape(path)
     if os.path.isdir(path):
         # glob.escape so metacharacters in the real directory name stay literal.
-        return os.path.join(glob.escape(path), "**", f"*.{ext}")
+        return os.path.join(glob.escape(path), "**", f"*.{_case_insensitive_ext(ext)}")
     if is_glob_pattern(path):
         return path
-    return os.path.join(path, "**", f"*.{ext}")
+    return os.path.join(path, "**", f"*.{_case_insensitive_ext(ext)}")
 
 
 def expand_glob_pattern(pattern: str) -> list[str]:
@@ -109,7 +125,7 @@ def assert_directory_scan_supported(file_type: str, encoding: str | None = None,
         raise DirectoryScanUnsupportedError(
             f"Directory scanning is not supported for file type '{file_type}'. Supported types: {supported}."
         )
-    if file_type == "csv" and encoding and encoding.upper() not in _DIRECTORY_SCAN_UTF8_ENCODINGS:
+    if file_type == "csv" and encoding is not None and not is_utf8_encoding(encoding):
         raise DirectoryScanUnsupportedError(
             f"Directory scanning of csv files requires a UTF-8 encoding, got '{encoding}'."
         )

@@ -1716,5 +1716,108 @@ class TestSourceChangeOutranksCache:
         assert decision.strategy == ExecutionStrategy.SKIP
 
 
+class TestDirectoryFingerprintIdentity:
+    """The aggregate fingerprint also hashes which files matched, not just the totals."""
+
+    def test_mtime_preserving_equal_size_swap_is_detected(self, tmp_path):
+        """rsync -a / cp -p style refresh: count, total size and newest mtime are all preserved,
+        so only the digest over the (path, mtime, size) triples can see the change."""
+        _write_csv_files(tmp_path, ["a", "b"])
+        replaced = tmp_path / "b.csv"
+        content = replaced.read_text()
+        replaced_stat = os.stat(replaced)
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+        assert info.has_changed() is False
+
+        replaced.unlink()
+        substitute = tmp_path / "c.csv"
+        substitute.write_text(content)
+        os.utime(substitute, (replaced_stat.st_atime, replaced_stat.st_mtime))
+
+        assert info.has_changed() is True
+
+    def test_legacy_digestless_snapshot_still_compares_aggregates(self, tmp_path):
+        """A directory snapshot serialized before the digest existed keeps working on the
+        aggregate comparison instead of always reading as changed."""
+        _write_csv_files(tmp_path, ["a"])
+        fresh = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+        legacy = SourceFileInfo.from_dict(
+            {"path": fresh.path, "mtime": fresh.mtime, "size": fresh.size, "file_count": fresh.file_count}
+        )
+
+        assert legacy.files_digest is None
+        assert legacy.has_changed() is False
+
+        _write_csv_files(tmp_path, ["b"])
+        assert legacy.has_changed() is True
+
+
+class TestSourceChangeInvalidatesDownstream:
+    """SOURCE_FILE_CHANGED must refresh the whole chain: the settings hash does not rotate on a
+    disk change, so the executor bumps the cache epoch and lets the reset cascade downstream."""
+
+    def _directory_graph_with_select(
+        self, directory: Path, flow_id: int, execution_location: ExecutionLocationLit = "local"
+    ) -> FlowGraph:
+        graph = create_graph(execution_location=execution_location, flow_id=flow_id)
+        add_node_promise(graph, "read", node_id=1)
+        graph.add_read(
+            input_schema.NodeRead(
+                flow_id=flow_id,
+                node_id=1,
+                received_file=input_schema.ReceivedTable(
+                    name="folder", path=str(directory), file_type="csv", scan_mode="directory"
+                ),
+            )
+        )
+        add_node_promise(graph, "select", node_id=2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_select(
+            input_schema.NodeSelect(
+                flow_id=flow_id,
+                node_id=2,
+                depending_on_id=1,
+                select_input=[transform_schema.SelectInput(old_name="id", new_name="id", keep=True)],
+                keep_missing=False,
+            )
+        )
+        return graph
+
+    def test_added_file_reaches_the_downstream_node(self, tmp_path):
+        """Regression: the downstream node used to SKIP and serve the pre-change frame."""
+        _write_csv_files(tmp_path, ["a"])
+        graph = self._directory_graph_with_select(tmp_path, flow_id=26)
+        graph.run_graph()
+        select_node = graph.get_node(2)
+        assert select_node.get_resulting_data().collect().height == 1
+
+        _write_csv_files(tmp_path, ["b"])
+        graph.run_graph()
+
+        assert graph.get_node(1).get_resulting_data().collect().height == 2
+        assert select_node.get_resulting_data().collect().height == 2
+
+    def test_repeated_changes_refresh_a_cached_remote_downstream(self, tmp_path):
+        """Remote mode + cache_results downstream, changed repeatedly. The hash rotation must
+        happen in run_graph's freshness pass, before the stages run — rotating inside the
+        executor is reverted by _execute_single_node's hash save/restore, which froze the
+        cached downstream node from the second source change onward."""
+        _write_csv_files(tmp_path, ["a"])
+        graph = self._directory_graph_with_select(tmp_path, flow_id=27, execution_location="remote")
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+
+        graph.run_graph()
+        assert select_node.get_resulting_data().collect().height == 1
+
+        for i, name in enumerate(["b", "c", "d"], start=2):
+            _write_csv_files(tmp_path, [name])
+            graph.run_graph()
+            assert graph.get_node(1).get_resulting_data().collect().height == i
+            assert select_node.get_resulting_data().collect().height == i, (
+                f"cached downstream node froze after change {i - 1}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

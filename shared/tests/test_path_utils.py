@@ -13,6 +13,7 @@ from shared.path_utils import (
     expand_glob_pattern,
     is_glob_pattern,
     is_url,
+    is_utf8_encoding,
 )
 
 
@@ -55,8 +56,8 @@ def test_default_scan_extension_maps_ipc_to_arrow():
 
 
 def test_ensure_glob_pattern_synthesises_recursive_glob_for_a_directory(tmp_path):
-    """A bare directory becomes a recursive glob so nested files are read too."""
-    assert ensure_glob_pattern(str(tmp_path), "csv") == os.path.join(str(tmp_path), "**", "*.csv")
+    """A bare directory becomes a recursive, case-insensitive glob so nested files are read too."""
+    assert ensure_glob_pattern(str(tmp_path), "csv") == os.path.join(str(tmp_path), "**", "*.[cC][sS][vV]")
 
 
 def test_ensure_glob_pattern_leaves_an_explicit_pattern_alone(tmp_path):
@@ -76,7 +77,7 @@ def test_ensure_glob_pattern_treats_a_real_bracketed_directory_as_a_directory(tm
 
     pattern = ensure_glob_pattern(str(directory), "csv")
 
-    assert pattern == os.path.join(glob.escape(str(directory)), "**", "*.csv")
+    assert pattern == os.path.join(glob.escape(str(directory)), "**", "*.[cC][sS][vV]")
     assert expand_glob_pattern(pattern) == [str(directory / "one.csv"), str(directory / "two.csv")]
 
 
@@ -87,7 +88,7 @@ def test_ensure_glob_pattern_synthesises_for_a_directory_that_does_not_exist_yet
     """
     missing = tmp_path / "landing"
 
-    assert ensure_glob_pattern(str(missing), "csv") == os.path.join(str(missing), "**", "*.csv")
+    assert ensure_glob_pattern(str(missing), "csv") == os.path.join(str(missing), "**", "*.[cC][sS][vV]")
 
 
 def test_ensure_glob_pattern_passes_an_existing_file_through(tmp_path):
@@ -159,3 +160,55 @@ def test_assert_directory_scan_supported_accepts_a_local_path():
 def test_no_files_matched_error_is_a_file_not_found_error():
     """Callers that already handle a missing file keep working when a pattern matches nothing."""
     assert issubclass(NoFilesMatchedError, FileNotFoundError)
+
+
+# Review fixes: metacharacter escaping, case-insensitive extensions, encoding helper
+
+
+def test_ensure_glob_pattern_escapes_an_existing_bracketed_file(tmp_path):
+    """A concrete file whose name contains metacharacters must expand to itself, not to the
+    character-class interpretation (which matches nothing)."""
+    target = tmp_path / "report[1].csv"
+    target.write_text("a\n1\n")
+
+    pattern = ensure_glob_pattern(str(target), "csv")
+
+    assert pattern == glob.escape(str(target))
+    assert expand_glob_pattern(pattern) == [str(target)]
+
+
+def test_ensure_glob_pattern_is_idempotent(tmp_path):
+    """Every returned pattern must survive a second pass unchanged — set_absolute_filepath is
+    called from several places on the same value."""
+    directory_pattern = ensure_glob_pattern(str(tmp_path), "csv")
+    assert ensure_glob_pattern(directory_pattern, "csv") == directory_pattern
+
+    bracketed = tmp_path / "report[1].csv"
+    bracketed.write_text("a\n1\n")
+    file_pattern = ensure_glob_pattern(str(bracketed), "csv")
+    assert ensure_glob_pattern(file_pattern, "csv") == file_pattern
+
+
+def test_synthesised_extension_matches_any_casing(tmp_path):
+    """A.CSV and b.csv are the same data drop; fnmatch only folds case on Windows, so the
+    synthesised pattern carries character classes to behave the same on every platform."""
+    (tmp_path / "A.CSV").write_text("a\n1\n")
+    (tmp_path / "b.csv").write_text("a\n2\n")
+
+    matches = expand_glob_pattern(ensure_glob_pattern(str(tmp_path), "csv"))
+
+    assert matches == [str(tmp_path / "A.CSV"), str(tmp_path / "b.csv")]
+
+
+def test_is_utf8_encoding():
+    for encoding in ("utf-8", "UTF-8", "utf8", "UTF8-LOSSY", "utf-8-lossy"):
+        assert is_utf8_encoding(encoding)
+    for encoding in (None, "", "latin-1", "UTF-16", "ascii"):
+        assert not is_utf8_encoding(encoding)
+
+
+def test_assert_directory_scan_supported_refuses_an_empty_csv_encoding():
+    """An empty string is not UTF-8; only a true None (non-csv callers) skips the check."""
+    with pytest.raises(DirectoryScanUnsupportedError):
+        assert_directory_scan_supported("csv", "")
+    assert_directory_scan_supported("csv", None)

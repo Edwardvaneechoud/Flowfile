@@ -133,8 +133,7 @@ class NodeExecutor:
             effective_performance_mode = False
 
         if decision.reason == InvalidationReason.SOURCE_FILE_CHANGED:
-            # The worker keeps results keyed by node hash, which a source-file change does not
-            # rotate; without this purge _do_execute_remote would serve the stale cached frame.
+            # The worker keys results by node hash, which a source change does not rotate.
             self._clear_cache(state)
 
         self._prepare_for_execution(state)

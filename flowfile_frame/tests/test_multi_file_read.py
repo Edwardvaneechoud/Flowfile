@@ -83,7 +83,7 @@ def test_directory_source_infers_directory_mode(tmp_path, suffix):
 
     received = _received(frame)
     assert received.scan_mode == "directory"
-    assert received.abs_file_path.endswith(f"**{os.sep}*.csv")
+    assert received.abs_file_path.endswith(f"**{os.sep}*.[cC][sS][vV]")
     assert frame.collect().height == 3
 
 
@@ -183,7 +183,7 @@ def test_read_ipc_directory_with_file_paths(tmp_path):
 
     received = _received(frame)
     assert received.scan_mode == "directory"
-    assert received.abs_file_path.endswith(f"**{os.sep}*.arrow")
+    assert received.abs_file_path.endswith(f"**{os.sep}*.[aA][rR][rR][oO][wW]")
     assert frame.collect().columns == ["a", "src"]
 
 
@@ -222,6 +222,21 @@ def test_non_directory_readers_do_not_expose_scan_mode():
         params = inspect.signature(fn).parameters
         assert "scan_mode" not in params, f"{fn.__name__} should not advertise scan_mode"
         assert "include_file_paths" not in params, f"{fn.__name__} should not advertise include_file_paths"
+
+
+def test_url_sources_always_resolve_to_single_file():
+    """Regression: a URL query string (``?raw=true``) contains glob metacharacters, but a remote
+    source has no filesystem to expand a glob over — it must never auto-promote to directory."""
+    from flowfile_frame.flow_frame_methods import _resolve_scan_mode
+
+    urls = (
+        "https://raw.githubusercontent.com/o/r/main/d.csv?raw=true",
+        "https://bucket.s3.amazonaws.com/k.parquet?X-Amz-Signature=xyz",
+        "http://host/x.arrow?sas=1",
+        "https://example.com/data.csv",
+    )
+    for url in urls:
+        assert _resolve_scan_mode(url) == "single_file", url
 
 
 if __name__ == "__main__":

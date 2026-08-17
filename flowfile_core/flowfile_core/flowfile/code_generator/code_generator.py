@@ -383,9 +383,10 @@ class FlowGraphCodeConverter(
     def _handle_csv_read(self, file_settings: input_schema.ReceivedTable, var_name: str):
         if file_settings.table_settings.encoding.lower() in ("utf-8", "utf8"):
             self._add_code(f"{var_name} = {self.framework}.scan_csv(")
-            self._add_code(f'    "{file_settings.abs_file_path}",')
+            self._add_code(f"    {self._py_str(file_settings.abs_file_path)},")
             for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
                 self._add_code(kwarg_line)
+            self._emit_include_file_paths(file_settings)
             self._add_code(")")
         else:
             self._handle_csv_read_non_utf8(file_settings, var_name)
@@ -408,13 +409,33 @@ class FlowGraphCodeConverter(
             return
         if file_settings.file_type == "csv":
             self._handle_csv_read(file_settings, var_name)
-        elif file_settings.file_type == "parquet":
-            self._add_code(f'{var_name} = {self.framework}.scan_parquet("{file_settings.abs_file_path}")')
-        elif file_settings.file_type == "ipc":
-            self._add_code(f'{var_name} = {self._scan_callable("ipc")}("{file_settings.abs_file_path}")')
+        elif file_settings.file_type in ("parquet", "ipc"):
+            self._emit_single_file_scan(file_settings.file_type, file_settings, var_name)
         elif file_settings.file_type in ("xlsx", "excel"):
             self._handle_excel_read(file_settings, var_name)
+        else:
+            # No emission for this type; refuse loudly instead of leaving var_name unbound.
+            self.unsupported_nodes.append(
+                (settings.node_id, "read", f"No code generation for file type '{file_settings.file_type}'.")
+            )
+            return
         self._add_code("")
+
+    def _emit_single_file_scan(self, file_type: str, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        source = self._py_str(file_settings.abs_file_path)
+        reader = self._scan_callable(file_type)
+        if file_settings.include_file_paths:
+            self._add_code(f"{var_name} = {reader}(")
+            self._add_code(f"    {source},")
+            self._emit_include_file_paths(file_settings)
+            self._add_code(")")
+        else:
+            self._add_code(f"{var_name} = {reader}({source})")
+
+    def _emit_include_file_paths(self, file_settings: input_schema.ReceivedTable) -> None:
+        """The engine adds the source-path column in every scan mode, so the export must too."""
+        if file_settings.include_file_paths:
+            self._add_code(f"    include_file_paths={self._py_str(file_settings.include_file_paths)},")
 
     def _handle_directory_read(
         self, settings: input_schema.NodeRead, file_settings: input_schema.ReceivedTable, var_name: str
@@ -456,11 +477,12 @@ class FlowGraphCodeConverter(
         """Emit the polars-shaped directory scan; FlowFrame overrides this with its own reader."""
         self._add_code(f"{var_name} = {self._scan_callable(file_settings.file_type)}(")
         self._add_code(f"    {self._directory_scan_source(file_settings)},")
+        # The list is already fully expanded; polars must not re-glob literal filenames.
+        self._add_code("    glob=False,")
         if file_settings.file_type == "csv":
             for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
                 self._add_code(kwarg_line)
-        if file_settings.include_file_paths:
-            self._add_code(f"    include_file_paths={self._py_str(file_settings.include_file_paths)},")
+        self._emit_include_file_paths(file_settings)
         self._add_code(")")
 
     def _handle_excel_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
@@ -1309,8 +1331,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         if file_settings.file_type == "csv":
             for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
                 self._add_code(kwarg_line)
-        if file_settings.include_file_paths:
-            self._add_code(f"    include_file_paths={self._py_str(file_settings.include_file_paths)},")
+        self._emit_include_file_paths(file_settings)
         self._add_code(")")
 
     @staticmethod

@@ -83,6 +83,7 @@
           <CsvTableConfig
             v-if="isInputCsvTable(receivedTable.table_settings)"
             v-model="receivedTable.table_settings"
+            :directory-mode="scanMode === 'directory'"
           />
           <ParquetTableConfig
             v-if="isInputParquetTable(receivedTable.table_settings)"
@@ -128,7 +129,7 @@
           mode="open"
           context="dataFiles"
           :is-visible="modalVisibleForOpen"
-          :allow-directory-selection="true"
+          :allow-directory-selection="allowDirectorySelection"
           @file-selected="handleFileChange"
           @directory-selected="handleDirectorySelected"
         />
@@ -165,6 +166,7 @@ import {
   extensionOf,
   inferScanModeFromPath,
   isDirectoryCapable,
+  isUtf8Encoding,
   type ReadFileType,
 } from "../../../../../utils/readFileTypes";
 import { scanModeForSelection } from "../../../../common/FileBrowser/cloudPathMapping";
@@ -208,6 +210,11 @@ watch(
 
 const scanMode = computed<ScanMode>(() => receivedTable.value?.scan_mode ?? "single_file");
 
+// Picking a directory rewrites the node to a directory-capable type, discarding the current settings.
+const allowDirectorySelection = computed(
+  () => !receivedTable.value || isDirectoryCapable(receivedTable.value.file_type),
+);
+
 const includeFilePathsInput = ref<string>("");
 
 watch(
@@ -216,6 +223,16 @@ watch(
     includeFilePathsInput.value = value ?? "";
   },
 );
+
+// The backend refuses a non-UTF-8 directory csv read, so a stale encoding would block every save.
+// Call from every path that can promote a table to directory mode.
+function normalizeEncodingForScanMode(table: ReceivedTable) {
+  if (table.scan_mode !== "directory") return;
+  const settings = table.table_settings;
+  if (isInputCsvTable(settings) && !isUtf8Encoding(settings.encoding)) {
+    settings.encoding = "utf-8";
+  }
+}
 
 // Seed only: the scan-mode select below stays the authoritative override, so a
 // path edit may promote to directory but never silently demotes an explicit pick.
@@ -230,6 +247,7 @@ function applyScanModeForPath(table: ReceivedTable, path: string) {
   if (table.scan_mode === "single_file") {
     table.include_file_paths = null;
   }
+  normalizeEncodingForScanMode(table);
 }
 
 function handleManualPathChange(path: string) {
@@ -266,6 +284,7 @@ function handleScanModeChange(value: string) {
   if (receivedTable.value.scan_mode === "single_file") {
     receivedTable.value.include_file_paths = null;
   }
+  normalizeEncodingForScanMode(receivedTable.value);
   // The schema differs per mode, so the cached one can never be reused.
   receivedTable.value.fields = [];
   saveSettings();
@@ -297,7 +316,7 @@ const handleDirectorySelected = (directoryPath: string) => {
       ? receivedTable.value.table_settings
       : createDefaultSettings(fileType);
 
-  receivedTable.value = {
+  const table: ReceivedTable = {
     name: baseNameOf(directoryPath) || directoryPath,
     path: directoryPath,
     file_type: fileType,
@@ -307,6 +326,8 @@ const handleDirectorySelected = (directoryPath: string) => {
     include_file_paths: receivedTable.value?.include_file_paths ?? null,
     fields: [],
   };
+  normalizeEncodingForScanMode(table);
+  receivedTable.value = table;
 
   modalVisibleForOpen.value = false;
 };

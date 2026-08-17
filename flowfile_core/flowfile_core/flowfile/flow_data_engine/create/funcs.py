@@ -35,35 +35,70 @@ def _resolve_scan_source(received_table: input_schema.ReceivedTable) -> str | li
         return received_table.abs_file_path
     matches = expand_glob_pattern(received_table.abs_file_path)
     if not matches:
-        raise NoFilesMatchedError(f"No files matched {received_table.abs_file_path}")
+        raise NoFilesMatchedError(
+            f"No files matched '{received_table.path}' (expanded pattern: {received_table.abs_file_path})"
+        )
     return matches
 
 
 def _scan_extra_kwargs(received_table: input_schema.ReceivedTable) -> dict:
-    """Optional polars scan kwargs; only set when the user asked for a source-path column."""
+    """Optional polars scan kwargs shared by the csv/parquet/ipc readers.
+
+    Directory mode passes ``glob=False``: the file list is already fully expanded, and polars'
+    own globbing would reinterpret literal filenames containing ``[``/``*``/``?`` as patterns,
+    silently dropping those files.
+    """
+    extra: dict = {}
+    if received_table.scan_mode == "directory":
+        extra["glob"] = False
     if received_table.include_file_paths:
-        return {"include_file_paths": received_table.include_file_paths}
-    return {}
+        extra["include_file_paths"] = received_table.include_file_paths
+    return extra
+
+
+def _canonical_dtype(dtype: pl.DataType) -> pl.DataType:
+    """Normalize away the differences polars unifies on its own when scanning a file list:
+    struct fields align by name (order-insensitive) and datetimes coerce across time zones.
+    The assertion below must reject only what polars itself would reject at collect time."""
+    if isinstance(dtype, pl.Struct):
+        return pl.Struct(
+            {field.name: _canonical_dtype(field.dtype) for field in sorted(dtype.fields, key=lambda f: f.name)}
+        )
+    if isinstance(dtype, pl.List):
+        return pl.List(_canonical_dtype(dtype.inner))
+    if isinstance(dtype, pl.Array):
+        return pl.Array(_canonical_dtype(dtype.inner), dtype.size)
+    if isinstance(dtype, pl.Datetime):
+        return pl.Datetime(dtype.time_unit)
+    return dtype
 
 
 def _assert_uniform_columns(matches: list[str], scan_single) -> None:
-    """Fail a directory scan up front when its files disagree on column names.
+    """Fail a directory scan up front when its files disagree on schema.
 
     Polars only surfaces parquet/ipc schema divergence when the divergent file is physically
     read, which a lazy run may never do — the run would "succeed" and poison every later
     collect. Checking the (cheap, metadata-only) per-file schemas here turns that into an
     attributable build-time error. csv needs no equivalent: ``pl.scan_csv`` resolves the
-    multi-file schema eagerly and raises on its own. Name-set only — dtype unification is
-    left to polars, mirroring the csv widening behaviour.
+    multi-file schema eagerly and raises on its own. Dtypes are compared per column after
+    canonicalization, because parquet/ipc get no widening beyond struct-field order and
+    datetime time zones — polars raises a SchemaError at collect time for anything else,
+    Int32 vs Int64 included.
     """
-    expected = scan_single(matches[0]).collect_schema().names()
+    expected = scan_single(matches[0], glob=False).collect_schema()
     for path in matches[1:]:
-        names = scan_single(path).collect_schema().names()
-        if set(names) != set(expected):
+        schema = scan_single(path, glob=False).collect_schema()
+        if set(schema.names()) != set(expected.names()):
             raise ValueError(
-                f"Directory scan column mismatch: '{path}' has columns {sorted(names)}, "
-                f"but '{matches[0]}' has {sorted(expected)}."
+                f"Directory scan column mismatch: '{path}' has columns {sorted(schema.names())}, "
+                f"but '{matches[0]}' has {sorted(expected.names())}."
             )
+        for name in schema.names():
+            if _canonical_dtype(schema[name]) != _canonical_dtype(expected[name]):
+                raise ValueError(
+                    f"Directory scan dtype mismatch: column '{name}' is {schema[name]} in "
+                    f"'{path}' but {expected[name]} in '{matches[0]}'."
+                )
 
 
 def create_from_json(received_table: input_schema.ReceivedTable):

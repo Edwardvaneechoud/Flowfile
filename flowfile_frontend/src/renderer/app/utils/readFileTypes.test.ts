@@ -98,7 +98,9 @@ describe("inferScanModeFromPath", () => {
     ["/data/**/*.csv", "directory"],
     ["/data/*/sales.csv", "directory"],
     ["/data/sales_?.csv", "directory"],
-    ["/data/sales_[0-9].csv", "directory"],
+    // "[" is legal in real names and cannot be stat'ed away here, so it never auto-promotes.
+    ["/data/sales_[0-9].csv", "single_file"],
+    ["/data/[archive]/sales.csv", "single_file"],
     ["/data/sales/", "directory"],
     ["C:\\data\\sales\\", "directory"],
     ["/data/sales", "single_file"],
@@ -171,7 +173,11 @@ describe("buildReceivedTable", () => {
   });
 
   it("defaults to a single-file scan with no source-path column", () => {
-    const table = buildReceivedTable({ name: "sales.csv", path: "/data/sales.csv", fileType: "csv" });
+    const table = buildReceivedTable({
+      name: "sales.csv",
+      path: "/data/sales.csv",
+      fileType: "csv",
+    });
     expect(table.scan_mode).toBe("single_file");
     expect(table.include_file_paths).toBeNull();
   });

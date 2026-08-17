@@ -308,3 +308,17 @@ def test_store_in_cloud_storage(cloud_storage_connection_settings):
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
     assert status.status == 'Completed', 'Expected status to be Completed'
+
+
+def test_create_table_refuses_directory_scan_mode():
+    """Directory reads are core-side only: no worker reader can execute a glob, so the route
+    must refuse instead of stat'ing a pattern as if it were a file."""
+    from flowfile_worker.create.models import ReceivedTable
+
+    received_table = ReceivedTable(
+        name="folder", path="/data/**/*.csv", file_type="csv", scan_mode="directory", table_settings=None
+    ).model_dump()
+
+    v = client.post("/create_table/csv", json=received_table)
+    assert v.status_code == 422
+    assert "Directory scan mode" in v.json()["detail"]
