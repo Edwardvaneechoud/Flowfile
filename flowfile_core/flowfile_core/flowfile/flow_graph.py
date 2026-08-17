@@ -5556,9 +5556,7 @@ class FlowGraph:
             node.name = "read"
             node.function = _func
             if directory_schema_callback is not None:
-                # Must land before setting_input: its setter's reset() eagerly background-starts
-                # the schema callback, and without a user-provided one the start-node fallback
-                # wraps _func — a throwaway full directory build (glob + per-file schema probe).
+                # Before setting_input, so reset()'s eager prefetch runs this instead of a throwaway full _func build.
                 node.user_provided_schema_callback = directory_schema_callback
             node.setting_input = input_file
             self.add_node_to_starting_list(node)
@@ -5599,8 +5597,7 @@ class FlowGraph:
                 name="read",
                 node_type="read",
                 parent_uuid=self.uuid,
-                # update_node installs this before assigning setting_input, keeping the eager
-                # schema prefetch on the cheap single-file probe instead of the full _func build.
+                # update_node installs this before setting_input, so the eager prefetch skips the full _func build.
                 schema_callback=directory_schema_callback,
             )
             self._node_db[input_file.node_id] = node
