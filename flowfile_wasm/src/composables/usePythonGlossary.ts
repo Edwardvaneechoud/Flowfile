@@ -7,8 +7,7 @@
  * generator actually emits, so there is nothing here you will not meet.
  */
 
-import { hoverTooltip, showTooltip, tooltips, type Tooltip } from '@codemirror/view'
-import type { EditorView } from '@codemirror/view'
+import { EditorView, hoverTooltip, showTooltip, tooltips, type Tooltip } from '@codemirror/view'
 import { StateField, type EditorState, type Extension } from '@codemirror/state'
 
 export interface GlossaryEntry {
@@ -270,6 +269,37 @@ function cursorTooltipAt(state: EditorState): Tooltip | null {
   }
 }
 
+const glossaryTheme = EditorView.baseTheme({
+  '.cm-glossary': {
+    maxWidth: '340px',
+    padding: '8px 10px',
+    borderRadius: '6px',
+    border: '1px solid rgba(148, 163, 184, 0.35)',
+    background: '#1e293b',
+    color: '#e2e8f0',
+    fontFamily: 'system-ui, sans-serif',
+    lineHeight: '1.5'
+  },
+  '.cm-glossary-name': {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#7dd3fc',
+    marginBottom: '3px'
+  },
+  '.cm-glossary-summary': { fontSize: '12px' },
+  '.cm-glossary-example': {
+    margin: '6px 0 0',
+    padding: '5px 7px',
+    borderRadius: '4px',
+    background: 'rgba(15, 23, 42, 0.85)',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: '11px',
+    whiteSpace: 'pre-wrap',
+    color: '#cbd5e1'
+  }
+})
+
 /** A CodeMirror extension that explains a known identifier on hover — or, on touch devices, at the tap. */
 export function glossaryTooltip(): Extension {
   const hover = hoverTooltip((view, pos) => {
@@ -282,10 +312,7 @@ export function glossaryTooltip(): Extension {
       create: () => ({ dom: glossaryDom(hit.word, hit.entry) })
     }
   })
-  const extensions: Extension[] = [tooltips({ tooltipSpace: editorSpace }), hover]
+  const extensions: Extension[] = [tooltips({ tooltipSpace: editorSpace }), hover, glossaryTheme]
   if (COARSE_POINTER) extensions.push(cursorGlossary)
   return extensions
 }
-
-/** Identifiers the glossary can explain — used to tell the reader it is there. */
-export const GLOSSARY_TERMS: ReadonlySet<string> = new Set(Object.keys(PYTHON_GLOSSARY))

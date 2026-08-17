@@ -1800,11 +1800,8 @@ function plainHandlerFor(nodeType: string): keyof FlowToPlainPythonConverter | u
 export const PLAIN_PYTHON_NODE_TYPES: ReadonlySet<string> = new Set(Object.keys(PLAIN_HANDLERS))
 
 export interface NodeExplanation {
-  nodeId: number
-  nodeType: string
   explanation: string
   code: string | null
-  supported: boolean
   /** Helper functions the snippet calls but does not define; they live in the full script. */
   helpers: string[]
 }
@@ -1812,11 +1809,7 @@ export interface NodeExplanation {
 export interface PlainWalkthrough {
   /** The script the learner reads. */
   script: string
-  /** The same pipeline instrumented to record every intermediate table. */
-  traceScript: string
   steps: PlainStep[]
-  /** Per step, the lines of that node's own block. */
-  snippets: Record<number, string>
 }
 
 export function usePlainPythonGeneration() {
@@ -1828,12 +1821,7 @@ export function usePlainPythonGeneration() {
   const buildWalkthrough = (options: CodeGenerationOptions): PlainWalkthrough => {
     const converter = new FlowToPlainPythonConverter(options)
     const script = converter.convert()
-    const snippets: Record<number, string> = {}
-    for (const step of converter.steps) {
-      const snippet = converter.explain(step.nodeId)
-      if (snippet) snippets[step.nodeId] = snippet
-    }
-    return { script, traceScript: converter.buildTraceCode(), steps: converter.steps, snippets }
+    return { script, steps: converter.steps }
   }
 
   /** Prose + the plain-Python form of one node's actual settings, for the settings drawer. */
@@ -1850,15 +1838,8 @@ export function usePlainPythonGeneration() {
       code = null
     }
     const helpers = code ? Object.keys(HELPER_SOURCES).filter(name => code!.includes(`${name}(`)) : []
-    return { nodeId, nodeType, explanation, code, helpers, supported: PLAIN_PYTHON_NODE_TYPES.has(nodeType) }
+    return { explanation, code, helpers }
   }
 
-  return {
-    generatePlainPython,
-    buildWalkthrough,
-    explainNode,
-    PLAIN_PYTHON_NODE_TYPES,
-    NODE_EXPLANATIONS,
-    CONCEPTS
-  }
+  return { generatePlainPython, buildWalkthrough, explainNode }
 }

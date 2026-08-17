@@ -324,7 +324,7 @@ const clearDraft = () => {
   draftRanges.value = null
 }
 
-const walkthrough = ref<PlainWalkthrough>({ script: '', traceScript: '', steps: [], snippets: {} })
+const walkthrough = ref<PlainWalkthrough>({ script: '', steps: [] })
 const steps = computed(() => walkthrough.value.steps)
 const stepIndex = ref(0)
 const captured = ref<CapturedTrace | null>(null)
@@ -482,7 +482,8 @@ const extensions = [
   glossaryTooltip(),
   stepHighlight(),
   EditorView.updateListener.of(update => {
-    if (update.docChanged || update.geometryChanged || update.transactions.length > 0) syncReadouts()
+    // geometryChanged subsumes docChanged; focus-only updates are skipped.
+    if (update.geometryChanged || update.transactions.length > 0) syncReadouts()
   }),
   EditorView.theme({
     '&': { height: '100%' },
@@ -895,15 +896,13 @@ const closePanel = () => {
   emit('close')
 }
 
-const teachingModeAvailable = computed(() => props.teachingMode)
-
 watch(
   () => props.isVisible,
   isVisible => {
     if (!isVisible) return
     // Resolve the landing mode on open, so flipping Learning mode while the
     // panel is closed takes effect the next time it opens.
-    mode.value = teachingModeAvailable.value ? initialMode() : 'polars'
+    mode.value = props.teachingMode ? initialMode() : 'polars'
     generateCodeFromFlow()
   }
 )

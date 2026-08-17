@@ -35,12 +35,5 @@ export const useDesignerUiStore = defineStore('designerUi', () => {
     actions.value = null
   }
 
-  return {
-    showCodeGenerator,
-    showAbout,
-    showDocs,
-    actions,
-    registerActions,
-    clearActions
-  }
+  return { showCodeGenerator, showAbout, showDocs, actions, registerActions, clearActions }
 })

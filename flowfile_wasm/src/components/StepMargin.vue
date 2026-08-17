@@ -93,7 +93,7 @@
                   }}<template v-if="table.total > table.rows.length"> · first {{ table.rows.length }} captured</template>
                 </span>
               </div>
-              <RowTable :rows="table.rows" :limit="6" :total="table.total" flush />
+              <RowTable :rows="table.rows" :limit="6" :total="table.total" />
             </div>
           </div>
           <p v-if="delta" class="delta">{{ delta }}</p>
@@ -120,21 +120,7 @@
             {{ comparison.message }}
           </p>
           <pre v-if="runResult.failed" class="run-error">{{ runResult.error }}</pre>
-          <div v-else-if="runResult.rows.length" class="run-table-wrap">
-            <table class="run-table">
-              <thead>
-                <tr>
-                  <th v-for="column in runColumns" :key="column">{{ column }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, index) in runResult.rows.slice(0, 50)" :key="index">
-                  <td v-for="column in runColumns" :key="column">{{ formatCell(row[column]) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else class="pane-note">No rows.</div>
+          <RowTable v-else :rows="runResult.rows" :limit="50" />
         </template>
         <p v-else class="pane-note">Press ▶ to run this script here in the browser.</p>
       </section>
@@ -143,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import RowTable from './RowTable.vue'
 import type { Concept } from '../composables/usePlainPythonGeneration'
 import type { PlainRunResult, StepTable } from '../composables/usePlainStep'
@@ -151,7 +137,7 @@ import type { CompareResult } from '../composables/usePlainTrace'
 
 export type MarginTab = 'why' | 'data' | 'output'
 
-const props = defineProps<{
+defineProps<{
   tab: MarginTab
   concept: Concept | null
   tables: StepTable[]
@@ -178,17 +164,6 @@ defineEmits<{
 }>()
 
 const bodyEl = ref<HTMLElement | null>(null)
-
-const runColumns = computed(() => {
-  const seen: string[] = []
-  for (const row of props.runResult?.rows.slice(0, 50) ?? []) {
-    for (const column of Object.keys(row)) if (!seen.includes(column)) seen.push(column)
-  }
-  return seen
-})
-
-const formatCell = (value: unknown): string =>
-  value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)
 
 defineExpose({
   resetScroll: () => {
@@ -543,31 +518,6 @@ defineExpose({
   overflow-x: auto;
   overflow-y: hidden;
   max-width: 100%;
-}
-
-.run-table-wrap {
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.run-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.run-table th,
-.run-table td {
-  padding: 5px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--color-border-primary);
-  color: var(--color-text-primary);
-  white-space: nowrap;
-}
-
-.run-table th {
-  font-weight: 600;
-  color: var(--color-text-secondary);
 }
 
 .pane-note {

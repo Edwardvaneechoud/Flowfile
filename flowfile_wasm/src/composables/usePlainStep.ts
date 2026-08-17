@@ -1,9 +1,4 @@
-/**
- * Everything the margin says about the step you are looking at.
- *
- * Lifted out of the old walkthrough component so the panel shell and the margin
- * can read the same derived values without either owning them.
- */
+/** Everything the margin says about the step you are looking at. */
 
 import { computed, type Ref } from 'vue'
 import { CONCEPTS, type PlainStep } from './usePlainPythonGeneration'
@@ -105,5 +100,5 @@ export function usePlainStep(steps: Ref<PlainStep[]>, current: Ref<number>, capt
     return 'No data captured for this step.'
   })
 
-  return { step, concept, tables, delta, deltaCounts, blockedReason, stepLabel }
+  return { concept, tables, delta, deltaCounts, blockedReason }
 }

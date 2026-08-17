@@ -57,7 +57,7 @@ export interface CompareResult {
 }
 
 /** How many preview rows the value check walks. */
-export const COMPARE_SAMPLE = 50
+const COMPARE_SAMPLE = 50
 
 const show = (value: unknown): string =>
   value === null || value === undefined ? 'nothing (None)' : JSON.stringify(value)
