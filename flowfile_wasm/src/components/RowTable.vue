@@ -76,6 +76,7 @@ const format = (value: unknown): string =>
 .row-table th {
   font-weight: 600;
   color: var(--color-text-secondary);
+  background: var(--color-background-secondary);
 }
 
 .row-table td {
