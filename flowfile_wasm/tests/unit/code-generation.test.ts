@@ -148,8 +148,8 @@ describe('Code Generation', () => {
       const code = generateCode({ nodes, edges: [] })
 
       expect(code).toContain('pl.LazyFrame')
-      expect(code).toContain('"id": [1,2,3]')
-      expect(code).toContain('"name": ["Alice","Bob","Charlie"]')
+      expect(code).toContain('"id": [1, 2, 3]')
+      expect(code).toContain('"name": ["Alice", "Bob", "Charlie"]')
     })
 
     it('should generate code for filter node with basic filter', () => {
