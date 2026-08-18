@@ -469,6 +469,10 @@ def create_table(
         models.Status: Status object tracking the table creation
     """
     logger.info(f"Creating table of type: {file_type}")
+    if received_table.scan_mode == "directory":
+        # Mirrors core's create_from_path_worker guard: no worker reader can execute a glob,
+        # so refuse here instead of stat'ing a pattern as if it were a file.
+        raise HTTPException(status_code=422, detail="Directory scan mode is not supported by the worker file reader.")
     try:
         task_id = str(uuid.uuid4())
         file_ref = os.path.join(create_and_get_default_cache_dir(flowfile_flow_id), f"{task_id}.arrow")

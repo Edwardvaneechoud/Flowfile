@@ -2,6 +2,7 @@ import ast
 import builtins
 import io
 import keyword
+import os
 import re
 import tokenize
 
@@ -29,6 +30,7 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.excel_writer import resolve_excel_write_mode
+from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported
 
 
 class UnsupportedNodeError(Exception):
@@ -367,16 +369,24 @@ class FlowGraphCodeConverter(
 
         return input_vars
 
+    def _csv_scan_kwarg_lines(self, file_settings: input_schema.ReceivedTable) -> list[str]:
+        """The indented csv reader kwargs, shared by the single-file and directory emissions."""
+        table_settings = file_settings.table_settings
+        return [
+            f'    separator="{table_settings.delimiter}",',
+            f"    has_header={table_settings.has_headers},",
+            f"    ignore_errors={table_settings.ignore_errors},",
+            '    encoding="utf8-lossy",',
+            f"    skip_rows={table_settings.starting_from_line},",
+        ]
+
     def _handle_csv_read(self, file_settings: input_schema.ReceivedTable, var_name: str):
         if file_settings.table_settings.encoding.lower() in ("utf-8", "utf8"):
-            encoding = "utf8-lossy"
             self._add_code(f"{var_name} = {self.framework}.scan_csv(")
-            self._add_code(f'    "{file_settings.abs_file_path}",')
-            self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
-            self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
-            self._add_code(f"    ignore_errors={file_settings.table_settings.ignore_errors},")
-            self._add_code(f'    encoding="{encoding}",')
-            self._add_code(f"    skip_rows={file_settings.table_settings.starting_from_line},")
+            self._add_code(f"    {self._py_str(file_settings.abs_file_path)},")
+            for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
+                self._add_code(kwarg_line)
+            self._emit_include_file_paths(file_settings)
             self._add_code(")")
         else:
             self._handle_csv_read_non_utf8(file_settings, var_name)
@@ -394,13 +404,86 @@ class FlowGraphCodeConverter(
 
     def _handle_read(self, settings: input_schema.NodeRead, var_name: str, input_vars: dict[str, str]) -> None:
         file_settings = settings.received_file
+        if file_settings.scan_mode == "directory":
+            self._handle_directory_read(settings, file_settings, var_name)
+            return
         if file_settings.file_type == "csv":
             self._handle_csv_read(file_settings, var_name)
-        elif file_settings.file_type == "parquet":
-            self._add_code(f'{var_name} = {self.framework}.scan_parquet("{file_settings.abs_file_path}")')
+        elif file_settings.file_type in ("parquet", "ipc"):
+            self._emit_single_file_scan(file_settings.file_type, file_settings, var_name)
         elif file_settings.file_type in ("xlsx", "excel"):
             self._handle_excel_read(file_settings, var_name)
+        else:
+            # No emission for this type; refuse loudly instead of leaving var_name unbound.
+            self.unsupported_nodes.append(
+                (settings.node_id, "read", f"No code generation for file type '{file_settings.file_type}'.")
+            )
+            return
         self._add_code("")
+
+    def _emit_single_file_scan(self, file_type: str, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        source = self._py_str(file_settings.abs_file_path)
+        reader = self._scan_callable(file_type)
+        if file_settings.include_file_paths:
+            self._add_code(f"{var_name} = {reader}(")
+            self._add_code(f"    {source},")
+            self._emit_include_file_paths(file_settings)
+            self._add_code(")")
+        else:
+            self._add_code(f"{var_name} = {reader}({source})")
+
+    def _emit_include_file_paths(self, file_settings: input_schema.ReceivedTable) -> None:
+        """The engine adds the source-path column in every scan mode, so the export must too."""
+        if file_settings.include_file_paths:
+            self._add_code(f"    include_file_paths={self._py_str(file_settings.include_file_paths)},")
+
+    def _handle_directory_read(
+        self, settings: input_schema.NodeRead, file_settings: input_schema.ReceivedTable, var_name: str
+    ) -> None:
+        """Emit a directory-mode read, or refuse the node when the format cannot be scanned as a set.
+
+        The capability check is the engine's own, so a flow that runs exports and a flow that
+        would fail at run time is refused here instead of emitting a script that breaks later.
+        """
+        try:
+            assert_directory_scan_supported(
+                file_settings.file_type,
+                getattr(file_settings.table_settings, "encoding", None),
+                file_settings.path,
+            )
+        except DirectoryScanUnsupportedError as e:
+            self.unsupported_nodes.append((settings.node_id, "read", str(e)))
+            return
+        self._emit_directory_read(file_settings, var_name)
+        self._add_code("")
+
+    def _scan_callable(self, file_type: str) -> str:
+        """The reader expression for ``file_type``, registering whatever import it needs."""
+        return f"{self.framework}.scan_{file_type}"
+
+    def _directory_scan_source(self, file_settings: input_schema.ReceivedTable) -> str:
+        """Render the file-list expression a directory scan reads, mirroring the engine.
+
+        The engine hands polars the sorted list of existing matches rather than the pattern
+        itself, so the export repeats that expansion — polars' own globbing includes dotfiles
+        and does not promise the same ordering.
+        """
+        self.imports.add("import glob")
+        self.imports.add("import os")
+        pattern = self._py_str(file_settings.abs_file_path)
+        return f"sorted(p for p in glob.glob({pattern}, recursive=True) if os.path.isfile(p))"
+
+    def _emit_directory_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        """Emit the polars-shaped directory scan; FlowFrame overrides this with its own reader."""
+        self._add_code(f"{var_name} = {self._scan_callable(file_settings.file_type)}(")
+        self._add_code(f"    {self._directory_scan_source(file_settings)},")
+        # The list is already fully expanded; polars must not re-glob literal filenames.
+        self._add_code("    glob=False,")
+        if file_settings.file_type == "csv":
+            for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
+                self._add_code(kwarg_line)
+        self._emit_include_file_paths(file_settings)
+        self._add_code(")")
 
     def _handle_excel_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
         self._add_code(f"{var_name} = {self.framework}.read_excel(")
@@ -1227,6 +1310,42 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         raw_data = settings.raw_data_format
         self._add_code(f"{var_name} = ff.from_raw_data({raw_data.model_dump()})")
         self._add_code("")
+
+    def _scan_callable(self, file_type: str) -> str:
+        """``flowfile`` re-exports scan_csv/scan_parquet but not scan_ipc, so ipc is imported
+        from flowfile_frame instead of emitting an ``ff.`` attribute that does not exist."""
+        if file_type == "ipc":
+            self.imports.add("from flowfile_frame import scan_ipc")
+            return "scan_ipc"
+        return f"ff.scan_{file_type}"
+
+    def _emit_directory_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        """Emit the FlowFrame reader in directory mode so the export re-imports as the same node.
+
+        The reader re-derives the glob from the source path, so no expansion is emitted here;
+        that keeps the exported call editable and round-trippable, unlike a baked file list.
+        """
+        self._add_code(f"{var_name} = {self._scan_callable(file_settings.file_type)}(")
+        self._add_code(f"    {self._py_str(self._directory_source_path(file_settings))},")
+        self._add_code('    scan_mode="directory",')
+        if file_settings.file_type == "csv":
+            for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
+                self._add_code(kwarg_line)
+        self._emit_include_file_paths(file_settings)
+        self._add_code(")")
+
+    @staticmethod
+    def _directory_source_path(file_settings: input_schema.ReceivedTable) -> str:
+        """The path the FlowFrame reader should re-resolve into a glob.
+
+        The node's own path is preferred so a folder stays a folder in the export, but a
+        relative one would resolve against the running script's cwd, so that falls back to
+        the pattern the engine already resolved.
+        """
+        path = file_settings.path
+        if path and os.path.isabs(os.path.expanduser(path)):
+            return path
+        return file_settings.abs_file_path
 
     def _handle_cloud_storage_reader(
         self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]

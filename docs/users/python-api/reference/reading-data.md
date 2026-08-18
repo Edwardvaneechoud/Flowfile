@@ -3,7 +3,7 @@
 Flowfile provides Polars-compatible readers with additional cloud storage integration and visual workflow features.
 
 !!! info "Polars Compatibility"
-    All Flowfile readers accept the same parameters as Polars, plus optional `description` for visual documentation.
+    All Flowfile readers accept the same parameters as Polars, plus optional `description` for visual documentation. The local CSV, Parquet, and Arrow IPC readers also take `scan_mode` and `include_file_paths` for reading a directory of files.
 
 ## Local File Reading
 
@@ -70,6 +70,56 @@ df = read_avro("data.avro")
 
 IPC and NDJSON are scanned lazily, so they also provide `scan_ipc` / `scan_ndjson`.
 Avro has no lazy scan in Polars, so its read is offloaded to the worker.
+
+### Reading a Directory of Files
+
+`read_csv`, `read_parquet`, and `read_ipc` — and their `scan_*` aliases — read every matching file
+in a directory as one table. Two parameters control this:
+
+- `scan_mode`: `"single_file"` or `"directory"`. Auto-detected from the path if `None` (the
+  default): an existing directory, a trailing separator, or a `*`, `?`, or `[` anywhere in the path
+  selects `"directory"`. HTTP(S) URLs are always read as a single file
+- `include_file_paths`: name of a `String` column holding each row's source file path. `None` or a
+  blank name adds no column. Works in both scan modes; the name must not collide with a column
+  already in the data
+
+```python
+import flowfile as ff
+
+# Every .csv under the folder, read as one frame and tagged with its source file
+sales = ff.read_csv("data/monthly/", include_file_paths="source_file")
+
+# An explicit glob is used as written
+q1 = ff.read_csv("data/monthly/2026-0[123]-*.csv")
+
+# Set the mode explicitly when the path does not exist yet
+archive = ff.read_parquet("data/archive", scan_mode="directory")
+```
+
+`sales` stacks the rows of every file, with the absolute source path in the extra column:
+
+| order_id | amount | source_file |
+|---|---|---|
+| 1 | 10.0 | `/data/monthly/2026-01.csv` |
+| 2 | 20.0 | `/data/monthly/2026-01.csv` |
+| 3 | 30.0 | `/data/monthly/2026-02.csv` |
+
+A bare directory expands to a recursive glob for the format's extension — `**/*.csv`,
+`**/*.parquet`, `**/*.arrow`, matched case-insensitively. An explicit pattern is used verbatim. A
+pattern that matches no files raises `NoFilesMatchedError`.
+
+!!! note "Formats that support directory mode"
+    CSV, Parquet, and Arrow IPC only. `read_excel`, `read_ndjson`, and `read_avro` do not take
+    `scan_mode` or `include_file_paths`. CSV additionally requires a UTF-8 `encoding` (`utf8` or
+    `utf8-lossy`); any other encoding raises `DirectoryScanUnsupportedError`.
+
+Parquet and Arrow IPC directory scans compare the column names and dtypes of every matched file
+before reading, and fail naming the file that disagrees. CSV uses Polars' own multi-file schema
+resolution.
+
+The visual [Read Data node](../../visual-editor/nodes/input.md) exposes the same settings (Source →
+Single file / Directory, plus File path column), and the cloud readers take the same `scan_mode`
+parameter — see [Cloud Storage Reading](#cloud-storage-reading).
 
 ### Scanning vs Reading
 

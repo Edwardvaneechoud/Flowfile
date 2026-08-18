@@ -1,5 +1,7 @@
 // Pure mapping between a browser selection and cloud node settings.
 
+import type { ScanMode } from "@/types";
+
 import { basename } from "../../../utils/storagePath";
 
 /**
@@ -37,7 +39,7 @@ export function targetsDirectory(format?: string | null): boolean {
   return format === "delta" || format === "iceberg";
 }
 
-export function scanModeForSelection(isDirectory: boolean): "single_file" | "directory" {
+export function scanModeForSelection(isDirectory: boolean): ScanMode {
   return isDirectory ? "directory" : "single_file";
 }
 

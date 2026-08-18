@@ -1475,5 +1475,349 @@ class TestPreviewAfterUpstreamChange:
         assert result.columns
 
 
+def _rewrite_atomic(path: Path, content: str) -> None:
+    """write_text truncates under polars' live mmap (SIGBUS); write-then-replace is atomic.
+
+    The same window exists in production (the read node's schema callback mmaps on a background
+    thread while an external writer truncates the file); it predates this feature and is filed
+    separately.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content)
+    os.replace(tmp, path)
+
+
+def _csv_pattern(directory: Path) -> str:
+    return os.path.join(str(directory), "**", "*.csv")
+
+
+def _write_csv_files(directory: Path, names: list[str]) -> None:
+    for i, name in enumerate(names, start=1):
+        (directory / f"{name}.csv").write_text(f"id,val\n{i},{name}\n")
+
+
+def create_graph_with_read(path, flow_id: int = 20, scan_mode: str = "single_file") -> FlowGraph:
+    """Graph with a single csv read node — a file path in single-file mode, a directory otherwise."""
+    graph = create_graph(execution_location="local", flow_id=flow_id)
+    add_node_promise(graph, "read", node_id=1)
+    graph.add_read(
+        input_schema.NodeRead(
+            flow_id=flow_id,
+            node_id=1,
+            received_file=input_schema.ReceivedTable(
+                name=os.path.basename(str(path)) if scan_mode == "single_file" else "folder",
+                path=str(path),
+                file_type="csv",
+                scan_mode=scan_mode,
+            ),
+        )
+    )
+    return graph
+
+
+class TestSourceFileInfoFromPattern:
+    """SourceFileInfo.from_pattern — the aggregate fingerprint a directory-mode read is tracked by."""
+
+    def test_from_pattern_aggregates_count_mtime_and_size(self, tmp_path):
+        """One snapshot summarises the whole match set: how many files, the newest mtime, total bytes."""
+        _write_csv_files(tmp_path, ["a", "bb"])
+        files = [tmp_path / "a.csv", tmp_path / "bb.csv"]
+
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+
+        assert info.path == _csv_pattern(tmp_path)
+        assert info.file_count == 2
+        assert info.size == sum(os.path.getsize(f) for f in files)
+        assert info.mtime == max(os.stat(f).st_mtime for f in files)
+        assert info.has_changed() is False
+
+    def test_has_changed_when_a_file_is_added(self, tmp_path):
+        """A new file changes the data without changing any node setting."""
+        _write_csv_files(tmp_path, ["a"])
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+
+        _write_csv_files(tmp_path, ["b"])
+
+        assert info.has_changed() is True
+
+    def test_has_changed_when_a_file_is_removed(self, tmp_path):
+        """A removed file lowers the count, which a single stat could never see."""
+        _write_csv_files(tmp_path, ["a", "b"])
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+
+        (tmp_path / "b.csv").unlink()
+
+        assert info.has_changed() is True
+
+    def test_has_changed_when_a_file_is_edited(self, tmp_path):
+        """An in-place edit shows up through the total size and the newest mtime."""
+        _write_csv_files(tmp_path, ["a", "b"])
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+
+        edited = tmp_path / "a.csv"
+        _rewrite_atomic(edited, "id,val\n1,a_much_longer_value\n")
+        stat = os.stat(edited)
+        os.utime(edited, (stat.st_atime + 10, stat.st_mtime + 10))
+
+        assert info.has_changed() is True
+
+    def test_zero_matches_is_a_valid_snapshot(self, tmp_path):
+        """from_pattern never returns None: an empty directory is a state worth remembering, so a
+        file appearing later reads as a change."""
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+
+        assert info.file_count == 0
+        assert info.has_changed() is False
+
+        _write_csv_files(tmp_path, ["a"])
+        assert info.has_changed() is True
+
+
+class TestSourceFileInfoSerialization:
+    """to_dict / from_dict must survive the file_count addition in both directions."""
+
+    def test_round_trip_preserves_file_count(self, tmp_path):
+        _write_csv_files(tmp_path, ["a", "b"])
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+
+        restored = SourceFileInfo.from_dict(info.to_dict())
+
+        assert restored == info
+        assert restored.file_count == 2
+        assert restored.has_changed() is False
+
+    def test_legacy_dict_without_file_count_loads_as_single_file(self, tmp_path):
+        """Flows saved before directory mode have no file_count key; they must keep comparing by a
+        single stat rather than blowing up or being read as a zero-match pattern."""
+        source = tmp_path / "data.csv"
+        source.write_text("id,val\n1,a\n")
+        stat = os.stat(source)
+
+        restored = SourceFileInfo.from_dict({"path": str(source), "mtime": stat.st_mtime, "size": stat.st_size})
+
+        assert restored.file_count is None
+        assert restored.has_changed() is False
+
+
+def _commit_source_snapshot(node) -> None:
+    """Mirror the executor's own snapshot rule from ``execute``.
+
+    The fingerprint is taken before the scan and committed to the state only when it is not
+    None, so a source that cannot be stat'ed keeps the last known-good snapshot.
+    """
+    pending = node.executor._pending_source_snapshot()
+    if pending is not None:
+        node._execution_state.source_file_info = pending
+
+
+class TestSourceFileSnapshotUpdate:
+    """What the executor records after a run."""
+
+    def test_failed_stat_does_not_erase_a_good_snapshot(self, tmp_path):
+        """A path that cannot be stat'ed (moved away, permissions) must leave the last known-good
+        fingerprint intact — overwriting it with None silently disables change detection."""
+        source = tmp_path / "data.csv"
+        source.write_text("id,val\n1,a\n")
+        node = create_graph_with_read(source).get_node(1)
+        state = node._execution_state
+
+        _commit_source_snapshot(node)
+        good_snapshot = state.source_file_info
+        assert good_snapshot is not None
+
+        # The snapshot re-resolves abs_file_path from path, so point path itself at the gap.
+        node.setting_input.received_file.path = str(tmp_path / "not_there.csv")
+        node.setting_input.received_file.name = "not_there.csv"
+        _commit_source_snapshot(node)
+
+        assert state.source_file_info is good_snapshot
+
+    def test_directory_read_snapshots_the_aggregate(self, tmp_path):
+        """A directory read must be fingerprinted by its whole match set, not by stat'ing a glob."""
+        _write_csv_files(tmp_path, ["a", "b", "c"])
+        node = create_graph_with_read(tmp_path, flow_id=21, scan_mode="directory").get_node(1)
+        state = node._execution_state
+
+        _commit_source_snapshot(node)
+
+        assert state.source_file_info is not None
+        assert state.source_file_info.file_count == 3
+
+
+class TestSourceChangeOutranksCache:
+    """Decision order: a changed source outranks the worker cache.
+
+    ``results_exists`` is an HTTP call to the worker, so it is patched here to stand in for
+    'the worker holds a cached result' — the behaviour under test is the ordering, not the lookup.
+    """
+
+    def _ran_once_with_cache(self, path, flow_id: int):
+        """A cache-enabled read node that already ran once and recorded its source fingerprint."""
+        node = create_graph_with_read(path, flow_id=flow_id).get_node(1)
+        node.node_settings.cache_results = True
+        state = node._execution_state
+        _commit_source_snapshot(node)
+        state.mark_successful()
+        return node, state
+
+    def test_changed_source_beats_a_cache_hit(self, tmp_path):
+        """The node hash does not rotate when a file on disk changes, so a cache hit here would
+        serve data the user just replaced."""
+        source = tmp_path / "data.csv"
+        source.write_text("id,val\n1,a\n")
+        node, state = self._ran_once_with_cache(source, flow_id=22)
+
+        _rewrite_atomic(source, "id,val\n1,a_changed_and_longer\n")
+        stat = os.stat(source)
+        os.utime(source, (stat.st_atime + 10, stat.st_mtime + 10))
+
+        with patch("flowfile_core.flowfile.flow_node.executor.results_exists", return_value=True):
+            decision = node.executor._decide_execution(
+                state=state, run_location="local", performance_mode=False, force_refresh=False
+            )
+
+        assert decision.should_run is True
+        assert decision.reason == InvalidationReason.SOURCE_FILE_CHANGED
+
+    def test_deleted_source_beats_a_cache_hit(self, tmp_path):
+        """Deliberate behaviour change: a vanished source re-runs (and fails loudly) instead of
+        quietly serving a cached result for a file that no longer exists."""
+        source = tmp_path / "data.csv"
+        source.write_text("id,val\n1,a\n")
+        node, state = self._ran_once_with_cache(source, flow_id=23)
+
+        source.unlink()
+
+        with patch("flowfile_core.flowfile.flow_node.executor.results_exists", return_value=True):
+            decision = node.executor._decide_execution(
+                state=state, run_location="local", performance_mode=False, force_refresh=False
+            )
+
+        assert decision.should_run is True
+        assert decision.reason == InvalidationReason.SOURCE_FILE_CHANGED
+
+    def test_missing_snapshot_still_honours_the_cache(self, tmp_path):
+        """Known limitation, documented rather than fixed: after a restart there is no snapshot to
+        compare against, so the cache is trusted and an out-of-band edit is not noticed."""
+        source = tmp_path / "data.csv"
+        source.write_text("id,val\n1,a\n")
+        node = create_graph_with_read(source, flow_id=24).get_node(1)
+        node.node_settings.cache_results = True
+        state = node._execution_state
+        state.mark_successful()
+        assert state.source_file_info is None
+
+        with patch("flowfile_core.flowfile.flow_node.executor.results_exists", return_value=True):
+            decision = node.executor._decide_execution(
+                state=state, run_location="local", performance_mode=False, force_refresh=False
+            )
+
+        assert decision.should_run is False
+        assert decision.strategy == ExecutionStrategy.SKIP
+
+
+class TestDirectoryFingerprintIdentity:
+    """The aggregate fingerprint also hashes which files matched, not just the totals."""
+
+    def test_mtime_preserving_equal_size_swap_is_detected(self, tmp_path):
+        """rsync -a / cp -p style refresh: count, total size and newest mtime are all preserved,
+        so only the digest over the (path, mtime, size) triples can see the change."""
+        _write_csv_files(tmp_path, ["a", "b"])
+        replaced = tmp_path / "b.csv"
+        content = replaced.read_text()
+        replaced_stat = os.stat(replaced)
+        info = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+        assert info.has_changed() is False
+
+        replaced.unlink()
+        substitute = tmp_path / "c.csv"
+        substitute.write_text(content)
+        os.utime(substitute, (replaced_stat.st_atime, replaced_stat.st_mtime))
+
+        assert info.has_changed() is True
+
+    def test_legacy_digestless_snapshot_still_compares_aggregates(self, tmp_path):
+        """A directory snapshot serialized before the digest existed keeps working on the
+        aggregate comparison instead of always reading as changed."""
+        _write_csv_files(tmp_path, ["a"])
+        fresh = SourceFileInfo.from_pattern(_csv_pattern(tmp_path))
+        legacy = SourceFileInfo.from_dict(
+            {"path": fresh.path, "mtime": fresh.mtime, "size": fresh.size, "file_count": fresh.file_count}
+        )
+
+        assert legacy.files_digest is None
+        assert legacy.has_changed() is False
+
+        _write_csv_files(tmp_path, ["b"])
+        assert legacy.has_changed() is True
+
+
+class TestSourceChangeInvalidatesDownstream:
+    """SOURCE_FILE_CHANGED must refresh the whole chain: the settings hash does not rotate on a
+    disk change, so the executor bumps the cache epoch and lets the reset cascade downstream."""
+
+    def _directory_graph_with_select(
+        self, directory: Path, flow_id: int, execution_location: ExecutionLocationLit = "local"
+    ) -> FlowGraph:
+        graph = create_graph(execution_location=execution_location, flow_id=flow_id)
+        add_node_promise(graph, "read", node_id=1)
+        graph.add_read(
+            input_schema.NodeRead(
+                flow_id=flow_id,
+                node_id=1,
+                received_file=input_schema.ReceivedTable(
+                    name="folder", path=str(directory), file_type="csv", scan_mode="directory"
+                ),
+            )
+        )
+        add_node_promise(graph, "select", node_id=2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_select(
+            input_schema.NodeSelect(
+                flow_id=flow_id,
+                node_id=2,
+                depending_on_id=1,
+                select_input=[transform_schema.SelectInput(old_name="id", new_name="id", keep=True)],
+                keep_missing=False,
+            )
+        )
+        return graph
+
+    def test_added_file_reaches_the_downstream_node(self, tmp_path):
+        """Regression: the downstream node used to SKIP and serve the pre-change frame."""
+        _write_csv_files(tmp_path, ["a"])
+        graph = self._directory_graph_with_select(tmp_path, flow_id=26)
+        graph.run_graph()
+        select_node = graph.get_node(2)
+        assert select_node.get_resulting_data().collect().height == 1
+
+        _write_csv_files(tmp_path, ["b"])
+        graph.run_graph()
+
+        assert graph.get_node(1).get_resulting_data().collect().height == 2
+        assert select_node.get_resulting_data().collect().height == 2
+
+    def test_repeated_changes_refresh_a_cached_remote_downstream(self, tmp_path):
+        """Remote mode + cache_results downstream, changed repeatedly. The hash rotation must
+        happen in run_graph's freshness pass, before the stages run — rotating inside the
+        executor is reverted by _execute_single_node's hash save/restore, which froze the
+        cached downstream node from the second source change onward."""
+        _write_csv_files(tmp_path, ["a"])
+        graph = self._directory_graph_with_select(tmp_path, flow_id=27, execution_location="remote")
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+
+        graph.run_graph()
+        assert select_node.get_resulting_data().collect().height == 1
+
+        for i, name in enumerate(["b", "c", "d"], start=2):
+            _write_csv_files(tmp_path, [name])
+            graph.run_graph()
+            assert graph.get_node(1).get_resulting_data().collect().height == i
+            assert select_node.get_resulting_data().collect().height == i, (
+                f"cached downstream node froze after change {i - 1}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
