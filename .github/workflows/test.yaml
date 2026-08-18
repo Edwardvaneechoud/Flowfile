@@ -398,7 +398,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_core/tests/flowfile flowfile_core/tests/project flowfile_core/tests/test_migration.py -m "not kernel" --disable-warnings --durations=0 --durations-min=0.05
+        run: poetry run pytest flowfile_core/tests/flowfile flowfile_core/tests/project flowfile_core/tests/test_migration.py -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
 
   backend-tests-windows-core-b:
     name: backend-tests-windows-shard (core-b)
@@ -447,7 +447,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_core/tests --ignore=flowfile_core/tests/flowfile --ignore=flowfile_core/tests/project --ignore=flowfile_core/tests/test_migration.py -m "not kernel" --disable-warnings --durations=0 --durations-min=0.05
+        run: poetry run pytest flowfile_core/tests --ignore=flowfile_core/tests/flowfile --ignore=flowfile_core/tests/project --ignore=flowfile_core/tests/test_migration.py -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
 
   backend-tests-windows-pkg-other:
     name: backend-tests-windows-shard (pkg-other)
