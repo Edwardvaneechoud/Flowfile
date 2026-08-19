@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from flowfile_worker import mp_context
 from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
+from flowfile_worker.pool import task_pool
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router
 from shared.parent_watcher import start_parent_death_watcher
@@ -20,10 +21,15 @@ server_instance = None
 async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown"""
     logger.info("Starting application...")
+    task_pool.prewarm()
     try:
         yield
     finally:
         logger.info("Shutting down application...")
+        try:
+            task_pool.shutdown()
+        except Exception as e:
+            logger.error(f"worker pool shutdown failed: {e}")
         try:
             from flowfile_worker.viz_sessions import viz_session_registry
 

@@ -46,6 +46,7 @@ from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.storage_browser import router as storage_browser_router
+from flowfile_core.routes.system_worker import router as system_worker_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
@@ -229,6 +230,7 @@ app.include_router(ai_router, prefix="/ai", tags=["ai"])
 # a gate from the UI without first satisfying the gate they're trying to flip.
 app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
+app.include_router(system_worker_router, prefix="/system", tags=["system"])
 
 
 @app.post("/shutdown")

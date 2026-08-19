@@ -111,6 +111,9 @@ jobs:
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: ${{ matrix.os }}
+    env:
+      # Exercise the warm worker pool in CI (Windows jobs get it by platform default).
+      FLOWFILE_WORKER_POOL_SIZE: "2"
     strategy:
       fail-fast: false
       matrix:
@@ -278,6 +281,7 @@ jobs:
         # branch=true / dynamic_context (which sysmon does not support).
         env:
           COVERAGE_CORE: sysmon
+          FLOWFILE_WORKER_POOL_SIZE: "2"
         run: |
           poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --cov --cov-append --cov-report=
           poetry run pytest flowfile_worker/tests --disable-warnings --cov --cov-append --cov-report=

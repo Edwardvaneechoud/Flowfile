@@ -42,6 +42,12 @@ OperationType = Literal[
 ResultType = Literal["polars", "other"]
 
 
+class PoolConfigInput(BaseModel):
+    """Request body for POST /pool (warm worker pool resize)."""
+
+    size: int = Field(..., ge=0, le=32, description="Target member capacity; 0 disables the pool.")
+
+
 class PolarsOperation(BaseModel):
     operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     flowfile_flow_id: int | None = 1

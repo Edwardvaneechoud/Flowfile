@@ -40,9 +40,9 @@
     </div>
 
     <div v-if="!kernelsAvailable" class="env-actions">
-      <a class="env-link" href="#/main/kernels" @click.prevent="openKernelManager">
+      <a class="env-link" href="#/main/compute?tab=kernels" @click.prevent="openPythonKernels">
         <i class="fa-solid fa-up-right-from-square"></i>
-        Open Kernel Manager
+        Open Python Kernels
       </a>
       <button class="env-retry" type="button" @click="fetchKernels">
         <i class="fa-solid fa-rotate-right"></i>
@@ -101,7 +101,7 @@ const kernelsAvailable = computed(() => !dockerError.value);
 
 const statusMessage = computed(() =>
   dockerError.value
-    ? "Docker is unavailable — start Docker and open the Kernel Manager to configure a kernel."
+    ? "Docker is unavailable — start Docker and open the Python Kernels page to configure a kernel."
     : "No kernels configured yet.",
 );
 
@@ -125,8 +125,8 @@ function removeDep(index: number) {
   environment.value.dependencies.splice(index, 1);
 }
 
-function openKernelManager() {
-  router.push("/main/kernels");
+function openPythonKernels() {
+  router.push({ name: "compute", query: { tab: "kernels" } });
 }
 
 async function fetchKernels() {

@@ -10,7 +10,11 @@
       <el-menu-item
         v-if="!routeItem.children"
         :index="routeItem.name"
-        :route="{ name: routeItem.name }"
+        :route="
+          routeItem.query
+            ? { name: routeItem.name, query: routeItem.query }
+            : { name: routeItem.name }
+        "
         :disabled="routeItem.disabled"
       >
         <span class="nav-icon">
@@ -98,13 +102,20 @@ const activeIndex = computed(() => {
   // Connections/Catalog sub-items share one route name but differ by ?tab=, so
   // match the composite child index. Fall back to the parent's default child for
   // unknown/absent tabs (e.g. catalog ?tab=dashboards) so the parent still highlights.
-  const fallbackTab: Record<string, string> = { connections: "overview", catalog: "catalog" };
+  const fallbackTab: Record<string, string> = {
+    connections: "overview",
+    catalog: "catalog",
+    compute: "kernels",
+  };
   if (name in fallbackTab) {
-    const candidate = `${name}:${(route.query.tab as string) || fallbackTab[name]}`;
-    const known = props.items
-      .find((item) => item.name === name)
-      ?.children?.some((child) => (child.index ?? child.name) === candidate);
-    return known ? candidate : `${name}:${fallbackTab[name]}`;
+    const parent = props.items.find((item) => item.name === name);
+    // A flattened parent (admin-only children filtered away) has no composite
+    // child index, so it highlights on its plain name instead.
+    if (parent?.children) {
+      const candidate = `${name}:${(route.query.tab as string) || fallbackTab[name]}`;
+      const known = parent.children.some((child) => (child.index ?? child.name) === candidate);
+      return known ? candidate : `${name}:${fallbackTab[name]}`;
+    }
   }
   return name;
 });

@@ -2,8 +2,12 @@
   <div class="kernel-manager-container">
     <!-- Page header -->
     <div class="mb-3">
-      <h2 class="page-title">Kernel Manager</h2>
-      <p class="page-description">Manage Python execution environments for your flows</p>
+      <h2 class="page-title">Python kernels</h2>
+      <p class="page-description">
+        Isolated Python environments that run your Python Script and custom nodes. Each kernel is a
+        Docker container with its own packages. Regular data nodes don't need one — they run in
+        Flowfile's worker service (see the Performance tab).
+      </p>
     </div>
 
     <!-- Docker status banner (only when down) -->

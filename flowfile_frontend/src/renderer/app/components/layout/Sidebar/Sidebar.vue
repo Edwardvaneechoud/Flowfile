@@ -81,7 +81,7 @@ import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
 import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
-import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
+import { computeHelp } from "../../../views/ComputeView/computeHelp";
 import { dashboardHelp } from "../../../views/DashboardsView/dashboardHelp";
 import { projectHelp } from "../../../views/ProjectView/projectHelp";
 
@@ -110,7 +110,7 @@ const helpByRoute: Record<string, PageHelpContent> = {
   connections: connectionsHelp,
   project: projectHelp,
   templates: templatesHelp,
-  kernelManager: kernelHelp,
+  compute: computeHelp,
   "dashboard-new": dashboardHelp,
   "dashboard-edit": dashboardHelp,
   "dashboard-view": dashboardHelp,
@@ -148,6 +148,13 @@ const items = computed(() => {
         return { ...route, query: lastCatalogQuery.value };
       }
       return route;
+    })
+    .map((route) => {
+      if (!route.children) return route;
+      const children = route.children.filter((c) => !c.requiresAdmin || isAdmin);
+      // A one-child sub-menu is noise — flatten to a plain item (the page
+      // defaults to the surviving tab anyway).
+      return children.length > 1 ? { ...route, children } : { ...route, children: undefined };
     });
 });
 

@@ -9,7 +9,16 @@ import polars as pl
 from deltalake.exceptions import DeltaError
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_context, status_dict, status_dict_lock
+from flowfile_worker import (
+    CACHE_DIR,
+    PROCESS_MEMORY_USAGE,
+    funcs,
+    models,
+    mp_context,
+    pool,
+    status_dict,
+    status_dict_lock,
+)
 from flowfile_worker.configs import logger
 from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
@@ -1258,6 +1267,30 @@ def clear_task(task_id: str):
         PROCESS_MEMORY_USAGE.pop(task_id, None)
         logger.info(f"Successfully cleared task: {task_id}")
     return {"message": f"Task {task_id} has been cleared."}
+
+
+def _active_task_count() -> int:
+    """Tasks currently in flight on this worker, pooled and spawned alike."""
+    with status_dict_lock:
+        return sum(1 for status in status_dict.values() if status.status in ("Starting", "Processing"))
+
+
+@router.get("/pool")
+def get_pool_state() -> dict:
+    """Live warm-pool state + config, for core's /system/worker_pool admin proxy."""
+    return {**pool.task_pool.describe(), "active_tasks": _active_task_count()}
+
+
+@router.post("/pool")
+def set_pool_state(payload: models.PoolConfigInput) -> dict:
+    """Resize the warm pool at runtime (0 disables) and save it for future boots.
+
+    Core admin-gates access. FLOWFILE_WORKER_POOL_SIZE, when set, still wins at
+    the next boot (operator override) - the response's env_override says so.
+    """
+    pool.task_pool.resize(payload.size)
+    pool.persist_size(payload.size)
+    return {**pool.task_pool.describe(), "active_tasks": _active_task_count()}
 
 
 @router.post("/cancel_task/{task_id}")

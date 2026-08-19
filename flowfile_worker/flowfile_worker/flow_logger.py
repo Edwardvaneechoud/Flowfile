@@ -41,7 +41,13 @@ class FlowfileLogHandler(logging.Handler):
 
 
 def get_worker_logger(flowfile_flow_id: int, flowfile_node_id: int | str) -> logging.Logger:
-    logger_name = f"NodeLog: {flowfile_node_id}"
+    """Return the process-cached logger that ships this node's logs to core.
+
+    Keyed on (flow_id, node_id): FlowfileLogHandler freezes flow_id at construction,
+    so a node_id-only key would let a process that serves a second flow (e.g. a pooled
+    worker child) ship that flow's logs to the first flow's /raw_logs.
+    """
+    logger_name = f"NodeLog: {flowfile_flow_id}:{flowfile_node_id}"
     logger = logging.getLogger(logger_name)
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
