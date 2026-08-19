@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -33,7 +34,10 @@ from flowfile_core.routes.routes import flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
 
-WORKER_HOST = os.environ.get("FLOWFILE_WORKER_HOST", "0.0.0.0")
+# Windows has no 0.0.0.0 loopback alias for connects; the worker binds 127.0.0.1 there.
+WORKER_HOST = os.environ.get(
+    "FLOWFILE_WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
+)
 WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
 
 # A bearer token the in-process server requires on its /secure route. Routed

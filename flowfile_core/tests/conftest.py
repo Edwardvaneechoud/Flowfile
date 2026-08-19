@@ -100,7 +100,9 @@ logging.basicConfig(
 logger = logging.getLogger("flowfile_fixture")
 
 # Configuration constants
-WORKER_HOST = os.environ.get("FLOWFILE_WORKER_HOST", "0.0.0.0")
+WORKER_HOST = os.environ.get(
+    "FLOWFILE_WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
+)
 WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
 WORKER_URL = f"http://{WORKER_HOST}:{WORKER_PORT}/docs"
 STARTUP_TIMEOUT = int(os.environ.get("FLOWFILE_STARTUP_TIMEOUT", 30))  # seconds
@@ -274,6 +276,12 @@ def managed_worker() -> Generator[None, None, None]:
     """
     Context manager for flowfile worker process management.
     Ensures proper cleanup even when tests fail.
+
+    A failure here aborts the session instead of skipping. This runs inside a
+    session-scoped autouse fixture, so a ``pytest.skip`` would skip every test in
+    the suite and still exit 0 — which is how a broken worker probe turned a whole
+    Windows CI run green while running nothing. ``SKIP_WORKER_TESTS=1`` remains the
+    explicit way to run without a worker.
     """
     proc = None
     try:
@@ -283,11 +291,14 @@ def managed_worker() -> Generator[None, None, None]:
         else:
             proc, success = start_worker()
             if not success:
-                error_msg = "Failed to start flowfile_worker"
+                error_msg = (
+                    f"Failed to start flowfile_worker at {WORKER_HOST}:{WORKER_PORT}. "
+                    "Set SKIP_WORKER_TESTS=1 to run the suite without one."
+                )
                 logger.error(error_msg)
                 if proc and proc.poll() is None:
                     stop_worker(proc)
-                pytest.skip(error_msg)
+                pytest.exit(error_msg, returncode=1)
             yield
     finally:
         if proc is not None and proc.poll() is None:
