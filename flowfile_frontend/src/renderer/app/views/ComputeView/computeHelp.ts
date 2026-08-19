@@ -20,7 +20,7 @@ export const computeHelp: PageHelpContent = {
           icon: "fa-solid fa-gauge-high",
           title: "Warm worker pool",
           description:
-            "A speed setting for all the regular data nodes (joins, filters, formulas, …). Keeping worker processes warm skips a start-up cost per node. Admins manage it on the Performance tab.",
+            "A speed setting for all the regular data nodes (joins, filters, formulas, …). Warm worker processes start on demand when a flow runs and retire after sitting idle, skipping the per-node start-up cost. Admins manage it on the Performance tab.",
         },
       ],
     },
@@ -87,6 +87,12 @@ export const computeHelp: PageHelpContent = {
           title: "The pool needs no Docker",
           description:
             "The warm worker pool is independent of kernels and Docker — it speeds up regular nodes even when Docker is off.",
+        },
+        {
+          type: "success",
+          title: "Warm processes come and go",
+          description:
+            "With the pool on, processes start when flows run and retire after sitting idle. Zero warm processes between runs is normal.",
         },
       ],
     },

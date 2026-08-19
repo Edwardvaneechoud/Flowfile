@@ -1,85 +1,110 @@
 <template>
-  <div v-if="isAdmin" class="pool-card">
-    <div class="pool-card-header">
-      <div>
-        <h3 class="pool-card-title">Warm worker pool</h3>
-        <p class="pool-card-description">
-          Flowfile starts a helper process for every data node it runs. Keeping a few processes warm
-          skips that start-up cost (about half a second per node), so flows with many nodes finish
-          faster. When every warm process is busy, extra nodes start fresh processes as usual —
-          nothing waits.
-        </p>
-      </div>
-      <el-switch
-        v-model="poolEnabled"
-        :disabled="loading || applying"
-        active-text="Warm pool"
-        @change="onToggle"
-      />
+  <div v-if="isAdmin" class="pool-root">
+    <div v-if="loadError" class="pool-banner">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <span>{{ loadError }}</span>
     </div>
 
-    <div v-if="loadError" class="pool-error">
-      {{ loadError }}
-    </div>
-
-    <div v-else-if="state" class="pool-card-body">
-      <div class="pool-stats">
-        <div class="pool-stat pool-stat--warm">
-          <div class="pool-stat__icon"><i class="fa-solid fa-fire"></i></div>
+    <div class="pool-stats">
+      <el-tooltip placement="top" :show-after="400" :content="serviceTooltip">
+        <div class="pool-stat" :class="{ 'pool-stat--down': serviceDown }">
+          <div class="pool-stat__icon">
+            <i :class="serviceDown ? 'fa-solid fa-plug-circle-xmark' : 'fa-solid fa-server'"></i>
+          </div>
           <div class="pool-stat__body">
-            <div class="pool-stat__value">
-              {{ state.idle }}<span class="pool-stat__value-suffix">/ {{ state.size }}</span>
-            </div>
-            <div class="pool-stat__label">Warm processes</div>
+            <div class="pool-stat__value">{{ serviceStatusText }}</div>
+            <div class="pool-stat__label">Worker service</div>
           </div>
         </div>
-        <div class="pool-stat pool-stat--busy">
+      </el-tooltip>
+
+      <el-tooltip
+        placement="top"
+        :show-after="400"
+        content="Node jobs the worker is executing right now — in warm processes or freshly started ones."
+      >
+        <div class="pool-stat">
           <div class="pool-stat__icon"><i class="fa-solid fa-bolt"></i></div>
           <div class="pool-stat__body">
-            <div class="pool-stat__value">{{ state.busy }}</div>
-            <div class="pool-stat__label">Busy</div>
-          </div>
-        </div>
-        <div class="pool-stat pool-stat--running">
-          <div class="pool-stat__icon"><i class="fa-solid fa-gears"></i></div>
-          <div class="pool-stat__body">
-            <div class="pool-stat__value">{{ state.activeTasks }}</div>
+            <div class="pool-stat__value">
+              {{ serviceDown ? "—" : state ? state.activeTasks : "…" }}
+            </div>
             <div class="pool-stat__label">Jobs running</div>
           </div>
         </div>
-        <div class="pool-stat pool-stat--served">
-          <div class="pool-stat__icon"><i class="fa-solid fa-check-double"></i></div>
+      </el-tooltip>
+
+      <el-tooltip
+        v-if="state && poolEnabled"
+        placement="top"
+        :show-after="400"
+        :content="warmTooltip"
+      >
+        <div class="pool-stat">
+          <div class="pool-stat__icon"><i class="fa-solid fa-layer-group"></i></div>
           <div class="pool-stat__body">
-            <div class="pool-stat__value">{{ state.tasksCompleted }}</div>
-            <div class="pool-stat__label">Pool tasks served</div>
+            <div class="pool-stat__value">
+              {{ serviceDown ? "—" : aliveCount
+              }}<span v-if="!serviceDown" class="pool-stat__value-suffix">/ {{ state.size }}</span>
+            </div>
+            <div class="pool-stat__label">Warm processes</div>
+            <div v-if="warmSub" class="pool-stat__sub">{{ warmSub }}</div>
           </div>
         </div>
-      </div>
+      </el-tooltip>
 
-      <table v-if="state.members.length" class="pool-members">
-        <thead>
-          <tr>
-            <th>PID</th>
-            <th>State</th>
-            <th>Tasks served</th>
-            <th>Idle</th>
-            <th>Memory</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="member in state.members" :key="member.pid">
-            <td>{{ member.pid }}</td>
-            <td>
-              <span :class="['pool-member-state', `pool-member-state--${member.state}`]">
-                {{ member.state }}
-              </span>
-            </td>
-            <td>{{ member.tasksServed }}</td>
-            <td>{{ member.state === "idle" ? `${Math.round(member.idleSeconds)}s` : "—" }}</td>
-            <td>{{ member.rssMb === null ? "—" : `${Math.round(member.rssMb)} MB` }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <el-tooltip
+        v-if="state && !poolEnabled"
+        placement="top"
+        :show-after="400"
+        content="Every node currently starts a fresh process. Turn the pool on below to keep processes ready."
+      >
+        <div class="pool-stat">
+          <div class="pool-stat__icon"><i class="fa-solid fa-layer-group"></i></div>
+          <div class="pool-stat__body">
+            <div class="pool-stat__value">Off</div>
+            <div class="pool-stat__label">Warm pool</div>
+          </div>
+        </div>
+      </el-tooltip>
+
+      <el-tooltip
+        v-if="state && poolEnabled"
+        placement="top"
+        :show-after="400"
+        content="Node jobs handled by warm processes since the worker service started."
+      >
+        <div class="pool-stat">
+          <div class="pool-stat__icon"><i class="fa-solid fa-clipboard-check"></i></div>
+          <div class="pool-stat__body">
+            <div class="pool-stat__value">{{ serviceDown ? "—" : state.tasksCompleted }}</div>
+            <div class="pool-stat__label">Pool jobs served</div>
+            <div class="pool-stat__sub">since worker start</div>
+          </div>
+        </div>
+      </el-tooltip>
+    </div>
+
+    <div v-if="state" class="pool-config">
+      <div class="pool-config__header">
+        <div>
+          <h3 class="pool-card-title">Warm worker pool</h3>
+          <p class="pool-card-description">
+            Keeps worker processes ready between data nodes so each node skips its start-up cost —
+            about half a second. When every warm process is busy, extra nodes start fresh processes
+            as usual — nothing waits.
+          </p>
+        </div>
+        <div class="pool-toggle">
+          <span class="pool-toggle__word">{{ poolEnabled ? "On" : "Off" }}</span>
+          <el-switch
+            v-model="poolEnabled"
+            :disabled="loading || applying"
+            aria-label="Warm worker pool"
+            @change="onToggle"
+          />
+        </div>
+      </div>
 
       <div v-if="poolEnabled" class="pool-size-row">
         <label class="pool-size-label" for="pool-size-input">Keep warm</label>
@@ -91,28 +116,87 @@
           :disabled="applying"
           size="small"
         />
-        <el-button
-          type="primary"
-          size="small"
-          :loading="applying"
-          :disabled="desiredSize === state.size"
-          @click="apply(desiredSize)"
+        <span class="pool-size-suffix">processes</span>
+        <el-tooltip
+          content="Applies immediately to the whole Flowfile instance and persists across restarts."
+          placement="top"
+          :show-after="400"
         >
-          Apply
-        </el-button>
+          <span>
+            <el-button
+              type="primary"
+              size="small"
+              :loading="applying"
+              :disabled="desiredSize === state.size"
+              @click="apply(desiredSize)"
+            >
+              Apply
+            </el-button>
+          </span>
+        </el-tooltip>
       </div>
 
-      <p v-if="state.envOverride" class="pool-hint pool-hint--warning">
-        <code>FLOWFILE_WORKER_POOL_SIZE</code> is set in the environment — it overrides this setting
-        whenever the worker restarts. Unset it to let this setting take over.
+      <div v-else class="pool-offstate">
+        <p class="pool-offstate__line1">
+          The warm pool is off — each data node runs in its own fresh worker process, so every
+          transformation starts from a completely clean session.
+        </p>
+        <p class="pool-offstate__line2">
+          Turn it on to reuse up to {{ desiredSize }} warm processes between nodes — faster for
+          flows with many nodes. Keep it off when you want full isolation per node.
+        </p>
+      </div>
+
+      <p v-if="state.envOverride" class="pool-hint--warning">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <span>
+          <code>FLOWFILE_WORKER_POOL_SIZE</code> is set in the environment — it overrides this
+          setting whenever the worker restarts. Unset it to let this setting take over.
+        </span>
       </p>
-      <p v-else class="pool-hint">
-        Changes apply immediately and persist across restarts
-        <template v-if="state.platformDefaultSize > 0">
-          (platform default when never changed: {{ state.platformDefaultSize }})
-        </template>
-        <template v-else>(platform default when never changed: off)</template>.
-      </p>
+    </div>
+
+    <div v-if="state && poolEnabled" class="pool-processes">
+      <h4 class="pool-processes__title">Pool processes</h4>
+
+      <table v-if="state.members.length" class="pool-members">
+        <thead>
+          <tr>
+            <th>PID</th>
+            <th>State</th>
+            <th :title="jobsServedTitle">Jobs served</th>
+            <th :title="idleForTitle">Idle for</th>
+            <th :title="memoryTitle">Memory</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="member in state.members" :key="member.pid">
+            <td>{{ member.pid }}</td>
+            <td>
+              <span :class="['pool-member-state', `pool-member-state--${member.state}`]">
+                {{ memberStateLabel(member.state) }}
+              </span>
+            </td>
+            <td>
+              {{
+                state.maxTasksPerMember > 0
+                  ? `${member.tasksServed} / ${state.maxTasksPerMember}`
+                  : member.tasksServed
+              }}
+            </td>
+            <td>{{ member.state === "idle" ? formatIdle(member.idleSeconds) : "—" }}</td>
+            <td>{{ member.rssMb === null ? "—" : `${Math.round(member.rssMb)} MB` }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div v-if="state.members.length" class="pool-lifecycle">{{ lifecycleLine }}</div>
+
+      <div v-else class="pool-empty">
+        <i class="fa-solid fa-moon"></i>
+        <div class="pool-empty__title">No warm processes right now</div>
+        <div class="pool-empty__hint">{{ emptyHint }}</div>
+      </div>
     </div>
   </div>
 </template>
@@ -135,10 +219,12 @@ const desiredSize = ref(4);
 const loading = ref(true);
 const applying = ref(false);
 const loadError = ref("");
+const pollMisses = ref(0);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const hydrate = (next: WorkerPoolState) => {
+  pollMisses.value = 0;
   state.value = next;
   poolEnabled.value = next.enabled;
   // Fresh state proves the worker is reachable; drop any stale banner.
@@ -174,7 +260,7 @@ const poll = async () => {
   try {
     hydrate(await getWorkerPool());
   } catch {
-    /* transient poll failure — the load()/apply() paths surface real errors */
+    pollMisses.value += 1; // counted for the service tile only
   }
 };
 
@@ -203,6 +289,77 @@ const onToggle = (enabled: boolean | string | number) => {
   void apply(enabled ? desiredSize.value : 0);
 };
 
+const serviceTooltip =
+  "The service that runs every regular data node in your flows. Checked every 2 seconds from this page.";
+
+const serviceDown = computed(() => loadError.value !== "" || pollMisses.value >= 3);
+const serviceStatusText = computed(() =>
+  serviceDown.value ? "Unreachable" : state.value ? "Connected" : "…",
+);
+const aliveCount = computed(() => (state.value ? state.value.idle + state.value.busy : 0));
+const warmSub = computed(() => {
+  if (!state.value || serviceDown.value) return "";
+  if (aliveCount.value === 0) return "start on demand";
+  return `${state.value.idle} ready · ${state.value.busy} busy`;
+});
+const ttlText = computed<string | null>(() => {
+  const s = state.value?.idleTtlSeconds ?? 0;
+  if (s <= 0) return null;
+  if (s < 120) return `${Math.round(s)} seconds`;
+  return `${Math.round(s / 60)} minutes`;
+});
+const memText = computed<string | null>(() => {
+  const mb = state.value?.rssLimitMb ?? 0;
+  if (mb <= 0) return null;
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return Number.isInteger(gb) ? `${gb} GB` : `${gb.toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
+});
+const formatIdle = (s: number) =>
+  s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+const memberStateLabel = (s: "idle" | "busy") => (s === "idle" ? "Ready" : "Busy");
+
+const maxTasksPerMember = computed(() => state.value?.maxTasksPerMember ?? 0);
+
+const warmTooltip = computed(() =>
+  ttlText.value
+    ? `Alive pool processes out of the configured size. They start on demand when a flow runs and retire after ${ttlText.value} idle.`
+    : "Alive pool processes out of the configured size. They start on demand when a flow runs and retire when idle.",
+);
+
+const jobsServedTitle = computed(() =>
+  maxTasksPerMember.value > 0
+    ? `A process is recycled after ${maxTasksPerMember.value} jobs.`
+    : undefined,
+);
+const idleForTitle = computed(() =>
+  ttlText.value ? `Idle processes retire after ${ttlText.value}.` : undefined,
+);
+const memoryTitle = computed(() =>
+  memText.value ? `A process is recycled if it grows past ${memText.value}.` : undefined,
+);
+
+const lifecycleLine = computed(() => {
+  const clauses: string[] = [];
+  if (ttlText.value) clauses.push(`after ${ttlText.value} idle`);
+  if (maxTasksPerMember.value > 0) clauses.push(`${maxTasksPerMember.value} jobs`);
+  if (memText.value) clauses.push(`${memText.value} of memory`);
+  if (clauses.length === 0) return "Warm processes start on demand and retire when idle.";
+  const joined =
+    clauses.length === 1
+      ? clauses[0]
+      : `${clauses.slice(0, -1).join(", ")}, or ${clauses[clauses.length - 1]}`;
+  return `Warm processes retire ${joined}; the pool refills on demand.`;
+});
+
+const emptyHint = computed(() =>
+  ttlText.value
+    ? `They start on demand when a flow runs and retire after ${ttlText.value} idle — an empty pool between runs is normal.`
+    : "They start on demand when a flow runs and retire when idle — an empty pool between runs is normal.",
+);
+
 onMounted(() => {
   void load();
   pollTimer = setInterval(poll, POLL_INTERVAL_MS);
@@ -214,135 +371,287 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.pool-card {
-  border: 1px solid var(--el-border-color, #dcdfe6);
-  border-radius: 8px;
-  padding: 16px 20px;
-  background: var(--el-bg-color, #fff);
-}
-.pool-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.pool-card-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 600;
-}
-.pool-card-description {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary, #909399);
-}
-.pool-card-body {
-  margin-top: 14px;
+.pool-root {
   display: flex;
   flex-direction: column;
-  gap: 14px;
 }
+
+.pool-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-4);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  margin-bottom: var(--spacing-3);
+}
+
+.pool-banner i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+/* Stat tiles: visual parity with .km-stat in KernelManagerView.vue */
 .pool-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
 }
+
 .pool-stat {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--el-border-color-lighter, #ebeef5);
-  border-radius: 8px;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition:
+    transform var(--transition-base) var(--transition-timing),
+    box-shadow var(--transition-base) var(--transition-timing);
 }
+
+.pool-stat:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
 .pool-stat__icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--border-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  color: #fff;
+  font-size: 16px;
+  flex-shrink: 0;
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
 }
-.pool-stat--warm .pool-stat__icon {
-  background: #e6a23c;
+
+.pool-stat--down .pool-stat__icon {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
 }
-.pool-stat--busy .pool-stat__icon {
-  background: #409eff;
+
+.pool-stat__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.pool-stat--running .pool-stat__icon {
-  background: #67c23a;
-}
-.pool-stat--served .pool-stat__icon {
-  background: #909399;
-}
+
 .pool-stat__value {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
   line-height: 1.1;
 }
+
 .pool-stat__value-suffix {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--el-text-color-secondary, #909399);
-  margin-left: 4px;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  margin-left: var(--spacing-1);
 }
+
 .pool-stat__label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary, #909399);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-0-5);
 }
-.pool-members {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
+
+.pool-stat__sub {
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-muted);
+  margin-top: var(--spacing-0-5);
 }
-.pool-members th {
-  text-align: left;
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--el-text-color-secondary, #909399);
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5);
+
+/* Shared card shell for config + processes */
+.pool-config,
+.pool-processes {
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-xs);
+  padding: var(--spacing-4) var(--spacing-5);
 }
-.pool-members td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5);
+
+.pool-config {
+  margin-bottom: var(--spacing-4);
 }
-.pool-member-state {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  text-transform: capitalize;
+
+.pool-config__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-4);
 }
-.pool-member-state--idle {
-  background: #f0f9eb;
-  color: #67c23a;
+
+.pool-card-title {
+  margin: 0 0 var(--spacing-1);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
-.pool-member-state--busy {
-  background: #ecf5ff;
-  color: #409eff;
+
+.pool-card-description {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  max-width: 70ch;
 }
+
+.pool-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.pool-toggle__word {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  min-width: 2ch;
+  text-align: right;
+}
+
 .pool-size-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--spacing-3);
+  margin-top: var(--spacing-3);
 }
+
 .pool-size-label {
-  font-size: 13px;
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
 }
-.pool-hint {
+
+.pool-size-suffix {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.pool-offstate {
+  margin-top: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.pool-offstate__line1 {
   margin: 0;
-  font-size: 12px;
-  color: var(--el-text-color-secondary, #909399);
+  color: var(--color-text-primary);
 }
+
+.pool-offstate__line2 {
+  margin: var(--spacing-1) 0 0;
+  color: var(--color-text-secondary);
+}
+
 .pool-hint--warning {
-  color: var(--el-color-warning, #e6a23c);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  margin: var(--spacing-3) 0 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
 }
-.pool-error {
-  margin-top: 12px;
-  font-size: 13px;
-  color: var(--el-color-danger, #f56c6c);
+
+.pool-hint--warning i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.pool-processes__title {
+  margin: 0 0 var(--spacing-3);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.pool-members {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pool-members th {
+  text-align: left;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.pool-members td {
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+  padding: var(--spacing-1-5) var(--spacing-2);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.pool-member-state {
+  display: inline-block;
+  padding: 1px var(--spacing-2);
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+}
+
+.pool-member-state--idle {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.pool-member-state--busy {
+  background: var(--color-info-light);
+  color: var(--color-info);
+}
+
+.pool-lifecycle {
+  margin-top: var(--spacing-3);
+  padding-top: var(--spacing-2);
+  border-top: 1px solid var(--color-border-light);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.pool-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--spacing-6) var(--spacing-4);
+  gap: var(--spacing-1);
+}
+
+.pool-empty i {
+  font-size: 20px;
+  color: var(--color-text-muted);
+  margin-bottom: var(--spacing-1);
+}
+
+.pool-empty__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.pool-empty__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  max-width: 46ch;
 }
 </style>

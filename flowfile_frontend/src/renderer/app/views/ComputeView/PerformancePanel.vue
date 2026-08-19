@@ -3,9 +3,10 @@
     <div class="mb-3">
       <h2 class="page-title">Performance</h2>
       <p class="page-description">
-        How Flowfile runs the regular data nodes in your flows — joins, filters, formulas, file
-        reads. These settings apply to the whole Flowfile instance. Python Script and custom nodes
-        run in kernels instead — manage those on the Python Kernels tab.
+        Regular data nodes — joins, filters, formulas, file reads — run in Flowfile's worker
+        service. This page shows whether that service is up and what it's doing, and lets you keep
+        worker processes warm so flows finish faster. Python Script and custom nodes run in kernels
+        instead — see the Python Kernels tab.
       </p>
     </div>
 
