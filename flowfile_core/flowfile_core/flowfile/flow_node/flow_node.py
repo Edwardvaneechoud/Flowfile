@@ -1145,7 +1145,8 @@ class FlowNode:
                                     # function returned — the copy keeps all of that off the
                                     # engine shared with sibling consumers in the same stage.
                                     input_result = input_result.shallow_copy()
-                                _df_type = type(input_result.data_frame) if input_result else "None"
+                                # Truthiness on a FlowDataEngine hits __len__ -> collect(); keep it "is not None".
+                                _df_type = type(input_result.data_frame) if input_result is not None else "None"
                                 self.print(f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}")
                                 input_data.append(input_result)
                             self.print(f"All {len(input_data)} inputs collected, calling node function")
