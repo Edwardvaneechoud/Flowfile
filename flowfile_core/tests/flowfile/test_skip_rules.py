@@ -6,9 +6,9 @@ A. ``classify_from_inputs`` — the pure local rule (ALL vs ANY) as a unit table
 B. ``classify_graph`` — full-graph Kahn classification over REAL FlowGraphs,
    cross-checked against ``determine_nodes_to_skip``.
 C. The runtime seam in ``FlowGraph._execute_stages`` — deliberate skips are
-   injected directly (white-box) until the gate node exists, so the schema-stable
-   empty-frame substitution, the ANY-input liveness invalidation, and the
-   run-flag clearing can be exercised against real data.
+   injected directly (white-box) until the gate node exists, so the gated-branch
+   drop, the ANY-input liveness invalidation, and the run-flag clearing can be
+   exercised against real data.
 
 Run with an isolated DB:
     FLOWFILE_DB_PATH=/tmp/ff_p2_tests.db SKIP_WORKER_TESTS=1 \
@@ -292,8 +292,8 @@ def test_deliberate_skip_keeps_run_green_and_records_a_skipped_result():
     assert run_info.nodes_completed == 5
 
 
-def test_union_runs_with_schema_stable_empty_frame_for_the_gated_branch():
-    """The union survives the gate and keeps branch B's columns as nulls."""
+def test_union_drops_the_gated_branch_and_runs_with_survivors():
+    """The union survives the gate and outputs branch A alone — branch B's column is gone."""
     graph = build_gated_diamond()
     run_stages(graph, deliberate={3})
 
@@ -301,8 +301,7 @@ def test_union_runs_with_schema_stable_empty_frame_for_the_gated_branch():
     branch_a_df = collect_node(graph, 2)
 
     assert union_df.height == branch_a_df.height == 3
-    assert "b_only" in union_df.columns
-    assert union_df["b_only"].null_count() == union_df.height
+    assert "b_only" not in union_df.columns
 
 
 def test_deliberately_skipped_node_run_flags_cleared():
@@ -329,8 +328,9 @@ def test_any_input_liveness_invalidates_union_across_gate_flips():
     run_stages(graph, deliberate={3})
     gated_df = collect_node(graph, 4)
     assert gated_df.height == 3
-    assert gated_df["b_only"].null_count() == 3
+    assert "b_only" not in gated_df.columns
 
+    # Both branches survive here, so the diagonal concat null-fills across them.
     run_stages(graph, deliberate=set())
     open_df = collect_node(graph, 4)
     assert open_df.height == 6
@@ -340,7 +340,7 @@ def test_any_input_liveness_invalidates_union_across_gate_flips():
     run_stages(graph, deliberate={3})
     regated_df = collect_node(graph, 4)
     assert regated_df.height == 3
-    assert regated_df["b_only"].null_count() == 3
+    assert "b_only" not in regated_df.columns
 
 
 def test_failed_branch_blocks_the_union_and_is_not_reported_as_skipped(tmp_path):

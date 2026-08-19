@@ -436,7 +436,7 @@ class FlowGraphCodeConverter(
                 # Per-input gates beyond the node's own condition: the union
                 # runs regardless, but each such input's contribution must be
                 # guarded in the emitted concat (engine parity: a closed-gate
-                # input contributes a zero-row schema-typed frame).
+                # input is dropped, so it never enters the concat list).
                 extras = {
                     producer_id: edge - combined for producer_id, edge in edge_conds if edge - combined
                 }

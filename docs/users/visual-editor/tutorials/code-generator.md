@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
 ### Example 5: A Gated If/Else Branch
 
-A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. Branch variables are pre-initialized as empty schema-typed frames, and the Union that re-converges the branches concatenates whichever ones are defined.
+A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. Each branch appends its frame to a list under its own `if` guard, and the Union that re-converges the branches concatenates that list — a branch that was gated off simply isn't in it, so the columns only it produces are absent from the result.
 
 **Flowfile Pipeline:**
 
@@ -184,9 +184,6 @@ def run_etl_pipeline(*, env: str = 'dev'):
     Generated from Flowfile
     """
 
-    df_4 = pl.LazyFrame(schema={'region': pl.String, 'amount': pl.Int64, 'channel': pl.String})
-    df_5 = pl.LazyFrame(schema={'region': pl.String, 'amount': pl.Int64, 'channel': pl.String})
-
     df_1 = pl.LazyFrame([['north', 'south'], [10, 5]], schema=pl.Schema([("region", pl.String), ("amount", pl.Int64)]), strict=False)
 
     if env == 'prod':
@@ -195,10 +192,14 @@ def run_etl_pipeline(*, env: str = 'dev'):
     if not (env == 'prod'):
         df_5 = df_1.with_columns([(pl.lit("dev")).alias("channel").cast(pl.String)])
 
-    df_6 = pl.concat([
-        df_4,
-        df_5,
-    ], how='diagonal_relaxed')
+    df_6_frames = []
+    if env == 'prod':
+        df_6_frames.append(df_4)
+    if not (env == 'prod'):
+        df_6_frames.append(df_5)
+    if not df_6_frames:
+        df_6_frames.append(pl.LazyFrame(schema={'region': pl.String, 'amount': pl.Int64, 'channel': pl.String}))
+    df_6 = pl.concat(df_6_frames, how='diagonal_relaxed')
 
     return df_6
 
@@ -209,10 +210,12 @@ if __name__ == "__main__":
 
 </details>
 
+Every input of this Union sits behind a guard, so the generator adds the `if not df_6_frames` line: an empty schema-typed frame keeps the concat valid in the case where no branch runs at all. A Union that also has at least one ungated input does not need it.
+
 A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
 
 !!! note "All export modes"
-    The FlowFrame and Project exports emit the same `if` blocks. The gated-off branch variable is pre-initialized as an empty `ff.FlowFrame` carrying the branch's schema, and a formula gate probes the frame's underlying LazyFrame via `.data`.
+    The FlowFrame and Project exports emit the same `if` blocks and the same guarded list-appends, with the no-branch-ran stand-in wrapped as an `ff.FlowFrame`, and a formula gate probes the frame's underlying LazyFrame via `.data`.
 
 ## Project Export
 

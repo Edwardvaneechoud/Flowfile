@@ -29,13 +29,14 @@ from typing import Literal
 
 import polars as pl
 import pytest
+from fastapi import HTTPException
 
 from flowfile_core.flowfile.code_generator.code_generator import (
     FlowGraphToFlowFrameConverter,
     FlowGraphToPolarsConverter,
     UnsupportedNodeError,
 )
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, delete_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.param_types import FlowParameter
@@ -798,7 +799,7 @@ class TestGateBlindCallers:
         # node 5 sits behind the closed (complementary) gate 4
         graph.validate_if_node_can_be_fetched(5)
 
-    def test_plan_without_closed_gate_ids_has_no_deliberate_skips(self):
+    def test_plan_without_closed_gate_handles_has_no_deliberate_skips(self):
         graph = build_diamond(env="prod")
 
         plan = compute_execution_plan(
@@ -1171,9 +1172,14 @@ class TestAdversarialReviewRegressions:
         add_union(graph, node_id=6, depending_on_ids=[2, 4])
 
         code = FlowGraphToPolarsConverter(graph).convert()
-        # The load-bearing guard is hoisted to a named assignment, not inlined.
-        assert "df_2 = df_1 if env == 'prod' else pl.LazyFrame(schema=" in code
-        assert "df_4 = df_1 if env != 'prod' else pl.LazyFrame(schema=" in code
+        # Both union inputs come straight off a gate, so both appends are guarded
+        # and the list needs the empty-frame fallback for the all-closed case.
+        assert "df_6_frames = []" in code
+        assert "if env == 'prod':\n        df_6_frames.append(df_1)" in code
+        assert "if env != 'prod':\n        df_6_frames.append(df_1)" in code
+        assert "\n    df_6_frames.append(" not in code
+        assert "if not df_6_frames:\n        df_6_frames.append(pl.LazyFrame(schema=" in code
+        assert "df_6 = pl.concat(df_6_frames, how='diagonal_relaxed')" in code
         for env_value in ("prod", "dev"):
             generated = run_generated(code, env=env_value)
             graph.flow_settings.parameters[0].default_value = env_value
@@ -1181,6 +1187,7 @@ class TestAdversarialReviewRegressions:
             engine = collect_node(graph, 6)
             assert run_info.success is True
             assert generated.height == engine.height == 3, (env_value, generated.height, engine.height)
+            assert generated.columns == engine.columns == ["a"]
 
     def test_gate_with_only_control_connected_is_not_runnable(self):
         graph = create_graph(flow_id=41)
@@ -1376,6 +1383,78 @@ class TestElseOutputYamlRoundTrip:
         assert_branch(collect_node(reopened, 6), "a_prod", "a_dev", [1, 2, 3])
 
 
+class TestDoubleWiredGateExits:
+    """One target may read a single output handle per source node.
+
+    ``_input_output_handles`` keys one handle per source, so a second edge from
+    the same gate re-keys the first: both exits would read one side, silently
+    dropping the live branch or duplicating it.
+    """
+
+    @staticmethod
+    def _build(flow_id: int) -> FlowGraph:
+        """1 manual_input -> 2 gate(env == prod, else_output), with union 6 waiting."""
+        graph = create_graph(flow_id=flow_id)
+        graph.flow_settings.parameters.append(FlowParameter(name="env", default_value="prod", type="string"))
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            else_output=True,
+            parameter="env",
+            operator="equals",
+            value="prod",
+        )
+        add_promise(graph, "union", 6)
+        return graph
+
+    def test_wiring_both_exits_into_one_union_is_rejected(self):
+        graph = self._build(flow_id=61)
+        connect(graph, 2, 6)
+
+        with pytest.raises(HTTPException) as exc_info:
+            connect(graph, 2, 6, output_handle="output-1")
+
+        assert exc_info.value.status_code == 422
+        assert "output-0" in exc_info.value.detail
+        union = graph.get_node(6)
+        assert [node.node_id for node in union.all_inputs] == [2]
+        assert union._input_output_handles[2] == "output-0"
+
+    def test_disconnecting_first_allows_rewiring_the_other_exit(self):
+        graph = self._build(flow_id=62)
+        connect(graph, 2, 6)
+
+        delete_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 6))
+        connect(graph, 2, 6, output_handle="output-1")
+
+        union = graph.get_node(6)
+        assert [node.node_id for node in union.all_inputs] == [2]
+        assert union._input_output_handles[2] == "output-1"
+
+    def test_same_handle_double_edge_still_connects(self):
+        """A self-join reads one source twice — same handle, so nothing is re-keyed."""
+        graph = create_graph(flow_id=63)
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_passthrough_select(graph, node_id=2, depending_on_id=1)
+        add_promise(graph, "join", 3)
+
+        connect(graph, 2, 3)
+        connect(graph, 2, 3, input_type="right")
+
+        join = graph.get_node(3)
+        assert [node.node_id for node in join.all_inputs] == [2, 2]
+        assert join._input_output_handles[2] == "output-0"
+
+    def test_the_same_exit_pair_may_feed_two_different_targets(self):
+        """The normal then/else split: two targets, one handle each."""
+        graph = build_split_diamond(env="prod", flow_id=64)
+
+        assert graph.get_node(3)._input_output_handles[2] == "output-0"
+        assert graph.get_node(5)._input_output_handles[2] == "output-1"
+
+
 class TestElseOutputExport:
     @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
     def test_split_gate_emits_negated_block(self, converter):
@@ -1400,14 +1479,15 @@ class TestElseOutputExport:
         generated_df = generated_df.select(engine_df.columns)
         assert generated_df.to_dicts() == engine_df.to_dicts()
 
-    def test_formula_split_gate_emits_negated_flag_block(self):
-        graph = TestElseOutputFormulaGate().build([{"flag": True}], flow_id=60)
+    @pytest.mark.parametrize(
+        "flag, live, gated",
+        [(True, "a_then", "a_else"), (False, "a_else", "a_then")],
+    )
+    def test_formula_split_gate_emits_negated_flag_block(self, flag, live, gated):
+        graph = TestElseOutputFormulaGate().build([{"flag": flag}], flow_id=60)
 
         code = FlowGraphToPolarsConverter(graph).convert()
 
         assert "if _gate_2_open:" in code
         assert "if not (_gate_2_open):" in code
-        result = run_generated(code)
-        assert set(result.columns) == {"a_then", "a_else"}
-        assert result["a_then"].to_list() == [1, 2, 3]
-        assert result["a_else"].null_count() == result.height
+        assert_branch(run_generated(code), live, gated, [1, 2, 3])

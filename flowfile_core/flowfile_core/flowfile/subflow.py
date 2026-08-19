@@ -476,9 +476,9 @@ def execute_run_flow_node(
                 )
             if out_node.node_id in deliberately_skipped:
                 # The output sits behind a closed gate in the child: pulling it
-                # would lazily execute the gated-off branch. Contribute a
-                # zero-row frame with its predicted schema instead — the same
-                # semantics as a gated union input.
+                # would lazily execute the gated-off branch. The slot still has
+                # to yield something, so contribute a zero-row frame with its
+                # predicted schema.
                 try:
                     skipped_schema = out_node.schema
                 except Exception:

@@ -6331,12 +6331,11 @@ class FlowGraph:
 
         Stashes which inputs were deliberately skipped this run — keyed by
         (source id, source handle), so a two-output gate feeding the union is
-        judged per edge — so input assembly can substitute schema-stable empty
-        frames for them, and invalidates the node when the surviving-input set
-        differs from the previous run — the node's hash only folds settings
-        and input hashes, so a gate flip would otherwise serve the previous
-        run's partial result from the dev-mode cache (and the worker's
-        cache_results lookup).
+        judged per edge — so input assembly can drop them from the concat, and
+        invalidates the node when the surviving-input set differs from the
+        previous run — the node's hash only folds settings and input hashes, so
+        a gate flip would otherwise serve the previous run's partial result from
+        the dev-mode cache (and the worker's cache_results lookup).
         """
         input_pairs = [
             (input_node, src_handle)
@@ -7178,11 +7177,33 @@ def node_is_source(node: "FlowNode") -> bool:
     return node.node_type in get_source_node_types()
 
 
+def live_source_handle(to_node: "FlowNode", from_node_id: int) -> str | None:
+    """The output handle a live edge from ``from_node_id`` into ``to_node`` reads.
+
+    Existence comes from the target's actual current inputs, so a bookkeeping
+    entry left behind by a deleted edge never answers. Dynamic-input targets
+    key their handles per input slot (``keyed_source_handles``) and are exempt.
+    """
+    if to_node.accepts_dynamic_inputs:
+        return None
+    if not any(node.node_id == from_node_id for node in to_node.all_inputs):
+        return None
+    return to_node._input_output_handles.get(from_node_id, DEFAULT_OUTPUT_HANDLE)
+
+
 def validate_connection(
     from_node: "FlowNode",
     to_node: "FlowNode",
+    output_handle: str | None = None,
 ) -> ConnectionValidationError | None:
-    """Non-mutating topology check for from_node -> to_node; None when valid."""
+    """Non-mutating topology check for from_node -> to_node; None when valid.
+
+    ``output_handle`` is the source handle the new edge would read. Pass it to
+    also refuse double-wiring two different exits of one source into the same
+    target: ``_input_output_handles`` keys one handle per source node, so the
+    second edge silently re-keys the first and both then read one exit (a
+    closed gate side losing its data, or the live side being read twice).
+    """
     if node_is_source(to_node):
         return ConnectionValidationError(
             "target_is_source",
@@ -7193,6 +7214,16 @@ def validate_connection(
             "would_create_cycle",
             f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
         )
+    if output_handle is not None:
+        existing_handle = live_source_handle(to_node, from_node.node_id)
+        if existing_handle is not None and existing_handle != output_handle:
+            return ConnectionValidationError(
+                "source_handle_conflict",
+                f"Node {to_node.node_id} already reads node {from_node.node_id} on {existing_handle}, "
+                f"so it cannot also read {output_handle} of that node: one target reads a single "
+                "output handle per source. Disconnect the existing connection first, or send this "
+                "output to a different node.",
+            )
     return None
 
 
@@ -7217,7 +7248,7 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    error = validate_connection(from_node, to_node)
+    error = validate_connection(from_node, to_node, node_connection.output_connection.connection_class)
     if error is not None:
         raise HTTPException(422, error.detail)
     if to_node.accepts_dynamic_inputs:
