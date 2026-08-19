@@ -3,10 +3,9 @@
     <div class="mb-3">
       <h2 class="page-title">Performance</h2>
       <p class="page-description">
-        Regular data nodes — joins, filters, formulas, file reads — run in Flowfile's worker
-        service. This page shows whether that service is up and what it's doing, and lets you keep
-        worker processes warm so flows finish faster. Python Script and custom nodes run in kernels
-        instead — see the Python Kernels tab.
+        Data nodes run in the worker service; the warm worker pool keeps worker processes ready
+        between nodes. Python Script and custom nodes run in Python kernels, managed in the Python
+        Kernels tab.
       </p>
     </div>
 
@@ -16,8 +15,8 @@
       <i class="fa-solid fa-lock"></i>
       <h3>Administrator setting</h3>
       <p>
-        Worker settings apply to everyone on this server, so only administrators can view or change
-        them. There's nothing you need to set up — your flows use worker processes automatically.
+        Worker settings are server-wide and managed by administrators. Your flows use the worker
+        service automatically.
       </p>
     </div>
   </div>

@@ -21,7 +21,7 @@
       <el-tooltip
         placement="top"
         :show-after="400"
-        content="Node jobs the worker is executing right now — in warm processes or freshly started ones."
+        content="Node jobs currently executing, in warm or fresh processes."
       >
         <div class="pool-stat">
           <div class="pool-stat__icon"><i class="fa-solid fa-bolt"></i></div>
@@ -57,7 +57,7 @@
         v-if="state && !poolEnabled"
         placement="top"
         :show-after="400"
-        content="Every node currently starts a fresh process. Turn the pool on below to keep processes ready."
+        content="Each node starts a fresh process. Turn the pool on to keep processes warm."
       >
         <div class="pool-stat">
           <div class="pool-stat__icon"><i class="fa-solid fa-layer-group"></i></div>
@@ -90,9 +90,8 @@
         <div>
           <h3 class="pool-card-title">Warm worker pool</h3>
           <p class="pool-card-description">
-            Keeps worker processes ready between data nodes so each node skips its start-up cost —
-            about half a second. When every warm process is busy, extra nodes start fresh processes
-            as usual — nothing waits.
+            Keeps worker processes ready between data nodes, skipping process startup (~0.5 s per
+            node). When all warm processes are busy, additional nodes start fresh processes.
           </p>
         </div>
         <div class="pool-toggle">
@@ -137,21 +136,17 @@
       </div>
 
       <div v-else class="pool-offstate">
-        <p class="pool-offstate__line1">
-          The warm pool is off — each data node runs in its own fresh worker process, so every
-          transformation starts from a completely clean session.
-        </p>
+        <p class="pool-offstate__line1">Each data node runs in a fresh, isolated worker process.</p>
         <p class="pool-offstate__line2">
-          Turn it on to reuse up to {{ desiredSize }} warm processes between nodes — faster for
-          flows with many nodes. Keep it off when you want full isolation per node.
+          Turn it on to reuse up to {{ desiredSize }} warm processes between nodes.
         </p>
       </div>
 
       <p v-if="state.envOverride" class="pool-hint--warning">
         <i class="fa-solid fa-triangle-exclamation"></i>
         <span>
-          <code>FLOWFILE_WORKER_POOL_SIZE</code> is set in the environment — it overrides this
-          setting whenever the worker restarts. Unset it to let this setting take over.
+          <code>FLOWFILE_WORKER_POOL_SIZE</code> is set in the environment and overrides this
+          setting when the worker restarts. Unset it to manage the pool size here.
         </span>
       </p>
     </div>
@@ -194,7 +189,7 @@
 
       <div v-else class="pool-empty">
         <i class="fa-solid fa-moon"></i>
-        <div class="pool-empty__title">No warm processes right now</div>
+        <div class="pool-empty__title">No warm processes</div>
         <div class="pool-empty__hint">{{ emptyHint }}</div>
       </div>
     </div>
@@ -246,8 +241,7 @@ const load = async () => {
     hydrate(next);
     syncSizeInput(next);
   } catch {
-    loadError.value =
-      "Can't reach the worker service, so pool status is unavailable. If the worker is still starting, this page reconnects automatically.";
+    loadError.value = "Can't reach the worker service. Reconnecting automatically.";
   } finally {
     loading.value = false;
   }
@@ -289,8 +283,7 @@ const onToggle = (enabled: boolean | string | number) => {
   void apply(enabled ? desiredSize.value : 0);
 };
 
-const serviceTooltip =
-  "The service that runs every regular data node in your flows. Checked every 2 seconds from this page.";
+const serviceTooltip = "Runs all regular data nodes. Checked every 2 seconds.";
 
 const serviceDown = computed(() => loadError.value !== "" || pollMisses.value >= 3);
 const serviceStatusText = computed(() =>
@@ -325,8 +318,8 @@ const maxTasksPerMember = computed(() => state.value?.maxTasksPerMember ?? 0);
 
 const warmTooltip = computed(() =>
   ttlText.value
-    ? `Alive pool processes out of the configured size. They start on demand when a flow runs and retire after ${ttlText.value} idle.`
-    : "Alive pool processes out of the configured size. They start on demand when a flow runs and retire when idle.",
+    ? `Live processes out of the configured pool size. They start on demand and retire after ${ttlText.value} idle.`
+    : "Live processes out of the configured pool size. They start on demand and retire when idle.",
 );
 
 const jobsServedTitle = computed(() =>
@@ -356,8 +349,8 @@ const lifecycleLine = computed(() => {
 
 const emptyHint = computed(() =>
   ttlText.value
-    ? `They start on demand when a flow runs and retire after ${ttlText.value} idle — an empty pool between runs is normal.`
-    : "They start on demand when a flow runs and retire when idle — an empty pool between runs is normal.",
+    ? `Processes start when a flow runs and retire after ${ttlText.value} idle.`
+    : "Processes start when a flow runs and retire when idle.",
 );
 
 onMounted(() => {
