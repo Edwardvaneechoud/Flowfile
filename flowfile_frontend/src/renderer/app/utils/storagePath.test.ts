@@ -241,3 +241,40 @@ describe("isRootPath", () => {
     expect(isRootPath(value)).toBe(false);
   });
 });
+
+describe("windows local paths", () => {
+  it("walks up a drive path instead of standing still", () => {
+    const start = "C:\\Users\\edwar\\Downloads";
+    expect(parentPath(start)).toBe("C:\\Users\\edwar");
+    expect(parentPath(start)).not.toBe(start);
+  });
+
+  it("stops at the drive root", () => {
+    expect(parentPath("C:\\Users")).toBe("C:\\");
+    expect(isRootPath(parentPath("C:\\Users"))).toBe(true);
+  });
+
+  it("splits a file path", () => {
+    const file = "C:\\Users\\edwar\\Downloads\\test.csv";
+    expect(dirname(file)).toBe("C:\\Users\\edwar\\Downloads");
+    expect(basename(file)).toBe("test.csv");
+    expect(joinPath(dirname(file), basename(file))).toBe(file);
+  });
+
+  it("normalizes to a comparable form a prefix check can use", () => {
+    const root = normalizePath("C:\\Users\\edwar");
+    expect(root).toBe("C:/Users/edwar");
+    expect(normalizePath("C:\\Users\\edwar\\Downloads").startsWith(root + "/")).toBe(true);
+  });
+
+  it("reaches a fixed point from a UNC path", () => {
+    expect(parentPath("\\\\server\\share\\dir")).toBe("\\\\server\\share");
+    let current = "\\\\server\\share\\dir";
+    for (let step = 0; step < 64; step += 1) {
+      const next = parentPath(current);
+      if (next === current) break;
+      current = next;
+    }
+    expect(parentPath(current)).toBe(current);
+  });
+});
