@@ -8,6 +8,7 @@ inheritance, and the resolver's defensive error branches — no object-storage I
 """
 
 import uuid
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -109,7 +110,9 @@ def test_join_catalog_uri_cloud_keeps_scheme():
 
 
 def test_join_catalog_uri_local_is_filesystem_path():
-    assert join_catalog_uri("/a/b", "t_ab12") == "/a/b/t_ab12"
+    joined = join_catalog_uri("/a/b", "t_ab12")
+    assert not _is_cloud_uri(joined)
+    assert joined == str(Path("/a/b") / "t_ab12")
 
 
 def test_local_target_to_worker_payload_is_none():
