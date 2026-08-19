@@ -47,22 +47,23 @@ class ExecutionPlan:
 def compute_execution_plan(
     nodes: list[FlowNode],
     flow_starts: list[FlowNode] = None,
-    closed_gate_ids: set[str | int] | None = None,
+    closed_gate_handles: dict[str | int, frozenset[str]] | None = None,
 ) -> ExecutionPlan:
     """Computes the execution plan: nodes to skip and parallelizable execution stages.
 
     Args:
         nodes: All nodes in the flow.
         flow_starts: Explicit starting nodes for the flow.
-        closed_gate_ids: Gates whose parameter condition evaluated false; their
-            downstream is deliberately skipped. Omitted by gate-blind callers
-            (code export, fetch validation), which therefore keep planning as
-            if every gate were open.
+        closed_gate_handles: Per-gate dead output handles from evaluated
+            parameter conditions; consumers on a dead handle are deliberately
+            skipped. Omitted by gate-blind callers (code export, fetch
+            validation), which therefore keep planning as if every gate were
+            fully open.
 
     Returns:
         An ExecutionPlan with skip_nodes, deliberate_skip_nodes and stages.
     """
-    status = classify_graph(nodes, closed_gate_ids=closed_gate_ids)
+    status = classify_graph(nodes, closed_gate_handles=closed_gate_handles)
     skip_nodes = [node for node in nodes if status.get(node.node_id) == NodeRunStatus.SKIPPED_ERROR]
     deliberate_skip_nodes = [
         node for node in nodes if status.get(node.node_id) == NodeRunStatus.SKIPPED_DELIBERATE

@@ -119,8 +119,15 @@ Where [Filter](transform.md#filter-data) decides which *rows* continue, Gate dec
 
 | Handle | Purpose |
 |---|---|
-| **Data (passes through)** | The dataset the gate forwards. Required. |
-| **Control (optional)** | Read only when the condition source is **Formula**; when connected, the formula is checked against this input instead of the data input. |
+| **Data (passes through)** | The dataset the gate forwards. Required, on the left edge. |
+| **Control (optional)** | The small square pip at the **bottom** of the node — a signal, not data. Read only when the condition source is **Formula**; when connected, the formula is checked against this input instead of the data input. |
+
+#### Outputs
+
+| Handle | Purpose |
+|---|---|
+| **Then** (`T`) | The data, live while the condition holds. The only output unless the else output is enabled. |
+| **Else** (`E`, optional) | Enable **Add an else output** in the settings: the data leaves here when the condition does **not** hold. Exactly one of the two sides runs per execution; the other side's downstream is skipped. |
 
 ---
 
@@ -160,20 +167,21 @@ A formula gate re-evaluates on every run even when nothing else in the flow chan
 
 #### The if/else pattern
 
-The canonical branch is two gates with *complementary* conditions — `equals` and `not equals` on the same parameter, or a formula and its negation — with the branches re-converging on a **Union**:
+Enable **Add an else output** and the gate becomes a two-exit router: one condition, two branches, complementarity guaranteed. Put each branch behind one exit and re-converge them on a **Union**:
 
 ```mermaid
 graph LR
-    R[Read data] --> G1["Gate: env equals prod"]
-    R --> G2["Gate: env not equals prod"]
-    G1 --> P[Enrich for prod]
-    G2 --> D[Sample for dev]
+    R[Read data] --> G["Gate: env equals prod"]
+    G -- "T (then)" --> P[Enrich for prod]
+    G -- "E (else)" --> D[Sample for dev]
     P --> U[Union data]
     D --> U
     U --> W[Write data]
 ```
 
-Exactly one side runs. The skipped side contributes a zero-row frame carrying its predicted schema, so the Union's output columns are the same whichever way the condition falls — a column that exists only on the branch that was skipped comes out as nulls rather than disappearing. That stability is what lets everything downstream of the Union stay configured against one schema.
+Exactly one side runs, and the Union outputs whichever branch ran. A column produced only by the skipped branch is absent from the output — it does not come back as nulls. So when the two branches produce different shapes, configure the nodes downstream of the Union against the columns the branches share, or end each branch with a Select that establishes a common shape (keep the missing columns) before the Union. Note that edit-time schema prediction is gate-blind: the canvas predicts the union of both branches' columns, so a run's actual output can be narrower than the predicted schema.
+
+(Two separate gates with hand-written complementary conditions still work — but the else output cannot drift out of complement, so prefer it.)
 
 ---
 
@@ -190,7 +198,7 @@ Skips caused by a *failure* or by invalid settings are unchanged — they still 
 
 #### Export to Python
 
-Gates survive all three [code export modes](../tutorials/code-generator.md) — Polars, FlowFrame, and Project: each gate becomes a real `if` block over the generated function's keyword arguments, gated branch variables are pre-initialized as empty schema-typed frames, and the Union simply concatenates the branch variables — a gated-off branch contributes its zero-row stand-in. A formula gate exports as a small row-probe helper evaluated when the pipeline function runs.
+Gates survive all three [code export modes](../tutorials/code-generator.md) — Polars, FlowFrame, and Project: each gate becomes a real `if` block over the generated function's keyword arguments (the else branch renders under `if not (...)`), each branch appends its frame to a list under its `if` guard, and the Union concatenates the list — a gated-off branch simply isn't in it. A formula gate exports as a small row-probe helper evaluated when the pipeline function runs.
 
 Single-node preview ignores gates entirely — fetching one node's data plans as if every gate were open, so you can inspect a branch that this run's condition would skip.
 

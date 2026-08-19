@@ -134,7 +134,9 @@ from flowfile_core.flowfile.util.skip_rules import (
     GATE_NODE_TYPE,
     NodeRunStatus,
     classify_from_inputs,
+    dead_gate_handles,
     effective_input_status,
+    gate_has_else_output,
     uses_any_rule,
 )
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
@@ -6170,7 +6172,7 @@ class FlowGraph:
         params: dict[str, ParamValue],
         skip_node_ids: set[str | int],
         deliberate_skip_ids: set[str | int] | None = None,
-        closed_gate_ids: set[str | int] | None = None,
+        closed_gate_handles: dict[str | int, frozenset[str]] | None = None,
     ) -> set[str | int]:
         """Execute all stages in the plan, running independent nodes in parallel.
 
@@ -6184,9 +6186,11 @@ class FlowGraph:
         ``skip_node_ids`` arrives holding the static (misconfiguration) skips
         and is mutated in place to accumulate every skipped node, preserving
         the caller's view. ``deliberate_skip_ids`` holds gate-driven skips and
-        is likewise mutated when the rules propagate one. ``closed_gate_ids``
-        holds parameter-mode gates already known to be closed; gates routed by
-        their control input join it as they execute and evaluate.
+        is likewise mutated when the rules propagate one.
+        ``closed_gate_handles`` (gate id -> dead output handles) holds
+        parameter-mode routing decided before the run; formula gates join it —
+        mutated in place, same dict the caller created — as they execute and
+        evaluate.
 
         Returns:
             Set of node IDs that failed during execution.
@@ -6195,8 +6199,8 @@ class FlowGraph:
         failed_node_ids: set[str | int] = set()
         if deliberate_skip_ids is None:
             deliberate_skip_ids = set()
-        if closed_gate_ids is None:
-            closed_gate_ids = set()
+        if closed_gate_handles is None:
+            closed_gate_handles = {}
 
         statuses: dict[str | int, NodeRunStatus] = {}
         for node_id in skip_node_ids:
@@ -6223,14 +6227,14 @@ class FlowGraph:
                             self.flow_logger.get_node_logger(node.node_id).info(f"Skipping node {node.node_id}")
                         continue
                     input_statuses = [
-                        effective_input_status(statuses, input_node.node_id, closed_gate_ids)
-                        for input_node in node.all_inputs
+                        effective_input_status(statuses, input_node.node_id, src_handle, closed_gate_handles)
+                        for input_node, src_handle in node._slot_input_pairs()
                         if input_node is not None
                     ]
                     decision = classify_from_inputs(node, input_statuses)
                     if decision == NodeRunStatus.RUN:
                         if uses_any_rule(node):
-                            self._apply_any_input_liveness(node, statuses, closed_gate_ids)
+                            self._apply_any_input_liveness(node, statuses, closed_gate_handles)
                             any_rule_nodes_touched.append(node)
                         nodes_to_run.append(node)
                         continue
@@ -6283,11 +6287,18 @@ class FlowGraph:
                                 failed_node_ids.add(node.node_id)
                                 skip_node_ids.add(node.node_id)
                                 continue
-                            if closed:
-                                closed_gate_ids.add(node.node_id)
-                                self.flow_logger.get_node_logger(node.node_id).info(
-                                    f"Gate {node.node_id} closed by its control input; downstream will be skipped"
-                                )
+                            dead = dead_gate_handles(not closed, gate_has_else_output(node))
+                            if dead:
+                                closed_gate_handles[node.node_id] = dead
+                                side = "then branch" if gate_has_else_output(node) and closed else "downstream"
+                                if closed:
+                                    self.flow_logger.get_node_logger(node.node_id).info(
+                                        f"Gate {node.node_id} closed by its formula; {side} will be skipped"
+                                    )
+                                else:
+                                    self.flow_logger.get_node_logger(node.node_id).info(
+                                        f"Gate {node.node_id} open; its else branch will be skipped"
+                                    )
                     else:
                         statuses[node.node_id] = NodeRunStatus.FAILED
                         failed_node_ids.add(node.node_id)
@@ -6314,27 +6325,34 @@ class FlowGraph:
         self,
         node: FlowNode,
         statuses: dict[str | int, NodeRunStatus],
-        closed_gate_ids: set[str | int] | None = None,
+        closed_gate_handles: dict[str | int, frozenset[str]] | None = None,
     ) -> None:
         """Prepare an ANY-rule node (union) to run with a partial input set.
 
-        Stashes which inputs were deliberately skipped this run so input
-        assembly can substitute schema-stable empty frames for them, and
-        invalidates the node when the surviving-input set differs from the
-        previous run — the node's hash only folds settings and input hashes,
-        so a gate flip would otherwise serve the previous run's partial result
-        from the dev-mode cache (and the worker's cache_results lookup).
+        Stashes which inputs were deliberately skipped this run — keyed by
+        (source id, source handle), so a two-output gate feeding the union is
+        judged per edge — so input assembly can substitute schema-stable empty
+        frames for them, and invalidates the node when the surviving-input set
+        differs from the previous run — the node's hash only folds settings
+        and input hashes, so a gate flip would otherwise serve the previous
+        run's partial result from the dev-mode cache (and the worker's
+        cache_results lookup).
         """
-        surviving = frozenset(
-            input_node.node_id
-            for input_node in node.all_inputs
+        input_pairs = [
+            (input_node, src_handle)
+            for input_node, src_handle in node._slot_input_pairs()
             if input_node is not None
-            and effective_input_status(statuses, input_node.node_id, closed_gate_ids) == NodeRunStatus.RUN
+        ]
+        surviving = frozenset(
+            (input_node.node_id, src_handle)
+            for input_node, src_handle in input_pairs
+            if effective_input_status(statuses, input_node.node_id, src_handle, closed_gate_handles)
+            == NodeRunStatus.RUN
         )
         node._skipped_input_ids_this_run = frozenset(
-            input_node.node_id
-            for input_node in node.all_inputs
-            if input_node is not None and input_node.node_id not in surviving
+            (input_node.node_id, src_handle)
+            for input_node, src_handle in input_pairs
+            if (input_node.node_id, src_handle) not in surviving
         )
         previous = self._any_input_liveness.get(node.node_id)
         if previous is not None and previous != surviving:
@@ -6378,16 +6396,18 @@ class FlowGraph:
         formula = resolve_parameters(gate_input.formula, params or {})
         return not _gate_formula_matches(source_result, formula)
 
-    def _evaluate_gate_conditions(self) -> set[str | int]:
-        """Evaluate parameter-mode gates before the run; returns the closed ones.
+    def _evaluate_gate_conditions(self) -> dict[str | int, frozenset[str]]:
+        """Evaluate parameter-mode gates before the run; returns per-gate dead handles.
 
-        Formula gates are decided when they execute (stage loop). A gate
-        whose condition cannot be evaluated (unknown parameter, un-coercible
-        value) is left open here so it fails visibly at execution and its
-        downstream error-skips — fail-closed either way, but with the error
-        on the canvas instead of a silently-picked branch.
+        Formula gates are decided when they execute (stage loop). A gate with
+        an else output always routes exactly one handle dead on a successful
+        evaluation. A gate whose condition cannot be evaluated (unknown
+        parameter, un-coercible value) gets no entry — fully open — so it
+        fails visibly at execution and its downstream (both sides) error-skips
+        — fail-closed either way, but with the error on the canvas instead of
+        a silently-picked branch.
         """
-        closed: set[str | int] = set()
+        closed: dict[str | int, frozenset[str]] = {}
         parameters_by_name = {p.name: p for p in self.flow_settings.parameters}
         typed_params = {p.name: p.typed_default() for p in self.flow_settings.parameters}
         for node in self.nodes:
@@ -6405,8 +6425,9 @@ class FlowGraph:
                     effective = gate_input.model_copy(
                         update={"value": resolve_parameters(gate_input.value, typed_params)}
                     )
-                if not effective.evaluate(parameters_by_name):
-                    closed.add(node.node_id)
+                dead = dead_gate_handles(effective.evaluate(parameters_by_name), gate_has_else_output(node))
+                if dead:
+                    closed[node.node_id] = dead
             except ValueError:
                 # A broken condition must fail loudly, and the gate's own hash
                 # does not fold flow parameters — after one green run the
@@ -6576,15 +6597,15 @@ class FlowGraph:
             self._refresh_catalog_reader_freshness()
 
             params: dict[str, ParamValue] = {p.name: p.typed_default() for p in self.flow_settings.parameters}
-            # Parameter-mode gates are decided before anything runs; the plan
-            # classifies their downstream as deliberately skipped (green, not
-            # failed). Control-input gates are decided when they execute.
-            closed_gate_ids = self._evaluate_gate_conditions()
+            # Parameter-mode gates are routed before anything runs; the plan
+            # classifies each dead handle's downstream as deliberately skipped
+            # (green, not failed). Formula gates are decided when they execute.
+            closed_gate_handles = self._evaluate_gate_conditions()
 
             execution_plan = compute_execution_plan(
                 nodes=self.nodes,
                 flow_starts=self._flow_starts + self.get_implicit_starter_nodes(),
-                closed_gate_ids=closed_gate_ids,
+                closed_gate_handles=closed_gate_handles,
             )
 
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
@@ -6599,7 +6620,7 @@ class FlowGraph:
             self._record_deliberate_skips(deliberate_skip_ids)
 
             failed_node_ids = self._execute_stages(
-                execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_ids
+                execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
             )
             if not self.flow_settings.is_canceled:
                 self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids)

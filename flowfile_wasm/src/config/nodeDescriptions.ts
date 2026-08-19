@@ -50,7 +50,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   },
   gate: {
     title: 'Gate',
-    intro: 'Pass data through only when a condition holds — a flow parameter rule, or a formula that matches at least one row of the data (or an optional control input). When the gate is closed everything downstream is skipped instead of failing, so one branch of an if/else can run and the other stays idle. Full Flowfile app only.'
+    intro: 'Pass data through only when a condition holds — a flow parameter rule, or a formula that matches at least one row of the data (or an optional control input). When the gate is closed everything downstream is skipped instead of failing, and an optional else output routes the data to a second exit when the condition does not hold — a one-node if/else. Full Flowfile app only.'
   },
   formula: {
     title: 'Formula',

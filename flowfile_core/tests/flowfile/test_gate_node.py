@@ -73,10 +73,18 @@ def add_promise(graph: FlowGraph, node_type: str, node_id: int) -> None:
     )
 
 
-def connect(graph: FlowGraph, from_id: int, to_id: int, input_type: str = "input-0") -> None:
+def connect(
+    graph: FlowGraph,
+    from_id: int,
+    to_id: int,
+    input_type: str = "input-0",
+    output_handle: str = "output-0",
+) -> None:
     add_connection(
         graph,
-        input_schema.NodeConnection.create_from_simple_input(from_id, to_id, input_type=input_type),
+        input_schema.NodeConnection.create_from_simple_input(
+            from_id, to_id, input_type=input_type, output_handle=output_handle
+        ),
     )
 
 
@@ -101,6 +109,7 @@ def add_gate(
     node_id: int,
     depending_on_id: int,
     control_id: int | None = None,
+    else_output: bool = False,
     **gate_kwargs,
 ) -> None:
     add_promise(graph, "gate", node_id)
@@ -113,6 +122,7 @@ def add_gate(
             node_id=node_id,
             depending_on_id=depending_on_id,
             is_setup=True,
+            else_output=else_output,
             gate_input=transform_schema.GateInput(**gate_kwargs),
         )
     )
@@ -132,9 +142,16 @@ def add_passthrough_select(graph: FlowGraph, node_id: int, depending_on_id: int)
     )
 
 
-def add_rename_select(graph: FlowGraph, node_id: int, depending_on_id: int, old: str, new: str) -> None:
+def add_rename_select(
+    graph: FlowGraph,
+    node_id: int,
+    depending_on_id: int,
+    old: str,
+    new: str,
+    output_handle: str = "output-0",
+) -> None:
     add_promise(graph, "select", node_id)
-    connect(graph, depending_on_id, node_id)
+    connect(graph, depending_on_id, node_id, output_handle=output_handle)
     graph.add_select(
         input_schema.NodeSelect(
             flow_id=graph.flow_id,
@@ -226,6 +243,35 @@ def build_diamond(env: str = "prod", flow_id: int = 1) -> FlowGraph:
     return graph
 
 
+def build_split_diamond(env: str = "prod", flow_id: int = 1) -> FlowGraph:
+    """The one-gate if/else: a single else_output gate replacing the two-gate diamond.
+
+    1 manual_input -> 2 gate(env == prod, else_output)
+    then (output-0) -> 3 select(a -> a_prod) -> 6 union
+    else (output-1) -> 5 select(a -> a_dev) -> 6
+    6 union -> 7 select (terminal, record-preserving)
+    """
+    graph = create_graph(flow_id=flow_id)
+    graph.flow_settings.parameters.append(
+        FlowParameter(name="env", default_value=env, type="string")
+    )
+    add_manual_input(graph, SOURCE_ROWS, node_id=1)
+    add_gate(
+        graph,
+        node_id=2,
+        depending_on_id=1,
+        else_output=True,
+        parameter="env",
+        operator="equals",
+        value="prod",
+    )
+    add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_prod")
+    add_rename_select(graph, node_id=5, depending_on_id=2, old="a", new="a_dev", output_handle="output-1")
+    add_union(graph, node_id=6, depending_on_ids=[3, 5])
+    add_passthrough_select(graph, node_id=7, depending_on_id=6)
+    return graph
+
+
 def set_parameter(graph: FlowGraph, name: str, value: str) -> None:
     for param in graph.flow_settings.parameters:
         if param.name == name:
@@ -235,10 +281,10 @@ def set_parameter(graph: FlowGraph, name: str, value: str) -> None:
 
 
 def assert_branch(df: pl.DataFrame, live: str, gated: str, values: list[int]) -> None:
-    """The union keeps both branches' columns; the gated one is all-null."""
-    assert set(df.columns) == {live, gated}
+    """The union outputs only the branch that ran; the gated column is absent."""
+    assert set(df.columns) == {live}
+    assert gated not in df.columns
     assert df[live].to_list() == values
-    assert df[gated].null_count() == df.height
 
 
 # A. The parameter diamond
@@ -273,7 +319,7 @@ class TestParameterGateDiamond:
         assert run_info.number_of_nodes == len(graph.nodes) == 7
         assert run_info.nodes_completed == run_info.number_of_nodes
 
-    def test_union_keeps_both_branches_columns_with_the_gated_one_null(self):
+    def test_union_outputs_only_the_live_branch_columns(self):
         graph = build_diamond(env="prod")
         graph.run_graph()
 
@@ -764,13 +810,13 @@ class TestGateBlindCallers:
         assert plan.skip_nodes == []
         assert plan.node_count == len(graph.nodes)
 
-    def test_plan_with_closed_gate_ids_marks_the_branch_deliberate(self):
+    def test_plan_with_closed_gate_handles_marks_the_branch_deliberate(self):
         graph = build_diamond(env="prod")
 
         plan = compute_execution_plan(
             nodes=graph.nodes,
             flow_starts=graph._flow_starts + graph.get_implicit_starter_nodes(),
-            closed_gate_ids={4},
+            closed_gate_handles={4: frozenset({"output-0", "output-1"})},
         )
 
         assert [node.node_id for node in plan.deliberate_skip_nodes] == [5]
@@ -800,8 +846,15 @@ class TestPolarsExport:
         assert "if env == 'prod':" in code
         assert "if env != 'prod':" in code
         assert "def run_etl_pipeline(*, env" in code
-        # Pre-initialized branch vars make inline union guards unnecessary.
+        # Gated union inputs append to a list under their guards — no stand-in
+        # substitution, no None-filtering listcomp.
+        assert "df_6_frames = []" in code
+        assert "df_6_frames.append(df_3)" in code
+        assert "df_6_frames.append(df_5)" in code
         assert "if df is not None" not in code
+        # The terminal select 7 is ungated, so no branch var pre-inits at all.
+        assert "df_3 = pl.LazyFrame(schema=" not in code
+        assert "df_5 = pl.LazyFrame(schema=" not in code
 
     @pytest.mark.parametrize("env", ["prod", "dev"])
     def test_generated_code_matches_the_engine_for_both_parameter_values(self, env):
@@ -825,9 +878,9 @@ class TestPolarsExport:
         dev_df = run_generated(code, env="dev")
 
         assert prod_df["a_prod"].to_list() == [1, 2, 3]
-        assert prod_df["a_dev"].null_count() == prod_df.height
+        assert "a_dev" not in prod_df.columns
         assert dev_df["a_dev"].to_list() == [1, 2, 3]
-        assert dev_df["a_prod"].null_count() == dev_df.height
+        assert "a_prod" not in dev_df.columns
 
     @pytest.mark.parametrize("flag, expect_rows", [(True, 3), (False, 0)])
     def test_formula_gate_export_uses_the_formula_helper(self, flag, expect_rows):
@@ -900,10 +953,10 @@ class TestFlowFrameExport:
 
     A ``df.gate(...)`` emission would be wrong here: the generated module
     returns a FlowFrame whose ``collect()`` deliberately ignores gates, so the
-    condition has to live in the exported Python itself. Gated-off branch vars
-    pre-initialize as ``ff.FlowFrame(pl.LazyFrame(schema=...))`` stand-ins and
-    the formula helper probes the FlowFrame's underlying LazyFrame via
-    ``.data``.
+    condition has to live in the exported Python itself. Gated union inputs
+    append to a list under their guards (same list-append shape as the Polars
+    export) and the formula helper probes the FlowFrame's underlying LazyFrame
+    via ``.data``.
     """
 
     def test_diamond_export_emits_real_if_blocks(self):
@@ -916,10 +969,15 @@ class TestFlowFrameExport:
         assert "def run_etl_pipeline(*, env" in code
         assert "import flowfile as ff" in code
         assert "import polars as pl" in code
-        assert "ff.FlowFrame(pl.LazyFrame(schema=" in code
-        # Pre-initialized branch vars keep the union a plain multi-line concat.
+        # Gated union inputs append to a list under their guards.
+        assert "df_6_frames = []" in code
+        assert "df_6_frames.append(df_3)" in code
+        assert "df_6_frames.append(df_5)" in code
         assert "if df is not None" not in code
-        assert "ff.concat([" in code
+        assert "ff.concat(df_6_frames" in code
+        # The terminal select 7 is ungated, so no branch var pre-inits at all.
+        assert "df_3 = ff.FlowFrame(" not in code
+        assert "df_5 = ff.FlowFrame(" not in code
 
     @pytest.mark.parametrize("env", ["prod", "dev"])
     def test_generated_code_matches_the_engine_for_both_parameter_values(self, env):
@@ -942,9 +1000,9 @@ class TestFlowFrameExport:
         dev_df = run_generated(code, env="dev")
 
         assert prod_df["a_prod"].to_list() == [1, 2, 3]
-        assert prod_df["a_dev"].null_count() == prod_df.height
+        assert "a_dev" not in prod_df.columns
         assert dev_df["a_dev"].to_list() == [1, 2, 3]
-        assert dev_df["a_prod"].null_count() == dev_df.height
+        assert "a_prod" not in dev_df.columns
 
     @pytest.mark.parametrize("flag, expect_rows", [(True, 3), (False, 0)])
     def test_formula_gate_export_probes_the_lazyframe(self, flag, expect_rows):
@@ -1180,3 +1238,176 @@ class TestAdversarialReviewRegressions:
             schema = [LossyColumn()]
 
         assert FlowGraphToPolarsConverter._empty_frame_schema_expr(StubNode()) is None
+
+
+# H. Else output (one-gate if/else)
+
+
+class TestElseOutputDiamond:
+    @pytest.mark.parametrize(
+        "env, live, gated, live_node, gated_node",
+        [("prod", "a_prod", "a_dev", 3, 5), ("dev", "a_dev", "a_prod", 5, 3)],
+    )
+    def test_exactly_one_branch_runs_per_parameter_value(self, env, live, gated, live_node, gated_node):
+        graph = build_split_diamond(env=env, flow_id=50)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert by_id[2].success is True and by_id[2].skipped is False
+        assert by_id[gated_node].skipped is True and by_id[gated_node].success is True
+        assert by_id[live_node].skipped is False
+        assert run_info.nodes_completed == run_info.number_of_nodes
+        assert_branch(collect_node(graph, 6), live, gated, [1, 2, 3])
+
+    def test_flipping_the_parameter_reroutes_the_live_graph(self):
+        graph = build_split_diamond(env="prod", flow_id=51)
+        assert graph.run_graph().success is True
+        assert_branch(collect_node(graph, 6), "a_prod", "a_dev", [1, 2, 3])
+
+        set_parameter(graph, "env", "dev")
+
+        assert graph.run_graph().success is True
+        assert_branch(collect_node(graph, 6), "a_dev", "a_prod", [1, 2, 3])
+
+    def test_closed_unpaired_gate_kills_a_stale_else_edge(self):
+        """Toggling else_output off leaves a dangling output-1 edge; a closed
+        gate must not leak data through it."""
+        graph = build_split_diamond(env="dev", flow_id=52)
+        graph.get_node(2).setting_input.else_output = False
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert by_id[3].skipped is True
+        assert by_id[5].skipped is True
+        assert by_id[6].skipped is True
+
+    def test_open_unpaired_gate_serves_a_stale_else_edge_like_then(self):
+        graph = build_split_diamond(env="prod", flow_id=53)
+        graph.get_node(2).setting_input.else_output = False
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert by_id[3].skipped is False
+        assert by_id[5].skipped is False
+
+
+class TestElseOutputFormulaGate:
+    def build(self, control_rows: list[dict], flow_id: int) -> FlowGraph:
+        """1 data + 10 control -> 2 gate([flag], else_output) -> then 3 / else 5 -> 6 union."""
+        graph = create_graph(flow_id=flow_id)
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_manual_input(graph, control_rows, node_id=10)
+        add_gate(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            control_id=10,
+            else_output=True,
+            condition_source="formula",
+            formula="[flag]",
+        )
+        add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_then")
+        add_rename_select(graph, node_id=5, depending_on_id=2, old="a", new="a_else", output_handle="output-1")
+        add_union(graph, node_id=6, depending_on_ids=[3, 5])
+        return graph
+
+    @pytest.mark.parametrize(
+        "flag, live, gated, live_node, gated_node",
+        [(True, "a_then", "a_else", 3, 5), (False, "a_else", "a_then", 5, 3)],
+    )
+    def test_formula_routes_exactly_one_side(self, flag, live, gated, live_node, gated_node):
+        graph = self.build([{"flag": flag}], flow_id=54)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert by_id[gated_node].skipped is True
+        assert by_id[live_node].skipped is False
+        assert_branch(collect_node(graph, 6), live, gated, [1, 2, 3])
+
+    def test_routing_re_evaluates_when_the_control_data_flips(self):
+        graph = self.build([{"flag": True}], flow_id=55)
+        assert graph.run_graph().success is True
+        assert results_by_id(graph.get_run_info())[5].skipped is True
+
+        set_manual_input(graph, [{"flag": False}], node_id=10)
+
+        assert graph.run_graph().success is True
+        by_id = results_by_id(graph.get_run_info())
+        assert by_id[3].skipped is True
+        assert by_id[5].skipped is False
+
+    def test_broken_formula_fails_the_gate_and_error_skips_both_sides(self):
+        graph = self.build([{"flag": True}], flow_id=56)
+        graph.get_node(2).setting_input.gate_input.formula = "[no_such_column] > 1"
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        by_id = results_by_id(run_info)
+        assert by_id[2].success is False
+        assert 3 not in by_id
+        assert 5 not in by_id
+        assert 6 not in by_id
+
+
+class TestElseOutputYamlRoundTrip:
+    def test_else_output_and_edge_survive_save_and_open(self, tmp_path):
+        graph = build_split_diamond(env="prod", flow_id=57)
+        path = tmp_path / "split_gate_flow.yaml"
+        graph.save_flow(str(path))
+
+        reopened = open_flow(Path(path))
+
+        restored = reopened.get_node(2).setting_input
+        assert restored.else_output is True
+        assert reopened.get_node(5)._input_output_handles[2] == "output-1"
+        assert reopened.get_node(3)._input_output_handles[2] == "output-0"
+
+        run_info = reopened.run_graph()
+        assert run_info.success is True
+        assert_branch(collect_node(reopened, 6), "a_prod", "a_dev", [1, 2, 3])
+
+
+class TestElseOutputExport:
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    def test_split_gate_emits_negated_block(self, converter):
+        graph = build_split_diamond(env="prod", flow_id=58)
+
+        code = converter(graph).convert()
+
+        assert "if env == 'prod':" in code
+        assert "if not (env == 'prod'):" in code
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    @pytest.mark.parametrize("env", ["prod", "dev"])
+    def test_split_gate_engine_parity_both_values(self, converter, env):
+        graph = build_split_diamond(env=env, flow_id=59)
+        code = converter(graph).convert()
+        graph.run_graph()
+        engine_df = collect_node(graph, 7)
+
+        generated_df = run_generated(code, env=env)
+
+        assert set(generated_df.columns) == set(engine_df.columns)
+        generated_df = generated_df.select(engine_df.columns)
+        assert generated_df.to_dicts() == engine_df.to_dicts()
+
+    def test_formula_split_gate_emits_negated_flag_block(self):
+        graph = TestElseOutputFormulaGate().build([{"flag": True}], flow_id=60)
+
+        code = FlowGraphToPolarsConverter(graph).convert()
+
+        assert "if _gate_2_open:" in code
+        assert "if not (_gate_2_open):" in code
+        result = run_generated(code)
+        assert set(result.columns) == {"a_then", "a_else"}
+        assert result["a_then"].to_list() == [1, 2, 3]
+        assert result["a_else"].null_count() == result.height

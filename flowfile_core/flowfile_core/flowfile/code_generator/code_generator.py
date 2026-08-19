@@ -233,16 +233,17 @@ class FlowGraphCodeConverter(
         # Flow parameters that become function kwargs (set in convert()).
         self._codegen_params: list = []
         self.warnings: list[str] = []
-        # Gate machinery: per-node conjunction of gate ids that must be open
-        # (drives if-block emission), per-gate condition expression, and the
-        # runtime flag vars of control-input gates. Empty when the flow has no
-        # gates, which keeps the fused single-block rendering path.
-        self._gate_conds: dict[int, frozenset[int]] = {}
+        # Gate machinery: per-node conjunction of signed gate atoms
+        # ((gate_id, needs_open) — False for else-handle consumers, rendered
+        # as `not (...)`) driving if-block emission, per-gate condition
+        # expression, and the runtime flag vars of formula gates. Empty when
+        # the flow has no gates, which keeps the fused single-block path.
+        self._gate_conds: dict[int, frozenset[tuple[int, bool]]] = {}
         self._gate_exprs: dict[int, str] = {}
         self._runtime_gate_flags: dict[int, str] = {}
         # ANY-rule (union) inputs guarded by gates beyond the union's own
-        # condition: union node id -> {producer id -> extra gate ids}.
-        self._any_input_edge_conds: dict[int, dict[int, frozenset[int]]] = {}
+        # condition: union node id -> {producer id -> extra signed atoms}.
+        self._any_input_edge_conds: dict[int, dict[int, frozenset[tuple[int, bool]]]] = {}
         self._module_helpers: list[str] = []
 
     def convert(self) -> str:
@@ -409,15 +410,24 @@ class FlowGraphCodeConverter(
                 continue
             self._gate_exprs[gate.node_id] = expr
 
-        conds: dict[int, frozenset[int]] = {}
+        conds: dict[int, frozenset[tuple[int, bool]]] = {}
         for node in execution_plan.all_nodes:
-            edge_conds: list[tuple[int, frozenset[int]]] = []
+            edge_conds: list[tuple[int, frozenset[tuple[int, bool]]]] = []
             for input_node in node.all_inputs:
                 if input_node is None:
                     continue
                 edge = conds.get(input_node.node_id, frozenset())
                 if input_node.node_type == "gate" and input_node.node_id in self._gate_exprs:
-                    edge = edge | {input_node.node_id}
+                    # Polarity mirrors the engine: an edge off the else handle
+                    # of an else_output gate needs the condition FALSE. A stale
+                    # output-1 edge on a single-output gate keeps needs-open —
+                    # matching dead_gate_handles killing both handles when
+                    # such a gate closes.
+                    needs_open = not (
+                        node._input_output_handles.get(input_node.node_id, "output-0") == "output-1"
+                        and getattr(input_node.setting_input, "else_output", False)
+                    )
+                    edge = edge | {(input_node.node_id, needs_open)}
                 edge_conds.append((input_node.node_id, edge))
             if not edge_conds:
                 continue
@@ -498,8 +508,11 @@ class FlowGraphCodeConverter(
             return None
         return f"pl.LazyFrame(schema={{{fields}}})"
 
-    def _render_gate_cond(self, cond: frozenset[int]) -> str:
-        parts = [self._gate_exprs[gate_id] for gate_id in sorted(cond)]
+    def _render_gate_cond(self, cond: frozenset[tuple[int, bool]]) -> str:
+        parts = [
+            self._gate_exprs[gate_id] if needs_open else f"not ({self._gate_exprs[gate_id]})"
+            for gate_id, needs_open in sorted(cond)
+        ]
         if len(parts) == 1:
             return parts[0]
         return " and ".join(f"({part})" for part in parts)
@@ -977,35 +990,39 @@ class FlowGraphCodeConverter(
 
         Nodes whose condition set is non-empty emit inside an
         ``if <conjunction>:`` block; consecutive same-condition nodes share
-        one block. Every variable defined under a condition is
-        None-initialized up front (and control-gate flags False-initialized)
-        so ungated consumers — the union's None-guarded concat, the trailing
-        return — always see a defined name. Chain fusion is deliberately
-        bypassed here: fused chains and block boundaries don't compose, and
-        correctness beats prettiness for gated exports.
+        one block. Union references to gated vars are guarded at the union's
+        own emission site, so the only remaining ungated references are the
+        module's return path — only gated vars the return will reference get
+        a stand-in pre-init (control-gate flags stay False-initialized).
+        Chain fusion is deliberately bypassed here: fused chains and block
+        boundaries don't compose, and correctness beats prettiness for gated
+        exports.
         """
         body: list[str] = []
         for flag in sorted(self._runtime_gate_flags.values()):
             body.append(f"{flag} = False")
+        return_vars = self._return_referenced_vars()
         seen_vars: set[str] = set()
         for node, effective_var, _start, _end in self._node_spans:
             cond = self._gate_conds.get(node.node_id, frozenset())
-            if not cond or effective_var in seen_vars:
+            if not cond or effective_var in seen_vars or effective_var not in return_vars:
                 continue
             seen_vars.add(effective_var)
-            # A gated-off branch contributes a zero-row frame with its
-            # predicted schema — matching the engine's schema-stable union
-            # semantics (branch-only columns surface as nulls). None when the
-            # schema can't be predicted; the union's guard filters those.
+            # A gated-off terminal still gets returned: a zero-row frame with
+            # its predicted schema keeps the return well-defined when the
+            # branch didn't run. None when the schema can't be predicted.
             schema_expr = self._empty_frame_schema_expr(node)
             body.append(f"{effective_var} = {schema_expr or 'None'}")
         # Multi-output nodes under a gate bind sibling per-handle vars
-        # (df_N_fail, df_N_test, output-N vars) — initialize those too so a
-        # reference outside the block is never an unbound name. Per-handle
-        # schemas aren't statically known, so these init to None (the union's
-        # guard filters them).
+        # (df_N_fail, df_N_test, output-N vars) — same rule: pre-init (to
+        # None, per-handle schemas aren't statically known) only when the
+        # return path references them.
         for (handle_node_id, _handle), handle_var in sorted(self.node_handle_var_mapping.items(), key=str):
-            if self._gate_conds.get(handle_node_id) and handle_var not in seen_vars:
+            if (
+                self._gate_conds.get(handle_node_id)
+                and handle_var not in seen_vars
+                and handle_var in return_vars
+            ):
                 seen_vars.add(handle_var)
                 body.append(f"{handle_var} = None")
         if body:
@@ -1192,6 +1209,19 @@ class FlowGraphCodeConverter(
             out.append("\n".join(physical[pos : pos + span]))
             pos += span
         return out
+
+    def _return_referenced_vars(self) -> set[str]:
+        """The variable names ``add_return_code`` will reference, mirroring its logic.
+
+        Used by ``_render_body_with_gates`` (after all spans are emitted, so
+        ``output_nodes``/``last_node_var`` are final) to decide which gated
+        vars need a stand-in pre-init for the return path.
+        """
+        if self.output_nodes:
+            return {var_name for _, var_name in self.output_nodes}
+        if self.last_node_var:
+            return {self.last_node_var}
+        return set()
 
     def add_return_code(self, lines: list[str]) -> None:
         if self.output_nodes:

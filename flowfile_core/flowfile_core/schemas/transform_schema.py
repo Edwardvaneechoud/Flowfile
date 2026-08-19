@@ -1155,8 +1155,8 @@ class GateInput(BaseModel):
     (reported as skipped, not failed). ``value`` is stored as a string — like
     parameter defaults — and coerced with the referenced parameter's declared
     type at evaluation time; for ``in`` / ``not_in`` it is a comma-separated
-    list. For the complementary branch of an if/else, use the complementary
-    operator (``not_equals``, ``is_false``, ``not_in``) or a negated formula.
+    list. For an if/else, enable ``NodeGate.else_output`` — one condition,
+    two exits (then/else) — instead of maintaining two complementary gates.
 
     Legacy settings (the pre-formula shape) are migrated on load: the removed
     ``control_input`` source becomes ``formula``, and a parameter gate saved

@@ -648,6 +648,10 @@ class NodeTemplate(BaseModel):
     # When set, the arity check accepts min_inputs..input connections instead of
     # exactly `input` — for nodes with optional inputs (gate's control input).
     min_inputs: int | None = None
+    # Purely cosmetic (like input_labels): input handle indices the canvas
+    # renders as bottom-center "parameter" pips instead of left data handles
+    # (gate's control input). Never read at execution time.
+    control_input_indices: list[int] | None = None
     # Per-instance input handles (run_flow): connections are keyed by target
     # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
     dynamic_inputs: bool = False

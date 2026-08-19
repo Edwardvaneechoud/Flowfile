@@ -136,10 +136,13 @@ class TransformHandlersMixin(ConverterMixinBase):
     def _handle_union(self, settings: input_schema.NodeUnion, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle union nodes.
 
-        In a gated flow, inputs living behind a closed gate are None (their
-        branch's block did not run), so the concat list filters Nones —
-        matching the engine's ANY rule where the union outputs whichever
-        branches survived.
+        In a gated flow, inputs behind a closed gate are dropped — the engine's
+        ANY rule outputs only whichever branches survived. Each input whose
+        edge carries gate atoms beyond the union's own condition appends to a
+        list under an ``if`` guard for those extra atoms; the guard is what
+        makes the reference safe (extra ∪ combined ⊇ the producer's condition,
+        so the var is always assigned when the guard passes at the union's
+        site). Inputs without extra atoms append unguarded.
         """
         dfs = []
         if "main" in input_vars:
@@ -155,48 +158,34 @@ class TransformHandlersMixin(ConverterMixinBase):
             how = "diagonal"
 
         if getattr(self, "_gate_exprs", None):
-            # Gated flow. Producers with their own condition set were
-            # pre-initialized to a zero-row schema-typed stand-in (or None) and
-            # reassigned inside their if-block, so they need no guard here. The
-            # one case needing an explicit guard is a gate wired straight into
-            # the union: its variable is the ungated upstream frame, so the
-            # closed case gets a hoisted stand-in assignment — matching the
-            # engine's schema-stable union semantics.
             edge_guards = self._any_input_edge_conds.get(settings.node_id, {})
             union_node = self.flow_graph.get_node(settings.node_id)
             producers = list(union_node.node_inputs.main_inputs or [])
-            handle_vars = set(self.node_handle_var_mapping.values())
-            may_be_none = False
-            hoisted_any = False
-            if len(producers) == len(dfs):
-                resolved: list[str] = []
+            # Length mismatch would mean inputs can't be attributed to
+            # producers (never expected: both derive from main_inputs); guards
+            # can't be placed then, so fall through to the plain concat —
+            # correct whenever no edge carries extra atoms.
+            if edge_guards and len(producers) == len(dfs):
+                list_var = f"{var_name}_frames"
+                self._add_code(f"{list_var} = []")
+                any_unguarded = False
                 for producer, df_var in zip(producers, dfs, strict=True):
-                    producer_cond = self._gate_conds.get(producer.node_id, frozenset())
                     extra = edge_guards.get(producer.node_id)
-                    if extra and not extra <= producer_cond:
-                        empty = self._empty_frame_schema_expr(producer) or "None"
-                        hoisted = f"df_{producer.node_id}"
-                        self._add_code(f"{hoisted} = {df_var} if {self._render_gate_cond(extra)} else {empty}")
-                        hoisted_any = True
-                        if empty == "None":
-                            may_be_none = True
-                        resolved.append(hoisted)
-                        continue
-                    if producer_cond and (df_var in handle_vars or self._empty_frame_schema_expr(producer) is None):
-                        may_be_none = True
-                    resolved.append(df_var)
-                dfs = resolved
-            else:
-                # Inputs can't be attributed to producers; keep the safe filtering form.
-                may_be_none = True
-            if hoisted_any:
-                self._add_code("")
-            if may_be_none:
-                candidates = ", ".join(dfs)
-                self._add_code(
-                    f"{var_name} = {self.framework}.concat("
-                    f"[df for df in [{candidates}] if df is not None], how='{how}')"
-                )
+                    if extra:
+                        self._add_code(f"if {self._render_gate_cond(extra)}:")
+                        self._add_code(f"    {list_var}.append({df_var})")
+                    else:
+                        any_unguarded = True
+                        self._add_code(f"{list_var}.append({df_var})")
+                if not any_unguarded:
+                    # Every input is guarded, so all branches can be closed at
+                    # run time (independent gates); concat needs ≥1 frame.
+                    empty = self._empty_frame_schema_expr(union_node)
+                    if empty is None:
+                        empty = "pl.LazyFrame()" if self.framework == "pl" else "ff.FlowFrame(pl.LazyFrame())"
+                    self._add_code(f"if not {list_var}:")
+                    self._add_code(f"    {list_var}.append({empty})")
+                self._add_code(f"{var_name} = {self.framework}.concat({list_var}, how='{how}')")
                 self._add_code("")
                 return
 

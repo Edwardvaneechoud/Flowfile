@@ -12,19 +12,26 @@ from its immediate inputs alone:
   become "half the data written successfully".
 
 Error-ish covers failures, misconfiguration, and cancellation. Deliberate skips
-originate only from closed gates, so graphs without gates behave exactly as
-before. ANY is restricted to ``union`` because the other multi-input node types
-address their inputs positionally (``input_df_1..N``) — eliding one would
-silently renumber the rest.
+originate only from gates, so graphs without gates behave exactly as before.
+Gate closure is per OUTPUT HANDLE: a gate routes each of its outputs live or
+dead (``closed_gate_handles`` maps gate id -> dead handles), so a two-output
+gate's "then" consumers can skip while its "else" consumers run. A FAILED gate
+still kills every output — error propagation stays handle-blind. ANY is
+restricted to ``union`` because the other multi-input node types address their
+inputs positionally (``input_df_1..N``) — eliding one would silently renumber
+the rest.
 """
 
 from collections import deque
 from enum import Enum
 
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 
 ANY_INPUT_NODE_TYPES: frozenset[str] = frozenset({"union"})
 GATE_NODE_TYPE = "gate"
+THEN_HANDLE = DEFAULT_OUTPUT_HANDLE
+ELSE_HANDLE = "output-1"
 
 
 class NodeRunStatus(str, Enum):
@@ -46,20 +53,46 @@ def uses_any_rule(node: FlowNode) -> bool:
     return node.node_type in ANY_INPUT_NODE_TYPES
 
 
+def gate_has_else_output(node: FlowNode) -> bool:
+    return bool(getattr(node.setting_input, "else_output", False))
+
+
+def dead_gate_handles(is_open: bool, has_else_output: bool) -> frozenset[str] | None:
+    """The gate output handles whose consumers must be deliberately skipped.
+
+    An open single-output gate routes nothing dead (None: no entry). With an
+    else output exactly one side is always dead. A closed single-output gate
+    kills BOTH handles: the drawer deliberately keeps a dangling else edge
+    when the toggle is switched off (filter-split parity), and that stale
+    edge must never leak data past a closed gate.
+    """
+    if is_open:
+        return frozenset({ELSE_HANDLE}) if has_else_output else None
+    if has_else_output:
+        return frozenset({THEN_HANDLE})
+    return frozenset({THEN_HANDLE, ELSE_HANDLE})
+
+
 def effective_input_status(
     statuses: dict[str | int, "NodeRunStatus"],
     input_node_id: str | int,
-    closed_gate_ids: frozenset | set | None = None,
+    source_handle: str = DEFAULT_OUTPUT_HANDLE,
+    closed_gate_handles: dict[str | int, frozenset[str]] | None = None,
 ) -> "NodeRunStatus":
     """The status a consumer should see for one of its inputs.
 
-    A closed gate runs successfully (it "ran and decided") but declines its
-    downstream: consumers see it as a deliberate skip. The mapping applies
-    only when the gate itself is healthy — a gate that error-skipped or
-    failed propagates the error regardless of its condition.
+    A gate that routed this edge's output handle dead ran successfully (it
+    "ran and decided") but declines that side's downstream: consumers on the
+    dead handle see a deliberate skip. The mapping applies only when the
+    gate itself is healthy — a gate that error-skipped or failed propagates
+    the error to every handle regardless of its condition.
     """
     actual = statuses.get(input_node_id, NodeRunStatus.RUN)
-    if closed_gate_ids and input_node_id in closed_gate_ids and actual == NodeRunStatus.RUN:
+    if (
+        closed_gate_handles
+        and actual == NodeRunStatus.RUN
+        and source_handle in closed_gate_handles.get(input_node_id, frozenset())
+    ):
         return NodeRunStatus.SKIPPED_DELIBERATE
     return actual
 
@@ -82,35 +115,39 @@ def classify_from_inputs(node: FlowNode, input_statuses: list[NodeRunStatus]) ->
 def classify_graph(
     nodes: list[FlowNode],
     deliberate_seed_ids: set[str | int] | None = None,
-    closed_gate_ids: set[str | int] | None = None,
+    closed_gate_handles: dict[str | int, frozenset[str]] | None = None,
 ) -> dict[str | int, NodeRunStatus]:
     """Classify every node of the (unfiltered) graph in topological order.
 
     Seeds: nodes failing ``is_correct`` are error-ish; ids in
-    ``deliberate_seed_ids`` are deliberate. Ids in ``closed_gate_ids`` are
-    healthy gates whose condition evaluated false: the gate itself classifies
-    normally (it runs), but its consumers read it as a deliberate skip via
-    ``effective_input_status``. Runs Kahn over all zero-in-degree nodes —
-    never over ``flow_starts`` — so unreachable subgraphs are classified too.
+    ``deliberate_seed_ids`` are deliberate. ``closed_gate_handles`` maps
+    healthy gates to their dead output handles: the gate itself classifies
+    normally (it runs), but consumers on a dead handle read it as a
+    deliberate skip via ``effective_input_status``. Runs Kahn over all
+    zero-in-degree nodes — never over ``flow_starts`` — so unreachable
+    subgraphs are classified too.
 
     Cycles do not raise here: cycle members downstream of an error-ish node are
     error-skipped (matching the old BFS closure); other cycle members stay
     unclassified so the stage builder keeps raising on genuine cycles.
     """
     deliberate_seed_ids = deliberate_seed_ids or set()
-    closed_gate_ids = closed_gate_ids or set()
+    closed_gate_handles = closed_gate_handles or {}
     node_by_id: dict[str | int, FlowNode] = {node.node_id: node for node in nodes}
     status: dict[str | int, NodeRunStatus] = {}
 
     # Predecessors derive from leads_to_nodes — the same edge source the stage
-    # topology uses — so classification and ordering can never disagree.
+    # topology uses — so classification and ordering can never disagree. Each
+    # predecessor carries the output handle the consumer reads (the consumer
+    # records it, keyed by source id).
     in_degree: dict[str | int, int] = {node_id: 0 for node_id in node_by_id}
-    predecessors: dict[str | int, list[str | int]] = {node_id: [] for node_id in node_by_id}
+    predecessors: dict[str | int, list[tuple[str | int, str]]] = {node_id: [] for node_id in node_by_id}
     for node in nodes:
         for downstream in node.leads_to_nodes:
             if downstream.node_id in in_degree:
                 in_degree[downstream.node_id] += 1
-                predecessors[downstream.node_id].append(node.node_id)
+                source_handle = downstream._input_output_handles.get(node.node_id, DEFAULT_OUTPUT_HANDLE)
+                predecessors[downstream.node_id].append((node.node_id, source_handle))
 
     queue = deque(node_id for node_id, degree in in_degree.items() if degree == 0)
     processed: set[str | int] = set()
@@ -126,8 +163,8 @@ def classify_graph(
             status[node_id] = NodeRunStatus.SKIPPED_DELIBERATE
         else:
             input_statuses = [
-                effective_input_status(status, predecessor_id, closed_gate_ids)
-                for predecessor_id in predecessors[node_id]
+                effective_input_status(status, predecessor_id, source_handle, closed_gate_handles)
+                for predecessor_id, source_handle in predecessors[node_id]
             ]
             status[node_id] = classify_from_inputs(node, input_statuses)
         for downstream in node.leads_to_nodes:

@@ -29,6 +29,8 @@ from flowfile_core.flowfile.util.skip_rules import (
     NodeRunStatus,
     classify_from_inputs,
     classify_graph,
+    dead_gate_handles,
+    effective_input_status,
 )
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
@@ -76,8 +78,11 @@ def add_manual_input(graph: FlowGraph, data: list[dict], node_id: int) -> None:
     )
 
 
-def connect(graph: FlowGraph, from_id: int, to_id: int) -> None:
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id, to_id))
+def connect(graph: FlowGraph, from_id: int, to_id: int, output_handle: str = "output-0") -> None:
+    add_connection(
+        graph,
+        input_schema.NodeConnection.create_from_simple_input(from_id, to_id, output_handle=output_handle),
+    )
 
 
 def add_passthrough_select(graph: FlowGraph, node_id: int, depending_on_id: int) -> None:
@@ -384,3 +389,43 @@ def test_skipped_node_recovers_once_the_missing_source_appears(tmp_path):
     recovered = collect_node(graph, 2)
     assert recovered.height == 2
     assert recovered["name"].to_list() == ["alice", "bob"]
+
+
+# D. Per-handle gate routing (pure rules; graph-level coverage in test_gate_node.py)
+
+
+class TestDeadGateHandles:
+    @pytest.mark.parametrize(
+        "is_open, has_else, expected",
+        [
+            (True, False, None),
+            (True, True, frozenset({"output-1"})),
+            (False, True, frozenset({"output-0"})),
+            # A closed single-output gate kills BOTH handles: a stale else edge
+            # left behind by toggling the option off must never leak data.
+            (False, False, frozenset({"output-0", "output-1"})),
+        ],
+    )
+    def test_routing_table(self, is_open, has_else, expected):
+        assert dead_gate_handles(is_open, has_else) == expected
+
+
+class TestEffectiveInputStatusPerHandle:
+    def test_dead_handle_skips_only_its_consumers(self):
+        closed = {2: frozenset({"output-0"})}
+
+        then_side = effective_input_status({2: RUN}, 2, "output-0", closed)
+        else_side = effective_input_status({2: RUN}, 2, "output-1", closed)
+
+        assert then_side == SKIPPED_DELIBERATE
+        assert else_side == RUN
+
+    def test_failed_gate_beats_routing_on_every_handle(self):
+        closed = {2: frozenset({"output-0"})}
+
+        assert effective_input_status({2: FAILED}, 2, "output-0", closed) == FAILED
+        assert effective_input_status({2: FAILED}, 2, "output-1", closed) == FAILED
+
+    def test_gate_without_entry_is_fully_open(self):
+        assert effective_input_status({2: RUN}, 2, "output-1", {}) == RUN
+        assert effective_input_status({2: RUN}, 2, "output-1", None) == RUN

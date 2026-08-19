@@ -885,6 +885,10 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
         # output_nodes vars are kept in sync by the chain-fusion rename pass.
         self.output_nodes.append((settings.node_id, var_name))
 
+    def _return_referenced_vars(self) -> set[str]:
+        """Mirror this subclass's ``add_return_code``: only named flow outputs."""
+        return {var for node_id, var in self.output_nodes if node_id in self._flow_output_names}
+
     def add_return_code(self, lines: list[str]) -> None:
         entries = [
             (self._flow_output_names[node_id], var)

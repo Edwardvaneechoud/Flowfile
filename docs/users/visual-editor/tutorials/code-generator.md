@@ -167,8 +167,8 @@ A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow param
 **Flowfile Pipeline:**
 
 1.  **Manual Input** (`region`, `amount`)
-2.  Two **Gate** nodes on the flow parameter `env` — one `equals`, one `not equals`
-3.  A **Formula** behind each gate, tagging the rows with a `channel`
+2.  One **Gate** on the flow parameter `env` (`equals prod`) with the **else output** enabled
+3.  A **Formula** behind each exit, tagging the rows with a `channel`
 4.  **Union Data** merging both branches
 
 <details markdown="1">
@@ -195,7 +195,10 @@ def run_etl_pipeline(*, env: str = 'dev'):
     if not (env == 'prod'):
         df_5 = df_1.with_columns([(pl.lit("dev")).alias("channel").cast(pl.String)])
 
-    df_6 = pl.concat([df for df in [df_4, df_5] if df is not None], how='diagonal_relaxed')
+    df_6 = pl.concat([
+        df_4,
+        df_5,
+    ], how='diagonal_relaxed')
 
     return df_6
 

@@ -144,8 +144,10 @@ class FlowNode:
     _state_needs_reset: bool
     # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
     _on_flow_complete: Callable[[bool], None] | None
-    # set per run by the graph on ANY-rule nodes (union): inputs deliberately
-    # skipped this run, replaced by schema-stable empty frames at assembly
+    # set per run by the graph on ANY-rule nodes (union): (source id, source
+    # handle) pairs deliberately skipped this run, dropped from the input set
+    # at assembly — per-handle so a two-output gate feeding the union is
+    # judged per edge
     _skipped_input_ids_this_run: frozenset
 
     user_provided_schema_callback: Callable | None
@@ -1044,27 +1046,6 @@ class FlowNode:
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
-    def _substitute_for_skipped_input(self, input_node: "FlowNode") -> FlowDataEngine | None:
-        """Schema-stable stand-in for a deliberately-skipped (gated-off) input.
-
-        A zero-row frame with the input's predicted schema keeps this node's
-        output schema identical to the edit-time prediction across gate flips —
-        the gated branch behaves exactly as if it produced zero rows. Reading
-        the input's real data instead would lazily execute the gated branch;
-        returns None (drop the input) when no schema can be predicted.
-        """
-        try:
-            schema = input_node.schema
-        except Exception:
-            schema = None
-        if schema:
-            return FlowDataEngine.create_from_schema(schema)
-        logger.warning(
-            f"Node {self.node_id}: deliberately-skipped input {input_node.node_id} has no "
-            f"predictable schema; dropping it from the input set"
-        )
-        return None
-
     def _slot_input_pairs(self) -> list[tuple[Optional["FlowNode"], str]]:
         """Positional inputs for the node function, as (source_node, source_handle).
 
@@ -1161,10 +1142,8 @@ class FlowNode:
                                     continue
                                 if self._execution_state.is_canceled:
                                     raise Exception("Node execution canceled")
-                                if v.node_id in self._skipped_input_ids_this_run:
-                                    substitute = self._substitute_for_skipped_input(v)
-                                    if substitute is not None:
-                                        input_data.append(substitute)
+                                if (v.node_id, src_handle) in self._skipped_input_ids_this_run:
+                                    # gated-off inputs are dropped: the union outputs only what ran
                                     continue
                                 self.print(f"Getting resulting data from input {i} (node {v.node_id})")
                                 # Read the upstream via its own get_resulting_data(), which

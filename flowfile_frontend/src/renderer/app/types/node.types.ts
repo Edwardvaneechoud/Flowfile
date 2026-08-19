@@ -1082,6 +1082,8 @@ export interface NodeUnion extends NodeBase {
 
 export interface NodeGate extends NodeSingleInput {
   gate_input: GateInput;
+  // Adds the "else" output (output-1): live when the condition does not hold.
+  else_output?: boolean;
 }
 
 export interface NodeExternalSource extends NodeBase {

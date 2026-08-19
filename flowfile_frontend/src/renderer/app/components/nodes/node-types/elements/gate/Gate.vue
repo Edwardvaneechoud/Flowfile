@@ -69,13 +69,13 @@
           <div class="listbox-subtitle section-gap">Formula</div>
           <div v-if="hasControlInput" class="source-banner">
             The gate opens when <strong>at least one row</strong> of the
-            <strong>control input (C)</strong> matches this formula, and closes when none do. Use
-            the control's columns here — the data input (D) only passes through.
+            <strong>control input (the bottom handle)</strong> matches this formula, and closes
+            when none do. Use the control's columns here — the data input only passes through.
           </div>
           <div v-else class="source-banner">
             The gate opens when <strong>at least one row</strong> of the
-            <strong>data input (D)</strong> matches this formula, and closes when none do. Connect
-            a node to the C handle to check that frame instead.
+            <strong>data input</strong> matches this formula, and closes when none do. Connect a
+            node to the bottom control handle to check that frame instead.
           </div>
           <main-editor-ref
             :key="String(nodeGate.node_id)"
@@ -89,23 +89,42 @@
           </div>
         </template>
 
-        <p class="explainer">
-          The data input flows through unchanged while the condition holds. When it does not, the
-          gate still succeeds and every node downstream of it is <strong>skipped</strong>, not
-          failed — the run stays green.
-        </p>
-        <p class="explainer">
-          For an if/else branch, feed two gates with complementary conditions (e.g.
-          <code>equals</code> vs <code>not equals</code>, or a negated formula) and merge the two
-          branches with a Union: whichever branch survived is what comes out.
-        </p>
+        <div class="else-output-row">
+          <el-switch
+            v-model="elseOutputEnabled"
+            size="small"
+            active-text="Add an else output"
+            inactive-text="Single output"
+          />
+          <el-popover placement="top-start" :width="340" trigger="click">
+            <template #reference>
+              <span class="help-icon" role="button" aria-label="How the gate routes">?</span>
+            </template>
+            <div class="gate-help">
+              <p>
+                <strong>How the gate routes.</strong> The data flows through unchanged while the
+                condition holds. When it does not, the gate still succeeds and everything
+                downstream is <strong>skipped</strong>, not failed — the run stays green.
+              </p>
+              <p>
+                <strong>If/else.</strong> With the else output on, the data leaves
+                <strong>T</strong> (then) when the condition holds and <strong>E</strong> (else)
+                when it does not — exactly one side runs. Put each branch behind one exit and
+                merge them with a Union: whichever branch ran is what comes out.
+              </p>
+            </div>
+          </el-popover>
+        </div>
+        <div v-if="elseOutputEnabled" class="else-output-hint">
+          T (then) runs while the condition holds; E (else) runs when it does not.
+        </div>
       </div>
     </generic-node-settings>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   GATE_OPERATOR_LABELS,
   GATE_OPERATORS_WITH_VALUE,
@@ -113,6 +132,7 @@ import {
   type GateOperator,
   type NodeGate,
 } from "@/types/node.types";
+import { buildOutputHandles } from "@/utils/nodeHandles";
 import type { FlowParameter } from "@/types/flow.types";
 import type { NodeData } from "@/components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "@/stores/node-store";
@@ -131,6 +151,23 @@ const nodeData = ref<NodeData | null>(null);
 const gateInput = ref<GateInput | null>(null);
 const editorString = ref("");
 const editorChild = ref(null);
+const elseOutputEnabled = ref(false);
+
+const updateNodeOutputHandles = () => {
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance || !nodeGate.value) return;
+  const vfNode = vfInstance.findNode(String(nodeGate.value.node_id));
+  if (!vfNode) return;
+  // Same derivation the canvas uses on flow open (NodeGate.output_names), so
+  // toggling the else output live and reloading the flow agree on the handles.
+  vfNode.data.outputs = elseOutputEnabled.value
+    ? buildOutputHandles(2, ["then", "else"])
+    : buildOutputHandles(1);
+};
+
+watch(elseOutputEnabled, () => {
+  updateNodeOutputHandles();
+});
 
 const defaultGateInput = (): GateInput => ({
   condition_source: "parameter",
@@ -174,6 +211,9 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     if (gateInput.value?.condition_source === "formula") {
       gateInput.value.formula = nodeStore.inputCode;
     }
+    if (nodeGate.value) {
+      nodeGate.value.else_output = elseOutputEnabled.value;
+    }
   },
 });
 
@@ -186,11 +226,14 @@ const loadNodeData = async (nodeId: number) => {
     }
     gateInput.value = nodeGate.value.gate_input;
     editorString.value = gateInput.value.formula ?? "";
+    elseOutputEnabled.value = Boolean(nodeGate.value.else_output);
     dataLoaded.value = true;
   }
   // The drawer can open before the header has fetched flow settings, so make
   // sure the parameter dropdown has something to offer.
   if (flowStore.flowId > 0) await flowStore.loadParameters(flowStore.flowId);
+  await nextTick();
+  updateNodeOutputHandles();
 };
 
 defineExpose({ loadNodeData, pushNodeData, saveSettings });
@@ -199,6 +242,39 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 <style scoped>
 .source-group {
   margin-top: 4px;
+}
+.else-output-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.else-output-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-background-soft, #f0f0f0);
+  color: var(--color-text-secondary, #777);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+}
+.gate-help p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+.gate-help p:last-child {
+  margin-bottom: 0;
 }
 .section-gap {
   margin-top: 12px;
@@ -245,11 +321,5 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   line-height: 1.4;
-}
-.explainer {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-  margin: var(--spacing-2) 0;
 }
 </style>

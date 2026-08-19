@@ -694,7 +694,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             input=2,
             min_inputs=1,
             output=1,
-            input_labels=["Data (passes through)", "Control (optional; formula checks it instead)"],
+            input_labels=["Data (passes through)", "Control (optional bottom handle; formula checks it instead)"],
+            control_input_indices=[1],
             transform_type="narrow",
             node_type="process",
             image="gate.svg",
@@ -702,7 +703,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Gate",
             drawer_intro="Pass data through only when a condition holds — a flow parameter rule, or a "
             "formula matching at least one row of the control input (or the data itself); otherwise "
-            "downstream nodes are skipped (not failed)",
+            "downstream nodes are skipped (not failed). Enable the else output to route the data to "
+            "a second exit when the condition does not hold — a one-node if/else",
             laziness="lazy",
             tags=[NodeTag.GATE, NodeTag.CONDITION, NodeTag.BRANCH, NodeTag.SKIP, NodeTag.DEPENDENCY],
         ),

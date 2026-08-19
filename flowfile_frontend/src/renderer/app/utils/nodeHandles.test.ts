@@ -209,6 +209,38 @@ describe("buildDynamicOutputHandles", () => {
   });
 });
 
+describe("deriveHandles (control input pips)", () => {
+  // Gate's control input renders as a bottom "parameter" pip; the lone data
+  // handle then deliberately carries no letter chip (side count drops to 1).
+  it("renders a marked input as a bottom parameter handle", () => {
+    const { inputs } = deriveHandles({
+      input: 2,
+      output: 1,
+      input_labels: ["Data (passes through)", "Control (bottom handle)"],
+      control_input_indices: [1],
+    });
+    expect(inputs.map((h) => h.id)).toEqual(["input-0", "input-1"]);
+    expect(inputs[0].position).toBe(Position.Left);
+    expect(inputs[0].kind).toBeUndefined();
+    expect(inputs[0].label).toBeUndefined();
+    expect(inputs[1].position).toBe(Position.Bottom);
+    expect(inputs[1].kind).toBe("parameter");
+    expect(inputs[1].title).toBe("Control (bottom handle)");
+  });
+
+  it("gate with else output gets T/E letters on the output side", () => {
+    const { outputs } = deriveHandles({
+      input: 2,
+      output: 1,
+      output_names: ["then", "else"],
+      control_input_indices: [1],
+    });
+    expect(outputs.map((h) => h.id)).toEqual(["output-0", "output-1"]);
+    expect(outputs.map((h) => h.label)).toEqual(["T", "E"]);
+    expect(outputs.map((h) => h.title)).toEqual(["then", "else"]);
+  });
+});
+
 describe("buildOutputHandles (regression)", () => {
   it("uses max(template output count, saved names length)", () => {
     expect(buildOutputHandles(2)).toHaveLength(2);
