@@ -1481,10 +1481,22 @@ def _rewrite_atomic(path: Path, content: str) -> None:
     The same window exists in production (the read node's schema callback mmaps on a background
     thread while an external writer truncates the file); it predates this feature and is filed
     separately.
+
+    Windows additionally *rejects* the replace (WinError 5) while that background scan holds the
+    destination open, and the prefetch is orphaned by the schema_callback setter so it cannot be
+    joined — hence the retry. On POSIX the replace succeeds first time and the loop never spins.
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content)
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def _csv_pattern(directory: Path) -> str:
