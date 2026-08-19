@@ -298,7 +298,9 @@ def test_deterministic_ordering(tmp_path, execution_location):
 
     sources = _collect(node)["src"].to_list()
     assert [os.path.basename(p) for p in sources] == ["10.csv", "2.csv", "a_1.csv", "b_2.csv", "z_0.csv"]
-    assert sources == expand_glob_pattern(node.setting_input.received_file.abs_file_path)
+    # polars renders the file-path column with forward slashes; expand_glob_pattern returns native separators.
+    expected = expand_glob_pattern(node.setting_input.received_file.abs_file_path)
+    assert [Path(p).as_posix() for p in sources] == [Path(p).as_posix() for p in expected]
 
 
 # Single-file mode must be untouched
