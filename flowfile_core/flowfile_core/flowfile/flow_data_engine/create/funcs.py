@@ -276,6 +276,24 @@ def create_random(number_of_records: int = 1000) -> pl.LazyFrame:
     return create_fake_data(number_of_records).lazy()
 
 
+def parquet_row_count(received_table: input_schema.ReceivedTable) -> int | None:
+    """Exact row count from parquet footers alone — metadata reads, never a data scan.
+
+    Returns None whenever the count is not knowable for free (URLs, unreadable
+    footers), so callers keep their unknown-count sentinel in that case.
+    """
+    from pyarrow.parquet import ParquetFile
+
+    try:
+        source = _resolve_scan_source(received_table)
+        paths = source if isinstance(source, list) else [source]
+        if any(is_url(str(p)) for p in paths):
+            return None
+        return sum(ParquetFile(p).metadata.num_rows for p in paths)
+    except Exception:
+        return None
+
+
 def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.LazyFrame:
     if not isinstance(received_table.table_settings, input_schema.InputParquetTable):
         raise ValueError("Received table settings are not of type InputParquetTable")

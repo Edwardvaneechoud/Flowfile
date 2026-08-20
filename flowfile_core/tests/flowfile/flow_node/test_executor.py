@@ -5,6 +5,7 @@ and decision-making logic introduced in the refactored FlowNode.
 """
 
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -29,6 +30,7 @@ from flowfile_core.flowfile.flow_node.state import (
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from shared.storage_config import storage
 from typing import Literal
 
 
@@ -1481,10 +1483,22 @@ def _rewrite_atomic(path: Path, content: str) -> None:
     The same window exists in production (the read node's schema callback mmaps on a background
     thread while an external writer truncates the file); it predates this feature and is filed
     separately.
+
+    Windows additionally *rejects* the replace (WinError 5) while that background scan holds the
+    destination open, and the prefetch is orphaned by the schema_callback setter so it cannot be
+    joined — hence the retry. On POSIX the replace succeeds first time and the loop never spins.
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content)
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def _csv_pattern(directory: Path) -> str:
@@ -1817,6 +1831,129 @@ class TestSourceChangeInvalidatesDownstream:
             assert select_node.get_resulting_data().collect().height == i, (
                 f"cached downstream node froze after change {i - 1}"
             )
+
+
+def _graph_with_two_sorts_and_output(out_dir: Path, flow_id: int) -> FlowGraph:
+    """manual_input(1) -> sort(2) -> sort(3) -> output csv(4).
+
+    Both sorts are wide transforms, so each runs REMOTE and leaves its own
+    ``<hash>.arrow`` in the flow cache dir. The output node is in the "output"
+    node group, so it re-runs on every graph run and always dereferences the
+    plan node 3 is holding.
+    """
+    graph = create_graph(flow_id=flow_id, execution_location="remote")
+    add_manual_input(
+        graph,
+        [{"name": "Charlie", "age": 25}, {"name": "Alice", "age": 30}, {"name": "Bob", "age": 41}],
+        node_id=1,
+    )
+
+    add_node_promise(graph, "sort", node_id=2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_sort(
+        input_schema.NodeSort(
+            flow_id=flow_id,
+            node_id=2,
+            depending_on_id=1,
+            sort_input=[transform_schema.SortByInput(column="name", how="asc")],
+        )
+    )
+
+    add_node_promise(graph, "sort", node_id=3)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    graph.add_sort(
+        input_schema.NodeSort(
+            flow_id=flow_id,
+            node_id=3,
+            depending_on_id=2,
+            sort_input=[transform_schema.SortByInput(column="age", how="desc")],
+        )
+    )
+
+    add_node_promise(graph, "output", node_id=4)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
+    graph.add_output(
+        input_schema.NodeOutput(
+            flow_id=flow_id,
+            node_id=4,
+            output_settings={
+                "name": "out.csv",
+                "directory": str(out_dir),
+                "file_type": "csv",
+                "fields": [],
+                "write_mode": "overwrite",
+                "table_settings": {"delimiter": ",", "encoding": "utf-8"},
+            },
+        )
+    )
+    return graph
+
+
+class TestMissingWorkerArtifact:
+    """A removed worker result must make the node re-resolve, never fail the run.
+
+    A node's remote result is a lazy scan of ``<cache>/<flow_id>/<hash>.arrow``.
+    Core does not own that file: the 1-hour sweep in ``storage.cleanup_directories``,
+    a worker shutdown or a manual delete can take it away while core still believes
+    the node ran. Skipping such a node hands downstream a dangling scan.
+    """
+
+    def test_wiped_flow_cache_reruns_instead_of_failing(self, tmp_path):
+        """Regression: wiping the whole flow cache dir used to fail the next run."""
+        graph = _graph_with_two_sorts_and_output(tmp_path, flow_id=30)
+        assert graph.run_graph().success
+
+        cache_dir = storage.get_flow_cache_directory(graph.flow_id)
+        assert list(cache_dir.glob("*.arrow")), "the run produced no worker artifacts to remove"
+
+        shutil.rmtree(cache_dir)
+        (tmp_path / "out.csv").unlink()
+
+        run_info = graph.run_graph()
+        failures = [(n.node_id, n.error) for n in run_info.node_step_result if not n.success]
+        assert run_info.success, f"run failed after the cache was removed: {failures}"
+        assert list(cache_dir.glob("*.arrow")), "nodes did not re-materialise their results"
+        assert (tmp_path / "out.csv").exists(), "the output node never resolved its input"
+
+    def test_only_the_node_with_a_missing_artifact_reruns(self, tmp_path):
+        """The gate must not degrade into an unconditional re-run of the graph."""
+        graph = _graph_with_two_sorts_and_output(tmp_path, flow_id=31)
+        assert graph.run_graph().success
+
+        removed = Path(graph.get_node(2).results.example_data_path)
+        untouched = Path(graph.get_node(3).results.example_data_path)
+        untouched_mtime = untouched.stat().st_mtime_ns
+
+        removed.unlink()
+        assert graph.run_graph().success
+
+        assert removed.exists(), "node 2 should have re-run and rewritten its artifact"
+        assert untouched.stat().st_mtime_ns == untouched_mtime, "node 3 should still have skipped"
+
+    def test_decide_execution_flags_a_missing_artifact(self, tmp_path):
+        """The decision itself: present artifact -> SKIP, removed artifact -> CACHE_MISSING."""
+        graph = _graph_with_two_sorts_and_output(tmp_path, flow_id=32)
+        assert graph.run_graph().success
+
+        node = graph.get_node(2)
+        executor = NodeExecutor(node)
+        decision = executor._decide_execution(
+            state=node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+        assert decision.should_run is False
+
+        Path(node.results.example_data_path).unlink()
+        decision = executor._decide_execution(
+            state=node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+        assert decision.should_run is True
+        assert decision.reason == InvalidationReason.CACHE_MISSING
 
 
 if __name__ == "__main__":

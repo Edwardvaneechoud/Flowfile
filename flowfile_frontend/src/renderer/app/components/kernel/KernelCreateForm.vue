@@ -9,7 +9,7 @@
       {{
         packages.length > 0
           ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s. " +
-            "Creation continues in the background — track it in the Kernel Manager."
+            "Creation continues in the background — track it on the Python Kernels page."
           : "Provisioning kernel…"
       }}
     </p>
@@ -57,7 +57,7 @@
           }}{{
             isFlavourAvailable(flavour.value)
               ? ""
-              : " — not installed (install it in the Kernel Manager)"
+              : " — not installed (install it on the Python Kernels page)"
           }}
         </option>
       </select>

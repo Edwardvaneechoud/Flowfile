@@ -155,8 +155,10 @@
       <i class="fa-solid fa-circle-info"></i>
       <span v-if="dockerAvailable">
         This notebook has Python cells — select or
-        <router-link :to="{ name: 'kernelManager' }">start a kernel</router-link> to run them.
-        Markdown cells run without a kernel.
+        <router-link :to="{ name: 'compute', query: { tab: 'kernels' } }"
+          >start a kernel</router-link
+        >
+        to run them. Markdown cells run without a kernel.
       </span>
       <span v-else>
         Docker is not available — Python cells are disabled. Markdown cells still work.

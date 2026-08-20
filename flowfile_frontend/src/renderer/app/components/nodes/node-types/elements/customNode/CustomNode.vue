@@ -128,8 +128,11 @@
               >
                 Create kernel for this node
               </button>
-              <router-link :to="{ name: 'kernelManager' }" class="kernel-manager-link">
-                Open Kernel Manager
+              <router-link
+                :to="{ name: 'compute', query: { tab: 'kernels' } }"
+                class="kernel-manager-link"
+              >
+                Open Python Kernels
               </router-link>
             </div>
           </div>
@@ -328,7 +331,7 @@ async function onAddMissingPackages() {
   } catch (error) {
     ElMessage.error(
       `Rebuild failed — kernel "${kernel.name}" is stopped. ` +
-        `${(error as Error).message ?? ""} Retry or edit it in the Kernel Manager.`,
+        `${(error as Error).message ?? ""} Retry or edit it on the Python Kernels page.`,
     );
   } finally {
     upgradePhase.value = null;

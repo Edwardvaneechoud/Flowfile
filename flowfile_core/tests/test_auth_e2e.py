@@ -21,11 +21,13 @@ HEALTH_CHECK_INTERVAL = 2  # seconds
 
 
 def is_docker_available() -> bool:
-    """Check if Docker is available and running."""
+    """Check if Docker is available and can run the Linux core image."""
     try:
         client = docker.from_env()
         client.ping()
-        return True
+        # The suite builds the linux/amd64 core image; a Windows-container
+        # daemon (GitHub windows runners) cannot build or run it.
+        return client.info().get("OSType") == "linux"
     except Exception:
         return False
 

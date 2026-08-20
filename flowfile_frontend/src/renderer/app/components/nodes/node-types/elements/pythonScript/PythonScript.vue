@@ -45,7 +45,10 @@
                   </span>
                 </el-option>
               </el-select>
-              <router-link :to="{ name: 'kernelManager' }" class="manage-kernels-link">
+              <router-link
+                :to="{ name: 'compute', query: { tab: 'kernels' } }"
+                class="manage-kernels-link"
+              >
                 Manage Kernels
               </router-link>
             </div>
@@ -73,10 +76,10 @@
               <i class="fa-solid fa-triangle-exclamation"></i>
               Kernel is {{ selectedKernelState }}.
               <template v-if="selectedKernelState === 'stopped'"
-                >Start it from the Kernel Manager to execute code.</template
+                >Start it from the Python Kernels page to execute code.</template
               >
               <template v-else-if="selectedKernelState === 'error'"
-                >Check the Kernel Manager for details.</template
+                >Check the Python Kernels page for details.</template
               >
               <template v-else-if="selectedKernelState === 'starting'"
                 >Please wait for it to become idle.</template

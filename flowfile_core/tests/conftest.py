@@ -52,9 +52,9 @@ import socket
 from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
+from tests.core_log_sink import CoreLogSink, session_claims_core_port
 from tests.flowfile_core_test_utils import is_docker_available
 from tests.kernel_fixtures import managed_kernel
-
 
 _NOT_ISOLATED_MSG = (
     'Secure store NOT isolated: a flowfile_worker is already running, so tests use the real '
@@ -81,6 +81,17 @@ def pytest_configure(config):
         config.issue_config_time_warning(pytest.PytestConfigWarning(_NOT_ISOLATED_MSG), stacklevel=2)
 
 
+_core_port_claimed_by_tests = False
+
+
+# trylast: pytest's own -m/-k deselection runs after a plain conftest hook, so
+# without this the claim still sees items the session will never run.
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    global _core_port_claimed_by_tests
+    _core_port_claimed_by_tests = session_claims_core_port(items)
+
+
 def is_port_in_use(port, host='localhost'):
     """Check if a port is in use on the specified host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -100,7 +111,9 @@ logging.basicConfig(
 logger = logging.getLogger("flowfile_fixture")
 
 # Configuration constants
-WORKER_HOST = os.environ.get("FLOWFILE_WORKER_HOST", "0.0.0.0")
+WORKER_HOST = os.environ.get(
+    "FLOWFILE_WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
+)
 WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
 WORKER_URL = f"http://{WORKER_HOST}:{WORKER_PORT}/docs"
 STARTUP_TIMEOUT = int(os.environ.get("FLOWFILE_STARTUP_TIMEOUT", 30))  # seconds
@@ -122,7 +135,13 @@ def setup_test_db():
     if os.environ.get("TESTING") == "True" and "sqlite" in get_database_url():
         logger.info(f"Trying to cleanup: {get_database_url()}")
         try:
+            from sqlalchemy import text
+
             Base.metadata.drop_all(bind=engine)
+            # drop_all leaves alembic_version; without dropping it a failed unlink (WinError 32) strands a stamped but table-less DB.
+            with engine.begin() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+            engine.dispose()
 
             db_path = get_database_url().replace("sqlite:///", "")
             if db_path != ":memory:" and os.path.exists(db_path):
@@ -274,6 +293,12 @@ def managed_worker() -> Generator[None, None, None]:
     """
     Context manager for flowfile worker process management.
     Ensures proper cleanup even when tests fail.
+
+    A failure here aborts the session instead of skipping. This runs inside a
+    session-scoped autouse fixture, so a ``pytest.skip`` would skip every test in
+    the suite and still exit 0 — which is how a broken worker probe turned a whole
+    Windows CI run green while running nothing. ``SKIP_WORKER_TESTS=1`` remains the
+    explicit way to run without a worker.
     """
     proc = None
     try:
@@ -283,11 +308,14 @@ def managed_worker() -> Generator[None, None, None]:
         else:
             proc, success = start_worker()
             if not success:
-                error_msg = "Failed to start flowfile_worker"
+                error_msg = (
+                    f"Failed to start flowfile_worker at {WORKER_HOST}:{WORKER_PORT}. "
+                    "Set SKIP_WORKER_TESTS=1 to run the suite without one."
+                )
                 logger.error(error_msg)
                 if proc and proc.poll() is None:
                     stop_worker(proc)
-                pytest.skip(error_msg)
+                pytest.exit(error_msg, returncode=1)
             yield
     finally:
         if proc is not None and proc.poll() is None:
@@ -295,7 +323,38 @@ def managed_worker() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def flowfile_worker(request):
+def core_log_sink():
+    """Serve ``/raw_logs`` on the core port so worker log shipping stays fast.
+
+    Worker children POST every node log line to core; here core is in-process
+    behind TestClient, so nothing listens and each POST eats the handler's 2s
+    connect timeout on Windows (~7 lines x 2s per worker-backed test). The sink
+    keeps the real delivery path running at loopback speed.
+
+    Never starts when the port is already bound (a real core wins), when the
+    session collected a test that binds the port itself, or when
+    FLOWFILE_TEST_LOG_SINK=0.
+    """
+    disabled = os.environ.get("FLOWFILE_TEST_LOG_SINK", "1").lower() in ("0", "false", "no", "off")
+    if disabled or os.environ.get("SKIP_WORKER_TESTS") == "1" or _core_port_claimed_by_tests:
+        yield None
+        return
+
+    sink = CoreLogSink()
+    if not sink.start():
+        logger.info("Core port %s already in use, not starting the log sink", sink.port)
+        yield None
+        return
+
+    logger.info("Serving worker log shipping at http://%s:%s/raw_logs", sink.host, sink.port)
+    try:
+        yield sink
+    finally:
+        sink.stop()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def flowfile_worker(request, core_log_sink):
     """
     Pytest fixture that ensures flowfile_worker is running for the test session.
     Uses the managed_worker context manager for proper resource management.
@@ -453,9 +512,21 @@ def execution_location(request):
     Tests receive this fixture as a parameter, and pytest runs them once per
     param. The `remote` variant is skipped automatically when no worker is
     running, so this is safe for contributors without a worker.
+
+    A live worker is necessary but not sufficient: the worker fixture is
+    independent of the offload flag, so with ``FLOWFILE_OFFLOAD_TO_WORKER=0`` a
+    worker is still listening while ``get_prio_execution_location`` silently
+    downgrades "remote" to "local". Both params would then exercise the same
+    path and report twice the passes while proving nothing about remote.
     """
-    if request.param == "remote" and not is_worker_running():
-        pytest.skip("Worker not running")
+    from flowfile_core.schemas.schemas import (
+        is_valid_execution_location_in_current_global_settings,
+    )
+
+    if request.param == "remote" and not (
+        is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")
+    ):
+        pytest.skip("Remote execution not active")
     return request.param
 
 

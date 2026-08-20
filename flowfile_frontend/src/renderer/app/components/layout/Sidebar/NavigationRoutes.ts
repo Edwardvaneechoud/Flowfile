@@ -1,5 +1,6 @@
 import { connectionTypes } from "../../../views/ConnectionsView/connectionTypes";
 import { catalogTabs } from "../../../views/CatalogView/catalogTabs";
+import { computeTabs } from "../../../views/ComputeView/computeTabs";
 
 export interface INavigationRoute {
   name: string;
@@ -90,11 +91,19 @@ export default {
       },
     },
     {
-      name: "kernelManager",
-      displayName: "menu.kernelManager",
-      meta: {
-        icon: "fa-solid fa-server",
-      },
+      name: "compute",
+      displayName: "menu.compute",
+      meta: { icon: "fa-solid fa-server" },
+      // Clicking the parent itself opens the kernels tab.
+      query: { tab: "kernels" },
+      children: computeTabs.map((t) => ({
+        name: "compute",
+        index: `compute:${t.key}`,
+        query: { tab: t.key },
+        displayName: t.sidebarKey,
+        meta: { icon: t.icon },
+        requiresAdmin: t.requiresAdmin,
+      })),
     },
     {
       name: "nodeDesigner",

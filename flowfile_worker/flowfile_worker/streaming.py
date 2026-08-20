@@ -26,9 +26,16 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from flowfile_worker import CACHE_DIR, funcs, models, mp_context, status_dict, status_dict_lock
+from flowfile_worker import CACHE_DIR, funcs, models, mp_context, pool, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
-from flowfile_worker.spawner import _TASK_TIMEOUT, drain_result_queue, process_manager, unpack_result
+from flowfile_worker.pool import PoolMember
+from flowfile_worker.spawner import (
+    _TASK_TIMEOUT,
+    drain_member_envelope,
+    drain_result_queue,
+    process_manager,
+    unpack_result,
+)
 
 streaming_router = APIRouter()
 
@@ -108,33 +115,47 @@ def _register_status(ctx: _TaskContext) -> None:
 # Subprocess management
 
 
-def _spawn_subprocess(ctx: _TaskContext, polars_bytes: bytes) -> tuple[Process, Any, Any, Queue]:
-    """Spawn a worker subprocess and return (process, progress, error_message, queue)."""
-    process_task = getattr(funcs, ctx.operation)
+def _register_running(ctx: _TaskContext, p: Process, pooled: bool) -> None:
+    """Track the task's process and flip its status once it is underway."""
+    process_manager.add_process(ctx.task_id, p)
+    with status_dict_lock:
+        status_dict[ctx.task_id].status = "Processing"
+    logger.info(f"[WS] Started task {ctx.task_id} with operation: {ctx.operation}{' (pooled)' if pooled else ''}")
 
+
+def _spawn_subprocess(ctx: _TaskContext, polars_bytes: bytes) -> tuple[Process, Any, Any, Queue, PoolMember | None]:
+    """Lease a pool member or spawn a subprocess; returns (process, progress, error_message, queue, member).
+
+    *member* is None on the default spawn-per-task path.
+    """
     kwargs = dict(ctx.extra_kwargs)
     kwargs["polars_serializable_object"] = polars_bytes
-
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    queue = mp_context.Queue(maxsize=1)
-
-    kwargs["progress"] = progress
-    kwargs["error_message"] = error_message
-    kwargs["queue"] = queue
     kwargs["file_path"] = ctx.file_path
     kwargs["flowfile_flow_id"] = ctx.flow_id
     kwargs["flowfile_node_id"] = ctx.node_id
 
-    p = mp_context.Process(target=process_task, kwargs=kwargs)
+    member = pool.task_pool.acquire(ctx.operation)
+    if member is not None:
+        try:
+            member.submit(ctx.operation, kwargs)
+            _register_running(ctx, member.process, pooled=True)
+        except Exception:
+            # A failed lease must not leak the slot; ws_submit owns checkin after this.
+            pool.task_pool.checkin(member, reusable=False)
+            raise
+        return member.process, member.progress, member.error_message, member.result_q, member
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
+    kwargs["progress"] = progress
+    kwargs["error_message"] = error_message
+    kwargs["queue"] = queue
+
+    p = mp_context.Process(target=getattr(funcs, ctx.operation), kwargs=kwargs)
     p.start()
-    process_manager.add_process(ctx.task_id, p)
-
-    with status_dict_lock:
-        status_dict[ctx.task_id].status = "Processing"
-
-    logger.info(f"[WS] Started task {ctx.task_id} with operation: {ctx.operation}")
-    return p, progress, error_message, queue
+    _register_running(ctx, p, pooled=False)
+    return p, progress, error_message, queue, None
 
 
 def _read_error_message(error_message) -> str:
@@ -275,13 +296,20 @@ async def _send_final_error(websocket: WebSocket, task_id: str, progress, error_
 # Disconnect handling
 
 
-def _handoff_to_background(task_id: str, p: Process, progress, error_message, queue: Queue) -> None:
-    """Hand off a running subprocess to a background thread for REST status updates."""
+def _handoff_to_background(
+    task_id: str, p: Process, progress, error_message, queue: Queue, member: PoolMember | None
+) -> None:
+    """Hand off a running subprocess to a background thread for REST status updates.
+
+    handle_task owns the process from here on, including checking a pool member
+    back in when the task finishes off-socket.
+    """
     from flowfile_worker.spawner import handle_task as _handle_task
 
     threading.Thread(
         target=_handle_task,
         args=(task_id, p, progress, error_message, queue),
+        kwargs={"member": member},
         daemon=True,
     ).start()
 
@@ -324,6 +352,8 @@ async def ws_submit(websocket: WebSocket):
     progress = None
     error_message = None
     queue = None
+    member = None
+    envelope_received = False
 
     try:
         metadata = await websocket.receive_json()
@@ -333,9 +363,36 @@ async def ws_submit(websocket: WebSocket):
 
         polars_bytes = await websocket.receive_bytes()
 
-        p, progress, error_message, queue = _spawn_subprocess(ctx, polars_bytes)
+        p, progress, error_message, queue, member = _spawn_subprocess(ctx, polars_bytes)
 
         had_error = await _monitor_progress(websocket, p, progress, error_message, task_id)
+
+        # A pool member puts one completion envelope per task (also on task error); it is
+        # drained under a watchdog bound and doubles as the result on the success path.
+        # A member the monitor terminated (timeout) or that died is never drained - a
+        # partial envelope from a killed writer can block the recv.
+        raw = None
+        if member is not None:
+            with progress.get_lock():
+                final = progress.value
+            # had_error with final==100 is the timeout branch racing a completion:
+            # the monitor terminated the member after its last read, then the child
+            # flipped to 100. Like handle_task's timed_out guard, a member the
+            # monitor terminated is never drained or reused.
+            if final in (100, -1) and not (had_error and final == 100):
+                # Over for the process manager either way; unmapping first means a
+                # stale /cancel_task can no longer terminate a reusable member.
+                process_manager.remove_process(task_id)
+                envelope_received, raw = await asyncio.to_thread(drain_member_envelope, queue, p)
+            elif not had_error and p.is_alive():
+                # The socket died mid-task (progress send failed): let the task finish
+                # off-socket, mirroring the spawn path's join-to-completion semantics.
+                _handoff_to_background(task_id, p, progress, error_message, queue, member)
+                p = None
+                progress = None
+                error_message = None
+                member = None
+                return
         if had_error:
             return
 
@@ -343,27 +400,30 @@ async def ws_submit(websocket: WebSocket):
             final = progress.value
 
         if final == 100:
-            # Drain the queue BEFORE joining: a large put() blocks the child's feeder
-            # thread until read, so joining first would deadlock.
-            result_data, number_of_records = unpack_result(
-                await asyncio.to_thread(drain_result_queue, queue, p)
-            )
-            await asyncio.to_thread(p.join)
-            await _send_completion(
-                websocket, task_id, ctx.result_type, ctx.file_path, result_data, number_of_records
-            )
+            if member is None:
+                # Drain the queue BEFORE joining: a large put() blocks the child's feeder
+                # thread until read, so joining first would deadlock.
+                raw = await asyncio.to_thread(drain_result_queue, queue, p)
+                await asyncio.to_thread(p.join)
+            result_data, number_of_records = unpack_result(raw)
+            await _send_completion(websocket, task_id, ctx.result_type, ctx.file_path, result_data, number_of_records)
         else:
-            await asyncio.to_thread(p.join)
+            if member is None:
+                await asyncio.to_thread(p.join)
             await _send_final_error(websocket, task_id, progress, error_message)
 
     except WebSocketDisconnect:
         logger.warning(f"[WS] Client disconnected for task {task_id}")
-        if p is not None and p.is_alive() and queue is not None:
-            _handoff_to_background(task_id, p, progress, error_message, queue)
+        # Once a member's envelope is drained the task is already terminal in
+        # status_dict; handing off would re-drain an empty queue for 30s and
+        # retire a healthy member - fall through to the checkin instead.
+        if p is not None and p.is_alive() and queue is not None and not envelope_received:
+            _handoff_to_background(task_id, p, progress, error_message, queue, member)
             # Prevent finally block from cleaning up - handle_task owns these now
             p = None
             progress = None
             error_message = None
+            member = None
     except Exception as e:
         logger.error(f"[WS] Error for task {task_id}: {e}", exc_info=True)
         try:
@@ -371,7 +431,10 @@ async def ws_submit(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        if p is not None:
+        if member is not None:
+            process_manager.remove_process(task_id)
+            await asyncio.to_thread(pool.task_pool.checkin, member, envelope_received)
+        elif p is not None:
             await asyncio.to_thread(_cleanup_process, task_id, p)
         del p, progress, error_message
         gc.collect(0)
