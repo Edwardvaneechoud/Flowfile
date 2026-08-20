@@ -68,4 +68,4 @@ EXPOSE 63579
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:63579/docs || exit 1
 
-CMD ["python", "-m", "flowfile_worker.main"]
+CMD ["python", "-m", "flowfile_worker"]

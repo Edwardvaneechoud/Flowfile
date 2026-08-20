@@ -1,4 +1,5 @@
 import ast
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -2748,7 +2749,7 @@ def test_excel_create_mode_export(tmp_path):
     polars_code = export_flow_to_polars(flow)
     verify_code_contains(polars_code,
                          "import os",
-                         f'if os.path.exists("{output_path}"):',
+                         f"if os.path.exists({json.dumps(str(output_path), ensure_ascii=False)}):",
                          "raise FileExistsError(",
                          "write_excel("
                          )

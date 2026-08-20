@@ -291,7 +291,7 @@ def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(get_cu
             )
 
     try:
-        file_path.write_text(source, encoding="utf-8")
+        file_path.write_text(source, encoding="utf-8", newline="\n")
         logger.info("Saved custom node to %s", file_path)
     except Exception as e:
         logger.error("Failed to save custom node: %s", e)

@@ -69,6 +69,13 @@ export interface FlowfileEditorProps {
   nodeCategories?: NodeCategoryConfig[]
   /** Whether the editor is read-only */
   readonly?: boolean
+  /**
+   * Offer the plain-Python teaching flavour (default: true). Adds a second mode
+   * to the Code panel that rewrites the flow with lists, dicts and for loops
+   * instead of Polars, plus a "How would I write this myself?" panel in node
+   * settings. Set false to hide both.
+   */
+  teachingMode?: boolean
   /** Height of the editor (default: '100%') */
   height?: string
   /** Width of the editor (default: '100%') */

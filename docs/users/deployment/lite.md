@@ -43,6 +43,42 @@ It also supports **exporting a flow to a Python/Polars script** and a lightweigh
 
 ---
 
+## Learning mode
+
+Learning mode is opt-in. By default the Code panel is a plain **Polars** view; turn on **Learning mode** — the graduation-cap button in the left icon rail, or the same button in the Code panel's header — and two things appear: a **Python walkthrough** tab in the Code panel (which becomes where the panel opens), and a **"How would I write this myself?"** section in every node's settings. Turn it off and both disappear again; the setting is remembered.
+
+### The Python walkthrough
+
+The same flow as one standalone script with no dataframe library — every table a `list[dict]`, every node an explicit loop — and a way to walk it a node at a time.
+
+The script is the centre of the view and stays there. Step chips along the top move a highlight through it, so you always see the block you are reading about *in place*, with what came before it and what happens next still on screen. **Hover any name** — `sorted`, `setdefault`, `lambda`, one of the generated helpers — for a one-line explanation and a small example.
+
+Underneath, **Data** shows the actual rows going in and coming out at the current step. Press **Show the data at each step** and the pipeline runs once in your browser — the script *as it is in the editor, your edits included* — recording every intermediate table, so you can watch 1000 rows become 8 and read the loop that did it. Fill in an exercise and trace again: the steps after it get their data too.
+
+The editor is **editable**, and the script **runs where you are reading it**. Change a loop, press ▶, and the code executes in the same in-browser Python that runs the canvas, against the same files, with the rows shown in **Output**. **Compare to canvas** checks your version against what the flow produced — row count, columns, and the cell values themselves, and it tells you the first row and column where they differ.
+
+At a wide enough window the panel docks beside the canvas rather than covering it, and the canvas follows along: stepping through the walkthrough selects the node you are reading about and pans it into view. Double-click any empty spot on the canvas to close the panel.
+
+### Background, if you want it
+
+By default there is no prose — just the code, the steps and the data. Press **Why does it look like this?** and a **Why** tab appears explaining the *pattern* behind the current step. It stays open as you step, and is remembered next time.
+
+That is the part a code comment cannot carry. A group by is the accumulator-dict pattern, and it explains why that takes two passes and where else you will write the shape. A join is a hash index, and it shows why building a dictionary first turns rows×rows of work into rows+rows. A sort takes a key function — and it shows you that `None < 5` does not return `False`, it raises, which is why the key carries a `True`/`False` flag in front of the value.
+
+Nodes with a plain-Python form: manual input, CSV read, filter (basic mode), select, sort, unique, group by, join (inner, left, semi and anti), cross join, union, record ID, take sample, rename (prefix/suffix), pivot, unpivot, and the write nodes.
+
+Anything driven by the formula expression language — the Formula node, a filter in advanced mode, the Polars Code node — becomes an **exercise stub**: a function that quotes the rule it is supposed to apply and raises `NotImplementedError`. Fill it in, press ▶, and the rest of the script runs. A single one of them never fails the export, and the walkthrough still shows the data for every step before it.
+
+While Learning mode is on, every node's settings panel carries the same thing at a smaller scale: a **"How would I write this myself?"** section with a plain-English description plus the loop for *that node's actual settings* — your columns, your operators — rather than a generic example.
+
+!!! warning "It is a teaching output, not a production one"
+    The generated script produces the same rows as the canvas, but it is deliberately not optimised and holds the whole table in memory as a list. Reading a CSV also leaves dates as text, where the engine recognises them — the generated helper flags that as an exercise.
+
+!!! info "Embedders can remove it entirely"
+    Learning mode is already opt-in for the person using the editor — an embedded editor is a plain code view until they press the graduation-cap button in the Code panel. Set `teachingMode: false` on the `FlowfileEditor` component to remove the capability altogether, opt-in button included.
+
+---
+
 ## What's *not* included
 
 Everything that depends on the Python backend, worker, or kernel containers is **unavailable** in Flowfile Lite; those nodes appear greyed-out in the palette so the full breadth stays discoverable. The [feature comparison](#feature-comparison) below lists what's excluded; the **Window Functions** node is also unavailable.
@@ -74,6 +110,9 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 | Catalog | Delta-backed, versioned, virtual tables | Lightweight (CSV-only) |
 | Secrets & connections manager | ✓ | ✗ |
 | Export flow to Python | ✓ | ✓ |
+| Plain-Python (learning) export | ✗ | ✓ |
+| Step-by-step Python walkthrough with live data | ✗ | ✓ |
+| Edit + re-run the generated script | ✗ | ✓ |
 | Graphic Walker visualization | ✓ | ✓ |
 | Python API (`flowfile_frame`) | ✓ | ✗ |
 | Data privacy | Sent to your backend/services as configured | Never leaves your browser |

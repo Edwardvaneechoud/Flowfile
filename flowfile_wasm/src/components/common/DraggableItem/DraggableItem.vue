@@ -79,12 +79,15 @@
       >
         <span class="icon">❐</span>
       </button>
-      <div v-if="tabs.length" class="dragitem-tabs" @mousedown.stop>
+      <div v-if="tabs.length" class="dragitem-tabs" role="tablist" @mousedown.stop>
         <button
           v-for="t in tabs"
           :key="t.id"
+          role="tab"
           class="dragitem-tab"
           :class="{ active: t.id === activeTab }"
+          :aria-selected="t.id === activeTab"
+          :title="t.title"
           @click="emit('update:activeTab', t.id)"
         >
           {{ t.label }}
@@ -92,6 +95,11 @@
       </div>
       <div v-else-if="title" class="dragitem-tabs" @mousedown="startMove">
         <span class="dragitem-tab dragitem-tab--static active">{{ title }}</span>
+      </div>
+      <!-- Host-supplied header buttons (e.g. the Code panel's run/export).
+           mousedown.stop so pressing one never starts a panel drag. -->
+      <div v-if="$slots.actions && !isMinimized" class="dragitem-actions" @mousedown.stop>
+        <slot name="actions"></slot>
       </div>
       <button
         v-if="onClose"
@@ -104,7 +112,7 @@
       </button>
     </div>
 
-    <div class="content" @click="registerClick">
+    <div class="content" :class="{ flush: flushContent }" @click="registerClick">
       <slot v-if="!isMinimized"></slot>
     </div>
 
@@ -242,10 +250,16 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  // Opt-in: hand the whole content box to the slot (no padding, no scroller)
+  // for panels that own their own chrome and scrollers.
+  flushContent: {
+    type: Boolean,
+    default: false,
+  },
   // Tab strip rendered in the header. Empty ⇒ the `title` shows as a single
   // static tab (so every panel header looks the same).
   tabs: {
-    type: Array as () => { id: string; label: string }[],
+    type: Array as () => { id: string; label: string; title?: string }[],
     default: () => [],
   },
   activeTab: {
@@ -516,6 +530,19 @@ defineExpose({
   margin-left: auto;
   flex-shrink: 0;
 }
+/* With header actions present they take the free space instead, so the close
+   button stays pinned next to them rather than splitting the gap. */
+.dragitem-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 8px;
+  flex-shrink: 0;
+}
+.dragitem-actions ~ .close-button {
+  margin-left: 4px;
+}
 .close-button:hover {
   color: var(--color-text-inverse);
   background-color: var(--color-danger);
@@ -608,6 +635,12 @@ button.dragitem-tab:hover {
   overflow: auto;
   padding: 10px;
   box-sizing: border-box;
+}
+.content.flush {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
 }
 /* Sticky footer below the scrolling content (opt-in via the `footer` slot). */
 .footer {

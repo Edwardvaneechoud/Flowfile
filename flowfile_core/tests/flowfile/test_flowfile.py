@@ -481,8 +481,11 @@ def test_running_performance_mode():
     slow = graph.run_graph()
 
     assert slow.node_step_result[1].run_time_ms > fast.node_step_result[1].run_time_ms, 'Performance mode should be faster'
-    # Sanity check that values are in milliseconds (would fail if accidentally stored as seconds).
-    assert slow.node_step_result[1].run_time_ms > 10, 'Run time should be at least 10 ms, confirming ms units'
+    # Units check: run_time_ms must match the second-based timestamps on the same
+    # result, so a regression to storing seconds fails regardless of how fast the run is.
+    result = slow.node_step_result[1]
+    expected_ms = int((result.end_timestamp - result.start_timestamp) * 1000)
+    assert abs(result.run_time_ms - expected_ms) <= 1, 'run_time_ms should be milliseconds derived from the timestamps'
 
 
 def test_remote_run_skips_count_roundtrip(monkeypatch):

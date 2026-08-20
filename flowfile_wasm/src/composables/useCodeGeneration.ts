@@ -33,7 +33,7 @@ import type {
   AggType
 } from '../types'
 
-interface CodeGenerationOptions {
+export interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
   edges: FlowEdge[]
   flowName?: string
@@ -57,7 +57,10 @@ function isJoinInputVars(input: unknown): input is JoinInputVars {
   );
 }
 
-function toPythonValue(value: any): string {
+export function toPythonValue(value: any): string {
+  if (value === null || value === undefined) {
+    return 'None'
+  }
   if (typeof value === 'boolean') {
     return value ? 'True' : 'False'
   }
@@ -218,7 +221,8 @@ const NODE_TYPE_VAR_LABEL: Record<string, string> = {
 }
 
 // Python keywords + common builtins that generated names must never shadow.
-const RESERVED_NAMES = new Set<string>([
+// Exported for the plain-Python flavour, whose loop temporaries obey the same rule.
+export const RESERVED_NAMES = new Set<string>([
   'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class',
   'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global',
   'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return',
@@ -229,18 +233,20 @@ const RESERVED_NAMES = new Set<string>([
   'slice', 'sorted', 'str', 'sum', 'tuple', 'type', 'vars', 'zip'
 ])
 
-class FlowToPolarsConverter {
-  private nodes: Map<number, FlowNode>
+// Members are `protected` rather than `private` because usePlainPythonGeneration.ts
+// subclasses this to emit the teaching flavour; see that file for the seam it uses.
+export class FlowToPolarsConverter {
+  protected nodes: Map<number, FlowNode>
   private edges: FlowEdge[]
-  private flowName: string
-  private nodeVarMapping: Map<number, string>
-  private imports: Set<string>
-  private codeLines: string[]
-  private lastNodeVar: string | null
+  protected flowName: string
+  protected nodeVarMapping: Map<number, string>
+  protected imports: Set<string>
+  protected codeLines: string[]
+  protected lastNodeVar: string | null
   private unsupportedNodes: Array<{ id: number; type: string; reason: string }>
   private formulaCode: Record<number, string>
   // (node, effectiveVar, start, end) per emitting node; (start, end) slices codeLines.
-  private nodeSpans: Array<{ node: FlowNode; effectiveVar: string; start: number; end: number }>
+  protected nodeSpans: Array<{ node: FlowNode; effectiveVar: string; start: number; end: number }>
   // node_id -> upstream node_id for nodes that emit nothing (passthroughs).
   private passthrough: Map<number, number>
   private currentNodeId: number
@@ -359,7 +365,7 @@ class FlowToPolarsConverter {
     }
   }
 
-  private dispatchNodeCode(node: FlowNode, varName: string, inputVars: Record<string, string>): void {
+  protected dispatchNodeCode(node: FlowNode, varName: string, inputVars: Record<string, string>): void {
     switch (node.type) {
       case 'read':
         this.handleReadCsv(node.settings as NodeReadSettings, varName)
@@ -559,7 +565,8 @@ class FlowToPolarsConverter {
 
     this.addCode(`${varName} = pl.LazyFrame({`)
     for (const [colName, values] of Object.entries(dataDict)) {
-      this.addCode(`    "${colName}": ${JSON.stringify(values)},`)
+      // Not JSON.stringify: JSON's null/true/false are not Python literals.
+      this.addCode(`    "${colName}": ${toPythonValue(values)},`)
     }
     this.addCode(`})`)
     this.addCode('')
@@ -764,7 +771,7 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private collectMainInputs(inputVars: Record<string, string>): string[] {
+  protected collectMainInputs(inputVars: Record<string, string>): string[] {
     return Object.keys(inputVars)
       .filter(k => k === 'main' || k.startsWith('main_'))
       .sort((a, b) => (a === 'main' ? -1 : parseInt(a.slice(5))) - (b === 'main' ? -1 : parseInt(b.slice(5))))
@@ -946,39 +953,39 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-        private handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
-          const inputDf = inputVars.main || 'df'
-          const unpivotInput = settings.unpivot_input
+  private handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const unpivotInput = settings.unpivot_input
 
-      this.addCode(`${varName} = ${inputDf}.unpivot(`)
+    this.addCode(`${varName} = ${inputDf}.unpivot(`)
 
-      if (unpivotInput.index_columns?.length > 0) {
-        this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
-      }
-
-      if (unpivotInput.data_type_selector_mode === 'data_type' && unpivotInput.data_type_selector) {
-        this.imports.add('import polars.selectors as cs')
-
-        const selectorMap: Record<string, string> = {
-          'numeric': 'cs.numeric()',
-          'string': 'cs.string()',
-          'float': 'cs.float()',
-          'date': 'cs.temporal()',  // Note: 'date' maps to temporal() in Polars
-          'all': 'cs.all()'
-        }
-
-        const selector = selectorMap[unpivotInput.data_type_selector] || 'cs.all()'
-
-        this.addCode(`    on=${selector},`)
-      } else if (unpivotInput.value_columns?.length > 0) {
-        this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
-      }
-
-      this.addCode(`    variable_name="variable",`)
-      this.addCode(`    value_name="value"`)
-      this.addCode(`)`)
-      this.addCode('')
+    if (unpivotInput.index_columns?.length > 0) {
+      this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
     }
+
+    if (unpivotInput.data_type_selector_mode === 'data_type' && unpivotInput.data_type_selector) {
+      this.imports.add('import polars.selectors as cs')
+
+      const selectorMap: Record<string, string> = {
+        'numeric': 'cs.numeric()',
+        'string': 'cs.string()',
+        'float': 'cs.float()',
+        'date': 'cs.temporal()',  // Note: 'date' maps to temporal() in Polars
+        'all': 'cs.all()'
+      }
+
+      const selector = selectorMap[unpivotInput.data_type_selector] || 'cs.all()'
+
+      this.addCode(`    on=${selector},`)
+    } else if (unpivotInput.value_columns?.length > 0) {
+      this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
+    }
+
+    this.addCode(`    variable_name="variable",`)
+    this.addCode(`    value_name="value"`)
+    this.addCode(`)`)
+    this.addCode('')
+  }
 
   private handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
@@ -1149,11 +1156,11 @@ class FlowToPolarsConverter {
     return mapping[dataType] || 'pl.Utf8'
   }
 
-  private addCode(line: string): void {
+  protected addCode(line: string): void {
     this.codeLines.push(line)
   }
 
-  private addComment(comment: string): void {
+  protected addComment(comment: string): void {
     this.codeLines.push(comment)
   }
 
@@ -1180,7 +1187,7 @@ class FlowToPolarsConverter {
   }
 
   // Fuse linear single-use chains, then give the surviving boundaries clean names.
-  private renderBody(): string[] {
+  protected renderBody(): string[] {
     const emissions: NodeEmission[] = []
     const nodeById = new Map<number, FlowNode>()
     for (const { node, effectiveVar, start, end } of this.nodeSpans) {
@@ -1221,7 +1228,7 @@ class FlowToPolarsConverter {
   }
 
   // Map provisional `df_N` tokens to clean labels; suffix only on collision.
-  private planBoundaryNames(
+  protected planBoundaryNames(
     emissions: NodeEmission[], survivors: Set<number>, nodeById: Map<number, FlowNode>
   ): Map<string, string> {
     const ordered = emissions.filter(em => survivors.has(em.nodeId))
@@ -1288,7 +1295,7 @@ class FlowToPolarsConverter {
   // Only real code is rewritten — string literals and comments are left verbatim
   // (mirrors flowfile_core's _rename_tokens, which renames NAME tokens only), so a
   // column/filter value like "df_2" is never mangled into a renamed variable.
-  private applyRenames(body: string[], rename: Map<string, string>): string[] {
+  protected applyRenames(body: string[], rename: Map<string, string>): string[] {
     if (rename.size === 0) return body
     const patterns = Array.from(rename.entries()).map(
       ([oldName, newName]) => [new RegExp(`\\b${oldName}\\b(?!=)`, 'g'), newName] as const
@@ -1349,7 +1356,7 @@ class FlowToPolarsConverter {
     return out
   }
 
-  private buildFinalCode(): string {
+  protected buildFinalCode(): string {
     const lines: string[] = []
 
     lines.push(...Array.from(this.imports).sort())

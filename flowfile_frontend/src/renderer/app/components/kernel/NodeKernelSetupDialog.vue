@@ -145,7 +145,7 @@ const phaseLabel = computed(() => (phase.value ? PHASE_LABELS[phase.value] : "Wo
 async function upgrade(match: KernelMatch): Promise<void> {
   const kernel = kernels.value.find((k) => k.id === match.kernel_id);
   if (!kernel) {
-    ElMessage.error("Could not load this kernel — try again from the Kernel Manager.");
+    ElMessage.error("Could not load this kernel — try again from the Python Kernels page.");
     return;
   }
   try {
@@ -166,7 +166,7 @@ async function upgrade(match: KernelMatch): Promise<void> {
   } catch (error) {
     ElMessage.error(
       `Failed to rebuild "${kernel.name}": ${(error as Error).message}. ` +
-        "The kernel is stopped — retry here or from the Kernel Manager.",
+        "The kernel is stopped — retry here or from the Python Kernels page.",
     );
   } finally {
     upgradingId.value = null;

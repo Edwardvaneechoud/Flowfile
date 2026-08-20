@@ -20,7 +20,7 @@ export interface DesignerActions {
 }
 
 export const useDesignerUiStore = defineStore('designerUi', () => {
-  // Shared so the header button, Canvas toolbar (lib), and the modal agree.
+  // Shared so the header button, Canvas toolbar (lib), and the panel agree.
   const showCodeGenerator = ref(false)
   // App-shell modals shared across IconRail / Home / AppLayout.
   const showAbout = ref(false)

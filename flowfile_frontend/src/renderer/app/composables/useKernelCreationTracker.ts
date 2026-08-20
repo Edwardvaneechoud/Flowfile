@@ -76,7 +76,7 @@ async function createKernel(
         notify(
           "warning",
           "Kernel created but failed to start",
-          `"${config.name}": ${(error as Error).message}. Start it from the Kernel Manager.`,
+          `"${config.name}": ${(error as Error).message}. Start it from the Python Kernels page.`,
         );
         return created;
       }
@@ -90,7 +90,7 @@ async function createKernel(
       notify(
         "success",
         "Kernel created",
-        `Kernel "${config.name}" was created — start it from the Kernel Manager when you're ready.`,
+        `Kernel "${config.name}" was created — start it from the Python Kernels page when you're ready.`,
       );
     }
     return created;
@@ -106,7 +106,7 @@ export function _resetKernelCreationTracker(): void {
 /**
  * Module-singleton tracker for in-flight kernel creations. It owns the
  * create(+optional start) call so the operation outlives any dialog or
- * component: pending entries render in the Kernel Manager sidebar and
+ * component: pending entries render in the Python Kernels sidebar and
  * settle-time outcomes surface via ElNotification, making the tracker the
  * sole reporter of creation results. Known tradeoff: the backend registers
  * a kernel only after its image build finishes, so a page reload during

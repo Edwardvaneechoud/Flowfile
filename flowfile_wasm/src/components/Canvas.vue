@@ -126,6 +126,7 @@
         :edge-types="edgeTypes"
         :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
+        :zoom-on-double-click="!uiStore.showCodeGenerator && !suppressDblClickZoom"
         class="custom-node-flow"
         fit-view-on-init
         @connect="onConnect"
@@ -176,6 +177,7 @@
       <NodeSettingsWrapper
         :node-id="selectedNode.id"
         :settings="selectedNode.settings"
+        :teaching-mode="props.teachingMode"
       >
         <component
           :is="getSettingsComponent(selectedNode.type)"
@@ -327,10 +329,13 @@
       style="display: none"
     />
 
-    <!-- Code Generator Modal -->
+    <!-- Code panel (an overlay panel like the others: docked right, resizable) -->
     <CodeGenerator
       :is-visible="uiStore.showCodeGenerator"
+      :teaching-mode="props.teachingMode"
+      :top-offset="toolbarHeight"
       @close="uiStore.showCodeGenerator = false"
+      @focus-node="panToNode"
     />
     <!-- Missing Files Modal -->
     <MissingFilesModal
@@ -455,9 +460,13 @@ const props = withDefaults(defineProps<{
   // App mode hides the in-canvas toolbar and drives actions from the header;
   // the embeddable library keeps the toolbar (default true).
   showToolbar?: boolean
+  // Offer the plain-Python teaching flavour: the Code panel's second mode and
+  // the "How would I write this myself?" panel in node settings.
+  teachingMode?: boolean
 }>(), {
   readonly: false,
-  showToolbar: true
+  showToolbar: true,
+  teachingMode: true
 })
 
 const emit = defineEmits<{
@@ -505,7 +514,8 @@ const tablePreviewHeight = computed(() =>
 const settingsPanelHeight = computed(() =>
   Math.max(220, availableHeight.value - toolbarHeight.value - tablePreviewHeight.value),
 )
-const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut, findNode, setCenter, viewport } =
+  useVueFlow()
 
 useStaleModifierGuard()
 
@@ -860,11 +870,36 @@ function onNodeDoubleClick(event: { node: Node }) {
   })
 }
 
-function onPaneClick() {
+// Closing the panel re-enables zoomOnDoubleClick BEFORE the browser delivers
+// the native dblclick, so d3-zoom would still zoom on the closing gesture.
+// Hold the zoom off long enough for that dblclick to pass.
+const suppressDblClickZoom = ref(false)
+
+function onPaneClick(event: MouseEvent) {
+  // The second click of a double-click on empty canvas closes the Code panel
+  // (event.detail counts consecutive clicks; node double-clicks never reach
+  // the pane handler).
+  if (event.detail >= 2 && uiStore.showCodeGenerator) {
+    suppressDblClickZoom.value = true
+    window.setTimeout(() => (suppressDblClickZoom.value = false), 300)
+    uiStore.showCodeGenerator = false
+    return
+  }
   flowStore.selectNode(null)
   showSettings.value = false
   showTablePreview.value = false
   closePaneMenu()
+}
+
+/** Smooth-pan the viewport to a node, keeping the current zoom (walkthrough sync). */
+function panToNode(nodeId: number) {
+  const node = findNode(String(nodeId))
+  if (!node) return
+  setCenter(
+    node.position.x + (node.dimensions?.width || 0) / 2,
+    node.position.y + (node.dimensions?.height || 0) / 2,
+    { zoom: viewport.value.zoom, duration: 300 }
+  )
 }
 
 function onPaneContextMenu(event: MouseEvent) {

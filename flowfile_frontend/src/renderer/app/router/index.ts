@@ -81,9 +81,16 @@ const routes: Array<RouteRecordRaw> = [
         redirect: { name: "connections", query: { tab: "ai" } },
       },
       {
+        name: "compute",
+        path: "compute",
+        component: () => import("../views/ComputeView/ComputeView.vue"),
+      },
+      {
+        // Legacy alias: old #/main/kernelManager bookmarks and any missed
+        // { name: "kernelManager" } caller land on the kernels tab.
         name: "kernelManager",
         path: "kernelManager",
-        component: () => import("../views/KernelManagerView/KernelManagerView.vue"),
+        redirect: { name: "compute", query: { tab: "kernels" } },
       },
       {
         name: "templates",

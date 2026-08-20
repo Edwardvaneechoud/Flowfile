@@ -722,6 +722,8 @@ export interface RawDataFormat {
 
 // Received/File Table Types
 
+export type ScanMode = "single_file" | "directory";
+
 export interface ReceivedTable {
   id?: number;
   name?: string;
@@ -733,6 +735,8 @@ export interface ReceivedTable {
   abs_file_path?: string;
   file_type: "csv" | "json" | "parquet" | "excel" | "ipc" | "ndjson" | "avro";
   table_settings: InputTableSettings;
+  scan_mode?: ScanMode;
+  include_file_paths?: string | null;
 }
 
 // Database Types
@@ -786,7 +790,7 @@ export type ParquetCompression = "snappy" | "gzip" | "brotli" | "lz4" | "zstd";
 export type WriteMode = "overwrite" | "append";
 
 export interface CloudStorageReadSettings extends CloudStorageSettings {
-  scan_mode: "single_file" | "directory";
+  scan_mode: ScanMode;
   file_format?: FileFormat | undefined;
   csv_has_header?: boolean;
   csv_delimiter?: string;

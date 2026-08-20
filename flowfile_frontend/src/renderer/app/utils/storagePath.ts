@@ -78,6 +78,25 @@ export function buildUri(scheme: string, container = "", key = ""): string {
 const isWindowsPath = (value: string): boolean =>
   /^[A-Za-z]:[\\/]/.test(value) || (value.includes("\\") && !value.includes("/"));
 
+/** Last separator of a Windows path, ignoring any trailing one. */
+const windowsCut = (value: string): [string, number] => {
+  const trimmed = value.replace(/[\\/]+$/, "");
+  return [trimmed, Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"))];
+};
+
+/** `C:\a\b` -> `C:\a`; a drive root or UNC host is its own parent. */
+const windowsParent = (value: string): string => {
+  const [trimmed, cut] = windowsCut(value);
+  if (cut <= 1) return value;
+  const parent = trimmed.slice(0, cut);
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+};
+
+const windowsBasename = (value: string): string => {
+  const [trimmed, cut] = windowsCut(value);
+  return cut === -1 ? trimmed : trimmed.slice(cut + 1);
+};
+
 /** True at a filesystem root, a home shortcut, or an object-store's container list. */
 export function isRootPath(value: string): boolean {
   if (!value) return true;
@@ -99,6 +118,7 @@ export function parentPath(value: string): string {
     return buildUri(scheme, container, cut === -1 ? "" : key.slice(0, cut));
   }
   if (isRootPath(value)) return value;
+  if (isWindowsPath(value)) return windowsParent(value);
   const parent = path.dirname(value);
   return parent === value || parent === "." ? value : parent;
 }
@@ -119,6 +139,7 @@ export function joinPath(base: string, child: string): string {
 }
 
 export function basename(value: string): string {
+  if (isWindowsPath(value)) return windowsBasename(value);
   if (!isCloudUri(value)) return path.basename(value);
   const { scheme, container, key } = parseUri(value);
   if (key) return key.slice(key.lastIndexOf("/") + 1);
@@ -126,11 +147,14 @@ export function basename(value: string): string {
 }
 
 export function dirname(value: string): string {
+  if (isWindowsPath(value)) return windowsParent(value);
   return isCloudUri(value) ? parentPath(value) : path.dirname(value);
 }
 
 /** Normalize without ever collapsing a `scheme://` separator. */
 export function normalizePath(value: string): string {
+  // Comparison form only: Windows separators fold to "/" so prefix checks work.
+  if (isWindowsPath(value)) return path.normalize(value.replace(/\\/g, "/"));
   if (!isCloudUri(value)) return path.normalize(value);
   const { scheme, container, key } = parseUri(value);
   if (!container) return scheme;

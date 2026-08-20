@@ -19,6 +19,7 @@ from flowfile_core.flowfile.flow_node.models import (
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
 from flowfile_core.schemas import schemas
+from shared.path_utils import is_url
 
 if TYPE_CHECKING:
     from flowfile_core.configs.flow_logger import NodeLogger
@@ -117,17 +118,7 @@ class NodeExecutor:
             self._clear_cache(state)
 
         decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
-
-        # Override for wide transforms when optimizing for downstream
-        if (
-            decision.should_run
-            and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-            and self.node.node_default
-            and self.node.node_default.transform_type == "wide"
-            and optimize_for_downstream
-            and run_location != "local"
-        ):
-            decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
+        decision = self._override_for_downstream(decision, run_location, optimize_for_downstream)
         if not decision.should_run:
             return
 
@@ -141,12 +132,20 @@ class NodeExecutor:
         if self.node.node_settings.cache_results:
             effective_performance_mode = False
 
+        if decision.reason == InvalidationReason.SOURCE_FILE_CHANGED:
+            # The worker keys results by node hash, which a source change does not rotate.
+            self._clear_cache(state)
+
         self._prepare_for_execution(state)
         self.node.reset()
 
+        # Snapshot before the scan so files arriving mid-run are not silently marked as seen.
+        pending_source_info = self._pending_source_snapshot()
+
         try:
             self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger)
-            self._update_source_file_info(state)
+            if pending_source_info is not None:
+                state.source_file_info = pending_source_info
             self._sync_state_to_legacy(state)
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
         except Exception as e:
@@ -158,6 +157,24 @@ class NodeExecutor:
                 self._sync_state_to_legacy(state)
                 return
             self._handle_error(state, e, run_location, effective_performance_mode, retry, node_logger)
+
+    def _override_for_downstream(
+        self,
+        decision: ExecutionDecision,
+        run_location: schemas.ExecutionLocationsLiteral,
+        optimize_for_downstream: bool,
+    ) -> ExecutionDecision:
+        """Promote a sampled wide transform to a full remote run so downstream nodes can reuse it."""
+        if (
+            decision.should_run
+            and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+            and self.node.node_default
+            and self.node.node_default.transform_type == "wide"
+            and optimize_for_downstream
+            and run_location != "local"
+        ):
+            return ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
+        return decision
 
     def _decide_execution(
         self,
@@ -191,6 +208,18 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
 
+        # Changed source data outranks every cache: the node hash does not rotate when a file
+        # on disk changes, so a cache hit here would serve data the user just replaced.
+        if self._source_file_changed(state):
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
+
+        # A vanished worker artifact outranks the in-memory "already ran" flag: the held
+        # result is a scan of that file, so skipping here hands downstream a dangling plan.
+        if self.node.results.artifact_is_missing():
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
+
         # Cache-enabled nodes: check if cache file is still present
         # This must come before performance_mode so cached results are preserved
         # even when upstream nodes produce no new data.
@@ -207,10 +236,6 @@ class NodeExecutor:
         if not state.has_run_with_current_setup:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.NEVER_RAN)
-
-        if self._source_file_changed(state):
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
 
         # Already ran with current settings → skip
         # Results are available in memory from previous execution
@@ -334,14 +359,32 @@ class NodeExecutor:
             return rf.abs_file_path
         return rf.path if hasattr(rf, "path") else None
 
-    def _update_source_file_info(self, state: NodeExecutionState) -> None:
-        """Update source file tracking after successful execution."""
-        if self.node.node_type != "read":
-            return
+    def _pending_source_snapshot(self) -> SourceFileInfo | None:
+        """Snapshot the source *before* the scan, to be committed only if the run succeeds.
 
-        path = self._get_source_path()
-        if path:
-            state.source_file_info = SourceFileInfo.from_path(path)
+        Taken up front so a file written while the node is reading counts as a later change
+        instead of being folded into this run's fingerprint. Returns None for non-read nodes
+        and for sources that cannot be stat'ed, in which case any existing snapshot is kept.
+        """
+        if self.node.node_type != "read":
+            return None
+
+        received_file = getattr(self.node.setting_input, "received_file", None)
+        if received_file is not None and not is_url(getattr(received_file, "path", None)):
+            # Idempotent: recomputes the pattern from the ${param}-substituted path.
+            received_file.set_absolute_filepath()
+
+        return self._snapshot_source(self._get_source_path())
+
+    def _snapshot_source(self, path: str | None) -> SourceFileInfo | None:
+        """Fingerprint *path* for change detection: an aggregate in directory mode, a single stat otherwise."""
+        if self.node.node_type != "read" or not path:
+            return None
+
+        received_file = getattr(self.node.setting_input, "received_file", None)
+        if received_file is not None and getattr(received_file, "scan_mode", "single_file") == "directory":
+            return SourceFileInfo.from_pattern(path)
+        return SourceFileInfo.from_path(path)
 
     def _prepare_for_execution(self, state: NodeExecutionState) -> None:
         """Prepare node state before execution."""

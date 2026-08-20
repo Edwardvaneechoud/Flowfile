@@ -26,6 +26,11 @@ class ConverterMixinBase:
         """
         return json.dumps(value, ensure_ascii=False)
 
+    @staticmethod
+    def _py_path(value) -> str:
+        # str() first: abs_file_path is str | None, and json.dumps(None) would emit `null`.
+        return json.dumps(str(value), ensure_ascii=False)
+
     if typing.TYPE_CHECKING:
         framework: str
         imports: set[str]

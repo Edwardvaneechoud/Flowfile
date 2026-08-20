@@ -5,15 +5,15 @@ import sys
 
 import pytest
 
-os.environ['TEST_MODE'] = '1'
+os.environ["TEST_MODE"] = "1"
 
 from tests.utils import is_docker_available
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from test_utils.postgres import fixtures as pg_fixtures
 
 
-def is_port_in_use(port, host='localhost'):
+def is_port_in_use(port, host="localhost"):
     """Check if a port is in use on the specified host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
@@ -23,13 +23,23 @@ def is_port_in_use(port, host='localhost'):
             return False
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 logger = logging.getLogger("flowfile_fixture")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def shutdown_worker_pool():
+    """Retire the module-singleton warm pool's members at session end.
+
+    Tests that don't patch pool.task_pool lease members from the env-configured
+    singleton (CI sets FLOWFILE_WORKER_POOL_SIZE; Windows defaults it on), and a
+    bare pytest process never runs the app lifespan that would shut it down.
+    """
+    yield
+    from flowfile_worker.pool import task_pool
+
+    task_pool.shutdown()
 
 
 @pytest.fixture(scope="session", autouse=True)
