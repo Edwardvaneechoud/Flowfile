@@ -40,9 +40,11 @@
           :key="option"
           :label="option"
           :value="option"
+          :disabled="directoryMode && !isUtf8Encoding(option)"
         />
       </el-select>
     </div>
+    <div v-if="directoryMode" class="row-hint">Directory scans read UTF-8 csv files only.</div>
 
     <!-- Row for Quote Character -->
     <div class="row">
@@ -124,10 +126,15 @@
 <script lang="ts" setup>
 import { ref, watch } from "vue";
 import { InputCsvTable } from "../../../baseNode/nodeInput";
+import { isUtf8Encoding } from "../../../../../utils/readFileTypes";
 
-const props = defineProps<{
-  modelValue: InputCsvTable;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: InputCsvTable;
+    directoryMode?: boolean;
+  }>(),
+  { directoryMode: false },
+);
 
 const emit = defineEmits(["update:modelValue"]);
 const localCsvTable = ref({ ...props.modelValue });
@@ -173,6 +180,12 @@ watch(
   margin-bottom: 12px;
   gap: 20px;
   max-width: 100%; /* Prevent overflow */
+}
+
+.row-hint {
+  margin: -6px 0 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 label {

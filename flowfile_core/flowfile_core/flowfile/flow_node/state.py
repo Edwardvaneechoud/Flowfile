@@ -5,6 +5,7 @@ Can be persisted to database/cache for stateless operation.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,9 +13,35 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from shared.path_utils import expand_glob_pattern
+
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
     from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+
+def _aggregate_stats(pattern: str) -> tuple[int, float, int, str]:
+    """Return (file count, newest mtime, total size, identity digest) over *pattern*'s matches.
+
+    The digest hashes the sorted (path, mtime, size) triples, so a replacement that preserves
+    count, total size and the newest mtime (rsync -a / cp -p style refreshes) still reads as a
+    change. Files that vanish between expansion and stat are skipped; their disappearance
+    still shows up as a lower count and a different digest.
+    """
+    count = 0
+    newest_mtime = 0.0
+    total_size = 0
+    hasher = hashlib.sha256()
+    for path in expand_glob_pattern(pattern):
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        count += 1
+        newest_mtime = max(newest_mtime, stat.st_mtime)
+        total_size += stat.st_size
+        hasher.update(f"{path}\x00{stat.st_mtime_ns}\x00{stat.st_size}\n".encode())
+    return count, newest_mtime, total_size, hasher.hexdigest()
 
 
 @dataclass
@@ -27,6 +54,8 @@ class SourceFileInfo:
     path: str
     mtime: float
     size: int
+    file_count: int | None = None  # None marks a legacy single-file snapshot
+    files_digest: str | None = None  # identity of the match set; None on legacy snapshots
 
     @classmethod
     def from_path(cls, path: str) -> SourceFileInfo | None:
@@ -37,8 +66,24 @@ class SourceFileInfo:
         except OSError:
             return None
 
+    @classmethod
+    def from_pattern(cls, pattern: str) -> SourceFileInfo:
+        """Create an aggregate snapshot of every file matching *pattern* (directory scan mode).
+
+        Never returns None: zero matches are a valid state that must still be recorded, so a
+        file appearing later reads as a change.
+        """
+        count, newest_mtime, total_size, digest = _aggregate_stats(pattern)
+        return cls(path=pattern, mtime=newest_mtime, size=total_size, file_count=count, files_digest=digest)
+
     def has_changed(self) -> bool:
-        """Check if file has changed since this info was recorded."""
+        """Check if the source has changed since this info was recorded."""
+        if self.file_count is not None:
+            count, newest_mtime, total_size, digest = _aggregate_stats(self.path)
+            if self.files_digest is not None:
+                return digest != self.files_digest
+            # Digest-less snapshot from an older serialization: compare the aggregates only.
+            return (count, newest_mtime, total_size) != (self.file_count, self.mtime, self.size)
         try:
             stat = os.stat(self.path)
             return stat.st_mtime != self.mtime or stat.st_size != self.size
@@ -47,12 +92,24 @@ class SourceFileInfo:
 
     def to_dict(self) -> dict:
         """Serialize for external storage."""
-        return {"path": self.path, "mtime": self.mtime, "size": self.size}
+        return {
+            "path": self.path,
+            "mtime": self.mtime,
+            "size": self.size,
+            "file_count": self.file_count,
+            "files_digest": self.files_digest,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> SourceFileInfo:
         """Deserialize from external storage."""
-        return cls(path=data["path"], mtime=data["mtime"], size=data["size"])
+        return cls(
+            path=data["path"],
+            mtime=data["mtime"],
+            size=data["size"],
+            file_count=data.get("file_count"),
+            files_digest=data.get("files_digest"),
+        )
 
 
 @dataclass

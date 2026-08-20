@@ -31,7 +31,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
-from shared.path_utils import is_url
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_url
 
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
@@ -212,10 +212,21 @@ class ReceivedTable(BaseModel):
     status: str | None = None
     fields: list[MinimalFieldInfo] = Field(default_factory=list)
     abs_file_path: str | None = None
+    scan_mode: Literal["single_file", "directory"] = "single_file"
+    include_file_paths: str | None = None
 
     file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"]
 
     table_settings: InputTableSettings
+
+    @field_validator("include_file_paths", mode="before")
+    @classmethod
+    def normalize_include_file_paths(cls, v):
+        """A blank column name means 'do not add the source-path column'."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            return stripped or None
+        return v
 
     @classmethod
     def create_from_path(
@@ -247,16 +258,20 @@ class ReceivedTable(BaseModel):
             return self.path
 
     def set_absolute_filepath(self):
-        """Resolves the path to an absolute file path."""
+        """Resolves the path to an absolute file path (or, in directory mode, to a glob pattern)."""
         if is_url(self.path):
             self.abs_file_path = self.path
             return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
-        if self.name and self.name not in base_path.name:
+        # In directory mode the name is a node label, not a filename to append.
+        if self.scan_mode == "single_file" and self.name and self.name not in base_path.name:
             base_path = base_path / self.name
-        self.abs_file_path = str(base_path.resolve())
+        resolved = str(base_path.resolve())
+        if self.scan_mode == "directory":
+            resolved = ensure_glob_pattern(resolved, default_scan_extension(self.file_type))
+        self.abs_file_path = resolved
 
     @model_validator(mode="before")
     @classmethod
