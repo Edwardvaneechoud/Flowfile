@@ -85,6 +85,7 @@ gitpython = "^3.1.40"
 duckdb = "^1.5.5"
 pymssql = "^2.3.2"
 packaging = ">=24.0"
+psutil = ">=5.9.0"
 
 
 [tool.poetry.scripts]

@@ -90,8 +90,8 @@
         <div>
           <h3 class="pool-card-title">Warm worker pool</h3>
           <p class="pool-card-description">
-            Keeps worker processes ready between data nodes, skipping process startup (~0.5 s per
-            node). When all warm processes are busy, additional nodes start fresh processes.
+            Keeps worker processes warm between data nodes, saving ~0.5 s of startup each. When all
+            of them are busy, extra nodes start fresh processes.
           </p>
         </div>
         <div class="pool-toggle">
@@ -336,15 +336,10 @@ const memoryTitle = computed(() =>
 
 const lifecycleLine = computed(() => {
   const clauses: string[] = [];
-  if (ttlText.value) clauses.push(`after ${ttlText.value} idle`);
+  if (ttlText.value) clauses.push(`${ttlText.value} idle`);
   if (maxTasksPerMember.value > 0) clauses.push(`${maxTasksPerMember.value} jobs`);
-  if (memText.value) clauses.push(`${memText.value} of memory`);
   if (clauses.length === 0) return "Warm processes start on demand and retire when idle.";
-  const joined =
-    clauses.length === 1
-      ? clauses[0]
-      : `${clauses.slice(0, -1).join(", ")}, or ${clauses[clauses.length - 1]}`;
-  return `Warm processes retire ${joined}; the pool refills on demand.`;
+  return `Warm processes retire after ${clauses.join(" or ")}.`;
 });
 
 const emptyHint = computed(() =>
@@ -497,7 +492,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: var(--font-size-md);
   color: var(--color-text-secondary);
-  max-width: 70ch;
+  text-wrap: pretty;
 }
 
 .pool-toggle {
