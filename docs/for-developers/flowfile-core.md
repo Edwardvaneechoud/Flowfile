@@ -403,7 +403,9 @@ Development mode is the interactive, debugging-friendly mode. It produces **prev
 
 #### Performance Mode (remote)
 
-Performance mode skips preview data generation and only runs nodes when strictly necessary — output nodes, cache rebuilds, or nodes that have never run. Once a node has run, it is skipped on subsequent executions. No sampling takes place.
+Performance mode skips preview data generation — no sampling takes place, and no intermediate result is stored.
+
+Every node is still visited on every run: the performance-mode branch in `NodeExecutor._decide_execution` returns `should_run=True` unconditionally, ahead of the "has it already run?" check, so nothing is skipped on the basis of a previous execution. What changes is how much work a visit costs. An ordinary transform node only extends the Polars plan; it does not materialize and does not reach the worker. Only output nodes (in Core) and `cache_results` nodes (on the worker) produce a real result.
 
 #### Local Mode
 

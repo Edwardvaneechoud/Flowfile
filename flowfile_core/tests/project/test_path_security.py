@@ -317,6 +317,27 @@ class TestH4ManagedPointerSanitization:
 class TestL1ExternalPointerValidation:
     """L1 — external pointer paths escaping allowed roots must be skipped (not stored)."""
 
+    @pytest.fixture(autouse=True)
+    def pinned_data_roots(self, tmp_path, monkeypatch):
+        """Pin the three storage-derived allowed roots under ``tmp_path``.
+
+        Unpinned, ``storage.user_data_directory`` falls back to ``Path.home()``
+        (shared/storage_config.py:61), and on Windows %TEMP% lives *inside* %USERPROFILE% — so
+        ``tmp_path/../../etc/passwd`` really is under an allowed root and the validator correctly
+        returns True. The "escape" these tests assert only exists where the temp dir sits outside
+        the data roots (POSIX). Pinning makes it a genuine escape on every platform, and also
+        covers POSIX runs whose $HOME is ``/`` or ``/root``. Mirrors tests/sharing/conftest.py:41.
+        """
+        from shared.storage_config import storage
+
+        pinned = tmp_path / "pinned_roots"
+        (pinned / "flows").mkdir(parents=True)
+        (pinned / "outputs").mkdir(parents=True)
+        (pinned / "user_data").mkdir(parents=True)
+        monkeypatch.setattr(storage, "_base_dir", pinned)
+        monkeypatch.setattr(storage, "_user_data_dir", pinned / "user_data")
+        return pinned
+
     def test_escaping_external_path_is_rejected(self, tmp_path):
         # Finding L1: pre-fix stored external paths verbatim; post-fix validates.
         from flowfile_core.project.importer import _external_path_allowed
@@ -327,7 +348,7 @@ class TestL1ExternalPointerValidation:
         for bad in ("/etc/passwd", "/root/.bashrc", "/../secret", "/tmp/../../etc"):
             assert not _external_path_allowed(bad, root), f"External path {bad!r} should be rejected"
 
-    def test_project_root_child_is_accepted(self, tmp_path):
+    def test_project_root_child_is_accepted(self, tmp_path, pinned_data_roots):
         # Non-regression: a path inside the project root is allowed.
         from flowfile_core.project.importer import _external_path_allowed
 
@@ -335,6 +356,8 @@ class TestL1ExternalPointerValidation:
         root.mkdir()
         child = str(root / "data" / "file.parquet")
         assert _external_path_allowed(child, root), "Child of project root must be accepted"
+        # Guard: over-restricted roots would make the two rejection tests pass vacuously.
+        assert _external_path_allowed(str(pinned_data_roots / "user_data" / "f.parquet"), root)
 
     def test_traversal_in_external_path_is_rejected(self, tmp_path):
         # Finding L1: traversal in external path.

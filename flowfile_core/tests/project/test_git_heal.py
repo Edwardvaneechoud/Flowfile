@@ -5,13 +5,27 @@ DB row but no .git, so versioning silently no-ops. Once git is available, the ne
 initialize the repo and produce a commit rather than staying a no-op.
 """
 
+import os
 import shutil
+import stat
+import sys
 
 import pytest
 
 from flowfile_core.project import git_ops, project_sync
 
 OWNER = 1
+
+
+def _rmtree_force(path):
+    """Git loose objects are read-only; Windows refuses to unlink them."""
+
+    def _clear_readonly(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+
+    kwargs = {"onexc": _clear_readonly} if sys.version_info >= (3, 12) else {"onerror": _clear_readonly}
+    shutil.rmtree(path, **kwargs)
 
 
 def test_save_version_heals_repo_missing_git(tmp_path):
@@ -23,7 +37,7 @@ def test_save_version_heals_repo_missing_git(tmp_path):
     try:
         project_sync.init_project(str(root), "Heal Test", OWNER)
         # Simulate a project created while git was unavailable: drop the repo entirely.
-        shutil.rmtree(root / ".git")
+        _rmtree_force(root / ".git")
         assert not git_ops.is_repo(root)
         assert git_ops.log(root) == []
 

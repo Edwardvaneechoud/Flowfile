@@ -1,12 +1,15 @@
 import gc
 import os
 import queue as _queue
+import threading
 from base64 import b64encode
 from multiprocessing import Process
 from multiprocessing.queues import Queue
 from time import monotonic, sleep
+from typing import Any
 
-from flowfile_worker import funcs, models, mp_context, status_dict, status_dict_lock
+from flowfile_worker import funcs, models, mp_context, pool, status_dict, status_dict_lock
+from flowfile_worker.pool import PoolMember
 from flowfile_worker.process_manager import ProcessManager
 
 process_manager = ProcessManager()
@@ -59,7 +62,31 @@ def unpack_result(result):
     return result, None
 
 
-def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_message: mp_context.Array, q: Queue):
+def drain_member_envelope(q: Queue, p: Process) -> tuple[bool, Any]:
+    """Drain a pool member's completion envelope with a hard wall-clock bound.
+
+    q.get()'s timeout only bounds the poll, not the recv: a member terminated
+    mid-put (a raced /cancel_task) can leave a partial message that would block
+    the recv unboundedly, so the drain runs on a watchdog thread. No envelope
+    within the bound marks the member unfit for reuse.
+    """
+    box: list = []
+    watchdog = threading.Thread(target=lambda: box.append(drain_result_queue(q, p)), daemon=True)
+    watchdog.start()
+    watchdog.join(RESULT_QUEUE_TIMEOUT + 5.0)
+    if not box:
+        return False, None
+    return pool.unwrap_envelope(box[0])
+
+
+def handle_task(
+    task_id: str,
+    p: Process,
+    progress: mp_context.Value,
+    error_message: mp_context.Array,
+    q: Queue,
+    member: PoolMember | None = None,
+):
     """
     Monitors and manages a running process task, updating its status and handling completion/errors.
 
@@ -69,12 +96,17 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         progress (mp_context.Value): Shared value object tracking task progress (0-100)
         error_message (mp_context.Array): Shared array for storing error messages
         q (Queue): Queue for storing task results
+        member (PoolMember | None): Set when *p* is a leased pool member. Its completion
+            envelope is then always drained (never joined mid-task), and instead of the
+            terminate/join teardown the member is checked back in - reusable only if the
+            envelope arrived; cancel, timeout, or a crash retire it.
 
     Notes:
         - Updates task status in status_dict while process is running
         - Handles task cancellation, completion, and error states
         - Cleans up process resources after completion
     """
+    envelope_received = False
     try:
         with status_dict_lock:
             status_dict[task_id].status = "Processing"
@@ -119,13 +151,24 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             final_progress = progress.value
 
         # Drain the queue BEFORE joining (see drain_result_queue). Only the success path
-        # (progress == 100) puts a result; errors travel via the shared Array.
+        # (progress == 100) puts a result; errors travel via the shared Array. A pool
+        # member puts one envelope per task (also on task error), drained under a
+        # watchdog bound - but a member we terminated (cancel/timeout) or that died is
+        # never drained: a partial envelope from a killed writer can block the recv.
         result = None
         number_of_records = None
-        if not cancelled and final_progress == 100:
-            result, number_of_records = unpack_result(drain_result_queue(q, p))
-
-        p.join()
+        if member is not None:
+            # This task is over for the process manager either way; unmapping first
+            # means a stale /cancel_task can no longer terminate a reusable member.
+            process_manager.remove_process(task_id)
+            if not cancelled and not timed_out and final_progress in (100, -1):
+                envelope_received, payload = drain_member_envelope(q, p)
+                if final_progress == 100:
+                    result, number_of_records = unpack_result(payload)
+        else:
+            if not cancelled and final_progress == 100:
+                result, number_of_records = unpack_result(drain_result_queue(q, p))
+            p.join()
 
         with status_dict_lock:
             status = status_dict[task_id]
@@ -156,9 +199,12 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
                     status.status = "Unknown Error"
 
     finally:
-        if p.is_alive():
-            p.terminate()
-        p.join()
+        if member is not None:
+            pool.task_pool.checkin(member, reusable=envelope_received)
+        else:
+            if p.is_alive():
+                p.terminate()
+            p.join()
         process_manager.remove_process(task_id)
         del p, progress, error_message
         gc.collect(0)
@@ -186,20 +232,40 @@ def start_process(
         flowfile_node_id: id of the node that started the process
 
     Notes:
-        - Creates shared memory objects for progress tracking and error handling
-        - Initializes and starts a new process for the specified operation
-        - Delegates to handle_task for process monitoring
+        - Leases a warm pool member when the pool is on and the operation is poolable
+        - Otherwise creates shared memory objects and spawns a fresh process (default)
+        - Delegates to handle_task for process monitoring either way
     """
     if kwargs is None:
         kwargs = {}
-    process_task = getattr(funcs, operation)
     kwargs["polars_serializable_object"] = polars_serializable_object
-    kwargs["progress"] = mp_context.Value("i", 0)
-    kwargs["error_message"] = mp_context.Array("c", 1024)
-    kwargs["queue"] = mp_context.Queue(maxsize=1)
     kwargs["file_path"] = file_ref
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
+
+    member = pool.task_pool.acquire(operation)
+    if member is not None:
+        try:
+            member.submit(operation, kwargs)
+            process_manager.add_process(task_id, member.process)
+        except Exception:
+            # A failed lease must not leak the slot; handle_task owns checkin after this.
+            pool.task_pool.checkin(member, reusable=False)
+            raise
+        handle_task(
+            task_id=task_id,
+            p=member.process,
+            progress=member.progress,
+            error_message=member.error_message,
+            q=member.result_q,
+            member=member,
+        )
+        return
+
+    process_task = getattr(funcs, operation)
+    kwargs["progress"] = mp_context.Value("i", 0)
+    kwargs["error_message"] = mp_context.Array("c", 1024)
+    kwargs["queue"] = mp_context.Queue(maxsize=1)
 
     p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
     p.start()

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  DIRECTORY_CAPABLE_TYPES,
   READ_EXTENSION_MAP,
   READ_EXTENSIONS,
   baseNameOf,
@@ -7,6 +8,9 @@ import {
   createDefaultSettings,
   detectFileType,
   extensionOf,
+  inferScanModeFromPath,
+  isDirectoryCapable,
+  type ReadFileType,
 } from "./readFileTypes";
 
 describe("detectFileType", () => {
@@ -53,6 +57,63 @@ describe("detectFileType", () => {
   it("reads the extension off a Windows path", () => {
     expect(detectFileType("C:\\Users\\me\\book.xlsx")).toBe("excel");
   });
+
+  it("reads the extension off a glob pattern", () => {
+    expect(detectFileType("data/**/*.parquet")).toBe("parquet");
+  });
+});
+
+describe("isDirectoryCapable", () => {
+  const cases: [ReadFileType, boolean][] = [
+    ["csv", true],
+    ["parquet", true],
+    ["ipc", true],
+    ["excel", false],
+    ["ndjson", false],
+    ["avro", false],
+  ];
+
+  for (const [fileType, expected] of cases) {
+    it(`${expected ? "accepts" : "rejects"} ${fileType}`, () => {
+      expect(isDirectoryCapable(fileType)).toBe(expected);
+      expect(DIRECTORY_CAPABLE_TYPES.has(fileType)).toBe(expected);
+    });
+  }
+
+  it("mirrors shared/path_utils.py exactly", () => {
+    expect([...DIRECTORY_CAPABLE_TYPES].sort()).toEqual(["csv", "ipc", "parquet"]);
+  });
+
+  it("rejects an absent or unknown type", () => {
+    expect(isDirectoryCapable(undefined)).toBe(false);
+    expect(isDirectoryCapable(null)).toBe(false);
+    expect(isDirectoryCapable("json")).toBe(false);
+  });
+});
+
+describe("inferScanModeFromPath", () => {
+  const cases: [string, string][] = [
+    ["/data/sales.csv", "single_file"],
+    ["C:\\data\\sales.csv", "single_file"],
+    ["/data/**/*.csv", "directory"],
+    ["/data/*/sales.csv", "directory"],
+    ["/data/sales_?.csv", "directory"],
+    // "[" is legal in real names and cannot be stat'ed away here, so it never auto-promotes.
+    ["/data/sales_[0-9].csv", "single_file"],
+    ["/data/[archive]/sales.csv", "single_file"],
+    ["/data/sales/", "directory"],
+    ["C:\\data\\sales\\", "directory"],
+    ["/data/sales", "single_file"],
+    ["${data_dir}.csv", "single_file"],
+    ["${data_dir}/*.csv", "directory"],
+    ["${data_dir}/sales.csv", "single_file"],
+  ];
+
+  for (const [path, expected] of cases) {
+    it(`reads ${path} as ${expected}`, () => {
+      expect(inferScanModeFromPath(path)).toBe(expected);
+    });
+  }
 });
 
 describe("extensionOf", () => {
@@ -109,6 +170,16 @@ describe("buildReceivedTable", () => {
     const path = "C:\\data\\book.xlsx";
     const table = buildReceivedTable({ name: baseNameOf(path), path, fileType: "excel" });
     expect(table).toMatchObject({ name: "book.xlsx", path, file_type: "excel" });
+  });
+
+  it("defaults to a single-file scan with no source-path column", () => {
+    const table = buildReceivedTable({
+      name: "sales.csv",
+      path: "/data/sales.csv",
+      fileType: "csv",
+    });
+    expect(table.scan_mode).toBe("single_file");
+    expect(table.include_file_paths).toBeNull();
   });
 
   it("forwards the extension so a tsv gets a tab delimiter", () => {

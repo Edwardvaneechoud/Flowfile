@@ -24,7 +24,7 @@
         show-icon
         class="flavour-hint"
         :title="`The suggested ${suggestion.config.image_flavour} image isn't installed yet`"
-        description="Another flavour was selected below — you can install the suggested image from the Kernel Manager."
+        description="Another flavour was selected below — you can install the suggested image from the Python Kernels page."
       />
       <el-alert
         v-if="pendingForSeed && !creationInFlight"

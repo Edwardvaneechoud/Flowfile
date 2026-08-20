@@ -407,10 +407,11 @@ class TestRoundTrip:
         output_data = output_node.get_resulting_data()
 
         assert output_data is not None, "Should have output data"
-        assert output_data.number_of_records > 0, "Should have records"
+        # count() resolves a lazy result; number_of_records is only pre-populated on a remote run.
+        assert output_data.count() > 0, "Should have records"
 
         print("\n=== Execution Result ===")
-        print(f"Records: {output_data.number_of_records}")
+        print(f"Records: {output_data.count()}")
 
 
 class TestLegacyPickleLoad:
