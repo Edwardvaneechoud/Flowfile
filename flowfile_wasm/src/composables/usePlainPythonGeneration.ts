@@ -758,9 +758,9 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   /**
    * The same pipeline, instrumented to record every intermediate table.
    *
-   * `__steps__` is module-level rather than a local, so a raising exercise stub
-   * still leaves everything computed before it readable — which is exactly the
-   * case the walkthrough needs to keep working.
+   * `__steps__` is module-level rather than a local, so a script the learner
+   * has edited into raising mid-way still leaves everything computed before
+   * the raise readable.
    */
   buildTraceCode(): string {
     // Renders the body and finalises imports/helpers; the text itself is unused.
