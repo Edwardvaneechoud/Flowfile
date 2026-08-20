@@ -1,12 +1,32 @@
 import type { PageHelpContent } from "../../components/common/PageHelpModal/types";
 
-export const kernelHelp: PageHelpContent = {
-  title: "Kernel Manager",
+export const computeHelp: PageHelpContent = {
+  title: "Compute",
   icon: "fa-solid fa-server",
   sections: [
     {
-      title: "Overview",
+      title: "Two kinds of compute",
       icon: "fa-solid fa-info-circle",
+      description:
+        "Flowfile runs your flows with two separate systems. This page manages both — each on its own tab.",
+      features: [
+        {
+          icon: "fa-brands fa-python",
+          title: "Python kernels",
+          description:
+            "Docker containers that run Python Script and custom nodes. You create them, pick their packages, and start or stop them on the Python Kernels tab.",
+        },
+        {
+          icon: "fa-solid fa-gauge-high",
+          title: "Warm worker pool",
+          description:
+            "A speed setting for all the regular data nodes (joins, filters, formulas, …). Warm worker processes start on demand when a flow runs and retire after sitting idle, skipping the per-node start-up cost. Admins manage it on the Performance tab.",
+        },
+      ],
+    },
+    {
+      title: "Python kernels",
+      icon: "fa-brands fa-python",
       description:
         "Kernels are isolated Python environments running in Docker containers. They execute Python Script nodes and custom code in a sandboxed environment with full package support.",
       features: [
@@ -61,6 +81,18 @@ export const kernelHelp: PageHelpContent = {
           title: "Pull the image first",
           description:
             "On first use, Docker pulls the chosen kernel image (~500 MB base, ~720 MB ML). Subsequent kernels start in seconds.",
+        },
+        {
+          type: "success",
+          title: "The pool needs no Docker",
+          description:
+            "The warm worker pool is independent of kernels and Docker — it speeds up regular nodes even when Docker is off.",
+        },
+        {
+          type: "success",
+          title: "Warm processes come and go",
+          description:
+            "With the pool on, processes start when flows run and retire after sitting idle. Zero warm processes between runs is normal.",
         },
       ],
     },

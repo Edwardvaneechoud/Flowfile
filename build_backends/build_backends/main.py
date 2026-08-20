@@ -267,7 +267,7 @@ for _pkg in ('tokenizers', 'tiktoken'):
 ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
 
 # Create runtime hook file
-with open('connectorx_hook.py', 'w') as f:
+with open('connectorx_hook.py', 'w', encoding='utf-8') as f:
     f.write(create_runtime_hook())
 
 a = Analysis(
@@ -372,7 +372,7 @@ coll = COLLECT(
 )
 '''
     spec_path = f"{output_name}.spec"
-    with open(spec_path, "w") as f:
+    with open(spec_path, "w", encoding="utf-8") as f:
         f.write(spec_content)
     return spec_path
 

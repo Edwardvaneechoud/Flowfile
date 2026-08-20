@@ -111,6 +111,9 @@ jobs:
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: ${{ matrix.os }}
+    env:
+      # Exercise the warm worker pool in CI (Windows jobs get it by platform default).
+      FLOWFILE_WORKER_POOL_SIZE: "2"
     strategy:
       fail-fast: false
       matrix:
@@ -192,7 +195,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -200,7 +203,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_worker/tests --disable-warnings
+        run: poetry run pytest flowfile_worker/tests --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Stop Mock Database
         run: poetry run stop_postgres
@@ -278,6 +281,7 @@ jobs:
         # branch=true / dynamic_context (which sysmon does not support).
         env:
           COVERAGE_CORE: sysmon
+          FLOWFILE_WORKER_POOL_SIZE: "2"
         run: |
           poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --cov --cov-append --cov-report=
           poetry run pytest flowfile_worker/tests --disable-warnings --cov --cov-append --cov-report=
@@ -311,22 +315,72 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  # Windows backend tests
-  backend-tests-windows:
+  # ---------------------------------------------------------------------------
+  # Windows backend tests, split into three shards.
+  #
+  # The monolithic backend-tests-windows job ran a 29.8-min flowfile_core step
+  # inside a 37.3-min job (run 31878578384). pytest-xdist is not available here:
+  # the suite pins one shared SQLite catalog DB, one worker port and one log-sink
+  # port per session, so parallelism has to be job-level - separate VMs mean
+  # separate filesystems, ports and DBs, with no harness changes. The required
+  # branch-protection context `backend-tests-windows` survives as the fan-in job
+  # further down; these three do the work.
+  #
+  # Core split, measured from run 31878578384's --durations=0 table
+  # (notes/run_31878578384_durations.csv - 1,658.2s attributed out of the 1,788s
+  # step, 92.7% coverage):
+  #   core-a  flowfile/ + project/ + test_migration.py  817.4s (49.3%)
+  #   core-b  the rest of flowfile_core/tests           840.8s (50.7%)
+  # 2.8% imbalance, splitting the monolith's 6,864 collected tests 3,849/3,015.
+  # core-b is expressed as --ignore of core-a's three paths, so a newly added
+  # test file always lands in a shard instead of silently vanishing, and both
+  # shards keep the monolith's relative execution order.
+  #
+  # Each shard repeats the setup below (~75s warm) and pays the ~130s of
+  # per-session core overhead the durations table does not attribute to a test.
+  #
+  # Setup notes carried over unchanged from the monolithic job:
+  # - setup-python's `cache: pip` does not cover poetry-installed packages, so a
+  #   cold `poetry install` costs ~4.5 min here (vs ~25s on Linux). Putting the
+  #   venv in-project makes it land on the workspace drive at a stable path the
+  #   cache step can key on. Three jobs restoring one cache entry is fine.
+  # - The cache key is exact-match with no restore-keys on purpose: `poetry
+  #   install` does not prune extraneous packages, so a venv restored from a
+  #   different lock could keep stale ones and silently diverge from poetry.lock.
+  #   A miss just costs today's cold install. The interpreter patch version is in
+  #   the key because the venv's shims and pyvenv.cfg are bound to it.
+  # - Backend tests do not need the built Vue UI (see note in backend-tests).
+  # - No mock-service steps (unlike backend-tests / coverage): every test_utils
+  #   fixture returns is_docker_available() == False on Windows under CI, and the
+  #   runner's Docker daemon is in Windows-container mode anyway, so each
+  #   start_*/stop_* step was a guaranteed no-op that still paid a full poetry +
+  #   interpreter spin-up. Tests needing those services skip themselves.
+  # ---------------------------------------------------------------------------
+  backend-tests-windows-core-a:
+    name: backend-tests-windows-shard (core-a)
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.any_backend == 'true' ||
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: windows-latest
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: 'pip'  # Enable pip caching
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install Poetry
         shell: pwsh
@@ -334,35 +388,109 @@ jobs:
           (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
           echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      # Always runs, cache hit or not — it is fast against a warm venv and self-heals
+      # any drift between the restored env and poetry.lock.
       - name: Install Dependencies
         shell: pwsh
         run: |
           poetry install --no-interaction --no-ansi --with dev
 
-      # Backend tests do not need the built Vue UI (see note in backend-tests).
-      - name: Start Mock Database with Sample Data
+      - name: Run pytest for flowfile_core (shard core-a)
+        if: |
+          needs.detect-changes.outputs.backend_core == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run start_postgres
+        run: poetry run pytest flowfile_core/tests/flowfile flowfile_core/tests/project flowfile_core/tests/test_migration.py -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
 
-      - name: Start Mock MySQL Database with Sample Data
-        shell: pwsh
-        run: poetry run start_mysql
+  backend-tests-windows-core-b:
+    name: backend-tests-windows-shard (core-b)
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: windows-latest
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Start Mock SQL Server Database with Sample Data
-        shell: pwsh
-        run: poetry run start_mssql
+      - name: Set up Python 3.11
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'  # Enable pip caching
 
-      - name: Start Mock S3 bucket with Sample Data
-        shell: pwsh
-        run: poetry run start_minio
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
 
-      - name: Start Mock Azure Blob Storage (Azurite)
+      - name: Install Poetry
         shell: pwsh
-        run: poetry run start_azurite
+        run: |
+          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Start Mock Google Cloud Storage
+      # Always runs, cache hit or not — it is fast against a warm venv and self-heals
+      # any drift between the restored env and poetry.lock.
+      - name: Install Dependencies
         shell: pwsh
-        run: poetry run start_gcs
+        run: |
+          poetry install --no-interaction --no-ansi --with dev
+
+      # The --ignore set must stay in lockstep with core-a's path list above.
+      - name: Run pytest for flowfile_core (shard core-b)
+        if: |
+          needs.detect-changes.outputs.backend_core == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
+        shell: pwsh
+        run: poetry run pytest flowfile_core/tests --ignore=flowfile_core/tests/flowfile --ignore=flowfile_core/tests/project --ignore=flowfile_core/tests/test_migration.py -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
+
+  backend-tests-windows-pkg-other:
+    name: backend-tests-windows-shard (pkg-other)
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: windows-latest
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'  # Enable pip caching
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Poetry
+        shell: pwsh
+        run: |
+          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # Always runs, cache hit or not — it is fast against a warm venv and self-heals
+      # any drift between the restored env and poetry.lock.
+      - name: Install Dependencies
+        shell: pwsh
+        run: |
+          poetry install --no-interaction --no-ansi --with dev
 
       # Kafka tests need a broker; they run in test-kafka-integration.yml
       - name: Run pytest for shared
@@ -382,15 +510,6 @@ jobs:
         shell: pwsh
         run: poetry run pytest flowfile_frame/tests --disable-warnings
 
-      - name: Run pytest for flowfile_core
-        if: |
-          needs.detect-changes.outputs.backend_core == 'true' ||
-          needs.detect-changes.outputs.shared == 'true' ||
-          needs.detect-changes.outputs.test_workflow == 'true' ||
-          github.event.inputs.run_all_tests == 'true'
-        shell: pwsh
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
-
       - name: Run pytest for flowfile_worker
         if: |
           needs.detect-changes.outputs.backend_worker == 'true' ||
@@ -398,27 +517,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_worker/tests --disable-warnings
-
-      - name: Stop Mock Database
-        shell: pwsh
-        run: poetry run stop_postgres
-
-      - name: Stop Mock MySQL Database
-        shell: pwsh
-        run: poetry run stop_mysql
-
-      - name: Stop Mock S3 bucket
-        shell: pwsh
-        run: poetry run stop_minio
-
-      - name: Stop Mock Azure Blob Storage (Azurite)
-        shell: pwsh
-        run: poetry run stop_azurite
-
-      - name: Stop Mock Google Cloud Storage
-        shell: pwsh
-        run: poetry run stop_gcs
+        run: poetry run pytest flowfile_worker/tests --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Run pytest for flowfile
         if: |
@@ -428,6 +527,72 @@ jobs:
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
+
+  # Fan-in for the three Windows shards. `backend-tests-windows` is a required
+  # branch-protection context, so this job id must not change - it is the only
+  # thing GitHub still reports under that name.
+  #
+  # A plain `needs:` fan-in would be a false-green machine: a skipped needed job
+  # does not fail its dependents. So every result is checked explicitly, against
+  # whether the shards were supposed to run at all.
+  backend-tests-windows:
+    needs: [detect-changes, backend-tests-windows-core-a, backend-tests-windows-core-b, backend-tests-windows-pkg-other]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Windows shard results
+        env:
+          DETECT: ${{ needs.detect-changes.result }}
+          CORE_A: ${{ needs.backend-tests-windows-core-a.result }}
+          CORE_B: ${{ needs.backend-tests-windows-core-b.result }}
+          PKG_OTHER: ${{ needs.backend-tests-windows-pkg-other.result }}
+          # Same expression as each shard's job-level `if:`. When it is false the
+          # path filters excluded the whole group (e.g. a docs-only change) and
+          # three skipped shards are the correct, passing outcome.
+          SHARDS_EXPECTED: ${{ needs.detect-changes.outputs.any_backend == 'true' || needs.detect-changes.outputs.test_workflow == 'true' || github.event.inputs.run_all_tests == 'true' }}
+        run: |
+          echo "=== Windows shard results ==="
+          echo "  detect-changes: $DETECT"
+          echo "  shards expected to run: $SHARDS_EXPECTED"
+          echo "  core-a:    $CORE_A"
+          echo "  core-b:    $CORE_B"
+          echo "  pkg-other: $PKG_OTHER"
+          echo ""
+
+          # Without a trustworthy detect-changes there is no trustworthy
+          # SHARDS_EXPECTED, so its own result is part of the gate.
+          if [[ "$DETECT" != "success" ]]; then
+            echo "ERROR: detect-changes result is '$DETECT' - cannot verify the shards."
+            exit 1
+          fi
+
+          if [[ "$SHARDS_EXPECTED" != "true" ]]; then
+            for r in "$CORE_A" "$CORE_B" "$PKG_OTHER"; do
+              if [[ "$r" != "skipped" ]]; then
+                echo "ERROR: no Windows shard should have run, but one reported '$r'."
+                exit 1
+              fi
+            done
+            echo "No backend changes - all Windows shards skipped by path filters."
+            exit 0
+          fi
+
+          # Shards were expected to run, so only 'success' passes. 'failure',
+          # 'cancelled' and 'skipped' are all red: a shard that never ran proves
+          # nothing, and reporting it green is exactly the false-green trap this
+          # job exists to close.
+          status=0
+          for shard in "core-a:$CORE_A" "core-b:$CORE_B" "pkg-other:$PKG_OTHER"; do
+            if [[ "${shard#*:}" != "success" ]]; then
+              echo "ERROR: Windows shard '${shard%%:*}' reported '${shard#*:}' (expected 'success')."
+              status=1
+            fi
+          done
+
+          if [[ $status -eq 0 ]]; then
+            echo "All Windows shards passed."
+          fi
+          exit $status
 
   # Kernel integration tests - runs in parallel on a separate worker
   kernel-tests:
@@ -653,7 +818,7 @@ jobs:
           echo "Job results:"
           echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
           echo "  - Coverage: ${{ needs.coverage.result }}"
-          echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
+          echo "  - Backend Tests (Windows, 3-shard fan-in): ${{ needs.backend-tests-windows.result }}"
           echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
           echo "  - Stub Drift: ${{ needs.check-stubs.result }}"
           echo "  - Formula Docs Drift: ${{ needs.check-formula-docs.result }}"

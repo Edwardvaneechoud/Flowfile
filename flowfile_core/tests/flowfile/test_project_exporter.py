@@ -688,7 +688,7 @@ def test_project_executes_end_to_end(tmp_path):
     project_dir = write_project(manifest, tmp_path)
 
     result = subprocess.run(
-        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, encoding="utf-8", timeout=300
     )
     assert result.returncode == 0, result.stderr
     assert "doubled the age column" in result.stdout
@@ -1068,7 +1068,7 @@ class TestRunFlowProjectExport:
         manifest = export_flow_to_project(flow)
         project_dir = write_project(manifest, tmp_path)
         result = subprocess.run(
-            [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+            [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, encoding="utf-8", timeout=300
         )
         assert result.returncode == 0, result.stderr
         # head(1) + head(2) of the 3-row parent frame -> 3 rows with metadata columns
@@ -1157,7 +1157,7 @@ def test_custom_node_flowfile_ctx_executes_end_to_end(tmp_path):
 
     project_dir = write_project(manifest, tmp_path)
     result = subprocess.run(
-        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, encoding="utf-8", timeout=300
     )
     assert result.returncode == 0, result.stderr
     assert "ctx node ran" in result.stdout

@@ -26,6 +26,7 @@ export function useKernelManager() {
   const flavourInfo: Ref<Map<ImageFlavour, FlavourInfo>> = ref(new Map());
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
+  let disposed = false;
 
   const checkDockerStatus = async () => {
     dockerStatus.value = await KernelApi.getDockerStatus();
@@ -112,6 +113,9 @@ export function useKernelManager() {
   };
 
   const startPolling = () => {
+    // The async onMounted below can land here after unmount (e.g. a fast tab
+    // switch away from the kernels tab) — starting then would leak the timers.
+    if (disposed) return;
     stopPolling();
     pollTimer = setInterval(async () => {
       try {
@@ -146,6 +150,7 @@ export function useKernelManager() {
   });
 
   onUnmounted(() => {
+    disposed = true;
     stopPolling();
   });
 

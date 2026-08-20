@@ -6,6 +6,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSeriali
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings, FullCloudStorageConnection
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+from flowfile_worker.log_models import RawLogInput as RawLogInput  # noqa: F401
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
 
@@ -39,6 +40,12 @@ OperationType = Literal[
     "scd2_delta",
 ]
 ResultType = Literal["polars", "other"]
+
+
+class PoolConfigInput(BaseModel):
+    """Request body for POST /pool (warm worker pool resize)."""
+
+    size: int = Field(..., ge=0, le=32, description="Target member capacity; 0 disables the pool.")
 
 
 class PolarsOperation(BaseModel):
@@ -200,14 +207,6 @@ class Status(BaseModel):
 
     def __hash__(self):
         return hash(self.file_ref)
-
-
-class RawLogInput(BaseModel):
-    flowfile_flow_id: int
-    log_message: str
-    log_type: Literal["INFO", "WARNING", "ERROR"]
-    node_id: int | None = None
-    extra: dict | None = None
 
 
 class ColumnSchema(BaseModel):

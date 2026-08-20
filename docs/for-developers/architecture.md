@@ -118,7 +118,12 @@ Flowfile offers two execution modes tailored for different needs:
 In Development mode, each node's transformation is triggered sequentially within the Worker service. Its intermediate result is typically serialized using **Apache Arrow IPC format** and cached to disk. This allows you to inspect the data at each step in the Designer via small samples fetched from the cache.
 
 **Performance Mode**
-In Performance mode, Flowfile fully embraces Polars' lazy evaluation. The Core service constructs the *entire* Polars execution plan based on the DAG. This plan (`LazyFrame`) is passed to the Worker service. The Worker only *materializes* (executes `.collect()` or `.sink_*()`) the plan when an output node (like writing to a file) requires the final result, or if a node is explicitly configured to cache its results (`node.cache_results`). This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
+In Performance mode, Flowfile fully embraces Polars' lazy evaluation. The Core service constructs the *entire* Polars execution plan based on the DAG, and an ordinary transform node does nothing more than extend that plan — it is neither materialized nor sent to the Worker. Materialization happens in exactly two places:
+
+- **Output nodes** (writing to a file, an API response, a subflow) materialize **in Core**, not on the Worker. Sinks have nothing to offload, so `_do_execute_remote` short-circuits them before the offload path.
+- **Nodes with `cache_results` enabled** are the one case that still offloads: caching requires a real result, so the executor drops those nodes out of performance mode for the duration of their run and sends them to the Worker.
+
+This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
 
 <details markdown="1">
 <summary>View Performance Mode Python Example (simplified)</summary>
@@ -127,11 +132,15 @@ In Performance mode, Flowfile fully embraces Polars' lazy evaluation. The Core s
 # Execution logic in Performance Mode (simplified)
 def execute_performance_mode(self, node: FlowNode, is_output_node: bool):
     """Handles execution in performance mode, leveraging lazy evaluation."""
-    if is_output_node or node.cache_results:
-        # If the result is needed (output or caching), offload to the Worker.
-        # Offload happens inside ExternalDfFetcher.__init__ — constructing it
-        # serializes the LazyFrame and POSTs it to the worker. flow_id and
-        # node_id are required.
+    if is_output_node:
+        # Sinks have nothing to offload: the write itself is the materialization,
+        # so an output node collects in Core and never reaches the Worker.
+        return node.get_resulting_data()
+    if node.cache_results:
+        # Caching needs a real result, so these nodes drop out of performance
+        # mode and offload. Offload happens inside ExternalDfFetcher.__init__ —
+        # constructing it serializes the LazyFrame and POSTs it to the worker.
+        # flow_id and node_id are required.
         fetcher = ExternalDfFetcher(
             flow_id=node.flow_id,
             node_id=node.node_id,
@@ -148,7 +157,7 @@ def execute_performance_mode(self, node: FlowNode, is_output_node: bool):
 
 </details>
 
-Crucially, **all actual data processing and materialization of Polars DataFrames/LazyFrames happens in the Worker service**. This separation prevents large datasets from overwhelming the Core service, ensuring the UI remains responsive.
+Crucially, **bulk data processing and materialization of Polars DataFrames/LazyFrames happens in the Worker service** — Core builds plans and ships paths and JSON, never intermediate frames. (The exception is a sink, which collects in Core because writing *is* the materialization.) This separation prevents large datasets from overwhelming the Core service, ensuring the UI remains responsive.
 
 ### Efficient Data Exchange
 

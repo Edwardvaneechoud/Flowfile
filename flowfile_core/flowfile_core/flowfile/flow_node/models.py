@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -295,6 +296,7 @@ class NodeResults:
         self.errors = None
         self.warnings = None
         self.example_data_generator = None
+        self.example_data_path = None
 
     def get_example_data(self) -> pa.Table | None:
         """
@@ -303,6 +305,17 @@ class NodeResults:
         """
         if self.example_data_generator:
             return self.example_data_generator()
+
+    def artifact_is_missing(self) -> bool:
+        """True when the worker file backing the current result has been removed.
+
+        ``example_data_path`` is the artifact the last run produced: for a REMOTE
+        node it is the very file ``resulting_data`` scans, for LOCAL_WITH_SAMPLING
+        the sibling sample in the same flow cache dir. It is set only by
+        ``store_example_data_generator`` and cleared before every run, so a path
+        that no longer exists means whatever is held here is a dangling scan.
+        """
+        return self.example_data_path is not None and not os.path.exists(self.example_data_path)
 
     @property
     def resulting_data(self) -> FlowDataEngine | None:
@@ -323,4 +336,5 @@ class NodeResults:
     def reset(self):
         """Resets all result attributes to their default, empty state."""
         self._resulting_data = None
+        self.example_data_path = None
         self.run_time_ms = -1

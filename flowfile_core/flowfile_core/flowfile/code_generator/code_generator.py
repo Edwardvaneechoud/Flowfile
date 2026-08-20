@@ -383,7 +383,7 @@ class FlowGraphCodeConverter(
     def _handle_csv_read(self, file_settings: input_schema.ReceivedTable, var_name: str):
         if file_settings.table_settings.encoding.lower() in ("utf-8", "utf8"):
             self._add_code(f"{var_name} = {self.framework}.scan_csv(")
-            self._add_code(f"    {self._py_str(file_settings.abs_file_path)},")
+            self._add_code(f"    {self._py_path(file_settings.abs_file_path)},")
             for kwarg_line in self._csv_scan_kwarg_lines(file_settings):
                 self._add_code(kwarg_line)
             self._emit_include_file_paths(file_settings)
@@ -393,7 +393,7 @@ class FlowGraphCodeConverter(
 
     def _handle_csv_read_non_utf8(self, file_settings: input_schema.ReceivedTable, var_name: str):
         self._add_code(f"{var_name} = {self.framework}.read_csv(")
-        self._add_code(f'    "{file_settings.abs_file_path}",')
+        self._add_code(f"    {self._py_path(file_settings.abs_file_path)},")
         self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
         self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
         self._add_code(f"    ignore_errors={file_settings.table_settings.ignore_errors},")
@@ -422,7 +422,7 @@ class FlowGraphCodeConverter(
         self._add_code("")
 
     def _emit_single_file_scan(self, file_type: str, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
-        source = self._py_str(file_settings.abs_file_path)
+        source = self._py_path(file_settings.abs_file_path)
         reader = self._scan_callable(file_type)
         if file_settings.include_file_paths:
             self._add_code(f"{var_name} = {reader}(")
@@ -470,7 +470,7 @@ class FlowGraphCodeConverter(
         """
         self.imports.add("import glob")
         self.imports.add("import os")
-        pattern = self._py_str(file_settings.abs_file_path)
+        pattern = self._py_path(file_settings.abs_file_path)
         return f"sorted(p for p in glob.glob({pattern}, recursive=True) if os.path.isfile(p))"
 
     def _emit_directory_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
@@ -487,7 +487,7 @@ class FlowGraphCodeConverter(
 
     def _handle_excel_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
         self._add_code(f"{var_name} = {self.framework}.read_excel(")
-        self._add_code(f'    "{file_settings.abs_file_path}",')
+        self._add_code(f"    {self._py_path(file_settings.abs_file_path)},")
         if file_settings.table_settings.sheet_name:
             self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
         self._add_code(")")
@@ -674,11 +674,11 @@ class FlowGraphCodeConverter(
 
         if output_settings.file_type == "csv":
             self._add_code(f"{input_df}.sink_csv(")
-            self._add_code(f'    "{output_settings.abs_file_path}",')
+            self._add_code(f"    {self._py_path(output_settings.abs_file_path)},")
             self._add_code(f'    separator="{output_settings.table_settings.delimiter}"')
             self._add_code(")")
         elif output_settings.file_type == "parquet":
-            self._add_code(f'{input_df}.sink_parquet("{output_settings.abs_file_path}")')
+            self._add_code(f"{input_df}.sink_parquet({self._py_path(output_settings.abs_file_path)})")
         elif output_settings.file_type == "excel":
             self._handle_output_excel(input_df, output_settings, settings.node_id)
 
@@ -687,7 +687,7 @@ class FlowGraphCodeConverter(
     def _handle_output_excel(self, input_df: str, output_settings, node_id: int) -> None:
         write_mode = resolve_excel_write_mode(output_settings.write_mode)
         self._add_code(f"{input_df}.write_excel(")
-        self._add_code(f'    "{output_settings.abs_file_path}",')
+        self._add_code(f"    {self._py_path(output_settings.abs_file_path)},")
         if write_mode == "overwrite":
             self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
         else:
@@ -1157,7 +1157,7 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
 
     def _handle_csv_read_non_utf8(self, file_settings: input_schema.ReceivedTable, var_name: str):
         self._add_code(f"{var_name} = {self.framework}.read_csv(")
-        self._add_code(f'    "{file_settings.abs_file_path}",')
+        self._add_code(f"    {self._py_path(file_settings.abs_file_path)},")
         self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
         self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
         self._add_code(f"    ignore_errors={file_settings.table_settings.ignore_errors},")
@@ -1168,7 +1168,7 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
 
     def _handle_excel_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
         self._add_code(f"{var_name} = {self.framework}.read_excel(")
-        self._add_code(f'    "{file_settings.abs_file_path}",')
+        self._add_code(f"    {self._py_path(file_settings.abs_file_path)},")
         if file_settings.table_settings.sheet_name:
             self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
         self._add_code(").lazy()")
@@ -1208,10 +1208,10 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
         if write_mode == "create":
             self.imports.add("import os")
             reason = f"Cannot write '{path}': the file already exists (write mode 'create')."
-            self._add_code(f'if os.path.exists("{path}"):')
-            self._add_code(f'    raise FileExistsError("{reason}")')
+            self._add_code(f"if os.path.exists({self._py_path(path)}):")
+            self._add_code(f"    raise FileExistsError({self._py_str(reason)})")
         self._add_code(f"{input_df}.collect().write_excel(")
-        self._add_code(f'    "{path}",')
+        self._add_code(f"    {self._py_path(path)},")
         self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
         self._add_code(")")
 

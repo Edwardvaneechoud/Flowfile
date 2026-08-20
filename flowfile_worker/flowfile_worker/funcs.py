@@ -1,3 +1,13 @@
+"""Subprocess compute targets.
+
+This is the spawned child's entry surface: every task pays what this module imports at
+top level, so only polars, the logger, and cheap always-loaded state live here —
+everything else (models, pl_fuzzy_frame_match, the external-source connectors,
+shared.delta_utils) is imported inside the task that needs it.
+"""
+
+from __future__ import annotations
+
 import hashlib
 import io
 import logging
@@ -10,39 +20,33 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
-from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+
+from flowfile_worker import mp_context
+from flowfile_worker.flow_logger import get_worker_logger
+from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
+from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from deltalake import DeltaTable
+    from pl_fuzzy_frame_match import FuzzyMapping
 
-from flowfile_worker import models, mp_context
-from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
-from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
-from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
-from flowfile_worker.external_sources.sql_source.main import write_df_to_database
-from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
-from flowfile_worker.flow_logger import get_worker_logger
-from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
-from shared.delta_utils import (
-    NO_VERSIONS_HASH,
-    format_delta_timestamp,
-    get_delta_size_bytes,
-    make_json_safe,
-    validate_catalog_path,
-    validate_catalog_uri,
-)
-from shared.excel_writer import write_excel_output
-from shared.storage_config import storage
+    from flowfile_worker import models
+    from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
+    from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 
 
 def _validate_catalog_path(table_name: str) -> Path:
     """Validate and resolve *table_name* under the catalog tables directory."""
+    from shared.delta_utils import validate_catalog_path
+
     return validate_catalog_path(table_name, storage.catalog_tables_directory)
 
 
 def _resolve_catalog_target(table_name: str, base_uri: str | None) -> str:
     """Resolve a bare *table_name* to a local path or an object-storage URI."""
     if base_uri is not None:
+        from shared.delta_utils import validate_catalog_uri
+
         return validate_catalog_uri(table_name, base_uri)
     return str(_validate_catalog_path(table_name))
 
@@ -62,6 +66,8 @@ def _resolve_storage_options(storage_payload: dict | None) -> dict | None:
 
 def _validate_virtual_results_path(name: str) -> Path:
     """Validate and resolve *name* under the catalog_virtual_results directory."""
+    from shared.delta_utils import validate_catalog_path
+
     return validate_catalog_path(name, storage.catalog_virtual_results_directory)
 
 
@@ -71,6 +77,8 @@ def _row_count_ipc(p: Path) -> int:
 
 def _get_delta_size_bytes(delta_dir: Path | str, storage_options: dict | None = None) -> int:
     """Delegate to ``shared.delta_utils.get_delta_size_bytes``."""
+    from shared.delta_utils import get_delta_size_bytes
+
     return get_delta_size_bytes(delta_dir, storage_options=storage_options)
 
 
@@ -200,6 +208,8 @@ def fuzzy_join_task(
     flowfile_flow_id: int,
     flowfile_node_id: int | str,
 ):
+    from pl_fuzzy_frame_match import fuzzy_match_dfs
+
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
         flowfile_logger.info("Starting fuzzy join operation")
@@ -461,6 +471,8 @@ def write_to_database(
     """
     Writes a Polars DataFrame to a SQL database.
     """
+    from flowfile_worker.external_sources.sql_source.main import write_df_to_database
+
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write operation to: {database_write_settings.table_name}")
     df = collect_lazy_frame(pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object)))
@@ -504,6 +516,8 @@ def write_to_cloud_storage(
     Returns:
         None
     """
+    from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
+
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write operation to: {cloud_write_settings.write_settings.resource_path}")
     df = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
@@ -545,6 +559,8 @@ def write_output(
             flowfile_logger.info(f'Execution plan explanation:\n{df.explain(format="plain")}')
         flowfile_logger.info("Successfully deserialized dataframe")
         if data_type == "excel":
+            from shared.excel_writer import write_excel_output
+
             frame = collect_lazy_frame(df) if isinstance(df, pl.LazyFrame) else df
             write_excel_output(frame, path=path, sheet_name=sheet_name, write_mode=write_mode)
             flowfile_logger.info(f"Number of records written: {frame.height}")
@@ -1095,6 +1111,8 @@ def execute_sql_query(
     import re
     import time
 
+    from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
+    from shared.delta_utils import make_json_safe
     from shared.sql_validation import validate_sql_query
 
     # Re-validate server-side: the worker must not trust the core caller.
@@ -1153,6 +1171,8 @@ def read_table_metadata(table_name: str, base_uri: str | None = None, storage_op
 
     Called by the worker endpoint so the core process never touches data files.
     """
+    from flowfile_worker.catalog_reader import open_catalog_table
+
     lf = open_catalog_table(table_name, base_uri=base_uri, storage_options=storage_options)
     schema = lf.collect_schema()
     schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
@@ -1179,6 +1199,9 @@ def get_delta_history(
     """
     from deltalake import DeltaTable
 
+    from flowfile_worker import models
+    from shared.delta_utils import format_delta_timestamp
+
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, storage_options=storage_options)
     history = dt.history(limit)
@@ -1196,8 +1219,10 @@ def get_delta_history(
     return models.DeltaHistoryResponse(current_version=current_version, history=entries)
 
 
-def _delta_preview_payload(dt: "DeltaTable", n_rows: int) -> tuple[list[str], list[str], list[list], int]:
+def _delta_preview_payload(dt: DeltaTable, n_rows: int) -> tuple[list[str], list[str], list[list], int]:
     """Bounded head read of an open Delta table -> (columns, dtypes, rows, total_rows)."""
+    from shared.delta_utils import make_json_safe
+
     dataset = dt.to_pyarrow_dataset()
     pa_table = dataset.head(n_rows)
     columns = pa_table.column_names
@@ -1228,6 +1253,8 @@ def read_delta_version_preview(
     """
     from deltalake import DeltaTable
 
+    from flowfile_worker import models
+
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, version=version, storage_options=storage_options)
     columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
@@ -1248,6 +1275,8 @@ def read_delta_preview(
     or a key under *base_uri* in object storage when set.
     """
     from deltalake import DeltaTable
+
+    from flowfile_worker import models
 
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, storage_options=storage_options)
@@ -1354,6 +1383,9 @@ def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.Reso
     Superseded same-table snapshots are pruned for both targets (age-guarded
     so concurrent readers can finish).
     """
+    from flowfile_worker import models
+    from shared.delta_utils import NO_VERSIONS_HASH
+
     if req.target == "kernel_shared":
         target_dir = storage.shared_virtual_results_directory
         name_fp = req.source_versions_hash[:16]

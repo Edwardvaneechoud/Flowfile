@@ -714,6 +714,12 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             "\n"
             "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
             "\n"
+            "# a non-UTF-8 console codepage crashes printing Polars frames (box-drawing chars)\n"
+            'if hasattr(sys.stdout, "reconfigure"):\n'
+            '    sys.stdout.reconfigure(encoding="utf-8")\n'
+            'if hasattr(sys.stderr, "reconfigure"):\n'
+            '    sys.stderr.reconfigure(encoding="utf-8")\n'
+            "\n"
             "from pipeline import run_etl_pipeline  # noqa: E402\n"
             "\n"
             "\n"

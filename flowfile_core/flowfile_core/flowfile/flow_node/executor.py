@@ -208,6 +208,12 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
 
+        # A vanished worker artifact outranks the in-memory "already ran" flag: the held
+        # result is a scan of that file, so skipping here hands downstream a dangling plan.
+        if self.node.results.artifact_is_missing():
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
+
         # Cache-enabled nodes: check if cache file is still present
         # This must come before performance_mode so cached results are preserved
         # even when upstream nodes produce no new data.

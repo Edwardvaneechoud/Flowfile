@@ -6,6 +6,7 @@ patches are call recorders that prove a function was *not* invoked, plus a synch
 """
 
 import os
+import time
 from pathlib import Path
 
 import polars as pl
@@ -57,10 +58,22 @@ def _rewrite_atomic(path: Path, content: str) -> None:
     The same window exists in production (the read node's schema callback mmaps on a background
     thread while an external writer truncates the file); it predates this feature and is filed
     separately.
+
+    Windows additionally *rejects* the replace (WinError 5) while that background scan holds the
+    destination open, and the prefetch is orphaned by the schema_callback setter so it cannot be
+    joined — hence the retry. On POSIX the replace succeeds first time and the loop never spins.
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content)
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def _write_xlsx(path, rows: list[dict], sheet_name: str = "Sheet1") -> None:
@@ -298,7 +311,9 @@ def test_deterministic_ordering(tmp_path, execution_location):
 
     sources = _collect(node)["src"].to_list()
     assert [os.path.basename(p) for p in sources] == ["10.csv", "2.csv", "a_1.csv", "b_2.csv", "z_0.csv"]
-    assert sources == expand_glob_pattern(node.setting_input.received_file.abs_file_path)
+    # polars renders the file-path column with forward slashes; expand_glob_pattern returns native separators.
+    expected = expand_glob_pattern(node.setting_input.received_file.abs_file_path)
+    assert [Path(p).as_posix() for p in sources] == [Path(p).as_posix() for p in expected]
 
 
 # Single-file mode must be untouched

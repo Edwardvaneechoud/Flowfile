@@ -1273,6 +1273,10 @@ class FlowDataEngine:
             raise Exception(f"Cannot create from {received_table.file_type}")
 
         flow_file = cls(handler(received_table))
+        if received_table.file_type == "parquet":
+            count = create_funcs.parquet_row_count(received_table)
+            if count is not None:
+                flow_file.number_of_records = count
         flow_file._org_path = received_table.abs_file_path
         return flow_file
 
