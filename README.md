@@ -96,13 +96,11 @@ Database and REST nodes export as `flowfile` calls, so their stored connections 
 
 &nbsp;
 
-### The platform around it
+### Other features
 
-**A data catalog.** Unity-style hierarchy (catalog > schema > table), Delta Lake-backed with version history and time travel. Flows register into namespaces and write output through a Catalog Writer node.
+Everything a flow produces can land in the data catalog: a catalog > schema > table hierarchy with Delta Lake underneath, so tables get version history and time travel. Flows write into it through a Catalog Writer node — or register their output as a virtual table, with nothing materialised. For those, Flowfile stores the Polars query plan rather than the data (as long as the producing graph is lazy-safe), so a consumer's filters push down straight through the flow boundary, and upstream Delta versions are tracked per read to catch stale data.
 
-**Virtual flow tables.** Flow outputs can live in the catalog without being materialized. If the producer graph is lazy-safe, Flowfile serializes the Polars LazyFrame and filter/projection pushdown crosses the flow boundary. Upstream Delta versions are tracked per read to catch stale data.
-
-**A SQL editor** on top of the catalog (Polars SQLContext). Query any registered table, visualize the result in an embedded Graphic Walker, save any ad-hoc query as a reusable flow in one click.
+There's a SQL editor on top (Polars SQLContext under the hood): query any registered table, chart the result in the embedded Graphic Walker, and if an ad-hoc query turns out to be useful, save it as a flow in one click.
 
 <div align="center">
   <img src=".github/images/sql_editor.png" alt="SQL editor with Graphic Walker visualization" width="800"/>
@@ -112,23 +110,9 @@ Database and REST nodes export as `flowfile` calls, so their stored connections 
 
 &nbsp;
 
-**A scheduler.** Run flows on an interval, trigger when a catalog table updates, or fire when a set of tables has all refreshed. Run history, logs, and cancellation live in the UI. Runs embedded, standalone, or in Docker.
+You can put flows on a schedule: on an interval, when a catalog table updates, or once a whole set of tables has refreshed. Run history, logs and cancellation live in the UI, and the scheduler runs embedded, standalone or in Docker. Any node setting takes `${variable}` parameters — file paths, SQL queries, formulas — with defaults managed in the Designer and overridden at run time with `--param`.
 
-**Flow parameters.** Parameterize any node setting using `${variable}` syntax — file paths, SQL queries, formulas. Manage defaults from a Designer panel, override at runtime via CLI with `--param`.
-
-**Multi-user sharing.** Run the Docker deployment and Flowfile becomes multi-user: accounts, an admin role, user groups. Share a connection, flow, or catalog namespace with a group at "use" or "manage" level; secrets can be shared too, read-only. Everything else stays private to its owner. The desktop app is single-user.
-
-**See it all together.** A single flow can filter, join, pivot, and aggregate, then branch into as many outputs as you need.
-
-<div align="center">
-  <img src="docs/assets/images/guides/sales_dashboard/dashboard_overview.png" alt="A complete Flowfile pipeline with joins, pivots, and aggregations feeding multiple outputs" width="800"/>
-  <br>
-  <sub>One flow, many outputs — joins, pivots, and aggregations feeding a product leaderboard, a monthly trend, and a city matrix.</sub>
-</div>
-
-&nbsp;
-
-### Extending it
+With the Docker deployment it all becomes multi-user: accounts, an admin role, user groups. Share a connection, flow or catalog namespace with a group at "use" or "manage" level (secrets can be shared too, read-only); everything else stays private to its owner. The desktop app is single-user.
 
 **Python kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
 
@@ -137,6 +121,14 @@ Database and REST nodes export as `flowfile` calls, so their stored connections 
 **An embeddable editor.** The browser editor also ships as a standalone Vue component, [`flowfile-editor`](https://www.npmjs.com/package/flowfile-editor), so you can drop a Polars-powered visual ETL canvas into any web app with zero backend: `npm install flowfile-editor`.
 
 **Templates and clipboard import.** Get started with built-in flow templates, or paste tabular data from Excel / Google Sheets directly onto the canvas to create a pre-filled input node.
+
+A single flow can filter, join, pivot and aggregate, then branch into as many outputs as you need:
+
+<div align="center">
+  <img src="docs/assets/images/guides/sales_dashboard/dashboard_overview.png" alt="A complete Flowfile pipeline with joins, pivots, and aggregations feeding multiple outputs" width="800"/>
+  <br>
+  <sub>Joins, pivots and aggregations feeding a product leaderboard, a monthly trend and a city matrix.</sub>
+</div>
 
 ---
 
