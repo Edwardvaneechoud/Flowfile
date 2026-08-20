@@ -289,7 +289,9 @@ function initialMode(): CodeMode {
 }
 
 function initialFlavour(): WalkthroughFlavour {
-  return localStorage.getItem(FLAVOUR_KEY) === 'polars' ? 'polars' : 'plain'
+  // Polars is the default: it is the library the canvas actually runs. An
+  // explicit earlier choice of the plain flavour is still honoured.
+  return localStorage.getItem(FLAVOUR_KEY) === 'plain' ? 'plain' : 'polars'
 }
 // Written ONLY by setFlavour, which always routes through generateCodeFromFlow —
 // that is what lets steps/trace/run state stay single rather than per-flavour.
@@ -1110,6 +1112,9 @@ onBeforeUnmount(() => {
   background: var(--color-background-secondary);
 }
 
+/* No scrollbar chrome: with always-visible scrollbars (macOS setting) the bar
+   paints as a fat track across the rail. The arrows and the auto-centring on
+   step change are the navigation; wheel/drag scrolling still works. */
 .rail-track {
   flex: 1 1 auto;
   min-width: 0;
@@ -1119,7 +1124,11 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
   scroll-behavior: smooth;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.rail-track::-webkit-scrollbar {
+  display: none;
 }
 
 .chip {
