@@ -26,8 +26,8 @@ export interface StepCapture {
  * The capture is indented like the block's first line (the section banner),
  * which is the block's own statement level — the last line of a block may sit
  * deeper, inside a loop. `__steps__` itself is never defined here: the run
- * harness pre-seeds it in the exec namespace, so a raising exercise stub still
- * leaves everything captured before it readable.
+ * harness pre-seeds it in the exec namespace, so a script that raises mid-way
+ * still leaves everything captured before the raise readable.
  */
 export function instrumentScript(text: string, captures: StepCapture[]): string {
   const lines = text.split('\n')

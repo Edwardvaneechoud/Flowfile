@@ -46,7 +46,17 @@
       </button>
 
       <section v-show="tab === 'why'" class="concept">
-        <template v-if="concept">
+        <template v-if="polarsDoc">
+          <div class="concept-head">
+            <h4 class="concept-title">{{ polarsDoc.label }}</h4>
+            <button class="concept-hide" @click="$emit('toggle-background')">Hide background</button>
+          </div>
+          <p class="concept-para">{{ polarsDoc.blurb }}</p>
+          <a class="polars-doc-link" :href="polarsDoc.href" target="_blank" rel="noopener noreferrer">
+            {{ polarsDoc.label }} — Polars docs ↗
+          </a>
+        </template>
+        <template v-else-if="concept">
           <div class="concept-head">
             <h4 class="concept-title">{{ concept.title }}</h4>
             <button class="concept-hide" @click="$emit('toggle-background')">Hide background</button>
@@ -56,32 +66,25 @@
           </p>
           <pre v-if="concept.sketch" class="concept-sketch">{{ concept.sketch.join("\n") }}</pre>
           <p v-if="concept.takeaway" class="concept-takeaway">{{ concept.takeaway }}</p>
+          <p v-if="concept.another" class="concept-another">
+            <span class="concept-another-label">Another way</span>
+            {{ concept.another.text }}
+            <a
+              class="concept-another-link"
+              :href="concept.another.href"
+              target="_blank"
+              rel="noopener noreferrer"
+              >{{ concept.another.linkLabel }} ↗</a
+            >
+          </p>
         </template>
         <p v-else class="pane-note">No background for this step.</p>
       </section>
 
       <section v-show="tab === 'data'" class="step-data">
-        <p v-if="stale && dataState === 'ready'" class="data-stale">
-          The script changed since these rows were captured.
-          <button class="data-relink" @click="$emit('trace')">Trace it again</button>
-        </p>
-        <div v-if="dataState === 'idle'" class="data-hint">
-          <button class="data-run" :disabled="!canRun" @click="$emit('trace')">
-            {{ canRun ? "Show the data at each step" : "Waiting for Python…" }}
-          </button>
-          <span class="data-note">Runs the script as it is now, here in your browser — nothing leaves the page.</span>
-        </div>
-        <div v-else-if="dataState === 'running'" class="data-hint">Working it out…</div>
-        <div v-else-if="dataState === 'failed'" class="data-failed">
-          <p class="data-hint failed">
-            {{ traceError ? "The script raised before any step finished:" : "The trace did not produce any data." }}
-          </p>
-          <pre v-if="traceError" class="run-error">{{ traceError }}</pre>
-          <button class="data-run" :disabled="!canRun" @click="$emit('trace')">Try again</button>
-        </div>
-        <div v-else-if="!tables.length" class="data-hint-block">
-          <p class="data-hint">{{ blockedReason }}</p>
-          <pre v-if="traceError" class="run-error">{{ traceError }}</pre>
+        <div v-if="dataLoading && !tables.length" class="data-hint">Fetching this step's rows…</div>
+        <div v-else-if="!tables.length" class="data-hint">
+          Run the flow to view the data this step produced.
         </div>
         <template v-else>
           <div class="tables">
@@ -133,6 +136,7 @@ import { ref } from 'vue'
 import RowTable from './RowTable.vue'
 import type { Concept } from '../composables/usePlainPythonGeneration'
 import type { PlainRunResult, StepTable } from '../composables/usePlainStep'
+import type { PolarsDoc } from '../composables/usePolarsWalkthrough'
 import type { CompareResult } from '../composables/usePlainTrace'
 
 export type MarginTab = 'why' | 'data' | 'output'
@@ -140,16 +144,13 @@ export type MarginTab = 'why' | 'data' | 'output'
 defineProps<{
   tab: MarginTab
   concept: Concept | null
+  /** In the Polars flavour the Why tab links to the reference instead of a concept card. */
+  polarsDoc: PolarsDoc | null
   tables: StepTable[]
   delta: string
   deltaCounts: { before: number; after: number } | null
-  blockedReason: string
-  dataState: 'idle' | 'running' | 'ready' | 'failed'
-  canRun: boolean
-  /** The buffer no longer matches the script the tables were traced from. */
-  stale: boolean
-  /** Cleaned traceback of the last trace's failure, if it raised unexpectedly. */
-  traceError: string | null
+  /** A canvas preview for this step is still on its way over the bridge. */
+  dataLoading: boolean
   showBackground: boolean
   runResult: PlainRunResult | null
   comparison: CompareResult | null
@@ -157,7 +158,6 @@ defineProps<{
 
 defineEmits<{
   'update:tab': [MarginTab]
-  trace: []
   compare: []
   'close-run': []
   'toggle-background': []
@@ -350,26 +350,35 @@ defineExpose({
   max-width: 68ch;
 }
 
-.data-stale {
-  margin: 0 0 12px;
-  padding: 8px 10px;
-  border-radius: 4px;
-  background: var(--color-background-tertiary);
+/* Quieter than the takeaway on purpose: the card still ends on the thing to
+   remember; this is a road sign past it. */
+.concept-another {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border-primary);
   font-size: 11.5px;
-  line-height: 1.55;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  max-width: 68ch;
+}
+
+.concept-another-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--color-text-secondary);
 }
 
-.data-relink {
+.concept-another-link {
   margin-left: 6px;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--color-accent);
-  font-size: 11.5px;
   text-decoration: underline;
-  cursor: pointer;
+  white-space: nowrap;
 }
+
 
 .data-hint {
   display: flex;
@@ -380,43 +389,6 @@ defineExpose({
   color: var(--color-text-secondary);
 }
 
-.data-hint.failed {
-  color: var(--color-danger);
-}
-
-.data-failed,
-.data-hint-block {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.data-run {
-  padding: 6px 14px;
-  border: 1px solid var(--color-accent);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-accent);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.data-run:hover:not(:disabled) {
-  background: var(--color-accent);
-  color: #fff;
-}
-
-.data-run:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.data-note {
-  font-size: 11px;
-  opacity: 0.75;
-}
 
 .tables {
   display: flex;
@@ -524,5 +496,22 @@ defineExpose({
   margin: 0;
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.polars-doc-link {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  color: var(--color-accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.polars-doc-link:hover {
+  background: var(--color-accent);
+  color: #fff;
 }
 </style>

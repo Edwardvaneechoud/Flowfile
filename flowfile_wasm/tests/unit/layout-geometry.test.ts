@@ -15,6 +15,7 @@ import {
   intentFromRect,
   isContainerUsable,
   snapSideForRect,
+  unobstructedRect,
   type Bounds,
   type PanelConfig,
   type PanelIntent,
@@ -339,5 +340,58 @@ describe('snapSideForRect', () => {
     const tie: RenderRect = { left: 770, top: 670, width: 400, height: 200 }
     expect(snapSideForRect(tie, container, ['right', 'bottom'])).toBe('right')
     expect(snapSideForRect(tie, container, ['bottom', 'right'])).toBe('bottom')
+  })
+})
+
+describe('unobstructedRect', () => {
+  const pane: RenderRect = { left: 0, top: 0, width: 1400, height: 800 }
+  const centre = (r: RenderRect) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
+
+  it('a right-docked panel insets from the right', () => {
+    const code: RenderRect = { left: 780, top: 0, width: 620, height: 800 }
+    expect(unobstructedRect(pane, [code])).toEqual({ left: 0, top: 0, width: 780, height: 800 })
+    expect(centre(unobstructedRect(pane, [code])).x).toBe(390)
+  })
+
+  it('a left sidebar insets from the left', () => {
+    const sidebar: RenderRect = { left: 0, top: 0, width: 200, height: 800 }
+    expect(unobstructedRect(pane, [sidebar])).toEqual({ left: 200, top: 0, width: 1200, height: 800 })
+  })
+
+  it('a bottom dock that also touches the right edge still cuts from the bottom', () => {
+    const preview: RenderRect = { left: 200, top: 560, width: 1200, height: 240 }
+    expect(unobstructedRect(pane, [preview])).toEqual({ left: 0, top: 0, width: 1400, height: 560 })
+  })
+
+  it('several panels compose into one free rect', () => {
+    const sidebar: RenderRect = { left: 0, top: 0, width: 200, height: 800 }
+    const code: RenderRect = { left: 780, top: 0, width: 620, height: 800 }
+    const preview: RenderRect = { left: 200, top: 560, width: 1200, height: 240 }
+    expect(unobstructedRect(pane, [sidebar, code, preview])).toEqual({
+      left: 200,
+      top: 0,
+      width: 580,
+      height: 560,
+    })
+  })
+
+  it('a full-screen panel falls back to the pane', () => {
+    expect(unobstructedRect(pane, [{ ...pane }])).toEqual(pane)
+  })
+
+  it('a collapsed header is too small to move the canvas', () => {
+    const minimized: RenderRect = { left: 1160, top: 0, width: 240, height: MINIMIZED_HEADER_PX }
+    expect(unobstructedRect(pane, [minimized])).toEqual(pane)
+  })
+
+  it('a cut that would leave a sliver is refused', () => {
+    // Covers everything but a 40px strip on the left — narrower than MIN_PANEL_W.
+    const wide: RenderRect = { left: 40, top: 0, width: 1360, height: 800 }
+    expect(unobstructedRect(pane, [wide])).toEqual(pane)
+  })
+
+  it('an unmeasured pane is returned untouched', () => {
+    const empty: RenderRect = { left: 0, top: 0, width: 0, height: 0 }
+    expect(unobstructedRect(empty, [{ left: 0, top: 0, width: 100, height: 100 }])).toEqual(empty)
   })
 })

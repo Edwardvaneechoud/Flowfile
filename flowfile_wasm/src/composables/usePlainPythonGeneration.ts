@@ -44,21 +44,21 @@ type InputVars = Record<string, string>
 /** Thrown by an emitter that cannot honour this particular configuration. */
 class PlainPythonUnsupported extends Error {}
 
-/** Join strategies with an honest loop form. right/full/outer/cross become exercises. */
+/** Join strategies with an honest loop form. The rest become done-by-the-canvas notes. */
 const JOIN_HOWS_SUPPORTED = new Set(['inner', 'left', 'semi', 'anti'])
 
-/** Honest exercise text per unsupported join — a full join is NOT a swapped left join. */
+/** Honest per-join reasons — a full join is NOT a swapped left join. */
 const JOIN_EXERCISE_REASONS: Record<string, string> = {
-  right: 'A "right" join is a left join with the two tables swapped — worth writing out yourself.',
-  full: 'A "full" join is a left join plus the right-hand rows that found no match — worth writing out yourself.',
-  outer: 'An "outer" join is a left join plus the right-hand rows that found no match — worth writing out yourself.',
+  right: 'A "right" join is a left join with the two tables swapped.',
+  full: 'A "full" join is a left join plus the right-hand rows that found no match.',
+  outer: 'An "outer" join is a left join plus the right-hand rows that found no match.',
   cross: 'A cross join pairs every row with every row — two nested loops, like the Cross join node.'
 }
 
 /**
  * The aggregations pivot really implements. The settings panel also offers
  * n_unique and concat, but the engine has no case for them and quietly sums
- * instead — so those become an exercise rather than a lie.
+ * instead — so those become a done-by-the-canvas note rather than a lie.
  */
 const PIVOT_AGGS_SUPPORTED = new Set(['sum', 'mean', 'min', 'max', 'count', 'first', 'last', 'median'])
 
@@ -105,7 +105,7 @@ export const NODE_EXPLANATIONS: Record<string, string> = {
   write_to_catalog:
     'Saves the rows as a Catalog table. A standalone script has no Catalog, so the generated code writes the same rows to a CSV file.',
   formula:
-    'Evaluates a Flowfile expression on every row. Translating any possible expression would mean writing a whole expression evaluator, so the script leaves this node as an exercise for you to fill in instead.',
+    'Evaluates a Flowfile expression on every row. Translating any possible expression would mean writing a whole expression evaluator, so the generated script cannot reproduce it — the canvas applies this step for you.',
   polars_code:
     'Runs Polars code you wrote yourself. It is already Python, and it already uses a dataframe library, so there is nothing to translate.',
   pivot:
@@ -139,6 +139,11 @@ export interface Concept {
   sketch?: string[]
   /** The thing to take away and reuse elsewhere. */
   takeaway?: string
+  /**
+   * A standard-library road to the same shape — a thought and a link, never a
+   * third code path. Sparingly: it only lands if most cards do not have one.
+   */
+  another?: { text: string; linkLabel: string; href: string }
 }
 
 export const CONCEPTS: Record<string, Concept> = {
@@ -242,7 +247,12 @@ export const CONCEPTS: Record<string, Concept> = {
       '     -> cities in order, ages in order within each city'
     ],
     takeaway:
-      'To sort by several columns one pass at a time: sort by the least important column first and the most important last. Stability keeps the earlier passes intact.'
+      'To sort by several columns one pass at a time: sort by the least important column first and the most important last. Stability keeps the earlier passes intact.',
+    another: {
+      text: 'operator.itemgetter("city", "age") builds the same key function without a lambda. It cannot do the (is not None, value) trick, though — that still needs the lambda.',
+      linkLabel: 'Sorting HOW-TO — Python docs',
+      href: 'https://docs.python.org/3/howto/sorting.html'
+    }
   },
   'seen-set': {
     title: 'The `seen` set',
@@ -260,7 +270,12 @@ export const CONCEPTS: Record<string, Concept> = {
       '    seen.add(key)',
       '    out.append(row)'
     ],
-    takeaway: 'Use a set for "have I seen this?" and a dict for "what did I see with it?". Both answer instantly; a list does not.'
+    takeaway: 'Use a set for "have I seen this?" and a dict for "what did I see with it?". Both answer instantly; a list does not.',
+    another: {
+      text: 'For a flat list of values, list(dict.fromkeys(values)) drops duplicates in one line, keeping first appearances — a dict holds one entry per key. Rows need a detour: a key must be a value that cannot change, so each dict becomes a tuple first — exactly what the loop\'s key = (row["email"],) line is quietly doing.',
+      linkLabel: 'dict.fromkeys — Python docs',
+      href: 'https://docs.python.org/3/library/stdtypes.html#dict.fromkeys'
+    }
   },
   'accumulator-dict': {
     title: 'Group by: sort into buckets, then summarise',
@@ -286,7 +301,12 @@ export const CONCEPTS: Record<string, Concept> = {
       '    "Widget" -> 100 + 150 = 250',
       '    "Gadget" ->       200 = 200'
     ],
-    takeaway: 'setdefault(key, []).append(x) is the one-liner for "add to the list at this key, creating the list if needed".'
+    takeaway: 'setdefault(key, []).append(x) is the one-liner for "add to the list at this key, creating the list if needed".',
+    another: {
+      text: 'itertools.groupby collapses the two passes into one — but it only groups rows that are already next to each other, so you must sort by the group key first. The buckets dict never needs the sort.',
+      linkLabel: 'itertools.groupby — Python docs',
+      href: 'https://docs.python.org/3/library/itertools.html#itertools.groupby'
+    }
   },
   'nested-accumulator': {
     title: 'Pivot: a grid of buckets',
@@ -339,7 +359,12 @@ export const CONCEPTS: Record<string, Concept> = {
       '    for row in left:',
       '        for other in index.get(row["id"], []): ...'
     ],
-    takeaway: 'When you catch yourself scanning one list inside a loop over another, build a dict instead.'
+    takeaway: 'When you catch yourself scanning one list inside a loop over another, build a dict instead.',
+    another: {
+      text: 'collections.defaultdict(list) makes the setdefault line unnecessary: index[key].append(other) creates the empty list itself the first time a key appears.',
+      linkLabel: 'collections.defaultdict — Python docs',
+      href: 'https://docs.python.org/3/library/collections.html#collections.defaultdict'
+    }
   },
   'nested-loop': {
     title: 'Cross join: every pair',
@@ -347,7 +372,12 @@ export const CONCEPTS: Record<string, Concept> = {
       'A cross join pairs every row on the left with every row on the right. There is no key to match on, so two nested loops is exactly the right code — nothing here to speed up.',
       'Watch the output size: it multiplies. 1,000 rows against 1,000 rows makes 1,000,000 rows out.'
     ],
-    sketch: ['for row in left:          # 3 rows', '    for other in right:   # 4 rows', '        ...               # 12 rows out']
+    sketch: ['for row in left:          # 3 rows', '    for other in right:   # 4 rows', '        ...               # 12 rows out'],
+    another: {
+      text: 'itertools.product(left, right) yields exactly these pairs — the two nested loops as one call. Merging each pair into one row is still yours to write.',
+      linkLabel: 'itertools.product — Python docs',
+      href: 'https://docs.python.org/3/library/itertools.html#itertools.product'
+    }
   },
   'column-union': {
     title: 'Stacking tables that disagree',
@@ -433,15 +463,6 @@ export const CONCEPTS: Record<string, Concept> = {
       'written: "he said ""hi"", loudly"'
     ],
     takeaway: 'Never write CSV by joining strings yourself — the edge cases will break the file.'
-  },
-  exercise: {
-    title: 'Over to you',
-    body: [
-      'This node has no ready-made loop, so the script leaves it to you: a function that currently just raises an error, with the rule it should apply quoted in the comment above it.',
-      'Everything before this step already ran, so its data is there to look at. Edit the function right here in the editor — replace the raise with a loop that returns a new list of rows — then press ▶ to run your version, or "Show the data at each step" to trace it.',
-      'The steps after this one have no data yet, because the script stops here until your function returns something.'
-    ],
-    takeaway: 'Return a new list of dicts. The rest of the script does not care how you build it.'
   }
 }
 
@@ -469,7 +490,7 @@ export const CONCEPT_FOR_NODE: Record<string, string> = {
   write_to_catalog: 'write-csv'
 }
 
-/** Why a node type has no loop form, quoted into its exercise stub. */
+/** Why a node type has no loop form, quoted into its done-by-the-canvas note. */
 const STUB_REASONS: Record<string, string> = {
   formula: 'The canvas evaluates this with its expression engine, so there is no fixed loop to show.',
   polars_code: 'This node is already Python, and it already uses a dataframe library — there is nothing to translate.'
@@ -479,8 +500,14 @@ const STUB_REASONS: Record<string, string> = {
 const HELPER_SOURCES: Record<string, string[]> = {
   read_csv_file: [
     'def read_csv_file(path, delimiter=",", has_header=True, skip_rows=0, infer_types=True):',
-    '    """Read a CSV file into a list of dicts, one dict per row."""',
-    '    with open(path, newline="", encoding="utf-8") as handle:',
+    '    """Read a CSV file — or an http(s) URL — into a list of dicts, one dict per row."""',
+    '    if path.startswith(("http://", "https://")):',
+    '        import io, urllib.request',
+    '        with urllib.request.urlopen(path) as response:',
+    '            handle = io.StringIO(response.read().decode("utf-8"))',
+    '    else:',
+    '        handle = open(path, newline="", encoding="utf-8")',
+    '    with handle:',
     '        rows = list(csv.reader(handle, delimiter=delimiter))',
     '    rows = rows[skip_rows:]',
     '    if not rows:',
@@ -591,7 +618,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   protected renderedSpans = new Map<number, [number, number]>()
   /** node id -> the variables it read, recorded pre-rename at dispatch time. */
   protected stepInputs = new Map<number, string[]>()
-  /** Nodes that ended up as an exercise rather than a loop. */
+  /** Nodes that ended up as a done-by-the-canvas note rather than a real loop. */
   protected stubbed = new Set<number>()
   /** One entry per emitting node, in pipeline order. Populated by renderBody(). */
   steps: PlainStep[] = []
@@ -669,7 +696,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
       emit.call(this, node, varName, inputVars)
     } catch (error) {
       if (!(error instanceof PlainPythonUnsupported)) throw error
-      // Roll back a half-written block, then leave an exercise in its place.
+      // Roll back a half-written block, then leave a done-by-the-canvas note.
       this.codeLines.length = start
       this.stubbed.add(node.id)
       this.emitExerciseStub(node, varName, inputVars, error.message)
@@ -716,8 +743,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
         varName: final(emission.varName),
         inputVars: (this.stepInputs.get(emission.nodeId) ?? []).map(final),
         concept: this.stubbed.has(emission.nodeId)
-          ? 'exercise'
-          : (CONCEPT_FOR_NODE[emission.node.type] ?? 'exercise'),
+          ? ''
+          : (CONCEPT_FOR_NODE[emission.node.type] ?? ''),
         // Resolved against the finished script in buildFinalCode, once the
         // header above the body is known.
         lineStart: span[0],
@@ -731,9 +758,9 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   /**
    * The same pipeline, instrumented to record every intermediate table.
    *
-   * `__steps__` is module-level rather than a local, so a raising exercise stub
-   * still leaves everything computed before it readable — which is exactly the
-   * case the walkthrough needs to keep working.
+   * `__steps__` is module-level rather than a local, so a script the learner
+   * has edited into raising mid-way still leaves everything computed before
+   * the raise readable.
    */
   buildTraceCode(): string {
     // Renders the body and finalises imports/helpers; the text itself is unused.
@@ -847,33 +874,33 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     return (lines[0]?.startsWith('# --- ') ? lines.slice(1) : lines).join('\n')
   }
 
-  // --- exercise stubs ------------------------------------------------------
+  /** Whether the node was emitted as a passthrough note rather than a real loop. */
+  isStubbed(nodeId: number): boolean {
+    return this.stubbed.has(nodeId)
+  }
 
+  // --- steps the canvas keeps to itself -------------------------------------
+
+  /**
+   * A node with no honest plain-Python form gets a short note, never a fake
+   * implementation: the rule is quoted, and the rows pass through unchanged
+   * (or start empty for a source) so every later name stays defined.
+   */
   protected emitExerciseStub(node: FlowNode, varName: string, inputVars: InputVars, reason?: string): void {
-    const inputs = this.collectMainInputs(inputVars)
-    const right = inputVars.right
-    const args = right ? [inputVars.main || 'rows_left', right] : inputs
-    // `rows`, or `left_rows`/`right_rows` — a person's parameter names, not a machine's.
-    const parameters = right
-      ? ['left_rows', 'right_rows']
-      : args.length === 1
-        ? ['rows']
-        : args.map((_, index) => `rows_${index + 1}`)
-    const functionName = this.temp(node.type, node.id)
+    const main = inputVars.main || this.collectMainInputs(inputVars)[0]
     const why = reason || STUB_REASONS[node.type] || `The canvas runs this node with a library, so there is no loop to show.`
 
-    this.section(`${getNodeDescription(node.type).title} — over to you`)
+    this.section(`${getNodeDescription(node.type).title} — done by the canvas`)
     this.teach(why)
     const detail = this.stubDetail(node)
     if (detail) this.teach('The rule it applies is:', ...detail.split('\n').map(line => `    ${line}`))
-    this.teach(
-      'Writing this one by hand is the exercise. Replace the raise below with a',
-      'loop that returns the new list of rows, and the rest of the script runs.'
-    )
-    this.addCode(`def ${functionName}(${parameters.join(', ')}):`)
-    this.addCode(`    raise NotImplementedError(${toPythonValue(why)})`)
-    this.addCode('')
-    this.addCode(`${varName} = ${functionName}(${args.join(', ')})`)
+    if (main) {
+      this.teach('No plain-Python form for it, so the rows continue unchanged here.')
+      this.addCode(`${varName} = ${main}`)
+    } else {
+      this.teach('No plain-Python form for it, so this table starts out empty here.')
+      this.addCode(`${varName} = []`)
+    }
     this.addCode('')
   }
 
@@ -886,7 +913,6 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     if (node.type === 'pivot') {
       const pivot = settings?.pivot_input
       if (!pivot?.pivot_column) return null
-      // Without the index and the aggregation the exercise cannot be solved.
       const index = pivot.index_columns?.length ? pivot.index_columns.join(', ') : '(none — one output row)'
       const aggregations = pivot.aggregations?.length ? pivot.aggregations.join(', ') : '(none selected)'
       return [
@@ -936,9 +962,6 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     }
     const path = table?.path ?? ''
     const remote = path.startsWith('http://') || path.startsWith('https://')
-    if (remote) {
-      throw new PlainPythonUnsupported('This file is loaded from a URL; fetching it is a separate exercise.')
-    }
     const csvSettings = table?.table_settings as InputCsvTable | undefined
     this.useHelper('read_csv_file')
     this.imports.add('import csv')
@@ -949,7 +972,8 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
       'pipeline) works out which columns are really numbers — the same guess',
       'other tools make silently.'
     )
-    const args = [toPythonValue(settings.file_name || table?.name || 'data.csv')]
+    if (remote) this.teach('Given a URL, the helper fetches the file with urllib first.')
+    const args = [toPythonValue(remote ? path : settings.file_name || table?.name || 'data.csv')]
     if (csvSettings?.delimiter && csvSettings.delimiter !== ',') {
       args.push(`delimiter=${toPythonValue(csvSettings.delimiter)}`)
     }
@@ -966,7 +990,7 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   }
 
   plainReadFromCatalog(node: FlowNode, varName: string): void {
-    const name = (node.settings as NodeReadFromCatalogSettings).dataset_name || 'catalog_table'
+    const name = ((node.settings as NodeReadFromCatalogSettings).dataset_name || '').trim() || 'catalog_table'
     this.emitCsvStandIn(varName, name, 'the Catalog')
   }
 
@@ -1711,9 +1735,15 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   // --- sinks ---------------------------------------------------------------
 
   /** Emitting nothing makes the base class alias this node straight to its input. */
-  plainExploreData(): void {}
+  plainExploreData(node: FlowNode, _varName: string, inputVars: InputVars): void {
+    // Interactive-only: remap to the input (like the base handlePreview) so the
+    // return line and downstream readers resolve to a defined name.
+    if (inputVars.main) this.nodeVarMapping.set(node.id, inputVars.main)
+  }
 
-  plainExternalOutput(): void {}
+  plainExternalOutput(node: FlowNode, _varName: string, inputVars: InputVars): void {
+    if (inputVars.main) this.nodeVarMapping.set(node.id, inputVars.main)
+  }
 
   plainOutput(node: FlowNode, varName: string, inputVars: InputVars): void {
     const settings = node.settings as NodeOutputSettings
@@ -1804,6 +1834,8 @@ export interface NodeExplanation {
   code: string | null
   /** Helper functions the snippet calls but does not define; they live in the full script. */
   helpers: string[]
+  /** True when the snippet is an exercise stub, not a real loop. */
+  isStub: boolean
 }
 
 export interface PlainWalkthrough {
@@ -1830,15 +1862,17 @@ export function usePlainPythonGeneration() {
     const nodeType = node?.type ?? 'unknown'
     const explanation = NODE_EXPLANATIONS[nodeType] ?? ''
     let code: string | null = null
+    let isStub = false
     try {
       const converter = new FlowToPlainPythonConverter(options)
       converter.convert()
       code = converter.explain(nodeId)
+      isStub = converter.isStubbed(nodeId)
     } catch {
       code = null
     }
     const helpers = code ? Object.keys(HELPER_SOURCES).filter(name => code!.includes(`${name}(`)) : []
-    return { explanation, code, helpers }
+    return { explanation, code, helpers, isStub }
   }
 
   return { generatePlainPython, buildWalkthrough, explainNode }

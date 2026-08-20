@@ -58,7 +58,7 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
     example: 'raise NotImplementedError("...")'
   },
   NotImplementedError: {
-    summary: 'The error meaning "this part is not written yet". In this script: your exercise — replace the raise with your own loop.'
+    summary: 'The error meaning "this part is not written yet".'
   },
   ValueError: { summary: 'Raised when the type is right but the value is not — int("4.2") for instance.' },
   True: { summary: 'The boolean yes. Capitalised — true is a NameError.' },
@@ -77,7 +77,7 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
     example: 'sorted(rows, key=lambda r: r["age"])'
   },
   sort: {
-    summary: 'Orders a list IN PLACE and returns None. Use sorted() if you want a copy.',
+    summary: 'Orders a list IN PLACE and returns None — use sorted() for a copy. On a Polars frame, the opposite: .sort() returns a NEW sorted frame.',
     example: 'rows.sort(key=..., reverse=True)'
   },
   lambda: {
@@ -106,7 +106,10 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
     summary: 'Walks a dict handing you each key and value as a pair.',
     example: 'for column, value in row.items():'
   },
-  values: { summary: 'The values of a dict, without their keys.', example: 'list(by_key.values())' },
+  values: {
+    summary: 'The values of a dict, without their keys. In a Polars pivot, values= names the column that fills the grid.',
+    example: 'list(by_key.values())'
+  },
   set: {
     summary: 'An unordered collection with no duplicates. Checking membership is instant however big it gets.',
     example: 'seen = set();  if key in seen: ...'
@@ -116,13 +119,16 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
     summary: 'An immutable sequence. Unlike a list it can be a dict key or a set member — which is why group keys are tuples.',
     example: '(row["a"],)   <- the comma is what makes it a tuple'
   },
-  len: { summary: 'How many items. Works on lists, dicts, sets and strings.' },
-  sum: { summary: 'Adds up a sequence of numbers. Summing nothing gives 0.', example: 'sum([])  ->  0' },
+  len: { summary: 'How many items — lists, dicts, sets and strings. Inside a Polars expression, pl.len() is the row count.' },
+  sum: {
+    summary: 'Adds up a sequence of numbers; summing nothing gives 0. As a Polars aggregation, .sum() totals a column per group, skipping nulls.',
+    example: 'sum([])  ->  0'
+  },
   min: {
-    summary: 'The smallest item. Pass default= so an empty sequence returns that instead of raising.',
+    summary: 'The smallest item; pass default= so an empty sequence returns that instead of raising. In Polars, .min() is the per-group smallest, nulls skipped.',
     example: 'min(values, default=None)'
   },
-  max: { summary: 'The largest item. Takes the same default= as min().' },
+  max: { summary: 'The largest item — same default= as min(). In Polars, .max() is the per-group largest.' },
   next: {
     summary: 'Pulls the first item off a generator; the second argument is what to return when there is none.',
     example: 'next((r for r in rows if ...), None)'
@@ -135,7 +141,10 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
   continue: { summary: 'Skip the rest of this loop pass and move to the next item.' },
   None: { summary: 'Python\'s "no value". It is not 0 and not "" — and comparing it to a number raises.' },
   isinstance: { summary: 'Asks whether a value is of a given type.', example: 'isinstance(v, bool)' },
-  str: { summary: 'The text type, and the function that converts a value to text.' },
+  str: {
+    summary: 'The text type, and the function that converts a value to text. On a Polars column, .str opens the string methods.',
+    example: 'pl.col("x").str.contains("...")'
+  },
   int: { summary: 'The whole-number type. int("42") converts; int("4.2") raises ValueError.' },
   float: { summary: 'The decimal-number type. float("4.2") converts.' },
   bool: { summary: 'True or False. Note that bool is a kind of int, so check it before int in a type test.' },
@@ -153,7 +162,9 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
   re: { summary: 'Regular expressions. Polars\' str.contains is a regex search, so the loop uses re.search.' },
   statistics: { summary: 'Standard library maths helpers — mean, median and friends.' },
   search: { summary: 'Looks for a regex anywhere in a string; returns None when it does not match.', example: 're.search("W.dget", text)' },
-  median: { summary: 'The middle value once sorted. Raises on an empty sequence, hence the wrapper.' },
+  median: {
+    summary: 'The middle value once sorted. statistics.median raises on nothing (hence the wrapper); Polars\' .median() just gives null.'
+  },
   startswith: { summary: 'Literal prefix test on a string — not a regex.' },
   endswith: { summary: 'Literal suffix test on a string.' },
   strip: { summary: 'A copy of the string with the whitespace shaved off both ends.' },
@@ -167,9 +178,108 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
   writerows: { summary: 'Writes every row in the list, one CSV line each.' },
   fieldnames: { summary: 'The column names the CSV writer will use, in the order they should appear.' },
   join: {
-    summary: 'Glues a sequence of strings together with this string between them.',
-    example: '",".join(["a", "b"])  ->  "a,b"'
+    summary: 'Two meanings: on a string, glues a sequence together with it between the parts; on a Polars frame, matches the rows of two tables on key columns.',
+    example: 'left.join(right, left_on=["id"], right_on=["id"], how="left")'
   },
+
+  // --- the Polars flavour (bare-word keys: the tokenizer splits on dots) ---
+  pl: {
+    summary: 'The Polars library, imported as pl — the dataframe engine the canvas itself runs on.',
+    example: 'import polars as pl'
+  },
+  LazyFrame: {
+    summary: 'A recipe for a table, not the table. Steps chain onto it instantly; nothing computes until .collect().'
+  },
+  lazy: { summary: 'Turns an eager DataFrame into a LazyFrame, so later steps extend the recipe instead of running now.' },
+  collect: {
+    summary: 'Runs the whole recipe and returns the actual table — the one moment Polars does the work.',
+    example: 'run_etl_pipeline().collect()'
+  },
+  scan_csv: {
+    summary: 'Starts a lazy CSV read. Nothing loads yet, and only the columns the recipe needs ever will.',
+    example: 'pl.scan_csv("data.csv")'
+  },
+  scan_parquet: { summary: 'The lazy Parquet read — same idea as scan_csv, for a columnar file format.' },
+  read_excel: { summary: 'Reads an Excel sheet into a DataFrame — eager, because the file format has no lazy path.' },
+  col: {
+    summary: 'Names a column inside an expression. It is a reference, not the data — the data arrives at collect().',
+    example: 'pl.col("age") > 30'
+  },
+  lit: { summary: 'A plain value lifted into an expression, so it can sit beside columns.', example: 'pl.lit(1)' },
+  alias: {
+    summary: 'Names the result of an expression — the column it will appear as.',
+    example: 'pl.col("a").sum().alias("total")'
+  },
+  cast: { summary: 'Converts a column to another type.', example: 'pl.col("a").cast(pl.Int64)' },
+  filter: {
+    summary: 'Keeps the rows where the expression is true — the whole guard-loop in one call.',
+    example: 'source.filter(pl.col("age") > 30)'
+  },
+  select: { summary: 'Keeps exactly the columns you name, in that order — the rebuild-each-row loop in one call.' },
+  with_columns: {
+    summary: 'Adds or replaces columns, keeping the rest of the table as it is.',
+    example: 'df.with_columns((pl.col("a") * 2).alias("b"))'
+  },
+  group_by: {
+    summary: 'One output row per distinct key — the buckets dict, built for you.',
+    example: 'df.group_by(["product"]).agg([...])'
+  },
+  agg: { summary: 'The summaries to compute per group — the group-by loop\'s second pass, as expressions.' },
+  unique: { summary: 'Drops duplicate rows — the seen set, built in. subset= names the columns that count as "the same".' },
+  head: { summary: 'The first n rows of the table.', example: 'df.head(5)' },
+  with_row_index: {
+    summary: 'Adds a counting column — enumerate for tables.',
+    example: 'df.with_row_index(name="record_id", offset=1)'
+  },
+  concat: { summary: 'Stacks tables on top of each other — the union. (On strings in an aggregation, it joins values.)' },
+  sink_csv: {
+    summary: 'Runs the recipe and writes the result to a CSV file in chunks — no whole-table detour through memory when the plan can stream.',
+    example: 'filtered.sink_csv("out.csv")'
+  },
+  sink_parquet: { summary: 'Runs the recipe and streams the result into a Parquet file.' },
+  write_excel: { summary: 'Writes a DataFrame to an Excel file.' },
+  rename: { summary: 'Renames columns from an {old: new} mapping.', example: 'df.rename({"a": "b"})' },
+  drop: { summary: 'Removes the named columns and keeps everything else.' },
+  pivot: { summary: 'Turns one column\'s values into new columns — the grid of buckets, in one call.' },
+  unpivot: { summary: 'The reverse of pivot: melts wide columns back into long (variable, value) rows.' },
+  descending: {
+    summary: 'sort\'s per-column direction — True means largest first.',
+    example: 'df.sort(["age"], descending=[True])'
+  },
+  subset: { summary: 'Which columns unique() compares — rows equal on just these count as duplicates.' },
+  keep: { summary: 'Which duplicate unique() keeps: "first", "last", "any" or "none".' },
+  how: { summary: 'The join strategy: "inner" keeps matches only, "left" keeps every left row, "semi"/"anti" filter by match.' },
+  left_on: { summary: 'The join key column(s) on the left table; right_on is its partner.' },
+  right_on: { summary: 'The join key column(s) on the right table; pairs with left_on.' },
+  suffix: { summary: 'Text appended to clashing column names — how a join tells the right table\'s columns apart.' },
+  is_null: { summary: 'True where the value is missing.' },
+  is_not_null: { summary: 'True where the value is present.' },
+  is_in: { summary: 'Membership test against a list of values.', example: 'pl.col("x").is_in(["a", "b"])' },
+  is_between: { summary: 'True where the value lies inside the range, ends included.' },
+  contains: {
+    summary: 'Regex search inside a string column — the reason the plain loop reaches for re.search.',
+    example: 'pl.col("x").str.contains("W.dget")'
+  },
+  starts_with: { summary: 'Literal prefix test on a string column — not a regex.' },
+  ends_with: { summary: 'Literal suffix test on a string column.' },
+  mean: { summary: 'The per-group average. Nulls are skipped; averaging nothing gives null.' },
+  count: { summary: 'How many values in the group — a missing value does not count. (pl.len() is the row count.)' },
+  first: { summary: 'The first value in the group — positional, so a null counts as a value.' },
+  last: { summary: 'The last value in the group, same rule as first.' },
+  n_unique: { summary: 'How many distinct values — "missing" counts as one of them.' },
+  int_range: { summary: 'A counting expression: the numbers 0, 1, 2, … as a column.' },
+  shuffle: { summary: 'Randomly reorders values — how a random sample picks its rows.' },
+  simple_function_to_expr: {
+    summary: 'Translates a Flowfile formula string into a Polars expression at run time.',
+    example: 'from polars_expr_transformer import simple_function_to_expr'
+  },
+  cs: { summary: 'Polars column selectors — ways to name groups of columns at once, like cs.all() or cs.numeric().' },
+  Utf8: { summary: 'Polars\' text column type.' },
+  Int64: { summary: 'Polars\' whole-number column type.' },
+  Float64: { summary: 'Polars\' decimal-number column type.' },
+  Boolean: { summary: 'Polars\' true/false column type.' },
+  Date: { summary: 'Polars\' calendar-date column type — a day, no time attached.' },
+  Datetime: { summary: 'Polars\' date-and-time column type.' },
 
   // --- helpers this generator writes for you ---
   read_csv_file: {

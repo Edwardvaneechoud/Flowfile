@@ -6,10 +6,10 @@
     <NodeExplainer v-if="teachingMode && learning.enabled" :node-id="nodeId" />
 
     <div class="general-settings-section">
-      <div class="section-header" @click="isExpanded = !isExpanded">
-        <span class="section-title">General Settings</span>
-        <span class="expand-icon">{{ isExpanded ? '−' : '+' }}</span>
-      </div>
+      <button type="button" class="section-header" :aria-expanded="isExpanded" @click="isExpanded = !isExpanded">
+        <svg class="section-chevron" :class="{ open: isExpanded }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <span class="section-title">General settings</span>
+      </button>
 
       <div v-show="isExpanded" class="section-content">
         <div class="setting-group">
@@ -104,35 +104,50 @@ function handleReferenceBlur() {
 
 .general-settings-section {
   margin-top: 16px;
-  border-top: 1px solid var(--border-color, #e0e0e0);
-  padding-top: 8px;
 }
 
 .section-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--spacing-4, 16px);
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-background-muted, #fafafa);
+  color: var(--color-text-primary, #333);
   cursor: pointer;
   user-select: none;
+  text-align: left;
 }
 
 .section-header:hover {
-  opacity: 0.8;
+  background: var(--color-background-secondary, #f0f2f5);
+}
+
+.section-header:focus {
+  outline: none;
+}
+
+.section-header:focus-visible {
+  outline: 2px solid var(--color-accent, #4a90d9);
+  outline-offset: 1px;
 }
 
 .section-title {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary, #666);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-weight: 500;
 }
 
-.expand-icon {
-  font-size: 16px;
-  font-weight: bold;
-  color: var(--text-secondary, #666);
+.section-chevron {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary, #888);
+  transition: transform 0.15s ease;
+}
+
+.section-chevron.open {
+  transform: rotate(90deg);
 }
 
 .section-content {
@@ -184,15 +199,6 @@ function handleReferenceBlur() {
 
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
-  .general-settings-section {
-    border-top-color: #444;
-  }
-
-  .section-title,
-  .expand-icon {
-    color: #aaa;
-  }
-
   .setting-label {
     color: #ddd;
   }

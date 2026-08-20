@@ -62,20 +62,20 @@ describe('plain-Python generation', () => {
     expect(PLAIN_PYTHON_NODE_TYPES.has('pivot')).toBe(true)
   })
 
-  it('leaves an unsupported node as an exercise instead of failing the export', () => {
+  it('leaves an unsupported node as a passthrough note instead of failing the export', () => {
     const formula = makeNode(2, 'formula', { function: { field: { name: 'c' }, function: '[a] * 2' } }, [1])
     const code = generatePlainPython(flowWith(SOURCE, formula))
 
-    expect(code).toContain('over to you')
-    expect(code).toContain('raise NotImplementedError')
-    expect(code).toContain('[a] * 2') // the rule is quoted back for you to implement
-    // A person's names: a bare function name and a `rows` parameter.
-    expect(code).toContain('def formula(rows):')
+    expect(code).toContain('done by the canvas')
+    expect(code).toContain('[a] * 2') // the rule is still quoted
+    // No fake implementation — the rows pass through under the step's name.
+    expect(code).not.toContain('raise NotImplementedError')
+    expect(code).toContain('computed = source')
     // The rest of the flow still generated.
     expect(code).toContain('source = [')
   })
 
-  it('falls back to an exercise when a supported node has an unsupported setting', () => {
+  it('falls back to a passthrough note when a supported node has an unsupported setting', () => {
     const advanced = makeNode(
       2,
       'filter',
@@ -83,8 +83,9 @@ describe('plain-Python generation', () => {
       [1]
     )
     const code = generatePlainPython(flowWith(SOURCE, advanced))
-    expect(code).toContain('over to you')
+    expect(code).toContain('done by the canvas')
     expect(code).toContain('Polars expression')
+    expect(code).not.toContain('raise NotImplementedError')
     // The half-written block was rolled back, not left behind.
     expect(code).not.toContain('for row in source:')
   })
@@ -133,17 +134,17 @@ describe('plain-Python generation', () => {
     expect(code).toContain('seen = []')
   })
 
-  it('never lets an exercise stub shadow a Python builtin', () => {
+  it('a passthrough note never defines a function at all', () => {
     const advanced = makeNode(
       2,
       'filter',
       { filter_input: { mode: 'advanced', advanced_filter: 'pl.col("a") > 1' } },
       [1]
     )
-    // `filter` is a builtin, so the stub keeps its node-id suffix.
+    // The old exercise stubs defined functions; a note binds a name and moves on.
     const code = generatePlainPython(flowWith(SOURCE, advanced))
-    expect(code).toContain('def filter_2(rows):')
-    expect(code).not.toContain('def filter(')
+    expect(code).not.toContain('def filter')
+    expect(code).toContain('filtered = source')
   })
 
   it('emits an empty pipeline rather than throwing on an empty flow', () => {
@@ -175,6 +176,7 @@ describe('per-node explanations', () => {
     expect(explanation.code).toContain('"b"') // the user's actual column, not a generic example
     // Only this node's block, not the whole script.
     expect(explanation.code).not.toContain('source = [')
+    expect(explanation.isStub).toBe(false)
   })
 
   it('explains a node type that has no loop form without contradicting itself', () => {
@@ -182,8 +184,10 @@ describe('per-node explanations', () => {
     const explanation = explainNode(flowWith(SOURCE, formula), 2)
 
     expect(explanation.explanation).not.toBe('')
-    expect(explanation.explanation).toContain('exercise')
-    expect(explanation.code).toContain('raise NotImplementedError')
+    expect(explanation.explanation).toContain('the canvas applies this step for you')
+    expect(explanation.code).not.toContain('raise NotImplementedError')
+    // The drawer hides the plain block and shows the Polars snippet on this flag.
+    expect(explanation.isStub).toBe(true)
   })
 
   it('drops the section banner from a drawer snippet but keeps it in the script', () => {
@@ -207,5 +211,47 @@ describe('per-node explanations', () => {
 
   it('returns no snippet for a node that is not in the flow', () => {
     expect(explainNode(flowWith(SOURCE), 42).code).toBeNull()
+  })
+})
+
+describe('YAML-loaded flows and interactive-only tails', () => {
+  it('an explicit rightInputId: null never fabricates a df_right input', () => {
+    // Flows loaded from YAML carry `right_input_id: null` on every node; a
+    // null id must not register phantom rows_left / df_right names.
+    const read = makeNode(
+      1,
+      'read',
+      { received_file: { name: 'sales.csv', path: 'https://example.com/sales.csv', file_type: 'csv' } },
+      [],
+      { rightInputId: null, leftInputId: null }
+    )
+    const formula = makeNode(
+      2,
+      'formula',
+      { function: { field: { name: 'x', data_type: 'Float64' }, function: '[a] * 2' } },
+      [1],
+      { rightInputId: null, leftInputId: null }
+    )
+    const code = generatePlainPython(flowWith(read, formula))
+    expect(code).not.toContain('df_right')
+    expect(code).not.toContain('rows_left')
+  })
+
+  it('reads a URL-sourced file for real instead of stubbing it', () => {
+    const read = makeNode(1, 'read', {
+      received_file: { name: 'sales.csv', path: 'https://example.com/sales.csv', file_type: 'csv' }
+    })
+    const code = generatePlainPython(flowWith(read))
+    expect(code).toContain('read_csv_file("https://example.com/sales.csv")')
+    expect(code).toContain('urllib.request.urlopen')
+    expect(code).not.toContain('NotImplementedError')
+  })
+
+  it('a trailing explore_data returns its input, not an undefined df_N', () => {
+    const unique = makeNode(2, 'unique', { unique_input: { columns: null, strategy: 'any' } }, [1])
+    const explore = makeNode(3, 'explore_data', {}, [2])
+    const code = generatePlainPython(flowWith(SOURCE, unique, explore))
+    expect(code).not.toContain('df_3')
+    expect(code).toMatch(/return deduped/)
   })
 })
