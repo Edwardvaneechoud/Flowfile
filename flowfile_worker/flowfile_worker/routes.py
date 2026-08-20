@@ -5,7 +5,6 @@ import os
 import uuid
 from queue import Empty
 
-import polars as pl
 from deltalake.exceptions import DeltaError
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -1018,13 +1017,12 @@ def validate_result(task_id: str) -> bool | None:
     logger.debug(f"Validating result for task: {task_id}")
     status = status_dict.get(task_id)
     if status.status == "Completed" and status.result_type == "polars":
-        try:
-            pl.scan_ipc(status.file_ref)
-            logger.debug(f"Validation successful for task: {task_id}")
+        # Not pl.scan_ipc: scanning is lazy and succeeds on a path that no longer
+        # exists, which made this probe - and core's results_exists - always say yes.
+        if os.path.exists(status.file_ref):
             return True
-        except Exception as e:
-            logger.error(f"Validation failed for task {task_id}: {str(e)}")
-            return False
+        logger.error(f"Validation failed for task {task_id}: result file is gone ({status.file_ref})")
+        return False
     return True
 
 

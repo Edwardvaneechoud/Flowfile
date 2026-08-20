@@ -1,3 +1,4 @@
+import time
 from base64 import b64decode
 from io import BytesIO
 
@@ -112,6 +113,36 @@ def test_external_package(create_grouper_data):
     # Results are base64-encoded string in JSON response, decode once
     result_df = pl.LazyFrame.deserialize(BytesIO(b64decode(status.results))).collect()
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
+
+
+def test_status_404s_when_the_result_file_is_gone(create_grouper_data):
+    """A deleted .arrow must make /status 404, so core's results_exists tells the truth.
+
+    The old guard was pl.scan_ipc(), which is lazy and succeeds on a path that no
+    longer exists — every cache-validity check downstream of it always said yes.
+    """
+    df = create_grouper_data
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Operation-Type": "store",
+        "X-Flow-Id": "1",
+        "X-Node-Id": "-1",
+    }
+    v = client.post('/submit_query/', content=df.serialize(), headers=headers)
+    assert v.status_code == 200, v.text
+    task_id = models.Status.model_validate(v.json()).background_task_id
+
+    for _ in range(100):
+        r = client.get(f'/status/{task_id}')
+        assert r.status_code == 200, r.text
+        status = models.Status.model_validate(r.json())
+        if status.status == 'Completed':
+            break
+        time.sleep(0.1)
+    assert status.status == 'Completed', f'task did not complete: {status.status}'
+
+    os.remove(status.file_ref)
+    assert client.get(f'/status/{task_id}').status_code == 404
 
 
 def test_add_fuzzy_join(create_fuzzy_data):

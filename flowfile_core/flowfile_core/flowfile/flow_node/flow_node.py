@@ -1329,14 +1329,14 @@ class FlowNode:
             return []
 
     def remove_cache(self):
-        """Removes cached results for this node.
+        """Drops this node's stored result from the worker.
 
-        Note: Currently not fully implemented.
+        Unguarded by results_exists: a task whose result file is already gone
+        still holds a worker status entry, and that is exactly the case that
+        needs clearing.
         """
 
-        if results_exists(self.hash):
-            logger.warning("Not implemented")
-            clear_task_from_worker(self.hash)
+        clear_task_from_worker(self.hash)
 
     def needs_run(
         self,

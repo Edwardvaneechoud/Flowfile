@@ -317,6 +317,15 @@ class TestWebSocketPath:
             assert pl.LazyFrame.deserialize(io.BytesIO(raw)).collect().equals(lf.collect())
 
     def test_ws_error_keeps_member(self, warm_pool):
+        """A task-level error must not burn the member.
+
+        The checkin is awaited INSIDE the ``with``. On the error path the terminal frame is sent
+        from _monitor_progress before ws_submit drains the completion envelope, while the success
+        path drains first - so leaving the block on the frame alone races TestClient's context-exit
+        cancel (portal.call(cs.cancel)) against that drain. The cancel lands on the drain's await,
+        CancelledError skips both excepts, ``envelope_received`` is never assigned, and the finally
+        retires a healthy member. POSIX wins that race by ~0.2ms; Windows does not.
+        """
         with client.websocket_connect("/ws/submit") as ws:
             ws.send_json({"task_id": "pool-ws-err", "operation": "store", "flow_id": 1, "node_id": -1})
             ws.send_bytes(b"garbage")
@@ -324,6 +333,11 @@ class TestWebSocketPath:
                 message = json.loads(ws.receive_text())
                 if message["type"] == "error":
                     break
+            # The child must have reported its own error. "Process ended unexpectedly" is the
+            # parent's verdict on a member that died without ever setting progress - a genuinely
+            # burnt member, which is a different failure from losing the reusability verdict.
+            assert message.get("error_message") != "Process ended unexpectedly", message
+            self._await_idle(warm_pool)
         assert warm_pool.stats() == {"size": 1, "idle": 1, "total": 1}, "clean error must not burn the member"
 
     def _await_terminal(self, task_id: str, timeout: float = 60.0) -> str:
