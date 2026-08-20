@@ -49,7 +49,7 @@ Learning mode is opt-in. By default the Code panel is a plain **Polars** view; t
 
 ### The Python walkthrough
 
-The same flow as one standalone script with no dataframe library — every table a `list[dict]`, every node an explicit loop — and a way to walk it a node at a time.
+The same flow as one standalone script, and a way to walk it a node at a time — in **two spellings**. Plain Python first: every table a `list[dict]`, every node an explicit loop, no dataframe library. Flip the **Plain Python | Polars** switch above the script and the same steps appear in Polars — the dataframe library the canvas actually runs — with the same step chips and the same variable names, so the `filtered` a loop builds is `filtered = source.filter(...)` one flip away. The switch keeps your place: step to Group By as loops, flip, and read the same step as one chain.
 
 The script is the centre of the view and stays there. Step chips along the top move a highlight through it, so you always see the block you are reading about *in place*, with what came before it and what happens next still on screen. **Hover any name** — `sorted`, `setdefault`, `lambda`, one of the generated helpers — for a one-line explanation and a small example.
 
@@ -65,11 +65,13 @@ By default there is no prose — just the code, the steps and the data. Press **
 
 That is the part a code comment cannot carry. A group by is the accumulator-dict pattern, and it explains why that takes two passes and where else you will write the shape. A join is a hash index, and it shows why building a dictionary first turns rows×rows of work into rows+rows. A sort takes a key function — and it shows you that `None < 5` does not return `False`, it raises, which is why the key carries a `True`/`False` flag in front of the value.
 
+A few cards end with a quiet **Another way** footer: the standard-library tool shaped like the loop you just read — `itertools.groupby` for the group by, `collections.defaultdict` for the join index, `itertools.product` for the cross join — with a link to the official Python docs.
+
 Nodes with a plain-Python form: manual input, CSV read, filter (basic mode), select, sort, unique, group by, join (inner, left, semi and anti), cross join, union, record ID, take sample, rename (prefix/suffix), pivot, unpivot, and the write nodes.
 
-Anything driven by the formula expression language — the Formula node, a filter in advanced mode, the Polars Code node — becomes an **exercise stub**: a function that quotes the rule it is supposed to apply and raises `NotImplementedError`. Fill it in, press ▶, and the rest of the script runs. A single one of them never fails the export, and the walkthrough still shows the data for every step before it.
+In the plain-Python spelling, anything driven by the formula expression language — the Formula node, a filter in advanced mode, the Polars Code node — becomes an **exercise stub**: a function that quotes the rule it is supposed to apply and raises `NotImplementedError`. Fill it in, press ▶, and the rest of the script runs. A single one of them never fails the export, and the walkthrough still shows the data for every step before it. In the Polars spelling there are no stubs — those nodes are ordinary code, which also makes it the place to check a solved exercise against.
 
-While Learning mode is on, every node's settings panel carries the same thing at a smaller scale: a **"How would I write this myself?"** section with a plain-English description plus the loop for *that node's actual settings* — your columns, your operators — rather than a generic example.
+While Learning mode is on, every node's settings panel carries the same thing at a smaller scale: a **"How would I write this myself?"** section with a plain-English description plus the loop for *that node's actual settings* — your columns, your operators — rather than a generic example. Beneath the loop sits the same step in Polars, under the same variable names — the loop↔one-liner correspondence at a glance. For an exercise stub the Polars line stays, there to check your loop against (the Polars Code node excepted — its settings already are Polars).
 
 !!! warning "It is a teaching output, not a production one"
     The generated script produces the same rows as the canvas, but it is deliberately not optimised and holds the whole table in memory as a list. Reading a CSV also leaves dates as text, where the engine recognises them — the generated helper flags that as an exercise.

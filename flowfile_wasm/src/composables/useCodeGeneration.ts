@@ -28,6 +28,7 @@ import type {
   NodeExternalDataSettings,
   NodeOutputSettings,
   NodeWriteToCatalogSettings,
+  NodeReadFromCatalogSettings,
   PolarsCodeSettings,
   FilterOperator,
   AggType
@@ -202,6 +203,7 @@ const NODE_TYPE_VAR_LABEL: Record<string, string> = {
   read: 'source',
   manual_input: 'source',
   external_data: 'source',
+  read_from_catalog: 'source',
   filter: 'filtered',
   formula: 'computed',
   select: 'selected',
@@ -250,6 +252,8 @@ export class FlowToPolarsConverter {
   // node_id -> upstream node_id for nodes that emit nothing (passthroughs).
   private passthrough: Map<number, number>
   private currentNodeId: number
+  // Final names for every emitting node (fused-away ones included); set by renderBody().
+  private explainRename: Map<string, string> | null
 
   constructor(options: CodeGenerationOptions) {
     this.nodes = options.nodes
@@ -264,6 +268,7 @@ export class FlowToPolarsConverter {
     this.nodeSpans = []
     this.passthrough = new Map()
     this.currentNodeId = -1
+    this.explainRename = null
   }
 
   convert(): string {
@@ -442,6 +447,9 @@ export class FlowToPolarsConverter {
       case 'write_to_catalog':
         this.handleWriteToCatalog(node.settings as NodeWriteToCatalogSettings, varName, inputVars)
         break
+      case 'read_from_catalog':
+        this.handleReadFromCatalog(node.settings as NodeReadFromCatalogSettings, varName)
+        break
       default:
         this.unsupportedNodes.push({
           id: node.id,
@@ -455,12 +463,14 @@ export class FlowToPolarsConverter {
   private getInputVars(node: FlowNode): Record<string, string> {
     const inputVars: Record<string, string> = {}
 
-    // For join nodes: leftInputId maps to 'main', rightInputId maps to 'right'
-    if (node.leftInputId !== undefined) {
+    // For join nodes: leftInputId maps to 'main', rightInputId maps to 'right'.
+    // != null: flows loaded from YAML carry an explicit `right_input_id: null`,
+    // which must not fabricate a phantom df_left/df_right input.
+    if (node.leftInputId != null) {
       inputVars.main = this.nodeVarMapping.get(node.leftInputId) || 'df_left'
     }
 
-    if (node.rightInputId !== undefined) {
+    if (node.rightInputId != null) {
       inputVars.right = this.nodeVarMapping.get(node.rightInputId) || 'df_right'
     }
 
@@ -597,6 +607,14 @@ export class FlowToPolarsConverter {
     this.addComment(`# Write to Catalog table "${name}" (browser catalog → CSV file in standalone code)`)
     this.addCode(`${inputDf}.sink_csv("${name}.csv", separator=",")`)
     this.addCode(`${varName} = ${inputDf}  # Reference for potential downstream use`)
+    this.addCode('')
+  }
+
+  private handleReadFromCatalog(settings: NodeReadFromCatalogSettings, varName: string): void {
+    const name = (settings.dataset_name || '').trim() || 'catalog_table'
+    // Mirror of handleWriteToCatalog: the table's standalone form is its CSV file.
+    this.addComment(`# Read Catalog table "${name}" (browser catalog → CSV file in standalone code)`)
+    this.addCode(`${varName} = pl.scan_csv("${name}.csv")`)
     this.addCode('')
   }
 
@@ -1167,8 +1185,8 @@ export class FlowToPolarsConverter {
   // Upstream node ids feeding `node` (main + left + right).
   private rawProducerIds(node: FlowNode): number[] {
     const ids = [...(node.inputIds || [])]
-    if (node.leftInputId !== undefined) ids.push(node.leftInputId)
-    if (node.rightInputId !== undefined) ids.push(node.rightInputId)
+    if (node.leftInputId != null) ids.push(node.leftInputId)
+    if (node.rightInputId != null) ids.push(node.rightInputId)
     return ids
   }
 
@@ -1216,7 +1234,19 @@ export class FlowToPolarsConverter {
 
     const [body, survivors] = renderPipeline(emissions, consumers)
     const rename = this.planBoundaryNames(emissions, survivors, nodeById)
+    this.explainRename = this.planExplainNames(emissions, nodeById)
     return this.applyRenames(body, rename)
+  }
+
+  // Names for explain()'s single-node snippets. Deliberately NOT the fused
+  // script's names: the drawer stacks each snippet under the plain flavour's
+  // loop, and the plain flavour names every node from an unfused pass — doing
+  // the same here (filtered_1/filtered_2, never a survivor's bare `filtered`)
+  // keeps one identifier meaning one table across the two stacked blocks.
+  private planExplainNames(
+    emissions: NodeEmission[], nodeById: Map<number, FlowNode>
+  ): Map<string, string> {
+    return this.planBoundaryNames(emissions, new Set(emissions.map(em => em.nodeId)), nodeById)
   }
 
   // Renameable boundaries: single-output provisional `df_N` assignments (not pinned,
@@ -1356,6 +1386,23 @@ export class FlowToPolarsConverter {
     return out
   }
 
+  // One node's Polars statement, standalone and under its final script names — powers
+  // the settings drawer's "same step in Polars" block. Null when the node emitted
+  // nothing (passthrough/disconnected) or convert() never completed.
+  explain(nodeId: number): string | null {
+    if (!this.explainRename) return null
+    const span = this.nodeSpans.find(s => s.node.id === nodeId)
+    if (!span) return null
+    let lines = this.codeLines.slice(span.start, span.end)
+    while (lines.length > 0 && lines[lines.length - 1] === '') lines = lines.slice(0, -1)
+    if (lines.length === 0) return null
+    // applyRenames also remaps lastNodeVar; restore it so explain() is idempotent.
+    const saved = this.lastNodeVar
+    const renamed = this.applyRenames(lines, this.explainRename)
+    this.lastNodeVar = saved
+    return renamed.join('\n')
+  }
+
   protected buildFinalCode(): string {
     const lines: string[] = []
 
@@ -1393,7 +1440,10 @@ export class FlowToPolarsConverter {
 
     lines.push('if __name__ == "__main__":')
     lines.push('    pipeline_output = run_etl_pipeline()')
-    lines.push('    print(pipeline_output.collect())')
+    // Type-aware: an external_output tail binds an already-collected DataFrame.
+    lines.push('    if isinstance(pipeline_output, pl.LazyFrame):')
+    lines.push('        pipeline_output = pipeline_output.collect()')
+    lines.push('    print(pipeline_output)')
 
     return lines.join('\n')
   }
@@ -1412,7 +1462,20 @@ export function useCodeGeneration() {
     }
   }
 
+  // The Polars form of one node's actual settings, for the settings drawer.
+  // Whole-flow convert then slice, mirroring usePlainPythonGeneration's explainNode.
+  const explainNodePolars = (options: CodeGenerationOptions, nodeId: number): string | null => {
+    try {
+      const converter = new FlowToPolarsConverter(options)
+      converter.convert()
+      return converter.explain(nodeId)
+    } catch {
+      return null
+    }
+  }
+
   return {
-    generateCode
+    generateCode,
+    explainNodePolars
   }
 }

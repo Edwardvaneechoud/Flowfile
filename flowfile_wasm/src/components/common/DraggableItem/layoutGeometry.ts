@@ -328,3 +328,51 @@ export function snapSideForRect(
   }
   return best
 }
+
+// An overlay smaller than this share of the canvas is not worth panning around
+// (a collapsed panel header, a small floater) — cutting it away would move the
+// canvas more than the obstruction justifies.
+const IGNORABLE_OVERLAY_AREA = 0.04
+
+const intersect = (a: RenderRect, b: RenderRect): RenderRect | null => {
+  const left = Math.max(a.left, b.left)
+  const top = Math.max(a.top, b.top)
+  const width = Math.min(a.left + a.width, b.left + b.width) - left
+  const height = Math.min(a.top + a.height, b.top + b.height) - top
+  return width > 0 && height > 0 ? { left, top, width, height } : null
+}
+
+/**
+ * The slice of the canvas the overlay panels leave visible — what "centre the
+ * node on screen" should actually mean while panels are docked over the pane.
+ *
+ * Every overlay is cut away whole, from whichever of the four sides leaves the
+ * most room. That derives the inset from the measured rects alone, so a
+ * right-docked panel becomes a right inset and a bottom-docked one a bottom
+ * inset without any panel having to declare where it sits. A cut that would
+ * leave less than the minimum panel box is refused, so a full-screen or
+ * pane-covering overlay falls back to the pane itself rather than to a sliver.
+ */
+export function unobstructedRect(pane: RenderRect, overlays: RenderRect[]): RenderRect {
+  const paneArea = pane.width * pane.height
+  if (paneArea <= 0) return pane
+
+  let free = pane
+  for (const overlay of overlays) {
+    const hit = intersect(free, overlay)
+    if (!hit || hit.width * hit.height < paneArea * IGNORABLE_OVERLAY_AREA) continue
+    const candidates: RenderRect[] = [
+      { ...free, width: hit.left - free.left },
+      { ...free, left: hit.left + hit.width, width: free.left + free.width - (hit.left + hit.width) },
+      { ...free, height: hit.top - free.top },
+      { ...free, top: hit.top + hit.height, height: free.top + free.height - (hit.top + hit.height) },
+    ]
+    let best: RenderRect | null = null
+    for (const candidate of candidates) {
+      if (candidate.width < MIN_PANEL_W || candidate.height < MIN_PANEL_H) continue
+      if (!best || candidate.width * candidate.height > best.width * best.height) best = candidate
+    }
+    if (best) free = best
+  }
+  return free
+}

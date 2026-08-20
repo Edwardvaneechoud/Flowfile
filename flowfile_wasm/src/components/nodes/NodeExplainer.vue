@@ -1,43 +1,71 @@
 <template>
   <div class="node-explainer">
-    <div class="section-header" @click="toggle">
+    <button type="button" class="section-header" :aria-expanded="isExpanded" @click="toggle">
+      <svg class="section-chevron" :class="{ open: isExpanded }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
       <span class="section-title">How would I write this myself?</span>
-      <span class="expand-icon">{{ isExpanded ? '−' : '+' }}</span>
-    </div>
+    </button>
 
     <div v-if="isExpanded" class="section-content">
       <p v-if="explanation?.explanation" class="explainer-prose">{{ explanation.explanation }}</p>
-      <div v-if="explanation?.code" class="explainer-code">
-        <!-- indent-with-tab off: even a read-only editor must not trap Tab. -->
-        <Codemirror
-          :model-value="explanation.code"
-          :extensions="extensions"
-          :disabled="true"
-          :indent-with-tab="false"
-        />
-      </div>
-      <p v-else class="explainer-hint">Connect this node to see the code for your own settings.</p>
-      <p v-if="explanation?.helpers.length" class="explainer-hint">
-        Calls {{ explanation.helpers.join(", ") }} — defined for you in the full script under Code ▸
-        Python walkthrough.
+      <!-- A stubbed node has no honest loop — its note is not worth an editor.
+           The Polars snippet below is the real code for those. -->
+      <template v-if="explanation?.code && !explanation.isStub">
+        <div class="explainer-code">
+          <!-- indent-with-tab off: even a read-only editor must not trap Tab. -->
+          <Codemirror
+            :model-value="explanation.code"
+            :extensions="extensions"
+            :disabled="true"
+            :indent-with-tab="false"
+          />
+        </div>
+        <p v-if="explanation?.helpers.length" class="explainer-hint">
+          Calls {{ explanation.helpers.join(", ") }} — defined for you in the full script under Code ▸
+          Python walkthrough.
+        </p>
+        <div class="explainer-actions">
+          <button class="explainer-copy" aria-label="Copy the plain-Python loop" @click="copySnippet">
+            {{ copied ? 'Copied ✓' : 'Copy' }}
+          </button>
+        </div>
+      </template>
+      <p v-else-if="!explanation?.code" class="explainer-hint">
+        Connect this node to see the code for your own settings.
       </p>
-      <div v-if="explanation?.code" class="explainer-actions">
-        <button class="explainer-copy" @click="copySnippet">{{ copied ? 'Copied ✓' : 'Copy' }}</button>
-      </div>
+      <template v-if="explanation?.code && polarsSnippet">
+        <p class="explainer-bridge">{{ bridgeLabel }}</p>
+        <div class="explainer-code">
+          <Codemirror
+            :model-value="polarsSnippet"
+            :extensions="extensions"
+            :disabled="true"
+            :indent-with-tab="false"
+          />
+        </div>
+        <div class="explainer-actions">
+          <button class="explainer-copy" aria-label="Copy the Polars snippet" @click="copyPolars">
+            {{ copiedPolars ? 'Copied ✓' : 'Copy' }}
+          </button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useFlowStore } from '../../stores/flow-store'
+import { usePyodideStore } from '../../stores/pyodide-store'
 import { usePlainPythonGeneration } from '../../composables/usePlainPythonGeneration'
+import { useCodeGeneration } from '../../composables/useCodeGeneration'
+import { translateFormulaNodes } from '../../composables/useFormulaTranslation'
 import { glossaryTooltip } from '../../composables/usePythonGlossary'
+import type { NodeFormulaSettings } from '../../types'
 
 const props = defineProps<{ nodeId: number }>()
 
@@ -45,10 +73,13 @@ const props = defineProps<{ nodeId: number }>()
 const STORAGE_KEY = 'flowfile-node-explainer-open'
 
 const flowStore = useFlowStore()
+const pyodideStore = usePyodideStore()
 const { explainNode } = usePlainPythonGeneration()
+const { explainNodePolars } = useCodeGeneration()
 
 const isExpanded = ref(localStorage.getItem(STORAGE_KEY) === '1')
 const copied = ref(false)
+const copiedPolars = ref(false)
 
 const extensions = [
   python(),
@@ -71,6 +102,50 @@ const explanation = computed(() =>
     : null
 )
 
+// Upgrade formula snippets from the runtime-translation fallback to the real
+// Polars expression, once Pyodide is ready (never triggers its initialization).
+// Whole-flow, not just this node: an untranslated formula stays multi-line,
+// which changes chain fusion and so the names in other nodes' snippets.
+const formulaCode = ref<Record<number, string>>({})
+const formulaKey = computed(() =>
+  [...flowStore.nodes.values()]
+    .filter(n => n.type === 'formula')
+    .map(n => `${n.id}:${(n.settings as NodeFormulaSettings)?.function?.function ?? ''}`)
+    .join('|')
+)
+let translatedKey: string | null = null
+watch(
+  () => (isExpanded.value && pyodideStore.isReady ? formulaKey.value : null),
+  async key => {
+    if (!key || key === translatedKey) return
+    const translated = await translateFormulaNodes(flowStore.nodes)
+    // Only cache a success; a failed fetch may work on the next trigger.
+    if (Object.keys(translated).length > 0) translatedKey = key
+    formulaCode.value = translated
+  },
+  { immediate: true }
+)
+
+// The same step in Polars. polars_code nodes already are Polars — nothing to bridge.
+const polarsSnippet = computed(() => {
+  if (!isExpanded.value) return null
+  if (flowStore.nodes.get(props.nodeId)?.type === 'polars_code') return null
+  return explainNodePolars(
+    { nodes: flowStore.nodes, edges: flowStore.edges, formulaCode: formulaCode.value },
+    props.nodeId
+  )
+})
+
+// For a stubbed node the plain block is hidden, so the Polars snippet is the
+// step's only code — introduce it as such, and without claiming "what the
+// canvas runs": reader stubs (Excel reads) get a snippet that genuinely
+// differs from the engine.
+const bridgeLabel = computed(() =>
+  explanation.value?.isStub
+    ? 'This step in Polars:'
+    : 'The same step in Polars — the dataframe library the canvas actually runs:'
+)
+
 const toggle = () => {
   isExpanded.value = !isExpanded.value
   localStorage.setItem(STORAGE_KEY, isExpanded.value ? '1' : '0')
@@ -86,40 +161,66 @@ const copySnippet = async () => {
     /* clipboard blocked; the snippet is selectable anyway */
   }
 }
+
+const copyPolars = async () => {
+  if (!polarsSnippet.value) return
+  try {
+    await navigator.clipboard.writeText(polarsSnippet.value)
+    copiedPolars.value = true
+    setTimeout(() => (copiedPolars.value = false), 1500)
+  } catch {
+    /* clipboard blocked; the snippet is selectable anyway */
+  }
+}
 </script>
 
 <style scoped>
 .node-explainer {
   margin-top: 16px;
-  border-top: 1px solid var(--border-color, #e0e0e0);
-  padding-top: 8px;
 }
 
 .section-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--spacing-4, 16px);
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-background-muted, #fafafa);
+  color: var(--color-text-primary, #333);
   cursor: pointer;
   user-select: none;
+  text-align: left;
 }
 
 .section-header:hover {
-  opacity: 0.8;
+  background: var(--color-background-secondary, #f0f2f5);
+}
+
+.section-header:focus {
+  outline: none;
+}
+
+.section-header:focus-visible {
+  outline: 2px solid var(--color-accent, #4a90d9);
+  outline-offset: 1px;
 }
 
 .section-title {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary, #666);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-weight: 500;
 }
 
-.expand-icon {
-  font-size: 16px;
-  font-weight: bold;
-  color: var(--text-secondary, #666);
+.section-chevron {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary, #888);
+  transition: transform 0.15s ease;
+}
+
+.section-chevron.open {
+  transform: rotate(90deg);
 }
 
 /* No inner scroll: this sits below the settings form, so the panel's own
@@ -140,6 +241,13 @@ const copySnippet = async () => {
   font-size: 12px;
   font-style: italic;
   color: var(--text-secondary, #888);
+}
+
+.explainer-bridge {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary, #666);
 }
 
 .explainer-code {
@@ -168,17 +276,12 @@ const copySnippet = async () => {
 }
 
 @media (prefers-color-scheme: dark) {
-  .node-explainer {
-    border-top-color: #444;
-  }
-
-  .section-title,
-  .expand-icon {
-    color: #aaa;
-  }
-
   .explainer-prose {
     color: #ddd;
+  }
+
+  .explainer-bridge {
+    color: #aaa;
   }
 }
 </style>
