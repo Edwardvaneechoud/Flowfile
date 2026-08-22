@@ -1,0 +1,273 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 600" role="img" aria-label="Four grey data sources — Postgres, S3, Kafka and Google Analytics — each feed a scheduled Flowfile sync flow that lands into the catalog, and a single cyan table-trigger cascade fans out to downstream flows, charts and dashboards that refresh automatically.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/>
+    </marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .sbox  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .fbox  { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chipg { fill:#eef0f2; }
+    .chipb { fill:#eaf3fc; }
+    .icg   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icb   { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw   { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .hubt  { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:19px; fill:#ffffff; }
+    .hubs  { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#eaf6ff; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:2.4; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .clbl  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12px; fill:#2DD5D3; }
+  </style>
+
+  <!-- ============ ARROWS: SOURCE -> SYNC (grey) ============ -->
+  <path class="arw" d="M181,123 L249,123" marker-end="url(#ah)"/>
+  <path class="arw" d="M181,241 L249,241" marker-end="url(#ah)"/>
+  <path class="arw" d="M181,359 L249,359" marker-end="url(#ah)"/>
+  <path class="arw" d="M181,477 L249,477" marker-end="url(#ah)"/>
+
+  <!-- ============ ARROWS: SYNC -> CATALOG (grey, fan in) ============ -->
+  <path class="arw" d="M411,123 L466,247" marker-end="url(#ah)"/>
+  <path class="arw" d="M411,241 L466,283" marker-end="url(#ah)"/>
+  <path class="arw" d="M411,359 L466,319" marker-end="url(#ah)"/>
+  <path class="arw" d="M411,477 L466,355" marker-end="url(#ah)"/>
+
+  <!-- ============ CYAN TRIGGER CASCADE ============ -->
+  <path class="arwc" d="M647,300 L682,300"/>
+  <path class="arwc" d="M711,289 C731,276 726,192 744,178" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M718,300 L744,300" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M711,311 C731,324 726,408 744,422" marker-end="url(#ahc)"/>
+
+  <!-- ============ SOURCES (grey, elsewhere) ============ -->
+  <!-- Postgres -->
+  <g>
+    <rect class="sbox" x="28" y="92" width="152" height="62" rx="11"/>
+    <rect class="chipg" x="40" y="103" width="40" height="40" rx="9"/>
+    <g class="icg" transform="translate(48,111)">
+      <ellipse cx="12" cy="6" rx="7" ry="2.6"/>
+      <path d="M5,6 V16 C5,17.4 8.1,18.6 12,18.6 C15.9,18.6 19,17.4 19,16 V6"/>
+      <path d="M5,11 C5,12.4 8.1,13.6 12,13.6 C15.9,13.6 19,12.4 19,11"/>
+    </g>
+    <text class="t" x="96" y="120">Postgres</text>
+    <text class="s" x="96" y="137">database rows</text>
+  </g>
+  <!-- S3 -->
+  <g>
+    <rect class="sbox" x="28" y="210" width="152" height="62" rx="11"/>
+    <rect class="chipg" x="40" y="221" width="40" height="40" rx="9"/>
+    <g class="icg" transform="translate(48,229)">
+      <path d="M7.5,17 H16.4 C18.4,17 20,15.4 20,13.5 C20,11.7 18.6,10.2 16.8,10.1 C16.4,7.7 14.4,6 12,6 C9.9,6 8,7.5 7.4,9.4 C5.4,9.6 4,11.2 4,13.2 C4,15.3 5.6,17 7.5,17 Z"/>
+    </g>
+    <text class="t" x="96" y="238">S3</text>
+    <text class="s" x="96" y="255">object store</text>
+  </g>
+  <!-- Kafka -->
+  <g>
+    <rect class="sbox" x="28" y="328" width="152" height="62" rx="11"/>
+    <rect class="chipg" x="40" y="339" width="40" height="40" rx="9"/>
+    <g class="icg" transform="translate(48,347)">
+      <circle cx="7.5" cy="12" r="2.2"/>
+      <circle cx="16.5" cy="6.5" r="2.2"/>
+      <circle cx="16.5" cy="17.5" r="2.2"/>
+      <line x1="9.4" y1="10.9" x2="14.6" y2="7.6"/>
+      <line x1="9.4" y1="13.1" x2="14.6" y2="16.4"/>
+    </g>
+    <text class="t" x="96" y="356">Kafka</text>
+    <text class="s" x="96" y="373">event topic</text>
+  </g>
+  <!-- Google Analytics -->
+  <g>
+    <rect class="sbox" x="28" y="446" width="152" height="62" rx="11"/>
+    <rect class="chipg" x="40" y="457" width="40" height="40" rx="9"/>
+    <g class="icg" transform="translate(48,465)">
+      <circle cx="12" cy="12" r="7.2"/>
+      <line x1="12" y1="12" x2="12" y2="4.8"/>
+      <line x1="12" y1="12" x2="18.6" y2="9"/>
+      <line x1="12" y1="12" x2="16.4" y2="17.8"/>
+    </g>
+    <text class="t" x="96" y="474">GA4</text>
+    <text class="s" x="96" y="491">analytics API</text>
+  </g>
+
+  <!-- ============ SCHEDULED SYNC FLOWS (Flowfile, blue) ============ -->
+  <!-- template repeats: flow-node dots + calendar-clock schedule badge -->
+  <g>
+    <rect class="fbox" x="252" y="92" width="158" height="62" rx="11"/>
+    <rect class="chipb" x="264" y="103" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(272,111)">
+      <path d="M4,16 L9,10 L14,14 L20,7"/>
+      <circle cx="4" cy="16" r="1.7" fill="#1D76D6"/>
+      <circle cx="9" cy="10" r="1.7" fill="#1D76D6"/>
+      <circle cx="14" cy="14" r="1.7" fill="#1D76D6"/>
+      <circle cx="20" cy="7" r="1.7" fill="#1D76D6"/>
+    </g>
+    <g transform="translate(293,95)">
+      <circle cx="9" cy="9" r="8.3" fill="#ffffff" stroke="#1D76D6" stroke-width="1.3"/>
+      <g fill="none" stroke="#1D76D6" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.6" y="5.6" width="8.8" height="8" rx="1.5"/>
+        <line x1="4.6" y1="7.9" x2="13.4" y2="7.9"/>
+        <line x1="6.8" y1="4.4" x2="6.8" y2="6.1"/>
+        <line x1="11.2" y1="4.4" x2="11.2" y2="6.1"/>
+      </g>
+      <circle cx="11.3" cy="10.9" r="2.7" fill="#ffffff" stroke="#1D76D6" stroke-width="1.1"/>
+      <path d="M11.3,9.4 V10.9 L12.6,11.6" fill="none" stroke="#1D76D6" stroke-width="1" stroke-linecap="round"/>
+    </g>
+    <text class="t" x="316" y="120">Sync flow</text>
+    <text class="s" x="316" y="137">daily</text>
+  </g>
+  <g>
+    <rect class="fbox" x="252" y="210" width="158" height="62" rx="11"/>
+    <rect class="chipb" x="264" y="221" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(272,229)">
+      <path d="M4,16 L9,10 L14,14 L20,7"/>
+      <circle cx="4" cy="16" r="1.7" fill="#1D76D6"/>
+      <circle cx="9" cy="10" r="1.7" fill="#1D76D6"/>
+      <circle cx="14" cy="14" r="1.7" fill="#1D76D6"/>
+      <circle cx="20" cy="7" r="1.7" fill="#1D76D6"/>
+    </g>
+    <g transform="translate(293,213)">
+      <circle cx="9" cy="9" r="8.3" fill="#ffffff" stroke="#1D76D6" stroke-width="1.3"/>
+      <g fill="none" stroke="#1D76D6" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.6" y="5.6" width="8.8" height="8" rx="1.5"/>
+        <line x1="4.6" y1="7.9" x2="13.4" y2="7.9"/>
+        <line x1="6.8" y1="4.4" x2="6.8" y2="6.1"/>
+        <line x1="11.2" y1="4.4" x2="11.2" y2="6.1"/>
+      </g>
+      <circle cx="11.3" cy="10.9" r="2.7" fill="#ffffff" stroke="#1D76D6" stroke-width="1.1"/>
+      <path d="M11.3,9.4 V10.9 L12.6,11.6" fill="none" stroke="#1D76D6" stroke-width="1" stroke-linecap="round"/>
+    </g>
+    <text class="t" x="316" y="238">Sync flow</text>
+    <text class="s" x="316" y="255">hourly</text>
+  </g>
+  <g>
+    <rect class="fbox" x="252" y="328" width="158" height="62" rx="11"/>
+    <rect class="chipb" x="264" y="339" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(272,347)">
+      <path d="M4,16 L9,10 L14,14 L20,7"/>
+      <circle cx="4" cy="16" r="1.7" fill="#1D76D6"/>
+      <circle cx="9" cy="10" r="1.7" fill="#1D76D6"/>
+      <circle cx="14" cy="14" r="1.7" fill="#1D76D6"/>
+      <circle cx="20" cy="7" r="1.7" fill="#1D76D6"/>
+    </g>
+    <g transform="translate(293,331)">
+      <circle cx="9" cy="9" r="8.3" fill="#ffffff" stroke="#1D76D6" stroke-width="1.3"/>
+      <g fill="none" stroke="#1D76D6" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.6" y="5.6" width="8.8" height="8" rx="1.5"/>
+        <line x1="4.6" y1="7.9" x2="13.4" y2="7.9"/>
+        <line x1="6.8" y1="4.4" x2="6.8" y2="6.1"/>
+        <line x1="11.2" y1="4.4" x2="11.2" y2="6.1"/>
+      </g>
+      <circle cx="11.3" cy="10.9" r="2.7" fill="#ffffff" stroke="#1D76D6" stroke-width="1.1"/>
+      <path d="M11.3,9.4 V10.9 L12.6,11.6" fill="none" stroke="#1D76D6" stroke-width="1" stroke-linecap="round"/>
+    </g>
+    <text class="t" x="316" y="356">Sync flow</text>
+    <text class="s" x="316" y="373">every 5 min</text>
+  </g>
+  <g>
+    <rect class="fbox" x="252" y="446" width="158" height="62" rx="11"/>
+    <rect class="chipb" x="264" y="457" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(272,465)">
+      <path d="M4,16 L9,10 L14,14 L20,7"/>
+      <circle cx="4" cy="16" r="1.7" fill="#1D76D6"/>
+      <circle cx="9" cy="10" r="1.7" fill="#1D76D6"/>
+      <circle cx="14" cy="14" r="1.7" fill="#1D76D6"/>
+      <circle cx="20" cy="7" r="1.7" fill="#1D76D6"/>
+    </g>
+    <g transform="translate(293,449)">
+      <circle cx="9" cy="9" r="8.3" fill="#ffffff" stroke="#1D76D6" stroke-width="1.3"/>
+      <g fill="none" stroke="#1D76D6" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.6" y="5.6" width="8.8" height="8" rx="1.5"/>
+        <line x1="4.6" y1="7.9" x2="13.4" y2="7.9"/>
+        <line x1="6.8" y1="4.4" x2="6.8" y2="6.1"/>
+        <line x1="11.2" y1="4.4" x2="11.2" y2="6.1"/>
+      </g>
+      <circle cx="11.3" cy="10.9" r="2.7" fill="#ffffff" stroke="#1D76D6" stroke-width="1.1"/>
+      <path d="M11.3,9.4 V10.9 L12.6,11.6" fill="none" stroke="#1D76D6" stroke-width="1" stroke-linecap="round"/>
+    </g>
+    <text class="t" x="316" y="474">Sync flow</text>
+    <text class="s" x="316" y="491">daily</text>
+  </g>
+
+  <!-- ============ CATALOG HERO (brand gradient) ============ -->
+  <rect x="470" y="200" width="176" height="200" rx="18" fill="url(#brand)"/>
+  <text class="hubt" x="558" y="234" text-anchor="middle">Catalog</text>
+  <text class="hubs" x="558" y="253" text-anchor="middle">versioned tables</text>
+  <g>
+    <rect x="500" y="276" width="116" height="26" rx="4" fill="#ffffff" fill-opacity="0.15" stroke="#ffffff" stroke-opacity="0.9" stroke-width="1.2"/>
+    <line x1="500" y1="285" x2="616" y2="285" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1"/>
+    <line x1="530" y1="276" x2="530" y2="302" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1"/>
+  </g>
+  <g>
+    <rect x="500" y="310" width="116" height="26" rx="4" fill="#ffffff" fill-opacity="0.15" stroke="#ffffff" stroke-opacity="0.9" stroke-width="1.2"/>
+    <line x1="500" y1="319" x2="616" y2="319" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1"/>
+    <line x1="530" y1="310" x2="530" y2="336" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1"/>
+  </g>
+  <g>
+    <rect x="500" y="344" width="116" height="26" rx="4" fill="#ffffff" fill-opacity="0.15" stroke="#ffffff" stroke-opacity="0.9" stroke-width="1.2"/>
+    <line x1="500" y1="353" x2="616" y2="353" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1"/>
+    <line x1="530" y1="344" x2="530" y2="370" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1"/>
+  </g>
+
+  <!-- ============ TABLE-TRIGGER NODE (cyan accent) ============ -->
+  <circle cx="700" cy="300" r="16" fill="#ffffff" stroke="#2DD5D3" stroke-width="2"/>
+  <path d="M701.6,290.5 L694,301.8 L699.4,301.8 L698,309.5 L707,297.8 L701.6,297.8 Z" fill="#2DD5D3"/>
+  <text class="clbl" x="687" y="253" text-anchor="middle">table-<tspan x="687" dy="14">triggers</tspan></text>
+
+  <!-- ============ DOWNSTREAM (Flowfile, blue) ============ -->
+  <!-- downstream flow -->
+  <g>
+    <rect class="fbox" x="746" y="145" width="192" height="62" rx="11"/>
+    <rect class="chipb" x="758" y="156" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(766,164)">
+      <path d="M4,16 L9,10 L14,14 L20,7"/>
+      <circle cx="4" cy="16" r="1.7" fill="#1D76D6"/>
+      <circle cx="9" cy="10" r="1.7" fill="#1D76D6"/>
+      <circle cx="14" cy="14" r="1.7" fill="#1D76D6"/>
+      <circle cx="20" cy="7" r="1.7" fill="#1D76D6"/>
+    </g>
+    <text class="t" x="810" y="173">Downstream flow</text>
+    <text class="s" x="810" y="190">reruns on refresh</text>
+  </g>
+  <!-- chart -->
+  <g>
+    <rect class="fbox" x="746" y="269" width="192" height="62" rx="11"/>
+    <rect class="chipb" x="758" y="280" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(766,288)">
+      <line x1="4" y1="18.5" x2="20" y2="18.5"/>
+      <line x1="7.5" y1="18.5" x2="7.5" y2="13" stroke-width="2.6"/>
+      <line x1="12" y1="18.5" x2="12" y2="8.5" stroke-width="2.6"/>
+      <line x1="16.5" y1="18.5" x2="16.5" y2="11" stroke-width="2.6"/>
+    </g>
+    <text class="t" x="810" y="297">Chart</text>
+    <text class="s" x="810" y="314">auto-refreshes</text>
+  </g>
+  <!-- dashboard -->
+  <g>
+    <rect class="fbox" x="746" y="393" width="192" height="62" rx="11"/>
+    <rect class="chipb" x="758" y="404" width="40" height="40" rx="9"/>
+    <g class="icb" transform="translate(766,412)">
+      <rect x="4" y="5" width="16" height="14" rx="2"/>
+      <line x1="4" y1="9" x2="20" y2="9"/>
+      <line x1="12" y1="9" x2="12" y2="19"/>
+      <line x1="6.2" y1="12" x2="9.8" y2="12"/>
+      <line x1="6.2" y1="15" x2="9.8" y2="15"/>
+      <line x1="14.2" y1="12" x2="17.8" y2="12"/>
+      <line x1="14.2" y1="15" x2="17.8" y2="15"/>
+    </g>
+    <text class="t" x="810" y="421">Dashboard</text>
+    <text class="s" x="810" y="438">always current</text>
+  </g>
+
+  <!-- ============ FLOW LABEL ============ -->
+  <text class="albl" x="438" y="150" text-anchor="middle">publish</text>
+</svg>
