@@ -49,7 +49,7 @@ Learning mode is opt-in. By default the Code panel is a plain **Polars** view; t
 
 ### The Python walkthrough
 
-The same flow as one standalone script, and a way to walk it a node at a time — in **two spellings**. Plain Python first: every table a `list[dict]`, every node an explicit loop, no dataframe library. Flip the **Plain Python | Polars** switch above the script and the same steps appear in Polars — the dataframe library the canvas actually runs — with the same step chips and the same variable names, so the `filtered` a loop builds is `filtered = source.filter(...)` one flip away. The switch keeps your place: step to Group By as loops, flip, and read the same step as one chain.
+The same flow as one standalone script, and a way to walk it a node at a time — in **two spellings**. It opens in Polars — the dataframe library the canvas actually runs. Flip the **Plain Python | Polars** switch above the script and the same steps appear as plain Python: every table a `list[dict]`, every node an explicit loop, no dataframe library — with the same step chips and the same variable names, so the `filtered = source.filter(...)` chain is the `filtered` a loop builds one flip away. The switch keeps your place: step to Group By as one chain, flip, and read the same step as loops.
 
 The script is the centre of the view and stays there. Step chips along the top move a highlight through it, so you always see the block you are reading about *in place*, with what came before it and what happens next still on screen. **Hover any name** — `sorted`, `setdefault`, `lambda`, one of the generated helpers — for a one-line explanation and a small example.
 
