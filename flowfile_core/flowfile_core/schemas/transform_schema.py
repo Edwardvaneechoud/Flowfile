@@ -1207,10 +1207,7 @@ class GateInput(BaseModel):
         if self.operator == "is_set":
             return param.default_value.strip() != ""
         if self.operator in ("is_true", "is_false"):
-            try:
-                truthy = bool(coerce_param_value("boolean", param.default_value))
-            except ValueError:
-                truthy = False
+            truthy = coerce_param_value("boolean", param.default_value)
             return truthy if self.operator == "is_true" else not truthy
         current = param.typed_default()
         if self.operator in ("equals", "not_equals"):

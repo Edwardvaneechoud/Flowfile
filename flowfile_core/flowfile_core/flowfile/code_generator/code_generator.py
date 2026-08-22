@@ -19,8 +19,10 @@ from flowfile_core.flowfile.code_generator.param_codegen import (
     apply_param_sentinels,
     codegen_parameters,
     param_arg,
+    param_sentinel,
     resolve_param_sentinels,
     restore_param_sentinels,
+    restore_sentinels_to_refs,
 )
 from flowfile_core.flowfile.code_generator.transform_handlers import TransformHandlersMixin
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
@@ -405,8 +407,7 @@ class FlowGraphCodeConverter(
                     (
                         gate.node_id,
                         "gate",
-                        f"Gate condition references parameter '{gate_input.parameter}' which does not "
-                        "exist as an exportable flow parameter, or its value cannot be coerced",
+                        self._gate_refusal_reason(gate_input, parameters_by_name, codegen_param_names),
                     )
                 )
                 continue
@@ -457,6 +458,33 @@ class FlowGraphCodeConverter(
             # while emitting gated pre-inits/helpers would be dropped. The
             # gate machinery emits pl-based literals in every framework.
             self.imports.add("import polars as pl")
+
+    @staticmethod
+    def _gate_refusal_reason(gate_input, parameters_by_name, codegen_param_names) -> str:
+        """An accurate diagnosis for a parameter-mode gate the export refuses.
+
+        Distinguishes an unknown/unexportable parameter from a coercion
+        failure. A coercion failure caused by a ``${ref}`` in the comparison
+        value is a real engine feature (refs resolve at run time) that the
+        export simply does not support for typed parameters — the message
+        must say so instead of denying the parameter exists.
+        """
+        if gate_input.parameter not in parameters_by_name or gate_input.parameter not in codegen_param_names:
+            return (
+                f"Gate condition references parameter '{gate_input.parameter}' which does not "
+                "exist as an exportable flow parameter"
+            )
+        value = restore_sentinels_to_refs(gate_input.value)
+        if "${" in value:
+            return (
+                f"Gate compares typed parameter '{gate_input.parameter}' against a parameter "
+                f"reference ({value!r}); typed parameter-to-parameter comparison is not supported "
+                "in code export (the engine resolves it at run time)"
+            )
+        return (
+            f"Gate condition value {value!r} cannot be coerced to the declared type of "
+            f"parameter '{gate_input.parameter}'"
+        )
 
     @staticmethod
     def _gate_condition_expr(gate_input, parameters_by_name, codegen_param_names) -> str | None:
@@ -510,11 +538,31 @@ class FlowGraphCodeConverter(
             return None
         return f"pl.LazyFrame(schema={{{fields}}})"
 
+    @staticmethod
+    def _conds_are_complementary(a: frozenset[tuple[int, bool]], b: frozenset[tuple[int, bool]]) -> bool:
+        """Exactly {(g, True)} vs {(g, False)} for the same gate — nothing else.
+
+        The sole trigger for if/else fusion: shared prefixes (P∧g / P∧¬g),
+        different gates, and multi-atom sets never qualify, because the else
+        of ``if P and g`` is not ``P and not g``.
+        """
+        if len(a) != 1 or len(b) != 1:
+            return False
+        (gate_a, open_a), = a
+        (gate_b, open_b), = b
+        return gate_a == gate_b and open_a != open_b
+
     def _render_gate_cond(self, cond: frozenset[tuple[int, bool]]) -> str:
-        parts = [
-            self._gate_exprs[gate_id] if needs_open else f"not ({self._gate_exprs[gate_id]})"
-            for gate_id, needs_open in sorted(cond)
-        ]
+        parts = []
+        flag_names = set(self._runtime_gate_flags.values())
+        for gate_id, needs_open in sorted(cond):
+            expr = self._gate_exprs[gate_id]
+            if needs_open:
+                parts.append(expr)
+            elif expr in flag_names:
+                parts.append(f"not {expr}")
+            else:
+                parts.append(f"not ({expr})")
         if len(parts) == 1:
             return parts[0]
         return " and ".join(f"({part})" for part in parts)
@@ -522,6 +570,27 @@ class FlowGraphCodeConverter(
     def _gate_probe_expr(self, input_var: str) -> str:
         """The frame expression handed to the gate formula helper (a polars frame)."""
         return input_var
+
+    def _gate_formula_arg(self, formula: str) -> str:
+        """The formula expression handed to ``simple_function_to_expr``.
+
+        A whole-field ``${param}`` formula would be rewritten by the sentinel
+        post-pass into the bare typed kwarg, handing the parser a raw
+        bool/int/float (TypeError at run time). The engine stringifies first
+        (``resolve_parameters`` → ``stringify_param_value``: bool ->
+        ``true``/``false``, everything else ``str``), so mirror that exactly.
+        Partial refs keep the f-string rewrite path unchanged.
+        """
+        stripped = formula.strip()
+        for param in self._codegen_params:
+            if stripped == param_sentinel(param.name):
+                literal = self._py_str(stripped)
+                if param.type == "boolean":
+                    return f"('true' if {literal} else 'false')"
+                return f"str({literal})"
+        # Cosmetic strip: the engine's parser is whitespace-insensitive, so
+        # padding cannot change behavior — embed the trimmed text.
+        return self._py_str(stripped)
 
     def _handle_gate(self, settings: input_schema.NodeGate, var_name: str, input_vars: dict[str, str]) -> None:
         """Gates are passthroughs: remap downstream references to the data input.
@@ -550,9 +619,10 @@ class FlowGraphCodeConverter(
         )
         source_df = input_vars.get("right") or main_df
         flag = self._runtime_gate_flags[settings.node_id]
+        formula_arg = self._gate_formula_arg(gate_input.formula)
         self._add_code(
             f"{flag} = _flowfile_gate_formula_matches("
-            f"{self._gate_probe_expr(source_df)}, simple_function_to_expr({self._py_str(gate_input.formula)}))"
+            f"{self._gate_probe_expr(source_df)}, simple_function_to_expr({formula_arg}))"
         )
         self._add_code("")
 
@@ -1073,7 +1143,9 @@ class FlowGraphCodeConverter(
 
         Nodes whose condition set is non-empty emit inside an
         ``if <conjunction>:`` block; consecutive same-condition nodes share
-        one block. Union references to gated vars are guarded at the union's
+        one block, and a block whose condition is exactly complementary to
+        the previous one (one gate's then/else pair, singleton atoms only)
+        emits as its ``else:``. Union references to gated vars are guarded at the union's
         own emission site, so the only remaining ungated references are the
         module's return path — only gated vars the return will reference get
         a stand-in pre-init (control-gate flags stay False-initialized).
@@ -1111,7 +1183,8 @@ class FlowGraphCodeConverter(
         if body:
             body.append("")
 
-        current_cond: frozenset[int] = frozenset()
+        current_cond: frozenset[tuple[int, bool]] = frozenset()
+        in_else_block = False
         for node, _effective_var, start, end in self._node_spans:
             lines = self.code_lines[start:end]
             while lines and lines[-1] == "":
@@ -1120,10 +1193,19 @@ class FlowGraphCodeConverter(
                 continue
             cond = self._gate_conds.get(node.node_id, frozenset())
             if cond != current_cond:
-                if body and body[-1] != "":
-                    body.append("")
-                if cond:
-                    body.append(f"if {self._render_gate_cond(cond)}:")
+                # Adjacent exactly-complementary singleton blocks fuse into a
+                # real if/else; an else block never chains a second else.
+                merge_else = not in_else_block and self._conds_are_complementary(current_cond, cond)
+                if merge_else:
+                    while body and body[-1] == "":
+                        body.pop()
+                    body.append("else:")
+                else:
+                    if body and body[-1] != "":
+                        body.append("")
+                    if cond:
+                        body.append(f"if {self._render_gate_cond(cond)}:")
+                in_else_block = merge_else
                 current_cond = cond
             indent = "    " if cond else ""
             for line in lines:

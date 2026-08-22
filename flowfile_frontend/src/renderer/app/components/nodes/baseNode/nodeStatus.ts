@@ -139,7 +139,7 @@ export function nodeStatusTooltip(status: NodeStatusOutput | undefined): string 
     case "running":
       return "Operation in progress...";
     case "skipped":
-      return "Skipped (gated off) — condition not met";
+      return "Skipped — gated off this run";
     case "unknown":
     default:
       return "Status unknown";

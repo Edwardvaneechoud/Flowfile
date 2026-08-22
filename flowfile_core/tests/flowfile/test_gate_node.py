@@ -24,11 +24,14 @@ Run with an isolated DB:
         poetry run pytest flowfile_core/tests/flowfile/test_gate_node.py -q
 """
 
+import os
+import platform
 from pathlib import Path
 from typing import Literal
 
 import polars as pl
 import pytest
+import requests
 from fastapi import HTTPException
 
 from flowfile_core.flowfile.code_generator.code_generator import (
@@ -53,8 +56,9 @@ SOURCE_ROWS = [{"a": 1}, {"a": 2}, {"a": 3}]
 def create_graph(
     flow_id: int = 1,
     execution_mode: Literal["Development", "Performance"] = "Development",
+    execution_location: Literal["local", "remote"] = "local",
 ) -> FlowGraph:
-    """A local-execution FlowGraph, so no worker is involved."""
+    """A FlowGraph pinned to local execution by default, so no worker is involved."""
     handler = FlowfileHandler()
     handler.register_flow(
         schemas.FlowSettings(
@@ -62,7 +66,7 @@ def create_graph(
             name="gate_node_test",
             path=".",
             execution_mode=execution_mode,
-            execution_location="local",
+            execution_location=execution_location,
         )
     )
     return handler.get_flow(flow_id)
@@ -184,8 +188,15 @@ def add_csv_read(graph: FlowGraph, node_id: int, path: str) -> None:
     )
 
 
-def add_filter(graph: FlowGraph, node_id: int, depending_on_id: int, field: str, value: str) -> None:
-    """An equals filter — used to build an empty control frame."""
+def add_filter(
+    graph: FlowGraph,
+    node_id: int,
+    depending_on_id: int,
+    field: str,
+    value: str,
+    split_mode: bool = False,
+) -> None:
+    """An equals filter — used to build an empty control frame or a pass/fail split."""
     add_promise(graph, "filter", node_id)
     connect(graph, depending_on_id, node_id)
     graph.add_filter(
@@ -193,6 +204,7 @@ def add_filter(graph: FlowGraph, node_id: int, depending_on_id: int, field: str,
             flow_id=graph.flow_id,
             node_id=node_id,
             depending_on_id=depending_on_id,
+            split_mode=split_mode,
             filter_input=FilterInput(
                 mode="basic",
                 basic_filter=BasicFilter(field=field, operator=FilterOperator.EQUALS, value=value),
@@ -216,14 +228,19 @@ def results_by_id(run_info) -> dict:
     return {nr.node_id: nr for nr in run_info.node_step_result}
 
 
-def build_diamond(env: str = "prod", flow_id: int = 1) -> FlowGraph:
+def build_diamond(
+    env: str = "prod",
+    flow_id: int = 1,
+    execution_mode: Literal["Development", "Performance"] = "Development",
+    execution_location: Literal["local", "remote"] = "local",
+) -> FlowGraph:
     """The target user story.
 
     1 manual_input -> 2 gate(env == prod) -> 3 select(a -> a_prod) -> 6 union
     1 manual_input -> 4 gate(env != prod, the complement) -> 5 select(a -> a_dev) -> 6
     6 union -> 7 select (terminal, record-preserving)
     """
-    graph = create_graph(flow_id=flow_id)
+    graph = create_graph(flow_id=flow_id, execution_mode=execution_mode, execution_location=execution_location)
     graph.flow_settings.parameters.append(
         FlowParameter(name="env", default_value=env, type="string")
     )
@@ -244,7 +261,11 @@ def build_diamond(env: str = "prod", flow_id: int = 1) -> FlowGraph:
     return graph
 
 
-def build_split_diamond(env: str = "prod", flow_id: int = 1) -> FlowGraph:
+def build_split_diamond(
+    env: str = "prod",
+    flow_id: int = 1,
+    execution_mode: Literal["Development", "Performance"] = "Development",
+) -> FlowGraph:
     """The one-gate if/else: a single else_output gate replacing the two-gate diamond.
 
     1 manual_input -> 2 gate(env == prod, else_output)
@@ -252,7 +273,7 @@ def build_split_diamond(env: str = "prod", flow_id: int = 1) -> FlowGraph:
     else (output-1) -> 5 select(a -> a_dev) -> 6
     6 union -> 7 select (terminal, record-preserving)
     """
-    graph = create_graph(flow_id=flow_id)
+    graph = create_graph(flow_id=flow_id, execution_mode=execution_mode)
     graph.flow_settings.parameters.append(
         FlowParameter(name="env", default_value=env, type="string")
     )
@@ -744,6 +765,37 @@ class TestFormulaGate:
         assert results_by_id(run_info)[3].skipped is False
         assert collect_node(graph, 3).height == 3
 
+    @pytest.mark.parametrize(
+        "formula, expect_open",
+        [("[flag] = 'reject'", True), ("[flag] = 'keep'", False)],
+    )
+    def test_control_wired_to_a_secondary_output_probes_that_frame(self, formula, expect_open):
+        """A split filter's fail side feeds the control pip: the formula must
+        run against output-1's rows, not the source's default (pass) output —
+        'reject' rows exist only on the fail side, 'keep' rows only on pass."""
+        graph = create_graph(flow_id=76)
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_manual_input(graph, [{"flag": "keep"}, {"flag": "reject"}], node_id=10)
+        add_filter(graph, node_id=11, depending_on_id=10, field="flag", value="keep", split_mode=True)
+        add_promise(graph, "gate", 2)
+        connect(graph, 1, 2)
+        connect(graph, 11, 2, input_type="right", output_handle="output-1")
+        graph.add_gate(
+            input_schema.NodeGate(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                is_setup=True,
+                gate_input=transform_schema.GateInput(condition_source="formula", formula=formula),
+            )
+        )
+        add_passthrough_select(graph, node_id=3, depending_on_id=2)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        assert results_by_id(run_info)[3].skipped is (not expect_open)
+
     def test_broken_formula_fails_the_gate_loudly(self):
         graph = build_formula_gate_graph([{"flag": True}], flow_id=29, formula="[no_such_col] = 1")
 
@@ -772,6 +824,30 @@ class TestFormulaGate:
 
 
 class TestGateFailureModes:
+    def test_is_true_coercion_failure_raises_at_the_schema_level(self):
+        gate = transform_schema.GateInput(parameter="full", operator="is_true")
+        with pytest.raises(ValueError, match="not a valid boolean"):
+            gate.evaluate({"full": FlowParameter(name="full", default_value="banana")})
+
+    @pytest.mark.parametrize("operator", ["is_true", "is_false"])
+    def test_non_boolean_value_fails_a_truthiness_gate_loudly(self, operator):
+        """No silent coercion: 'banana' must fail the gate, never route a branch."""
+        graph = create_graph(flow_id=70)
+        graph.flow_settings.parameters.append(FlowParameter(name="full", default_value="banana"))
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="full", operator=operator)
+        add_passthrough_select(graph, node_id=3, depending_on_id=2)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        by_id = results_by_id(run_info)
+        assert by_id[2].success is False
+        assert "boolean" in by_id[2].error.lower()
+        # Error-driven skip: no green skipped rows downstream.
+        assert 3 not in by_id
+        assert [nr.node_id for nr in run_info.node_step_result if nr.skipped] == []
+
     def test_unknown_parameter_fails_the_gate_and_error_skips_downstream(self):
         graph = create_graph(flow_id=17)
         add_manual_input(graph, SOURCE_ROWS, node_id=1)
@@ -1073,6 +1149,143 @@ class TestFlowFrameExport:
             FlowGraphToFlowFrameConverter(graph).convert()
 
         assert "ghost" in str(exc_info.value)
+
+
+class TestWholeFieldParameterFormulaExport:
+    """A formula that is exactly ``${param}`` must reach the parser stringified.
+
+    The sentinel post-pass rewrites a whole-field ref to the bare typed kwarg,
+    which would hand ``simple_function_to_expr`` a raw bool/int (TypeError at
+    run time). The export mirrors the engine's ``resolve_parameters`` instead:
+    bools render ``'true'``/``'false'``, everything else through ``str(...)``.
+    """
+
+    @staticmethod
+    def _build(flow_id: int, param: FlowParameter) -> FlowGraph:
+        graph = build_self_gate_graph(flow_id=flow_id, formula=f"${{{param.name}}}")
+        graph.flow_settings.parameters.append(param)
+        return graph
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    @pytest.mark.parametrize("flag", [True, False])
+    def test_boolean_parameter_routes_like_the_engine(self, converter, flag):
+        param = FlowParameter(name="flag", default_value="true" if flag else "false", type="boolean")
+        graph = self._build(flow_id=71, param=param)
+
+        code = converter(graph).convert()
+
+        assert "simple_function_to_expr(('true' if flag else 'false'))" in code
+        graph.run_graph()
+        engine_result = graph.get_node(3).results.resulting_data
+        engine_height = engine_result.data_frame.lazy().collect().height if engine_result else 0
+        generated_df = run_generated(code, flag=flag)
+        assert generated_df.height == engine_height == (3 if flag else 0)
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    def test_integer_parameter_fails_like_the_engine(self, converter):
+        """A bare integer is not a boolean predicate, so the engine fails the
+        gate loudly — the generated module must fail at the same point with
+        the same stringified formula, not TypeError inside the parser."""
+        param = FlowParameter(name="n", default_value="2", type="integer")
+        graph = self._build(flow_id=72, param=param)
+
+        code = converter(graph).convert()
+
+        assert "simple_function_to_expr(str(n))" in code
+        run_info = graph.run_graph()
+        assert run_info.success is False
+        by_id = results_by_id(run_info)
+        assert by_id[2].success is False
+        assert "boolean" in by_id[2].error.lower()
+        with pytest.raises(pl.exceptions.ComputeError, match="Boolean"):
+            run_generated(code, n=2)
+
+
+class TestTypedParamRefComparisonExport:
+    """A typed gate value holding ``${ref}`` runs in the engine but not in export."""
+
+    @staticmethod
+    def _build(flow_id: int) -> FlowGraph:
+        graph = create_graph(flow_id=flow_id)
+        graph.flow_settings.parameters.append(FlowParameter(name="rows", default_value="10", type="integer"))
+        graph.flow_settings.parameters.append(FlowParameter(name="limit", default_value="10", type="integer"))
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="rows", operator="equals", value="${limit}")
+        add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_kept")
+        return graph
+
+    def test_engine_resolves_the_ref_and_routes(self):
+        graph = self._build(flow_id=73)
+
+        first = graph.run_graph()
+        assert first.success is True
+        assert results_by_id(first)[3].skipped is False
+
+        set_parameter(graph, "limit", "99")
+        second = graph.run_graph()
+        assert second.success is True
+        assert results_by_id(second)[3].skipped is True
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    def test_export_refuses_with_an_accurate_message(self, converter):
+        graph = self._build(flow_id=74)
+
+        with pytest.raises(UnsupportedNodeError) as exc_info:
+            converter(graph).convert()
+
+        message = str(exc_info.value)
+        assert "typed parameter-to-parameter comparison is not supported" in message
+        assert "${limit}" in message
+        assert "does not exist" not in message
+
+
+class TestAllGatedOffUnionExport:
+    """Pins the deliberate engine/export divergence when every union input closes.
+
+    Engine: the union and its downstream are deliberately skipped (green
+    skipped rows, no result). Export: the guarded append list stays empty, the
+    generator's fallback appends an empty schema-typed frame, and downstream
+    runs to a zero-row result. Accepted behavior — documented next to the
+    ``if not df_6_frames`` explanation in
+    docs/users/visual-editor/tutorials/code-generator.md. Built with two
+    INDEPENDENT gates (build_diamond-style, not one gate's then/else pair) so
+    the list+fallback emission form is what this pins.
+    """
+
+    @staticmethod
+    def _build(flow_id: int) -> FlowGraph:
+        graph = create_graph(flow_id=flow_id)
+        graph.flow_settings.parameters.append(
+            FlowParameter(name="env", default_value="other", type="string")
+        )
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="env", operator="equals", value="value_x")
+        add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_x")
+        add_gate(graph, node_id=4, depending_on_id=1, parameter="env", operator="equals", value="value_y")
+        add_rename_select(graph, node_id=5, depending_on_id=4, old="a", new="a_y")
+        add_union(graph, node_id=6, depending_on_ids=[3, 5])
+        add_passthrough_select(graph, node_id=7, depending_on_id=6)
+        return graph
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    def test_all_closed_export_returns_the_empty_stand_in_while_the_engine_skips(self, converter):
+        graph = self._build(flow_id=75)
+
+        code = converter(graph).convert()
+
+        assert "df_6_frames = []" in code
+        assert "if not df_6_frames:" in code
+
+        run_info = graph.run_graph()
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert by_id[6].skipped is True
+        assert by_id[7].skipped is True
+        assert graph.get_node(6).results.resulting_data is None
+
+        generated_df = run_generated(code, env="other")
+        assert generated_df.height == 0
+        assert set(generated_df.columns) == {"a_x", "a_y"}
 
 
 # G. YAML round-trip
@@ -1457,13 +1670,14 @@ class TestDoubleWiredGateExits:
 
 class TestElseOutputExport:
     @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
-    def test_split_gate_emits_negated_block(self, converter):
+    def test_split_gate_emits_if_else_blocks(self, converter):
         graph = build_split_diamond(env="prod", flow_id=58)
 
         code = converter(graph).convert()
 
         assert "if env == 'prod':" in code
-        assert "if not (env == 'prod'):" in code
+        assert "else:" in code
+        assert "if not (env == 'prod'):" not in code
 
     @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
     @pytest.mark.parametrize("env", ["prod", "dev"])
@@ -1483,11 +1697,271 @@ class TestElseOutputExport:
         "flag, live, gated",
         [(True, "a_then", "a_else"), (False, "a_else", "a_then")],
     )
-    def test_formula_split_gate_emits_negated_flag_block(self, flag, live, gated):
+    def test_formula_split_gate_emits_if_else_flag_blocks(self, flag, live, gated):
         graph = TestElseOutputFormulaGate().build([{"flag": flag}], flow_id=60)
 
         code = FlowGraphToPolarsConverter(graph).convert()
 
         assert "if _gate_2_open:" in code
-        assert "if not (_gate_2_open):" in code
+        assert "else:" in code
+        assert "if not (_gate_2_open):" not in code
+        assert "_frames" not in code
         assert_branch(run_generated(code), live, gated, [1, 2, 3])
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    @pytest.mark.parametrize("env", ["prod", "dev"])
+    def test_union_renders_as_if_else_assignment_and_executes(self, converter, env):
+        """The complementary-pair union is a plain if/else assignment — no list, no concat."""
+        graph = build_split_diamond(env=env, flow_id=61)
+        code = converter(graph).convert()
+
+        assert "df_6 = df_3" in code
+        assert "df_6 = df_5" in code
+        assert "_frames" not in code
+        assert "concat" not in code
+
+        graph.run_graph()
+        engine_df = collect_node(graph, 7)
+        generated_df = run_generated(code, env=env)
+        assert set(generated_df.columns) == set(engine_df.columns)
+        assert generated_df.select(engine_df.columns).to_dicts() == engine_df.to_dicts()
+
+
+class TestComplementaryPairNegativeSpace:
+    """Only one gate's exactly-complementary singleton pair fuses to if/else.
+
+    Different gates and shared-prefix conjunctions keep today's rendering:
+    separate if blocks, list-append unions, and the empty-frame fallback
+    whenever the guard set isn't provably exhaustive.
+    """
+
+    def test_independent_gate_diamond_keeps_list_form_and_fallback(self):
+        graph = build_diamond(env="prod", flow_id=62)
+
+        code = FlowGraphToPolarsConverter(graph).convert()
+
+        assert "else:" not in code
+        assert "df_6_frames = []" in code
+        assert "if not df_6_frames:" in code
+        assert "df_6 = pl.concat(df_6_frames, how='diagonal_relaxed')" in code
+
+    @staticmethod
+    def _build_nested(flow_id: int) -> FlowGraph:
+        """An else_output split nested under an outer gate: P∧g / P∧¬g branch blocks."""
+        graph = create_graph(flow_id=flow_id)
+        graph.flow_settings.parameters.append(FlowParameter(name="env", default_value="prod", type="string"))
+        graph.flow_settings.parameters.append(FlowParameter(name="mode", default_value="x", type="string"))
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="env", operator="equals", value="prod")
+        add_gate(
+            graph, node_id=4, depending_on_id=2, else_output=True, parameter="mode", operator="equals", value="x"
+        )
+        add_rename_select(graph, node_id=5, depending_on_id=4, old="a", new="a_then")
+        add_rename_select(graph, node_id=6, depending_on_id=4, old="a", new="a_else", output_handle="output-1")
+        add_union(graph, node_id=7, depending_on_ids=[5, 6])
+        return graph
+
+    @pytest.mark.parametrize("mode", ["x", "y"])
+    def test_nested_split_keeps_conjunction_blocks(self, mode):
+        """The else of ``if P and g`` is not ``P and not g`` — no fusion under a prefix."""
+        graph = self._build_nested(flow_id=63)
+        set_parameter(graph, "mode", mode)
+
+        code = FlowGraphToPolarsConverter(graph).convert()
+
+        assert "if (env == 'prod') and (mode == 'x'):" in code
+        assert "if (env == 'prod') and (not (mode == 'x')):" in code
+
+        graph.run_graph()
+        engine_df = collect_node(graph, 7)
+        generated_df = run_generated(code, env="prod", mode=mode)
+        assert set(generated_df.columns) == set(engine_df.columns)
+        assert generated_df.select(engine_df.columns).to_dicts() == engine_df.to_dicts()
+
+    def test_three_input_union_with_complementary_pair_drops_the_fallback(self):
+        """A then/else pair proves the list non-empty even with a third, independent branch."""
+        graph = create_graph(flow_id=64)
+        graph.flow_settings.parameters.append(FlowParameter(name="env", default_value="prod", type="string"))
+        graph.flow_settings.parameters.append(FlowParameter(name="flag", default_value="yes", type="string"))
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(
+            graph, node_id=2, depending_on_id=1, else_output=True, parameter="env", operator="equals", value="prod"
+        )
+        add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_then")
+        add_rename_select(graph, node_id=5, depending_on_id=2, old="a", new="a_else", output_handle="output-1")
+        add_gate(graph, node_id=8, depending_on_id=1, parameter="flag", operator="equals", value="yes")
+        add_rename_select(graph, node_id=9, depending_on_id=8, old="a", new="a_extra")
+        add_union(graph, node_id=6, depending_on_ids=[3, 5, 9])
+
+        code = FlowGraphToPolarsConverter(graph).convert()
+
+        assert "df_6_frames = []" in code
+        assert "if not df_6_frames:" not in code
+        result = run_generated(code, env="dev", flag="no")
+        assert result.columns == ["a_else"]
+        assert result.height == 3
+
+
+# I. Performance execution mode
+
+
+class TestPerformanceModeGates:
+    """Gate routing is execution-mode independent.
+
+    Performance runs must route, deliberately skip, and report N/N progress
+    exactly like the Development runs pinned in sections A and H.
+    """
+
+    def test_parameter_diamond_routes_and_skips_like_development(self):
+        graph = build_diamond(env="prod", flow_id=80, execution_mode="Performance")
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert [nr.node_id for nr in run_info.node_step_result if nr.skipped] == [5]
+        assert by_id[5].success is True
+        for gate_id in (2, 4):
+            assert by_id[gate_id].success is True and by_id[gate_id].skipped is False
+        assert run_info.number_of_nodes == run_info.nodes_completed == 7
+        assert_branch(collect_node(graph, 7), live="a_prod", gated="a_dev", values=[1, 2, 3])
+
+    def test_parameter_flip_reroutes_in_performance_mode(self):
+        graph = build_diamond(env="prod", flow_id=81, execution_mode="Performance")
+        assert graph.run_graph().success is True
+        assert_branch(collect_node(graph, 7), live="a_prod", gated="a_dev", values=[1, 2, 3])
+
+        set_parameter(graph, "env", "dev")
+        second = graph.run_graph()
+
+        assert second.success is True
+        by_id = results_by_id(second)
+        assert by_id[3].skipped is True
+        assert by_id[5].skipped is False
+        assert_branch(collect_node(graph, 7), live="a_dev", gated="a_prod", values=[1, 2, 3])
+
+    @pytest.mark.parametrize(
+        "env, live, gated, live_node, gated_node",
+        [("prod", "a_prod", "a_dev", 3, 5), ("dev", "a_dev", "a_prod", 5, 3)],
+    )
+    def test_else_output_split_routes_and_skips_like_development(self, env, live, gated, live_node, gated_node):
+        graph = build_split_diamond(env=env, flow_id=82, execution_mode="Performance")
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert by_id[2].success is True and by_id[2].skipped is False
+        assert by_id[gated_node].skipped is True and by_id[gated_node].success is True
+        assert by_id[live_node].skipped is False
+        assert run_info.nodes_completed == run_info.number_of_nodes
+        assert_branch(collect_node(graph, 6), live, gated, [1, 2, 3])
+
+
+# J. Worker offload
+
+
+WORKER_HOST = os.environ.get(
+    "FLOWFILE_WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
+)
+WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
+
+
+def _worker_available() -> bool:
+    if os.environ.get("SKIP_WORKER_TESTS") == "1":
+        return False
+    try:
+        return requests.get(f"http://{WORKER_HOST}:{WORKER_PORT}/docs", timeout=5).ok
+    except requests.exceptions.RequestException:
+        return False
+
+
+class TestWorkerOffloadDiamond:
+    """The default offloaded path (execution_location="remote") keeps gate semantics.
+
+    The rest of this suite pins execution_location="local"; this one diamond run
+    proves the deliberate-skip semantics survive the worker offload hop. Skips
+    cleanly when no worker is reachable (e.g. SKIP_WORKER_TESTS=1).
+    """
+
+    def test_offloaded_diamond_routes_and_skips_like_local(self):
+        if not _worker_available():
+            pytest.skip("flowfile_worker is not reachable")
+        graph = build_diamond(env="prod", flow_id=83, execution_location="remote")
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        by_id = results_by_id(run_info)
+        assert [nr.node_id for nr in run_info.node_step_result if nr.skipped] == [5]
+        assert by_id[5].success is True
+        for gate_id in (2, 4):
+            assert by_id[gate_id].success is True and by_id[gate_id].skipped is False
+        assert run_info.nodes_completed == run_info.number_of_nodes == 7
+        assert_branch(collect_node(graph, 7), live="a_prod", gated="a_dev", values=[1, 2, 3])
+
+
+# K. Nested parameter gates
+
+
+class TestNestedParameterGates:
+    """A gate behind a gate, both parameter-mode: an AND of the two conditions.
+
+    Engine: the doubly-gated branch runs only when BOTH gates are open, and the
+    inner gate itself only executes (decides) when the outer gate lets data
+    reach it. Export: the inner node's guard renders the two-atom conjunction —
+    never flat-merged into an else, which would invert the outer condition.
+    """
+
+    _COMBOS = [("prod", "x"), ("prod", "y"), ("qa", "x"), ("qa", "y")]
+
+    @staticmethod
+    def _build(flow_id: int, env: str, mode: str) -> FlowGraph:
+        """1 manual_input -> 2 gate(env == prod) -> 3 gate(mode == x) -> 4 select(a -> a_kept)."""
+        graph = create_graph(flow_id=flow_id)
+        graph.flow_settings.parameters.append(FlowParameter(name="env", default_value=env, type="string"))
+        graph.flow_settings.parameters.append(FlowParameter(name="mode", default_value=mode, type="string"))
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="env", operator="equals", value="prod")
+        add_gate(graph, node_id=3, depending_on_id=2, parameter="mode", operator="equals", value="x")
+        add_rename_select(graph, node_id=4, depending_on_id=3, old="a", new="a_kept")
+        return graph
+
+    @pytest.mark.parametrize("env, mode", _COMBOS)
+    def test_only_the_doubly_open_path_runs(self, env, mode):
+        graph = self._build(flow_id=84, env=env, mode=mode)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        assert run_info.nodes_completed == run_info.number_of_nodes == 4
+        by_id = results_by_id(run_info)
+        outer_open = env == "prod"
+        both_open = outer_open and mode == "x"
+        assert by_id[2].success is True and by_id[2].skipped is False
+        assert by_id[3].success is True
+        assert by_id[3].skipped is (not outer_open)
+        assert by_id[4].success is True
+        assert by_id[4].skipped is (not both_open)
+        if both_open:
+            assert collect_node(graph, 4)["a_kept"].to_list() == [1, 2, 3]
+        else:
+            assert graph.get_node(4).results.resulting_data is None
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    @pytest.mark.parametrize("env, mode", _COMBOS)
+    def test_export_renders_the_conjunction_and_matches_the_engine(self, converter, env, mode):
+        graph = self._build(flow_id=85, env=env, mode=mode)
+
+        code = converter(graph).convert()
+
+        assert "if (env == 'prod') and (mode == 'x'):" in code
+        assert "else:" not in code
+
+        graph.run_graph()
+        engine_result = graph.get_node(4).results.resulting_data
+        engine_height = engine_result.data_frame.lazy().collect().height if engine_result else 0
+        generated_df = run_generated(code, env=env, mode=mode)
+        assert generated_df.columns == ["a_kept"]
+        expected_height = 3 if env == "prod" and mode == "x" else 0
+        assert generated_df.height == engine_height == expected_height

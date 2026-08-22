@@ -143,6 +143,13 @@ class TransformHandlersMixin(ConverterMixinBase):
         makes the reference safe (extra ∪ combined ⊇ the producer's condition,
         so the var is always assigned when the guard passes at the union's
         site). Inputs without extra atoms append unguarded.
+
+        Exactly two inputs whose extras are one gate's exactly-complementary
+        singletons collapse to an if/else assignment — inside the union's own
+        condition block exactly one side is live, so no list and no fallback.
+        Any complementary pair among the extras also proves the list non-empty,
+        dropping the empty-frame fallback; the fallback stays only when the
+        guard set isn't provably exhaustive (e.g. independent gates).
         """
         dfs = []
         if "main" in input_vars:
@@ -166,20 +173,35 @@ class TransformHandlersMixin(ConverterMixinBase):
             # can't be placed then, so fall through to the plain concat —
             # correct whenever no edge carries extra atoms.
             if edge_guards and len(producers) == len(dfs):
+                extras = [edge_guards.get(producer.node_id) for producer in producers]
+                has_complementary_pair = any(
+                    self._conds_are_complementary(a, b)
+                    for i, a in enumerate(extras)
+                    if a
+                    for b in extras[i + 1:]
+                    if b
+                )
+                if len(dfs) == 2 and all(extras) and has_complementary_pair:
+                    self._add_code(f"if {self._render_gate_cond(extras[0])}:")
+                    self._add_code(f"    {var_name} = {dfs[0]}")
+                    self._add_code("else:")
+                    self._add_code(f"    {var_name} = {dfs[1]}")
+                    self._add_code("")
+                    return
                 list_var = f"{var_name}_frames"
                 self._add_code(f"{list_var} = []")
                 any_unguarded = False
-                for producer, df_var in zip(producers, dfs, strict=True):
-                    extra = edge_guards.get(producer.node_id)
+                for extra, df_var in zip(extras, dfs, strict=True):
                     if extra:
                         self._add_code(f"if {self._render_gate_cond(extra)}:")
                         self._add_code(f"    {list_var}.append({df_var})")
                     else:
                         any_unguarded = True
                         self._add_code(f"{list_var}.append({df_var})")
-                if not any_unguarded:
-                    # Every input is guarded, so all branches can be closed at
-                    # run time (independent gates); concat needs ≥1 frame.
+                if not any_unguarded and not has_complementary_pair:
+                    # Every input is guarded and no pair is provably
+                    # exhaustive (independent gates): all branches can be
+                    # closed at run time, and concat needs ≥1 frame.
                     empty = self._empty_frame_schema_expr(union_node)
                     if empty is None:
                         empty = "pl.LazyFrame()" if self.framework == "pl" else "ff.FlowFrame(pl.LazyFrame())"

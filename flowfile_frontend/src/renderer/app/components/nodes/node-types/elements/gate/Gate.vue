@@ -7,7 +7,12 @@
     >
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Condition source</div>
-        <el-radio-group v-model="gateInput.condition_source" class="source-group" size="small">
+        <el-radio-group
+          v-model="gateInput.condition_source"
+          class="source-group"
+          size="small"
+          @change="handleConditionSourceChange"
+        >
           <el-radio-button value="parameter">Flow parameter</el-radio-button>
           <el-radio-button value="formula">Formula</el-radio-button>
         </el-radio-group>
@@ -63,14 +68,17 @@
             <div v-else-if="parameterHint" class="help-text">{{ parameterHint }}</div>
             <div v-if="showListHint" class="help-text">Enter comma-separated values.</div>
           </template>
+          <div v-if="hasControlInput" class="help-text">
+            The control input is only read by Formula conditions.
+          </div>
         </template>
 
         <template v-else>
           <div class="listbox-subtitle section-gap">Formula</div>
           <div v-if="hasControlInput" class="source-banner">
             The gate opens when <strong>at least one row</strong> of the
-            <strong>control input (the bottom handle)</strong> matches this formula, and closes
-            when none do. Use the control's columns here — the data input only passes through.
+            <strong>control input (the bottom handle)</strong> matches this formula, and closes when
+            none do. Use the control's columns here — the data input only passes through.
           </div>
           <div v-else class="source-banner">
             The gate opens when <strong>at least one row</strong> of the
@@ -81,6 +89,9 @@
             :key="String(nodeGate.node_id)"
             ref="editorChild"
             :editor-string="editorString"
+            :input-source="
+              gateInput.condition_source === 'formula' && hasControlInput ? 'right' : 'main'
+            "
           />
           <div class="help-text">
             Write it like a Filter condition — e.g. <code>[status] = 'error'</code> opens on a
@@ -95,6 +106,7 @@
             size="small"
             active-text="Add an else output"
             inactive-text="Single output"
+            @change="handleElseToggle"
           />
           <el-popover placement="top-start" :width="340" trigger="click">
             <template #reference>
@@ -103,14 +115,14 @@
             <div class="gate-help">
               <p>
                 <strong>How the gate routes.</strong> The data flows through unchanged while the
-                condition holds. When it does not, the gate still succeeds and everything
-                downstream is <strong>skipped</strong>, not failed — the run stays green.
+                condition holds. When it does not, the gate still succeeds and everything downstream
+                is <strong>skipped</strong>, not failed — the run stays green.
               </p>
               <p>
                 <strong>If/else.</strong> With the else output on, the data leaves
                 <strong>T</strong> (then) when the condition holds and <strong>E</strong> (else)
-                when it does not — exactly one side runs. Put each branch behind one exit and
-                merge them with a Union: whichever branch ran is what comes out.
+                when it does not — exactly one side runs. Put each branch behind one exit and merge
+                them with a Union: whichever branch ran is what comes out.
               </p>
             </div>
           </el-popover>
@@ -125,6 +137,7 @@
 
 <script lang="ts" setup>
 import { computed, nextTick, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
   GATE_OPERATOR_LABELS,
   GATE_OPERATORS_WITH_VALUE,
@@ -134,7 +147,10 @@ import {
 } from "@/types/node.types";
 import { buildOutputHandles } from "@/utils/nodeHandles";
 import type { FlowParameter } from "@/types/flow.types";
+import type { NodeConnection } from "@/types/canvas.types";
 import type { NodeData } from "@/components/nodes/baseNode/nodeInterfaces";
+import { FlowApi } from "@/api";
+import { suppressedEdgeRemovals } from "@/composables/useDragAndDrop";
 import { useNodeStore } from "@/stores/node-store";
 import { useFlowStore } from "@/stores/flow-store";
 import { useEditorStore } from "@/stores/editor-store";
@@ -169,6 +185,89 @@ watch(elseOutputEnabled, () => {
   updateNodeOutputHandles();
 });
 
+// Fired only on user toggles (not on load), so drawer opens never prompt.
+const handleElseToggle = async (enabled: boolean | string | number) => {
+  if (enabled) return;
+  const vfInstance = flowStore.vueFlowInstance;
+  const nodeId = nodeGate.value?.node_id;
+  if (!vfInstance || nodeId == null) return;
+  const staleEdges = vfInstance.getEdges.value.filter(
+    (edge: { source: string; sourceHandle?: string | null }) =>
+      edge.source === String(nodeId) && edge.sourceHandle === "output-1",
+  );
+  if (staleEdges.length === 0) return;
+  const plural = staleEdges.length === 1 ? "connection" : "connections";
+  try {
+    await ElMessageBox.confirm(
+      `The else output still has ${staleEdges.length} ${plural} on the canvas. Without an else ` +
+        "output, an open gate serves those edges the then-data instead of skipping them. " +
+        "Remove them, or keep them and accept that behavior?",
+      "Else output disabled",
+      {
+        confirmButtonText: staleEdges.length === 1 ? "Remove edge" : "Remove edges",
+        cancelButtonText: "Keep",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+  await removeElseEdges(staleEdges);
+};
+
+// Same backend-first prune as RunFlow.vue's applyInterfaceToCanvas.
+const removeElseEdges = async (
+  edges: {
+    id: string;
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  }[],
+) => {
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance || !nodeGate.value) return;
+  const removedIds: string[] = [];
+  let failedCount = 0;
+  for (const edge of edges) {
+    const connection: NodeConnection = {
+      input_connection: {
+        node_id: Number(edge.target),
+        connection_class: (edge.targetHandle ??
+          "input-0") as NodeConnection["input_connection"]["connection_class"],
+      },
+      output_connection: {
+        node_id: Number(edge.source),
+        connection_class: (edge.sourceHandle ??
+          "output-0") as NodeConnection["output_connection"]["connection_class"],
+      },
+    };
+    try {
+      await FlowApi.deleteConnection(Number(nodeGate.value.flow_id), connection);
+    } catch (error) {
+      // 422 = already gone server-side; the edge is stale either way.
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 422) {
+        console.error("Failed to delete stale else connection:", error);
+        failedCount += 1;
+        continue;
+      }
+    }
+    suppressedEdgeRemovals.add(edge.id);
+    removedIds.push(edge.id);
+  }
+  // One removal per call: Canvas.handleEdgeChange ignores batched change events.
+  for (const id of removedIds) {
+    vfInstance.removeEdges([id]);
+  }
+  if (failedCount > 0) {
+    ElMessage.error(
+      `Could not remove ${failedCount} else connection${failedCount === 1 ? "" : "s"}; ` +
+        "they remain on the canvas.",
+    );
+  }
+};
+
 const defaultGateInput = (): GateInput => ({
   condition_source: "parameter",
   parameter: "",
@@ -184,9 +283,29 @@ const operatorOptions = (Object.keys(GATE_OPERATOR_LABELS) as GateOperator[]).ma
 
 const parameters = computed<FlowParameter[]>(() => flowStore.parameters);
 
-const hasControlInput = computed(() => Boolean(nodeData.value?.right_input));
+// Live canvas edges, not the one-time nodeData snapshot, so connecting or
+// disconnecting the control pip while the drawer is open stays truthful.
+const hasControlInput = computed(() => {
+  const vfInstance = flowStore.vueFlowInstance;
+  const nodeId = nodeGate.value?.node_id;
+  if (vfInstance && nodeId != null) {
+    return vfInstance.getEdges.value.some(
+      (edge: { target: string; targetHandle?: string | null }) =>
+        edge.target === String(nodeId) && edge.targetHandle === "input-1",
+    );
+  }
+  return Boolean(nodeData.value?.right_input);
+});
 
 const openFlowSettings = () => editorStore.requestOpenFlowSettings();
+
+// Leaving Formula unmounts the editor; capture its live buffer so flipping
+// back remounts with the unsaved formula instead of the last-saved one.
+const handleConditionSourceChange = (source: string | number | boolean | undefined) => {
+  if (source !== "formula") {
+    editorString.value = nodeStore.inputCode;
+  }
+};
 
 const showValueInput = computed(() =>
   GATE_OPERATORS_WITH_VALUE.includes(gateInput.value?.operator ?? "equals"),

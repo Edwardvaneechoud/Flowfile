@@ -535,6 +535,10 @@ class NodeTag(str, Enum):
     DEPENDENCY = "dependency"
     GATE = "gate"
     CONDITION = "condition"
+    CONDITIONAL = "conditional"
+    IF = "if"
+    ELSE = "else"
+    SWITCH = "switch"
     BRANCH = "branch"
     SKIP = "skip"
 

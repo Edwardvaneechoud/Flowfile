@@ -17,6 +17,7 @@
         <column-selector
           v-if="optionSelection === 'fields'"
           :filter-text="filterText"
+          :table-schema="activeInput?.table_schema"
           @value-selected="handleNodeSelected"
         />
         <param-selector
@@ -39,7 +40,7 @@
         ref="functionEditor"
         class="prism-editor-ref"
         :editor-string="code"
-        :columns="nodeStore.nodeData?.main_input?.columns"
+        :columns="activeInput?.columns"
         :column-types="columnTypes"
         :parameters="parameters"
         @update-editor-string="handleCodeChange"
@@ -50,7 +51,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, Ref, watch, onMounted, nextTick, computed } from "vue";
+import { ref, Ref, watch, onMounted, nextTick, computed, type PropType } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import ParamSelector from "./ParamSelector/ParamSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
@@ -76,7 +77,14 @@ const radioOptions = [
 
 const props = defineProps({
   editorString: { type: String, required: true },
+  // Which connected input feeds columns/autocomplete/field list: the gate's
+  // formula editor points this at the control input (right_input).
+  inputSource: { type: String as PropType<"main" | "right">, default: "main" },
 });
+
+const activeInput = computed(() =>
+  props.inputSource === "right" ? nodeStore.nodeData?.right_input : nodeStore.nodeData?.main_input,
+);
 
 const startX = ref(0);
 const startWidth = ref(0);
@@ -101,7 +109,7 @@ const searchPlaceholder = computed(() => {
 });
 
 const columnTypes = computed<Record<string, string>>(() => {
-  const schema = nodeStore.nodeData?.main_input?.table_schema ?? [];
+  const schema = activeInput.value?.table_schema ?? [];
   const map: Record<string, string> = {};
   for (const col of schema) {
     map[col.name] = col.data_type;

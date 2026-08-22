@@ -6436,12 +6436,15 @@ class FlowGraph:
         """Fresh routing decision for a formula gate, from its source node's result.
 
         The predicate runs against the control input when one is connected,
-        else against the gate's own data input. Reads the source node's
-        memoized result (it ran in an earlier stage); falls back to a lazy
-        pull when the gate's own cache branch short-cut input assembly.
-        ``${param}`` refs in the formula resolve with the run's parameters —
-        the stage loop sees the restored (unsubstituted) settings. Raises on
-        a missing/unparsable formula — the caller fails the gate visibly.
+        else against the gate's own data input — resolved through the edge's
+        recorded source handle, like input assembly, so a control wired to a
+        secondary output (e.g. a split filter's fail side) probes that frame,
+        not the source's default output. The memoized result is served when
+        the source ran in an earlier stage; the resolution lazily pulls when
+        the gate's own cache branch short-cut input assembly. ``${param}``
+        refs in the formula resolve with the run's parameters — the stage
+        loop sees the restored (unsubstituted) settings. Raises on a
+        missing/unparsable formula — the caller fails the gate visibly.
         """
         gate_input = node.setting_input.gate_input
         source_node = node.node_inputs.right_input
@@ -6449,9 +6452,10 @@ class FlowGraph:
             source_node = node.node_inputs.main_inputs[0]
         if source_node is None:
             raise ValueError("gate has no input to evaluate its formula against")
-        source_result = source_node.results.resulting_data
+        handle = node._input_output_handles.get(source_node.node_id, DEFAULT_OUTPUT_HANDLE)
+        source_result = node._resolve_input_result_for_handle(source_node, handle)
         if source_result is None:
-            source_result = source_node.get_resulting_data()
+            raise ValueError("gate input produced no result to evaluate its formula against")
         formula = resolve_parameters(gate_input.formula, params or {})
         return not _gate_formula_matches(source_result, formula)
 

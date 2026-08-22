@@ -103,7 +103,7 @@ describe("deriveNodeStatus", () => {
 describe("nodeStatusTooltip", () => {
   it("explains the skipped state", () => {
     expect(nodeStatusTooltip({ statusIndicator: "skipped", hasRun: false })).toBe(
-      "Skipped (gated off) — condition not met",
+      "Skipped — gated off this run",
     );
   });
 

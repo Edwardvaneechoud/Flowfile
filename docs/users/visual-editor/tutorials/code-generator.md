@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
 ### Example 5: A Gated If/Else Branch
 
-A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. Each branch appends its frame to a list under its own `if` guard, and the Union that re-converges the branches concatenates that list — a branch that was gated off simply isn't in it, so the columns only it produces are absent from the result.
+A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. With the **else output** enabled the two branches are exactly complementary, so the generator emits a genuine `if`/`else` pair — and the Union that re-converges them collapses to a plain conditional assignment: whichever side ran is the result.
 
 **Flowfile Pipeline:**
 
@@ -188,18 +188,13 @@ def run_etl_pipeline(*, env: str = 'dev'):
 
     if env == 'prod':
         df_4 = df_1.with_columns([(pl.lit("prod")).alias("channel").cast(pl.String)])
-
-    if not (env == 'prod'):
+    else:
         df_5 = df_1.with_columns([(pl.lit("dev")).alias("channel").cast(pl.String)])
 
-    df_6_frames = []
     if env == 'prod':
-        df_6_frames.append(df_4)
-    if not (env == 'prod'):
-        df_6_frames.append(df_5)
-    if not df_6_frames:
-        df_6_frames.append(pl.LazyFrame(schema={'region': pl.String, 'amount': pl.Int64, 'channel': pl.String}))
-    df_6 = pl.concat(df_6_frames, how='diagonal_relaxed')
+        df_6 = df_4
+    else:
+        df_6 = df_5
 
     return df_6
 
@@ -210,12 +205,12 @@ if __name__ == "__main__":
 
 </details>
 
-Every input of this Union sits behind a guard, so the generator adds the `if not df_6_frames` line: an empty schema-typed frame keeps the concat valid in the case where no branch runs at all. A Union that also has at least one ungated input does not need it.
+The `if`/`else` fusion applies only when the two guards are one gate's exactly-complementary then/else pair. A Union behind guards that aren't provably exhaustive — say two **independent** gates — instead collects each surviving branch into a list under its own `if` guard and concatenates the list; when every input is guarded that way the generator also adds an `if not <list>:` fallback appending an empty schema-typed frame, because all branches could be closed at run time and the concat needs at least one frame. That fallback is a deliberate divergence from the visual editor: when every input is gated off, the engine skips the Union and everything downstream, while the exported script continues with the empty frame and produces zero-row output.
 
 A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
 
 !!! note "All export modes"
-    The FlowFrame and Project exports emit the same `if` blocks and the same guarded list-appends, with the no-branch-ran stand-in wrapped as an `ff.FlowFrame`, and a formula gate probes the frame's underlying LazyFrame via `.data`.
+    The FlowFrame and Project exports emit the same `if`/`else` blocks and union assignment (and the same guarded list-appends where those still apply), with any no-branch-ran stand-in wrapped as an `ff.FlowFrame`, and a formula gate probes the frame's underlying LazyFrame via `.data`.
 
 ## Project Export
 

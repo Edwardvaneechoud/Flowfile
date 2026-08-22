@@ -706,7 +706,17 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             "downstream nodes are skipped (not failed). Enable the else output to route the data to "
             "a second exit when the condition does not hold — a one-node if/else",
             laziness="lazy",
-            tags=[NodeTag.GATE, NodeTag.CONDITION, NodeTag.BRANCH, NodeTag.SKIP, NodeTag.DEPENDENCY],
+            tags=[
+                NodeTag.GATE,
+                NodeTag.CONDITION,
+                NodeTag.CONDITIONAL,
+                NodeTag.IF,
+                NodeTag.ELSE,
+                NodeTag.SWITCH,
+                NodeTag.BRANCH,
+                NodeTag.SKIP,
+                NodeTag.DEPENDENCY,
+            ],
         ),
         NodeTemplate(
             name="Wait For",
