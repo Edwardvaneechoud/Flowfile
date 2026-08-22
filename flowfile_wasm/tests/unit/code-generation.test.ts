@@ -507,7 +507,8 @@ describe('Code Generation', () => {
       expect(code).toContain('Generated from Flowfile WASM')
       expect(code).toContain('if __name__ == "__main__":')
       expect(code).toContain('pipeline_output = run_etl_pipeline()')
-      expect(code).toContain('print(pipeline_output.collect())')
+      // Type-aware footer: an external_output tail binds a DataFrame already.
+      expect(code).toContain('print(pipeline_output)')
     })
   })
 
@@ -920,6 +921,26 @@ describe('Code Generation', () => {
       const code = generateCode({ nodes, edges: [] })
 
       expect(code).toContain('return final_result')
+    })
+  })
+
+  describe('YAML-loaded null input ids', () => {
+    it('rightInputId: null never registers a phantom right input', () => {
+      // Flows loaded from YAML carry `right_input_id: null` on every node.
+      const nodes = new Map<number, FlowNode>()
+      const read = createNode(1, 'read', {
+        received_file: { name: 'data.csv', path: 'https://example.com/data.csv', file_type: 'csv' }
+      })
+      read.rightInputId = null as unknown as undefined
+      read.leftInputId = null as unknown as undefined
+      const unique = createNode(2, 'unique', { unique_input: { columns: null, strategy: 'any' } }, [1])
+      unique.rightInputId = null as unknown as undefined
+      nodes.set(1, read)
+      nodes.set(2, unique)
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 2]]) })
+      expect(code).not.toContain('df_right')
+      expect(code).not.toContain('df_left')
     })
   })
 })

@@ -1,7 +1,7 @@
 /**
  * The walkthrough view is only as good as its trace build: one run of the
  * instrumented script has to hand back every intermediate table, including
- * when a later step is still an unfilled exercise.
+ * for steps the canvas keeps to itself (passthrough notes).
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -111,10 +111,10 @@ describe('walkthrough step metadata', () => {
     expect(explainNode(flow, 2).code).not.toContain('groups')
   })
 
-  it('marks a node with no loop form as an exercise', () => {
+  it('gives a node with no loop form an empty concept, never a fake card', () => {
     const formula = makeNode(3, 'formula', { function: { field: { name: 'x' }, function: '[revenue] * 2' } }, [2])
     const { steps } = buildWalkthrough(flowWith(SOURCE, FILTER, formula))
-    expect(steps[2].concept).toBe('exercise')
+    expect(steps[2].concept).toBe('')
   })
 })
 
@@ -174,6 +174,23 @@ describe('concept coverage', () => {
       expect(concept.body.length, `${key} has no body`).toBeGreaterThan(0)
     }
   })
+
+  it('keeps the "another way" footers rare and pointed at the official docs', () => {
+    const withAnother = Object.entries(CONCEPTS).filter(([, concept]) => concept.another)
+    // Deliberately few: a footer on most cards would stop being a nudge.
+    expect(withAnother.map(([key]) => key).sort()).toEqual([
+      'accumulator-dict',
+      'hash-index',
+      'key-function',
+      'nested-loop',
+      'seen-set'
+    ])
+    for (const [key, concept] of withAnother) {
+      expect(concept.another!.href, key).toMatch(/^https:\/\/docs\.python\.org\/3\//)
+      expect(concept.another!.text.length, `${key} has empty footer text`).toBeGreaterThan(0)
+      expect(concept.another!.linkLabel, key).toContain('Python docs')
+    }
+  })
 })
 
 describe('hover glossary', () => {
@@ -226,16 +243,16 @@ describe('trace build', () => {
     expect(captured.grouped).toEqual([{ product: 'Gadget', total: 200 }, { product: 'Widget', total: 150 }])
   })
 
-  it('still returns the earlier steps when a later one is an unfilled exercise', ctx => {
+  it('a done-by-the-canvas step passes its rows through and keeps tracing', ctx => {
     if (!python) ctx.skip('no CPython found (set FLOWFILE_TEST_PYTHON)')
-    // This is the whole reason __steps__ is module-level rather than a local.
     const formula = makeNode(3, 'formula', { function: { field: { name: 'x' }, function: '[revenue] * 2' } }, [2])
     const traceScript = traceScriptFor(flowWith(SOURCE, FILTER, formula))
     const captured = runTrace(traceScript, 'stubbed')
 
     expect(captured.source).toHaveLength(3)
     expect(captured.filtered).toHaveLength(2)
-    expect(captured.computed).toBeUndefined()
+    // The note binds the input through unchanged, so the step still has data.
+    expect(captured.computed).toEqual(captured.filtered)
   })
 
   it('keeps the trace script free of Polars, like the script it mirrors', () => {
@@ -285,33 +302,32 @@ describe('instrumented-buffer trace (the browser path)', () => {
     expect(buffered).toEqual(reference)
   })
 
-  it('traces the learner\'s SOLVED exercise: the stub filled in, downstream steps get data', ctx => {
+  it('traces the learner\'s OWN edit to a passthrough step, downstream included', ctx => {
     if (!python) ctx.skip('no CPython found (set FLOWFILE_TEST_PYTHON)')
     const formula = makeNode(3, 'formula', { function: { field: { name: 'doubled' }, function: '[revenue] * 2' } }, [2])
     const walk = buildWalkthrough(flowWith(SOURCE, FILTER, formula, { ...GROUP, id: 4, inputIds: [3] }))
 
-    // The learner replaces the raise with a working loop — same line count, so
-    // the step ranges the highlight tracks still hold.
+    // The learner turns the passthrough into a real transformation — same line
+    // count, so the step ranges the highlight tracks still hold.
     const solved = walk.script.replace(
-      /^(\s*)raise NotImplementedError\(.*\)$/m,
-      '$1return [{**row, "doubled": row["revenue"] * 2} for row in rows]'
+      /^(\s*)computed = filtered$/m,
+      '$1computed = [{**row, "doubled": row["revenue"] * 2} for row in filtered]'
     )
     expect(solved).not.toBe(walk.script)
 
     const captured = runInstrumentedBuffer(solved, walk, 'solved')
     expect(captured.computed).toHaveLength(2)
     expect((captured.computed as any)[0].doubled).toBe(400)
-    // The step AFTER the solved exercise now has data too — the whole point.
     expect(captured.grouped).toBeDefined()
   })
 
-  it('still yields the pre-stub tables when the exercise is left unsolved', ctx => {
+  it('a passthrough note keeps the whole script runnable end to end', ctx => {
     if (!python) ctx.skip('no CPython found (set FLOWFILE_TEST_PYTHON)')
     const formula = makeNode(3, 'formula', { function: { field: { name: 'x' }, function: '[revenue] * 2' } }, [2])
     const walk = buildWalkthrough(flowWith(SOURCE, FILTER, formula))
     const captured = runInstrumentedBuffer(walk.script, walk, 'unsolved')
     expect(captured.source).toHaveLength(3)
     expect(captured.filtered).toHaveLength(2)
-    expect(captured.computed).toBeUndefined()
+    expect(captured.computed).toEqual(captured.filtered)
   })
 })

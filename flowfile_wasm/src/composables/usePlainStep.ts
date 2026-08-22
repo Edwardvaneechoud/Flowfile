@@ -19,8 +19,8 @@ export interface PlainRunResult {
 }
 
 /**
- * What a trace run captured: per-variable tables capped at the bridge, plus
- * the true row counts — so the counts never lie about a big table.
+ * Per-variable tables plus true row counts — so the counts never lie about a
+ * big table. Fed from the canvas run's node previews, keyed by step varName.
  */
 export interface CapturedTrace {
   tables: Record<string, Record<string, unknown>[]>
@@ -29,8 +29,8 @@ export interface CapturedTrace {
 
 type Captured = CapturedTrace | null
 
-/** Steps that collapse rows rather than discarding them. */
-const AGGREGATING = new Set(['accumulator-dict'])
+/** Node types that collapse rows rather than discarding them. */
+const AGGREGATING = new Set(['group_by'])
 
 export const stepLabel = (step: PlainStep): string => getNodeDescription(step.nodeType).title
 
@@ -81,24 +81,12 @@ export function usePlainStep(steps: Ref<PlainStep[]>, current: Ref<number>, capt
     if (counts.after < counts.before) {
       // "Dropped 992" would be a lie about a group by: nothing was discarded,
       // the rows were folded together.
-      return AGGREGATING.has(active.concept)
+      return AGGREGATING.has(active.nodeType)
         ? `${counts.before} rows in, ${counts.after} out — every row is still accounted for, folded into ${counts.after} groups.`
         : `${counts.before} rows in, ${counts.after} out — this step dropped ${counts.before - counts.after}.`
     }
     return `${counts.before} rows in, ${counts.after} out — this step produced ${counts.after - counts.before} more.`
   })
 
-  /** Why this step has no data, when an earlier one does. */
-  const blockedReason = computed(() => {
-    const stopped = steps.value.findIndex(entry => !captured.value?.tables[entry.varName])
-    if (stopped > 0 && steps.value[stopped]?.concept === 'exercise') {
-      return `The script stopped at step ${stopped + 1}, which is still an unfilled exercise — so nothing past it has run yet.`
-    }
-    if (stopped > 0 && stopped < current.value) {
-      return `The script stopped at step ${stopped + 1}, so nothing past it has run yet.`
-    }
-    return 'No data captured for this step.'
-  })
-
-  return { concept, tables, delta, deltaCounts, blockedReason }
+  return { concept, tables, delta, deltaCounts }
 }
