@@ -160,6 +160,58 @@ if __name__ == "__main__":
 !!! note "`.data` accessor"
     The generated code calls `.data` on FlowFrame results to extract the underlying Polars `LazyFrame`. This keeps the rest of the pipeline as standard Polars operations.
 
+### Example 5: A Gated If/Else Branch
+
+A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. With the **else output** enabled the two branches are exactly complementary, so the generator emits a genuine `if`/`else` pair — and the Union that re-converges them collapses to a plain conditional assignment: whichever side ran is the result.
+
+**Flowfile Pipeline:**
+
+1.  **Manual Input** (`region`, `amount`)
+2.  One **Gate** on the flow parameter `env` (`equals prod`) with the **else output** enabled
+3.  A **Formula** behind each exit, tagging the rows with a `channel`
+4.  **Union Data** merging both branches
+
+<details markdown="1">
+<summary>Generated Polars Code</summary>
+
+```python
+import polars as pl
+
+
+def run_etl_pipeline(*, env: str = 'dev'):
+    """
+    ETL Pipeline: gated
+    Generated from Flowfile
+    """
+
+    df_1 = pl.LazyFrame([['north', 'south'], [10, 5]], schema=pl.Schema([("region", pl.String), ("amount", pl.Int64)]), strict=False)
+
+    if env == 'prod':
+        df_4 = df_1.with_columns([(pl.lit("prod")).alias("channel").cast(pl.String)])
+    else:
+        df_5 = df_1.with_columns([(pl.lit("dev")).alias("channel").cast(pl.String)])
+
+    if env == 'prod':
+        df_6 = df_4
+    else:
+        df_6 = df_5
+
+    return df_6
+
+
+if __name__ == "__main__":
+    pipeline_output = run_etl_pipeline()
+```
+
+</details>
+
+The `if`/`else` fusion applies only when the two guards are one gate's exactly-complementary then/else pair. A Union behind guards that aren't provably exhaustive — say two **independent** gates — instead collects each surviving branch into a list under its own `if` guard and concatenates the list; when every input is guarded that way the generator also adds an `if not <list>:` fallback appending an empty schema-typed frame, because all branches could be closed at run time and the concat needs at least one frame. That fallback is a deliberate divergence from the visual editor: when every input is gated off, the engine skips the Union and everything downstream, while the exported script continues with the empty frame and produces zero-row output.
+
+A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
+
+!!! note "All export modes"
+    The FlowFrame and Project exports emit the same `if`/`else` blocks and union assignment (and the same guarded list-appends where those still apply), with any no-branch-ran stand-in wrapped as an `ff.FlowFrame`, and a formula gate probes the frame's underlying LazyFrame via `.data`.
+
 ## Project Export
 
 For more complex flows — especially flows that contain **notebook (Python script) nodes** or **custom user-defined nodes** — a single generated script becomes hard to read. The third export mode, **Project**, exports the flow as a structured multi-file Python project instead:
@@ -182,6 +234,7 @@ Key points:
 * **Notebook nodes are exported** (they are not supported by the single-file modes). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
 * **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
 * The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`).
+* **Gates land in `pipeline.py` as real `if` blocks** over the function's parameter arguments, exactly like the single-file exports.
 * Server-backed `flowfile_ctx` APIs (global artifacts, catalog access) raise `NotImplementedError` in the exported project; the export panel and the generated README list these limitations per node.
 
 From the Code panel you can either **download the project as a .zip** or **save it directly into a folder** using the built-in file browser.

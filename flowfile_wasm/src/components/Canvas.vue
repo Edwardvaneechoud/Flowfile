@@ -632,7 +632,8 @@ const nodeCategories = ref<NodeCategory[]>([
       // inputs: 1 — single handle accepts multiple connections (like polars_code).
       { type: 'union', name: 'Union', icon: 'union.svg', inputs: 1, outputs: 1, keywords: ['concat', 'append', 'stack', 'combine'] },
       { type: 'fuzzy_match', name: 'Fuzzy Match', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['fuzzy', 'similarity', 'levenshtein', 'approximate', 'fuzzy join'], docsAnchor: 'fuzzy-match' },
-      { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'], docsAnchor: 'graph-solver' }
+      { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'], docsAnchor: 'graph-solver' },
+      { type: 'gate', name: 'Gate', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['gate', 'condition', 'branch', 'skip', 'if'], docsAnchor: 'gate' }
     ]
   },
   {

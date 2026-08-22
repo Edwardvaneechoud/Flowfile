@@ -268,6 +268,7 @@ def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
     * ``NodeManualInput`` → ``("raw_data_format", RawData)``
 
     Multi-field types (``NodeFilter`` has ``filter_input + split_mode``,
+    ``NodeGate`` has ``gate_input + else_output``,
     ``NodeJoin`` has ``join_input + auto_keep_*`` etc.), empty types
     (``NodeRecordCount``, ``NodeWaitFor``), and types whose only
     type-specific field is a primitive (``NodeSample.sample_size: int``)

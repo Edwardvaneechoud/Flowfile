@@ -466,6 +466,7 @@ def execute_run_flow_node(
             error = _first_child_error(run_info) if run_info is not None else "run did not start"
             raise Exception(f"Subflow '{resolved.name}' run {run_index}/{len(runs)} failed: {error}")
 
+        deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
         for slot_name in settings.output_slots:
             out_node = child.get_node(output_ports[slot_name].node_id)
             if out_node is None or not out_node.has_input:
@@ -473,7 +474,21 @@ def execute_run_flow_node(
                     f"Subflow output '{slot_name}' has no input connected inside '{resolved.name}' — "
                     "connect it or remove the flow_output node"
                 )
-            result = out_node.get_resulting_data()
+            if out_node.node_id in deliberately_skipped:
+                # The output sits behind a closed gate in the child: pulling it
+                # would lazily execute the gated-off branch. The slot still has
+                # to yield something, so contribute a zero-row frame with its
+                # predicted schema.
+                try:
+                    skipped_schema = out_node.schema
+                except Exception:
+                    skipped_schema = []
+                result = FlowDataEngine.create_from_schema(skipped_schema) if skipped_schema else FlowDataEngine()
+                node_logger.info(
+                    f"Subflow output '{slot_name}' was gated off in '{resolved.name}'; contributing an empty frame"
+                )
+            else:
+                result = out_node.get_resulting_data()
             lf = result.data_frame if result is not None else pl.DataFrame().lazy()
             if not isinstance(lf, pl.LazyFrame):
                 lf = lf.lazy()

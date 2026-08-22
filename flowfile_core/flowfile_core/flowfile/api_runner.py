@@ -256,6 +256,17 @@ def run_flow_as_api(
         if run_info is None or not run_info.success:
             raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
 
+        deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
+        if api_node.node_id in deliberately_skipped:
+            # The response node sits behind a closed gate for these parameter
+            # values. Pulling it anyway would lazily execute the gated-off
+            # branch and serve its data as if the gate were open — refuse
+            # explicitly instead.
+            raise ApiExecutionError(
+                "API response node was gated off for these parameter values (a gate "
+                "condition upstream evaluated false)"
+            )
+
         data = api_node.get_resulting_data()
         if data is None:
             raise ApiExecutionError("API response node produced no data")

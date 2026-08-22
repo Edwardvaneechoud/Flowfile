@@ -695,6 +695,182 @@ def test_project_executes_end_to_end(tmp_path):
     assert "age_doubled" in result.stdout
 
 
+# ==================== gate project export ====================
+
+
+def _connect(
+    flow: FlowGraph, from_id: int, to_id: int, input_type: str = "main", output_handle: str = "output-0"
+) -> None:
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(
+            from_id, to_id, input_type=input_type, output_handle=output_handle
+        ),
+    )
+
+
+def _add_rename_select(
+    flow: FlowGraph, node_id: int, depending_on_id: int, old: str, new: str, output_handle: str = "output-0"
+) -> None:
+    flow.add_select(
+        input_schema.NodeSelect(
+            flow_id=flow.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            select_input=[transform_schema.SelectInput(old_name=old, new_name=new)],
+            keep_missing=True,
+        )
+    )
+    _connect(flow, depending_on_id, node_id, output_handle=output_handle)
+
+
+def _build_gated_diamond(flow_id: int = 1) -> FlowGraph:
+    """Two complementary parameter gates re-converging on a union."""
+    from flowfile_core.flowfile.param_types import FlowParameter
+
+    flow = create_basic_flow(flow_id=flow_id, name="gated_flow")
+    flow.flow_settings.parameters.append(FlowParameter(name="env", default_value="prod", type="string"))
+    add_sample_input(flow, node_id=1)
+    for gate_id, operator, select_id, renamed in [(2, "equals", 3, "age_prod"), (4, "not_equals", 5, "age_dev")]:
+        flow.add_gate(
+            input_schema.NodeGate(
+                flow_id=flow_id,
+                node_id=gate_id,
+                depending_on_id=1,
+                is_setup=True,
+                gate_input=transform_schema.GateInput(parameter="env", operator=operator, value="prod"),
+            )
+        )
+        _connect(flow, 1, gate_id)
+        _add_rename_select(flow, node_id=select_id, depending_on_id=gate_id, old="age", new=renamed)
+    flow.add_union(input_schema.NodeUnion(flow_id=flow_id, node_id=6, depending_on_ids=[3, 5]))
+    _connect(flow, 3, 6)
+    _connect(flow, 5, 6)
+    return flow
+
+
+def test_project_export_supports_parameter_gates(tmp_path):
+    """A gated flow exports as a runnable project with real if-blocks in pipeline.py."""
+    flow = _build_gated_diamond()
+
+    manifest = export_flow_to_project(flow)
+
+    pipeline = get_file(manifest, "pipeline.py")
+    assert "if env == 'prod':" in pipeline
+    assert "if env != 'prod':" in pipeline
+    assert "ff.FlowFrame(pl.LazyFrame(schema=" in pipeline
+    ast.parse(pipeline)
+
+    project_dir = write_project(manifest, tmp_path)
+    result = subprocess.run(
+        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+    )
+    assert result.returncode == 0, result.stderr
+    assert "age_prod" in result.stdout
+
+
+def test_project_export_formula_gate_pipeline_contains_helper():
+    flow = create_basic_flow(name="formula_gated_flow")
+    add_sample_input(flow, node_id=1)
+    flow.add_gate(
+        input_schema.NodeGate(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            is_setup=True,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[age] > 20"),
+        )
+    )
+    _connect(flow, 1, 2)
+    _add_rename_select(flow, node_id=3, depending_on_id=2, old="age", new="age_kept")
+
+    manifest = export_flow_to_project(flow)
+
+    pipeline = get_file(manifest, "pipeline.py")
+    assert "import polars as pl" in pipeline
+    assert ".data, simple_function_to_expr" in pipeline
+    helper_pos = pipeline.index("_flowfile_gate_formula_matches")
+    assert helper_pos < pipeline.index("def run_etl_pipeline")
+    ast.parse(pipeline)
+
+
+def _run_pipeline_module(code: str, **kwargs) -> pl.DataFrame:
+    """Exec a generated pipeline module in-process and collect its result."""
+    namespace: dict = {}
+    exec(code, namespace)
+    return namespace["run_etl_pipeline"](**kwargs).collect()
+
+
+def _build_split_diamond_flow(flow_id: int = 1) -> FlowGraph:
+    """One else_output gate replacing the two complementary gates.
+
+    Single-column input on purpose: the code generator renders only the listed
+    select entries (it is keep_missing-blind), which is a select parity gap
+    unrelated to what this test pins.
+
+    1 manual_input(a) -> 2 gate(env == prod, else_output)
+    then (output-0) -> 3 select(a -> a_prod) -> 6 union
+    else (output-1) -> 5 select(a -> a_dev) -> 6
+    """
+    from flowfile_core.flowfile.param_types import FlowParameter
+
+    flow = create_basic_flow(flow_id=flow_id, name="split_gated_flow")
+    flow.flow_settings.parameters.append(FlowParameter(name="env", default_value="prod", type="string"))
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"a": 1}, {"a": 2}, {"a": 3}]),
+        )
+    )
+    flow.add_gate(
+        input_schema.NodeGate(
+            flow_id=flow_id,
+            node_id=2,
+            depending_on_id=1,
+            is_setup=True,
+            else_output=True,
+            gate_input=transform_schema.GateInput(parameter="env", operator="equals", value="prod"),
+        )
+    )
+    _connect(flow, 1, 2)
+    _add_rename_select(flow, node_id=3, depending_on_id=2, old="a", new="a_prod")
+    _add_rename_select(flow, node_id=5, depending_on_id=2, old="a", new="a_dev", output_handle="output-1")
+    flow.add_union(input_schema.NodeUnion(flow_id=flow_id, node_id=6, depending_on_ids=[3, 5]))
+    _connect(flow, 3, 6)
+    _connect(flow, 5, 6)
+    return flow
+
+
+def test_project_export_else_output_split_renders_if_else_and_matches_engine():
+    """The complementary then/else pair exports as a real if/else in pipeline.py:
+    fused branch blocks and a direct union assignment — no list, no concat, no
+    empty-frame fallback — and the executed module matches the engine."""
+    flow = _build_split_diamond_flow()
+
+    manifest = export_flow_to_project(flow)
+
+    pipeline = get_file(manifest, "pipeline.py")
+    assert "if env == 'prod':" in pipeline
+    assert "else:" in pipeline
+    assert "if not (env == 'prod'):" not in pipeline
+    assert "_frames" not in pipeline
+    assert "concat" not in pipeline
+    ast.parse(pipeline)
+
+    for env, live, gated in [("prod", "a_prod", "a_dev"), ("dev", "a_dev", "a_prod")]:
+        flow.flow_settings.parameters[0].default_value = env
+        run_info = flow.run_graph()
+        assert run_info.success is True
+        engine_df = flow.get_node(6).results.resulting_data.data_frame.lazy().collect()
+
+        generated_df = _run_pipeline_module(pipeline, env=env)
+
+        assert set(generated_df.columns) == set(engine_df.columns)
+        assert live in generated_df.columns and gated not in generated_df.columns
+        assert generated_df.select(engine_df.columns).to_dicts() == engine_df.to_dicts()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
@@ -757,6 +933,46 @@ def _build_head_subflow(tmp_path: Path) -> dict:
     path = tmp_path / "head_subflow.yaml"
     flow.save_flow(str(path))
     return {"path": path, "registration_id": _register_flow_file(path, "head_subflow")}
+
+
+def _build_split_subflow(tmp_path: Path) -> dict:
+    """flow_input 'customers' -> else_output gate(env == prod) -> a_prod/a_dev renames -> union -> flow_output."""
+    from flowfile_core.flowfile.param_types import FlowParameter
+
+    flow = create_basic_flow(flow_id=34, name="split_subflow")
+    flow.flow_settings.parameters = [FlowParameter(name="env", default_value="prod", type="string")]
+    flow.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            input_name="customers",
+            raw_data_format=input_schema.RawData.from_pylist([{"a": 1}, {"a": 2}, {"a": 3}]),
+        )
+    )
+    flow.add_gate(
+        input_schema.NodeGate(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            is_setup=True,
+            else_output=True,
+            gate_input=transform_schema.GateInput(parameter="env", operator="equals", value="prod"),
+        )
+    )
+    _connect(flow, 1, 2)
+    _add_rename_select(flow, node_id=3, depending_on_id=2, old="a", new="a_prod")
+    _add_rename_select(flow, node_id=5, depending_on_id=2, old="a", new="a_dev", output_handle="output-1")
+    flow.add_union(input_schema.NodeUnion(flow_id=flow.flow_id, node_id=6, depending_on_ids=[3, 5]))
+    _connect(flow, 3, 6)
+    _connect(flow, 5, 6)
+    flow.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=flow.flow_id, node_id=7, output_name="result", depending_on_id=6)
+    )
+    _connect(flow, 6, 7)
+
+    path = tmp_path / "split_subflow.yaml"
+    flow.save_flow(str(path))
+    return {"path": path, "registration_id": _register_flow_file(path, "split_subflow")}
 
 
 def _keyed_connect(flow: FlowGraph, from_id: int, to_id: int, target_handle: str) -> None:
@@ -827,6 +1043,45 @@ class TestRunFlowProjectExport:
         assert '= _sf_9_outputs["row_count"]' in pipeline
         assert 'ff.FlowFrame(_sf_9_outputs' not in pipeline
         ast.parse(pipeline)
+
+    def test_subflow_module_renders_else_output_split(self, tmp_path):
+        """A subflow with an else_output gate exports as a real if/else inside its
+        module — fused branch blocks and a direct union assignment, no guarded
+        list — and the executed module routes exactly one side per env value."""
+        sub = _build_split_subflow(tmp_path)
+        flow = create_basic_flow(flow_id=53, name="parent_split")
+        add_sample_input(flow, node_id=1)
+        flow.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=flow.flow_id,
+                node_id=9,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=sub["registration_id"]),
+                input_slots=["customers"],
+                output_slots=["result"],
+                parameter_specs=[schemas.FlowParameter(name="env", default_value="prod", type="string")],
+            )
+        )
+        _keyed_connect(flow, 1, 9, "input-1")
+
+        manifest = export_flow_to_project(flow)
+
+        module = _manifest_file(manifest, "subflows/split_subflow.py")
+        assert "def run(customers: ff.FlowFrame | None = None, *, env: str = 'prod') -> dict[str, ff.FlowFrame]:" in module
+        assert "if env == 'prod':" in module
+        assert "else:" in module
+        assert "if not (env == 'prod'):" not in module
+        assert "_frames" not in module
+        assert "concat" not in module
+        ast.parse(module)
+
+        namespace: dict = {}
+        exec(module, namespace)
+        for env, live, gated in [("prod", "a_prod", "a_dev"), ("dev", "a_dev", "a_prod")]:
+            result = namespace["run"](env=env)["result"].collect()
+            assert result.columns == [live]
+            assert gated not in result.columns
+            assert result[live].to_list() == [1, 2, 3]
 
     def test_iterate_mode_emits_loop_with_metadata(self, tmp_path):
         sub = _build_head_subflow(tmp_path)

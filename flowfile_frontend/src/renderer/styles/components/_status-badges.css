@@ -34,6 +34,13 @@
   color: var(--color-info);
 }
 
+/* Deliberately not run (e.g. a branch behind a closed gate) — muted, not red. */
+.status-badge--muted,
+.status-badge.skipped {
+  background: var(--color-background-soft);
+  color: var(--color-text-secondary);
+}
+
 /* Text color utilities for status */
 .text-success {
   color: var(--color-success);

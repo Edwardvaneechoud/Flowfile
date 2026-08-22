@@ -19,18 +19,41 @@ from flowfile_core.flowfile.code_generator.param_codegen import (
     apply_param_sentinels,
     codegen_parameters,
     param_arg,
+    param_sentinel,
     resolve_param_sentinels,
     restore_param_sentinels,
+    restore_sentinels_to_refs,
 )
 from flowfile_core.flowfile.code_generator.transform_handlers import TransformHandlersMixin
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.flowfile.util.skip_rules import uses_any_rule
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.excel_writer import resolve_excel_write_mode
 from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported
+
+# repr() of nested Polars dtypes leaves inner names unqualified
+# (repr(pl.List(pl.Int64)) == 'List(Int64)') — qualify every known dtype name
+# so emitted schema literals are valid in a module that only imports pl.
+_POLARS_DTYPE_NAMES = sorted((name for name in dir(pl.datatypes) if name[:1].isupper()), key=len, reverse=True)
+_DTYPE_NAME_RE = re.compile(r"\b(" + "|".join(_POLARS_DTYPE_NAMES) + r")\b")
+
+
+def _render_polars_dtype(dtype) -> str:
+    return _DTYPE_NAME_RE.sub(r"pl.\1", repr(dtype))
+
+
+# Emitted once at module level when a flow contains formula gates; kept in
+# exact behavioral parity with flow_graph._gate_formula_matches.
+_GATE_FORMULA_HELPER = '''\
+def _flowfile_gate_formula_matches(df, predicate):
+    """True when at least one row satisfies the gate's formula predicate."""
+    frame = df.lazy() if isinstance(df, pl.DataFrame) else df
+    return frame.filter(predicate).head(1).collect().height > 0'''
 
 
 class UnsupportedNodeError(Exception):
@@ -214,6 +237,18 @@ class FlowGraphCodeConverter(
         # Flow parameters that become function kwargs (set in convert()).
         self._codegen_params: list = []
         self.warnings: list[str] = []
+        # Gate machinery: per-node conjunction of signed gate atoms
+        # ((gate_id, needs_open) — False for else-handle consumers, rendered
+        # as `not (...)`) driving if-block emission, per-gate condition
+        # expression, and the runtime flag vars of formula gates. Empty when
+        # the flow has no gates, which keeps the fused single-block path.
+        self._gate_conds: dict[int, frozenset[tuple[int, bool]]] = {}
+        self._gate_exprs: dict[int, str] = {}
+        self._runtime_gate_flags: dict[int, str] = {}
+        # ANY-rule (union) inputs guarded by gates beyond the union's own
+        # condition: union node id -> {producer id -> extra signed atoms}.
+        self._any_input_edge_conds: dict[int, dict[int, frozenset[tuple[int, bool]]]] = {}
+        self._module_helpers: list[str] = []
 
     def convert(self) -> str:
         """Convert the FlowGraph to code, turning ``${name}`` parameter references
@@ -256,6 +291,8 @@ class FlowGraphCodeConverter(
             flow_starts=self.flow_graph._flow_starts + self.flow_graph.get_implicit_starter_nodes(),
         )
         skip_ids = {node.node_id for node in execution_plan.skip_nodes}
+
+        self._compute_gate_conditions(execution_plan)
 
         for node in (node for stage in execution_plan.stages for node in stage if node.node_id not in skip_ids):
             self._generate_node_code(node)
@@ -314,17 +351,280 @@ class FlowGraphCodeConverter(
                 self._add_comment("# This node type is not supported for code export")
         end = len(self.code_lines)
 
+        if end == start:
+            main_inputs = node.node_inputs.main_inputs or []
+            if len(main_inputs) == 1:
+                node_cond = self._gate_conds.get(node.node_id, frozenset())
+                input_cond = self._gate_conds.get(main_inputs[0].node_id, frozenset())
+                if self._gate_exprs and node.node_type != "gate" and node_cond != input_cond:
+                    # A gated no-op passthrough must still materialize under
+                    # its condition: eliding it would resolve downstream and
+                    # return references to the ungated upstream variable,
+                    # leaking data past a closed gate in the exported script.
+                    # (Gates themselves stay elided — their passthrough is
+                    # unconditional; only their consumers are guarded.)
+                    input_var = self._resolve_upstream_var(node, main_inputs[0].node_id, "df")
+                    self.node_var_mapping[node.node_id] = var_name
+                    self._add_code(f"{var_name} = {input_var}")
+                    self._add_code("")
+                    end = len(self.code_lines)
+                else:
+                    self._passthrough[node.node_id] = main_inputs[0].node_id
+
         effective_var = self.node_var_mapping[node.node_id]
         self.handle_output_node(node, effective_var)
         if node.node_template.output > 0:
             self.last_node_var = effective_var
 
-        if end == start:
-            main_inputs = node.node_inputs.main_inputs or []
-            if len(main_inputs) == 1:
-                self._passthrough[node.node_id] = main_inputs[0].node_id
-        else:
+        if end > start:
             self._node_spans.append((node, effective_var, start, end))
+
+    def _compute_gate_conditions(self, execution_plan) -> None:
+        """Compute, per node, which gates must be open for it to run.
+
+        Mirrors the runtime trigger rules symbolically: an edge from a gate
+        adds that gate to the consumer's condition set; ALL-rule nodes need
+        every input's gates open (union of edge conditions) while the
+        ANY-rule union runs when any branch survives (intersection). The
+        resulting sets drive if-block emission in _render_body_with_gates.
+        """
+        gates = [node for node in self.flow_graph.nodes if node.node_type == "gate"]
+        if not gates:
+            return
+        parameters_by_name = {p.name: p for p in self.flow_graph.flow_settings.parameters}
+        codegen_param_names = {p.name for p in self._codegen_params}
+        for gate in gates:
+            gate_input = getattr(gate.setting_input, "gate_input", None)
+            if gate_input is None:
+                continue
+            if gate_input.condition_source == "formula":
+                self._runtime_gate_flags[gate.node_id] = f"_gate_{gate.node_id}_open"
+                self._gate_exprs[gate.node_id] = self._runtime_gate_flags[gate.node_id]
+                continue
+            expr = self._gate_condition_expr(gate_input, parameters_by_name, codegen_param_names)
+            if expr is None:
+                self.unsupported_nodes.append(
+                    (
+                        gate.node_id,
+                        "gate",
+                        self._gate_refusal_reason(gate_input, parameters_by_name, codegen_param_names),
+                    )
+                )
+                continue
+            self._gate_exprs[gate.node_id] = expr
+
+        conds: dict[int, frozenset[tuple[int, bool]]] = {}
+        for node in execution_plan.all_nodes:
+            edge_conds: list[tuple[int, frozenset[tuple[int, bool]]]] = []
+            for input_node in node.all_inputs:
+                if input_node is None:
+                    continue
+                edge = conds.get(input_node.node_id, frozenset())
+                if input_node.node_type == "gate" and input_node.node_id in self._gate_exprs:
+                    # Polarity mirrors the engine: an edge off the else handle
+                    # of an else_output gate needs the condition FALSE. A stale
+                    # output-1 edge on a single-output gate keeps needs-open —
+                    # matching dead_gate_handles killing both handles when
+                    # such a gate closes.
+                    needs_open = not (
+                        node._input_output_handles.get(input_node.node_id, "output-0") == "output-1"
+                        and getattr(input_node.setting_input, "else_output", False)
+                    )
+                    edge = edge | {(input_node.node_id, needs_open)}
+                edge_conds.append((input_node.node_id, edge))
+            if not edge_conds:
+                continue
+            if uses_any_rule(node):
+                combined = frozenset.intersection(*(edge for _, edge in edge_conds))
+                # Per-input gates beyond the node's own condition: the union
+                # runs regardless, but each such input's contribution must be
+                # guarded in the emitted concat (engine parity: a closed-gate
+                # input is dropped, so it never enters the concat list).
+                extras = {
+                    producer_id: edge - combined for producer_id, edge in edge_conds if edge - combined
+                }
+                if extras:
+                    self._any_input_edge_conds[node.node_id] = extras
+            else:
+                combined = frozenset().union(*(edge for _, edge in edge_conds))
+            if combined:
+                conds[node.node_id] = combined
+        self._gate_conds = conds
+        if self._runtime_gate_flags:
+            self._module_helpers.append(_GATE_FORMULA_HELPER)
+        if self._gate_exprs:
+            # Registered here, not during body rendering: _build_final_code
+            # serializes imports before _render_body runs, so an import added
+            # while emitting gated pre-inits/helpers would be dropped. The
+            # gate machinery emits pl-based literals in every framework.
+            self.imports.add("import polars as pl")
+
+    @staticmethod
+    def _gate_refusal_reason(gate_input, parameters_by_name, codegen_param_names) -> str:
+        """An accurate diagnosis for a parameter-mode gate the export refuses.
+
+        Distinguishes an unknown/unexportable parameter from a coercion
+        failure. A coercion failure caused by a ``${ref}`` in the comparison
+        value is a real engine feature (refs resolve at run time) that the
+        export simply does not support for typed parameters — the message
+        must say so instead of denying the parameter exists.
+        """
+        if gate_input.parameter not in parameters_by_name or gate_input.parameter not in codegen_param_names:
+            return (
+                f"Gate condition references parameter '{gate_input.parameter}' which does not "
+                "exist as an exportable flow parameter"
+            )
+        value = restore_sentinels_to_refs(gate_input.value)
+        if "${" in value:
+            return (
+                f"Gate compares typed parameter '{gate_input.parameter}' against a parameter "
+                f"reference ({value!r}); typed parameter-to-parameter comparison is not supported "
+                "in code export (the engine resolves it at run time)"
+            )
+        return (
+            f"Gate condition value {value!r} cannot be coerced to the declared type of "
+            f"parameter '{gate_input.parameter}'"
+        )
+
+    @staticmethod
+    def _gate_condition_expr(gate_input, parameters_by_name, codegen_param_names) -> str | None:
+        """Render a parameter-mode gate condition over the function's kwargs.
+
+        Comparison values are coerced with the parameter's declared type at
+        export time so the emitted literal compares like the runtime does.
+        Returns None when the parameter is unknown/unexportable or a value
+        cannot be coerced — the caller refuses the export.
+        """
+        param = parameters_by_name.get(gate_input.parameter)
+        if param is None or gate_input.parameter not in codegen_param_names:
+            return None
+        operator = gate_input.operator
+        try:
+            if operator in ("equals", "not_equals"):
+                literal = repr(coerce_param_value(param.type, gate_input.value, param.enum_values))
+                expr = f"{gate_input.parameter} {'==' if operator == 'equals' else '!='} {literal}"
+            elif operator in ("in", "not_in"):
+                items = [
+                    repr(coerce_param_value(param.type, raw.strip(), param.enum_values))
+                    for raw in gate_input.value.split(",")
+                    if raw.strip()
+                ]
+                membership = f"{gate_input.parameter} in [{', '.join(items)}]"
+                expr = membership if operator == "in" else f"not ({membership})"
+            elif operator in ("is_true", "is_false"):
+                truthy = f"str({gate_input.parameter}).strip().lower() in ('true', '1', 'yes', 'on')"
+                expr = truthy if operator == "is_true" else f"not ({truthy})"
+            else:  # is_set
+                expr = f"str({gate_input.parameter}).strip() != ''"
+        except ValueError:
+            return None
+        return expr
+
+    @staticmethod
+    def _empty_frame_schema_expr(node: FlowNode) -> str | None:
+        """``pl.LazyFrame(schema={...})`` matching the node's predicted schema."""
+        try:
+            schema = node.schema
+            if not schema:
+                return None
+            # Some schema strings are lossy (a bare "List" without its inner
+            # type) and can't be cast back — fall back to None (drop) so the
+            # emitted module never carries an uninstantiable dtype literal.
+            fields = ", ".join(
+                f"{column.name!r}: {_render_polars_dtype(cast_str_to_polars_type(column.data_type))}"
+                for column in schema
+            )
+        except Exception:
+            return None
+        return f"pl.LazyFrame(schema={{{fields}}})"
+
+    @staticmethod
+    def _conds_are_complementary(a: frozenset[tuple[int, bool]], b: frozenset[tuple[int, bool]]) -> bool:
+        """Exactly {(g, True)} vs {(g, False)} for the same gate — nothing else.
+
+        The sole trigger for if/else fusion: shared prefixes (P∧g / P∧¬g),
+        different gates, and multi-atom sets never qualify, because the else
+        of ``if P and g`` is not ``P and not g``.
+        """
+        if len(a) != 1 or len(b) != 1:
+            return False
+        (gate_a, open_a), = a
+        (gate_b, open_b), = b
+        return gate_a == gate_b and open_a != open_b
+
+    def _render_gate_cond(self, cond: frozenset[tuple[int, bool]]) -> str:
+        parts = []
+        flag_names = set(self._runtime_gate_flags.values())
+        for gate_id, needs_open in sorted(cond):
+            expr = self._gate_exprs[gate_id]
+            if needs_open:
+                parts.append(expr)
+            elif expr in flag_names:
+                parts.append(f"not {expr}")
+            else:
+                parts.append(f"not ({expr})")
+        if len(parts) == 1:
+            return parts[0]
+        return " and ".join(f"({part})" for part in parts)
+
+    def _gate_probe_expr(self, input_var: str) -> str:
+        """The frame expression handed to the gate formula helper (a polars frame)."""
+        return input_var
+
+    def _gate_formula_arg(self, formula: str) -> str:
+        """The formula expression handed to ``simple_function_to_expr``.
+
+        A whole-field ``${param}`` formula would be rewritten by the sentinel
+        post-pass into the bare typed kwarg, handing the parser a raw
+        bool/int/float (TypeError at run time). The engine stringifies first
+        (``resolve_parameters`` → ``stringify_param_value``: bool ->
+        ``true``/``false``, everything else ``str``), so mirror that exactly.
+        Partial refs keep the f-string rewrite path unchanged.
+        """
+        stripped = formula.strip()
+        for param in self._codegen_params:
+            if stripped == param_sentinel(param.name):
+                literal = self._py_str(stripped)
+                if param.type == "boolean":
+                    return f"('true' if {literal} else 'false')"
+                return f"str({literal})"
+        # Cosmetic strip: the engine's parser is whitespace-insensitive, so
+        # padding cannot change behavior — embed the trimmed text.
+        return self._py_str(stripped)
+
+    def _handle_gate(self, settings: input_schema.NodeGate, var_name: str, input_vars: dict[str, str]) -> None:
+        """Gates are passthroughs: remap downstream references to the data input.
+
+        Shared by the Polars and FlowFrame exports. Parameter-mode gates emit
+        nothing here — their condition becomes the if-block guarding
+        downstream nodes. Formula gates emit their routing flag: the formula
+        applied as a row predicate to the control (right) input when wired,
+        else to the data input — open iff any row matches, mirroring
+        flow_graph._formula_gate_is_closed. The probed frame goes through
+        ``_gate_probe_expr`` so the FlowFrame export can hand the helper the
+        underlying LazyFrame instead of the FlowFrame wrapper.
+        """
+        main_df = input_vars.get("main", "df")
+        self.node_var_mapping[settings.node_id] = main_df
+        gate_input = settings.gate_input
+        if gate_input.condition_source != "formula":
+            return
+        if not gate_input.formula.strip():
+            self.unsupported_nodes.append(
+                (settings.node_id, "gate", "Gate routes on a formula, but no formula is configured")
+            )
+            return
+        self.imports.add(
+            "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
+        )
+        source_df = input_vars.get("right") or main_df
+        flag = self._runtime_gate_flags[settings.node_id]
+        formula_arg = self._gate_formula_arg(gate_input.formula)
+        self._add_code(
+            f"{flag} = _flowfile_gate_formula_matches("
+            f"{self._gate_probe_expr(source_df)}, simple_function_to_expr({formula_arg}))"
+        )
+        self._add_code("")
 
     def _resolve_upstream_var(self, downstream: FlowNode, upstream_id: int, default: str) -> str:
         """Resolve the variable name for an upstream node, honouring its output handle.
@@ -805,6 +1105,8 @@ class FlowGraphCodeConverter(
 
     def _render_body(self) -> list[str]:
         """Fuse linear single-use chains and give the surviving boundaries clean names."""
+        if self._gate_exprs:
+            return self._render_body_with_gates()
         emissions: list[NodeEmission] = []
         node_by_id: dict[int, FlowNode] = {}
         for node, effective_var, start, end in self._node_spans:
@@ -835,6 +1137,83 @@ class FlowGraphCodeConverter(
         body, survivors = render_pipeline(emissions, consumers)
         rename = self._plan_boundary_names(emissions, survivors, node_by_id)
         return self._apply_renames(body, rename)
+
+    def _render_body_with_gates(self) -> list[str]:
+        """Emit the body with real ``if`` blocks around gated segments.
+
+        Nodes whose condition set is non-empty emit inside an
+        ``if <conjunction>:`` block; consecutive same-condition nodes share
+        one block, and a block whose condition is exactly complementary to
+        the previous one (one gate's then/else pair, singleton atoms only)
+        emits as its ``else:``. Union references to gated vars are guarded at the union's
+        own emission site, so the only remaining ungated references are the
+        module's return path — only gated vars the return will reference get
+        a stand-in pre-init (control-gate flags stay False-initialized).
+        Chain fusion is deliberately bypassed here: fused chains and block
+        boundaries don't compose, and correctness beats prettiness for gated
+        exports.
+        """
+        body: list[str] = []
+        for flag in sorted(self._runtime_gate_flags.values()):
+            body.append(f"{flag} = False")
+        return_vars = self._return_referenced_vars()
+        seen_vars: set[str] = set()
+        for node, effective_var, _start, _end in self._node_spans:
+            cond = self._gate_conds.get(node.node_id, frozenset())
+            if not cond or effective_var in seen_vars or effective_var not in return_vars:
+                continue
+            seen_vars.add(effective_var)
+            # A gated-off terminal still gets returned: a zero-row frame with
+            # its predicted schema keeps the return well-defined when the
+            # branch didn't run. None when the schema can't be predicted.
+            schema_expr = self._empty_frame_schema_expr(node)
+            body.append(f"{effective_var} = {schema_expr or 'None'}")
+        # Multi-output nodes under a gate bind sibling per-handle vars
+        # (df_N_fail, df_N_test, output-N vars) — same rule: pre-init (to
+        # None, per-handle schemas aren't statically known) only when the
+        # return path references them.
+        for (handle_node_id, _handle), handle_var in sorted(self.node_handle_var_mapping.items(), key=str):
+            if (
+                self._gate_conds.get(handle_node_id)
+                and handle_var not in seen_vars
+                and handle_var in return_vars
+            ):
+                seen_vars.add(handle_var)
+                body.append(f"{handle_var} = None")
+        if body:
+            body.append("")
+
+        current_cond: frozenset[tuple[int, bool]] = frozenset()
+        in_else_block = False
+        for node, _effective_var, start, end in self._node_spans:
+            lines = self.code_lines[start:end]
+            while lines and lines[-1] == "":
+                lines = lines[:-1]
+            if not lines:
+                continue
+            cond = self._gate_conds.get(node.node_id, frozenset())
+            if cond != current_cond:
+                # Adjacent exactly-complementary singleton blocks fuse into a
+                # real if/else; an else block never chains a second else.
+                merge_else = not in_else_block and self._conds_are_complementary(current_cond, cond)
+                if merge_else:
+                    while body and body[-1] == "":
+                        body.pop()
+                    body.append("else:")
+                else:
+                    if body and body[-1] != "":
+                        body.append("")
+                    if cond:
+                        body.append(f"if {self._render_gate_cond(cond)}:")
+                in_else_block = merge_else
+                current_cond = cond
+            indent = "    " if cond else ""
+            for line in lines:
+                body.append(f"{indent}{line}" if line else "")
+            body.append("")
+        while body and body[-1] == "":
+            body.pop()
+        return body
 
     @staticmethod
     def _is_renameable(em: NodeEmission, node: FlowNode) -> bool:
@@ -996,6 +1375,19 @@ class FlowGraphCodeConverter(
             pos += span
         return out
 
+    def _return_referenced_vars(self) -> set[str]:
+        """The variable names ``add_return_code`` will reference, mirroring its logic.
+
+        Used by ``_render_body_with_gates`` (after all spans are emitted, so
+        ``output_nodes``/``last_node_var`` are final) to decide which gated
+        vars need a stand-in pre-init for the return path.
+        """
+        if self.output_nodes:
+            return {var_name for _, var_name in self.output_nodes}
+        if self.last_node_var:
+            return {self.last_node_var}
+        return set()
+
     def add_return_code(self, lines: list[str]) -> None:
         if self.output_nodes:
             if len(self.output_nodes) == 1:
@@ -1018,6 +1410,11 @@ class FlowGraphCodeConverter(
         lines.extend(sorted(self.imports))
         lines.append("")
         lines.append("")
+
+        for helper in self._module_helpers:
+            lines.extend(helper.split("\n"))
+            lines.append("")
+            lines.append("")
 
         # Only the flat export inlines custom-node classes; the project export
         # writes them to modules and ships flowfile_ctx.py instead, so this
@@ -1224,6 +1621,21 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
     def __init__(self, flow_graph: FlowGraph):
         super().__init__(flow_graph)
         self.imports.add("import flowfile as ff")
+
+    def _gate_probe_expr(self, input_var: str) -> str:
+        """Bridge the FlowFrame down to its pl.LazyFrame for the gate row-probe helper.
+
+        Probing the FlowFrame itself would route filter/head through FlowFrame
+        methods, appending spurious nodes to the rebuilt graph.
+        """
+        return f"{input_var}.data"
+
+    def _empty_frame_schema_expr(self, node: FlowNode) -> str | None:
+        """Wrap the zero-row stand-in so gated branches hold a FlowFrame, not a bare LazyFrame."""
+        expr = FlowGraphCodeConverter._empty_frame_schema_expr(node)
+        if expr is None:
+            return None
+        return f"ff.FlowFrame({expr})"
 
     def _custom_node_input_expr(self, input_var: str) -> str:
         """Bridge a FlowFrame input down to the polars LazyFrame ``process()`` expects."""

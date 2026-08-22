@@ -2126,6 +2126,52 @@ class NodeApplyModel(NodeSingleInput):
         return "Apply Model"
 
 
+class NodeGate(NodeSingleInput):
+    """Pass-through node gated on a flow-parameter rule or a flowfile formula.
+
+    When the condition holds the input flows through unchanged. When it does
+    not, the gate itself still succeeds ("ran and decided") but every node
+    downstream of it is deliberately skipped — reported as skipped, not
+    failed, so the run stays green and source callbacks (e.g. Kafka offset
+    commits) still fire.
+
+    With ``else_output`` enabled the gate becomes a two-exit router: data
+    exits "then" (output-0) when the condition holds and "else" (output-1)
+    when it does not — exactly one side is live per run, so an if/else needs
+    one gate instead of two hand-maintained complementary conditions. Both
+    handles serve the same passthrough frame; only which downstream runs
+    differs.
+    """
+
+    gate_input: transform_schema.GateInput = Field(default_factory=transform_schema.GateInput)
+    # When True the node emits two outputs: "then" (output-0, live when the
+    # condition holds) and "else" (output-1, live when it does not). Default
+    # preserves single-output behaviour for existing flows.
+    else_output: bool = False
+
+    @property
+    def output_names(self) -> list[str] | None:
+        """Declared output handles, so the canvas can build both without the drawer.
+
+        The template's ``output`` stays 1 for backwards compatibility; the canvas
+        sizes the handle list off ``max(output, len(output_names))``. Unlike
+        filter_split, no NamedOutputs exist at run time — both handles resolve
+        to the same passthrough frame via ``get_output``'s default fallback.
+        """
+        return ["then", "else"] if self.else_output else None
+
+    def get_default_description(self) -> str:
+        gate = self.gate_input
+        if gate.condition_source == "formula":
+            return f"Gate: {gate.formula}" if gate.formula.strip() else "Gate"
+        if not gate.parameter:
+            return "Gate"
+        condition = f"${{{gate.parameter}}} {gate.operator.replace('_', ' ')}"
+        if gate.operator in ("equals", "not_equals", "in", "not_in"):
+            condition = f"{condition} {gate.value}"
+        return f"Gate: {condition}"
+
+
 class NodeWaitFor(NodeMultiInput):
     """Pass-through node that enforces ordering on extra dependency inputs.
 

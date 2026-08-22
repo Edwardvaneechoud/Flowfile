@@ -1,5 +1,7 @@
 from copy import deepcopy
 
+import polars as pl
+
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas
 
@@ -162,7 +164,9 @@ def _add_nodes_to_combined_graph(
                 node.setting_input, new_node_id, target_flow_id, fg.flow_id, node_id_mapping
             )
 
-            _add_node_to_graph(combined_graph, new_node_id, target_flow_id, node.node_type, setting_input)
+            _add_node_to_graph(
+                combined_graph, new_node_id, target_flow_id, node.node_type, setting_input, source_node=node
+            )
 
             processed_nodes.add((fg.flow_id, node.node_id))
 
@@ -209,7 +213,9 @@ def _create_updated_setting_input(
     return setting_input
 
 
-def _add_node_to_graph(graph: FlowGraph, node_id: int, flow_id: int, node_type: str, setting_input: any) -> None:
+def _add_node_to_graph(
+    graph: FlowGraph, node_id: int, flow_id: int, node_type: str, setting_input: any, source_node: any = None
+) -> None:
     """
     Add a node to the graph.
 
@@ -219,7 +225,22 @@ def _add_node_to_graph(graph: FlowGraph, node_id: int, flow_id: int, node_type: 
         flow_id: Flow ID
         node_type: Node type
         setting_input: Setting input
+        source_node: The original FlowNode, for node types whose state cannot be
+            rebuilt from settings alone
     """
+    if node_type == "polars_lazy_frame" and source_node is not None:
+        # No add_polars_lazy_frame(settings) exists — the node's function closes
+        # over an in-memory LazyFrame that settings can't carry. Recreate it from
+        # the source node's frame, or the merged node stays an unrunnable
+        # promise whose result is None.
+        result = source_node.get_resulting_data()
+        if result is not None:
+            frame = result.data_frame
+            if isinstance(frame, pl.DataFrame):
+                frame = frame.lazy()
+            graph.add_dependency_on_polars_lazy_frame(frame, node_id)
+            return
+
     node_promise = input_schema.NodePromise(
         node_id=node_id,
         flow_id=flow_id,

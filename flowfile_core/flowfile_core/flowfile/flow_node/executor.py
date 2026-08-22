@@ -198,6 +198,12 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
 
+        if self.node.node_type == "gate" and self._gate_routes_on_formula():
+            # The formula's source data can change without any hash changing,
+            # so the gate must re-evaluate its routing decision every run.
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
+
         if force_refresh:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
@@ -234,6 +240,10 @@ class NodeExecutor:
         # Already ran with current settings → skip
         # Results are available in memory from previous execution
         return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
+
+    def _gate_routes_on_formula(self) -> bool:
+        gate_input = getattr(self.node.setting_input, "gate_input", None)
+        return gate_input is not None and getattr(gate_input, "condition_source", "parameter") == "formula"
 
     def _determine_strategy(
         self,

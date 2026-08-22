@@ -29,15 +29,38 @@ export function buildOutputHandles(outputCount: number, names?: string[]): NodeH
 }
 
 // Mirror of buildOutputHandles for the input side: more than one handle gets a
-// compact letter on the canvas and the declared name as a tooltip.
-export function buildInputHandles(count: number, names?: string[]): NodeHandle[] {
-  const letters = handleLetters(count, names);
-  return Array.from({ length: count }, (_, i) => ({
-    id: inputHandle(i),
-    position: Position.Left,
-    label: letters[i],
-    title: names?.[i],
-  }));
+// compact letter on the canvas and the declared name as a tooltip. Indices in
+// controlIndices render as bottom-center "parameter" pips (gate's control
+// input) instead of left data handles; letters derive from the remaining side
+// inputs only, so a lone data handle carries no letter chip.
+export function buildInputHandles(
+  count: number,
+  names?: string[],
+  controlIndices?: number[],
+): NodeHandle[] {
+  const control = new Set(controlIndices ?? []);
+  const sideIndices = Array.from({ length: count }, (_, i) => i).filter((i) => !control.has(i));
+  const sideLetters = handleLetters(
+    sideIndices.length,
+    names ? sideIndices.map((i) => names[i]) : undefined,
+  );
+  let sidePosition = 0;
+  return Array.from({ length: count }, (_, i) => {
+    if (control.has(i)) {
+      return {
+        id: inputHandle(i),
+        position: Position.Bottom,
+        title: names?.[i],
+        kind: "parameter" as const,
+      };
+    }
+    return {
+      id: inputHandle(i),
+      position: Position.Left,
+      label: sideLetters[sidePosition++],
+      title: names?.[i],
+    };
+  });
 }
 
 // Dynamic-input nodes: index 0 is the fixed parameter handle. An empty label
@@ -88,6 +111,9 @@ export interface HandleSource {
   // Static per-type handle names. Distinct from input_names, which is the
   // per-instance dynamic-handle list and selects the branch below.
   input_labels?: string[] | null;
+  // Cosmetic per-type marker: input indices rendered as bottom "parameter"
+  // pips (gate's control input).
+  control_input_indices?: number[] | null;
 }
 
 export interface DerivedHandles {
@@ -106,7 +132,11 @@ export function deriveHandles(node: HandleSource): DerivedHandles {
     };
   }
   return {
-    inputs: buildInputHandles(node.multi ? 1 : node.input, node.input_labels ?? undefined),
+    inputs: buildInputHandles(
+      node.multi ? 1 : node.input,
+      node.input_labels ?? undefined,
+      node.control_input_indices ?? undefined,
+    ),
     outputs: buildOutputHandles(node.output, node.output_names ?? undefined),
   };
 }
