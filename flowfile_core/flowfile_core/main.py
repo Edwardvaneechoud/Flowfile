@@ -33,6 +33,7 @@ from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 from flowfile_core.routes.community_github import router as community_github_router
 from flowfile_core.routes.community_nodes import router as community_nodes_router
+from flowfile_core.routes.converters import router as converters_router
 from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
@@ -225,6 +226,7 @@ app.include_router(community_github_router, prefix="/community_nodes/github", ta
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
+app.include_router(converters_router, prefix="/converters", tags=["converters"])
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
 # Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip
 # a gate from the UI without first satisfying the gate they're trying to flip.
