@@ -7,6 +7,7 @@ export { SecretsApi } from "./secrets.api";
 export { ExpressionsApi } from "./expressions.api";
 export { CatalogApi } from "./catalog.api";
 export { TemplatesApi } from "./templates.api";
+export { AlteryxApi } from "./alteryx.api";
 
 export {
   getDirectoryContents,
