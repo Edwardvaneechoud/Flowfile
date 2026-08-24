@@ -913,3 +913,80 @@ class TestScd2ConfigMigration:
 
         _run_migration(db_path, monkeypatch)
         assert "scd2_config" in self._columns(db_path, "catalog_tables")
+
+
+# Migration 031: notifications
+
+
+class TestNotificationsMigration:
+    NEW_TABLES = {"notification_channels", "notification_rules", "notification_outbox"}
+
+    @staticmethod
+    def _columns(db_path: Path, table: str) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns(table)}
+        engine.dispose()
+        return names
+
+    def test_fresh_install_has_the_tables_and_column(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+
+        assert self.NEW_TABLES <= set(_get_tables(db_path))
+        assert "notification_processed_at" in self._columns(db_path, "flow_runs")
+
+    def test_upgrade_from_030_backfills_finished_runs(self, tmp_path, monkeypatch):
+        """An install with run history must not alert-storm on the first drain."""
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "030")
+        assert "notification_processed_at" not in self._columns(db_path, "flow_runs")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO flow_runs (flow_name, user_id, started_at, ended_at, run_type) "
+                    "VALUES ('old', 1, '2026-01-01 00:00:00', '2026-01-01 00:05:00', 'scheduled')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO flow_runs (flow_name, user_id, started_at, run_type) "
+                    "VALUES ('live', 1, '2026-01-01 00:00:00', 'scheduled')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = dict(
+                conn.execute(text("SELECT flow_name, notification_processed_at FROM flow_runs")).all()
+            )
+        engine.dispose()
+        assert rows["old"] is not None
+        assert rows["live"] is None
+
+    def test_downgrade_then_upgrade_round_trips(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "030")
+        assert not (self.NEW_TABLES & set(_get_tables(db_path)))
+        assert "notification_processed_at" not in self._columns(db_path, "flow_runs")
+
+        command.upgrade(cfg, "031")
+        assert self.NEW_TABLES <= set(_get_tables(db_path))
+        assert "notification_processed_at" in self._columns(db_path, "flow_runs")

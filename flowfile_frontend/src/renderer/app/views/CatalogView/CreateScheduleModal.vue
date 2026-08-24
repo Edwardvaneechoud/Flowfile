@@ -313,6 +313,32 @@
             placeholder="e.g. Nightly sales data refresh"
           />
         </el-form-item>
+
+        <!-- Optional alert. Never blocks creation: with no channels this is just a hint. -->
+        <el-form-item class="notify-item">
+          <el-checkbox v-model="notifyOnFailure">Notify on failure</el-checkbox>
+          <div v-if="notifyOnFailure && notificationsStore.channels.length > 0" class="notify-row">
+            <el-select
+              v-model="notifyChannelId"
+              placeholder="Select a channel"
+              size="small"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="channel in notificationsStore.channels"
+                :key="channel.id"
+                :label="channel.name"
+                :value="channel.id"
+              />
+            </el-select>
+            <div class="hint-text">
+              You'll be alerted when a run fails, and again when it recovers.
+            </div>
+          </div>
+          <div v-else-if="notifyOnFailure" class="hint-text">
+            Create a notification channel in the Alerts tab first.
+          </div>
+        </el-form-item>
       </template>
     </el-form>
 
@@ -344,6 +370,7 @@ import {
   parseCron,
 } from "./cron-builder";
 import { useAiStore } from "../../stores/ai-store";
+import { useNotificationsStore } from "../../stores/notifications-store";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 import { CatalogApi } from "../../api/catalog.api";
 
@@ -389,6 +416,12 @@ const SCHEDULE_TYPES: { value: ScheduleKind; icon: string; title: string; subtit
 // visible-watcher) so re-saving never silently relocates it to the editor's browser zone.
 const timezone = ref(localTimezone());
 const cron = ref(defaultCronState());
+
+// Optional "alert me when this fails" shortcut — creating the rule is the parent's
+// job (it needs the new schedule's id), so this only carries the user's pick out.
+const notificationsStore = useNotificationsStore();
+const notifyOnFailure = ref(false);
+const notifyChannelId = ref<number | null>(null);
 
 // AI "describe in words" → cron, shown only in Custom mode when a provider is configured.
 const aiStore = useAiStore();
@@ -542,6 +575,10 @@ watch(
       form.value.name = "";
       form.value.description = "";
       cron.value = defaultCronState();
+      notifyOnFailure.value = false;
+      notifyChannelId.value = null;
+      // Cheap and cached in the store; the checkbox needs to know whether any exist.
+      if (notificationsStore.channels.length === 0) void notificationsStore.loadChannels();
     }
   },
 );
@@ -624,7 +661,7 @@ function handleCreate() {
     body.trigger_table_ids = form.value.trigger_table_ids;
   }
 
-  emit("create", body);
+  emit("create", body, notifyOnFailure.value ? notifyChannelId.value : null);
 }
 </script>
 
@@ -853,6 +890,15 @@ function handleCreate() {
   font-size: var(--font-size-sm);
   color: var(--el-text-color-secondary);
   margin-top: 4px;
+}
+
+/* Optional failure-alert block */
+.notify-item :deep(.el-form-item__content) {
+  display: block;
+}
+
+.notify-row {
+  margin-top: var(--spacing-2);
 }
 
 /* AI "describe in words" → cron row (Custom mode only) */

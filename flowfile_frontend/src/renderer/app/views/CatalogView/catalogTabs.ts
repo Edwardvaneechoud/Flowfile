@@ -8,6 +8,7 @@ export const CATALOG_TAB_KEYS = [
   "favorites",
   "runs",
   "schedules",
+  "alerts",
   "sql",
   "notebook",
   "visuals",
@@ -49,6 +50,12 @@ export const catalogTabs: CatalogTabDef[] = [
     label: "Schedules",
     icon: "fa-solid fa-calendar-days",
     sidebarKey: "menu.catalogSchedules",
+  },
+  {
+    key: "alerts",
+    label: "Alerts",
+    icon: "fa-solid fa-bell",
+    sidebarKey: "menu.catalogAlerts",
   },
   {
     key: "sql",

@@ -233,6 +233,8 @@
           @view-flow="navigateToFlow"
           @select-schedule="selectSchedule"
         />
+        <!-- Alerts (notification channels, account-wide rules, delivery history) -->
+        <AlertsPanel v-else-if="catalogStore.activeTab === 'alerts'" />
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
           <h2>Favorites</h2>
@@ -528,6 +530,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useFlowStore } from "../../stores/flow-store";
+import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
 import { NodeApi } from "../../api/node.api";
@@ -550,6 +553,7 @@ import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
+import AlertsPanel from "./AlertsPanel.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import NotebookPanel from "./NotebookPanel.vue";
@@ -590,6 +594,7 @@ const catalogStore = useCatalogStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
+const notificationsStore = useNotificationsStore();
 const { openFlow } = useFlowOpener();
 const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 
@@ -1407,11 +1412,29 @@ function handleAddFlowSchedule(flowId: number) {
   showCreateSchedule.value = true;
 }
 
-async function handleCreateSchedule(body: FlowScheduleCreate) {
+/**
+ * `notifyChannelId` is the modal's optional "Notify on failure" pick. Wiring the
+ * alert up is best-effort: the schedule already exists, so a failure there warns
+ * instead of surfacing as a failed creation.
+ */
+async function handleCreateSchedule(body: FlowScheduleCreate, notifyChannelId?: number | null) {
   try {
-    await CatalogApi.createSchedule(body);
+    const created = await CatalogApi.createSchedule(body);
     showCreateSchedule.value = false;
     preselectedFlowId.value = null;
+    if (notifyChannelId) {
+      try {
+        await notificationsStore.createRule({
+          channel_id: notifyChannelId,
+          schedule_id: created.id,
+          on_failure: true,
+          on_recovery: true,
+          on_success: false,
+        });
+      } catch {
+        ElMessage.warning("Schedule created, but the failure alert could not be set up.");
+      }
+    }
     const loads: Promise<void>[] = [catalogStore.loadSchedules(), catalogStore.loadStats()];
     if (catalogStore.selectedFlowId) {
       loads.push(catalogStore.loadFlowSchedules(catalogStore.selectedFlowId));
@@ -1873,6 +1896,42 @@ onUnmounted(() => {
 .catalog-view .status-badge.unavailable {
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   color: var(--color-warning);
+}
+
+/* ========== Notification channel tags ========== */
+/* Shared by the Alerts panel and every rules list, so it lives here rather than in
+   one component's scoped block (scoped styles don't cross component boundaries). */
+.catalog-view .channel-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  background: rgba(156, 163, 175, 0.15);
+  color: var(--color-text-muted);
+}
+
+.catalog-view .channel-tag.slack {
+  background: rgba(74, 21, 75, 0.12);
+  color: #7c3aed;
+}
+
+.catalog-view .channel-tag.discord {
+  background: rgba(88, 101, 242, 0.14);
+  color: #5865f2;
+}
+
+.catalog-view .channel-tag.teams {
+  background: rgba(70, 90, 200, 0.14);
+  color: #4b53bc;
+}
+
+.catalog-view .channel-tag.generic {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  color: var(--color-info);
 }
 
 /* ========== Overview Table ========== */

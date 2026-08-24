@@ -27,6 +27,7 @@ from flowfile_scheduler.models import (
     SchedulerLock,
     ScheduleTriggerTable,
 )
+from shared.notifications.processor import process_pending_notifications
 from shared.run_completion import reap_orphaned_runs
 from shared.run_logs import cleanup_old_logs
 from shared.storage_config import get_database_url
@@ -143,6 +144,12 @@ class FlowScheduler:
                     cleanup_old_logs()
                 except Exception:
                     logger.exception("Log retention sweep failed")
+
+            # Evaluates newly-ended runs into the outbox and drains it over webhooks.
+            try:
+                process_pending_notifications()
+            except Exception:
+                logger.exception("Notification processing failed")
 
             launched = self._process_interval_schedules(db)
             launched += self._process_cron_schedules(db)

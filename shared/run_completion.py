@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from shared.models import FlowRun
+from shared.notifications.processor import enqueue_orphaned_run
 from shared.storage_config import get_database_url
 
 logger = logging.getLogger("flowfile.run_completion")
@@ -188,6 +189,10 @@ def reap_orphaned_runs(max_age_seconds: int | None = None) -> int:
                 logger.info("Run %s completed concurrently — not reaping", run.id)
                 continue
 
+            # Before the commit, so the close and its alert land in one transaction.
+            session.refresh(run)
+            enqueue_orphaned_run(session, run, reason)
+
             reaped += 1
             logger.warning("Reaped orphaned run %s (run_type=%s, pid=%s): %s", run.id, run.run_type, run.pid, reason)
 
@@ -201,11 +206,13 @@ def complete_run(
     success: bool,
     nodes_completed: int,
     number_of_nodes: int = 0,
+    node_results_json: str | None = None,
 ) -> None:
     """Mark a pre-created ``FlowRun`` record as completed.
 
     Creates a one-shot SQLAlchemy session against the shared database,
-    updates the run record, and tears down immediately.
+    updates the run record, and tears down immediately. ``node_results_json`` is the
+    serialised per-node result list; notification payloads read the failed nodes from it.
     """
     url = get_database_url()
     connect_args = {"check_same_thread": False} if "sqlite" in url else {}
@@ -221,6 +228,8 @@ def complete_run(
         run.nodes_completed = nodes_completed
         if number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes
+        if node_results_json is not None:
+            run.node_results_json = node_results_json
 
         session.commit()
         logger.info("Run %s completed: success=%s", run_id, success)
