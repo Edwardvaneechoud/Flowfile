@@ -169,6 +169,12 @@
         <i class="fa-solid fa-plus" /> Add alert
       </el-button>
     </div>
+
+    <!-- Advisory only: the backend fires per rule by design, so this is allowed — just noisy. -->
+    <p v-if="overlapWarning" class="overlap-warning" role="alert">
+      <i class="fa-solid fa-triangle-exclamation" />
+      {{ overlapWarning }}
+    </p>
   </div>
 </template>
 
@@ -219,6 +225,23 @@ const newRule = reactive({ on_failure: true, on_success: false, on_recovery: tru
 
 // One rule per channel per scope keeps the list readable and avoids duplicate pings.
 const usedChannelIds = computed(() => new Set(props.rules.map((r) => r.channel_id)));
+
+const scopeIsGlobal = computed(
+  () => (props.scope.registrationId ?? null) === null && (props.scope.scheduleId ?? null) === null,
+);
+
+// A rule at another scope level already sends this channel these runs' alerts —
+// one delivery fires per matching rule, so adding here would post twice per run.
+const overlapWarning = computed(() => {
+  if (newChannelId.value === null) return null;
+  const overlapping = notificationsStore.overlappingRules(newChannelId.value, props.scope);
+  if (overlapping.length === 0) return null;
+  if (scopeIsGlobal.value) {
+    const plural = overlapping.length > 1;
+    return `${overlapping.length} schedule- or flow-specific alert${plural ? "s" : ""} already send${plural ? "" : "s"} to this channel — those runs would be posted twice.`;
+  }
+  return "Your account-wide alert already sends to this channel — these runs would be posted twice.";
+});
 
 const channelById = computed(() => new Map(props.channels.map((c) => [c.id, c])));
 
@@ -364,6 +387,23 @@ async function removeRule(rule: NotificationRule) {
 .channel-off {
   cursor: help;
   white-space: nowrap;
+}
+
+.overlap-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  border-radius: var(--border-radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.overlap-warning i {
+  color: var(--color-warning);
 }
 
 .option-type {

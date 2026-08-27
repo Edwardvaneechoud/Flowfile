@@ -269,6 +269,45 @@ describe("notifications-store rules", () => {
     expect(store.rulesForFlow(7).map((r) => r.id)).toEqual([12]);
   });
 
+  it("reports the global rule as overlapping a scoped rule on the same channel", () => {
+    const store = useNotificationsStore();
+    store.rules = [
+      rule({ id: 10, channel_id: 1 }),
+      rule({ id: 11, channel_id: 2 }),
+      rule({ id: 12, channel_id: 1, schedule_id: 5 }),
+    ];
+
+    // Creating at schedule scope: the global rule on channel 1 overlaps.
+    expect(store.overlappingRules(1, { scheduleId: 9 }).map((r) => r.id)).toEqual([10]);
+    // Flow scope behaves the same way.
+    expect(store.overlappingRules(1, { registrationId: 7 }).map((r) => r.id)).toEqual([10]);
+    // A different channel's global rule is not an overlap.
+    expect(store.overlappingRules(3, { scheduleId: 9 })).toEqual([]);
+  });
+
+  it("reports scoped rules as overlapping a new global rule, ignoring disabled ones", () => {
+    const store = useNotificationsStore();
+    store.rules = [
+      rule({ id: 11, channel_id: 1, schedule_id: 5 }),
+      rule({ id: 12, channel_id: 1, registration_id: 7 }),
+      rule({ id: 13, channel_id: 1, schedule_id: 6, enabled: false }),
+      rule({ id: 14, channel_id: 2, schedule_id: 5 }),
+    ];
+
+    expect(store.overlappingRules(1).map((r) => r.id)).toEqual([11, 12]);
+    expect(store.overlappingRules(1, {}).map((r) => r.id)).toEqual([11, 12]);
+  });
+
+  it("does not report same-scope rules as overlaps", () => {
+    // The UI already blocks same-scope duplicates by disabling used channels;
+    // the overlap getter only looks across scope levels.
+    const store = useNotificationsStore();
+    store.rules = [rule({ id: 10, channel_id: 1 })];
+
+    expect(store.overlappingRules(1)).toEqual([]);
+    expect(store.overlappingRules(1, { scheduleId: 5 }).map((r) => r.id)).toEqual([10]);
+  });
+
   it("adds, patches and removes rules in place", async () => {
     const store = useNotificationsStore();
     createRuleMock.mockResolvedValue(rule({ id: 10 }));

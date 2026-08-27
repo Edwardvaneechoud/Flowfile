@@ -72,6 +72,28 @@ export const useNotificationsStore = defineStore("notifications", {
       (state) =>
       (registrationId: number): NotificationRule[] =>
         state.rules.filter((r) => r.registration_id === registrationId && r.schedule_id === null),
+
+    /**
+     * Enabled rules on `channelId` whose scope overlaps a rule created at `scope`:
+     * the backend fires one delivery per matching rule, so the channel would be
+     * pinged twice per run. A scoped rule overlaps the account-wide one and vice
+     * versa. Flow↔schedule overlap is undetectable here — schedule-scoped rule rows
+     * don't carry their flow's registration id — so only global↔narrower is reported.
+     */
+    overlappingRules:
+      (state) =>
+      (
+        channelId: number,
+        scope?: { registrationId?: number | null; scheduleId?: number | null },
+      ): NotificationRule[] => {
+        const creatingScoped =
+          (scope?.registrationId ?? null) !== null || (scope?.scheduleId ?? null) !== null;
+        return state.rules.filter((r) => {
+          if (r.channel_id !== channelId || !r.enabled) return false;
+          const ruleScoped = r.registration_id !== null || r.schedule_id !== null;
+          return creatingScoped ? !ruleScoped : ruleScoped;
+        });
+      },
   },
 
   actions: {
