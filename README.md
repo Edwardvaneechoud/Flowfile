@@ -55,7 +55,9 @@ Build pipelines on a visual canvas with a live preview at every node, or write t
 
 ### Canvas and code
 
-**A visual canvas** with 45 node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, window functions. Read from local files, databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS), Kafka, Google Analytics, or REST APIs. Write the result wherever you want. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
+**A visual canvas** with 45 node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, window functions. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
+
+Flowfile is a transformation tool rather than an ingestion platform, and its connections reflect that: local files (CSV, Parquet, Excel, JSON, IPC, NDJSON, Avro), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta and Iceberg tables included, though Iceberg is read-only for now), Kafka (consuming; there's no producer yet), Google Analytics, and REST APIs — and it writes wherever you point it. That's the whole list, honestly: no Snowflake, BigQuery or Oracle driver yet, and no CDC. If your data lives in one of those, land it somewhere Flowfile can reach — a bucket, a Postgres, plain files — and it takes over from there.
 
 **A Python API** with Polars-like syntax. Code and visual are two ways to build the same object graph — write a pipeline, call `open_graph_in_editor()`, and see it visually without re-building anything. Since the syntax mirrors Polars, porting an existing Polars script over is mostly mechanical.
 
@@ -96,7 +98,7 @@ Database and REST nodes export as `flowfile` calls, so their stored connections 
 
 &nbsp;
 
-### Other features
+### Around the canvas
 
 Everything a flow produces can land in the data catalog: a catalog > schema > table hierarchy with Delta Lake underneath, so tables get version history and time travel. Flows write into it through a Catalog Writer node — or register their output as a virtual table, with nothing materialised. For those, Flowfile stores the Polars query plan rather than the data (as long as the producing graph is lazy-safe), so a consumer's filters push down straight through the flow boundary, and upstream Delta versions are tracked per read to catch stale data.
 
@@ -114,7 +116,7 @@ You can put flows on a schedule: on an interval, when a catalog table updates, o
 
 With the Docker deployment it all becomes multi-user: accounts, an admin role, user groups. Share a connection, flow or catalog namespace with a group at "use" or "manage" level (secrets can be shared too, read-only); everything else stays private to its owner. The desktop app is single-user.
 
-**Python kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
+**Python kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe — the one thing they ask in return is that Docker is running locally. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
 
 **Custom nodes and a community registry.** Build your own nodes in the visual Node Designer — a typed settings form, live preview, and a single-file `.py` output — then share them through the [community registry](https://github.com/edwardvaneechoud/flowfile-community-nodes). Publishing is a pull request opened straight from the app; installing is one click from Catalog → Community Nodes, with sha256-pinned downloads and a capability consent dialog.
 
@@ -202,20 +204,14 @@ npm install && npm run dev:web  # :8080
 
 ## Where Flowfile fits
 
+Flowfile is deliberately a one-machine tool: Polars in-process, no cluster to stand up. Core and worker can run as separate containers, but they share a filesystem, not a fleet. That's a real limit and a real feature at once — it's why the whole platform installs with `pip`, runs in a browser tab, and never asks you to size anything. And a surprising amount of data fits on one good machine.
+
 | Instead of | The difference |
 |---|---|
 | **Alteryx / KNIME** | The same canvas idea, but MIT-licensed, Polars underneath, and every pipeline exports to Python you can take with you. |
 | **dbt** | dbt transforms data that's already in a warehouse. Flowfile works on files, databases and streams directly, no warehouse needed, and adds a visual layer. |
 | **Airflow / Dagster** | Orchestrators run pipelines; Flowfile is where the pipeline gets built. It has a small scheduler of its own, and exported scripts run fine under any orchestrator. |
 | **Plain Polars** | You keep Polars. Flowfile adds a canvas, a preview at every node, a catalog and a scheduler, and gets out of the way again when you export. |
-
-## What it doesn't do
-
-Flowfile runs on one machine. Polars in-process, no cluster — core and worker can run as separate containers, but they still need a shared filesystem.
-
-It's a transformation tool, not an ingestion platform: files (CSV, Parquet, Excel, JSON, IPC, NDJSON, Avro), five databases (Postgres, MySQL, SQL Server, SQLite, DuckDB), S3/ADLS/GCS, Kafka, Google Analytics and REST APIs. There's no Oracle, Snowflake or BigQuery driver, and no CDC. If your data lives in one of those, land it somewhere Flowfile can reach first.
-
-Smaller caveats: Kafka is read-only (there's a consumer, no producer), Iceberg reads but doesn't write, the Python Script node needs Docker running locally, and accounts/sharing only exist in the Docker deployment — the desktop app is single-user.
 
 ---
 
