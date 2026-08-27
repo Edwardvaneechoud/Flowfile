@@ -154,7 +154,7 @@ Parameter conditions are resolved before the run starts, so the execution plan a
 
 #### Condition source: formula
 
-Write a flowfile formula — the same expression language as the [Filter](transform.md#filter-data) node's advanced mode. The gate applies it as a row predicate and opens when **at least one row matches**. An empty result closes the gate — no matching rows means don't run the branch. A formula that cannot run (a typo, an unknown column) fails the gate visibly rather than silently picking a branch, and `${param}` references resolve inside the formula like in any other node.
+Write a flowfile formula — the same expression language as the [Filter](transform.md#filter-data) node's advanced mode. The gate applies it as a row predicate and opens when **at least one row matches**. An empty result closes the gate — no matching rows means don't run the branch. A formula that cannot run (a typo, an unknown column) fails the gate visibly rather than silently picking a branch, and `${param}` references resolve inside the formula like in any other node — `${env} = 'prod'` compares the parameter's value against the literal.
 
 The formula is checked against the **control input when one is connected, otherwise against the data input itself**:
 

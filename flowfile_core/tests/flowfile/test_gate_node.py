@@ -699,6 +699,33 @@ class TestFormulaGate:
         assert second.success is True
         assert results_by_id(second)[3].skipped is True
 
+    def test_string_parameter_ref_renders_as_a_quoted_literal(self):
+        """A string ``${ref}`` becomes a quoted expression literal, not a bare token."""
+        graph = build_self_gate_graph(flow_id=33, formula="${test} = 'helloo'")
+        graph.flow_settings.parameters.append(
+            FlowParameter(name="test", default_value="helloo", type="string")
+        )
+
+        first = graph.run_graph()
+        assert first.success is True
+        assert results_by_id(first)[3].skipped is False
+
+        set_parameter(graph, "test", "goodbye")
+        second = graph.run_graph()
+        assert second.success is True
+        assert results_by_id(second)[3].skipped is True
+
+    def test_string_parameter_with_a_quote_evaluates_instead_of_crashing(self):
+        graph = build_self_gate_graph(flow_id=34, formula="${test} = 'x'")
+        graph.flow_settings.parameters.append(
+            FlowParameter(name="test", default_value="it's", type="string")
+        )
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True
+        assert results_by_id(run_info)[3].skipped is True
+
     def test_empty_control_frame_closes_the_gate(self):
         """No rows means no match — don't run the branch."""
         graph = create_graph(flow_id=14)
@@ -1152,12 +1179,12 @@ class TestFlowFrameExport:
 
 
 class TestWholeFieldParameterFormulaExport:
-    """A formula that is exactly ``${param}`` must reach the parser stringified.
+    """A formula that is exactly ``${param}`` must reach the parser as a literal.
 
-    The sentinel post-pass rewrites a whole-field ref to the bare typed kwarg,
-    which would hand ``simple_function_to_expr`` a raw bool/int (TypeError at
-    run time). The export mirrors the engine's ``resolve_parameters`` instead:
-    bools render ``'true'``/``'false'``, everything else through ``str(...)``.
+    The sentinel post-pass would rewrite a whole-field ref to the bare typed
+    kwarg, handing ``simple_function_to_expr`` a raw bool/int (TypeError at
+    run time). The export mirrors the engine's ``resolve_expression_parameters``
+    instead: refs render through the emitted ``_flowfile_expr_literal`` helper.
     """
 
     @staticmethod
@@ -1174,7 +1201,7 @@ class TestWholeFieldParameterFormulaExport:
 
         code = converter(graph).convert()
 
-        assert "simple_function_to_expr(('true' if flag else 'false'))" in code
+        assert "simple_function_to_expr(_flowfile_expr_literal(flag))" in code
         graph.run_graph()
         engine_result = graph.get_node(3).results.resulting_data
         engine_height = engine_result.data_frame.lazy().collect().height if engine_result else 0
@@ -1191,7 +1218,7 @@ class TestWholeFieldParameterFormulaExport:
 
         code = converter(graph).convert()
 
-        assert "simple_function_to_expr(str(n))" in code
+        assert "simple_function_to_expr(_flowfile_expr_literal(n))" in code
         run_info = graph.run_graph()
         assert run_info.success is False
         by_id = results_by_id(run_info)
@@ -1199,6 +1226,32 @@ class TestWholeFieldParameterFormulaExport:
         assert "boolean" in by_id[2].error.lower()
         with pytest.raises(pl.exceptions.ComputeError, match="Boolean"):
             run_generated(code, n=2)
+
+
+class TestStringParameterRefFormulaExport:
+    """A string ``${ref}`` inside a formula renders as a typed quoted literal.
+
+    Raw f-string injection would hand the parser a bare token (NameError-style
+    parse failure in the engine before the fix); the export must route like
+    the fixed engine for both parameter values.
+    """
+
+    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
+    @pytest.mark.parametrize("value", ["helloo", "goodbye"])
+    def test_string_ref_routes_like_the_engine(self, converter, value):
+        graph = build_self_gate_graph(flow_id=77, formula="${test} = 'helloo'")
+        graph.flow_settings.parameters.append(
+            FlowParameter(name="test", default_value=value, type="string")
+        )
+
+        code = converter(graph).convert()
+
+        assert "_flowfile_expr_literal" in code
+        graph.run_graph()
+        engine_result = graph.get_node(3).results.resulting_data
+        engine_height = engine_result.data_frame.lazy().collect().height if engine_result else 0
+        generated_df = run_generated(code, test=value)
+        assert generated_df.height == engine_height == (3 if value == "helloo" else 0)
 
 
 class TestTypedParamRefComparisonExport:

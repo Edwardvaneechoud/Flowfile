@@ -1,6 +1,7 @@
 import ast
 import builtins
 import io
+import json
 import keyword
 import os
 import re
@@ -54,6 +55,17 @@ def _flowfile_gate_formula_matches(df, predicate):
     """True when at least one row satisfies the gate's formula predicate."""
     frame = df.lazy() if isinstance(df, pl.DataFrame) else df
     return frame.filter(predicate).head(1).collect().height > 0'''
+
+# Emitted when a gate formula references an exportable parameter; kept in
+# exact behavioral parity with param_types.render_param_as_expr_literal.
+_EXPR_LITERAL_HELPER = '''\
+def _flowfile_expr_literal(value):
+    """Render a parameter value as a flowfile-formula literal (parity with the engine)."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return json.dumps(str(value))'''
 
 
 class UnsupportedNodeError(Exception):
@@ -571,26 +583,46 @@ class FlowGraphCodeConverter(
         """The frame expression handed to the gate formula helper (a polars frame)."""
         return input_var
 
+    def _mark_expr_literal_needed(self) -> None:
+        self.imports.add("import json")
+        if _EXPR_LITERAL_HELPER not in self._module_helpers:
+            self._module_helpers.append(_EXPR_LITERAL_HELPER)
+
     def _gate_formula_arg(self, formula: str) -> str:
         """The formula expression handed to ``simple_function_to_expr``.
 
-        A whole-field ``${param}`` formula would be rewritten by the sentinel
-        post-pass into the bare typed kwarg, handing the parser a raw
-        bool/int/float (TypeError at run time). The engine stringifies first
-        (``resolve_parameters`` → ``stringify_param_value``: bool ->
-        ``true``/``false``, everything else ``str``), so mirror that exactly.
-        Partial refs keep the f-string rewrite path unchanged.
+        ``${param}`` refs are consumed here — never left for the generic
+        sentinel post-pass, which would inject the raw kwarg into an f-string
+        (a bare token, breaking string params). The engine renders refs as
+        typed expression literals (``resolve_expression_parameters`` →
+        ``render_param_as_expr_literal``), so each ref becomes a
+        ``_flowfile_expr_literal(<name>)`` call in the emitted module.
         """
-        stripped = formula.strip()
-        for param in self._codegen_params:
-            if stripped == param_sentinel(param.name):
-                literal = self._py_str(stripped)
-                if param.type == "boolean":
-                    return f"('true' if {literal} else 'false')"
-                return f"str({literal})"
         # Cosmetic strip: the engine's parser is whitespace-insensitive, so
         # padding cannot change behavior — embed the trimmed text.
-        return self._py_str(stripped)
+        stripped = formula.strip()
+        sentinel_to_name = {
+            param_sentinel(p.name): p.name for p in self._codegen_params if param_sentinel(p.name) in stripped
+        }
+        if not sentinel_to_name:
+            return self._py_str(stripped)
+        self._mark_expr_literal_needed()
+        if stripped in sentinel_to_name:
+            return f"_flowfile_expr_literal({sentinel_to_name[stripped]})"
+        pattern = re.compile("|".join(re.escape(s) for s in sorted(sentinel_to_name, key=len, reverse=True)))
+        parts: list[str] = []
+        pos = 0
+        for match in pattern.finditer(stripped):
+            parts.append(self._fstring_segment(stripped[pos : match.start()]))
+            parts.append("{_flowfile_expr_literal(" + sentinel_to_name[match.group(0)] + ")}")
+            pos = match.end()
+        parts.append(self._fstring_segment(stripped[pos:]))
+        return 'f"' + "".join(parts) + '"'
+
+    @staticmethod
+    def _fstring_segment(text: str) -> str:
+        """A literal f-string segment: braces doubled, then _py_str's quote-escaping."""
+        return json.dumps(text.replace("{", "{{").replace("}", "}}"), ensure_ascii=False)[1:-1]
 
     def _handle_gate(self, settings: input_schema.NodeGate, var_name: str, input_vars: dict[str, str]) -> None:
         """Gates are passthroughs: remap downstream references to the data input.

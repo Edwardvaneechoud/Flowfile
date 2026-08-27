@@ -90,8 +90,10 @@
         <div>
           <h3 class="pool-card-title">Warm worker pool</h3>
           <p class="pool-card-description">
-            Keeps worker processes warm between data nodes, saving ~0.5 s of startup each. When all
+            Keeps worker processes warm between data nodes, saving startup time. When all
             of them are busy, extra nodes start fresh processes.
+            <br>
+            Turn off when you need a clean process on every step to minimize build up memory usage.
           </p>
         </div>
         <div class="pool-toggle">

@@ -96,6 +96,7 @@ from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import (
     apply_parameters_in_place,
     find_unresolved_in_model,
+    resolve_expression_parameters,
     resolve_parameters,
     restore_parameters,
 )
@@ -6442,9 +6443,10 @@ class FlowGraph:
         not the source's default output. The memoized result is served when
         the source ran in an earlier stage; the resolution lazily pulls when
         the gate's own cache branch short-cut input assembly. ``${param}``
-        refs in the formula resolve with the run's parameters — the stage
-        loop sees the restored (unsubstituted) settings. Raises on a
-        missing/unparsable formula — the caller fails the gate visibly.
+        refs in the formula render as typed expression literals (strings
+        quoted) like every other expression field — the stage loop sees the
+        restored (unsubstituted) settings. Raises on a missing/unparsable
+        formula — the caller fails the gate visibly.
         """
         gate_input = node.setting_input.gate_input
         source_node = node.node_inputs.right_input
@@ -6456,7 +6458,7 @@ class FlowGraph:
         source_result = node._resolve_input_result_for_handle(source_node, handle)
         if source_result is None:
             raise ValueError("gate input produced no result to evaluate its formula against")
-        formula = resolve_parameters(gate_input.formula, params or {})
+        formula = resolve_expression_parameters(gate_input.formula, params or {})
         return not _gate_formula_matches(source_result, formula)
 
     def _evaluate_gate_conditions(self) -> dict[str | int, frozenset[str]]:
