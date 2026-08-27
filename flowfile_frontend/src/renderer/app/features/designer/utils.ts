@@ -23,6 +23,7 @@ const SVG_NODE_ICONS = [
   "flow_output.svg",
   "formula.svg",
   "fuzzy_match.svg",
+  "gate.svg",
   "google_analytics.svg",
   "graph_solver.svg",
   "group_by.svg",

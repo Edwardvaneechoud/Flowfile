@@ -144,6 +144,11 @@ class FlowNode:
     _state_needs_reset: bool
     # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
     _on_flow_complete: Callable[[bool], None] | None
+    # set per run by the graph on ANY-rule nodes (union): (source id, source
+    # handle) pairs deliberately skipped this run, dropped from the input set
+    # at assembly — per-handle so a two-output gate feeding the union is
+    # judged per edge
+    _skipped_input_ids_this_run: frozenset
 
     user_provided_schema_callback: Callable | None
     _schema_callback: SingleExecutionFuture | None
@@ -236,6 +241,7 @@ class FlowNode:
         self._execution_lock = threading.RLock()
         self._state_needs_reset = False
         self._on_flow_complete = None
+        self._skipped_input_ids_this_run = frozenset()
 
         self.user_provided_schema_callback = None
         self._schema_callback = None
@@ -568,9 +574,20 @@ class FlowNode:
         """
         if isinstance(self.setting_input, input_schema.NodePromise):
             return False
+        connected = len(self.node_inputs.get_all_inputs())
+        min_inputs = self.node_template.min_inputs
+        # min_inputs marks trailing inputs optional (gate's control input) — the
+        # main (data) input must still be wired, or the control frame would be
+        # passed through as if it were the data.
+        min_inputs_satisfied = (
+            min_inputs is not None
+            and min_inputs <= connected <= self.node_template.input
+            and bool(self.node_inputs.main_inputs)
+        )
         return (
-            self.node_template.input == len(self.node_inputs.get_all_inputs())
-            or (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0)
+            self.node_template.input == connected
+            or min_inputs_satisfied
+            or (self.node_template.multi and connected > 0)
             or (self.node_template.multi and self.node_template.can_be_start)
             or self.accepts_dynamic_inputs
         )
@@ -1125,6 +1142,9 @@ class FlowNode:
                                     continue
                                 if self._execution_state.is_canceled:
                                     raise Exception("Node execution canceled")
+                                if (v.node_id, src_handle) in self._skipped_input_ids_this_run:
+                                    # gated-off inputs are dropped: the union outputs only what ran
+                                    continue
                                 self.print(f"Getting resulting data from input {i} (node {v.node_id})")
                                 # Read the upstream via its own get_resulting_data(), which
                                 # single-flights materialization under the upstream's own

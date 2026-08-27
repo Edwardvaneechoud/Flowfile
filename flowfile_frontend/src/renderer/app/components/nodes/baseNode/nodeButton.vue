@@ -16,6 +16,7 @@ import type { Component } from "vue"; // <-- Import as a TYPE, not a value
 import { useNodeIconUrl } from "../../../composables/useCustomNodeIcon";
 import { useNodeStore } from "../../../stores/column-store";
 import { NodeTitleInfo } from "./nodeInterfaces";
+import { deriveNodeStatus, nodeStatusTooltip, type NodeStatusOutput } from "./nodeStatus";
 const description = ref<string>("");
 const nodeStore = useNodeStore();
 
@@ -36,117 +37,14 @@ const isSelected = computed(() => {
   return nodeStore.node_id == props.nodeId;
 });
 
-interface ResultOutput {
-  success?: boolean;
-  statusIndicator: "success" | "failure" | "unknown" | "warning" | "running";
-  error?: string;
-  hasRun: boolean;
-}
+const nodeResult = computed<NodeStatusOutput | undefined>(() =>
+  deriveNodeStatus(
+    nodeStore.getNodeResult(props.nodeId),
+    nodeStore.getNodeValidation(props.nodeId),
+  ),
+);
 
-const nodeResult = computed<ResultOutput | undefined>(() => {
-  const nodeResult = nodeStore.getNodeResult(props.nodeId);
-  const nodeValidation = nodeStore.getNodeValidation(props.nodeId);
-
-  if (nodeResult && nodeResult.is_running) {
-    return {
-      success: undefined,
-      statusIndicator: "running",
-      hasRun: false,
-      error: undefined,
-    };
-  }
-
-  if (nodeResult && !nodeResult.is_running) {
-    if (nodeValidation) {
-      if (
-        nodeResult.success === true &&
-        !nodeValidation.isValid &&
-        nodeValidation.validationTime > nodeResult.start_timestamp
-      ) {
-        return {
-          success: true,
-          statusIndicator: "warning",
-          error: nodeValidation.error,
-          hasRun: true,
-        };
-      }
-      if (nodeResult.success === true && nodeValidation.isValid) {
-        return {
-          success: true,
-          statusIndicator: "success",
-          error: nodeResult.error || nodeValidation.error,
-          hasRun: true,
-        };
-      }
-      if (
-        nodeResult.success === false &&
-        nodeValidation.isValid &&
-        nodeValidation.validationTime > nodeResult.start_timestamp
-      ) {
-        return {
-          success: false,
-          statusIndicator: "unknown",
-          error: nodeResult.error || nodeValidation.error,
-          hasRun: true,
-        };
-      }
-      if (
-        nodeResult.success === false &&
-        (!nodeValidation.isValid || !nodeValidation.validationTime)
-      ) {
-        return {
-          success: false,
-          statusIndicator: "failure",
-          error: nodeResult.error || nodeValidation.error,
-          hasRun: true,
-        };
-      }
-    }
-    return {
-      success: nodeResult.success ?? false,
-      statusIndicator: nodeResult.success ? "success" : "failure",
-      error: nodeResult.error,
-      hasRun: true,
-    };
-  }
-
-  if (nodeValidation) {
-    if (!nodeValidation.isValid) {
-      return {
-        success: false,
-        statusIndicator: "warning",
-        error: nodeValidation.error,
-        hasRun: false,
-      };
-    }
-    if (nodeValidation.isValid) {
-      return {
-        success: true,
-        statusIndicator: "unknown",
-        error: nodeValidation.error,
-        hasRun: false,
-      };
-    }
-  }
-
-  return undefined;
-});
-
-const tooltipContent = computed(() => {
-  switch (nodeResult.value?.statusIndicator) {
-    case "success":
-      return "Operation successful";
-    case "failure":
-      return "Operation failed: \n" + (nodeResult.value?.error || "No error message available");
-    case "warning":
-      return "Operation warning: \n" + (nodeResult.value?.error || "No warning message available");
-    case "running":
-      return "Operation in progress...";
-    case "unknown":
-    default:
-      return "Status unknown";
-  }
-});
+const tooltipContent = computed(() => nodeStatusTooltip(nodeResult.value));
 
 const getNodeDescription = async () => {
   description.value = await nodeStore.getNodeDescription(props.nodeId);
@@ -208,6 +106,13 @@ onMounted(() => {
 
 .status-indicator.unknown::before {
   background-color: var(--color-text-muted);
+}
+
+/* Hollow ring: deliberately empty, distinct from the solid "unknown" dot. */
+.status-indicator.skipped::before {
+  box-sizing: border-box;
+  background-color: transparent;
+  border: 2px solid #8a8f98;
 }
 
 .status-indicator.running::before {
