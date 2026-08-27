@@ -763,7 +763,7 @@ def test_project_export_supports_parameter_gates(tmp_path):
 
     project_dir = write_project(manifest, tmp_path)
     result = subprocess.run(
-        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, timeout=300
+        [sys.executable, "main.py"], cwd=project_dir, capture_output=True, text=True, encoding="utf-8", timeout=300
     )
     assert result.returncode == 0, result.stderr
     assert "age_prod" in result.stdout
