@@ -19,7 +19,7 @@
       <button
         v-if="teachingMode && !learning.enabled"
         class="icon-button learn-button"
-        title="Learning Python? Rebuild this flow as plain Python, step by step"
+        title="Learning Python? Step through this flow's code, one node at a time"
         @click="enableLearning"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -31,7 +31,7 @@
       <button
         v-if="isWalkthrough"
         class="icon-button run-button"
-        :disabled="running || !pyodideStore.isReady"
+        :disabled="running || loading || !pyodideStore.isReady"
         :title="pyodideStore.isReady ? 'Run this script here in the browser' : 'Python is still starting up'"
         @click="runScript"
       >
@@ -103,13 +103,12 @@
             :key="step.nodeId"
             :ref="element => setChipRef(element, index)"
             class="chip"
-            :class="{ current: index === stepIndex, exercise: step.concept === 'exercise' }"
+            :class="{ current: index === stepIndex }"
             :title="stepLabel(step)"
             @click="goTo(index)"
           >
             <span class="chip-index">{{ index + 1 }}</span>
             <span class="chip-name">{{ stepLabel(step) }}</span>
-            <span v-if="step.concept === 'exercise'" class="chip-exercise" title="Left as an exercise">✎</span>
           </button>
         </div>
         <button
@@ -123,7 +122,7 @@
         <span class="rail-count">{{ stepIndex + 1 }} / {{ steps.length }}</span>
       </nav>
 
-      <div v-if="isWalkthrough && !steps.length" class="empty-state">
+      <div v-if="isWalkthrough && !steps.length && !error" class="empty-state">
         Add a node or two to the canvas and this becomes a step-by-step walkthrough of the code
         behind them.
       </div>
@@ -137,14 +136,31 @@
       >
         <section ref="benchEl" class="bench">
           <div v-if="isWalkthrough" class="bench-head">
-            <span class="bench-label">
+            <span v-if="steps.length" class="bench-label">
               step {{ stepIndex + 1 }}<template v-if="labelLines">
                 · lines {{ labelLines.from }}–{{ labelLines.to }}</template>
             </span>
+            <div class="flavour-toggle" role="group" aria-label="Walkthrough flavour">
+              <button
+                :class="{ active: flavour === 'plain' }"
+                :disabled="loading || running"
+                title="The same flow in plain Python — lists, dicts and loops, no dataframe library"
+                @click="setFlavour('plain')"
+              >
+                Plain Python
+              </button>
+              <button
+                :class="{ active: flavour === 'polars' }"
+                :disabled="loading || running"
+                title="The same steps written with the Polars dataframe library"
+                @click="setFlavour('polars')"
+              >
+                Polars
+              </button>
+            </div>
             <button v-if="highlightOffScreen" class="bench-recentre" @click="recentre">
               ↩ step {{ stepIndex + 1 }}
             </button>
-            <span class="bench-hint">{{ glossaryHint }}</span>
           </div>
           <div class="bench-editor">
             <!-- indent-with-tab off: Tab must move focus, not indent — the
@@ -177,18 +193,14 @@
           ref="marginEl"
           v-model:tab="marginTab"
           :concept="concept"
+          :polars-doc="polarsDoc"
           :tables="tables"
           :delta="delta"
           :delta-counts="deltaCounts"
-          :blocked-reason="blockedReason"
-          :data-state="traceState"
-          :can-run="pyodideStore.isReady"
-          :stale="traceStale"
-          :trace-error="visibleTraceError"
+          :data-loading="stepDataLoading"
           :show-background="learning.showBackground"
           :run-result="runResult"
           :comparison="comparison"
-          @trace="runTrace"
           @compare="compareToCanvas"
           @close-run="runResult = null"
           @toggle-background="toggleBackground"
@@ -207,16 +219,13 @@ import { EditorView } from '@codemirror/view'
 import { useFlowStore } from '../stores/flow-store'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useCodeGeneration } from '../composables/useCodeGeneration'
+import { EXPR_TRANSFORMER_PACKAGE, translateFormulaNodes } from '../composables/useFormulaTranslation'
+import { buildPolarsWalkthrough, POLARS_DOC_FOR_NODE } from '../composables/usePolarsWalkthrough'
 import { usePlainPythonGeneration } from '../composables/usePlainPythonGeneration'
 import type { PlainWalkthrough } from '../composables/usePlainPythonGeneration'
 import { usePlainStep, stepLabel, type PlainRunResult, type CapturedTrace } from '../composables/usePlainStep'
-import { COARSE_POINTER, glossaryTooltip } from '../composables/usePythonGlossary'
-import {
-  compareTables,
-  instrumentScript,
-  type CompareResult,
-  type StepCapture
-} from '../composables/usePlainTrace'
+import { glossaryTooltip } from '../composables/usePythonGlossary'
+import { compareTables, type CompareResult } from '../composables/usePlainTrace'
 import {
   allStepLines,
   seedStepsIn,
@@ -229,7 +238,7 @@ import {
 import { useLearningStore } from '../stores/learning-store'
 import DraggableItem from './common/DraggableItem/DraggableItem.vue'
 import StepMargin, { type MarginTab } from './StepMargin.vue'
-import type { NodeFormulaSettings, NodeReadSettings } from '../types'
+import type { NodeReadSettings } from '../types'
 
 const props = withDefaults(
   defineProps<{
@@ -255,7 +264,9 @@ const { generateCode } = useCodeGeneration()
 const { buildWalkthrough } = usePlainPythonGeneration()
 
 type CodeMode = 'polars' | 'walkthrough'
+type WalkthroughFlavour = 'plain' | 'polars'
 const MODE_KEY = 'flowfile-codegen-mode'
+const FLAVOUR_KEY = 'flowfile-walkthrough-flavour'
 const MARGIN_TAB_KEY = 'flowfile-codegen-margin-tab'
 const SPLIT_KEY = 'flowfile-codegen-split'
 /** Panel width at which the bench and the margin sit side by side. */
@@ -277,6 +288,15 @@ function initialMode(): CodeMode {
   return 'walkthrough'
 }
 
+function initialFlavour(): WalkthroughFlavour {
+  // Polars is the default: it is the library the canvas actually runs. An
+  // explicit earlier choice of the plain flavour is still honoured.
+  return localStorage.getItem(FLAVOUR_KEY) === 'plain' ? 'plain' : 'polars'
+}
+// Written ONLY by setFlavour, which always routes through generateCodeFromFlow —
+// that is what lets steps/trace/run state stay single rather than per-flavour.
+const flavour = ref<WalkthroughFlavour>(initialFlavour())
+
 const code = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -284,7 +304,6 @@ const mode = ref<CodeMode>('polars')
 const running = ref(false)
 const runResult = ref<PlainRunResult | null>(null)
 const comparison = ref<CompareResult | null>(null)
-const glossaryHint = COARSE_POINTER ? 'tap any name for what it does' : 'hover any name for what it does'
 
 const isWalkthrough = computed(() => mode.value === 'walkthrough')
 
@@ -298,7 +317,7 @@ const tabs = computed(() =>
         {
           id: 'walkthrough',
           label: 'Python walkthrough',
-          title: 'Step through the flow one node at a time, in plain Python — no dataframe library'
+          title: 'Step through the flow one node at a time — in plain Python or in Polars'
         }
       ]
     : []
@@ -306,13 +325,42 @@ const tabs = computed(() =>
 
 // Editing the generated script is the point in walkthrough mode, so track
 // whether the buffer still matches what we generated — that is what "reset" undoes.
-const generated = ref('')
-// Survives a trip to another tab; cleared by Reset only.
-const draft = ref<string | null>(null)
+// Per-flavour slots: each walkthrough flavour keeps its own generated/draft/ranges
+// so switching never cross-contaminates. `generated` must be per-flavour too —
+// it keeps `edited` consistent during the polars flavour's async build, and both
+// builders emit one step per node, so a shared draftRanges would pass seedNow's
+// length guard while describing the OTHER flavour's document.
+interface FlavourSlot {
+  generated: string
+  draft: string | null
+  draftRanges: StepRange[] | null
+}
+const flavourState = reactive<Record<WalkthroughFlavour, FlavourSlot>>({
+  plain: { generated: '', draft: null, draftRanges: null },
+  polars: { generated: '', draft: null, draftRanges: null }
+})
+const generated = computed({
+  get: () => flavourState[flavour.value].generated,
+  set: value => {
+    flavourState[flavour.value].generated = value
+  }
+})
+// Survives a trip to another tab or flavour; cleared by Reset only.
+const draft = computed({
+  get: () => flavourState[flavour.value].draft,
+  set: value => {
+    flavourState[flavour.value].draft = value
+  }
+})
 // The step ranges as the highlight field last mapped them through the edits.
 // Stashed with the draft, because reseeding a draft from the generator's
 // pristine line numbers would misplace every highlight below an edit.
-const draftRanges = ref<StepRange[] | null>(null)
+const draftRanges = computed({
+  get: () => flavourState[flavour.value].draftRanges,
+  set: value => {
+    flavourState[flavour.value].draftRanges = value
+  }
+})
 const edited = computed(() => isWalkthrough.value && code.value !== generated.value)
 
 const stashDraft = () => {
@@ -327,23 +375,84 @@ const clearDraft = () => {
 const walkthrough = ref<PlainWalkthrough>({ script: '', steps: [] })
 const steps = computed(() => walkthrough.value.steps)
 const stepIndex = ref(0)
+// Per-varName tables for the Data tab, filled from the CANVAS run's node
+// previews (never by re-executing anything — see loadStepData).
 const captured = ref<CapturedTrace | null>(null)
-const traceState = ref<'idle' | 'running' | 'ready' | 'failed'>('idle')
-// The exact buffer text the last trace instrumented — staleness is "buffer ≠ this".
-const tracedCode = ref<string | null>(null)
-const traceError = ref<string | null>(null)
+const stepDataLoading = ref(false)
 // Bumped whenever the document is replaced programmatically; drives re-seeding.
 const scriptRevision = ref(0)
+// Bumped at the start of every regeneration. An in-flight ▶ run that finishes
+// after a flavour switch must throw its result away — the flavours bind the
+// same variable names, so stale tables would render as valid data.
+const buildEpoch = ref(0)
 
-const traceStale = computed(
-  () => traceState.value === 'ready' && tracedCode.value !== null && code.value !== tracedCode.value
-)
-// A raising exercise stub is the expected way a trace ends — not an error to show.
-const visibleTraceError = computed(() =>
-  traceError.value && !traceError.value.includes('NotImplementedError') ? traceError.value : null
+const { concept, tables, delta, deltaCounts } = usePlainStep(steps, stepIndex, captured)
+
+// Polars flavour: the Why tab links to the operation's reference page instead
+// of the plain flavour's teaching card.
+const polarsDoc = computed(() =>
+  isWalkthrough.value && flavour.value === 'polars'
+    ? (POLARS_DOC_FOR_NODE[steps.value[stepIndex.value]?.nodeType ?? ''] ?? null)
+    : null
 )
 
-const { concept, tables, delta, deltaCounts, blockedReason } = usePlainStep(steps, stepIndex, captured)
+// Step varName -> the node that PRODUCES that table (first writer wins, so a
+// sink step reusing its input's name never shadows the real producer).
+const varToNode = computed(() => {
+  const map = new Map<string, number>()
+  for (const step of steps.value) {
+    if (!map.has(step.varName)) map.set(step.varName, step.nodeId)
+  }
+  return map
+})
+
+/**
+ * Fill the current step's Data tab from the canvas run.
+ *
+ * Strictly preview-only: it reads existing node results and materialized
+ * previews (fetchNodePreview never reaches an execute_* bridge — the
+ * no-auto-run contract). Nothing here runs the flow; until the user does,
+ * the tab says so.
+ */
+const loadStepData = async () => {
+  const active = steps.value[stepIndex.value]
+  if (!active || !props.isVisible || !isWalkthrough.value) return
+  const epoch = buildEpoch.value
+  const names = [...active.inputVars, active.varName]
+  stepDataLoading.value = true
+  try {
+    for (const name of names) {
+      if (captured.value?.tables[name]) continue
+      const nodeId = varToNode.value.get(name)
+      if (nodeId === undefined) continue
+      if (!flowStore.nodeResults.get(nodeId)?.success) continue
+      const preview = await flowStore.fetchNodePreview(nodeId).catch(() => null)
+      if (epoch !== buildEpoch.value) return
+      const data = preview?.data
+      if (!data?.columns) continue
+      const rows = (data.data ?? []).map((cells: unknown[]) =>
+        Object.fromEntries(data.columns.map((column: string, i: number) => [column, cells[i]]))
+      )
+      const bucket = captured.value ?? { tables: {}, counts: {} }
+      bucket.tables[name] = rows
+      bucket.counts[name] = data.total_rows ?? rows.length
+      captured.value = { ...bucket }
+    }
+  } finally {
+    if (epoch === buildEpoch.value) stepDataLoading.value = false
+  }
+}
+
+watch([stepIndex, steps, () => props.isVisible], () => void loadStepData())
+// A finished canvas run supersedes whatever previews were captured before it.
+watch(
+  () => flowStore.isExecuting,
+  executing => {
+    if (executing) return
+    captured.value = null
+    void loadStepData()
+  }
+)
 
 /**
  * A cheap identity of the flow's shape and settings. updateNodeSettings
@@ -413,6 +522,26 @@ const setMode = (next: CodeMode) => {
   runResult.value = null
   comparison.value = null
   generateCodeFromFlow()
+}
+
+const setFlavour = (next: WalkthroughFlavour) => {
+  if (flavour.value === next || loading.value) return
+  const keepNodeId = steps.value[stepIndex.value]?.nodeId
+  // Stash BEFORE flipping: the draft computeds route by the current flavour.
+  if (edited.value) stashDraft()
+  flavour.value = next
+  localStorage.setItem(FLAVOUR_KEY, next)
+  // Instantly consistent buffer for the async build window that follows. The
+  // old highlight anchors would map through the doc swap into garbage, so
+  // clear them now; seedNow reseeds once the build lands.
+  code.value = draft.value ?? generated.value
+  if (editorView) {
+    seedStepsIn(editorView, [], -1)
+    syncReadouts()
+  }
+  runResult.value = null
+  comparison.value = null
+  generateCodeFromFlow({ preserveStepNodeId: keepNodeId })
 }
 
 const resetEdits = () => {
@@ -628,56 +757,47 @@ const nudgeSplit = (event: KeyboardEvent) => {
   persistSplit()
 }
 
-// Translate each formula node's expression to Polars code (to_polars_code).
-// Best-effort: the handler falls back to runtime translation on failure.
-const translateFormulaNodes = async (): Promise<Record<number, string>> => {
-  const out: Record<number, string> = {}
-  const formulaNodes = [...flowStore.nodes.values()].filter(n => n.type === 'formula')
-  if (formulaNodes.length === 0 || !pyodideStore.isReady) return out
-  try {
-    await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
-    for (const node of formulaNodes) {
-      const expr = (node.settings as NodeFormulaSettings)?.function?.function?.trim()
-      if (!expr) continue
-      const polars = await pyodideStore.runPythonWithResult(
-        'import json\n' +
-          'from polars_expr_transformer.process.polars_expr_transformer import to_polars_code\n' +
-          `to_polars_code(json.loads(${JSON.stringify(JSON.stringify(expr))}))`
-      )
-      if (typeof polars === 'string' && polars.trim()) out[node.id] = polars.trim()
-    }
-  } catch {
-    // handler falls back to runtime translation
-  }
-  return out
-}
-
-const generateCodeFromFlow = async () => {
+const generateCodeFromFlow = async (options?: { preserveStepNodeId?: number }) => {
   loading.value = true
   error.value = null
+  buildEpoch.value++
 
   try {
     if (isWalkthrough.value) {
-      // One conversion: buildWalkthrough's script is what generatePlainPython
-      // would have produced, so the editable buffer and the steps agree.
-      walkthrough.value = buildWalkthrough({
-        nodes: flowStore.nodes,
-        edges: flowStore.edges,
-        flowName: 'WASM Flow'
-      })
+      // The captured tables belong to the previous script's steps — and the
+      // two flavours bind the SAME variable names by design, so this reset
+      // must happen before the builder: a throwing build may never reach it.
+      captured.value = null
+      if (flavour.value === 'polars') {
+        const formulaCode = await translateFormulaNodes(flowStore.nodes)
+        walkthrough.value = buildPolarsWalkthrough({
+          nodes: flowStore.nodes,
+          edges: flowStore.edges,
+          flowName: 'WASM Flow',
+          formulaCode
+        })
+      } else {
+        // One conversion: buildWalkthrough's script is what generatePlainPython
+        // would have produced, so the editable buffer and the steps agree.
+        walkthrough.value = buildWalkthrough({
+          nodes: flowStore.nodes,
+          edges: flowStore.edges,
+          flowName: 'WASM Flow'
+        })
+      }
       generated.value = walkthrough.value.script
       code.value = draft.value ?? generated.value
-      stepIndex.value = Math.min(stepIndex.value, Math.max(0, walkthrough.value.steps.length - 1))
-      // The captured tables belong to the previous shape of the flow.
-      captured.value = null
-      traceState.value = 'idle'
-      tracedCode.value = null
-      traceError.value = null
+      const keep =
+        options?.preserveStepNodeId !== undefined
+          ? walkthrough.value.steps.findIndex(step => step.nodeId === options.preserveStepNodeId)
+          : -1
+      stepIndex.value =
+        keep >= 0 ? keep : Math.min(stepIndex.value, Math.max(0, walkthrough.value.steps.length - 1))
       scriptRevision.value++
       syncCanvasToStep()
       return
     }
-    const formulaCode = await translateFormulaNodes()
+    const formulaCode = await translateFormulaNodes(flowStore.nodes)
     code.value = generateCode({
       nodes: flowStore.nodes,
       edges: flowStore.edges,
@@ -688,6 +808,16 @@ const generateCodeFromFlow = async () => {
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to generate code'
     code.value = '# Failed to generate code. Please check your flow configuration.'
+    if (isWalkthrough.value) {
+      // Stale steps must not ghost across flavours: chips, canvas sync, trace
+      // captures and the compare target would all describe the other script.
+      walkthrough.value = { script: '', steps: [] }
+      // Keeps `edited` false, so the placeholder can never be stashed over a
+      // real draft — the failed flavour's stash survives for the next success.
+      generated.value = code.value
+      stepIndex.value = 0
+      scriptRevision.value++
+    }
   } finally {
     generatedFingerprint.value = flowFingerprint.value
     loading.value = false
@@ -702,32 +832,72 @@ const generateCodeFromFlow = async () => {
  * explicit-run-only sense: it only ever happens on this button.
  */
 const runScript = async () => {
-  if (!pyodideStore.isReady || running.value) return
+  if (!pyodideStore.isReady || running.value || loading.value) return
+  const epoch = buildEpoch.value
   running.value = true
   runResult.value = null
   // Otherwise last run's verdict sits next to this run's result and contradicts it.
   comparison.value = null
   marginTab.value = 'output'
   try {
-    stageReadFiles()
-    pyodideStore.setGlobal('_plain_script', code.value)
+    await ensureScriptPackages(code.value)
+    // Same length per line, so traceback line numbers still match the editor.
+    let source = code.value
+    for (const [url, name] of stageReadFiles()) source = source.replaceAll(`"${url}"`, `"${name}"`)
+    pyodideStore.setGlobal('_plain_script', source)
     const rows = await pyodideStore.runPythonWithResult(
       [
         'import json, traceback',
+        'import polars as pl',
         '_plain_ns = {}',
+        // Type-aware: the plain flavour returns list[dict], the Polars flavour
+        // a LazyFrame — one harness serves both.
+        'def _plain_rows(value):',
+        '    if isinstance(value, pl.LazyFrame):',
+        '        value = value.collect()',
+        '    if isinstance(value, pl.DataFrame):',
+        '        return value.to_dicts()',
+        '    return value',
+        // The wasm Polars build cannot run its file IO here: a file-backed
+        // scan_csv aborts the runtime at collect, and a sink cannot spawn its
+        // worker thread. Bridge both through Python IO exactly like the canvas
+        // engine does (read_csv(StringIO(...)).lazy(); collect + buffer write).
+        // Patched only around this run, then restored.
+        'import io',
+        '_orig_scan_csv = pl.scan_csv',
+        'def _scan_csv_no_file_io(source, *args, **kwargs):',
+        '    if not isinstance(source, str):',
+        '        return _orig_scan_csv(source, *args, **kwargs)',
+        '    with open(source, encoding=kwargs.pop("encoding", "utf-8")) as _handle:',
+        '        _text = _handle.read()',
+        '    return pl.read_csv(io.StringIO(_text), *args, **kwargs).lazy()',
+        'def _sink_csv_no_threads(self, path, *args, **kwargs):',
+        '    _buffer = io.BytesIO()',
+        '    self.collect().write_csv(_buffer, **kwargs)',
+        '    with open(path, "wb") as _handle:',
+        '        _handle.write(_buffer.getvalue())',
+        '_orig_sink_csv = pl.LazyFrame.sink_csv',
+        'pl.scan_csv = _scan_csv_no_file_io',
+        'pl.LazyFrame.sink_csv = _sink_csv_no_threads',
         'try:',
         // compile() with a filename so traceback line numbers match the editor.
         '    exec(compile(_plain_script, "pipeline.py", "exec"), _plain_ns)',
-        '    _plain_out = {"ok": True, "rows": json.dumps(_plain_ns["run_etl_pipeline"](), default=str)}',
+        '    _plain_out = {"ok": True, "rows": json.dumps(_plain_rows(_plain_ns["run_etl_pipeline"]()), default=str)}',
         'except Exception:',
         '    _plain_out = {"ok": False, "error": traceback.format_exc()}',
+        'finally:',
+        '    pl.scan_csv = _orig_scan_csv',
+        '    pl.LazyFrame.sink_csv = _orig_sink_csv',
         '_plain_out'
       ].join('\n')
     )
+    // A regeneration happened mid-run: this result describes the old script.
+    if (epoch !== buildEpoch.value) return
     runResult.value = rows?.ok
       ? { rows: JSON.parse(rows.rows), failed: false }
       : { rows: [], failed: true, error: cleanTraceback(rows?.error ?? 'Unknown error') }
   } catch (err) {
+    if (epoch !== buildEpoch.value) return
     runResult.value = { rows: [], failed: true, error: err instanceof Error ? err.message : String(err) }
   } finally {
     pyodideStore.deleteGlobal('_plain_script')
@@ -750,70 +920,6 @@ const cleanTraceback = (text: string): string => {
     return false
   })
   return kept.filter(line => line !== '').join('\n')
-}
-
-/** How many rows of each intermediate table cross the JS bridge. The counts stay exact. */
-const TRACE_ROW_CAP = 50
-
-/**
- * Instrument the buffer AS IT IS and keep every intermediate table.
- *
- * The captures are inserted into the live text at the step ranges the
- * highlight has been mapping through the learner's edits — so a solved
- * exercise gets per-step data, not just the generated script. `__steps__` is
- * pre-seeded in the exec namespace, which is what keeps everything captured
- * before a raising exercise stub readable; the raise itself is expected, and
- * any other exception is kept to show.
- */
-const runTrace = async () => {
-  if (!pyodideStore.isReady || traceState.value === 'running') return
-  const view = editorView
-  if (!view) return
-  traceState.value = 'running'
-  marginTab.value = 'data'
-  const source = code.value
-  const ranges = allStepLines(view.state)
-  const captures: StepCapture[] = steps.value
-    .map((step, index) => ({
-      fromLine: ranges[index]?.from ?? 0,
-      toLine: ranges[index]?.to ?? 0,
-      varName: step.varName
-    }))
-    .filter(capture => capture.toLine > 0)
-  try {
-    stageReadFiles()
-    pyodideStore.setGlobal('_trace_script', instrumentScript(source, captures))
-    const result = await pyodideStore.runPythonWithResult(
-      [
-        'import json, traceback',
-        '_trace_ns = {"__steps__": {}}',
-        '_trace_error = None',
-        'try:',
-        '    exec(compile(_trace_script, "pipeline.py", "exec"), _trace_ns)',
-        '    _trace_ns["run_etl_pipeline"]()',
-        'except Exception:',
-        '    _trace_error = traceback.format_exc()',
-        '_tables = {k: v for k, v in _trace_ns.get("__steps__", {}).items() if isinstance(v, list)}',
-        'json.dumps({',
-        `    "tables": {k: v[:${TRACE_ROW_CAP}] for k, v in _tables.items()},`,
-        '    "counts": {k: len(v) for k, v in _tables.items()},',
-        '    "error": _trace_error,',
-        '}, default=str)'
-      ].join('\n')
-    )
-    const parsed = JSON.parse(result)
-    captured.value = { tables: parsed.tables ?? {}, counts: parsed.counts ?? {} }
-    traceError.value = parsed.error ? cleanTraceback(parsed.error) : null
-    tracedCode.value = source
-    traceState.value = Object.keys(captured.value.tables).length > 0 ? 'ready' : 'failed'
-  } catch (err) {
-    captured.value = null
-    traceError.value = err instanceof Error ? err.message : String(err)
-    tracedCode.value = source
-    traceState.value = 'failed'
-  } finally {
-    pyodideStore.deleteGlobal('_trace_script')
-  }
 }
 
 /**
@@ -850,10 +956,28 @@ const compareToCanvas = async () => {
   })
 }
 
-/** Put each Read File node's text content where the generated script looks for it. */
-const stageReadFiles = () => {
+/** The buffer may need micropip packages Pyodide does not preload. */
+const ensureScriptPackages = async (script: string) => {
+  if (script.includes('polars_expr_transformer')) {
+    await pyodideStore.ensurePyPackages([EXPR_TRANSFORMER_PACKAGE])
+  }
+  // Same pin the engine installs for the Excel writer node.
+  if (script.includes('write_excel')) {
+    await pyodideStore.ensurePyPackages(['XlsxWriter==3.2.0'])
+  }
+}
+
+/**
+ * Put each Read File node's text content where the generated script looks for
+ * it, and return quoted-path substitutions for URL-sourced reads: the wasm
+ * Polars build has no `cloud` feature, so scan_csv("https://…") panics — the
+ * in-browser run executes against the staged copy instead. The buffer itself
+ * is never rewritten; the exported script keeps reading from the URL.
+ */
+const stageReadFiles = (): Array<[string, string]> => {
+  const substitutions: Array<[string, string]> = []
   const fs = pyodideStore.pyodide?.FS
-  if (!fs) return
+  if (!fs) return substitutions
   for (const node of flowStore.nodes.values()) {
     if (node.type !== 'read') continue
     const content = flowStore.getFileContent(node.id)
@@ -864,18 +988,24 @@ const stageReadFiles = () => {
       fs.writeFile(name, content.data)
     } catch {
       // A path the virtual FS will not take just surfaces as a Python error below.
+      continue
     }
+    const path = settings.received_file?.path
+    if (path && /^https?:\/\//i.test(path)) substitutions.push([path, name])
   }
+  return substitutions
 }
 
 const refreshCode = () => {
   // Regenerate from the flow — but never over the learner's typing: an
   // in-progress exercise solution survives as the draft, and the explicit
   // Reset button stays the only path that discards it. Refreshing from the
-  // Polars tab must not touch a draft stashed by an earlier tab switch.
+  // Polars tab must not touch a draft stashed by an earlier tab switch, and
+  // after a FAILED build the buffer is a placeholder (edited=false by design)
+  // — clearing then would destroy the draft the failed attempt had stashed.
   if (isWalkthrough.value) {
     if (edited.value) stashDraft()
-    else clearDraft()
+    else if (!error.value) clearDraft()
   }
   generateCodeFromFlow()
 }
@@ -885,7 +1015,11 @@ const exportCode = () => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = isWalkthrough.value ? 'pipeline_plain_python.py' : 'flowfile_pipeline.py'
+  a.download = isWalkthrough.value
+    ? flavour.value === 'polars'
+      ? 'pipeline_polars.py'
+      : 'pipeline_plain_python.py'
+    : 'flowfile_pipeline.py'
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -900,6 +1034,9 @@ watch(
   () => props.isVisible,
   isVisible => {
     if (!isVisible) return
+    // Edits typed before the close survived in `code`; stash them before the
+    // rebuild overwrites the buffer (the ranges were stashed by releaseEditor).
+    if (isWalkthrough.value && edited.value) stashDraft()
     // Resolve the landing mode on open, so flipping Learning mode while the
     // panel is closed takes effect the next time it opens.
     mode.value = props.teachingMode ? initialMode() : 'polars'
@@ -975,6 +1112,9 @@ onBeforeUnmount(() => {
   background: var(--color-background-secondary);
 }
 
+/* No scrollbar chrome: with always-visible scrollbars (macOS setting) the bar
+   paints as a fat track across the rail. The arrows and the auto-centring on
+   step change are the navigation; wheel/drag scrolling still works. */
 .rail-track {
   flex: 1 1 auto;
   min-width: 0;
@@ -984,7 +1124,11 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
   scroll-behavior: smooth;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.rail-track::-webkit-scrollbar {
+  display: none;
 }
 
 .chip {
@@ -1015,15 +1159,6 @@ onBeforeUnmount(() => {
 }
 
 /* A dashed border alone is nearly invisible; the glyph carries the meaning. */
-.chip.exercise:not(.current) {
-  border-style: dashed;
-}
-
-.chip-exercise {
-  font-size: 10px;
-  opacity: 0.9;
-}
-
 .chip-index {
   opacity: 0.65;
   font-variant-numeric: tabular-nums;
@@ -1129,15 +1264,34 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.bench-hint {
-  margin-left: auto;
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: right;
+.flavour-toggle {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 999px;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.flavour-toggle button {
+  padding: 1px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  letter-spacing: 0.2px;
+  cursor: pointer;
   white-space: nowrap;
-  opacity: 0.85;
+}
+
+.flavour-toggle button.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.flavour-toggle button:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .bench-editor {
@@ -1173,24 +1327,25 @@ onBeforeUnmount(() => {
 }
 
 /* Wide: columns. Driven by a Vue-bound class, not @container — container-type
-   would make this a containing block for the glossary's fixed tooltips. */
-.workbench.is-wide {
+   would make this a containing block for the glossary's fixed tooltips.
+   Scoped to .split: without a margin beside it the bench must fill the panel. */
+.workbench.split.is-wide {
   flex-direction: row;
 }
 
-.workbench.is-wide .bench {
+.workbench.split.is-wide .bench {
   flex: 0 0 var(--split-x, 60%);
   min-width: 460px;
   min-height: 0;
 }
 
-.workbench.is-wide .split-divider {
+.workbench.split.is-wide .split-divider {
   cursor: col-resize;
   border-block: none;
   border-inline: 1px solid var(--color-border-primary);
 }
 
-.workbench.is-wide :deep(.margin) {
+.workbench.split.is-wide :deep(.margin) {
   min-width: 340px;
   min-height: 0;
   border-left: 1px solid var(--color-border-primary);

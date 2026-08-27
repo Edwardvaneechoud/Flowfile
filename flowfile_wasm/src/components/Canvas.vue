@@ -117,7 +117,7 @@
     </div>
 
     <!-- Vue Flow Canvas -->
-    <div class="flow-canvas animated-bg-gradient" @drop="onDrop" @dragover="onDragOver">
+    <div ref="flowCanvasRef" class="flow-canvas animated-bg-gradient" @drop="onDrop" @dragover="onDragOver">
       <VueFlow
         ref="vueFlowRef"
         v-model:nodes="vueNodes"
@@ -412,6 +412,7 @@ import type { ColDef, GridReadyEvent, GridApi } from '@ag-grid-community/core'
 ModuleRegistry.registerModules([ClientSideRowModelModule])
 
 import DraggableItem from './common/DraggableItem/DraggableItem.vue'
+import { unobstructedRect } from './common/DraggableItem/layoutGeometry'
 import { useItemStore } from './common/DraggableItem/stateStore'
 import { Z_INDEX } from './common/DraggableItem/zIndex'
 import { useStaleModifierGuard } from '../composables/useStaleModifierGuard'
@@ -506,6 +507,7 @@ const toolbarHeight = ref(props.showToolbar ? 52 : 0)
 // these are reactive DEFAULTS — once the user commits an explicit size, intent
 // wins. Falls back to the window while the container is unmeasured (first frame).
 const canvasContainerRef = ref<HTMLElement | null>(null)
+const flowCanvasRef = ref<HTMLElement | null>(null)
 let unregisterContainer: (() => void) | null = null
 const availableHeight = computed(() => itemStore.containerBounds.height || window.innerHeight)
 const tablePreviewHeight = computed(() =>
@@ -514,7 +516,7 @@ const tablePreviewHeight = computed(() =>
 const settingsPanelHeight = computed(() =>
   Math.max(220, availableHeight.value - toolbarHeight.value - tablePreviewHeight.value),
 )
-const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut, findNode, setCenter, viewport } =
+const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut, findNode, setViewport, viewport } =
   useVueFlow()
 
 useStaleModifierGuard()
@@ -891,14 +893,46 @@ function onPaneClick(event: MouseEvent) {
   closePaneMenu()
 }
 
-/** Smooth-pan the viewport to a node, keeping the current zoom (walkthrough sync). */
+/**
+ * Smooth-pan the viewport to a node, keeping the current zoom (walkthrough sync).
+ *
+ * Centres on the canvas the user can actually SEE, not on the pane: setCenter
+ * aims at the pane's middle, which the docked Code panel is usually sitting on
+ * top of. The visible slice is derived from the measured overlay rects, so this
+ * follows the panels wherever they are docked, resized or minimized to.
+ */
 function panToNode(nodeId: number) {
   const node = findNode(String(nodeId))
-  if (!node) return
-  setCenter(
-    node.position.x + (node.dimensions?.width || 0) / 2,
-    node.position.y + (node.dimensions?.height || 0) / 2,
-    { zoom: viewport.value.zoom, duration: 300 }
+  const pane = flowCanvasRef.value
+  if (!node || !pane) return
+
+  const paneBox = pane.getBoundingClientRect()
+  const overlays = Array.from(
+    canvasContainerRef.value?.querySelectorAll<HTMLElement>('.overlay') ?? [],
+  ).map((el) => {
+    const box = el.getBoundingClientRect()
+    return {
+      left: box.left - paneBox.left,
+      top: box.top - paneBox.top,
+      width: box.width,
+      height: box.height,
+    }
+  })
+  const free = unobstructedRect(
+    { left: 0, top: 0, width: paneBox.width, height: paneBox.height },
+    overlays,
+  )
+
+  const { zoom } = viewport.value
+  const nodeX = node.position.x + (node.dimensions?.width || 0) / 2
+  const nodeY = node.position.y + (node.dimensions?.height || 0) / 2
+  setViewport(
+    {
+      x: free.left + free.width / 2 - nodeX * zoom,
+      y: free.top + free.height / 2 - nodeY * zoom,
+      zoom,
+    },
+    { duration: 300 },
   )
 }
 

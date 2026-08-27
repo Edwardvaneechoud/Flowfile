@@ -43,8 +43,8 @@ export function flowWith(...nodes: FlowNode[]): { nodes: Map<number, FlowNode>; 
   for (const node of nodes) {
     map.set(node.id, node)
     for (const input of node.inputIds) link(input, node.id)
-    if (node.leftInputId !== undefined) link(node.leftInputId, node.id)
-    if (node.rightInputId !== undefined) link(node.rightInputId, node.id)
+    if (node.leftInputId != null) link(node.leftInputId, node.id)
+    if (node.rightInputId != null) link(node.rightInputId, node.id)
   }
   return { nodes: map, edges }
 }

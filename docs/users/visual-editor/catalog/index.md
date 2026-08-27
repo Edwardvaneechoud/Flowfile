@@ -2,7 +2,7 @@
 
 Organize, track, and govern your data flows and tables in a central catalog.
 
-The Catalog is a central place to manage flows and track execution history. It registers data tables (physical and [virtual](virtual-tables.md)), queries data with [SQL](sql-editor.md), shares artifacts across flows, automates pipelines with [schedules](schedules.md), and serves flows as [API endpoints](#serve-flows-as-apis).
+The Catalog is a central place to manage flows and track execution history. It registers data tables (physical and [virtual](virtual-tables.md)), queries data with [SQL](sql-editor.md), shares artifacts across flows, automates pipelines with [schedules](schedules.md), and serves flows as [API endpoints](flow-api.md).
 
 !!! info "Limited in Flowfile Lite"
     The browser-only [Flowfile Lite](../../deployment/lite.md) edition includes only a **lightweight in-browser catalog** (save and reuse CSV tables). The governed catalog described here — Delta-backed storage, version history, virtual tables, lineage, SQL, schedules, and secrets — requires the full desktop/server build.
@@ -100,7 +100,7 @@ The Catalog view is split into tabs:
 | **SQL** | Query catalog tables — see [SQL Editor](sql-editor.md) |
 | **Notebook** | Notebooks stored next to the data — see [Notebooks](notebooks.md) |
 | **Visuals** | Charts and dashboards built on catalog tables — see [Visualizations](visualizations.md) |
-| **APIs** | Publish flows as HTTP endpoints and manage their keys — see [Serve flows as APIs](#serve-flows-as-apis) |
+| **APIs** | Publish flows as HTTP endpoints and manage their keys — see [Serve Flows as APIs](flow-api.md) |
 
 ---
 
@@ -319,19 +319,7 @@ Notebooks live in the catalog next to the tables they analyze: Python and Markdo
 
 ## Serve flows as APIs
 
-Publish a registered flow as an HTTP endpoint so other systems can run it on demand. A published flow is served at `GET /api/data/{slug}`, which runs the flow synchronously and returns the output of its **API response** node as JSON.
-
-- The flow must contain exactly one **API response** node — it marks the dataset returned to the caller.
-- Endpoints are **API-key authenticated**. Keys belong to an *API consumer* — a client account that can be granted several published flows, so one key can call all of them. Publishing and key management live in the catalog's **APIs** tab.
-- Flow parameters surface as request parameters, so a single published flow can serve many variations.
-
-The flow you build and test in the designer becomes a data service other systems can call — a dashboard, a scheduled job, another application.
-
-![Setting up a flow to serve as an API: declaring the flow parameters, filtering by them in the flow, then configuring the API response node.](../../../assets/images/guides/catalog/set-up-for-api.gif)
-
-Once published, the flow's detail panel shows the **Expose as API** section: the live endpoint URL, the query parameters inherited from the flow's parameters, API-key management, and a **Try it** runner that calls the endpoint with your own values.
-
-![The Expose as API panel of a published flow: the enabled GET endpoint URL, a query-parameters table inherited from the flow parameters, API keys with create and revoke actions, and a Try it section that runs the endpoint with test values.](../../../assets/images/guides/catalog/flow-api-panel.png)
+Publish a registered flow as an HTTP endpoint so other systems can run it on demand: `GET /api/data/{slug}` runs the flow synchronously and returns the output of its **API Response** node as JSON, authenticated with API keys, with flow parameters surfaced as query parameters. See the dedicated [Serve Flows as APIs](flow-api.md) page for publishing, keys and consumers, parameters, and run-time behavior.
 
 ---
 

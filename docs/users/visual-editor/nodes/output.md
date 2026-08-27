@@ -287,7 +287,7 @@ See [Subflows](../subflows.md) for the full pattern.
 
 ### API Response
 
-The **API Response** node marks its input as the body of an HTTP endpoint. When a flow is published as an API, the data flowing into this node is serialized and returned to the caller; a published flow must contain exactly one. During interactive runs it passes data through unchanged, so previews keep working.
+The **API Response** node marks its input as the body of an HTTP endpoint. When a flow is published as an API, the data flowing into this node is serialized and returned to the caller; a published flow must contain exactly one. During interactive runs it passes data through unchanged, so previews keep working. See [Serve Flows as APIs](../catalog/flow-api.md) for publishing, keys, and parameters.
 
 | Parameter | Description |
 |-----------|-------------|
