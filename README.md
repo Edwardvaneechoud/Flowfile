@@ -35,7 +35,7 @@
 
 ---
 
-Build pipelines on a visual canvas with a live preview at every node, or write them in Python with a Polars-like API. Code and visual are two views of the same graph: drag nodes or write Polars-style code, your choice. Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a SQL editor with embedded viz, a scheduler, flow parameters, sandboxed Python kernels, and group sharing for teams.
+Build pipelines on a visual canvas with a live preview at every node, or write them in Python with a Polars-like API — code and visual are two views of the same graph. Around it: a Delta-backed catalog, a SQL editor, a scheduler, sandboxed Python kernels, and sharing for teams.
 
 - Just want to see it? [demo.flowfile.org](https://demo.flowfile.org).
 - Transforming files on your laptop? `pip install Flowfile` (Python 3.10–3.13).
@@ -57,9 +57,9 @@ Build pipelines on a visual canvas with a live preview at every node, or write t
 
 **A visual canvas** with 45 node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, window functions. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
 
-Flowfile is a transformation tool rather than an ingestion platform, and its connections reflect that: local files (CSV, Parquet, Excel, JSON, IPC, NDJSON, Avro), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta and Iceberg tables included, though Iceberg is read-only for now), Kafka (consuming; there's no producer yet), Google Analytics, and REST APIs — and it writes wherever you point it. That's the whole list, honestly: no Snowflake, BigQuery or Oracle driver yet, and no CDC. If your data lives in one of those, land it somewhere Flowfile can reach — a bucket, a Postgres, plain files — and it takes over from there.
+It connects to local files (CSV, Parquet, Excel, JSON and friends), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no Snowflake, BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
 
-**A Python API** with Polars-like syntax. Code and visual are two ways to build the same object graph — write a pipeline, call `open_graph_in_editor()`, and see it visually without re-building anything. Since the syntax mirrors Polars, porting an existing Polars script over is mostly mechanical.
+**A Python API** with Polars-like syntax — write a pipeline, call `open_graph_in_editor()`, and it opens as an editable flow. Porting an existing Polars script over is mostly mechanical.
 
 <div align="center">
   <img src="docs/assets/images/quickstart/python_example.png" alt="A pipeline built with the Flowfile Python API, opened in the visual editor" width="800"/>
@@ -100,9 +100,9 @@ Database and REST nodes export as `flowfile` calls, so their stored connections 
 
 ### Around the canvas
 
-Everything a flow produces can land in the data catalog: a catalog > schema > table hierarchy with Delta Lake underneath, so tables get version history and time travel. Flows write into it through a Catalog Writer node — or register their output as a virtual table, with nothing materialised. For those, Flowfile stores the Polars query plan rather than the data (as long as the producing graph is lazy-safe), so a consumer's filters push down straight through the flow boundary, and upstream Delta versions are tracked per read to catch stale data.
+Everything a flow produces can land in the data catalog — a catalog > schema > table hierarchy on Delta Lake, so tables get version history and time travel. Flow outputs can also register as virtual tables: Flowfile stores the Polars query plan instead of the data, and a consumer's filters push down straight through the flow boundary.
 
-There's a SQL editor on top (Polars SQLContext under the hood): query any registered table, chart the result in the embedded Graphic Walker, and if an ad-hoc query turns out to be useful, save it as a flow in one click.
+There's a SQL editor on top (Polars SQLContext): query any registered table, chart the result in the embedded Graphic Walker, and save a useful ad-hoc query as a flow in one click.
 
 <div align="center">
   <img src=".github/images/sql_editor.png" alt="SQL editor with Graphic Walker visualization" width="800"/>
@@ -112,25 +112,17 @@ There's a SQL editor on top (Polars SQLContext under the hood): query any regist
 
 &nbsp;
 
-You can put flows on a schedule: on an interval, when a catalog table updates, or once a whole set of tables has refreshed. Run history, logs and cancellation live in the UI, and the scheduler runs embedded, standalone or in Docker. Any node setting takes `${variable}` parameters — file paths, SQL queries, formulas — with defaults managed in the Designer and overridden at run time with `--param`.
+Flows can run on a schedule — on an interval, or when catalog tables update — with run history and logs in the UI. Any node setting takes `${variable}` parameters, overridable at run time with `--param`.
 
-With the Docker deployment it all becomes multi-user: accounts, an admin role, user groups. Share a connection, flow or catalog namespace with a group at "use" or "manage" level (secrets can be shared too, read-only); everything else stays private to its owner. The desktop app is single-user.
+The Docker deployment makes it multi-user: accounts, groups, and sharing of connections, flows and catalog namespaces at "use" or "manage" level. The desktop app is single-user.
 
-**Python kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe — the one thing they ask in return is that Docker is running locally. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
+**Python kernels.** User code runs in isolated Docker containers with their own package environments (so Docker needs to be running locally), with a Jupyter-style notebook editor — cell execution, autocompletion, rich output.
 
-**Custom nodes and a community registry.** Build your own nodes in the visual Node Designer — a typed settings form, live preview, and a single-file `.py` output — then share them through the [community registry](https://github.com/edwardvaneechoud/flowfile-community-nodes). Publishing is a pull request opened straight from the app; installing is one click from Catalog → Community Nodes, with sha256-pinned downloads and a capability consent dialog.
+**Custom nodes.** Build your own in the visual Node Designer and share them through the [community registry](https://github.com/edwardvaneechoud/flowfile-community-nodes) — publishing opens a pull request straight from the app; installing is one click, with sha256-pinned downloads and a consent dialog.
 
-**An embeddable editor.** The browser editor also ships as a standalone Vue component, [`flowfile-editor`](https://www.npmjs.com/package/flowfile-editor), so you can drop a Polars-powered visual ETL canvas into any web app with zero backend: `npm install flowfile-editor`.
+**An embeddable editor.** The browser editor also ships as a standalone Vue component, [`flowfile-editor`](https://www.npmjs.com/package/flowfile-editor): a Polars-powered canvas in any web app, zero backend.
 
-**Templates and clipboard import.** Get started with built-in flow templates, or paste tabular data from Excel / Google Sheets directly onto the canvas to create a pre-filled input node.
-
-A single flow can filter, join, pivot and aggregate, then branch into as many outputs as you need:
-
-<div align="center">
-  <img src="docs/assets/images/guides/sales_dashboard/dashboard_overview.png" alt="A complete Flowfile pipeline with joins, pivots, and aggregations feeding multiple outputs" width="800"/>
-  <br>
-  <sub>Joins, pivots and aggregations feeding a product leaderboard, a monthly trend and a city matrix.</sub>
-</div>
+**Templates and clipboard import.** Start from built-in templates, or paste data from Excel / Google Sheets straight onto the canvas.
 
 ---
 
@@ -204,7 +196,7 @@ npm install && npm run dev:web  # :8080
 
 ## Where Flowfile fits
 
-Flowfile is deliberately a one-machine tool: Polars in-process, no cluster to stand up. Core and worker can run as separate containers, but they share a filesystem, not a fleet. That's a real limit and a real feature at once — it's why the whole platform installs with `pip`, runs in a browser tab, and never asks you to size anything. And a surprising amount of data fits on one good machine.
+Flowfile is deliberately a one-machine tool: Polars in-process, no cluster. That's a limit and a feature at once — it's why the whole thing installs with `pip` and runs in a browser tab, and a surprising amount of data fits on one good machine.
 
 | Instead of | The difference |
 |---|---|
@@ -231,9 +223,7 @@ Deeper dive: [Architecting a Visual ETL Tool with Polars](https://dev.to/edwardv
 
 ## Project status
 
-Actively developed, pre-1.0. Releases go out from this repo to PyPI, the desktop installers, Docker Hub, and npm. The test suite is over 7,000 Python tests plus 150+ frontend and WASM test files, spread over seven CI test workflows (unit, Playwright e2e, kernel, Kafka, Docker auth); backend coverage lands on [Codecov](https://codecov.io/gh/edwardvaneechoud/Flowfile).
-
-What's next is tracked in [Issues](https://github.com/edwardvaneechoud/Flowfile/issues) and discussed in [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions); every release has a feedback thread on [Releases](https://github.com/edwardvaneechoud/Flowfile/releases).
+Actively developed, pre-1.0. Releases ship from this repo to PyPI, the desktop installers, Docker Hub and npm, gated by 7,000+ Python tests and 150+ frontend test files across seven CI workflows, with backend coverage on [Codecov](https://codecov.io/gh/edwardvaneechoud/Flowfile). What's next is tracked in [Issues](https://github.com/edwardvaneechoud/Flowfile/issues) and discussed in [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions).
 
 ## License
 
