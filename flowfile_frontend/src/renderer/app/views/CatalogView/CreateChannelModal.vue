@@ -3,16 +3,18 @@
     :model-value="visible"
     width="540px"
     align-center
-    class="channel-dialog"
+    class="channel-dialog catalog-dialog"
     @close="$emit('close')"
   >
-    <template #header>
+    <template #header="{ titleId }">
       <div class="dialog-header">
         <span class="dialog-header-icon">
           <i :class="isEdit ? 'fa-solid fa-pen-to-square' : 'fa-solid fa-bell'"></i>
         </span>
         <div class="dialog-header-text">
-          <span class="dialog-title">{{ isEdit ? "Edit channel" : "Add channel" }}</span>
+          <span :id="titleId" class="dialog-title">{{
+            isEdit ? "Edit channel" : "Add channel"
+          }}</span>
           <span class="dialog-subtitle">{{
             isEdit ? "Change where these alerts go" : "Where should Flowfile send alerts?"
           }}</span>
@@ -38,6 +40,7 @@
             type="button"
             class="type-card"
             :class="{ active: form.channel_type === t.value }"
+            :aria-pressed="form.channel_type === t.value"
             @click="selectType(t.value)"
           >
             <span class="type-card-icon"><i :class="t.icon"></i></span>
@@ -53,7 +56,7 @@
         </div>
       </el-form-item>
 
-      <el-form-item :label="isEdit ? 'Webhook URL (leave blank to keep current)' : 'Webhook URL'">
+      <el-form-item :label="urlLabel">
         <el-input
           v-model="form.webhook_url"
           :placeholder="urlPlaceholder"
@@ -69,12 +72,12 @@
            the only moment a typo is cheap to catch. -->
       <div class="test-row">
         <el-button size="small" :loading="testing" :disabled="!canTest || testing" @click="runTest">
-          <i v-if="!testing" class="fa-solid fa-paper-plane btn-icon" /> Send test
+          <i v-if="!testing" class="fa-solid fa-paper-plane" /> Send test
         </el-button>
-        <span v-if="testResult && testResult.ok" class="test-result ok">
+        <span v-if="testResult && testResult.ok" class="test-result ok" role="status">
           <i class="fa-solid fa-circle-check" /> Test message sent
         </span>
-        <span v-else-if="testResult" class="test-result failed">
+        <span v-else-if="testResult" class="test-result failed" role="status">
           <i class="fa-solid fa-circle-exclamation" />
           {{ testResult.error || "Test failed" }}
         </span>
@@ -142,8 +145,8 @@ const CHANNEL_TYPES: {
     value: "teams",
     icon: "fa-brands fa-microsoft",
     title: "Microsoft Teams",
-    help: "Channel → Connectors → Incoming Webhook",
-    placeholder: "https://outlook.office.com/webhook/...",
+    help: "Channel ··· menu → Workflows → “Post to a channel when a webhook request is received”",
+    placeholder: "https://....logic.azure.com/workflows/...",
   },
   {
     value: "generic",
@@ -171,19 +174,43 @@ const activeType = computed(
   () => CHANNEL_TYPES.find((t) => t.value === form.value.channel_type) ?? CHANNEL_TYPES[0],
 );
 
-const urlPlaceholder = computed(() =>
-  isEdit.value ? "Leave blank to keep the saved URL" : activeType.value.placeholder,
+// Switching type in edit mode makes the saved URL wrong (it belongs to the old
+// provider), so the blank-keeps-current shortcut no longer applies.
+const typeChanged = computed(
+  () =>
+    isEdit.value &&
+    !!props.editChannel &&
+    form.value.channel_type !== props.editChannel.channel_type,
 );
+
+const urlLabel = computed(() => {
+  if (!isEdit.value) return "Webhook URL";
+  if (typeChanged.value)
+    return `Webhook URL (required — the saved URL belongs to ${channelTypeTitle(props.editChannel?.channel_type)})`;
+  return "Webhook URL (leave blank to keep current)";
+});
+
+const urlPlaceholder = computed(() =>
+  isEdit.value && !typeChanged.value
+    ? "Leave blank to keep the saved URL"
+    : activeType.value.placeholder,
+);
+
+function channelTypeTitle(type: NotificationChannelType | undefined): string {
+  return CHANNEL_TYPES.find((t) => t.value === type)?.title ?? "the previous type";
+}
 
 const canTest = computed(() => form.value.webhook_url.trim().length > 0);
 
 const isValid = computed(() => {
   if (!form.value.name.trim()) return false;
-  // Editing may keep the stored URL; creating always needs one.
-  return isEdit.value || form.value.webhook_url.trim().length > 0;
+  // Editing may keep the stored URL — unless the type changed; creating always needs one.
+  if (isEdit.value) return !typeChanged.value || form.value.webhook_url.trim().length > 0;
+  return form.value.webhook_url.trim().length > 0;
 });
 
 function resetTest() {
+  testSeq += 1; // a verdict for the previous URL/type no longer applies
   testResult.value = null;
 }
 
@@ -196,6 +223,7 @@ watch(
   () => props.visible,
   (open) => {
     if (!open) return;
+    testSeq += 1; // discard any in-flight test from a previous open
     testResult.value = null;
     testing.value = false;
     if (isEdit.value && props.editChannel) {
@@ -210,17 +238,26 @@ watch(
   },
 );
 
+// Guards a slow test response from resurfacing after the dialog is closed,
+// reopened, or the URL edited in the meantime. `testSeq` invalidates verdicts;
+// `lastRunSeq` lets the newest run (and only it) clear the spinner.
+let testSeq = 0;
+let lastRunSeq = 0;
+
 async function runTest() {
   if (!canTest.value) return;
+  const seq = ++testSeq;
+  lastRunSeq = seq;
   testing.value = true;
   testResult.value = null;
   try {
-    testResult.value = await notificationsStore.testChannelUrl({
+    const result = await notificationsStore.testChannelUrl({
       channel_type: form.value.channel_type,
       webhook_url: form.value.webhook_url.trim(),
     });
+    if (seq === testSeq && props.visible) testResult.value = result;
   } finally {
-    testing.value = false;
+    if (seq === lastRunSeq) testing.value = false;
   }
 }
 
@@ -246,143 +283,9 @@ function handleSave() {
 </script>
 
 <style scoped>
-/* Dialog chrome — matches CreateScheduleModal so the two feel like one family. */
-.channel-dialog :deep(.el-dialog) {
-  border-radius: var(--border-radius-lg);
-  overflow: hidden;
-}
-.channel-dialog :deep(.el-dialog__header) {
-  margin-right: 0;
-  padding-bottom: var(--spacing-2);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-.channel-dialog :deep(.el-dialog__body) {
-  padding-top: var(--spacing-3);
-  padding-bottom: var(--spacing-1);
-}
-
-.channel-form :deep(.el-form-item) {
-  margin-bottom: var(--spacing-3);
-}
-.channel-form :deep(.el-form-item__label) {
-  padding-bottom: 3px;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--el-text-color-regular);
-  line-height: 1.3;
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
-}
-.dialog-header-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  border-radius: var(--border-radius-md);
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-  font-size: 15px;
-}
-.dialog-header-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-}
-.dialog-title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--el-text-color-primary);
-}
-.dialog-subtitle {
-  font-size: var(--font-size-sm);
-  color: var(--el-text-color-secondary);
-}
-
-/* Channel-type cards */
-.type-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-.type-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
-  width: 100%;
-  padding: var(--spacing-2) var(--spacing-3);
-  border: 1px solid var(--el-border-color);
-  border-radius: var(--border-radius-md);
-  background: var(--el-bg-color);
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
-    box-shadow 0.15s ease;
-}
-.type-card:hover {
-  border-color: var(--el-color-primary-light-5);
-  background: var(--el-fill-color-light);
-}
-.type-card.active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
-  box-shadow: inset 0 0 0 1px var(--el-color-primary);
-}
-.type-card-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  border-radius: var(--border-radius-md);
-  background: var(--el-fill-color);
-  color: var(--el-text-color-regular);
-  font-size: 14px;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-.type-card.active .type-card-icon {
-  background: var(--el-color-primary);
-  color: #fff;
-}
-.type-card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-.type-card-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--el-text-color-primary);
-}
-.type-card-sub {
-  font-size: var(--font-size-sm);
-  color: var(--el-text-color-secondary);
-}
-.type-card-check {
-  color: var(--el-color-primary);
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.hint-text {
-  font-size: var(--font-size-sm);
-  color: var(--el-text-color-secondary);
-  margin-top: 4px;
-}
-
+/* Dialog chrome, header, form rhythm and the type-card picker live in the
+   shared `.catalog-view .catalog-dialog` block (CatalogView.vue), used by
+   this dialog and CreateScheduleModal. Only channel-specific styles remain. */
 .test-row {
   display: flex;
   align-items: center;
@@ -403,17 +306,19 @@ function handleSave() {
   overflow-wrap: anywhere;
 }
 .test-result.ok {
-  color: var(--el-color-success);
+  color: var(--color-success);
   font-weight: var(--font-weight-medium);
 }
 .test-result.failed {
-  color: var(--el-color-error);
+  color: var(--color-danger);
 }
 .test-result.hint {
   color: var(--el-text-color-secondary);
 }
 
-.btn-icon {
-  margin-right: 6px;
+/* Element Plus renders the button label in a flex span, which drops the
+   whitespace between icon and text — restore the gap for icon+label buttons. */
+.channel-dialog :deep(.el-button > span) {
+  gap: 6px;
 }
 </style>

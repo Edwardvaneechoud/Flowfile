@@ -37,7 +37,9 @@ interface NotificationsState {
   error: string | null;
 }
 
-export const HISTORY_LIMIT = 50;
+// The backend's /notifications/history caps at 200 and supports no offset, so we
+// fetch the full window once and the Alerts panel paginates it client-side.
+export const HISTORY_LIMIT = 200;
 
 export const useNotificationsStore = defineStore("notifications", {
   state: (): NotificationsState => ({

@@ -164,7 +164,7 @@
         :rules="scheduleRules"
         :channels="notificationsStore.channels"
         :scope="{ scheduleId: schedule.id }"
-        empty-text="No alerts for this schedule yet."
+        :empty-text="scheduleAlertsEmptyText"
         no-channels-hint="No notification channels yet — set one up to be told when this schedule fails."
         no-channels-action="Go to Alerts"
         @need-channel="goToAlerts"
@@ -260,14 +260,21 @@ const scheduleTypeName = computed(() => {
 });
 
 // Alerts scoped to this schedule. Channels are shared across the view, so they are
-// only fetched when this panel has none yet.
+// only fetched when this panel has none yet. Rules are loaded unscoped so the
+// empty text can honestly say whether an account-wide alert already covers us.
 const scheduleRules = computed(() => notificationsStore.rulesForSchedule(props.schedule.id));
+
+const scheduleAlertsEmptyText = computed(() =>
+  notificationsStore.globalRules.length > 0
+    ? "No schedule-specific alerts — your account-wide alerts (Alerts tab) already cover this schedule's runs."
+    : "No alerts for this schedule yet.",
+);
 
 watch(
   () => props.schedule.id,
-  (scheduleId) => {
+  () => {
     if (notificationsStore.channels.length === 0) notificationsStore.loadChannels();
-    notificationsStore.loadRules({ scheduleId });
+    notificationsStore.loadRules();
   },
   { immediate: true },
 );

@@ -238,6 +238,23 @@ describe("notifications-store rules", () => {
     expect(store.rules.map((r) => r.id).sort()).toEqual([10, 12]);
   });
 
+  it("merges a registration-scoped load without touching schedule-scoped rules", async () => {
+    const store = useNotificationsStore();
+    store.rules = [
+      rule({ id: 10 }),
+      rule({ id: 11, registration_id: 7 }),
+      rule({ id: 12, registration_id: 7, schedule_id: 5 }),
+    ];
+    getRulesMock.mockResolvedValue([rule({ id: 13, registration_id: 7 })]);
+
+    await store.loadRules({ registrationId: 7 });
+
+    expect(getRulesMock).toHaveBeenCalledWith({ registrationId: 7 });
+    // The stale flow-scoped rule 11 is gone; the global rule 10 and the
+    // schedule-scoped rule 12 (same flow, different scope) both survive.
+    expect(store.rules.map((r) => r.id).sort()).toEqual([10, 12, 13]);
+  });
+
   it("scopes the getters by registration and schedule", () => {
     const store = useNotificationsStore();
     store.rules = [
@@ -286,7 +303,7 @@ describe("notifications-store history", () => {
 
     await store.loadHistory();
 
-    expect(getHistoryMock).toHaveBeenCalledWith(50);
+    expect(getHistoryMock).toHaveBeenCalledWith(200);
     expect(store.loadingHistory).toBe(false);
   });
 

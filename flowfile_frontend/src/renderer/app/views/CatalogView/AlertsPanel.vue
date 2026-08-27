@@ -4,7 +4,7 @@
       <h2>Alerts</h2>
       <div class="header-actions">
         <el-button size="small" :loading="refreshing" @click="refresh">
-          <i v-if="!refreshing" class="fa-solid fa-arrows-rotate btn-icon" /> Refresh
+          <i v-if="!refreshing" class="fa-solid fa-arrows-rotate" /> Refresh
         </el-button>
         <el-button type="primary" size="small" @click="openCreateChannel">
           <i class="fa-solid fa-plus" /> Add channel
@@ -24,15 +24,6 @@
     <div class="section">
       <div class="section-header">
         <h3><i class="fa-solid fa-satellite-dish section-icon"></i> Channels</h3>
-        <el-button
-          v-if="notificationsStore.channels.length > 0"
-          size="small"
-          type="primary"
-          text
-          @click="openCreateChannel"
-        >
-          <i class="fa-solid fa-plus" /> Add channel
-        </el-button>
       </div>
 
       <EmptyState
@@ -52,8 +43,26 @@
         <div class="table-header">
           <span class="col-name">Name</span>
           <span class="col-type">Type</span>
-          <span class="col-url">Webhook</span>
-          <span class="col-enabled">Active</span>
+          <span class="col-url">
+            Webhook
+            <el-tooltip
+              content="Only a masked preview is shown — the full URL is stored encrypted and never sent back to the browser."
+              placement="top"
+              :show-after="200"
+            >
+              <i class="fa-regular fa-circle-question header-help" tabindex="0" />
+            </el-tooltip>
+          </span>
+          <span class="col-enabled">
+            Active
+            <el-tooltip
+              content="Switched off, this channel receives nothing — from any alert."
+              placement="top"
+              :show-after="200"
+            >
+              <i class="fa-regular fa-circle-question header-help" tabindex="0" />
+            </el-tooltip>
+          </span>
           <span class="col-actions">Actions</span>
         </div>
         <div
@@ -90,14 +99,22 @@
             <el-switch
               :model-value="channel.enabled"
               size="small"
+              :loading="togglingChannelIds.has(channel.id)"
+              :disabled="togglingChannelIds.has(channel.id)"
+              :aria-label="`Channel ${channel.name} active`"
               @change="(val: boolean) => toggleChannel(channel, val)"
             />
           </div>
           <div class="col-actions">
-            <el-tooltip content="Send a test message" placement="top" :show-after="400">
+            <el-tooltip
+              content="Send a test message to this channel now"
+              placement="top"
+              :show-after="400"
+            >
               <el-button
                 size="small"
                 text
+                aria-label="Send a test message"
                 :loading="notificationsStore.testingChannelId === channel.id"
                 :disabled="notificationsStore.testingChannelId !== null"
                 @click="testChannel(channel)"
@@ -108,13 +125,24 @@
                 />
               </el-button>
             </el-tooltip>
-            <el-tooltip content="Edit" placement="top" :show-after="400">
-              <el-button size="small" text @click="openEditChannel(channel)">
+            <el-tooltip content="Edit name, type or URL" placement="top" :show-after="400">
+              <el-button
+                size="small"
+                text
+                aria-label="Edit channel"
+                @click="openEditChannel(channel)"
+              >
                 <i class="fa-solid fa-pen" />
               </el-button>
             </el-tooltip>
-            <el-tooltip content="Delete" placement="top" :show-after="400">
-              <el-button size="small" type="danger" text @click="deleteChannel(channel)">
+            <el-tooltip content="Delete channel and its alerts" placement="top" :show-after="400">
+              <el-button
+                size="small"
+                type="danger"
+                text
+                aria-label="Delete channel"
+                @click="deleteChannel(channel)"
+              >
                 <i class="fa-solid fa-trash" />
               </el-button>
             </el-tooltip>
@@ -126,7 +154,7 @@
     <!-- Global rules -->
     <div class="section">
       <div class="section-header">
-        <h3><i class="fa-solid fa-globe section-icon"></i> Alert me for all flows</h3>
+        <h3><i class="fa-solid fa-globe section-icon"></i> Alerts for all flows</h3>
       </div>
       <p class="section-hint">
         These alerts cover every run of every flow you own. For a single schedule, open that
@@ -149,54 +177,104 @@
       persist-key="alerts.history"
       :default-open="false"
       :count="notificationsStore.history.length"
+      :summary="historySummary"
     >
       <template #actions>
-        <el-button
-          size="small"
-          text
-          :loading="notificationsStore.loadingHistory"
-          @click="loadHistory"
-        >
-          <i v-if="!notificationsStore.loadingHistory" class="fa-solid fa-arrows-rotate" />
-        </el-button>
+        <el-tooltip content="Reload the delivery history" placement="top" :show-after="400">
+          <el-button
+            size="small"
+            text
+            aria-label="Reload delivery history"
+            :loading="notificationsStore.loadingHistory"
+            @click="loadHistory"
+          >
+            <i v-if="!notificationsStore.loadingHistory" class="fa-solid fa-arrows-rotate" />
+          </el-button>
+        </el-tooltip>
       </template>
 
       <p v-if="notificationsStore.history.length === 0" class="rules-empty">
         Nothing sent yet. Delivered alerts show up here.
       </p>
-      <div v-else class="history-table">
-        <div class="table-header">
-          <span class="col-status">Status</span>
-          <span class="col-event">Event</span>
-          <span class="col-flow">Flow</span>
-          <span class="col-channel">Channel</span>
-          <span class="col-time">When</span>
-        </div>
-        <div v-for="item in notificationsStore.history" :key="item.id" class="table-row">
-          <div class="col-status">
-            <el-tooltip
-              v-if="item.status === 'dead' && item.last_error"
-              :content="item.last_error"
-              placement="top"
-            >
-              <span class="status-badge" :class="deliveryStatusClass(item.status)">
-                {{ deliveryStatusLabel(item.status) }}
-              </span>
-            </el-tooltip>
-            <span v-else class="status-badge" :class="deliveryStatusClass(item.status)">
-              {{ deliveryStatusLabel(item.status) }}
-            </span>
-            <span v-if="item.attempts > 1" class="attempts">×{{ item.attempts }}</span>
+      <template v-else>
+        <div class="history-table">
+          <div class="table-header">
+            <span class="col-status">Status</span>
+            <span class="col-event">Event</span>
+            <span class="col-flow">Flow</span>
+            <span class="col-channel">Channel</span>
+            <span class="col-time">When</span>
           </div>
-          <div class="col-event">
-            <i :class="notificationEventIcon(item.event_type)" class="type-icon" />
-            {{ notificationEventLabel(item.event_type) }}
+          <div v-for="item in pagedHistory" :key="item.id" class="table-row">
+            <div class="col-status">
+              <el-tooltip :content="statusTooltip(item)" placement="top" :show-after="200">
+                <span class="status-badge" :class="deliveryStatusClass(item.status)" tabindex="0">
+                  {{ deliveryStatusLabel(item.status) }}
+                </span>
+              </el-tooltip>
+              <el-tooltip
+                v-if="item.attempts > 1"
+                :content="`${item.attempts} delivery attempts`"
+                placement="top"
+                :show-after="200"
+              >
+                <span class="attempts">×{{ item.attempts }}</span>
+              </el-tooltip>
+            </div>
+            <div class="col-event">
+              <el-tooltip
+                :content="notificationEventDescription(item.event_type)"
+                placement="top"
+                :show-after="200"
+              >
+                <span class="event-cell">
+                  <i :class="notificationEventIcon(item.event_type)" class="type-icon" />
+                  {{ notificationEventLabel(item.event_type) }}
+                </span>
+              </el-tooltip>
+            </div>
+            <div class="col-flow">{{ item.flow_name ?? "--" }}</div>
+            <div class="col-channel">{{ item.channel_name ?? "--" }}</div>
+            <div class="col-time">{{ formatDate(item.sent_at ?? item.created_at) }}</div>
           </div>
-          <div class="col-flow">{{ item.flow_name ?? "--" }}</div>
-          <div class="col-channel">{{ item.channel_name ?? "--" }}</div>
-          <div class="col-time">{{ formatDate(item.sent_at ?? item.created_at) }}</div>
         </div>
-      </div>
+
+        <div v-if="historyTotalPages > 1" class="pagination-bar">
+          <button
+            class="page-btn"
+            :disabled="historyPage <= 1"
+            aria-label="First page"
+            @click="historyPage = 1"
+          >
+            <i class="fa-solid fa-angles-left" />
+          </button>
+          <button
+            class="page-btn"
+            :disabled="historyPage <= 1"
+            aria-label="Previous page"
+            @click="historyPage -= 1"
+          >
+            <i class="fa-solid fa-angle-left" />
+          </button>
+          <span class="page-info">Page {{ historyPage }} of {{ historyTotalPages }}</span>
+          <button
+            class="page-btn"
+            :disabled="historyPage >= historyTotalPages"
+            aria-label="Next page"
+            @click="historyPage += 1"
+          >
+            <i class="fa-solid fa-angle-right" />
+          </button>
+          <button
+            class="page-btn"
+            :disabled="historyPage >= historyTotalPages"
+            aria-label="Last page"
+            @click="historyPage = historyTotalPages"
+          >
+            <i class="fa-solid fa-angles-right" />
+          </button>
+        </div>
+      </template>
     </CollapsibleSection>
 
     <CreateChannelModal
@@ -212,13 +290,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useNotificationsStore } from "../../stores/notifications-store";
 import type {
   NotificationChannel,
   NotificationChannelCreate,
   NotificationChannelUpdate,
+  NotificationHistoryItem,
 } from "../../types";
 import {
   channelTypeClass,
@@ -227,9 +306,11 @@ import {
   deliveryStatusClass,
   deliveryStatusLabel,
   formatDate,
+  notificationEventDescription,
   notificationEventIcon,
   notificationEventLabel,
 } from "./catalog-formatters";
+import { detailMessage } from "../../composables/saveError";
 import { CollapsibleSection, EmptyState } from "../../components/common";
 import CreateChannelModal from "./CreateChannelModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
@@ -241,10 +322,6 @@ const showChannelModal = ref(false);
 const savingChannel = ref(false);
 const editChannel = ref<NotificationChannel | null>(null);
 
-function detail(e: unknown, fallback: string): string {
-  return (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
-}
-
 function testResultFor(channelId: number) {
   return notificationsStore.testResults[channelId] ?? null;
 }
@@ -253,17 +330,51 @@ function testErrorFor(channelId: number): string {
   return notificationsStore.testResults[channelId]?.error ?? "Test failed";
 }
 
+const HISTORY_PAGE_SIZE = 10;
+const historyPage = ref(1);
+const historyTotalPages = computed(() =>
+  Math.max(1, Math.ceil(notificationsStore.history.length / HISTORY_PAGE_SIZE)),
+);
+const pagedHistory = computed(() =>
+  notificationsStore.history.slice(
+    (historyPage.value - 1) * HISTORY_PAGE_SIZE,
+    historyPage.value * HISTORY_PAGE_SIZE,
+  ),
+);
+// Clamp rather than reset so a background refresh can't leave us on a page past the end.
+watch(historyTotalPages, (pages) => {
+  if (historyPage.value > pages) historyPage.value = pages;
+});
+
+// Surfaces failures on the collapsed header, where a bare count would hide them.
+const historySummary = computed(() => {
+  const failed = notificationsStore.history.filter((h) => h.status === "dead").length;
+  if (failed === 0) return undefined;
+  return `${failed} failed · ${notificationsStore.history.length} total`;
+});
+
+function statusTooltip(item: NotificationHistoryItem): string {
+  if (item.status === "sent") return "Delivered to the webhook.";
+  if (item.status === "pending") return "Queued — sent on the next delivery pass.";
+  if (item.status === "sending") return "Delivery attempt in progress.";
+  return item.last_error
+    ? `Gave up after ${item.attempts} attempts — ${item.last_error}`
+    : "Delivery gave up after repeated failures.";
+}
+
 async function refresh() {
   refreshing.value = true;
   try {
     await notificationsStore.initialize();
+    historyPage.value = 1;
   } finally {
     refreshing.value = false;
   }
 }
 
-function loadHistory() {
-  return notificationsStore.loadHistory();
+async function loadHistory() {
+  await notificationsStore.loadHistory();
+  historyPage.value = 1;
 }
 
 function openCreateChannel() {
@@ -288,7 +399,7 @@ async function handleCreateChannel(body: NotificationChannelCreate) {
     closeChannelModal();
     ElMessage.success("Channel added");
   } catch (e) {
-    ElMessage.error(detail(e, "Failed to add channel"));
+    ElMessage.error(detailMessage(e, "Failed to add channel"));
   } finally {
     savingChannel.value = false;
   }
@@ -304,18 +415,27 @@ async function handleUpdateChannel(body: NotificationChannelUpdate) {
     closeChannelModal();
     ElMessage.success("Channel updated");
   } catch (e) {
-    ElMessage.error(detail(e, "Failed to update channel"));
+    ElMessage.error(detailMessage(e, "Failed to update channel"));
   } finally {
     savingChannel.value = false;
   }
 }
 
+const togglingChannelIds = ref<Set<number>>(new Set());
+
 async function toggleChannel(channel: NotificationChannel, enabled: boolean) {
+  const start = new Set(togglingChannelIds.value);
+  start.add(channel.id);
+  togglingChannelIds.value = start;
   try {
     await notificationsStore.updateChannel(channel.id, { enabled });
   } catch (e) {
-    ElMessage.error(detail(e, "Failed to update channel"));
+    ElMessage.error(detailMessage(e, "Failed to update channel"));
     await notificationsStore.loadChannels();
+  } finally {
+    const done = new Set(togglingChannelIds.value);
+    done.delete(channel.id);
+    togglingChannelIds.value = done;
   }
 }
 
@@ -333,7 +453,7 @@ async function deleteChannel(channel: NotificationChannel) {
     await notificationsStore.deleteChannel(channel.id);
     ElMessage.success("Channel deleted");
   } catch (e) {
-    ElMessage.error(detail(e, "Failed to delete channel"));
+    ElMessage.error(detailMessage(e, "Failed to delete channel"));
   }
 }
 
@@ -423,6 +543,23 @@ onMounted(() => {
   cursor: default;
 }
 
+/* Rows here hold switches and buttons, not links — no clickable-row highlight. */
+.channels-table .table-row:hover,
+.history-table .table-row:hover {
+  background: transparent;
+}
+
+/* Element Plus adds margin between adjacent buttons; the column gap already spaces them. */
+.col-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.history-table .col-flow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .col-name {
   display: flex;
   flex-direction: column;
@@ -486,13 +623,19 @@ onMounted(() => {
   color: var(--color-danger);
 }
 
-.rules-empty {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+/* Element Plus renders the button label in a flex span, which drops the
+   whitespace between icon and text — restore the gap for icon+label buttons. */
+.alerts-overview :deep(.el-button > span) {
+  gap: 6px;
 }
 
-.btn-icon {
-  margin-right: 6px;
+.event-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

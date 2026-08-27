@@ -160,19 +160,29 @@ export function notificationEventLabel(eventType: NotificationEventType | string
   return eventType;
 }
 
+/** One-line explanation of an event, shown as a tooltip in the delivery history. */
+export function notificationEventDescription(eventType: NotificationEventType | string): string {
+  if (eventType === "run_failed") return "The flow run ended with an error.";
+  if (eventType === "run_success") return "The flow run completed successfully.";
+  if (eventType === "run_recovered") return "The first successful run after a failure.";
+  if (eventType === "run_orphaned")
+    return "The run's process died before finishing and the run was closed as failed.";
+  return "Flow run event.";
+}
+
 export function notificationEventIcon(eventType: NotificationEventType | string): string {
   if (eventType === "run_failed") return "fa-solid fa-circle-xmark";
   if (eventType === "run_success") return "fa-solid fa-circle-check";
-  if (eventType === "run_recovered") return "fa-solid fa-arrow-rotate-left";
+  if (eventType === "run_recovered") return "fa-solid fa-heart-pulse";
   if (eventType === "run_orphaned") return "fa-solid fa-link-slash";
   return "fa-solid fa-bell";
 }
 
-/** `.status-badge` modifier for a delivery status: sent = green, dead = red, rest neutral. */
+/** `.status-badge` modifier for a delivery status: sent = green, dead = red, in-flight = amber. */
 export function deliveryStatusClass(status: NotificationDeliveryStatus | string): string {
   if (status === "sent") return "success";
   if (status === "dead") return "failure";
-  return "paused";
+  return "pending";
 }
 
 export function deliveryStatusLabel(status: NotificationDeliveryStatus | string): string {
