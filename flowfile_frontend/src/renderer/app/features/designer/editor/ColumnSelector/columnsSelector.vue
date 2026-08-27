@@ -18,7 +18,9 @@ import { MenuContents, ColumnSelectorInterface } from "./types";
 import { useNodeStore } from "../../../../stores/column-store";
 import { FileColumn } from "../../../../components/nodes/baseNode/nodeInterfaces";
 
-const props = defineProps<{ filterText?: string }>();
+// tableSchema overrides the store read (e.g. the gate's control input);
+// leaving it undefined keeps the default main-input behavior.
+const props = defineProps<{ filterText?: string; tableSchema?: FileColumn[] | null }>();
 
 const emit = defineEmits<{
   (event: "value-selected", payload: string): void;
@@ -40,8 +42,14 @@ const filteredChildren = computed<ColumnSelectorInterface[]>(() => {
   return children.filter((c) => c.label.toLowerCase().includes(q));
 });
 
+const activeSchema = computed<FileColumn[] | undefined>(() =>
+  props.tableSchema !== undefined
+    ? (props.tableSchema ?? undefined)
+    : nodeStore.nodeData?.main_input?.table_schema,
+);
+
 watch(
-  () => nodeStore.nodeData?.main_input?.table_schema,
+  activeSchema,
   (newColumns) => {
     if (newColumns) {
       updateColumnData(newColumns);
@@ -90,8 +98,8 @@ const updateColumnData = (columns: FileColumn[]) => {
 };
 
 onMounted(async () => {
-  if (nodeStore.nodeData?.main_input?.columns) {
-    updateColumnData(nodeStore.nodeData.main_input.table_schema);
+  if (activeSchema.value) {
+    updateColumnData(activeSchema.value);
   }
 });
 

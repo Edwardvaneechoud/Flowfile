@@ -79,14 +79,13 @@
                 {{ nr.description || "--" }}
               </td>
               <td>
-                <span
-                  class="status-badge"
-                  :class="nr.success ? 'success' : nr.success === false ? 'failure' : 'pending'"
-                >
-                  {{ nr.success ? "OK" : nr.success === false ? "Failed" : "Running" }}
+                <span class="status-badge" :class="nodeStatusClass(nr)">
+                  {{ nodeStatusText(nr) }}
                 </span>
               </td>
-              <td class="mono">{{ nr.run_time_ms >= 0 ? `${nr.run_time_ms}ms` : "--" }}</td>
+              <td class="mono">
+                {{ nr.skipped ? "--" : nr.run_time_ms >= 0 ? `${nr.run_time_ms}ms` : "--" }}
+              </td>
               <td class="error-text">
                 <el-popover
                   v-if="nr.error"
@@ -228,6 +227,20 @@ interface NodeResultData {
   error: string;
   run_time_ms: number;
   is_running: boolean;
+  // Deliberately skipped behind a closed gate: succeeds without running.
+  skipped?: boolean;
+}
+
+function nodeStatusText(nr: NodeResultData): string {
+  if (nr.skipped) return "Skipped";
+  if (nr.success) return "OK";
+  return nr.success === false ? "Failed" : "Running";
+}
+
+function nodeStatusClass(nr: NodeResultData): string {
+  if (nr.skipped) return "skipped";
+  if (nr.success) return "success";
+  return nr.success === false ? "failure" : "pending";
 }
 
 const statusClass = computed(() => {

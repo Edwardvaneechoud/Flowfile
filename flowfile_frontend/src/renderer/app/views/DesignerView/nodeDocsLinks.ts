@@ -56,6 +56,7 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
   graph_solver: "combine.html#graph-solver",
   cross_join: "combine.html#cross-join",
   run_flow: "combine.html#run-flow",
+  gate: "combine.html#gate",
 
   // aggregate.html
   group_by: "aggregate.html#group-by",

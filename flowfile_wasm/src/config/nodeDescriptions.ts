@@ -48,6 +48,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Union',
     intro: 'Stack the rows of all connected inputs into one table. Match by identical columns (vertical) or take the union of columns, null-filling gaps (diagonal).'
   },
+  gate: {
+    title: 'Gate',
+    intro: 'Pass data through only when a condition holds — a flow parameter rule, or a formula that matches at least one row of the data (or an optional control input). When the gate is closed everything downstream is skipped instead of failing, and an optional else output routes the data to a second exit when the condition does not hold — a one-node if/else. Full Flowfile app only.'
+  },
   formula: {
     title: 'Formula',
     intro: 'Add a calculated column from a simple expression like [price] * 1.21 or concat([first], " ", [last]). Loads the formula engine from PyPI on first use.'

@@ -545,6 +545,38 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "the test split from 'random_split'). Use after 'train_model' to assess "
         "quality. Don't use to score unlabelled data — that's 'apply_model'."
     ),
+    "gate": (
+        "Conditional passthrough: the data input flows through unchanged when the "
+        "gate's condition holds; when it does not, the gate itself still succeeds "
+        "but every node DOWNSTREAM of it is deliberately SKIPPED — reported as "
+        "skipped, not failed, so the run stays green and source callbacks (Kafka "
+        "offset commits) still fire. Input-0 is the data; input-1 is an OPTIONAL "
+        "control input. Two condition sources: "
+        '"parameter" (the default) evaluates a flow-parameter rule before the run '
+        "— operators equals, not_equals, in, not_in, is_true, is_false, is_set, "
+        "with `value` always a string (comma-separated for in / not_in); "
+        '"formula" applies a flowfile formula (the filter node\'s expression '
+        "language, e.g. `[status] = 'error'`) as a row predicate when the gate "
+        "executes — it opens iff AT LEAST ONE ROW matches, checked against the "
+        "control input when one is connected, else against the data input "
+        "itself. ${param} refs work inside the formula. With `else_output: "
+        "true` the gate becomes a two-exit router: data leaves output-0 "
+        "('then') when the condition holds and output-1 ('else') when it does "
+        "not — exactly one side runs per execution; the other side is "
+        "skipped. Use for environment-gated writes, data-quality gates (gate "
+        "on the data itself, or a 'filter' feeding the control input), and "
+        "either/or branches. Don't use to drop rows — that's 'filter'; don't "
+        "use for pure ordering with no condition — that's 'wait_for'. "
+        'Example: {"gate_input": {"condition_source": "parameter", '
+        '"parameter": "env", "operator": "equals", "value": "prod"}, '
+        '"else_output": true}. '
+        "Canonical if/else: ONE gate with else_output, branch A on the then "
+        "output (output-0), branch B on the else output (output-1), both "
+        "re-converging into a 'union' — the skipped branch contributes "
+        "nothing, so the union outputs only the branch that ran (its columns "
+        "only). Cost note: a gate only prevents its DOWNSTREAM from running, so "
+        "place it as early as possible."
+    ),
     "wait_for": (
         "Synchronisation barrier: wait for one or more upstream nodes to finish "
         "before downstream nodes run. Use when downstream sequencing matters "
@@ -1063,6 +1095,33 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "actual=sales, predicted=predicted_sales. Pitfall: the data "
         "must include both the true value AND the prediction — apply "
         "the model first, then evaluate."
+    ),
+    "gate": (
+        "Settings panel: a 'Condition source' choice — a flow parameter (the "
+        "default) or a formula — plus an 'Add an else output' switch. For a "
+        "parameter condition pick the 'Parameter', an 'Operator' (equals / "
+        "not equals / in / not in / is true / is false / is set) and a "
+        "'Value'. For a formula condition write a flowfile formula (the "
+        "Filter node's expression language, e.g. [status] = 'error') — the "
+        "gate opens when at least one row matches it, checked against the "
+        "optional control input (the bottom handle) when one is connected, "
+        "otherwise against the data input itself. Worked example: 'only load "
+        "to the production table when I run with env=prod' → drag 'Gate' "
+        "from Combine Operations, connect the cleaned data to the first "
+        "input, set Parameter=env, Operator=equals, Value=prod, then connect "
+        "the gate to 'Write to Database'. To run one branch or the other, "
+        "enable the else output: the data leaves handle T (then, output-0) "
+        "when the condition holds and handle E (else, output-1) when it does "
+        "not — put each branch behind one exit and feed both into a 'Union "
+        "data' node; the skipped branch contributes nothing, so the union "
+        "outputs only the branch that ran (its columns only). "
+        "Pitfall 1: a closed gate does not fail the run — the gate succeeds "
+        "and everything downstream is marked skipped, so a green run can "
+        "legitimately produce no output. Pitfall 2: it only stops work "
+        "downstream of itself; the reads it depends on still run, so place it "
+        "as early in the branch as possible. Pitfall 3: to remove rows use "
+        "'Filter data', and to order side effects with no condition use "
+        "'Wait For'."
     ),
     "wait_for": (
         "Settings panel: empty — no configuration; the node passes "

@@ -9,6 +9,7 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from polars import selectors
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from flowfile_core.flowfile.param_types import FlowParameter, coerce_param_value
 from flowfile_core.schemas.yaml_types import (
     BasicFilterYaml,
     CrossJoinInputYaml,
@@ -1128,6 +1129,98 @@ class UnionInput(BaseModel):
     """Defines settings for a union (concatenation) operation."""
 
     mode: Literal["selective", "relaxed"] = "relaxed"
+
+
+GateOperator = Literal["equals", "not_equals", "in", "not_in", "is_true", "is_false", "is_set"]
+
+
+class GateInput(BaseModel):
+    """Defines a gate node's condition.
+
+    Two condition sources:
+
+    * ``parameter`` (default) — a structured rule over a flow parameter
+      (operator + value). Data-independent: decided before the run starts and
+      exported as a plain ``if`` over the pipeline's parameter arguments.
+    * ``formula`` — a flowfile formula (the Filter node's expression language)
+      applied as a row predicate when the gate executes: the gate opens iff
+      **at least one row matches**. The predicate runs against the optional
+      second "control" input when one is connected, otherwise against the data
+      input itself, so a branch can gate on its own data or on a signal
+      computed anywhere else in the graph. ``${param}`` references resolve
+      like in any other node setting.
+
+    The gate passes its data input through when the condition holds; when it
+    does not, every node downstream of the gate is deliberately skipped
+    (reported as skipped, not failed). ``value`` is stored as a string — like
+    parameter defaults — and coerced with the referenced parameter's declared
+    type at evaluation time; for ``in`` / ``not_in`` it is a comma-separated
+    list. For an if/else, enable ``NodeGate.else_output`` — one condition,
+    two exits (then/else) — instead of maintaining two complementary gates.
+
+    Legacy settings (the pre-formula shape) are migrated on load: the removed
+    ``control_input`` source becomes ``formula``, and a parameter gate saved
+    with the removed ``invert`` flag gets its operator flipped to the
+    complement so its meaning is preserved.
+    """
+
+    condition_source: Literal["parameter", "formula"] = "parameter"
+    parameter: str = ""
+    operator: GateOperator = "equals"
+    value: str = ""
+    formula: str = Field(default="", json_schema_extra={"expression": True})
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_shape(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if data.get("condition_source") == "control_input":
+            data = {**data, "condition_source": "formula"}
+        if data.get("invert") and data.get("condition_source", "parameter") == "parameter":
+            complements = {
+                "equals": "not_equals",
+                "not_equals": "equals",
+                "in": "not_in",
+                "not_in": "in",
+                "is_true": "is_false",
+                "is_false": "is_true",
+            }
+            flipped = complements.get(data.get("operator", "equals"))
+            if flipped is not None:
+                data = {**data, "operator": flipped}
+        return data
+
+    def evaluate(self, parameters: dict[str, FlowParameter]) -> bool:
+        """Evaluate the parameter-mode condition against the flow's parameters.
+
+        Raises ValueError when the referenced parameter does not exist or the
+        configured value cannot be coerced to the parameter's type — a broken
+        condition must fail the gate node loudly, never silently pick a branch.
+        """
+        param = parameters.get(self.parameter)
+        if param is None:
+            raise ValueError(f"Gate references unknown flow parameter '{self.parameter}'")
+        return self._evaluate_operator(param)
+
+    def _evaluate_operator(self, param: FlowParameter) -> bool:
+        if self.operator == "is_set":
+            return param.default_value.strip() != ""
+        if self.operator in ("is_true", "is_false"):
+            truthy = coerce_param_value("boolean", param.default_value)
+            return truthy if self.operator == "is_true" else not truthy
+        current = param.typed_default()
+        if self.operator in ("equals", "not_equals"):
+            expected = coerce_param_value(param.type, self.value, param.enum_values)
+            matches = current == expected
+            return matches if self.operator == "equals" else not matches
+        expected_values = []
+        for raw_item in self.value.split(","):
+            raw_item = raw_item.strip()
+            if raw_item:
+                expected_values.append(coerce_param_value(param.type, raw_item, param.enum_values))
+        matches = current in expected_values
+        return matches if self.operator == "in" else not matches
 
 
 class UniqueInput(BaseModel):

@@ -547,8 +547,10 @@ def build_pick_upstream_spec(
                     "type": ["integer", "null"],
                     "enum": [*enum_values, None],
                     "description": (
-                        "Legacy field — leave null for non-join types. "
-                        "Join-shaped types now use a different spec "
+                        "Wires to input-1. Leave null for most types, but "
+                        "set it for a ``gate`` to stage its optional "
+                        "control input (the frame a formula condition "
+                        "checks). Join-shaped types use a different spec "
                         "(left_input_node_id + right_input_node_id)."
                     ),
                 },

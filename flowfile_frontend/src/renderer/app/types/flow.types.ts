@@ -140,6 +140,9 @@ export interface NodeTemplate {
   // Display-only names for the input handles, index i ↔ handle input-${i}.
   // Rendered as the handle tooltip; the canvas letter stays positional.
   input_labels?: string[] | null;
+  // Cosmetic: input indices rendered as bottom "parameter" pips instead of
+  // left data handles (gate's control input).
+  control_input_indices?: number[] | null;
   // True for nodes whose handles come from per-instance input_names/output_names
   // (run_flow); every handle of such a node accepts exactly one edge.
   dynamic_inputs?: boolean;
