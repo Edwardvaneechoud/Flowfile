@@ -55,7 +55,7 @@ Build pipelines on a visual canvas with a live preview at every node, or write t
 
 ### Canvas and code
 
-**A visual canvas** with 45 node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, window functions. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
+**A visual canvas** with 46 node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, window functions, conditional branching. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
 
 It connects to local files (CSV, Parquet, Excel, JSON and friends), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no Snowflake, BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
 
