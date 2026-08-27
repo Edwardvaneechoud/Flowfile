@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -393,8 +394,6 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
         result.nodes_completed,
         result.number_of_nodes,
     )
-
-    import json
 
     node_results = None
     try:

@@ -158,21 +158,26 @@ const activeIndex = computed(() => {
 });
 
 // Navigating to a child inside a collapsed group re-opens that group so the
-// active item is never invisibly selected.
-watch(activeIndex, (idx) => {
-  for (const item of props.items) {
-    for (const child of item.children ?? []) {
-      if ((child.index ?? child.name) === idx && child.group) {
-        const id = `${item.name}:${child.group.key}`;
-        if (collapsedGroups.value.has(id)) {
-          const next = new Set(collapsedGroups.value);
-          next.delete(id);
-          setCollapsedGroups(next);
+// active item is never invisibly selected. Immediate, so a deep link into a
+// collapsed group is uncovered on first mount too.
+watch(
+  activeIndex,
+  (idx) => {
+    for (const item of props.items) {
+      for (const child of item.children ?? []) {
+        if ((child.index ?? child.name) === idx && child.group) {
+          const id = `${item.name}:${child.group.key}`;
+          if (collapsedGroups.value.has(id)) {
+            const next = new Set(collapsedGroups.value);
+            next.delete(id);
+            setCollapsedGroups(next);
+          }
         }
       }
     }
-  }
-});
+  },
+  { immediate: true },
+);
 
 const accordionValue = ref<boolean[]>([]);
 onMounted(() => {

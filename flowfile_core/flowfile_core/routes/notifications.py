@@ -25,7 +25,6 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import secrets as core_secrets
@@ -255,12 +254,16 @@ def delete_channel(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a channel and the owner's rules pointing at it.
+    """Delete a channel, the owner's rules pointing at it, and its delivery history.
 
-    Outbox rows are deliberately kept: they are the delivery history, and the drainer
-    already marks a row dead when its channel is gone.
+    The outbox rows must go with the channel: history ownership is resolved through
+    the channel, so orphaned rows would be invisible — until a future channel reuses
+    the SQLite rowid and adopts another owner's flow names and error strings.
     """
     channel = _get_channel(db, channel_id, current_user.id)
+    db.query(db_models.NotificationOutbox).filter(
+        db_models.NotificationOutbox.channel_id == channel.id,
+    ).delete(synchronize_session=False)
     db.query(db_models.NotificationRule).filter(
         db_models.NotificationRule.channel_id == channel.id,
         db_models.NotificationRule.owner_id == current_user.id,
@@ -483,24 +486,18 @@ def list_history(
 ):
     """Recent delivery attempts for the current user, newest first.
 
-    Ownership is read through the rule, but a rule can have been deleted while its
-    outbox rows remain — so the channel (also owner-scoped, and snapshotted on the row)
-    is accepted as a second path. Both joins are outer, so a row whose rule *and*
-    channel are gone simply drops out.
+    Ownership is resolved through the channel — snapshotted on every row, owner-scoped,
+    and the row's lifetime anchor (outbox rows are deleted with their channel). The rule
+    is deliberately not consulted: rules are deletable independently, and a future rule
+    reusing a deleted rule's SQLite rowid must not adopt another owner's history.
     """
     rows = (
         db.query(db_models.NotificationOutbox, db_models.NotificationChannel)
-        .outerjoin(db_models.NotificationRule, db_models.NotificationRule.id == db_models.NotificationOutbox.rule_id)
-        .outerjoin(
+        .join(
             db_models.NotificationChannel,
             db_models.NotificationChannel.id == db_models.NotificationOutbox.channel_id,
         )
-        .filter(
-            or_(
-                db_models.NotificationRule.owner_id == current_user.id,
-                db_models.NotificationChannel.owner_id == current_user.id,
-            )
-        )
+        .filter(db_models.NotificationChannel.owner_id == current_user.id)
         .order_by(db_models.NotificationOutbox.id.desc())
         .limit(limit)
         .all()

@@ -19,8 +19,9 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth import secrets as core_secrets
-from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
 from flowfile_core.auth.models import User as PydanticUser
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     FlowRegistration,
@@ -626,7 +627,7 @@ def test_history_is_scoped_to_its_owner(client: TestClient, other_client: TestCl
 
 
 def test_history_survives_a_deleted_rule_via_the_channel(client: TestClient) -> None:
-    """Rows outlive their rule; the channel snapshot on the row is the fallback owner path."""
+    """Rows outlive their rule; the channel snapshot on the row is the owner path."""
     channel = _create_channel(client)
     rule = client.post("/notifications/rules", json={"channel_id": channel["id"]}).json()
     row_id = _insert_outbox(rule["id"], channel["id"], None)
@@ -640,6 +641,20 @@ def test_history_survives_a_deleted_rule_via_the_channel(client: TestClient) -> 
     assert body[0]["channel_name"] == "Ops Slack"
 
 
+def test_deleting_a_channel_deletes_its_history(client: TestClient) -> None:
+    """History ownership resolves through the channel, so rows outliving it would be
+    invisible — until a future channel reuses the SQLite rowid and adopts them."""
+    channel = _create_channel(client)
+    rule = client.post("/notifications/rules", json={"channel_id": channel["id"]}).json()
+    _insert_outbox(rule["id"], channel["id"], None)
+
+    assert client.delete(f"/notifications/channels/{channel['id']}").status_code == 204
+
+    assert client.get("/notifications/history").json() == []
+    with get_db_context() as db:
+        assert db.query(NotificationOutbox).count() == 0
+
+
 def test_history_limit_is_capped(client: TestClient) -> None:
     channel = _create_channel(client)
     rule = client.post("/notifications/rules", json={"channel_id": channel["id"]}).json()
@@ -649,6 +664,93 @@ def test_history_limit_is_capped(client: TestClient) -> None:
     assert len(client.get("/notifications/history", params={"limit": 2}).json()) == 2
     assert client.get("/notifications/history", params={"limit": 201}).status_code == 422
     assert client.get("/notifications/history", params={"limit": 0}).status_code == 422
+
+
+# ---------- referent deletion cleanup ----------
+#
+# Scoped rules must die with their schedule/flow: SQLite reuses rowids, so a stale
+# rule would alert the old owner's webhook about whichever future schedule or flow
+# is created with the same id.
+
+
+def test_deleting_a_schedule_deletes_its_scoped_rules(
+    client: TestClient, registration: FlowRegistration, schedule: FlowSchedule
+) -> None:
+    channel = _create_channel(client)
+    schedule_rule = client.post(
+        "/notifications/rules", json={"channel_id": channel["id"], "schedule_id": schedule.id}
+    ).json()
+    flow_rule = client.post(
+        "/notifications/rules", json={"channel_id": channel["id"], "registration_id": registration.id}
+    ).json()
+    global_rule = client.post("/notifications/rules", json={"channel_id": channel["id"]}).json()
+
+    with get_db_context() as db:
+        SQLAlchemyCatalogRepository(db).delete_schedule(schedule.id)
+
+    remaining = [r["id"] for r in client.get("/notifications/rules").json()]
+    assert schedule_rule["id"] not in remaining
+    assert flow_rule["id"] in remaining
+    assert global_rule["id"] in remaining
+
+
+def test_deleting_a_flow_deletes_its_scoped_rules(
+    client: TestClient, registration: FlowRegistration, schedule: FlowSchedule
+) -> None:
+    channel = _create_channel(client)
+    schedule_rule = client.post(
+        "/notifications/rules", json={"channel_id": channel["id"], "schedule_id": schedule.id}
+    ).json()
+    flow_rule = client.post(
+        "/notifications/rules", json={"channel_id": channel["id"], "registration_id": registration.id}
+    ).json()
+    global_rule = client.post("/notifications/rules", json={"channel_id": channel["id"]}).json()
+
+    with get_db_context() as db:
+        SQLAlchemyCatalogRepository(db).delete_flow(registration.id)
+
+    remaining = [r["id"] for r in client.get("/notifications/rules").json()]
+    assert schedule_rule["id"] not in remaining
+    assert flow_rule["id"] not in remaining
+    assert global_rule["id"] in remaining
+
+
+def test_deleting_a_user_deletes_their_notification_config(authed_app: None) -> None:
+    """A reused user rowid must not inherit channels (webhook credentials), live
+    rules, or another owner's delivery history."""
+    with get_db_context() as db:
+        victim = User(
+            username="notify_doomed_user",
+            email="notify_doomed_user@example.com",
+            full_name="Doomed",
+            hashed_password="x",
+            disabled=False,
+            is_admin=False,
+            must_change_password=False,
+        )
+        db.add(victim)
+        db.commit()
+        db.refresh(victim)
+        victim_id = victim.id
+
+    victim_client = _client_for(victim_id)
+    channel = _create_channel(victim_client, name="Doomed Ops")
+    rule = victim_client.post("/notifications/rules", json={"channel_id": channel["id"]}).json()
+    _insert_outbox(rule["id"], channel["id"], None)
+
+    main.app.dependency_overrides[get_current_admin_user] = lambda: PydanticUser(
+        id=OWNER_ID, username=f"user_{OWNER_ID}", is_admin=True
+    )
+    try:
+        resp = _client_for(OWNER_ID).delete(f"/auth/users/{victim_id}")
+        assert resp.status_code == 200, resp.text
+    finally:
+        main.app.dependency_overrides.pop(get_current_admin_user, None)
+
+    with get_db_context() as db:
+        assert db.query(NotificationChannel).filter_by(owner_id=victim_id).count() == 0
+        assert db.query(NotificationRule).filter_by(owner_id=victim_id).count() == 0
+        assert db.query(NotificationOutbox).count() == 0
 
 
 # ---------- wiring ----------

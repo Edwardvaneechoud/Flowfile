@@ -79,6 +79,7 @@ export const useNotificationsStore = defineStore("notifications", {
 
     async loadChannels() {
       this.loadingChannels = true;
+      this.error = null;
       try {
         this.channels = await NotificationsApi.getChannels();
       } catch (e: any) {
@@ -160,6 +161,7 @@ export const useNotificationsStore = defineStore("notifications", {
      */
     async loadRules(scope?: { registrationId?: number | null; scheduleId?: number | null }) {
       this.loadingRules = true;
+      this.error = null;
       try {
         const rules = await NotificationsApi.getRules(scope);
         const scoped =
@@ -205,6 +207,7 @@ export const useNotificationsStore = defineStore("notifications", {
 
     async loadHistory(limit = HISTORY_LIMIT) {
       this.loadingHistory = true;
+      this.error = null;
       try {
         this.history = await NotificationsApi.getHistory(limit);
       } catch (e: any) {

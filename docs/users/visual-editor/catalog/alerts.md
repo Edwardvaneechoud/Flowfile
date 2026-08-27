@@ -76,7 +76,7 @@ You can also tick **Notify on failure** directly in the create-schedule dialog t
 
 ### For one flow
 
-Create the alert with a flow scope via the flow's detail panel or the API — it then covers every scheduled/manual run of that flow regardless of which schedule started it.
+Create the alert with a flow scope via the API (`POST /notifications/rules` with a `registration_id`) — it then covers every scheduled/manual run of that flow regardless of which schedule started it.
 
 ### For everything you own
 
@@ -89,7 +89,7 @@ The **Alert me for all flows** section on the Alerts tab creates account-wide al
 - Alerts are sent by the scheduler loop and by the finishing run itself, so they typically arrive within seconds of a run ending. They require Flowfile (or the [standalone scheduler](schedules.md#standalone-mode)) to be running.
 - Failed deliveries are retried with increasing backoff (1m → 5m → 15m → 1h, up to 5 attempts) before being marked dead.
 - The **Recent notifications** section on the Alerts tab shows every delivery attempt with its status; a failed delivery shows the error on hover.
-- Deleting a channel also removes the alerts pointing at it. History is kept.
+- Deleting a channel also removes the alerts pointing at it and its delivery history. Deleting a schedule or flow removes the alerts scoped to it.
 
 ### Private / internal endpoints
 

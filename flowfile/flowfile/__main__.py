@@ -1,5 +1,6 @@
 #  flowfile/__main__.py
 
+import json
 import sys
 from pathlib import Path
 
@@ -100,8 +101,6 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         print("Error: Flow execution returned no result", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
-
-    import json
 
     node_results = None
     try:
