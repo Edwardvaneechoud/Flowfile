@@ -90,6 +90,32 @@ describe('NodeExplainer Polars bridge', () => {
     expect(wrapper.find('.explainer-prose').text()).toContain('nothing to translate')
   })
 
+  it('collapses each snippet on its own, and remembers it', async () => {
+    flow = flowWith(
+      SOURCE,
+      makeNode(
+        2,
+        'filter',
+        { filter_input: { mode: 'basic', basic_filter: { field: 'a', operator: 'greater_than', value: '1' } } },
+        [1]
+      )
+    )
+    const wrapper = mountExplainer(2)
+    const [plain, polars] = wrapper.findAll('.block-toggle')
+    expect(plain.text()).toContain('Plain Python')
+    expect(polars.text()).toContain('1 line')
+
+    await plain.trigger('click')
+    // Only the plain editor goes; the Polars one and both Copy buttons stay.
+    expect(wrapper.findAll('.cm-stub')).toHaveLength(1)
+    expect(wrapper.findAll('.explainer-copy')).toHaveLength(2)
+    expect(localStorage.getItem('flowfile-node-explainer-plain-open')).toBe('0')
+
+    expect(mountExplainer(2).findAll('.cm-stub')).toHaveLength(1)
+    await plain.trigger('click')
+    expect(wrapper.findAll('.cm-stub')).toHaveLength(2)
+  })
+
   it('shows only the connect hint when the node emits nothing', () => {
     flow = flowWith(SOURCE, makeNode(2, 'explore_data', {}, [1]))
     const wrapper = mountExplainer(2)
