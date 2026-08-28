@@ -1422,6 +1422,7 @@ class FlowDataEngine:
             A new, pivoted `FlowDataEngine` instance.
         """
         max_unique_vals = 200
+        # TODO: a null pivot value ends up as a column name and raises; give it its own bucket instead.
         new_cols_unique = fetch_unique_values(
             self.data_frame.select(pivot_input.pivot_column)
             .unique()

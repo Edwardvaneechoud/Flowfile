@@ -62,6 +62,9 @@ const JOIN_EXERCISE_REASONS: Record<string, string> = {
  */
 const PIVOT_AGGS_SUPPORTED = new Set(['sum', 'mean', 'min', 'max', 'count', 'first', 'last', 'median'])
 
+/** The counting aggregations the engine zero-fills, so an absent cell reads 0 rather than None. */
+const PIVOT_ZERO_FILL_AGGS = new Set(['sum', 'count', 'len'])
+
 /** Plain-English "what this node does", shown above the snippet in the settings drawer. */
 export const NODE_EXPLANATIONS: Record<string, string> = {
   manual_input:
@@ -609,6 +612,20 @@ const HELPER_DEPENDENCIES: Record<string, string[]> = {
   read_csv_file: ['pick_column_type']
 }
 
+/** One manual-input cell as its declared dtype, or unchanged when it will not convert. */
+function coerceCell(value: unknown, dataType: string | undefined): unknown {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value !== 'string' || !dataType) return value
+  if (dataType === 'Boolean') {
+    const lowered = value.trim().toLowerCase()
+    return lowered === 'true' ? true : lowered === 'false' ? false : null
+  }
+  if (!/^(Int|UInt|Float)/.test(dataType)) return value
+  const parsed = Number(value)
+  if (value.trim() === '' || Number.isNaN(parsed)) return null
+  return dataType.startsWith('Float') ? parsed : Math.trunc(parsed)
+}
+
 export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   /** Module-level helper functions this flow ended up needing. */
   protected helpers = new Set<string>()
@@ -943,9 +960,13 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const height = Math.max(0, ...names.map((_, index) => (raw.data[index] || []).length))
     this.addCode(`${varName} = [`)
     for (let row = 0; row < height; row++) {
-      const pairs = names.map(
-        (name, index) => `${toPythonValue(name)}: ${toPythonValue((raw.data[index] || [])[row] ?? null)}`
-      )
+      const pairs = names.map((name, index) => {
+        // Cells are text next to a declared dtype; a list of dicts has no dtypes
+        // to convert by later, so convert here.
+        const declared = (raw.columns[index] as { data_type?: string }).data_type
+        const value = coerceCell((raw.data[index] || [])[row] ?? null, declared)
+        return `${toPythonValue(name)}: ${toPythonValue(value)}`
+      })
       this.addCode(`    {${pairs.join(', ')}},`)
     }
     this.addCode(']')
@@ -1472,11 +1493,13 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     const out = this.temp('out', node.id)
     this.useHelper('as_text')
 
-    /** One cell of the output. An absent cell is None; an empty one still aggregates. */
+    /** One cell of the output. An absent cell is 0 for the counting aggregations, else None. */
     const cellValue = (aggregation: string): string => {
       const expression = this.aggExpression({ old_name: pivot.value_col, agg: aggregation as AggType }, 'cell')
       // first / last already guard on `cell`; the rest would trip over a missing one.
-      return aggregation === 'first' || aggregation === 'last' ? expression : `${expression} if cell else None`
+      if (aggregation === 'first' || aggregation === 'last') return expression
+      const missing = PIVOT_ZERO_FILL_AGGS.has(aggregation) ? '0' : 'None'
+      return `${expression} if cell else ${missing}`
     }
     /** The engine only spells the aggregation out when there is more than one. */
     const columnName = (aggregation: string): string =>

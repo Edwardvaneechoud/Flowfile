@@ -134,18 +134,28 @@ export interface JoinInputs {
   renames: SelectInput[]
 }
 
+// build_join reads join_type and right_suffix; `how` is core's spelling.
 export interface JoinInput {
   join_mapping: JoinMap[]
   left_select?: JoinInputs
   right_select?: JoinInputs
-  how: JoinStrategy
+  join_type?: JoinStrategy
+  how?: JoinStrategy
+  left_suffix?: string
+  right_suffix?: string
 }
 
 // UNIQUE SCHEMAS
 
+export type UniqueKeepStrategy = 'first' | 'last' | 'any' | 'none'
+
+// build_unique reads subset/keep or columns/strategy; so must every consumer.
 export interface UniqueInput {
+  subset?: string[]
+  keep?: UniqueKeepStrategy
+  maintain_order?: boolean
   columns?: string[]  // Optional - can be None in flowfile_core (all columns)
-  strategy: 'first' | 'last' | 'any' | 'none'
+  strategy?: UniqueKeepStrategy
 }
 
 // PIVOT SCHEMAS (matches flowfile_core/schemas/transform_schema.py)
@@ -410,9 +420,11 @@ export interface NodeDynamicRenameSettings extends NodeSingleInput {
 
 export interface NodeSampleSettings extends NodeSingleInput {
   sample_method?: SampleMethod
-  sample_size: number
+  sample_size?: number
   fraction?: number
   seed?: number | null
+  // Where the row count lived before sample_size existed; build_head still reads it.
+  head_input?: { n?: number }
 }
 
 export interface NodePreviewSettings extends NodeSingleInput {
