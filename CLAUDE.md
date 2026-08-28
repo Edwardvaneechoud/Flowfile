@@ -479,4 +479,5 @@ that's what you're debugging). Both flags default off; production runs stay sile
 - Tests and test_utils are excluded from Ruff linting (except specific per-file rules)
 - The `kernel`, `docker_integration`, and `kafka` pytest markers all require Docker
 - Do not "fix" the SHA-256 API-key hash (`flowfile_core/auth/api_key.py`) — it is deliberate for 256-bit tokens; the CodeQL weak-hash alert is a false positive
+- Do not "fix" the CodeQL full-SSRF alert on `shared/notifications/senders.py::_post` — posting to a user-supplied URL is what webhook delivery is; every caller runs the `validate_webhook_url` SSRF guard first (private/loopback/link-local/CGNAT/metadata ranges rejected, redirects not followed), which CodeQL cannot model as a sanitizer. Dismiss the alert as by-design, don't remove the egress
 - Never force-push to `main`; CI publishes kernel Docker images from it (`docker-publish.yml` on kernel-path pushes) and the test pipeline runs from it. PyPI/desktop/app-Docker releases run from `v*` tags

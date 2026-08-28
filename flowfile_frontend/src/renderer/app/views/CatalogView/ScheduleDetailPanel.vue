@@ -157,6 +157,20 @@
       </div>
     </div>
 
+    <!-- Notifications -->
+    <div class="section">
+      <h3><i class="fa-solid fa-bell section-icon"></i> Notifications</h3>
+      <NotificationRules
+        :rules="scheduleRules"
+        :channels="notificationsStore.channels"
+        :scope="{ scheduleId: schedule.id }"
+        :empty-text="scheduleAlertsEmptyText"
+        no-channels-hint="No notification channels yet — set one up to be told when this schedule fails."
+        no-channels-action="Go to Alerts"
+        @need-channel="goToAlerts"
+      />
+    </div>
+
     <!-- Run History -->
     <div class="section">
       <h3><i class="fa-solid fa-clock-rotate-left section-icon"></i> Run History</h3>
@@ -183,9 +197,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
 import type { FlowSchedule, FlowScheduleUpdate } from "../../types";
 import {
@@ -196,8 +212,11 @@ import {
 } from "./catalog-formatters";
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
+import NotificationRules from "./components/NotificationRules.vue";
 
+const router = useRouter();
 const catalogStore = useCatalogStore();
+const notificationsStore = useNotificationsStore();
 
 const props = defineProps<{
   schedule: FlowSchedule;
@@ -239,6 +258,30 @@ const scheduleTypeName = computed(() => {
   if (props.schedule.schedule_type === "table_set_trigger") return "Table Set Trigger";
   return props.schedule.schedule_type;
 });
+
+// Alerts scoped to this schedule. Channels are shared across the view, so they are
+// only fetched when this panel has none yet. Rules are loaded unscoped so the
+// empty text can honestly say whether an account-wide alert already covers us.
+const scheduleRules = computed(() => notificationsStore.rulesForSchedule(props.schedule.id));
+
+const scheduleAlertsEmptyText = computed(() =>
+  notificationsStore.globalRules.length > 0
+    ? "No schedule-specific alerts — your account-wide alerts (Alerts tab) already cover this schedule's runs."
+    : "No alerts for this schedule yet.",
+);
+
+watch(
+  () => props.schedule.id,
+  () => {
+    if (notificationsStore.channels.length === 0) notificationsStore.loadChannels();
+    notificationsStore.loadRules();
+  },
+  { immediate: true },
+);
+
+function goToAlerts() {
+  router.push({ name: "catalog", query: { tab: "alerts" } });
+}
 
 const isScheduleRunning = computed(() =>
   catalogStore.activeRuns.some((r) => r.schedule_id === props.schedule.id),

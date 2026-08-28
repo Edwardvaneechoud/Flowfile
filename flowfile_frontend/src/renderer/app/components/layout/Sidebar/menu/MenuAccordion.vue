@@ -46,27 +46,64 @@
           ></i>
         </template>
 
-        <el-menu-item-group :title="t(routeItem.displayName)">
-          <el-menu-item
-            v-for="child in routeItem.children"
-            :key="child.index ?? child.name"
-            :index="child.index ?? child.name"
-            :route="child.query ? { name: child.name, query: child.query } : { name: child.name }"
-            :disabled="child.disabled"
-          >
-            <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
-            <template #title>
-              <span>{{ t(child.displayName) }}</span>
-            </template>
-          </el-menu-item>
-        </el-menu-item-group>
+        <template
+          v-for="section in childSections(routeItem)"
+          :key="section.key ?? `${routeItem.name}-ungrouped`"
+        >
+          <el-menu-item-group v-if="!section.labelKey" :title="t(routeItem.displayName)">
+            <el-menu-item
+              v-for="child in section.children"
+              :key="child.index ?? child.name"
+              :index="child.index ?? child.name"
+              :route="child.query ? { name: child.name, query: child.query } : { name: child.name }"
+              :disabled="child.disabled"
+            >
+              <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+              <template #title>
+                <span>{{ t(child.displayName) }}</span>
+              </template>
+            </el-menu-item>
+          </el-menu-item-group>
+          <div v-else class="menu-group">
+            <button
+              type="button"
+              class="menu-group-header"
+              :aria-expanded="!isGroupCollapsed(routeItem.name, section.key)"
+              @click="toggleGroup(routeItem.name, section.key)"
+            >
+              <span>{{ t(section.labelKey) }}</span>
+              <i
+                class="fa-solid fa-chevron-down menu-group-chevron"
+                :class="{ 'is-collapsed': isGroupCollapsed(routeItem.name, section.key) }"
+              ></i>
+            </button>
+            <el-collapse-transition>
+              <div v-show="!isGroupCollapsed(routeItem.name, section.key)">
+                <el-menu-item
+                  v-for="child in section.children"
+                  :key="child.index ?? child.name"
+                  :index="child.index ?? child.name"
+                  :route="
+                    child.query ? { name: child.name, query: child.query } : { name: child.name }
+                  "
+                  :disabled="child.disabled"
+                >
+                  <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+                  <template #title>
+                    <span>{{ t(child.displayName) }}</span>
+                  </template>
+                </el-menu-item>
+              </div>
+            </el-collapse-transition>
+          </div>
+        </template>
       </el-sub-menu>
     </template>
   </el-menu>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { INavigationRoute } from "../NavigationRoutes";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
@@ -120,10 +157,85 @@ const activeIndex = computed(() => {
   return name;
 });
 
+// Navigating to a child inside a collapsed group re-opens that group so the
+// active item is never invisibly selected. Immediate, so a deep link into a
+// collapsed group is uncovered on first mount too.
+watch(
+  activeIndex,
+  (idx) => {
+    for (const item of props.items) {
+      for (const child of item.children ?? []) {
+        if ((child.index ?? child.name) === idx && child.group) {
+          const id = `${item.name}:${child.group.key}`;
+          if (collapsedGroups.value.has(id)) {
+            const next = new Set(collapsedGroups.value);
+            next.delete(id);
+            setCollapsedGroups(next);
+          }
+        }
+      }
+    }
+  },
+  { immediate: true },
+);
+
 const accordionValue = ref<boolean[]>([]);
 onMounted(() => {
   accordionValue.value = props.items.map((item) => isItemExpanded(item));
 });
+
+interface ChildSection {
+  key: string | null;
+  labelKey: string | null;
+  children: INavigationRoute[];
+}
+
+/** Adjacent children sharing a group key become one collapsible section. */
+function childSections(routeItem: INavigationRoute): ChildSection[] {
+  const sections: ChildSection[] = [];
+  for (const child of routeItem.children ?? []) {
+    const key = child.group?.key ?? null;
+    const last = sections[sections.length - 1];
+    if (last && last.key === key) last.children.push(child);
+    else sections.push({ key, labelKey: child.group?.labelKey ?? null, children: [child] });
+  }
+  return sections;
+}
+
+const COLLAPSED_GROUPS_KEY = "flowfile-sidebar-collapsed-groups";
+
+function readCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+const collapsedGroups = ref<Set<string>>(readCollapsedGroups());
+
+function setCollapsedGroups(next: Set<string>) {
+  collapsedGroups.value = next;
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...next]));
+  } catch {
+    // private mode / blocked storage: state just won't persist
+  }
+}
+
+function isGroupCollapsed(parent: string, key: string | null): boolean {
+  return key !== null && collapsedGroups.value.has(`${parent}:${key}`);
+}
+
+function toggleGroup(parent: string, key: string | null) {
+  if (key === null) return;
+  const id = `${parent}:${key}`;
+  const next = new Set(collapsedGroups.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  setCollapsedGroups(next);
+}
 
 function isRouteActive(item: INavigationRoute) {
   return item.name === route.name;
@@ -207,6 +319,39 @@ function isItemExpanded(item: INavigationRoute): boolean {
 /* Expand/collapse affordance on the collapsed rail icon */
 :deep(.el-sub-menu__title) {
   position: relative;
+}
+
+.menu-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-4) var(--spacing-1);
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.menu-group-header:hover {
+  color: var(--color-text-secondary);
+}
+
+/* Beats the generic sub-menu fa- sizing rule above (element + two classes). */
+.menu-group-header i.menu-group-chevron {
+  width: auto;
+  margin-right: 0;
+  font-size: 9px;
+  transition: transform var(--transition-fast, 0.15s ease);
+}
+
+.menu-group-chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .submenu-caret {

@@ -250,6 +250,9 @@ class FlowRun(Base):
     flow_snapshot = Column(Text, nullable=True)
     # JSON-serialised node step results
     node_results_json = Column(Text, nullable=True)
+    # Stamped when the run has been evaluated for notifications (NULL = pending evaluation).
+    # Not "a notification was sent" — a run with no matching rule is stamped too.
+    notification_processed_at = Column(DateTime, nullable=True)
 
 
 class FlowFavorite(Base):
@@ -404,6 +407,71 @@ class ScheduleTriggerTable(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("schedule_id", "table_id", name="uq_schedule_trigger_table"),)
+
+
+class NotificationChannel(Base):
+    """A webhook destination for run alerts. All channel types are webhooks; only the payload differs."""
+
+    __tablename__ = "notification_channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    channel_type = Column(String, nullable=False)  # "slack" | "discord" | "teams" | "generic"
+    # $ffsec$1$<owner_id>$<token> — the URL is a credential (anyone holding it can post).
+    webhook_url_encrypted = Column(Text, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class NotificationRule(Base):
+    """Which run outcomes reach which channel.
+
+    Scope narrows in order: ``schedule_id`` set ⇒ that schedule's runs; else
+    ``registration_id`` set ⇒ that flow's runs; else every run owned by ``owner_id``.
+    """
+
+    __tablename__ = "notification_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    channel_id = Column(Integer, ForeignKey("notification_channels.id"), nullable=False)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
+    schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=True)
+    on_failure = Column(Boolean, default=True, nullable=False)
+    on_success = Column(Boolean, default=False, nullable=False)
+    on_recovery = Column(Boolean, default=True, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class NotificationOutbox(Base):
+    """Transactional outbox row: one pending webhook delivery.
+
+    Enqueued in the same transaction that claims a run for evaluation, so a crash
+    between "run evaluated" and "alert queued" is impossible. ``channel_id`` is a
+    snapshot at enqueue time; the channel row is re-read at send. ``next_attempt_at``
+    doubles as the sending lease expiry, so a drainer that dies mid-send releases it.
+    """
+
+    __tablename__ = "notification_outbox"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule_id = Column(Integer, ForeignKey("notification_rules.id"), nullable=False)
+    channel_id = Column(Integer, ForeignKey("notification_channels.id"), nullable=False)
+    run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)
+    event_type = Column(String, nullable=False)  # run_failed | run_success | run_recovered | run_orphaned
+    payload_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending | sending | sent | dead
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("rule_id", "run_id", "event_type", name="uq_outbox_rule_run_event"),)
 
 
 class TableFavorite(Base):

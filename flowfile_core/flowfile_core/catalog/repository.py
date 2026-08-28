@@ -31,6 +31,7 @@ from flowfile_core.database.models import (
     FlowRun,
     FlowSchedule,
     GlobalArtifact,
+    NotificationRule,
     RunType,
     ScheduleTriggerTable,
     TableFavorite,
@@ -482,9 +483,17 @@ class SQLAlchemyCatalogRepository:
             self._db.query(ScheduleTriggerTable).filter(ScheduleTriggerTable.schedule_id.in_(schedule_ids)).delete(
                 synchronize_session=False
             )
+            self._db.query(NotificationRule).filter(NotificationRule.schedule_id.in_(schedule_ids)).delete(
+                synchronize_session=False
+            )
             self._db.query(FlowSchedule).filter(FlowSchedule.registration_id == registration_id).delete(
                 synchronize_session=False
             )
+        # Notification rules scoped to this flow don't cascade either; a stale rule would
+        # alert the old owner's webhook about whichever future flow reuses the rowid.
+        self._db.query(NotificationRule).filter(NotificationRule.registration_id == registration_id).delete(
+            synchronize_session=False
+        )
         # Remove published API endpoints and their keys. SQLite FK enforcement is
         # off so these don't cascade: a leftover key would stay enabled (a real
         # revocation gap) and the unique slug would stay occupied, blocking
@@ -1149,6 +1158,9 @@ class SQLAlchemyCatalogRepository:
 
     def delete_schedule(self, schedule_id: int) -> None:
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
+        # Rules scoped to this schedule die with it — a stale rule would alert the old
+        # owner's webhook about whichever future schedule reuses the SQLite rowid.
+        self._db.query(NotificationRule).filter_by(schedule_id=schedule_id).delete()
         schedule = self._db.get(FlowSchedule, schedule_id)
         if schedule is not None:
             self._db.delete(schedule)

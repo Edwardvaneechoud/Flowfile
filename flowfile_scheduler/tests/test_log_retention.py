@@ -22,6 +22,7 @@ from flowfile_scheduler.engine import LOG_SWEEP_INTERVAL, FlowScheduler
 from shared import run_completion
 from shared.models import FlowRegistration, FlowSchedule
 from shared.run_logs import cleanup_old_logs
+from shared.notifications import processor as notifications
 from shared.storage_config import storage
 
 BASE_TS = datetime(2026, 5, 25, 9, 0, 0)
@@ -33,6 +34,7 @@ def sched(tmp_path, monkeypatch):
     url = f"sqlite:///{tmp_path / 'sched.db'}"
     monkeypatch.setattr(engine_mod, "get_database_url", lambda: url)
     monkeypatch.setattr(run_completion, "get_database_url", lambda: url)
+    monkeypatch.setattr(notifications, "get_database_url", lambda: url)
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(

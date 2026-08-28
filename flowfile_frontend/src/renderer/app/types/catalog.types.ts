@@ -562,6 +562,7 @@ export type CatalogTab =
   | "following"
   | "runs"
   | "schedules"
+  | "alerts"
   | "sql"
   | "notebook"
   | "visuals"
