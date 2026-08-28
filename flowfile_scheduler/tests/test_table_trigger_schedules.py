@@ -28,6 +28,7 @@ from shared.models import (
     FlowSchedule,
     ScheduleTriggerTable,
 )
+from shared.notifications import processor as notifications
 from shared.run_completion import reap_orphaned_runs
 
 BASE_TS = datetime(2026, 5, 25, 9, 0, 0)
@@ -40,6 +41,7 @@ def sched(tmp_path, monkeypatch):
     url = f"sqlite:///{tmp_path / 'sched.db'}"
     monkeypatch.setattr(engine_mod, "get_database_url", lambda: url)
     monkeypatch.setattr(run_completion, "get_database_url", lambda: url)
+    monkeypatch.setattr(notifications, "get_database_url", lambda: url)
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(

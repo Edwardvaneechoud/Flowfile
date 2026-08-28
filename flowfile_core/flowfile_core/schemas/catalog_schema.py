@@ -5,9 +5,9 @@ run history, favorites and follows.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -1024,6 +1024,121 @@ class NotebookSummaryOut(BaseModel):
     access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ==================== Notification Schemas ====================
+
+NotificationChannelType = Literal["slack", "discord", "teams", "generic"]
+
+# Free-form name, trimmed so a whitespace-only name is rejected rather than stored.
+NotificationName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+
+
+class NotificationChannelCreate(BaseModel):
+    name: NotificationName
+    channel_type: NotificationChannelType
+    webhook_url: str
+    enabled: bool = True
+
+
+class NotificationChannelUpdate(BaseModel):
+    """Partial update — ``None`` means "leave unchanged" for every field."""
+
+    name: NotificationName | None = None
+    channel_type: NotificationChannelType | None = None
+    webhook_url: str | None = None
+    enabled: bool | None = None
+
+
+class NotificationChannelOut(BaseModel):
+    """A channel as the API returns it.
+
+    The webhook URL is a credential (anyone holding it can post to the workspace),
+    so it is *never* returned — only ``webhook_url_preview``, a masked form that is
+    enough for a human to tell two channels apart.
+    """
+
+    id: int
+    owner_id: int
+    name: str
+    channel_type: str
+    webhook_url_preview: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotificationRuleCreate(BaseModel):
+    """Scope narrows in order: ``schedule_id`` ⇒ that schedule; else ``registration_id``
+    ⇒ that flow; else every run the owner triggers. The two scope keys are mutually
+    exclusive — setting both is rejected."""
+
+    channel_id: int
+    registration_id: int | None = None
+    schedule_id: int | None = None
+    on_failure: bool = True
+    on_success: bool = False
+    on_recovery: bool = True
+    enabled: bool = True
+
+
+class NotificationRuleUpdate(BaseModel):
+    """Partial update. The rule's scope (registration/schedule) is immutable — a rule
+    for a different flow is a different rule."""
+
+    channel_id: int | None = None
+    on_failure: bool | None = None
+    on_success: bool | None = None
+    on_recovery: bool | None = None
+    enabled: bool | None = None
+
+
+class NotificationRuleOut(BaseModel):
+    id: int
+    owner_id: int
+    channel_id: int
+    # Resolved for display; None when the referent no longer exists.
+    channel_name: str | None = None
+    channel_type: str | None = None
+    registration_id: int | None = None
+    flow_name: str | None = None
+    schedule_id: int | None = None
+    schedule_name: str | None = None
+    on_failure: bool
+    on_success: bool
+    on_recovery: bool
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotificationTestResult(BaseModel):
+    """Outcome of a webhook test. A delivery failure is a result, not an HTTP error."""
+
+    ok: bool
+    error: str | None = None
+
+
+class NotificationChannelTestRequest(BaseModel):
+    """Pre-save test: the URL is still plaintext in the request, nothing is stored."""
+
+    channel_type: NotificationChannelType
+    webhook_url: str
+
+
+class NotificationHistoryItem(BaseModel):
+    """One outbox row, flattened for the history table."""
+
+    id: int
+    event_type: str
+    run_id: int | None = None
+    flow_name: str | None = None
+    channel_name: str | None = None
+    status: str
+    attempts: int
+    last_error: str | None = None
+    created_at: datetime
+    sent_at: datetime | None = None
 
 
 # Rebuild forward-referenced models

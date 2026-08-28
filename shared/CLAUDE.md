@@ -30,6 +30,7 @@ It is a Poetry package — `{ include = "shared" }` in root `pyproject.toml`, wi
 - `run_logs.py` — `run_log_path(run_id)` (canonical `<storage>/logs/scheduled_run_<id>.log`, resolved per call) + `cleanup_old_logs()` age retention over `scheduled_run_*.log` and `flow_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `<=0` disables). Stdlib + `storage_config` only — no sqlalchemy — so `subprocess_utils` stays dependency-light; `SUBPROCESS_RUN_TYPES` mirrors `run_completion.REAPABLE_RUN_TYPES` rather than importing it.
 - `parent_watcher.py` — `start_parent_death_watcher` for Tauri sidecar reparent detection.
 - `run_completion.py` — `complete_run` / `get_run_user_id` (CLI subprocess updates `FlowRun` via raw SQLAlchemy) + `reap_orphaned_runs` (closes active runs whose subprocess died — zombie-aware pid liveness, 5-min pid-NULL grace for subprocess run types only, `FLOWFILE_RUN_MAX_AGE_SECONDS` backstop that SIGTERMs before closing; called from the scheduler tick and core startup).
+- `notifications/` — run-outcome alerting over webhooks, core-free so the scheduler tick and the finishing CLI subprocess can both drive it. `processor.py` (`evaluate_completed_runs` claims newly-ended runs via a keyed conditional UPDATE on `FlowRun.notification_processed_at` and writes `NotificationOutbox` rows; `drain_outbox` leases and sends them with backoff; `enqueue_orphaned_run` is called from the reaper *before* its commit), `senders.py` (`validate_webhook_url` SSRF guard + slack/discord/teams/generic formatting + the `_post` seam), `payload.py` (metadata-only event dict), `crypto.py` (read-only `$ffsec$` mirror — see Gotchas).
 - `viz_protocol.py` — `HTTP_TIMEOUT_SECONDS` / `REQUEST_TIMEOUT_SECONDS` for catalog viz core↔worker calls.
 
 ## Key patterns & conventions
@@ -52,7 +53,7 @@ poetry run pytest shared/tests
 - `tests/kafka/` — needs a Redpanda container; `tests/kafka/conftest.py` auto-starts it via `test_utils.kafka.fixtures` and `pytest.skip`s when Docker is unavailable. No custom pytest marker is applied to shared tests (none of the root `pyproject.toml` markers are used here).
 
 ## Gotchas
-- `crypto/` exists on disk but contains only stale `__pycache__/*.pyc` — there is NO tracked crypto source module. Don't import `shared.crypto`; envelope/master-key crypto lives elsewhere.
+- `crypto/` exists on disk but contains only stale `__pycache__/*.pyc` — there is NO tracked crypto source module. Don't import `shared.crypto`; envelope/master-key crypto lives elsewhere. `shared/notifications/crypto.py` is a different thing: a deliberate read-only mirror of core's `$ffsec$` scheme (like `flowfile_worker/secrets.py`), so its HKDF params, format prefix and master-key resolution order must be changed in lockstep with core and the worker.
 - `rest_api/__init__.py` and `google_analytics/__init__.py` are empty — import submodules directly (`from shared.rest_api.models import ...`), not the package.
 - `fetch_rest_api` is driven by the worker's REST source; core's `/rest_api/sample` route and `flowfile_frame.read_api` reach it *through the worker*, not by calling it in-process.
 - `get_database_url()` resolution order: `FLOWFILE_DB_PATH` env → `TESTING=True` (temp test DB) → default `database_directory/flowfile_catalog.db`. `get_legacy_database_path()` is one-time-migration only.
@@ -65,6 +66,8 @@ poetry run pytest shared/tests
 - `run_completion.py` — CLI-subprocess `FlowRun` completion + orphan-run reaper, without core.
 - `subprocess_utils.py` — `spawn_flow_subprocess`.
 - `run_logs.py` — run-log path resolution + log retention (core startup, scheduler tick).
+- `notifications/processor.py` — outbox evaluation + webhook drain (scheduler tick, CLI subprocess).
+- `notifications/crypto.py` — read-only `$ffsec$` decryption for webhook URLs, without core.
 - `parent_watcher.py` — sidecar parent-death watcher.
 - `kafka/consumer.py` — Kafka read/commit engine.
 - `ml/algorithms.py` — ML algorithm/hyperparam registry (core+worker source of truth, served to the UI picker).

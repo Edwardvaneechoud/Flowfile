@@ -257,6 +257,26 @@ async def delete_user(
         synchronize_session=False
     )
 
+    # Notification channels hold an encrypted webhook credential and rules keep alerting
+    # after the owner is gone — a reused user rowid would inherit both. History rows go
+    # with the channels (that is also how history ownership is resolved).
+    channel_ids = [
+        row[0]
+        for row in db.query(db_models.NotificationChannel.id).filter(
+            db_models.NotificationChannel.owner_id == user_id
+        )
+    ]
+    if channel_ids:
+        db.query(db_models.NotificationOutbox).filter(
+            db_models.NotificationOutbox.channel_id.in_(channel_ids)
+        ).delete(synchronize_session=False)
+    db.query(db_models.NotificationRule).filter(db_models.NotificationRule.owner_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(db_models.NotificationChannel).filter(db_models.NotificationChannel.owner_id == user_id).delete(
+        synchronize_session=False
+    )
+
     db.delete(user)
     db.commit()
 

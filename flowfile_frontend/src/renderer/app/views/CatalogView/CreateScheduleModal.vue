@@ -3,16 +3,18 @@
     :model-value="visible"
     width="540px"
     align-center
-    class="schedule-dialog"
+    class="schedule-dialog catalog-dialog"
     @close="$emit('close')"
   >
-    <template #header>
+    <template #header="{ titleId }">
       <div class="dialog-header">
         <span class="dialog-header-icon">
           <i :class="isEdit ? 'fa-solid fa-pen-to-square' : 'fa-solid fa-calendar-plus'"></i>
         </span>
         <div class="dialog-header-text">
-          <span class="dialog-title">{{ isEdit ? "Edit schedule" : "Create schedule" }}</span>
+          <span :id="titleId" class="dialog-title">{{
+            isEdit ? "Edit schedule" : "Create schedule"
+          }}</span>
           <span class="dialog-subtitle">{{
             isEdit ? "Change when this flow runs" : "Run a flow automatically"
           }}</span>
@@ -313,6 +315,39 @@
             placeholder="e.g. Nightly sales data refresh"
           />
         </el-form-item>
+
+        <!-- Optional alert. Never blocks creation: with no channels this is just a hint. -->
+        <el-form-item class="notify-item">
+          <el-checkbox v-model="notifyOnFailure">Notify on failure</el-checkbox>
+          <div v-if="notifyOnFailure && notificationsStore.channels.length > 0" class="notify-row">
+            <el-select
+              v-model="notifyChannelId"
+              placeholder="Select a channel"
+              size="small"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="channel in notificationsStore.channels"
+                :key="channel.id"
+                :label="channel.name"
+                :value="channel.id"
+              >
+                <span>{{ channel.name }}</span>
+                <span class="option-type">{{ channelTypeLabel(channel.channel_type) }}</span>
+              </el-option>
+            </el-select>
+            <div class="hint-text">
+              {{
+                notifyChannelId === null
+                  ? "Pick a channel — or untick the box to create without alerts."
+                  : "You'll be alerted when a run fails, and again when it recovers."
+              }}
+            </div>
+          </div>
+          <div v-else-if="notifyOnFailure" class="hint-text">
+            Create a notification channel in the Alerts tab first.
+          </div>
+        </el-form-item>
       </template>
     </el-form>
 
@@ -344,6 +379,8 @@ import {
   parseCron,
 } from "./cron-builder";
 import { useAiStore } from "../../stores/ai-store";
+import { useNotificationsStore } from "../../stores/notifications-store";
+import { channelTypeLabel } from "./catalog-formatters";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 import { CatalogApi } from "../../api/catalog.api";
 
@@ -389,6 +426,12 @@ const SCHEDULE_TYPES: { value: ScheduleKind; icon: string; title: string; subtit
 // visible-watcher) so re-saving never silently relocates it to the editor's browser zone.
 const timezone = ref(localTimezone());
 const cron = ref(defaultCronState());
+
+// Optional "alert me when this fails" shortcut — creating the rule is the parent's
+// job (it needs the new schedule's id), so this only carries the user's pick out.
+const notificationsStore = useNotificationsStore();
+const notifyOnFailure = ref(false);
+const notifyChannelId = ref<number | null>(null);
 
 // AI "describe in words" → cron, shown only in Custom mode when a provider is configured.
 const aiStore = useAiStore();
@@ -542,6 +585,10 @@ watch(
       form.value.name = "";
       form.value.description = "";
       cron.value = defaultCronState();
+      notifyOnFailure.value = false;
+      notifyChannelId.value = null;
+      // Cheap and cached in the store; the checkbox needs to know whether any exist.
+      if (notificationsStore.channels.length === 0) void notificationsStore.loadChannels();
     }
   },
 );
@@ -549,6 +596,14 @@ watch(
 const isValid = computed(() => {
   if (isEdit.value) return cronValid.value; // edit is cron-only; no flow selection
   if (!form.value.registration_id) return false;
+  // A ticked notify box with channels available but none picked would silently
+  // create no rule — block until one is chosen (no channels stays a soft hint).
+  if (
+    notifyOnFailure.value &&
+    notificationsStore.channels.length > 0 &&
+    notifyChannelId.value === null
+  )
+    return false;
   if (form.value.schedule_type === "cron") return cronValid.value;
   if (form.value.schedule_type === "table_trigger") return !!form.value.trigger_table_id;
   if (form.value.schedule_type === "table_set_trigger")
@@ -624,143 +679,14 @@ function handleCreate() {
     body.trigger_table_ids = form.value.trigger_table_ids;
   }
 
-  emit("create", body);
+  emit("create", body, notifyOnFailure.value ? notifyChannelId.value : null);
 }
 </script>
 
 <style scoped>
-/* Dialog chrome */
-.schedule-dialog :deep(.el-dialog) {
-  border-radius: var(--border-radius-lg);
-  overflow: hidden;
-}
-.schedule-dialog :deep(.el-dialog__header) {
-  margin-right: 0;
-  padding-bottom: var(--spacing-2);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-.schedule-dialog :deep(.el-dialog__body) {
-  padding-top: var(--spacing-3);
-  padding-bottom: var(--spacing-1);
-}
-
-/* Compact form rhythm */
-.schedule-form :deep(.el-form-item) {
-  margin-bottom: var(--spacing-3);
-}
-.schedule-form :deep(.el-form-item__label) {
-  padding-bottom: 3px;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--el-text-color-regular);
-  line-height: 1.3;
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
-}
-.dialog-header-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  border-radius: var(--border-radius-md);
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-  font-size: 15px;
-}
-.dialog-header-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-}
-.dialog-title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--el-text-color-primary);
-}
-.dialog-subtitle {
-  font-size: var(--font-size-sm);
-  color: var(--el-text-color-secondary);
-}
-
-/* Schedule-type cards */
-.type-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-.type-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
-  width: 100%;
-  padding: var(--spacing-2) var(--spacing-3);
-  border: 1px solid var(--el-border-color);
-  border-radius: var(--border-radius-md);
-  background: var(--el-bg-color);
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
-    box-shadow 0.15s ease;
-}
-.type-card:hover {
-  border-color: var(--el-color-primary-light-5);
-  background: var(--el-fill-color-light);
-}
-.type-card.active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
-  box-shadow: inset 0 0 0 1px var(--el-color-primary);
-}
-.type-card-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  border-radius: var(--border-radius-md);
-  background: var(--el-fill-color);
-  color: var(--el-text-color-regular);
-  font-size: 14px;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-.type-card.active .type-card-icon {
-  background: var(--el-color-primary);
-  color: #fff;
-}
-.type-card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-.type-card-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--el-text-color-primary);
-}
-.type-card-sub {
-  font-size: var(--font-size-sm);
-  color: var(--el-text-color-secondary);
-}
-.type-card-check {
-  color: var(--el-color-primary);
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
+/* Dialog chrome, header, form rhythm and the type-card picker live in the
+   shared `.catalog-view .catalog-dialog` block (CatalogView.vue), used by
+   this dialog and CreateChannelModal. Only schedule-specific styles remain. */
 /* Cron options panel */
 .options-panel {
   padding: var(--spacing-3) var(--spacing-3) var(--spacing-1);
@@ -849,10 +775,20 @@ function handleCreate() {
   background: var(--el-bg-color);
 }
 
-.hint-text {
-  font-size: var(--font-size-sm);
+/* Optional failure-alert block */
+.notify-item :deep(.el-form-item__content) {
+  display: block;
+}
+
+.notify-row {
+  margin-top: var(--spacing-2);
+}
+
+.option-type {
+  float: right;
+  margin-left: var(--spacing-3);
   color: var(--el-text-color-secondary);
-  margin-top: 4px;
+  font-size: var(--font-size-xs);
 }
 
 /* AI "describe in words" → cron row (Custom mode only) */

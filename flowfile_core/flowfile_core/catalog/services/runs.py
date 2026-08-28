@@ -336,6 +336,8 @@ class FlowRunService:
         now = datetime.now(timezone.utc)
         run.ended_at = now
         run.success = False
+        # A user-initiated cancel is deliberate; alerting on it is noise.
+        run.notification_processed_at = now
         if run.started_at:
             started_utc = run.started_at.replace(tzinfo=None)
             now_utc = now.replace(tzinfo=None)

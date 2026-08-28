@@ -1,5 +1,5 @@
 import { connectionTypes } from "../../../views/ConnectionsView/connectionTypes";
-import { catalogTabs } from "../../../views/CatalogView/catalogTabs";
+import { CATALOG_TAB_GROUP_KEYS, catalogTabs } from "../../../views/CatalogView/catalogTabs";
 import { computeTabs } from "../../../views/ComputeView/computeTabs";
 
 export interface INavigationRoute {
@@ -20,6 +20,9 @@ export interface INavigationRoute {
   // Status-colored dot overlaid on the item's icon (e.g. project sync state).
   // Injected at render time, not part of the static route table.
   statusDot?: string;
+  // Collapsible section this child belongs to in the sidebar sub-menu; adjacent
+  // children sharing a key render under one toggleable group header.
+  group?: { key: string; labelKey: string };
 }
 
 export default {
@@ -56,6 +59,7 @@ export default {
         query: { tab: t.key },
         displayName: t.sidebarKey,
         meta: { icon: t.icon },
+        group: { key: t.group, labelKey: CATALOG_TAB_GROUP_KEYS[t.group] },
       })),
     },
     {

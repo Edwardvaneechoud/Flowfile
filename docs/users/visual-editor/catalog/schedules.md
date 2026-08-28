@@ -96,6 +96,9 @@ Each schedule in the list provides inline actions:
 !!! warning "One active run per flow"
     A flow can only have one active run at a time. If a flow is already running, new triggers (both scheduled and manual) are skipped until the current run completes.
 
+!!! tip "Get notified when a scheduled run fails"
+    The create-schedule dialog has a **Notify on failure** option, and every schedule's detail panel has a **Notifications** section. See [Alerts & Notifications](alerts.md).
+
 ---
 
 ## Flow Detail Panel
@@ -173,6 +176,7 @@ See [Docker Reference](../../deployment/docker.md) for full configuration.
 
 ## Related Documentation
 
+- [Alerts & Notifications](alerts.md) — Get a Slack/Teams/webhook message when a scheduled run fails or recovers
 - [Catalog](index.md) — Managing flows, tables, and run history
 - [Virtual Tables](virtual-tables.md) — Non-materialized tables that can trigger schedules
 - [Output Nodes](../nodes/output.md#catalog-writer) — Writing data to catalog tables (triggers table-based schedules)

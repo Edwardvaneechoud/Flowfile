@@ -1,4 +1,10 @@
-import type { FlowSchedule, GlobalArtifact } from "../../types";
+import type {
+  FlowSchedule,
+  GlobalArtifact,
+  NotificationChannelType,
+  NotificationDeliveryStatus,
+  NotificationEventType,
+} from "../../types";
 import { describeCron } from "./cron-builder";
 
 /**
@@ -120,4 +126,69 @@ export function runTypeIcon(
   if (runType === "manual") return "fa-solid fa-hand-pointer";
   if (runType === "on_demand") return "fa-solid fa-bolt";
   return "fa-solid fa-pencil-ruler";
+}
+
+// ===== Notification channels / rules / history =====
+
+/** Display label for a notification channel type. */
+export function channelTypeLabel(type: NotificationChannelType | string | null): string {
+  if (type === "slack") return "Slack";
+  if (type === "discord") return "Discord";
+  if (type === "teams") return "Teams";
+  if (type === "generic") return "Webhook";
+  return type ?? "Webhook";
+}
+
+export function channelTypeIcon(type: NotificationChannelType | string | null): string {
+  if (type === "slack") return "fa-brands fa-slack";
+  if (type === "discord") return "fa-brands fa-discord";
+  if (type === "teams") return "fa-brands fa-microsoft";
+  return "fa-solid fa-link";
+}
+
+/** Modifier class for the per-type tag; pairs with the `.channel-tag` styles. */
+export function channelTypeClass(type: NotificationChannelType | string | null): string {
+  if (type === "slack" || type === "discord" || type === "teams") return type;
+  return "generic";
+}
+
+export function notificationEventLabel(eventType: NotificationEventType | string): string {
+  if (eventType === "run_failed") return "Run failed";
+  if (eventType === "run_success") return "Run succeeded";
+  if (eventType === "run_recovered") return "Run recovered";
+  if (eventType === "run_orphaned") return "Run orphaned";
+  return eventType;
+}
+
+/** One-line explanation of an event, shown as a tooltip in the delivery history. */
+export function notificationEventDescription(eventType: NotificationEventType | string): string {
+  if (eventType === "run_failed") return "The flow run ended with an error.";
+  if (eventType === "run_success") return "The flow run completed successfully.";
+  if (eventType === "run_recovered") return "The first successful run after a failure.";
+  if (eventType === "run_orphaned")
+    return "The run's process died before finishing and the run was closed as failed.";
+  return "Flow run event.";
+}
+
+export function notificationEventIcon(eventType: NotificationEventType | string): string {
+  if (eventType === "run_failed") return "fa-solid fa-circle-xmark";
+  if (eventType === "run_success") return "fa-solid fa-circle-check";
+  if (eventType === "run_recovered") return "fa-solid fa-heart-pulse";
+  if (eventType === "run_orphaned") return "fa-solid fa-link-slash";
+  return "fa-solid fa-bell";
+}
+
+/** `.status-badge` modifier for a delivery status: sent = green, dead = red, in-flight = amber. */
+export function deliveryStatusClass(status: NotificationDeliveryStatus | string): string {
+  if (status === "sent") return "success";
+  if (status === "dead") return "failure";
+  return "pending";
+}
+
+export function deliveryStatusLabel(status: NotificationDeliveryStatus | string): string {
+  if (status === "sent") return "Sent";
+  if (status === "dead") return "Failed";
+  if (status === "sending") return "Sending";
+  if (status === "pending") return "Pending";
+  return status;
 }

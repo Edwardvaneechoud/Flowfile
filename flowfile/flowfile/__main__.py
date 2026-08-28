@@ -1,5 +1,6 @@
 #  flowfile/__main__.py
 
+import json
 import sys
 from pathlib import Path
 
@@ -101,11 +102,18 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
+    node_results = None
+    try:
+        node_results = json.dumps([nr.model_dump(mode="json") for nr in (result.node_step_result or [])])
+    except Exception as e:
+        print(f"Warning: node results serialization failed: {e}", file=sys.stderr)
+
     _complete_run_if_needed(
         run_id,
         success=result.success,
         nodes_completed=result.nodes_completed,
         number_of_nodes=result.number_of_nodes,
+        node_results_json=node_results,
     )
 
     print("-" * 40)
@@ -131,6 +139,7 @@ def _complete_run_if_needed(
     success: bool,
     nodes_completed: int,
     number_of_nodes: int = 0,
+    node_results_json: str | None = None,
 ) -> None:
     """Report results back to a pre-created run record if run_id is provided."""
     if run_id is None:
@@ -143,9 +152,18 @@ def _complete_run_if_needed(
             success=success,
             nodes_completed=nodes_completed,
             number_of_nodes=number_of_nodes,
+            node_results_json=node_results_json,
         )
     except Exception as e:
         print(f"Warning: Failed to update run record {run_id}: {e}", file=sys.stderr)
+
+    # Deliver from the finishing subprocess instead of waiting for the next scheduler tick.
+    try:
+        from shared.notifications.processor import process_pending_notifications
+
+        process_pending_notifications()
+    except Exception as e:
+        print(f"Warning: Notification processing failed: {e}", file=sys.stderr)
 
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
