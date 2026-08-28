@@ -136,7 +136,12 @@ FORMATTERS = {
 
 
 def _post(url: str, json: dict[str, Any]) -> httpx.Response:
-    """Single seam for the outbound request — tests monkeypatch this."""
+    """Single seam for the outbound request — tests monkeypatch this.
+
+    CodeQL flags this as full SSRF (py/full-ssrf): posting to a user-supplied URL is
+    what a webhook *is*, and every caller runs ``validate_webhook_url`` first — a
+    guard CodeQL cannot model. The alert is dismissed by design; see root CLAUDE.md.
+    """
     return httpx.post(url, json=json, timeout=REQUEST_TIMEOUT, follow_redirects=False)
 
 
