@@ -58,6 +58,19 @@ function isJoinInputVars(input: unknown): input is JoinInputVars {
   );
 }
 
+// Mirrors _str_to_dtype in the engine: match on the base name, else String.
+const POLARS_DTYPES = new Set([
+  'Int8', 'Int16', 'Int32', 'Int64', 'Int128',
+  'UInt8', 'UInt16', 'UInt32', 'UInt64',
+  'Float32', 'Float64',
+  'Boolean', 'String', 'Utf8', 'Categorical', 'Date', 'Time', 'Datetime', 'Duration', 'Null'
+])
+
+export function polarsDtype(name: string | undefined): string {
+  const base = (name || '').split('(')[0]
+  return POLARS_DTYPES.has(base) ? `pl.${base}` : 'pl.String'
+}
+
 export function toPythonValue(value: any): string {
   if (value === null || value === undefined) {
     return 'None'
@@ -545,14 +558,19 @@ export class FlowToPolarsConverter {
       if (tableSettings.ignore_errors) {
         this.addCode(`    ignore_errors=True,`)
       }
+      // As execute_read_csv derives it.
       if (tableSettings.infer_schema === false) {
         this.addCode(`    infer_schema_length=0,`)
+      } else if (tableSettings.infer_schema_length != null) {
+        this.addCode(`    infer_schema_length=${tableSettings.infer_schema_length},`)
       }
     } else {
       this.addCode(`    separator=",",`)
       this.addCode(`    has_header=True,`)
     }
 
+    // The node parses dates on read, so date expressions get a temporal dtype.
+    this.addCode(`    try_parse_dates=True,`)
     this.addCode(`)`)
     this.addCode('')
   }
@@ -573,12 +591,25 @@ export class FlowToPolarsConverter {
       dataDict[col.name] = rawData.data[i] ?? []
     }
 
+    // Cells are text next to a declared dtype; build with it like
+    // execute_manual_input, or numbers arrive as String and sum as text.
+    const declared = rawData.columns.map(col => (col as { data_type?: string }).data_type)
+    const typed = declared.every(Boolean) && declared.length === rawData.data.length
+
     this.addCode(`${varName} = pl.LazyFrame({`)
     for (const [colName, values] of Object.entries(dataDict)) {
       // Not JSON.stringify: JSON's null/true/false are not Python literals.
       this.addCode(`    "${colName}": ${toPythonValue(values)},`)
     }
-    this.addCode(`})`)
+    if (typed) {
+      this.addCode(`}, schema={`)
+      for (const [index, col] of rawData.columns.entries()) {
+        this.addCode(`    "${col.name}": ${polarsDtype(declared[index])},`)
+      }
+      this.addCode(`}, strict=False)`)
+    } else {
+      this.addCode(`})`)
+    }
     this.addCode('')
   }
 
@@ -691,21 +722,18 @@ export class FlowToPolarsConverter {
     const inputDf = inputVars.main || 'df'
     const selectExprs: string[] = []
 
-    for (const col of settings.select_input) {
-      if (col.keep && col.is_available !== false) {
-        let expr = `pl.col("${col.old_name}")`
+    // `position` order, like build_select — which also never casts.
+    const kept = settings.select_input
+      .filter(col => col.keep && col.is_available !== false)
+      .map((col, index) => ({ col, index }))
+      .sort((a, b) => (a.col.position ?? 0) - (b.col.position ?? 0) || a.index - b.index)
 
-        if (col.old_name !== col.new_name) {
-          expr += `.alias("${col.new_name}")`
-        }
-
-        if (col.data_type_change && col.data_type) {
-          const polarsType = this.getPolarsType(col.data_type)
-          expr += `.cast(${polarsType})`
-        }
-
-        selectExprs.push(expr)
+    for (const { col } of kept) {
+      let expr = `pl.col("${col.old_name}")`
+      if (col.old_name !== col.new_name) {
+        expr += `.alias("${col.new_name}")`
       }
+      selectExprs.push(expr)
     }
 
     if (selectExprs.length > 0) {
@@ -728,14 +756,34 @@ export class FlowToPolarsConverter {
 
     for (const aggCol of settings.groupby_input.agg_cols) {
       if (aggCol.agg === 'groupby') {
-        groupCols.push(aggCol.old_name)
+        // A group column can be renamed too, so it is an expression, not a name.
+        const newName = aggCol.new_name || aggCol.old_name
+        groupCols.push(
+          newName === aggCol.old_name
+            ? `pl.col("${aggCol.old_name}")`
+            : `pl.col("${aggCol.old_name}").alias("${newName}")`
+        )
       } else {
-        const aggFunc = this.getAggFunction(aggCol.agg)
-        aggExprs.push(`pl.col("${aggCol.old_name}").${aggFunc}().alias("${aggCol.new_name}")`)
+        aggExprs.push(this.aggExpr(aggCol.old_name, aggCol.agg, aggCol.new_name))
       }
     }
 
-    this.addCode(`${varName} = ${inputDf}.group_by(${JSON.stringify(groupCols)}).agg([`)
+    if (groupCols.length === 0) {
+      // No grouping columns: the engine reduces the whole frame in one select.
+      if (aggExprs.length === 0) {
+        this.nodeVarMapping.set(this.currentNodeId, inputDf)
+        return
+      }
+      this.addCode(`${varName} = ${inputDf}.select([`)
+      for (const expr of aggExprs) {
+        this.addCode(`    ${expr},`)
+      }
+      this.addCode(`])`)
+      this.addCode('')
+      return
+    }
+
+    this.addCode(`${varName} = ${inputDf}.group_by([${groupCols.join(', ')}]).agg([`)
     for (const expr of aggExprs) {
       this.addCode(`    ${expr},`)
     }
@@ -743,21 +791,25 @@ export class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private getAggFunction(agg: AggType): string {
-    const mapping: Record<AggType, string> = {
-      'groupby': '',
-      'sum': 'sum',
-      'max': 'max',
-      'min': 'min',
-      'count': 'count',
-      'mean': 'mean',
-      'median': 'median',
-      'first': 'first',
-      'last': 'last',
-      'n_unique': 'n_unique',
-      'concat': 'str.concat'
+  // One aggregation expression, matching _build_agg_exprs in the engine.
+  private aggExpr(oldName: string, agg: AggType, newName: string): string {
+    const col = `pl.col("${oldName}")`
+    const alias = `.alias("${newName || `${oldName}_${agg}`}")`
+    if (agg === 'concat') {
+      return `${col}.cast(pl.Utf8).str.join(",")${alias}`
     }
-    return mapping[agg] || 'sum'
+    const mapping: Partial<Record<AggType, string>> = {
+      sum: 'sum',
+      max: 'max',
+      min: 'min',
+      count: 'count',
+      mean: 'mean',
+      median: 'median',
+      first: 'first',
+      last: 'last',
+      n_unique: 'n_unique'
+    }
+    return `${col}.${mapping[agg] || 'sum'}()${alias}`
   }
 
   private handleJoin(settings: NodeJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
@@ -766,13 +818,17 @@ export class FlowToPolarsConverter {
     const joinInput = settings.join_input
 
     const leftOn = joinInput.join_mapping.map(jm => jm.left_col)
-    const rightOn = joinInput.join_mapping.map(jm => jm.right_col)
+    const rightOn = joinInput.join_mapping.map(jm => jm.right_col ?? jm.left_col)
+    // build_join reads join_type; `how` is core's spelling for the same thing.
+    const how = joinInput.join_type || joinInput.how || 'inner'
+    const suffix = joinInput.right_suffix ?? '_right'
 
     this.addCode(`${varName} = ${leftDf}.join(`)
     this.addCode(`    ${rightDf},`)
     this.addCode(`    left_on=${JSON.stringify(leftOn)},`)
     this.addCode(`    right_on=${JSON.stringify(rightOn)},`)
-    this.addCode(`    how="${joinInput.how}"`)
+    this.addCode(`    how="${how}",`)
+    this.addCode(`    suffix=${toPythonValue(suffix)}`)
     this.addCode(`)`)
     this.addCode('')
   }
@@ -823,8 +879,8 @@ export class FlowToPolarsConverter {
       this.addCode('')
       return
     }
-    const dtype = fn?.field?.data_type
-    const cast = dtype && dtype !== 'Auto' ? `.cast(pl.${dtype})` : ''
+    const castType = this.formulaCastType(fn?.field?.data_type)
+    const cast = castType ? `.cast(${castType})` : ''
 
     if (translated) {
       this.addCode(`${varName} = ${inputDf}.with_columns((${translated})${cast}.alias(${toPythonValue(name)}))`)
@@ -868,9 +924,9 @@ export class FlowToPolarsConverter {
         case 'Other': pred = `${base} not in ${STRING} | ${NUMERIC} | ${DATE}`; break
         default: pred = 'False'  // Boolean/Binary/Complex never occur as a group
       }
-      return `[c for c, dt in ${df}.schema.items() if ${pred}]`
+      return `[c for c, dt in ${df}.collect_schema().items() if ${pred}]`
     }
-    return `${df}.columns`
+    return `${df}.collect_schema().names()`
   }
 
   private handleDynamicRename(settings: NodeDynamicRenameSettings, varName: string, inputVars: { main?: string }): void {
@@ -903,7 +959,7 @@ export class FlowToPolarsConverter {
 
     if (dr.rename_mode === 'first_row') {
       this.addCode(`_targets = ${targets}`)
-      this.addCode(`_first = dict(zip(${inputDf}.columns, ${inputDf}.row(0)))`)
+      this.addCode(`_first = dict(zip(${inputDf}.collect_schema().names(), ${inputDf}.head(1).collect().row(0)))`)
       this.addCode(`${varName} = ${inputDf}.rename({o: str(_first[o]) for o in _targets if o != str(_first[o])}).slice(1)`)
       this.addCode('')
       return
@@ -929,45 +985,90 @@ export class FlowToPolarsConverter {
 
   private handleUnique(settings: NodeUniqueSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const uniqueInput = settings.unique_input
+    // build_unique reads subset/keep or columns/strategy, so this does too.
+    const uniqueInput = settings.unique_input || {}
+    const subset = uniqueInput.subset?.length ? uniqueInput.subset : uniqueInput.columns
+    const keep = uniqueInput.keep || uniqueInput.strategy || 'first'
+    const maintainOrder = uniqueInput.maintain_order ?? true
 
-    if (uniqueInput.columns && uniqueInput.columns.length > 0) {
-      this.addCode(`${varName} = ${inputDf}.unique(`)
-      this.addCode(`    subset=${JSON.stringify(uniqueInput.columns)},`)
-      this.addCode(`    keep="${uniqueInput.strategy}"`)
-      this.addCode(`)`)
-    } else {
-      this.addCode(`${varName} = ${inputDf}.unique(keep="${uniqueInput.strategy}")`)
+    this.addCode(`${varName} = ${inputDf}.unique(`)
+    if (subset && subset.length > 0) {
+      this.addCode(`    subset=${JSON.stringify(subset)},`)
     }
+    this.addCode(`    keep="${keep}",`)
+    this.addCode(`    maintain_order=${maintainOrder ? 'True' : 'False'}`)
+    this.addCode(`)`)
     this.addCode('')
   }
+
+  // What execute_pivot knows; anything else falls back to sum under its own name.
+  private static readonly PIVOT_AGGS = new Set(['sum', 'mean', 'min', 'max', 'count', 'first', 'last', 'median'])
+
+  // Zero-filled by execute_pivot: an absent combination reads 0, not null.
+  private static readonly PIVOT_ZERO_FILL_AGGS = new Set(['sum', 'count', 'len'])
 
   private handlePivot(settings: NodePivotSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     const pivotInput = settings.pivot_input
-    
-    // Handle multiple aggregations - just take first (same as core)
-    const aggFunc = pivotInput.aggregations?.[0] || 'first'
-    
-    if (pivotInput.index_columns.length === 0) {
-      this.addCode(`${varName} = (${inputDf}.collect()`)
-      this.addCode(`    .with_columns(pl.lit(1).alias("__temp_index__"))`)
-      this.addCode(`    .pivot(`)
-      this.addCode(`        values="${pivotInput.value_col}",`)
-      this.addCode(`        index=["__temp_index__"],`)
-      this.addCode(`        columns="${pivotInput.pivot_column}",`)
-      this.addCode(`        aggregate_function="${aggFunc}"`)
-      this.addCode(`    )`)
-      this.addCode(`    .drop("__temp_index__")`)
-      this.addCode(`).lazy()`)
-    } else {
-      this.addCode(`${varName} = ${inputDf}.collect().pivot(`)
-      this.addCode(`    values="${pivotInput.value_col}",`)
-      this.addCode(`    index=${JSON.stringify(pivotInput.index_columns)},`)
-      this.addCode(`    columns="${pivotInput.pivot_column}",`)
-      this.addCode(`    aggregate_function="${aggFunc}"`)
-      this.addCode(`).lazy()`)
+    const indexColumns = pivotInput.index_columns || []
+    const pivotColumn = pivotInput.pivot_column
+    const valueCol = pivotInput.value_col
+    const aggregations = pivotInput.aggregations?.length ? pivotInput.aggregations : ['sum']
+
+    // Mirrors execute_pivot: a native pivot cannot do several aggregations at once.
+    this.addCode(`_pivot_src = ${inputDf}.collect()`)
+    this.addCode(`_pivot_aggs = ${toPythonValue(aggregations)}`)
+    this.addCode(`_pivot_values = (`)
+    this.addCode(`    _pivot_src.select(pl.col(${toPythonValue(pivotColumn)}).cast(pl.String))`)
+    this.addCode(`    .unique()`)
+    this.addCode(`    .sort(${toPythonValue(pivotColumn)})`)
+    this.addCode(`    .limit(200)  # the node refuses a pivot column with more distinct values`)
+    this.addCode(`    .to_series()`)
+    this.addCode(`    .to_list()`)
+    this.addCode(`)`)
+
+    const groupCols = [...indexColumns, pivotColumn]
+    this.addCode(`_pivot_grouped = _pivot_src.group_by(${toPythonValue(groupCols)}).agg([`)
+    for (const agg of aggregations) {
+      const fn = FlowToPolarsConverter.PIVOT_AGGS.has(agg) ? agg : 'sum'
+      this.addCode(`    pl.col(${toPythonValue(valueCol)}).${fn}().alias(${toPythonValue(agg)}),`)
     }
+    this.addCode(`])`)
+
+    const indexExprs = indexColumns.length > 0 ? indexColumns : ['__temp_idx__']
+    if (indexColumns.length === 0) {
+      this.addCode(`_pivot_grouped = _pivot_grouped.with_columns(pl.lit(1).alias("__temp_idx__"))`)
+    }
+
+    const zeroFilled = aggregations.filter(agg => FlowToPolarsConverter.PIVOT_ZERO_FILL_AGGS.has(agg))
+    if (zeroFilled.length > 0) {
+      this.addCode(`# a combination that never occurred reads 0 for these, not null`)
+      this.addCode(`_pivot_zero_fill = ${toPythonValue(zeroFilled)}`)
+    }
+
+    this.addCode(`${varName} = _pivot_grouped.group_by([`)
+    for (const col of indexExprs) {
+      this.addCode(`    pl.col(${toPythonValue(col)}),`)
+    }
+    this.addCode(`]).agg([`)
+    const cell = `pl.col(_agg).filter(pl.col(${toPythonValue(pivotColumn)}) == _val).first()`
+    if (zeroFilled.length > 0) {
+      this.addCode(`    (`)
+      this.addCode(`        ${cell}.fill_null(0)`)
+      this.addCode(`        if _agg in _pivot_zero_fill`)
+      this.addCode(`        else ${cell}`)
+      this.addCode(`    )`)
+    } else {
+      this.addCode(`    ${cell}`)
+    }
+    this.addCode(`    .alias(f"{_val}_{_agg}" if len(_pivot_aggs) > 1 else str(_val))`)
+    this.addCode(`    for _val in _pivot_values`)
+    this.addCode(`    for _agg in _pivot_aggs`)
+    this.addCode(`])`)
+    if (indexColumns.length === 0) {
+      this.addCode(`${varName} = ${varName}.drop("__temp_idx__")`)
+    }
+    this.addCode(`${varName} = ${varName}.lazy()`)
     this.addCode('')
   }
 
@@ -1007,7 +1108,8 @@ export class FlowToPolarsConverter {
 
   private handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const n = settings.sample_size || 10
+    // build_head reads sample_size first, then head_input.n.
+    const n = settings.sample_size ?? settings.head_input?.n ?? 10
     const method = settings.sample_method || 'first'
 
     if (method !== 'random' && method !== 'random_fraction') {
@@ -1157,21 +1259,20 @@ export class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private getPolarsType(dataType: string): string {
+  // _DTYPE_MAP in the engine; anything else (incl. "Auto") stays uncast.
+  private formulaCastType(dataType: string | undefined): string | null {
     const mapping: Record<string, string> = {
-      'String': 'pl.Utf8',
-      'Integer': 'pl.Int64',
-      'Float': 'pl.Float64',
+      'String': 'pl.String',
+      'Utf8': 'pl.String',
+      'Int64': 'pl.Int64',
+      'Int32': 'pl.Int32',
+      'Float64': 'pl.Float64',
+      'Float32': 'pl.Float32',
       'Boolean': 'pl.Boolean',
       'Date': 'pl.Date',
-      'Datetime': 'pl.Datetime',
-      'Int32': 'pl.Int32',
-      'Int64': 'pl.Int64',
-      'Float32': 'pl.Float32',
-      'Float64': 'pl.Float64',
-      'Utf8': 'pl.Utf8'
+      'Datetime': 'pl.Datetime'
     }
-    return mapping[dataType] || 'pl.Utf8'
+    return (dataType && mapping[dataType]) || null
   }
 
   protected addCode(line: string): void {

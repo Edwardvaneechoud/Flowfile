@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, shallowRef, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
+import { toCoreCompatibleFlow, editorNodeType, editorNodeSettings } from '../utils/coreExport'
 import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
 import { fileStorage, SIZE_THRESHOLD } from './file-storage'
 import { asFileContent, contentByteSize, isBinary, type FileContent } from '../types/file-content'
@@ -245,14 +246,11 @@ export const useFlowStore = defineStore('flow', () => {
           const data = state.flowfileData as FlowfileData
 
           for (const flowfileNode of data.nodes) {
-            // Migrate old node types to new names (for backward compatibility)
-            let nodeType = flowfileNode.type
-            if (nodeType === 'read_csv') nodeType = 'read'
-            if (nodeType === 'preview') nodeType = 'explore_data'
-            if (nodeType === 'rename') nodeType = 'dynamic_rename'
+            // Node types this editor renamed (see utils/coreExport.ts).
+            const nodeType = editorNodeType(flowfileNode.type)
 
             // Migrate old settings field names
-            let settings = flowfileNode.setting_input as NodeSettings
+            let settings = editorNodeSettings(flowfileNode.type, flowfileNode.setting_input) as NodeSettings
             if (settings && (settings as any).received_table && !(settings as any).received_file) {
               (settings as any).received_file = (settings as any).received_table
               delete (settings as any).received_table
@@ -2879,14 +2877,11 @@ result
       for (const flowfileNode of data.nodes) {
         if (flowfileNode.id > maxId) maxId = flowfileNode.id
 
-        // Migrate old node types to new names (for backward compatibility)
-        let nodeType = flowfileNode.type
-        if (nodeType === 'read_csv') nodeType = 'read'
-        if (nodeType === 'preview') nodeType = 'explore_data'
-        if (nodeType === 'rename') nodeType = 'dynamic_rename'
+        // Renamed node types, plus the core spellings the download writes.
+        const nodeType = editorNodeType(flowfileNode.type)
 
         // Migrate old settings field names
-        let settings = flowfileNode.setting_input as NodeSettings
+        let settings = editorNodeSettings(flowfileNode.type, flowfileNode.setting_input) as NodeSettings
         if (settings && (settings as any).received_table && !(settings as any).received_file) {
           (settings as any).received_file = (settings as any).received_table
           delete (settings as any).received_table
@@ -3034,7 +3029,8 @@ result
     await runBeforeExportHooks()
 
     const flowName = name || currentFlowName.value || `flow_${new Date().toISOString().slice(0, 10)}`
-    const data = exportToFlowfile(flowName)
+    // Only the download speaks core's dialect; in-browser saves keep this one.
+    const data = toCoreCompatibleFlow(exportToFlowfile(flowName))
     currentFlowName.value = flowName
 
     let content: string

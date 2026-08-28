@@ -6,6 +6,27 @@ from .errors import format_error, format_error_lf
 from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
+# Absent pivot combination reads 0, not null — matching core's do_pivot.
+PIVOT_ZERO_FILL_AGGS = frozenset({"sum", "count", "len"})
+
+# What core refuses: polars 1.43 rejects only `sum` on these base types. A table
+# rather than a probe, because the browser's polars 1.18 rejects nothing at all.
+PIVOT_UNSUPPORTED_AGG_DTYPES = {
+    "sum": (pl.String, pl.Binary, pl.List, pl.Array, pl.Struct),
+}
+
+
+def unsupported_pivot_aggregations(dtype, aggregations: list[str]) -> list[str]:
+    """The requested pivot aggregations `dtype` cannot carry, without duplicates."""
+    base = dtype.base_type()
+    unsupported = [agg for agg in aggregations if base in PIVOT_UNSUPPORTED_AGG_DTYPES.get(agg, ())]
+    return list(dict.fromkeys(unsupported))
+
+
+def pivot_column_null_count(df: pl.DataFrame, pivot_column: str) -> int:
+    """How many rows carry no pivot label; a null cannot become a column name."""
+    return df.get_column(pivot_column).null_count()
+
 
 def _build_agg_exprs(agg_defs: list[dict]) -> list:
     """Build aggregation expressions from agg column definitions."""
@@ -132,6 +153,26 @@ def execute_pivot(node_id: int, input_id: int, settings: dict) -> dict:
                 "error": f"Pivot error on node #{node_id}: Value column '{value_col}' not found. Available columns: {cols}",
             }
 
+        value_dtype = df.schema[value_col]
+        unsupported = unsupported_pivot_aggregations(value_dtype, aggregations)
+        if unsupported:
+            listed = ", ".join(f"`{agg}`" for agg in unsupported)
+            del df
+            gc.collect()
+            return {
+                "success": False,
+                "error": f"Pivot error on node #{node_id}: {listed} operation not supported for dtype `{value_dtype}` (value column '{value_col}'). Please pick a numeric value column, or an aggregation such as count, first or last.",
+            }
+
+        null_labels = pivot_column_null_count(df, pivot_column)
+        if null_labels:
+            del df
+            gc.collect()
+            return {
+                "success": False,
+                "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' contains null values ({null_labels} row(s)), and a null cannot become a column name. Please filter out or fill the empty '{pivot_column}' values before the pivot.",
+            }
+
         max_unique = 200
         unique_values = (
             df.select(pl.col(pivot_column).cast(pl.String))
@@ -190,7 +231,10 @@ def execute_pivot(node_id: int, input_id: int, settings: dict) -> dict:
         for unique_val in unique_values:
             for agg in aggregations:
                 col_name = f"{unique_val}_{agg}" if len(aggregations) > 1 else str(unique_val)
-                pivot_exprs.append(pl.col(agg).filter(pl.col(pivot_column) == unique_val).first().alias(col_name))
+                cell = pl.col(agg).filter(pl.col(pivot_column) == unique_val).first()
+                if agg in PIVOT_ZERO_FILL_AGGS:
+                    cell = cell.fill_null(0)
+                pivot_exprs.append(cell.alias(col_name))
 
         result = grouped.group_by(index_exprs).agg(pivot_exprs)
 

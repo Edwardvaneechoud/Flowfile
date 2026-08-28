@@ -2,7 +2,7 @@
 
 Reads a flow spec as JSON on stdin, applies `engine.build_*` in the given order,
 and prints `@@@<json rows>`. This is the ground truth the generated plain-Python
-script is checked against by tests/unit/plain-python-parity.test.ts — the point
+and Polars scripts are checked against by the parity suites — the point
 being that the comparison is against the code the browser actually runs, not
 against a second reimplementation of it.
 
@@ -20,14 +20,12 @@ import polars as pl  # noqa: E402
 import engine  # noqa: E402
 
 
-def _source_frame(settings: dict) -> pl.LazyFrame:
-    """Build a manual-input frame exactly the way execute_manual_input does."""
-    raw = settings.get("raw_data_format") or {}
-    names = [column["name"] for column in raw.get("columns", [])]
-    data = raw.get("data", [])
-    if not names:
-        return pl.DataFrame().lazy()
-    return pl.DataFrame({name: values for name, values in zip(names, data)}).lazy()
+def _source_frame(node_id: int, settings: dict) -> pl.LazyFrame:
+    """Build a manual-input frame by running the real executor, not a copy of it."""
+    result = engine.execute_manual_input(node_id, "", settings)
+    if not result.get("success"):
+        raise RuntimeError(result.get("error"))
+    return engine.get_lazyframe(node_id)
 
 
 SINGLE_INPUT_BUILDERS = {
@@ -40,6 +38,7 @@ SINGLE_INPUT_BUILDERS = {
     "record_id": engine.build_record_id,
     "dynamic_rename": engine.build_dynamic_rename,
     "group_by": engine.build_group_by,
+    "formula": engine.build_formula,
     "unpivot": engine.build_unpivot,
 }
 
@@ -57,7 +56,17 @@ def run(spec: dict) -> list[dict]:
         settings = step.get("settings", {})
 
         if node_type == "manual_input":
-            frames[node_id] = _source_frame(settings)
+            frames[node_id] = _source_frame(node_id, settings)
+        elif node_type == "dynamic_rename" and (settings.get("dynamic_rename_input") or {}).get(
+            "rename_mode"
+        ) == "first_row":
+            # first_row needs the data, so it only exists in the executor.
+            input_id = int(step["inputs"][0])
+            engine.store_lazyframe(input_id, frames[input_id])
+            result = engine.execute_dynamic_rename(node_id, input_id, settings)
+            if not result.get("success"):
+                raise RuntimeError(result.get("error"))
+            frames[node_id] = engine.get_lazyframe(node_id)
         elif node_type in SINGLE_INPUT_BUILDERS:
             frames[node_id] = SINGLE_INPUT_BUILDERS[node_type](frames[int(step["inputs"][0])], settings)
         elif node_type in TWO_INPUT_BUILDERS:
