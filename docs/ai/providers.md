@@ -1,6 +1,6 @@
 # Provider Setup (BYOK)
 
-The [AI Assistant](index.md) runs against a built-in [on-device model](#on-device-model-no-key-required) or one of six LLM providers — pick what fits your budget, latency needs, or compliance posture: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. For the hosted providers you bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work there are two offline paths: the on-device model, which needs no key and no account, and Ollama, which points Flowfile at a server you run.
+The [AI Assistant](index.md) runs against a built-in [on-device model](#on-device-model-no-key-required) or one of six LLM providers: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. For the hosted providers you bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work there are two offline paths: the on-device model, which needs no key and no account, and Ollama, which points Flowfile at a server you run.
 
 !!! info "Not in Flowfile Lite"
     The AI Assistant (and BYOK provider setup) requires the full desktop/server build, not the browser-only [Flowfile Lite](../users/deployment/lite.md) edition.
