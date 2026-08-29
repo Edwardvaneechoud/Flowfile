@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -41,6 +42,7 @@ from flowfile_core.routes.flow_api import management_router as flow_api_manageme
 from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
+from flowfile_core.routes.notifications import router as notifications_router
 from flowfile_core.routes.project import router as project_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
@@ -214,6 +216,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(user_groups_router, prefix="/user-groups", tags=["user-groups"])
 app.include_router(shares_router, prefix="/shares", tags=["shares"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
+app.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 app.include_router(project_router, prefix="/project", tags=["project"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(storage_browser_router, prefix="/storage_browser", tags=["storage_browser"])
@@ -394,11 +397,18 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
         result.number_of_nodes,
     )
 
+    node_results = None
+    try:
+        node_results = json.dumps([nr.model_dump(mode="json") for nr in (result.node_step_result or [])])
+    except Exception as e:
+        _cli_logger.warning("Node results serialization failed: %s", e)
+
     _complete_run(
         run_id,
         success=result.success,
         nodes_completed=result.nodes_completed,
         number_of_nodes=result.number_of_nodes,
+        node_results_json=node_results,
     )
 
     if result.success:
@@ -416,7 +426,13 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
         return 1
 
 
-def _complete_run(run_id: int, success: bool, nodes_completed: int, number_of_nodes: int = 0) -> None:
+def _complete_run(
+    run_id: int,
+    success: bool,
+    nodes_completed: int,
+    number_of_nodes: int = 0,
+    node_results_json: str | None = None,
+) -> None:
     """Report results back to a pre-created run record."""
     _cli_logger.debug(
         "Completing run %d: success=%s, nodes_completed=%d, number_of_nodes=%d",
@@ -433,9 +449,18 @@ def _complete_run(run_id: int, success: bool, nodes_completed: int, number_of_no
             success=success,
             nodes_completed=nodes_completed,
             number_of_nodes=number_of_nodes,
+            node_results_json=node_results_json,
         )
     except Exception as e:
         _cli_logger.exception("Failed to update run record %d: %s", run_id, e)
+
+    # Deliver from the finishing subprocess instead of waiting for the next scheduler tick.
+    try:
+        from shared.notifications.processor import process_pending_notifications
+
+        process_pending_notifications()
+    except Exception as e:
+        _cli_logger.warning("Notification processing failed: %s", e)
 
 
 if __name__ == "__main__":

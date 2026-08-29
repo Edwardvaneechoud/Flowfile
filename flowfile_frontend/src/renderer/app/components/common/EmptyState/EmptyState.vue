@@ -55,4 +55,13 @@ defineProps<{
   display: flex;
   gap: var(--spacing-2);
 }
+
+/* Global stylesheets (_cards.css/_modals.css) style bare `.empty-state i` for
+   legacy hero icons; neutralize that leak inside the actions slot so buttons
+   keep their own icon sizing. */
+.empty-state-actions :deep(i) {
+  font-size: inherit;
+  margin: 0;
+  opacity: 1;
+}
 </style>

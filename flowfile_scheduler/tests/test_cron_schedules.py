@@ -16,6 +16,7 @@ import pytest
 from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import FlowScheduler
 from shared.models import FlowRegistration, FlowRun, FlowSchedule
+from shared.notifications import processor as notifications
 
 
 @pytest.fixture
@@ -23,6 +24,7 @@ def sched(tmp_path, monkeypatch):
     """A FlowScheduler bound to a throwaway SQLite DB with subprocess spawning stubbed."""
     url = f"sqlite:///{tmp_path / 'sched.db'}"
     monkeypatch.setattr(engine_mod, "get_database_url", lambda: url)
+    monkeypatch.setattr(notifications, "get_database_url", lambda: url)
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(

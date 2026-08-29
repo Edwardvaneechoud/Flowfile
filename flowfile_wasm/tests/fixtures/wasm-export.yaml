@@ -1,0 +1,244 @@
+# A flow in the shapes the settings panels actually emit: `unique_input` with
+# subset/keep, a join with no left_select/right_select, a `head` sample node.
+flowfile_version: 1.0.0
+flowfile_id: 1787910634583
+flowfile_name: Untitled Flow 2
+flowfile_settings:
+  description: ''
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: ''
+    x_position: 824
+    y_position: 618
+    input_ids: []
+    outputs:
+      - 2
+    setting_input:
+      cache_results: true
+      received_file:
+        name: comparison.xlsx
+        path: comparison.xlsx
+        file_type: excel
+        table_settings:
+          file_type: excel
+          sheet_name: compare
+          has_headers: true
+          start_row: 0
+          start_column: 0
+          end_row: 0
+          end_column: 0
+          type_inference: true
+      file_name: comparison.xlsx
+  - id: 2
+    type: select
+    is_start_node: false
+    description: ''
+    x_position: 975
+    y_position: 598
+    input_ids:
+      - 1
+    outputs:
+      - 3
+    setting_input:
+      cache_results: true
+      select_input:
+        - old_name: Row Labels
+          new_name: row_labels
+          keep: true
+          position: 0
+          data_type: String
+        - old_name: Sum of E_CONTRACTS_GROSS
+          new_name: e_contracts
+          keep: true
+          position: 1
+          data_type: Int64
+      keep_missing: false
+  - id: 3
+    type: filter
+    is_start_node: false
+    description: ''
+    x_position: 1110
+    y_position: 600
+    input_ids:
+      - 2
+    outputs:
+      - 4
+      - 5
+    setting_input:
+      cache_results: true
+      filter_input:
+        mode: basic
+        basic_filter:
+          field: e_contracts
+          operator: greater_than
+          value: '1'
+          value2: ''
+        advanced_filter: ''
+  - id: 4
+    type: unique
+    is_start_node: false
+    description: ''
+    x_position: 1240
+    y_position: 437
+    input_ids:
+      - 3
+    outputs: []
+    setting_input:
+      cache_results: true
+      unique_input:
+        subset:
+          - e_contracts
+          - row_labels
+        keep: last
+        maintain_order: true
+  - id: 5
+    type: group_by
+    is_start_node: false
+    description: ''
+    x_position: 1248
+    y_position: 596
+    input_ids:
+      - 3
+    outputs:
+      - 6
+      - 10
+    setting_input:
+      cache_results: true
+      groupby_input:
+        agg_cols:
+          - old_name: row_labels
+            new_name: row_label
+            agg: groupby
+          - old_name: e_contracts
+            new_name: contracts
+            agg: sum
+  - id: 6
+    type: record_id
+    is_start_node: false
+    description: ''
+    x_position: 1392
+    y_position: 585
+    input_ids:
+      - 5
+    outputs:
+      - 7
+    setting_input:
+      cache_results: true
+      record_id_input:
+        name: record_id
+        offset: 1
+  - id: 7
+    type: formula
+    is_start_node: false
+    description: ''
+    x_position: 1538
+    y_position: 567
+    input_ids:
+      - 6
+    outputs:
+      - 8
+    setting_input:
+      cache_results: true
+      function:
+        field:
+          name: new
+          data_type: Auto
+        function: '[record_id] > 1'
+  - id: 8
+    type: join
+    is_start_node: false
+    description: ''
+    x_position: 1755
+    y_position: 534
+    right_input_id: 7
+    input_ids:
+      - 7
+    outputs:
+      - 9
+    setting_input:
+      cache_results: true
+      join_input:
+        join_type: inner
+        how: inner
+        join_mapping:
+          - left_col: record_id
+            right_col: record_id
+        left_suffix: ''
+        right_suffix: _right
+  - id: 9
+    type: head
+    is_start_node: false
+    description: ''
+    x_position: 1942
+    y_position: 586
+    input_ids:
+      - 8
+    outputs: []
+    setting_input:
+      cache_results: true
+      sample_method: random_fraction
+      sample_size: 10
+      fraction: 10
+      seed: 42
+      head_input:
+        'n': 10
+  - id: 10
+    type: unpivot
+    is_start_node: false
+    description: ''
+    x_position: 1409
+    y_position: 724
+    input_ids:
+      - 5
+    outputs:
+      - 11
+    setting_input:
+      cache_results: true
+      unpivot_input:
+        index_columns:
+          - row_label
+        value_columns:
+          - contracts
+        data_type_selector_mode: column
+  - id: 11
+    type: pivot
+    is_start_node: false
+    description: ''
+    x_position: 1577
+    y_position: 787
+    input_ids:
+      - 10
+    outputs:
+      - 13
+    setting_input:
+      cache_results: true
+      pivot_input:
+        index_columns:
+          - variable
+        pivot_column: row_label
+        value_col: value
+        aggregations:
+          - sum
+  - id: 13
+    type: explore_data
+    is_start_node: false
+    description: ''
+    x_position: 1745
+    y_position: 771
+    input_ids:
+      - 11
+    outputs: []
+    setting_input:
+      cache_results: true
+      graphic_walker_input:
+        is_initial: false
+        dataModel:
+          fields: []
+          data: []
+        specList: []

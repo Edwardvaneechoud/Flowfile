@@ -10,42 +10,54 @@
       <!-- A stubbed node has no honest loop — its note is not worth an editor.
            The Polars snippet below is the real code for those. -->
       <template v-if="explanation?.code && !explanation.isStub">
-        <div class="explainer-code">
-          <!-- indent-with-tab off: even a read-only editor must not trap Tab. -->
-          <Codemirror
-            :model-value="explanation.code"
-            :extensions="extensions"
-            :disabled="true"
-            :indent-with-tab="false"
-          />
-        </div>
-        <p v-if="explanation?.helpers.length" class="explainer-hint">
-          Calls {{ explanation.helpers.join(", ") }} — defined for you in the full script under Code ▸
-          Python walkthrough.
-        </p>
-        <div class="explainer-actions">
+        <div class="block-head">
+          <button type="button" class="block-toggle" :aria-expanded="plainOpen" @click="togglePlain">
+            <span class="block-chevron" :class="{ open: plainOpen }" aria-hidden="true"></span>
+            <span>Plain Python</span>
+            <span class="block-lines">{{ lineLabel(explanation.code) }}</span>
+          </button>
           <button class="explainer-copy" aria-label="Copy the plain-Python loop" @click="copySnippet">
             {{ copied ? 'Copied ✓' : 'Copy' }}
           </button>
         </div>
+        <template v-if="plainOpen">
+          <div class="explainer-code">
+            <!-- indent-with-tab off: even a read-only editor must not trap Tab. -->
+            <Codemirror
+              :model-value="explanation.code"
+              :extensions="extensions"
+              :disabled="true"
+              :indent-with-tab="false"
+            />
+          </div>
+          <p v-if="explanation?.helpers.length" class="explainer-hint">
+            Calls {{ explanation.helpers.join(", ") }} — defined for you in the full script under Code ▸
+            Python walkthrough.
+          </p>
+        </template>
       </template>
       <p v-else-if="!explanation?.code" class="explainer-hint">
         Connect this node to see the code for your own settings.
       </p>
       <template v-if="explanation?.code && polarsSnippet">
         <p class="explainer-bridge">{{ bridgeLabel }}</p>
-        <div class="explainer-code">
+        <div class="block-head">
+          <button type="button" class="block-toggle" :aria-expanded="polarsOpen" @click="togglePolars">
+            <span class="block-chevron" :class="{ open: polarsOpen }" aria-hidden="true"></span>
+            <span>Polars</span>
+            <span class="block-lines">{{ lineLabel(polarsSnippet) }}</span>
+          </button>
+          <button class="explainer-copy" aria-label="Copy the Polars snippet" @click="copyPolars">
+            {{ copiedPolars ? 'Copied ✓' : 'Copy' }}
+          </button>
+        </div>
+        <div v-if="polarsOpen" class="explainer-code">
           <Codemirror
             :model-value="polarsSnippet"
             :extensions="extensions"
             :disabled="true"
             :indent-with-tab="false"
           />
-        </div>
-        <div class="explainer-actions">
-          <button class="explainer-copy" aria-label="Copy the Polars snippet" @click="copyPolars">
-            {{ copiedPolars ? 'Copied ✓' : 'Copy' }}
-          </button>
         </div>
       </template>
     </div>
@@ -71,6 +83,8 @@ const props = defineProps<{ nodeId: number }>()
 
 // Someone who wants this open wants it open for every node, not just this one.
 const STORAGE_KEY = 'flowfile-node-explainer-open'
+const PLAIN_KEY = 'flowfile-node-explainer-plain-open'
+const POLARS_KEY = 'flowfile-node-explainer-polars-open'
 
 const flowStore = useFlowStore()
 const pyodideStore = usePyodideStore()
@@ -78,6 +92,9 @@ const { explainNode } = usePlainPythonGeneration()
 const { explainNodePolars } = useCodeGeneration()
 
 const isExpanded = ref(localStorage.getItem(STORAGE_KEY) === '1')
+// Each snippet collapses on its own — the plain loop runs long. Open by default.
+const plainOpen = ref(localStorage.getItem(PLAIN_KEY) !== '0')
+const polarsOpen = ref(localStorage.getItem(POLARS_KEY) !== '0')
 const copied = ref(false)
 const copiedPolars = ref(false)
 
@@ -149,6 +166,21 @@ const bridgeLabel = computed(() =>
 const toggle = () => {
   isExpanded.value = !isExpanded.value
   localStorage.setItem(STORAGE_KEY, isExpanded.value ? '1' : '0')
+}
+
+const togglePlain = () => {
+  plainOpen.value = !plainOpen.value
+  localStorage.setItem(PLAIN_KEY, plainOpen.value ? '1' : '0')
+}
+
+const togglePolars = () => {
+  polarsOpen.value = !polarsOpen.value
+  localStorage.setItem(POLARS_KEY, polarsOpen.value ? '1' : '0')
+}
+
+const lineLabel = (code: string | null | undefined) => {
+  const lines = code ? code.trimEnd().split('\n').length : 0
+  return `${lines} line${lines === 1 ? '' : 's'}`
 }
 
 const copySnippet = async () => {
@@ -255,10 +287,50 @@ const copyPolars = async () => {
   overflow: hidden;
 }
 
-.explainer-actions {
+.block-head {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.block-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary, #666);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.block-toggle:focus {
+  outline: none;
+}
+
+.block-toggle:focus-visible {
+  outline: 2px solid var(--color-accent, #4a90d9);
+  outline-offset: 2px;
+}
+
+.block-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 0.15s ease;
+}
+
+.block-chevron.open {
+  transform: rotate(90deg);
+}
+
+.block-lines {
+  color: var(--text-tertiary, #999);
 }
 
 .explainer-copy {

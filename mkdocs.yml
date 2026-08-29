@@ -158,6 +158,8 @@ nav:
     - Notebooks: users/visual-editor/catalog/notebooks.md
     - Visualizations: users/visual-editor/catalog/visualizations.md
     - Schedules: users/visual-editor/catalog/schedules.md
+    - Alerts & Notifications: users/visual-editor/catalog/alerts.md
+    - Flows as APIs: users/visual-editor/catalog/flow-api.md
     - Subflows: users/visual-editor/subflows.md
     - Projects & Git: users/projects.md
 

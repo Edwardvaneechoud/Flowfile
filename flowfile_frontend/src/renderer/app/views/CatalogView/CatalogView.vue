@@ -2,17 +2,21 @@
   <div class="catalog-view">
     <!-- Tab Bar -->
     <div class="catalog-tabs">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        class="catalog-tab"
-        :class="{ active: catalogStore.activeTab === tab.key }"
-        @click="handleTabClick(tab.key)"
-      >
-        <i :class="tab.icon"></i>
-        <span>{{ tab.label }}</span>
-        <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
-      </button>
+      <template v-for="tab in tabs" :key="tab.key">
+        <div v-if="tab.groupStart" class="tab-group-divider" aria-hidden="true"></div>
+        <span v-if="tab.groupLabel" class="tab-group-label" aria-hidden="true">
+          {{ tab.groupLabel }}
+        </span>
+        <button
+          class="catalog-tab"
+          :class="{ active: catalogStore.activeTab === tab.key }"
+          @click="handleTabClick(tab.key)"
+        >
+          <i :class="tab.icon"></i>
+          <span>{{ tab.label }}</span>
+          <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
+        </button>
+      </template>
       <div class="tab-spacer"></div>
       <el-tooltip content="Refresh" placement="bottom" :show-after="400">
         <button class="catalog-tab info-btn" :disabled="refreshing" @click="refreshAll">
@@ -233,6 +237,8 @@
           @view-flow="navigateToFlow"
           @select-schedule="selectSchedule"
         />
+        <!-- Alerts (notification channels, account-wide rules, delivery history) -->
+        <AlertsPanel v-else-if="catalogStore.activeTab === 'alerts'" />
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
           <h2>Favorites</h2>
@@ -528,6 +534,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useFlowStore } from "../../stores/flow-store";
+import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
 import { NodeApi } from "../../api/node.api";
@@ -550,6 +557,7 @@ import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
+import AlertsPanel from "./AlertsPanel.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import NotebookPanel from "./NotebookPanel.vue";
@@ -568,7 +576,7 @@ import { countMatches, normalizeQuery } from "./catalogTreeFilter";
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
-import { catalogTabs } from "./catalogTabs";
+import { CATALOG_TAB_GROUP_LABELS, catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -590,6 +598,7 @@ const catalogStore = useCatalogStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
+const notificationsStore = useNotificationsStore();
 const { openFlow } = useFlowOpener();
 const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 
@@ -604,10 +613,15 @@ const openNamespaceShare = (node: NamespaceTree) => {
 };
 
 const tabs = computed(() =>
-  catalogTabs.map((tab) => ({
+  catalogTabs.map((tab, i) => ({
     key: tab.key as CatalogTab,
     label: tab.label,
     icon: tab.icon,
+    groupStart: i > 0 && tab.group !== catalogTabs[i - 1].group,
+    groupLabel:
+      i === 0 || tab.group !== catalogTabs[i - 1].group
+        ? CATALOG_TAB_GROUP_LABELS[tab.group]
+        : null,
     badge:
       tab.key === "favorites"
         ? (catalogStore.stats?.total_favorites ?? null)
@@ -1407,11 +1421,29 @@ function handleAddFlowSchedule(flowId: number) {
   showCreateSchedule.value = true;
 }
 
-async function handleCreateSchedule(body: FlowScheduleCreate) {
+/**
+ * `notifyChannelId` is the modal's optional "Notify on failure" pick. Wiring the
+ * alert up is best-effort: the schedule already exists, so a failure there warns
+ * instead of surfacing as a failed creation.
+ */
+async function handleCreateSchedule(body: FlowScheduleCreate, notifyChannelId?: number | null) {
   try {
-    await CatalogApi.createSchedule(body);
+    const created = await CatalogApi.createSchedule(body);
     showCreateSchedule.value = false;
     preselectedFlowId.value = null;
+    if (notifyChannelId) {
+      try {
+        await notificationsStore.createRule({
+          channel_id: notifyChannelId,
+          schedule_id: created.id,
+          on_failure: true,
+          on_recovery: true,
+          on_success: false,
+        });
+      } catch {
+        ElMessage.warning("Schedule created, but the failure alert could not be set up.");
+      }
+    }
     const loads: Promise<void>[] = [catalogStore.loadSchedules(), catalogStore.loadStats()];
     if (catalogStore.selectedFlowId) {
       loads.push(catalogStore.loadFlowSchedules(catalogStore.selectedFlowId));
@@ -1875,6 +1907,234 @@ onUnmounted(() => {
   color: var(--color-warning);
 }
 
+/* ========== Notification channel tags ========== */
+/* Shared by the Alerts panel and every rules list, so it lives here rather than in
+   one component's scoped block (scoped styles don't cross component boundaries). */
+.catalog-view .channel-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  background: rgba(156, 163, 175, 0.15);
+  color: var(--color-text-muted);
+}
+
+.catalog-view .channel-tag.slack {
+  background: rgba(74, 21, 75, 0.12);
+  color: #6d28d9;
+}
+
+.catalog-view .channel-tag.discord {
+  background: rgba(88, 101, 242, 0.14);
+  color: #4c51cf;
+}
+
+.catalog-view .channel-tag.teams {
+  background: rgba(70, 90, 200, 0.14);
+  color: #3f4aa8;
+}
+
+.catalog-view .channel-tag.generic {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  color: var(--color-info);
+}
+
+/* Brand hues legible on dark backgrounds (the light values sink into them). */
+[data-theme="dark"] .catalog-view .channel-tag.slack {
+  background: rgba(124, 58, 237, 0.22);
+  color: #b794f4;
+}
+
+[data-theme="dark"] .catalog-view .channel-tag.discord {
+  background: rgba(88, 101, 242, 0.22);
+  color: #a5b0fb;
+}
+
+[data-theme="dark"] .catalog-view .channel-tag.teams {
+  background: rgba(75, 83, 188, 0.25);
+  color: #a3aaf0;
+}
+
+/* Small "what does this mean?" affordance next to a table header or label;
+   pair with an el-tooltip. Shared across the alerts tables. The tooltip stamps
+   `el-tooltip__trigger` onto the <i> itself, which drags in the global
+   `[class*=" el-"]` app-font rule — restore the icon font explicitly. */
+.catalog-view .header-help {
+  margin-left: 4px;
+  color: var(--color-text-muted);
+  opacity: 0.8;
+  cursor: help;
+  font-family: var(--fa-style-family-classic, "Font Awesome 6 Free");
+  font-weight: 400;
+}
+
+/* Muted one-line empty text for lists inside a section (rules, history). */
+.catalog-view .rules-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* ========== Catalog dialog family ==========
+   Shared chrome for CreateScheduleModal / CreateChannelModal (both carry the
+   .catalog-dialog class and render in place, so .catalog-view reaches them):
+   rounded dialog, compact form rhythm, icon header, type-card picker. */
+.catalog-view .catalog-dialog .el-dialog {
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+}
+
+.catalog-view .catalog-dialog .el-dialog__header {
+  margin-right: 0;
+  padding-bottom: var(--spacing-2);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.catalog-view .catalog-dialog .el-dialog__body {
+  padding-top: var(--spacing-3);
+  padding-bottom: var(--spacing-1);
+}
+
+/* :where keeps this overridable by scoped per-panel rules (options-panel, value-row). */
+.catalog-view .catalog-dialog :where(.el-form-item) {
+  margin-bottom: var(--spacing-3);
+}
+
+.catalog-view .catalog-dialog .el-form-item__label {
+  padding-bottom: 3px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--el-text-color-regular);
+  line-height: 1.3;
+}
+
+.catalog-view .dialog-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+}
+
+.catalog-view .dialog-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--border-radius-md);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 15px;
+}
+
+.catalog-view .dialog-header-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.catalog-view .dialog-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--el-text-color-primary);
+}
+
+.catalog-view .dialog-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--el-text-color-secondary);
+}
+
+.catalog-view .type-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.catalog-view .type-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--el-bg-color);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.catalog-view .type-card:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-fill-color-light);
+}
+
+.catalog-view .type-card.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  box-shadow: inset 0 0 0 1px var(--el-color-primary);
+}
+
+.catalog-view .type-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--border-radius-md);
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  font-size: 14px;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.catalog-view .type-card.active .type-card-icon {
+  background: var(--el-color-primary);
+  color: #fff;
+}
+
+.catalog-view .type-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.catalog-view .type-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--el-text-color-primary);
+}
+
+.catalog-view .type-card-sub {
+  font-size: var(--font-size-sm);
+  color: var(--el-text-color-secondary);
+}
+
+.catalog-view .type-card-check {
+  color: var(--el-color-primary);
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.catalog-view .catalog-dialog .hint-text {
+  font-size: var(--font-size-sm);
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
 /* ========== Overview Table ========== */
 .catalog-view .overview-table,
 .catalog-view .runs-table,
@@ -2248,6 +2508,37 @@ onUnmounted(() => {
   min-width: 18px;
   text-align: center;
   line-height: 18px;
+}
+
+.tab-group-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: var(--spacing-1) var(--spacing-1);
+  background: var(--color-border-primary);
+}
+
+/* Whisper-quiet group caption at the start of each tab cluster. */
+.tab-group-label {
+  flex-shrink: 0;
+  align-self: center;
+  margin: 0 2px 0 var(--spacing-2);
+  font-size: 9px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  opacity: 0.7;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* The captions are a luxury: below this width they'd push the bar's
+   right-side controls out, so the dividers carry the grouping alone. */
+@media (max-width: 1550px) {
+  .tab-group-label {
+    display: none;
+  }
 }
 
 .tab-spacer {

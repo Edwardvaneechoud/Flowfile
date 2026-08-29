@@ -730,7 +730,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             "    elif isinstance(result, dict):\n"
             "        for name, frame in result.items():\n"
             '            print(f"=== {name} ===")\n'
-            "            print(frame.collect())\n"
+            "            # None: the output sat behind a closed gate and its schema\n"
+            "            # could not be predicted, so there is nothing to collect.\n"
+            '            print(frame.collect() if frame is not None else "(branch skipped)")\n'
             "    else:\n"
             "        print(result.collect())\n"
             "\n"
@@ -888,6 +890,10 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
         self._flow_output_names[settings.node_id] = settings.output_name
         # output_nodes vars are kept in sync by the chain-fusion rename pass.
         self.output_nodes.append((settings.node_id, var_name))
+
+    def _return_referenced_vars(self) -> set[str]:
+        """Mirror this subclass's ``add_return_code``: only named flow outputs."""
+        return {var for node_id, var in self.output_nodes if node_id in self._flow_output_names}
 
     def add_return_code(self, lines: list[str]) -> None:
         entries = [

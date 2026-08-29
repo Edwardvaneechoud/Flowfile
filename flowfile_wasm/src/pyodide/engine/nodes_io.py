@@ -2,6 +2,7 @@ import gc
 
 import polars as pl
 
+from .dtypes import _str_to_dtype
 from .errors import format_error, format_error_lf
 from .log import log_node, logger
 from .state import _output_binaries, get_lazyframe, get_schema, store_lazyframe
@@ -202,7 +203,17 @@ def execute_manual_input(node_id: int, data_content: str, settings: dict) -> dic
             if len(columns_meta) > 0 and len(data) > 0:
                 col_names = [c["name"] for c in columns_meta]
                 df_dict = {name: values for name, values in zip(col_names, data, strict=False)}
-                df = pl.DataFrame(df_dict)
+                # Cells are text next to a declared dtype; build with it like core's
+                # _handle_raw_data_format, or numbers arrive as String.
+                declared = [c.get("data_type") for c in columns_meta]
+                if all(declared) and len(declared) == len(data):
+                    schema = pl.Schema([(c["name"], _str_to_dtype(dt)) for c, dt in zip(columns_meta, declared, strict=True)])
+                    try:
+                        df = pl.DataFrame(data, schema, strict=False)
+                    except Exception:
+                        df = pl.DataFrame(df_dict)
+                else:
+                    df = pl.DataFrame(df_dict)
             else:
                 df = pl.DataFrame()
         else:

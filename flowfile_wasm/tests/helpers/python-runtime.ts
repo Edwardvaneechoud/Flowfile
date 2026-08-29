@@ -33,13 +33,21 @@ function poetryVenvPythons(): string[] {
     .filter(existsSync)
 }
 
-export function findPython(options: { requirePolars?: boolean } = {}): string | null {
-  const probe = options.requirePolars ? 'import polars' : ''
+export interface FindPythonOptions {
+  requirePolars?: boolean
+  /** Import to run instead — an interpreter that cannot run it is skipped. */
+  probe?: string
+  /** Environment for the probe. Give a probe with side effects an isolated one. */
+  env?: NodeJS.ProcessEnv
+}
+
+export function findPython(options: FindPythonOptions = {}): string | null {
+  const probe = options.probe ?? (options.requirePolars ? 'import polars' : '')
   const candidates = [process.env.FLOWFILE_TEST_PYTHON, 'python3', 'python', poetryPython(), ...poetryVenvPythons()]
   for (const candidate of candidates) {
     if (!candidate) continue
     try {
-      execFileSync(candidate, ['-c', probe], { stdio: 'ignore' })
+      execFileSync(candidate, ['-c', probe], { stdio: 'ignore', env: options.env ?? process.env })
       return candidate
     } catch {
       /* try the next one */

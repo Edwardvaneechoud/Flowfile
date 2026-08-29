@@ -35,7 +35,7 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 ## Run
 
 1. Click **Run** in the top toolbar.
-2. Node borders show execution state: green success, red failure, orange warning, grey not yet executed.
+2. Node borders show execution state: green success, red failure, orange warning, grey not yet executed. A hollow grey ring means the node was deliberately skipped behind a closed [Gate](nodes/combine.md#gate) — a successful outcome, not an error.
 3. Click any executed node to inspect its output in the bottom panel.
 
 In **Development** mode (the default) every node's data is available for preview after a run. Switch to **Performance** mode when the flow is done: only the steps needed for outputs execute, and the query optimizer works across nodes.

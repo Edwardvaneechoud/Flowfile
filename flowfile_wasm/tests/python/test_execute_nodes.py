@@ -94,6 +94,97 @@ def test_group_by_chain():
     assert set(rows[1:]) == {"x,30", "y,5"}
 
 
+def test_pivot_zero_fills_absent_combinations():
+    # Like core's do_pivot: an absent combination reads 0 for sum/count.
+    read_csv(1, "k,q,v\na,x,1\nb,x,3\nb,y,5\n")
+    r = engine.execute_pivot(2, 1, {"pivot_input": {
+        "index_columns": ["k"], "pivot_column": "q", "value_col": "v",
+        "aggregations": ["sum", "count", "mean", "min"],
+    }})
+    assert r["success"] is True, r.get("error")
+    rows = {row["k"]: row for row in engine.get_lazyframe(2).collect().to_dicts()}
+    assert rows["a"]["y_sum"] == 0
+    assert rows["a"]["y_count"] == 0
+    assert rows["a"]["y_mean"] is None
+    assert rows["a"]["y_min"] is None
+    assert rows["b"]["y_sum"] == 5
+
+    # A single aggregation names the column after the value alone; still zero-filled.
+    single = engine.execute_pivot(3, 1, {"pivot_input": {
+        "index_columns": ["k"], "pivot_column": "q", "value_col": "v", "aggregations": ["sum"],
+    }})
+    assert single["success"] is True, single.get("error")
+    assert {row["k"]: row["y"] for row in engine.get_lazyframe(3).collect().to_dicts()} == {"a": 0, "b": 5}
+
+
+def test_pivot_refuses_an_aggregation_the_value_dtype_cannot_carry():
+    # core refuses `sum` on String; the browser's polars 1.18 would sum to null.
+    read_csv(1, "k,q,v\na,x,one\nb,x,two\n")
+    r = engine.execute_pivot(2, 1, {"pivot_input": {
+        "index_columns": ["k"], "pivot_column": "q", "value_col": "v", "aggregations": ["mean", "sum"],
+    }})
+    assert r["success"] is False
+    assert "`sum` operation not supported for dtype `String`" in r["error"]
+    assert "value column 'v'" in r["error"]
+    assert engine.get_lazyframe(2) is None
+
+    # Only what core refuses is refused: everything else works on any dtype.
+    ok = engine.execute_pivot(3, 1, {"pivot_input": {
+        "index_columns": ["k"], "pivot_column": "q", "value_col": "v",
+        "aggregations": ["count", "first", "last", "min", "max", "mean", "median"],
+    }})
+    assert ok["success"] is True, ok.get("error")
+
+
+def test_pivot_refuses_sum_over_an_empty_string_column():
+    # Zero rows: core still resolves the aggregation's schema and rejects it.
+    engine.execute_manual_input(1, "", {"raw_data_format": {
+        "columns": [{"name": "k", "data_type": "String"}, {"name": "q", "data_type": "String"},
+                    {"name": "v", "data_type": "String"}],
+        "data": [[], [], []],
+    }})
+    r = engine.execute_pivot(2, 1, {"pivot_input": {
+        "index_columns": [], "pivot_column": "q", "value_col": "v", "aggregations": ["sum"],
+    }})
+    assert r["success"] is False
+    assert "`sum` operation not supported for dtype `String`" in r["error"]
+    assert engine.get_lazyframe(2) is None
+
+
+def test_pivot_refuses_a_null_in_the_pivot_column():
+    # A pivot turns each label into a column NAME, and a null is not a name.
+    engine.execute_manual_input(1, "", {"raw_data_format": {
+        "columns": [{"name": "k", "data_type": "Int64"}, {"name": "q", "data_type": "String"},
+                    {"name": "v", "data_type": "Int64"}],
+        "data": [[1, 1, 2], ["a", None, None], [1, 2, 3]],
+    }})
+    r = engine.execute_pivot(2, 1, {"pivot_input": {
+        "index_columns": ["k"], "pivot_column": "q", "value_col": "v", "aggregations": ["sum"],
+    }})
+    assert r["success"] is False
+    assert "Pivot column 'q' contains null values (2 row(s))" in r["error"]
+    assert "cannot become a column name" in r["error"]
+    assert engine.get_lazyframe(2) is None
+
+
+def test_pivot_allows_nulls_in_the_value_column():
+    # The refusal reads the pivot column, not the value column: nulls in the
+    # values are ordinary (they aggregate), only null *labels* are refused.
+    engine.execute_manual_input(1, "", {"raw_data_format": {
+        "columns": [{"name": "k", "data_type": "String"}, {"name": "q", "data_type": "String"},
+                    {"name": "v", "data_type": "Int64"}],
+        "data": [["a", "a", "b"], ["x", "y", "x"], [None, 2, None]],
+    }})
+    r = engine.execute_pivot(2, 1, {"pivot_input": {
+        "index_columns": ["k"], "pivot_column": "q", "value_col": "v", "aggregations": ["sum", "min"],
+    }})
+    assert r["success"] is True, r.get("error")
+    rows = {row["k"]: row for row in engine.get_lazyframe(2).collect().to_dicts()}
+    assert rows["a"]["x_sum"] == 0
+    assert rows["a"]["x_min"] is None
+    assert rows["a"]["y_sum"] == 2
+
+
 def test_manual_input_raw_data_format():
     r = engine.execute_manual_input(
         1, "",

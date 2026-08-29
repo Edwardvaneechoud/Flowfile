@@ -81,6 +81,9 @@ export interface NodeResult {
   error: string;
   run_time_ms: number;
   is_running: boolean;
+  // Deliberately skipped behind a closed gate: reported as success with a zero
+  // runtime, so the run stays green. Failure-driven skips emit no result at all.
+  skipped?: boolean;
 }
 
 // Node Description Types
@@ -673,6 +676,43 @@ export interface UnionInput {
   mode: "selective" | "relaxed";
 }
 
+// Gate Types
+
+export type GateOperator =
+  | "equals"
+  | "not_equals"
+  | "in"
+  | "not_in"
+  | "is_true"
+  | "is_false"
+  | "is_set";
+
+export const GATE_OPERATOR_LABELS: Readonly<Record<GateOperator, string>> = {
+  equals: "equals",
+  not_equals: "not equals",
+  in: "is one of",
+  not_in: "is not one of",
+  is_true: "is true",
+  is_false: "is false",
+  is_set: "is set",
+};
+
+// Operators that compare against `value`; the rest read the parameter alone.
+export const GATE_OPERATORS_WITH_VALUE: readonly GateOperator[] = [
+  "equals",
+  "not_equals",
+  "in",
+  "not_in",
+];
+
+export interface GateInput {
+  condition_source: "parameter" | "formula";
+  parameter: string;
+  operator: GateOperator;
+  value: string;
+  formula: string;
+}
+
 // Raw Data Types
 
 export interface RawDataFormat {
@@ -1042,6 +1082,12 @@ export interface NodeFormula extends NodeSingleInput {
 
 export interface NodeUnion extends NodeBase {
   union_input: UnionInput;
+}
+
+export interface NodeGate extends NodeSingleInput {
+  gate_input: GateInput;
+  // Adds the "else" output (output-1): live when the condition does not hold.
+  else_output?: boolean;
 }
 
 export interface NodeExternalSource extends NodeBase {

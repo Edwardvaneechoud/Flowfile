@@ -1,23 +1,17 @@
-from collections import deque
-
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.util.skip_rules import NodeRunStatus, classify_graph
 
 
 def determine_nodes_to_skip(nodes: list[FlowNode]) -> list[FlowNode]:
-    """Finds nodes to skip on the execution step.
+    """Finds nodes that are statically unrunnable on the execution step.
 
-    Skips every node whose input connections are invalid, plus the full
-    downstream closure of those nodes — a node cannot run if any ancestor
-    on its data path is unrunnable.
+    A node is skipped when its own input connections are invalid, or when the
+    trigger rules propagate an error-ish status to it from an unrunnable
+    ancestor (see ``skip_rules.classify_from_inputs``). For graphs without
+    gates this is exactly the old behavior: every misconfigured node plus its
+    full downstream closure. Deliberate (gate-driven) skips are not part of
+    this set — they are decided by the same rule engine but reported
+    separately, so a gated branch is never treated as unrunnable.
     """
-    skip_nodes = [node for node in nodes if not node.is_correct]
-    skipped_ids = {node.node_id for node in skip_nodes}
-    queue = deque(skip_nodes)
-    while queue:
-        node = queue.popleft()
-        for downstream in node.leads_to_nodes:
-            if downstream.node_id not in skipped_ids:
-                skipped_ids.add(downstream.node_id)
-                skip_nodes.append(downstream)
-                queue.append(downstream)
-    return skip_nodes
+    status = classify_graph(nodes)
+    return [node for node in nodes if status.get(node.node_id) == NodeRunStatus.SKIPPED_ERROR]

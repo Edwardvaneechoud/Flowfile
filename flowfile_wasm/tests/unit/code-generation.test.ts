@@ -4,8 +4,11 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import yaml from 'js-yaml'
 import { useCodeGeneration } from '../../src/composables/useCodeGeneration'
-import type { FlowNode, FlowEdge } from '../../src/types'
+import type { FlowNode, FlowEdge, FlowfileData } from '../../src/types'
 
 describe('Code Generation', () => {
   const { generateCode } = useCodeGeneration()
@@ -246,7 +249,7 @@ describe('Code Generation', () => {
         edges: createEdges([[1, 2]])
       })
 
-      expect(code).toContain('.group_by(["category"])')
+      expect(code).toContain('.group_by([pl.col("category")])')
       expect(code).toContain('.agg([')
       expect(code).toContain('pl.col("amount").sum().alias("total")')
       expect(code).toContain('pl.col("count").mean().alias("avg_count")')
@@ -575,7 +578,7 @@ describe('Code Generation', () => {
     })
 
     it('does not fuse into a node that references its input variable elsewhere', () => {
-      // dynamic_rename's expression references `<input>.columns`, so fusing would
+      // dynamic_rename's expression reads the input's schema, so fusing would
       // drop the variable it relies on -> the source must survive as its own var.
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
@@ -586,7 +589,7 @@ describe('Code Generation', () => {
       const code = generateCode({ nodes, edges: createEdges([[1, 2]]) })
 
       expect(code).toContain('source = pl.scan_csv')
-      expect(code).toContain('source.columns')
+      expect(code).toContain('source.collect_schema().names()')
       expect(code).toContain('renamed = source.rename')
     })
 
@@ -685,7 +688,8 @@ describe('Code Generation', () => {
   })
 
   describe('Type Casting in Select', () => {
-    it('should add cast for data type changes', () => {
+    // build_select renames and reorders; it never changes a dtype.
+    it('does not cast, even when the settings ask for a data type change', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'select', {
@@ -706,7 +710,8 @@ describe('Code Generation', () => {
         edges: createEdges([[1, 2]])
       })
 
-      expect(code).toContain('.cast(pl.Int64)')
+      expect(code).not.toContain('.cast(')
+      expect(code).toContain('pl.col("value")')
     })
   })
 
@@ -941,6 +946,77 @@ describe('Code Generation', () => {
       const code = generateCode({ nodes, edges: createEdges([[1, 2]]) })
       expect(code).not.toContain('df_right')
       expect(code).not.toContain('df_left')
+    })
+  })
+
+  // A saved flow, so the settings shapes are the ones the panels write.
+  describe('a flow file this editor saved', () => {
+    function fixtureFlow(): { nodes: Map<number, FlowNode>; edges: FlowEdge[] } {
+      const data = yaml.load(
+        readFileSync(resolve(__dirname, '../fixtures/wasm-export.yaml'), 'utf-8')
+      ) as FlowfileData
+      const nodes = new Map<number, FlowNode>()
+      const edges: FlowEdge[] = []
+      for (const node of data.nodes) {
+        nodes.set(node.id, {
+          id: node.id,
+          type: node.type,
+          x: node.x_position,
+          y: node.y_position,
+          settings: node.setting_input,
+          inputIds: node.input_ids || [],
+          leftInputId: node.input_ids?.[0],
+          rightInputId: node.right_input_id
+        } as FlowNode)
+        for (const input of node.input_ids || []) {
+          edges.push({
+            id: `e${input}-${node.id}`,
+            source: String(input),
+            target: String(node.id),
+            sourceHandle: 'output-0',
+            targetHandle: 'input-0'
+          })
+        }
+        if (node.right_input_id != null) {
+          edges.push({
+            id: `er${node.right_input_id}-${node.id}`,
+            source: String(node.right_input_id),
+            target: String(node.id),
+            sourceHandle: 'output-0',
+            targetHandle: 'input-1'
+          })
+        }
+      }
+      return { nodes, edges }
+    }
+
+    const code = generateCode(fixtureFlow())
+
+    it('dedupes on the chosen columns with the chosen strategy', () => {
+      // The generator used to ignore subset/keep and emit keep="undefined".
+      expect(code).toContain('subset=["e_contracts","row_labels"]')
+      expect(code).toContain('keep="last"')
+      expect(code).toContain('maintain_order=True')
+      expect(code).not.toContain('undefined')
+    })
+
+    it('renames the grouping column', () => {
+      // Without the alias, the pivot branch below is unbound.
+      expect(code).toContain('.group_by([pl.col("row_labels").alias("row_label")])')
+      expect(code).toContain('pl.col("e_contracts").sum().alias("contracts")')
+    })
+
+    it('joins with the configured strategy and suffix', () => {
+      expect(code).toContain('how="inner"')
+      expect(code).toContain('suffix="_right"')
+    })
+
+    it('binds every column the downstream nodes reference', () => {
+      const bound = new Set<string>()
+      for (const match of code.matchAll(/\.alias\("([^"]+)"\)/g)) bound.add(match[1])
+      for (const column of ['row_labels', 'e_contracts', 'row_label', 'contracts']) {
+        expect(bound, `${column} is never produced`).toContain(column)
+      }
     })
   })
 })

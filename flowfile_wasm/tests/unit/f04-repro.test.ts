@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { useCodeGeneration } from '../../src/composables/useCodeGeneration'
 import type { FlowNode } from '../../src/types'
 
-describe('F04 repro: group_by with no groupby-tagged column', () => {
+describe('group_by with no groupby-tagged column', () => {
   const { generateCode } = useCodeGeneration()
 
   function createNode(id: number, type: string, settings: any, inputIds: number[] = []): FlowNode {
@@ -26,7 +26,8 @@ describe('F04 repro: group_by with no groupby-tagged column', () => {
     } as FlowNode
   }
 
-  it('emits group_by([])', () => {
+  // build_group_by reduces the whole frame in one select: no group to group by.
+  it('reduces the whole frame with select', () => {
     const nodes = new Map<number, FlowNode>()
     nodes.set(1, createNode(1, 'manual_input', {
       raw_data_format: { columns: [{ name: 'a', data_type: 'Int64' }], data: [[1], [2], [3]] }
@@ -39,7 +40,8 @@ describe('F04 repro: group_by with no groupby-tagged column', () => {
       nodes,
       edges: [{ id: 'e1-2', source: '1', target: '2', sourceHandle: 'output-0', targetHandle: 'input-0' }] as any
     })
-    console.log(code)
-    expect(code).toContain('.group_by([]).agg([')
+    expect(code).toContain('.select([')
+    expect(code).toContain('pl.col("a").sum().alias("a_sum")')
+    expect(code).not.toContain('group_by')
   })
 })
