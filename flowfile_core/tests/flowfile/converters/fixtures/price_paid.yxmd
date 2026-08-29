@@ -1,0 +1,463 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="11.3">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+        <Position x="54" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="0">D:\Downloads\pp-complete.csv</File>
+          <FormatSpecificOptions>
+            <CodePage>28591</CodePage>
+            <Delimeter>,</Delimeter>
+            <IgnoreErrors>False</IgnoreErrors>
+            <FieldLen>254</FieldLen>
+            <AllowShareWrite>False</AllowShareWrite>
+            <HeaderRow>False</HeaderRow>
+            <IgnoreQuotes>DoubleQuotes</IgnoreQuotes>
+            <ImportLine>1</ImportLine>
+          </FormatSpecificOptions>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>pp-complete.csv</DefaultAnnotationText>
+          <Left value="False" />
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="Field_1" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_2" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_3" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_4" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_5" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_6" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_7" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_8" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_9" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_10" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_11" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_12" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_13" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_14" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_15" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Field_16" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="54" y="174" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <NumRows value="16" />
+          <Fields>
+            <Field name="Field1" />
+          </Fields>
+          <Data>
+            <r>
+              <c>Transaction unique identifier</c>
+            </r>
+            <r>
+              <c>Price</c>
+            </r>
+            <r>
+              <c>Date of Transfer</c>
+            </r>
+            <r>
+              <c>Postcode</c>
+            </r>
+            <r>
+              <c>Property Type</c>
+            </r>
+            <r>
+              <c>Old/New</c>
+            </r>
+            <r>
+              <c>Duration</c>
+            </r>
+            <r>
+              <c>PAON</c>
+            </r>
+            <r>
+              <c>SAON</c>
+            </r>
+            <r>
+              <c>Street</c>
+            </r>
+            <r>
+              <c>Locality</c>
+            </r>
+            <r>
+              <c>Town/City</c>
+            </r>
+            <r>
+              <c>District</c>
+            </r>
+            <r>
+              <c>County</c>
+            </r>
+            <r>
+              <c>PPDCategory Type</c>
+            </r>
+            <r>
+              <c>Record Status - monthly file only</c>
+            </r>
+          </Data>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxTextInput" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="186" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <RenameMode>RightInputRows</RenameMode>
+          <Fields orderChanged="False">
+            <Field name="Field_1" />
+            <Field name="Field_2" />
+            <Field name="Field_3" />
+            <Field name="Field_4" />
+            <Field name="Field_5" />
+            <Field name="Field_6" />
+            <Field name="Field_7" />
+            <Field name="Field_8" />
+            <Field name="Field_9" />
+            <Field name="Field_10" />
+            <Field name="Field_11" />
+            <Field name="Field_12" />
+            <Field name="Field_13" />
+            <Field name="Field_14" />
+            <Field name="Field_15" />
+            <Field name="Field_16" />
+            <Field name="*Unknown" />
+          </Fields>
+          <Expression />
+          <NamesFromRows>
+            <OnError>Warn</OnError>
+            <InputMode>Positional</InputMode>
+            <NewName>Field1</NewName>
+          </NamesFromRows>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <Left value="False" />
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="Transaction unique identifier" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Price" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Date of Transfer" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Postcode" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Property Type" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Old/New" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Duration" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="PAON" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="SAON" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Street" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Locality" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Town/City" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="District" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="County" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="PPDCategory Type" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+            <Field name="Record Status - monthly file only" size="254" source="File: D:\Downloads\pp-complete.csv" type="V_String" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDynamicRename" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect">
+        <Position x="294" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <OrderChanged value="False" />
+          <CommaDecimal value="False" />
+          <SelectFields>
+            <SelectField field="Transaction unique identifier" selected="True" type="String" size="254" />
+            <SelectField field="Price" selected="True" type="Int32" size="4" />
+            <SelectField field="Date of Transfer" selected="True" type="Date" size="10" />
+            <SelectField field="Postcode" selected="True" type="String" size="8" />
+            <SelectField field="Property Type" selected="True" type="String" size="1" />
+            <SelectField field="Old/New" selected="True" type="String" size="1" />
+            <SelectField field="Duration" selected="True" type="String" size="1" />
+            <SelectField field="PPDCategory Type" selected="True" type="String" size="1" />
+            <SelectField field="Record Status - monthly file only" selected="False" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSelect" />
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="582" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Expression>Year([Date of Transfer])=2016</Expression>
+          <Mode>Custom</Mode>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Year([Date of Transfer])=2016</DefaultAnnotationText>
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="390" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FieldType>Text</FieldType>
+          <Fields orderChanged="False">
+            <Field name="Old/New" />
+            <Field name="Transaction unique identifier" selected="False" />
+            <Field name="Postcode" selected="False" />
+            <Field name="Property Type" selected="False" />
+            <Field name="Duration" selected="False" />
+            <Field name="PAON" selected="False" />
+            <Field name="SAON" selected="False" />
+            <Field name="Street" selected="False" />
+            <Field name="Locality" selected="False" />
+            <Field name="Town/City" selected="False" />
+            <Field name="District" selected="False" />
+            <Field name="County" selected="False" />
+            <Field name="PPDCategory Type" selected="False" />
+            <Field name="*Unknown" selected="False" />
+          </Fields>
+          <CopyOutput value="False" />
+          <Expression>[_CurrentField_]='Y'</Expression>
+          <ChangeFieldType value="True" />
+          <OutputFieldType type="V_String" size="254" scale="0" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>[_CurrentField_]='Y'</DefaultAnnotationText>
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxMultiFieldFormula" />
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="882" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <File FileFormat="19" MaxRecords="">.\2016PPData.yxdb</File>
+          <Passwords />
+          <FormatSpecificOptions>
+            <NoSpatialIndex>False</NoSpatialIndex>
+            <SaveSource>True</SaveSource>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>2016PPData.yxdb</DefaultAnnotationText>
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+    <Node ToolID="9">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RegEx.RegEx">
+        <Position x="486" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Field>Postcode</Field>
+          <RegExExpression value="([A-Z]{1,2})([0-9][0-9A-Z]?) ([0-9]{1,2})([A-Z]{1,2})" />
+          <CaseInsensitve value="True" />
+          <Method>ParseComplex</Method>
+          <Replace expression="">
+            <CopyUnmatched value="True" />
+          </Replace>
+          <ParseSimple>
+            <SplitToRows value="False" />
+            <RootName />
+            <NumFields value="3" />
+            <ErrorHandling>Warn</ErrorHandling>
+          </ParseSimple>
+          <ParseComplex>
+            <Field field="PostCodeArea" type="String" size="2" />
+            <Field field="PostCodeDistrict" type="String" size="2" />
+            <Field field="PostCodeSector" type="Byte" size="1" />
+            <Field field="PostCodeUnit" type="String" size="2" />
+          </ParseComplex>
+          <Match>
+            <Field>Transaction unique identifier_Matched</Field>
+            <ErrorUnmatched value="False" />
+          </Match>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Parse:
+([A-Z]{1,2})([0-9][0-9A-Z]?...</DefaultAnnotationText>
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxRegEx" />
+    </Node>
+    <Node ToolID="11">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect">
+        <Position x="690" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <OrderChanged value="True" />
+          <CommaDecimal value="False" />
+          <SelectFields>
+            <SelectField field="Transaction unique identifier" selected="True" size="38" description="A reference number which is generated automatically recording each published sale. The number is unique and will change each time a sale is recorded." />
+            <SelectField field="Price" selected="True" description="	Sale price stated on the transfer deed." />
+            <SelectField field="Date of Transfer" selected="True" description="Date when the sale was completed, as stated on the transfer deed." />
+            <SelectField field="Postcode" selected="True" description="This is the postcode used at the time of the original transaction." />
+            <SelectField field="PostCodeArea" selected="True" />
+            <SelectField field="PostCodeDistrict" selected="True" />
+            <SelectField field="PostCodeSector" selected="True" />
+            <SelectField field="PostCodeUnit" selected="True" />
+            <SelectField field="Property Type" selected="True" description="D = Detached, S = Semi-Detached, T = Terraced, F = Flats/Maisonettes, O = Other" />
+            <SelectField field="Old/New" selected="True" rename="NewBuild" type="Bool" size="1" description="Is it a Newly Built Property" />
+            <SelectField field="Duration" selected="True" description="F = Freehold, L= Leasehold" />
+            <SelectField field="PAON" selected="True" size="64" description="Primary Addressable Object Name. Typically the house number or name" />
+            <SelectField field="SAON" selected="True" size="64" description="Secondary Addressable Object Name." />
+            <SelectField field="Street" selected="True" size="64" />
+            <SelectField field="Locality" selected="True" size="64" />
+            <SelectField field="Town/City" selected="True" size="32" />
+            <SelectField field="District" selected="True" size="32" />
+            <SelectField field="County" selected="True" size="32" />
+            <SelectField field="PPDCategory Type" selected="True" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSelect" />
+    </Node>
+    <Node ToolID="12">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="786" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Mode>Simple</Mode>
+          <Simple>
+            <Field>PPDCategory Type</Field>
+            <Operator>=</Operator>
+            <Operands>
+              <Operand>A</Operand>
+            </Operands>
+          </Simple>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>[PPDCategory Type] = "A"</DefaultAnnotationText>
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="4" Connection="Targets" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="4" Connection="Source" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Output" />
+      <Destination ToolID="7" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="6" Connection="True" />
+      <Destination ToolID="11" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="7" Connection="Output" />
+      <Destination ToolID="9" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="9" Connection="Output" />
+      <Destination ToolID="6" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="11" Connection="Output" />
+      <Destination ToolID="12" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="12" Connection="True" />
+      <Destination ToolID="8" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stop value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <MetaInfo>
+      <NameIsFileName value="True" />
+      <Name>Extract 2016 Prices</Name>
+      <Description />
+      <RootToolName />
+      <ToolVersion />
+      <ToolInDb value="False" />
+      <CategoryName />
+      <SearchTags />
+      <Author />
+      <Company />
+      <Copyright />
+      <DescriptionLink actual="" displayed="" />
+      <Example>
+        <Description />
+        <File />
+      </Example>
+    </MetaInfo>
+    <Events>
+      <Enabled value="True" />
+    </Events>
+  </Properties>
+</AlteryxDocument>

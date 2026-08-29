@@ -70,9 +70,10 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     "replace": _spec("Replace", "replace", 3),
     "padleft": _spec("PadLeft", "pad_left", 3),
     "padright": _spec("PadRight", "pad_right", 3),
+    "reversestring": _spec("ReverseString", "reverse", 1),
     # null / logic
     "isnull": _spec("IsNull", "is_empty", 1),
-    "isempty": _spec("IsEmpty", "is_empty", 1),
+    "isempty": FunctionSpec("IsEmpty", None, 1, 1, special="isempty"),
     # type conversion
     "tonumber": _spec("ToNumber", "to_number", 1),
     "tostring": _spec("ToString", "to_string", 1),
@@ -98,14 +99,24 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     # date / time
     "datetimeadd": FunctionSpec("DateTimeAdd", None, 3, 3, special="datetimeadd"),
     "datetimediff": FunctionSpec("DateTimeDiff", None, 3, 3, special="datetimediff"),
+    "datetimetrim": FunctionSpec("DateTimeTrim", None, 2, 2, special="datetimetrim"),
     "datetimeyear": _spec("DateTimeYear", "year", 1),
     "datetimemonth": _spec("DateTimeMonth", "month", 1),
     "datetimeday": _spec("DateTimeDay", "day", 1),
     "datetimehour": _spec("DateTimeHour", "hour", 1),
     "datetimeminute": _spec("DateTimeMinute", "minute", 1),
+    "datetimeminutes": _spec("DateTimeMinutes", "minute", 1),
     "datetimesecond": _spec("DateTimeSecond", "second", 1),
+    "datetimeseconds": _spec("DateTimeSeconds", "second", 1),
     "datetimenow": FunctionSpec("DateTimeNow", "now", 0, 0),
     "datetimetoday": FunctionSpec("DateTimeToday", "today", 0, 0),
+    # date / time, short forms
+    "year": _spec("Year", "year", 1),
+    "month": _spec("Month", "month", 1),
+    "day": _spec("Day", "day", 1),
+    "hour": _spec("Hour", "hour", 1),
+    "minute": _spec("Minute", "minute", 1),
+    "second": _spec("Second", "second", 1),
 }
 
 REJECTED_FUNCTIONS: dict[str, str] = {
@@ -134,9 +145,11 @@ _DATETIME_DIFF_UNITS = {
     "second": "datetime_diff_seconds",
 }
 
+_DATETIME_TRIM_PARTS = {"year", "month", "day", "hour", "minute", "second"}
+_DATETIME_TRIM_CALLS = {"firstofmonth": "start_of_month", "lastofmonth": "end_of_month"}
+
 _KEYWORDS = {"if", "then", "elseif", "else", "endif", "and", "or", "not", "in", "true", "false", "null"}
 
-_REASON_NOT = "the NOT operator is not supported by the Flowfile formula language; rewrite the condition as '= false'"
 _REASON_IN = (
     "the IN operator has no Flowfile formula equivalent; rewrite it as a chain of '=' comparisons joined by 'or'"
 )
@@ -196,7 +209,9 @@ def _tokenize(text: str) -> list[_Token]:
                 tokens.append(_Token("op", "!=", i))
                 i += 2
                 continue
-            raise _Untranslatable(_REASON_NOT)
+            tokens.append(_Token("op", "!", i))
+            i += 1
+            continue
         if ch == "^":
             raise _Untranslatable("the '^' power operator is not supported; rewrite it as Pow(base, exponent)")
         two = text[i : i + 2]
@@ -290,6 +305,11 @@ class _Binary(_Node):
 
 @dataclass
 class _Unary(_Node):
+    operand: _Node
+
+
+@dataclass
+class _Not(_Node):
     operand: _Node
 
 
@@ -398,8 +418,9 @@ class _Parser:
         return node
 
     def _unary(self) -> _Node:
-        if self._peek_ident() == "not":
-            raise _Untranslatable(_REASON_NOT)
+        if self._peek_ident() == "not" or self._peek_op() == "!":
+            self._i += 1
+            return _Not(self._unary())
         if self._peek_op() == "-":
             self._i += 1
             return _Unary(self._unary())
@@ -435,8 +456,6 @@ class _Parser:
         if low in ("true", "false"):
             self._i += 1
             return _Literal(low)
-        if low == "not":
-            raise _Untranslatable(_REASON_NOT)
         if low == "in":
             raise _Untranslatable(_REASON_IN)
         if low == "if":
@@ -486,9 +505,7 @@ class _Parser:
             self._expect_keyword("then", "an ELSEIF branch")
             node.branches.append((branch_condition, self._expr()))
         if self._peek_ident() != "else":
-            raise _Untranslatable(
-                "the IF expression has no ELSE branch; the Flowfile formula language requires one"
-            )
+            raise _Untranslatable("the IF expression has no ELSE branch; the Flowfile formula language requires one")
         self._i += 1
         node.otherwise = self._expr()
         self._expect_keyword("endif", "an IF expression")
@@ -522,6 +539,8 @@ def _emit(node: _Node) -> tuple[str, int]:
         return f"[{node.name}]", _PREC_ATOM
     if isinstance(node, _Unary):
         return f"-{_emit_child(node.operand, _PREC_UNARY)}", _PREC_UNARY
+    if isinstance(node, _Not):
+        return f"not({_emit_child(node.operand, _PREC_IF)})", _PREC_ATOM
     if isinstance(node, _Binary):
         left = _emit_child(node.left, node.prec)
         right = _emit_child(node.right, node.prec, right=True)
@@ -548,9 +567,7 @@ def _emit_child(node: _Node, parent_prec: int, right: bool = False) -> str:
 def _emit_call(node: _Call) -> tuple[str, int]:
     low = node.name.lower()
     if low.startswith("regex_"):
-        raise _Untranslatable(
-            f"regular-expression function {node.name}() has no Flowfile formula equivalent"
-        )
+        raise _Untranslatable(f"regular-expression function {node.name}() has no Flowfile formula equivalent")
     if low in REJECTED_FUNCTIONS:
         raise _Untranslatable(REJECTED_FUNCTIONS[low])
     spec = FUNCTION_MAP.get(low)
@@ -558,9 +575,7 @@ def _emit_call(node: _Call) -> tuple[str, int]:
         raise _Untranslatable(f"Alteryx function {node.name}() has no verified Flowfile formula equivalent")
     count = len(node.args)
     if count < spec.min_args or (spec.max_args is not None and count > spec.max_args):
-        raise _Untranslatable(
-            f"Alteryx function {spec.alteryx_name}() expects {_arity_text(spec)} but got {count}"
-        )
+        raise _Untranslatable(f"Alteryx function {spec.alteryx_name}() expects {_arity_text(spec)} but got {count}")
     if spec.special == "iif":
         condition, when_true, when_false = node.args
         return (
@@ -573,6 +588,12 @@ def _emit_call(node: _Call) -> tuple[str, int]:
         return _emit_datetime_add(node), _PREC_ATOM
     if spec.special == "datetimediff":
         return _emit_datetime_diff(node), _PREC_ATOM
+    if spec.special == "datetimetrim":
+        return _emit_datetime_trim(node), _PREC_ATOM
+    if spec.special == "isempty":
+        # Alteryx IsEmpty() is true for null *and* the empty string; is_empty() only covers null.
+        rendered = _emit_child(node.args[0], _PREC_IF)
+        return f'(is_empty({rendered}) or {rendered} = "")', _PREC_ATOM
     rendered_args = ", ".join(_emit_child(arg, _PREC_IF) for arg in node.args)
     return f"{spec.target}({rendered_args})", _PREC_ATOM
 
@@ -589,8 +610,7 @@ def _emit_round(node: _Call) -> str:
     multiple = node.args[1]
     if not isinstance(multiple, _Literal):
         raise _Untranslatable(
-            "Round() can only be converted when the second argument is a literal power of ten "
-            "(1, 0.1, 0.01, ...)"
+            "Round() can only be converted when the second argument is a literal power of ten (1, 0.1, 0.01, ...)"
         )
     text = multiple.text
     if text == "1":
@@ -621,6 +641,16 @@ def _emit_datetime_add(node: _Call) -> str:
     if target is None:
         raise _Untranslatable(f"DateTimeAdd() unit {raw!r} has no Flowfile formula equivalent")
     return f"{target}({_emit_child(node.args[0], _PREC_IF)}, {_emit_child(node.args[1], _PREC_IF)})"
+
+
+def _emit_datetime_trim(node: _Call) -> str:
+    raw, unit = _literal_unit(node.args[1], "DateTimeTrim")
+    target = _DATETIME_TRIM_CALLS.get(unit)
+    if target is not None:
+        return f"{target}({_emit_child(node.args[0], _PREC_IF)})"
+    if unit not in _DATETIME_TRIM_PARTS:
+        raise _Untranslatable(f"DateTimeTrim() unit {raw!r} has no Flowfile formula equivalent")
+    return f'date_trim({_emit_child(node.args[0], _PREC_IF)}, "{unit}")'
 
 
 def _emit_datetime_diff(node: _Call) -> str:

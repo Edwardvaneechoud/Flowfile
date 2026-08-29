@@ -1115,7 +1115,9 @@ class FlowDataEngine:
 
         actual_transforms = [c for c in idx_mapping if c[2] != dtypes[c[1]]]
         transformations = [
-            utils.define_pl_col_transformation(col_name=transform[0], col_type=transform[2])
+            utils.define_pl_col_transformation(
+                col_name=transform[0], col_type=transform[2], source_type=dtypes[transform[1]]
+            )
             for transform in actual_transforms
         ]
 

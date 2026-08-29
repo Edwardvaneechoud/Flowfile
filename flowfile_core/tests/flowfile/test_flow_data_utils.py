@@ -1,5 +1,7 @@
 """Tests for flowfile/flow_data_engine/utils module."""
 
+from datetime import date, datetime
+
 import polars as pl
 
 from flowfile_core.flowfile.flow_data_engine.utils import (
@@ -51,6 +53,17 @@ class TestDefinePlColTransformation:
     def test_float_type(self):
         expr = define_pl_col_transformation("col1", pl.Float64)
         assert expr is not None
+
+    def test_text_source_is_parsed_into_a_date(self):
+        frame = pl.DataFrame({"col1": ["2016-05-04", "nonsense"]})
+        expr = define_pl_col_transformation("col1", pl.Date, source_type=pl.String)
+        assert frame.select(expr)["col1"].to_list() == [date(2016, 5, 4), None]
+
+    def test_temporal_source_is_cast_rather_than_parsed(self):
+        # str.to_date raises on a non-string column, so a datetime source must take the cast path.
+        frame = pl.DataFrame({"col1": [datetime(2016, 5, 4, 10, 30)]})
+        expr = define_pl_col_transformation("col1", pl.Date, source_type=pl.Datetime)
+        assert frame.select(expr)["col1"].to_list() == [date(2016, 5, 4)]
 
 
 class TestFindFirstPositions:

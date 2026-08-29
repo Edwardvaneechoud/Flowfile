@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Fields><Field name="a" /><Field name="b" /></Fields>
+        <Data><r><c>1</c><c>2</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="110" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>Formula</RenameMode>
+        <Fields orderChanged="False"><Field name="a" /><Field name="b" /><Field name="*Unknown" /></Fields>
+        <Expression>Uppercase([_CurrentField_])</Expression>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="210" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>FirstRow</RenameMode>
+        <Fields orderChanged="False"><Field name="A" /><Field name="B" /><Field name="*Unknown" /></Fields>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="310" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>AddPrefixSuffix</RenameMode>
+        <Fields orderChanged="False"><Field name="A" /><Field name="B" /><Field name="*Unknown" /></Fields>
+        <AddPrefixSuffix><Prefix>pre_</Prefix><Suffix>_post</Suffix></AddPrefixSuffix>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="410" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>RemovePrefixSuffix</RenameMode>
+        <Fields orderChanged="False"><Field name="A" /><Field name="*Unknown" /></Fields>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="3" Connection="Output" /><Destination ToolID="4" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="4" Connection="Output" /><Destination ToolID="5" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Dynamic rename modes</Name></MetaInfo></Properties>
+</AlteryxDocument>

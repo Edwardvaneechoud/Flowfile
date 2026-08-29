@@ -28,6 +28,9 @@ class AlteryxTool:
     y: int | None = None
     configuration: ET.Element | None = None
     annotation: str = ""
+    default_annotation: str = ""
+    # Alteryx's cached output schema for the tool; the only column names a reader can offer.
+    output_fields: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -59,11 +62,20 @@ def _parse_int(value: str | None) -> int | None:
         return None
 
 
-def _read_annotation(node: ET.Element) -> str:
-    element = node.find("Properties/Annotation/AnnotationText")
+def _read_annotation(node: ET.Element, tag: str) -> str:
+    element = node.find(f"Properties/Annotation/{tag}")
     if element is None or element.text is None:
         return ""
     return element.text.strip()
+
+
+def _read_output_fields(node: ET.Element) -> list[str]:
+    holder = node.find("Properties/MetaInfo[@connection='Output']/RecordInfo")
+    if holder is None:
+        holder = node.find("Properties/MetaInfo/RecordInfo")
+    if holder is None:
+        return []
+    return [name for element in holder.findall("Field") if (name := element.get("name"))]
 
 
 def _build_tool(node: ET.Element, gui_settings: ET.Element | None, plugin: str) -> AlteryxTool | None:
@@ -85,7 +97,9 @@ def _build_tool(node: ET.Element, gui_settings: ET.Element | None, plugin: str) 
         x=_parse_int(position.get("x")) if position is not None else None,
         y=_parse_int(position.get("y")) if position is not None else None,
         configuration=node.find("Properties/Configuration"),
-        annotation=_read_annotation(node),
+        annotation=_read_annotation(node, "AnnotationText"),
+        default_annotation=_read_annotation(node, "DefaultAnnotationText"),
+        output_fields=_read_output_fields(node),
     )
 
 

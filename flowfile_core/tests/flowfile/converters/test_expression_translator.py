@@ -28,7 +28,9 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("padleft", 'PadLeft([Name], 5, "0")', 'pad_left([Name], 5, "0")'),
     ("padright", 'PadRight([Name], 5, "0")', 'pad_right([Name], 5, "0")'),
     ("isnull", "IsNull([Amount])", "is_empty([Amount])"),
-    ("isempty", "IsEmpty([Name])", "is_empty([Name])"),
+    # Alteryx IsEmpty() is true for null *and* the empty string; is_empty() only covers null.
+    ("isempty", "IsEmpty([Name])", '(is_empty([Name]) or [Name] = "")'),
+    ("reversestring", "ReverseString([Name])", "reverse([Name])"),
     ("tonumber", "ToNumber([Name])", "to_number([Name])"),
     ("tostring", "ToString([Amount])", "to_string([Amount])"),
     ("abs", "Abs([Amount])", "abs([Amount])"),
@@ -56,9 +58,18 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("datetimeday", "DateTimeDay([OrderDate])", "day([OrderDate])"),
     ("datetimehour", "DateTimeHour([OrderDate])", "hour([OrderDate])"),
     ("datetimeminute", "DateTimeMinute([OrderDate])", "minute([OrderDate])"),
+    ("datetimeminutes", "DateTimeMinutes([OrderDate])", "minute([OrderDate])"),
     ("datetimesecond", "DateTimeSecond([OrderDate])", "second([OrderDate])"),
+    ("datetimeseconds", "DateTimeSeconds([OrderDate])", "second([OrderDate])"),
     ("datetimenow", "DateTimeNow()", "now()"),
     ("datetimetoday", "DateTimeToday()", "today()"),
+    ("datetimetrim", 'DateTimeTrim([OrderDate], "month")', 'date_trim([OrderDate], "month")'),
+    ("year", "Year([OrderDate])", "year([OrderDate])"),
+    ("month", "Month([OrderDate])", "month([OrderDate])"),
+    ("day", "Day([OrderDate])", "day([OrderDate])"),
+    ("hour", "Hour([OrderDate])", "hour([OrderDate])"),
+    ("minute", "Minute([OrderDate])", "minute([OrderDate])"),
+    ("second", "Second([OrderDate])", "second([OrderDate])"),
 ]
 
 EXTRA_FUNCTION_CASES: list[tuple[str, str]] = [
@@ -74,6 +85,9 @@ EXTRA_FUNCTION_CASES: list[tuple[str, str]] = [
         'DateTimeDiff([ShipDate], [OrderDate], "seconds")',
         "datetime_diff_seconds([ShipDate], [OrderDate])",
     ),
+    ('DateTimeTrim([OrderDate], "firstofmonth")', "start_of_month([OrderDate])"),
+    ('DateTimeTrim([OrderDate], "lastofmonth")', "end_of_month([OrderDate])"),
+    ('DateTimeTrim([OrderDate], "day")', 'date_trim([OrderDate], "day")'),
 ]
 
 OPERATOR_CASES: list[tuple[str, str]] = [
@@ -95,6 +109,14 @@ OPERATOR_CASES: list[tuple[str, str]] = [
     ("[Flag] || [Other]", "[Flag] or [Other]"),
     ("-[Amount]", "-[Amount]"),
     ("[Amount] - -1", "[Amount] - -1"),
+    ("NOT [Flag]", "not([Flag])"),
+    ("NOT([Flag])", "not([Flag])"),
+    ("!([Flag])", "not([Flag])"),
+    ("![Flag]", "not([Flag])"),
+    ("[A] = 1 AND NOT [B]", "[A] = 1 and not([B])"),
+    ("NOT IsNull([Amount])", "not(is_empty([Amount]))"),
+    # `!` binds tighter than a comparison in Alteryx, so the NOT applies to the field alone.
+    ("NOT [Flag] = 1", "not([Flag]) = 1"),
 ]
 
 PRECEDENCE_CASES: list[tuple[str, str]] = [
@@ -149,11 +171,10 @@ LITERAL_CASES: list[tuple[str, str]] = [
 ]
 
 REJECTED_CASES: list[tuple[str, str]] = [
-    ("not-operator", "NOT [Flag]"),
-    ("not-operator-call", "NOT([Flag])"),
-    ("not-operator-bang", "!([Flag])"),
-    ("not-inside-and", "[A] = 1 AND NOT [B]"),
+    # Flowfile's `in` is substring containment, not set membership, so IN can never be translated.
     ("in-operator", '[Status] IN ("a", "b")'),
+    ("datetimetrim-unsupported-unit", 'DateTimeTrim([D], "fortnight")'),
+    ("datetimetrim-non-literal-unit", "DateTimeTrim([D], [Unit])"),
     ("null-literal", "NULL"),
     ("null-call", "Null()"),
     ("null-in-expression", "[Amount] = NULL()"),
@@ -274,10 +295,6 @@ def test_rejection_reasons_are_single_line_and_comment_safe(case_id: str, altery
     reason = try_translate(alteryx).reason
     assert "\n" not in reason and "\r" not in reason
     assert len(reason) <= 300
-
-
-def test_not_reason_mentions_the_not_operator():
-    assert "NOT" in try_translate("NOT [Flag]").reason
 
 
 def test_in_reason_mentions_the_in_operator():

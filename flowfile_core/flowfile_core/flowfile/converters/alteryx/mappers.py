@@ -8,13 +8,15 @@ Flowfile edges without knowing anything about individual tools.
 
 from __future__ import annotations
 
+import copy
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from polars_expr_transformer import simple_function_to_expr
 
-from flowfile_core.flowfile.converters.alteryx.expression import try_translate
+from flowfile_core.flowfile.converters.alteryx.expression import TranslationOutcome, try_translate
 from flowfile_core.flowfile.converters.alteryx.report import ToolReportRow, ToolStatus
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxConnection, AlteryxTool
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -27,19 +29,24 @@ DEFAULT_INPUT_ANCHOR = "Input"
 DEFAULT_OUTPUT_ANCHOR = "Output"
 WARNING_PREFIX = "⚠ "
 
+CONFIG_COMMENT_MAX_LINES = 80
+CONFIG_COMMENT_LINE_LIMIT = 300
+
 FORMULA_STEP_DX = 150
 FORMULA_STEP_DY = 110
 ANTI_DX = 180
 ANTI_DY = 160
 
+# Alteryx widths matter: Float is 4-byte, Byte is an unsigned 8-bit integer. Byte widens to
+# Int16 rather than UInt8 because Int16 is one of the types the select node's UI offers.
 _ALTERYX_TYPE_MAP: dict[str, str] = {
     "bool": "Boolean",
-    "byte": "Int64",
-    "int16": "Int64",
-    "int32": "Int64",
+    "byte": "Int16",
+    "int16": "Int16",
+    "int32": "Int32",
     "int64": "Int64",
     "fixeddecimal": "Float64",
-    "float": "Float64",
+    "float": "Float32",
     "double": "Float64",
     "string": "String",
     "v_string": "String",
@@ -127,6 +134,10 @@ class EmitContext:
     input_map: dict[tuple[int, str], list[tuple[int, str]]] = field(default_factory=dict)
     # best-effort column tracker: tool id -> columns leaving that tool (None = unknown)
     tool_columns: dict[int, list[str] | None] = field(default_factory=dict)
+    # every parsed tool by id, so a mapper can read the tool feeding one of its anchors
+    tools: dict[int, AlteryxTool] = field(default_factory=dict)
+    # (dest tool id, dest anchor) pairs a mapper resolved at convert time and does not want wired
+    suppressed_inputs: set[tuple[int, str]] = field(default_factory=set)
     next_node_id: int = 0
 
     def new_node_id(self) -> int:
@@ -196,6 +207,18 @@ class EmitContext:
                 return self.tool_columns.get(connection.origin_tool_id)
         return None
 
+    def source_tool(self, tool_id: int, anchors: tuple[str, ...]) -> AlteryxTool | None:
+        """The tool feeding the first of ``anchors`` that is actually wired."""
+        for anchor in anchors:
+            for connection in self.inbound.get(tool_id, []):
+                if connection.dest_anchor == anchor:
+                    return self.tools.get(connection.origin_tool_id)
+        return None
+
+    def suppress_input(self, tool_id: int, anchors: tuple[str, ...]) -> None:
+        """Mark anchors this mapper resolved at convert time so wiring skips them silently."""
+        self.suppressed_inputs.update((tool_id, anchor) for anchor in anchors)
+
 
 ToolMapper = Callable[[AlteryxTool, EmitContext], ToolReportRow]
 
@@ -244,6 +267,15 @@ def _is_true(value: str | None) -> bool:
     return (value or "").strip().lower() == "true"
 
 
+def _attribute(element: ET.Element | None, path: str, name: str, default: str = "") -> str:
+    if element is None:
+        return default
+    found = element.find(path)
+    if found is None:
+        return default
+    return (found.get(name) or default).strip()
+
+
 def _description(tool: AlteryxTool, warning: str = "") -> str:
     parts = [part for part in (warning, tool.annotation) if part]
     return " — ".join(parts)
@@ -263,6 +295,14 @@ def _split_path(raw: str) -> tuple[str, str]:
     return cleaned[:index], cleaned[index + 1 :]
 
 
+_WINDOWS_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def _is_foreign_absolute_path(path: str) -> bool:
+    """A drive-letter or UNC path, which only resolves on the machine the workflow came from."""
+    return bool(_WINDOWS_ABSOLUTE_RE.match(path.strip()))
+
+
 def _extension(name: str) -> str:
     return name.rsplit(".", 1)[-1].lower() if "." in name else ""
 
@@ -271,6 +311,36 @@ def _map_alteryx_type(alteryx_type: str | None) -> str | None:
     if not alteryx_type:
         return None
     return _ALTERYX_TYPE_MAP.get(alteryx_type.strip().lower())
+
+
+def _config_xml_lines(tool: AlteryxTool) -> list[str]:
+    """The tool's ``<Configuration>`` element pretty-printed into lines."""
+    if tool.configuration is None:
+        return []
+    element = copy.deepcopy(tool.configuration)
+    ET.indent(element, space="  ")
+    try:
+        rendered = ET.tostring(element, encoding="unicode")
+    except (TypeError, ValueError):
+        return []
+    lines = [line.rstrip()[:CONFIG_COMMENT_LINE_LIMIT] for line in rendered.splitlines() if line.strip()]
+    if len(lines) > CONFIG_COMMENT_MAX_LINES:
+        dropped = len(lines) - CONFIG_COMMENT_MAX_LINES
+        lines = [*lines[:CONFIG_COMMENT_MAX_LINES], f"... ({dropped} more lines; see the original .yxmd)"]
+    return lines
+
+
+def _original_config_lines(tool: AlteryxTool) -> list[str]:
+    """Everything the .yxmd said about this tool, so it can be rebuilt without the original file."""
+    lines: list[str] = []
+    annotation = tool.default_annotation or tool.annotation
+    if annotation:
+        lines.extend(f"Alteryx annotation: {part.strip()}" for part in annotation.splitlines() if part.strip())
+    config = _config_xml_lines(tool)
+    if config:
+        lines.append(f"Original Alteryx configuration ({tool.plugin or tool_label(tool)}):")
+        lines.extend(config)
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +354,7 @@ def _placeholder_code(tool: AlteryxTool, num_inputs: int, notes: list[str]) -> s
         "# This node passes its input through unchanged; rebuild the logic here.",
     ]
     lines.extend(f"# {_one_line(note)}" for note in notes)
+    lines.extend(f"# {line}" for line in _original_config_lines(tool))
     if num_inputs == 0:
         lines.append("output_df = pl.DataFrame()")
     elif num_inputs == 1:
@@ -422,7 +493,7 @@ def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     keep_missing = True
     select_input: list[transform_schema.SelectInput] = []
-    retyped: list[str] = []
+    unmapped_types: list[str] = []
     for element in config.findall("SelectFields/SelectField"):
         name = element.get("field") or ""
         selected = _is_true(element.get("selected"))
@@ -431,13 +502,17 @@ def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             continue
         if not name:
             continue
-        if element.get("type"):
-            retyped.append(name)
+        alteryx_type = element.get("type")
+        data_type = _map_alteryx_type(alteryx_type) if selected else None
+        if selected and alteryx_type and data_type is None:
+            unmapped_types.append(f"{name} ({alteryx_type})")
         select_input.append(
             transform_schema.SelectInput(
                 old_name=name,
                 new_name=element.get("rename") or name,
                 keep=selected,
+                data_type=data_type,
+                data_type_change=data_type is not None,
             )
         )
 
@@ -454,11 +529,10 @@ def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     messages = []
     status: ToolStatus = "converted"
-    if retyped:
+    if unmapped_types:
         status = "partial"
         messages.append(
-            "Data type changes were not converted; set them on a downstream Formula or Select node: "
-            + ", ".join(retyped)
+            "These Alteryx data types have no Flowfile equivalent and were left unchanged: " + ", ".join(unmapped_types)
         )
     return _row(tool, status, [node_id], "select", messages)
 
@@ -468,10 +542,78 @@ def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 # ---------------------------------------------------------------------------
 
 
+# Alteryx "simple" filters store a field/operator/operand triple instead of an expression.
+# Rebuilding the Alteryx expression and translating that reuses the fail-closed pipeline.
+_SIMPLE_FILTER_TEMPLATES: dict[str, tuple[str, int]] = {
+    "=": ("{field} = {operand}", 1),
+    "==": ("{field} = {operand}", 1),
+    "!=": ("{field} != {operand}", 1),
+    "<>": ("{field} != {operand}", 1),
+    ">": ("{field} > {operand}", 1),
+    ">=": ("{field} >= {operand}", 1),
+    "<": ("{field} < {operand}", 1),
+    "<=": ("{field} <= {operand}", 1),
+    "isnull": ("IsNull({field})", 0),
+    "isnotnull": ("!IsNull({field})", 0),
+    "isempty": ("IsEmpty({field})", 0),
+    "isnotempty": ("!IsEmpty({field})", 0),
+    "contains": ("Contains({field}, {operand})", 1),
+    "doesnotcontain": ("!Contains({field}, {operand})", 1),
+    "!contains": ("!Contains({field}, {operand})", 1),
+    "startswith": ("StartsWith({field}, {operand})", 1),
+    "doesnotstartwith": ("!StartsWith({field}, {operand})", 1),
+    "endswith": ("EndsWith({field}, {operand})", 1),
+    "doesnotendwith": ("!EndsWith({field}, {operand})", 1),
+}
+
+
+def _looks_numeric(value: str) -> bool:
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _simple_filter_expression(config: ET.Element) -> tuple[str, str | None]:
+    """Rebuild the Alteryx expression a simple-mode filter stands for, or explain why we cannot."""
+    simple = config.find("Simple")
+    if simple is None:
+        return "", "the Alteryx filter has no simple-mode configuration"
+    field_name = _text(simple, "Field")
+    if not field_name:
+        return "", "the Alteryx simple filter names no field"
+    if "[" in field_name or "]" in field_name:
+        return "", f"the Alteryx simple filter field {field_name!r} cannot be written as a field reference"
+    raw_operator = _text(simple, "Operator")
+    template, arity = _SIMPLE_FILTER_TEMPLATES.get(raw_operator.strip().lower(), (None, 0))
+    if template is None:
+        return "", f"the Alteryx simple filter operator {raw_operator or '(empty)'!r} is not supported"
+    operands = [(element.text or "").strip() for element in simple.findall("Operands/Operand")]
+    if arity and not operands:
+        return "", f"the Alteryx simple filter operator {raw_operator!r} has no operand"
+    operand = ""
+    if arity:
+        operand = operands[0]
+        if not _looks_numeric(operand):
+            if '"' in operand:
+                return "", "the Alteryx simple filter operand contains a double quote and cannot be converted safely"
+            operand = f'"{operand}"'
+    return template.format(field=f"[{field_name}]", operand=operand), None
+
+
 def map_filter(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
-    expression = _text(config, "Expression")
-    outcome = try_translate(expression)
+    mode = _text(config, "Mode")
+    rebuilt_from_simple = mode.lower() == "simple" or (
+        config.find("Simple") is not None and not _text(config, "Expression")
+    )
+    simple_reason = None
+    if rebuilt_from_simple:
+        expression, simple_reason = _simple_filter_expression(config)
+    else:
+        expression = _text(config, "Expression")
+    outcome = TranslationOutcome(None, simple_reason) if simple_reason else try_translate(expression)
     split_mode = ctx.has_outgoing(tool.tool_id, "False")
 
     if outcome.translated is None:
@@ -511,12 +653,28 @@ def _commented_formula_body(expression: str, reason: str, stub: str) -> str:
     )
 
 
-def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
-    config = _config(tool)
-    formula_fields = config.findall("FormulaFields/FormulaField")
-    if not formula_fields:
-        return _placeholder_row(tool, ctx, ["The Alteryx Formula tool has no expressions configured."])
+@dataclass
+class _Assignment:
+    """One Alteryx expression writing one output column."""
 
+    target: str
+    expression: str
+    data_type: str | None = None
+
+
+def _formula_assignments(tool: AlteryxTool) -> list[_Assignment]:
+    return [
+        _Assignment(
+            target=element.get("field") or f"formula_{index + 1}",
+            expression=element.get("expression") or "",
+            data_type=_map_alteryx_type(element.get("type")),
+        )
+        for index, element in enumerate(_config(tool).findall("FormulaFields/FormulaField"))
+    ]
+
+
+def _emit_formula_chain(tool: AlteryxTool, ctx: EmitContext, assignments: list[_Assignment]) -> ToolReportRow:
+    """Emit one Flowfile formula node per Alteryx assignment, chained in configuration order."""
     known = ctx.input_columns(tool.tool_id)
     node_ids: list[int] = []
     messages: list[str] = []
@@ -524,10 +682,8 @@ def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     placeholder = False
     previous_id: int | None = None
 
-    for index, element in enumerate(formula_fields):
-        expression = element.get("expression") or ""
-        target = element.get("field") or f"formula_{index + 1}"
-        data_type = _map_alteryx_type(element.get("type"))
+    for index, assignment in enumerate(assignments):
+        target, expression = assignment.target, assignment.expression
         outcome = try_translate(expression)
         dx, dy = index * FORMULA_STEP_DX, index * FORMULA_STEP_DY
 
@@ -546,7 +702,9 @@ def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             stub = "nullif(0, 0)" if is_new_column else f"[{target}]"
             body = _commented_formula_body(expression, outcome.reason or "no reason recorded", stub)
             stub_type = (
-                (data_type or transform_schema.AUTO_DATA_TYPE) if is_new_column else (transform_schema.AUTO_DATA_TYPE)
+                (assignment.data_type or transform_schema.AUTO_DATA_TYPE)
+                if is_new_column
+                else (transform_schema.AUTO_DATA_TYPE)
             )
             try:
                 simple_function_to_expr(body)
@@ -600,6 +758,13 @@ def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, status, node_ids, "formula", messages)
 
 
+def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    assignments = _formula_assignments(tool)
+    if not assignments:
+        return _placeholder_row(tool, ctx, ["The Alteryx Formula tool has no expressions configured."])
+    return _emit_formula_chain(tool, ctx, assignments)
+
+
 def _link(ctx: EmitContext, from_id: int, to_id: int, handle: str = PASS_HANDLE) -> None:
     """Connect two emitted nodes directly (used for 1:N expansions)."""
     nodes = {node.id: node for node in ctx.nodes}
@@ -607,6 +772,444 @@ def _link(ctx: EmitContext, from_id: int, to_id: int, handle: str = PASS_HANDLE)
     source.outputs.append(to_id)
     source.output_handles.append(handle)
     target.input_ids.append(from_id)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic Rename
+# ---------------------------------------------------------------------------
+
+DYNAMIC_RENAME_SOURCE_ANCHORS = ("Source", "Right", "R")
+DYNAMIC_RENAME_TARGET_ANCHORS = ("Targets", "Input", "Left", "T")
+
+
+def _normalise_mode(value: str) -> str:
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
+def _field_selection(config: ET.Element) -> tuple[list[str], list[str], bool]:
+    """``<Fields>`` as (every named field, the selected ones, whether ``*Unknown`` is selected)."""
+    names: list[str] = []
+    selected: list[str] = []
+    unknown_selected = False
+    for element in config.findall("Fields/Field"):
+        name = element.get("name") or ""
+        raw = element.get("selected")
+        is_selected = raw is None or _is_true(raw)
+        if name == "*Unknown":
+            unknown_selected = is_selected
+            continue
+        if not name:
+            continue
+        names.append(name)
+        if is_selected:
+            selected.append(name)
+    return names, selected, unknown_selected
+
+
+def _selection_settings(names: list[str], selected: list[str], unknown_selected: bool) -> dict:
+    if unknown_selected and selected == names:
+        return {"selection_mode": "all", "selected_columns": []}
+    return {"selection_mode": "list", "selected_columns": selected}
+
+
+def _register_rename_anchors(ctx: EmitContext, tool_id: int, first_id: int, last_id: int | None = None) -> None:
+    """Wire only the data anchor; the field-name anchor is resolved at import time, not wired."""
+    ctx.register_input(tool_id, DEFAULT_INPUT_ANCHOR, first_id, MAIN)
+    unwired: list[str] = []
+    for connection in ctx.inbound.get(tool_id, []):
+        if connection.dest_anchor in DYNAMIC_RENAME_TARGET_ANCHORS:
+            ctx.register_input(tool_id, connection.dest_anchor, first_id, MAIN)
+        else:
+            unwired.append(connection.dest_anchor)
+    ctx.suppress_input(tool_id, tuple(unwired))
+    ctx.register_all_outputs(tool_id, first_id if last_id is None else last_id)
+
+
+def _text_input_values(tool: AlteryxTool, column: str) -> list[str] | None:
+    """The rows of one Text Input column, when the tool feeding the names is a Text Input."""
+    if tool.tool_name != "TextInput":
+        return None
+    config = _config(tool)
+    names = [element.get("name") or "" for element in config.findall("Fields/Field")]
+    if not names:
+        return None
+    index = names.index(column) if column in names else 0
+    values: list[str] = []
+    for row in config.findall("Data/r"):
+        cells = row.findall("c")
+        if index < len(cells) and cells[index].text:
+            values.append(cells[index].text.strip())
+        else:
+            values.append("")
+    return values
+
+
+def _emit_dynamic_rename(
+    tool: AlteryxTool,
+    ctx: EmitContext,
+    rename_input: transform_schema.DynamicRenameInput,
+    messages: list[str],
+) -> ToolReportRow:
+    settings = input_schema.NodeDynamicRename(
+        flow_id=ctx.flow_id, node_id=ctx.new_node_id(), dynamic_rename_input=rename_input
+    )
+    node_id = ctx.add_node(tool, "dynamic_rename", settings, description=_description(tool))
+    _register_rename_anchors(ctx, tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = None
+    return _row(tool, "converted", [node_id], "dynamic_rename", messages)
+
+
+def _static_rename_to_select(
+    tool: AlteryxTool, ctx: EmitContext, targets: list[str], new_names: list[str], origin: str
+) -> ToolReportRow:
+    """Turn a rename whose new names are already known at import time into a plain select."""
+    pairs = list(zip(targets, new_names, strict=False))
+    select_input = [
+        transform_schema.SelectInput(old_name=old, new_name=new, keep=True) for old, new in pairs if new and old != new
+    ]
+    if not select_input:
+        return _placeholder_row(tool, ctx, ["The Alteryx Dynamic Rename resolved to no column renames."])
+    settings = input_schema.NodeSelect(
+        flow_id=ctx.flow_id, node_id=ctx.new_node_id(), keep_missing=True, select_input=select_input
+    )
+    node_id = ctx.add_node(tool, "select", settings, description=_description(tool))
+    _register_rename_anchors(ctx, tool.tool_id, node_id)
+    rename_map = {old: new for old, new in pairs if new}
+    ctx.tool_columns[tool.tool_id] = [rename_map.get(name, name) for name in targets]
+    messages = [
+        f"The new column names were read from {origin} at import time and became a Select node "
+        f"renaming {len(select_input)} column(s).",
+        "The Alteryx field-name input is no longer connected; the node that supplied it is kept unwired "
+        "so you can see where the names came from.",
+    ]
+    if len(new_names) < len(targets):
+        messages.append(
+            f"Only {len(new_names)} name(s) were available for {len(targets)} column(s); the rest keep their names."
+        )
+    return _row(tool, "partial", [node_id], "select", messages)
+
+
+def _rename_from_right_input(
+    tool: AlteryxTool, ctx: EmitContext, config: ET.Element, targets: list[str], mode: str
+) -> ToolReportRow:
+    source = ctx.source_tool(tool.tool_id, DYNAMIC_RENAME_SOURCE_ANCHORS)
+    if source is None:
+        return _placeholder_row(tool, ctx, ["The Alteryx Dynamic Rename field-name input is not connected."])
+    if mode == "rightinputmetadata":
+        new_names = ctx.tool_columns.get(source.tool_id)
+        if not new_names:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    "The Alteryx Dynamic Rename takes its names from the right input's column names, "
+                    f"which are not known at import time for '{tool_label(source)}' (ToolID {source.tool_id})."
+                ],
+            )
+        return _static_rename_to_select(
+            tool, ctx, targets, new_names, f"the columns of '{tool_label(source)}' (ToolID {source.tool_id})"
+        )
+
+    names_from_rows = config.find("NamesFromRows")
+    input_mode = _text(names_from_rows, "InputMode") if names_from_rows is not None else ""
+    if input_mode and input_mode.strip().lower() != "positional":
+        return _placeholder_row(
+            tool, ctx, [f"Alteryx Dynamic Rename input mode '{input_mode}' has no Flowfile equivalent."]
+        )
+    column = _text(names_from_rows, "NewName") if names_from_rows is not None else ""
+    new_names = _text_input_values(source, column)
+    if not new_names:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                "The Alteryx Dynamic Rename takes its names from the rows of "
+                f"'{tool_label(source)}' (ToolID {source.tool_id}), which cannot be read at import time; "
+                "rebuild this as a Select node once you know the names."
+            ],
+        )
+    return _static_rename_to_select(
+        tool, ctx, targets, new_names, f"the rows of '{tool_label(source)}' (ToolID {source.tool_id})"
+    )
+
+
+def map_dynamic_rename(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    raw_mode = _text(config, "RenameMode")
+    mode = _normalise_mode(raw_mode)
+    names, selected, unknown_selected = _field_selection(config)
+    selection = _selection_settings(names, selected, unknown_selected)
+
+    if mode in ("firstrow", "takefieldnamesfromfirstrowofdata"):
+        return _emit_dynamic_rename(
+            tool,
+            ctx,
+            transform_schema.DynamicRenameInput(rename_mode="first_row", **selection),
+            ["The first row of data is promoted to column headers and dropped, as in Alteryx."],
+        )
+
+    if mode == "formula":
+        expression = _text(config, "Expression")
+        outcome = try_translate(_CURRENT_FIELD_RE.sub("[column_name]", expression))
+        if outcome.translated is None:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    f"The Alteryx Dynamic Rename formula could not be converted: {outcome.reason}.",
+                    f"Original expression: {_one_line(expression)}",
+                ],
+            )
+        return _emit_dynamic_rename(
+            tool,
+            ctx,
+            transform_schema.DynamicRenameInput(rename_mode="formula", formula=outcome.translated, **selection),
+            [f"The Alteryx rename formula became the Flowfile formula {outcome.translated!r}."],
+        )
+
+    if mode in ("addprefixsuffix", "addprefix", "addsuffix", "prefix", "suffix", "prefixsuffix"):
+        prefix = _text(config, ".//Prefix")
+        suffix = _text(config, ".//Suffix")
+        if not prefix and not suffix:
+            return _placeholder_row(tool, ctx, ["The Alteryx Dynamic Rename has no prefix or suffix configured."])
+        return _emit_prefix_suffix_rename(tool, ctx, prefix, suffix, selection)
+
+    if mode in ("rightinputrows", "rightinputmetadata"):
+        return _rename_from_right_input(tool, ctx, config, selected or names, mode)
+
+    return _placeholder_row(
+        tool, ctx, [f"Alteryx Dynamic Rename mode '{raw_mode or '(empty)'}' has no Flowfile equivalent."]
+    )
+
+
+def _emit_prefix_suffix_rename(
+    tool: AlteryxTool, ctx: EmitContext, prefix: str, suffix: str, selection: dict
+) -> ToolReportRow:
+    """Alteryx applies prefix and suffix in one tool; Flowfile needs one node per rule."""
+    rules = [("prefix", prefix), ("suffix", suffix)]
+    node_ids: list[int] = []
+    previous_id: int | None = None
+    for index, (rename_mode, value) in enumerate([rule for rule in rules if rule[1]]):
+        settings = input_schema.NodeDynamicRename(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode=rename_mode, **{rename_mode: value}, **selection
+            ),
+        )
+        node_id = ctx.add_node(
+            tool, "dynamic_rename", settings, dx=index * FORMULA_STEP_DX, description=_description(tool)
+        )
+        node_ids.append(node_id)
+        if previous_id is not None:
+            _link(ctx, previous_id, node_id)
+        previous_id = node_id
+
+    _register_rename_anchors(ctx, tool.tool_id, node_ids[0], node_ids[-1])
+    ctx.tool_columns[tool.tool_id] = None
+    messages = []
+    if len(node_ids) > 1:
+        messages.append("Alteryx applies the prefix and the suffix in one tool; Flowfile needs one node for each.")
+    return _row(tool, "converted", node_ids, "dynamic_rename", messages)
+
+
+# ---------------------------------------------------------------------------
+# Multi Field Formula
+# ---------------------------------------------------------------------------
+
+_CURRENT_FIELD_RE = re.compile(r"\[_CurrentField_\]", re.IGNORECASE)
+_CURRENT_FIELD_NAME_RE = re.compile(r"\[_CurrentFieldName_\]", re.IGNORECASE)
+_SPECIAL_FIELD_RE = re.compile(r"\[_[A-Za-z]\w*_\]")
+
+
+def _substitute_current_field(expression: str, name: str) -> str:
+    """Bind Alteryx's [_CurrentField_] / [_CurrentFieldName_] to one field.
+
+    The replacements go through callables so a field name containing a backslash is inserted
+    literally instead of being read as a ``re.sub`` escape.
+    """
+    bound = _CURRENT_FIELD_RE.sub(lambda _match: f"[{name}]", expression)
+    return _CURRENT_FIELD_NAME_RE.sub(lambda _match: f'"{name}"', bound)
+
+
+def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    expression = _text(config, "Expression")
+    if not expression:
+        return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no expression configured."])
+    _, selected, _unknown = _field_selection(config)
+    if not selected:
+        return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."])
+
+    copy_output = _is_true(_attribute(config, "CopyOutput", "value"))
+    prefix, suffix = _text(config, "OutputPrefix"), _text(config, "OutputSuffix")
+    if copy_output and not prefix and not suffix:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Multi-Field Formula writes to copied fields whose names are not recorded in the workflow."],
+        )
+    declared_type = ""
+    if _is_true(_attribute(config, "ChangeFieldType", "value")):
+        declared_type = _attribute(config, "OutputFieldType", "type")
+    data_type = _map_alteryx_type(declared_type)
+
+    assignments: list[_Assignment] = []
+    for name in selected:
+        if '"' in name:
+            return _placeholder_row(
+                tool, ctx, [f"The Alteryx Multi-Field Formula field {name!r} cannot be written as a field reference."]
+            )
+        body = _substitute_current_field(expression, name)
+        if _SPECIAL_FIELD_RE.search(body):
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    "The Alteryx Multi-Field Formula uses a special field reference with no Flowfile equivalent.",
+                    f"Original expression: {_one_line(expression)}",
+                ],
+            )
+        assignments.append(_Assignment(f"{prefix}{name}{suffix}" if copy_output else name, body, data_type))
+
+    row = _emit_formula_chain(tool, ctx, assignments)
+    row.messages.insert(
+        0,
+        f"The Alteryx Multi-Field Formula was expanded into one Flowfile formula per field: {', '.join(selected)}.",
+    )
+    if declared_type:
+        row.messages.append(
+            f"Alteryx stored the result as '{declared_type}'; Flowfile keeps the type the expression produces. "
+            "Add a Select node if you need the Alteryx type."
+        )
+    return row
+
+
+# ---------------------------------------------------------------------------
+# RegEx
+# ---------------------------------------------------------------------------
+
+_REGEX_UNSUPPORTED = (("(?=", "lookahead"), ("(?!", "negative lookahead"), ("(?<", "lookbehind"))
+_REGEX_BACKREF_RE = re.compile(r"\\[1-9]")
+_DUNDER_RE = re.compile(r"__\w+__")
+_REPLACEMENT_GROUP_RE = re.compile(r"\$(\d+)")
+
+
+def _regex_pattern(config: ET.Element) -> tuple[str, str | None]:
+    """The tool's regex, rejected when it uses constructs the Rust regex engine has no support for."""
+    pattern = _attribute(config, "RegExExpression", "value")
+    if not pattern:
+        return "", "the Alteryx RegEx tool has no expression configured"
+    for token, label in _REGEX_UNSUPPORTED:
+        if token in pattern:
+            return "", f"the Alteryx regular expression uses {label}, which Polars' regex engine does not support"
+    if _REGEX_BACKREF_RE.search(pattern):
+        return "", "the Alteryx regular expression uses a backreference, which Polars' regex engine does not support"
+    if _DUNDER_RE.search(pattern):
+        return "", "the Alteryx regular expression contains a dunder pattern, which the Polars code node rejects"
+    if _is_true(_attribute(config, "CaseInsensitve", "value")):
+        pattern = f"(?i){pattern}"
+    return pattern, None
+
+
+def _regex_output_names(config: ET.Element, method: str, column: str) -> tuple[list[str], str | None]:
+    if method == "parsecomplex":
+        names = [element.get("field") or "" for element in config.findall("ParseComplex/Field")]
+        if not all(names):
+            return [], "the Alteryx RegEx tool has unnamed output fields"
+        return names, None
+    if _is_true(_attribute(config, "ParseSimple/SplitToRows", "value")):
+        return [], "Alteryx RegEx 'split to rows' parsing has no verified Polars translation"
+    try:
+        count = int(float(_attribute(config, "ParseSimple/NumFields", "value") or "0"))
+    except ValueError:
+        return [], "the Alteryx RegEx output field count could not be read"
+    if count < 1:
+        return [], "the Alteryx RegEx tool parses into no output fields"
+    root = _text(config, "ParseSimple/RootName") or column
+    return [f"{root}{index + 1}" for index in range(count)], None
+
+
+def _regex_code(config: ET.Element, method: str, column: str) -> tuple[str, str | None]:
+    """Generate the Polars body for one RegEx method, or explain why it cannot be generated.
+
+    The pattern itself reaches the generated code through the ``_pattern`` variable, so it is
+    not an argument here.
+    """
+    source = f"pl.col({column!r})"
+    if method in ("parsecomplex", "parsesimple"):
+        names, reason = _regex_output_names(config, method, column)
+        if reason is not None:
+            return "", reason
+        extracts = ",\n".join(
+            f"    {source}.str.extract(_pattern, {index + 1}).alias({name!r})" for index, name in enumerate(names)
+        )
+        return f"output_df = input_df.with_columns(\n{extracts},\n)", None
+    if method == "match":
+        target = _text(config, "Match/Field")
+        if not target:
+            return "", "the Alteryx RegEx match output field has no name"
+        return f"output_df = input_df.with_columns({source}.str.contains(_pattern).alias({target!r}))", None
+    if method == "replace":
+        replacement = _REPLACEMENT_GROUP_RE.sub(r"${\1}", _attribute(config, "Replace", "expression"))
+        if _DUNDER_RE.search(replacement):
+            return "", "the Alteryx RegEx replacement contains a dunder pattern, which the Polars code node rejects"
+        replaced = f"{source}.str.replace_all(_pattern, {replacement!r})"
+        if _is_true(_attribute(config, "Replace/CopyUnmatched", "value")):
+            body = replaced
+        else:
+            body = f"pl.when({source}.str.contains(_pattern)).then({replaced}).otherwise(None)"
+        return f"output_df = input_df.with_columns({body}.alias({column!r}))", None
+    return "", f"Alteryx RegEx method '{method}' has no verified Polars translation"
+
+
+def map_regex(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    column = _text(config, "Field")
+    method = _normalise_mode(_text(config, "Method"))
+    pattern, reason = _regex_pattern(config)
+    if not column:
+        reason = "the Alteryx RegEx tool names no input field"
+    if reason is None:
+        code, reason = _regex_code(config, method, column)
+    if reason is not None:
+        return _placeholder_row(tool, ctx, [f"The Alteryx RegEx tool could not be converted: {reason}."])
+
+    header = [
+        f"# Alteryx RegEx (ToolID {tool.tool_id}) translated to Polars; check the result against Alteryx.",
+        *(f"# {line}" for line in _original_config_lines(tool)),
+        f"_pattern = {pattern!r}",
+    ]
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code="\n".join([*header, code])),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+
+    known = ctx.input_columns(tool.tool_id)
+    added = _regex_added_columns(config, method, column)
+    ctx.tool_columns[tool.tool_id] = [*known, *[name for name in added if name not in known]] if known else None
+    return _row(
+        tool,
+        "partial",
+        [node_id],
+        "polars_code",
+        [
+            "The Alteryx RegEx tool became generated Polars code; Alteryx and Polars regex dialects differ, "
+            "so verify the output before relying on it."
+        ],
+    )
+
+
+def _regex_added_columns(config: ET.Element, method: str, column: str) -> list[str]:
+    if method in ("parsecomplex", "parsesimple"):
+        return _regex_output_names(config, method, column)[0]
+    if method == "match":
+        return [name for name in [_text(config, "Match/Field")] if name]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -911,6 +1514,10 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     received = input_schema.ReceivedTable.create_from_path(path, file_type=file_type)
     received.name = filename
     received.directory = directory or None
+    if _is_foreign_absolute_path(path):
+        # Keep the workflow's own path instead of resolving it against this machine's cwd,
+        # which would invent an absolute path that points nowhere.
+        received.abs_file_path = path
     if file_type == "excel" and sheet:
         received.table_settings.sheet_name = sheet
     if file_type in ("csv", "json"):
@@ -923,9 +1530,38 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     settings = input_schema.NodeRead(flow_id=ctx.flow_id, node_id=ctx.new_node_id(), received_file=received)
     node_id = ctx.add_node(tool, "read", settings, description=_description(tool), is_start_node=True)
+    node_ids = [node_id]
+    messages: list[str] = []
+    if _is_foreign_absolute_path(path):
+        messages.append(f"The workflow reads from '{path}'; repoint this node at your own copy of the file.")
+
+    headerless = received.table_settings.has_headers is False
+    if headerless and tool.output_fields:
+        # Alteryx calls headerless columns Field_1..Field_N; Polars calls them column_1..column_N.
+        # Without this rename every downstream reference to an Alteryx name silently misses.
+        rename_id = _emit_positional_header_rename(tool, ctx, tool.output_fields)
+        node_ids.append(rename_id)
+        _link(ctx, node_id, rename_id)
+        node_id = rename_id
+        messages.append(
+            "The file is read without headers, so a Select node renames Polars' "
+            f"column_1..column_{len(tool.output_fields)} to the Alteryx names "
+            f"({tool.output_fields[0]}, ...)."
+        )
     ctx.register_all_outputs(tool.tool_id, node_id)
-    ctx.tool_columns[tool.tool_id] = None
-    return _row(tool, "converted", [node_id], "read", [])
+    ctx.tool_columns[tool.tool_id] = tool.output_fields or None
+    return _row(tool, "converted", node_ids, "read", messages)
+
+
+def _emit_positional_header_rename(tool: AlteryxTool, ctx: EmitContext, names: list[str]) -> int:
+    select_input = [
+        transform_schema.SelectInput(old_name=f"column_{index + 1}", new_name=name, keep=True)
+        for index, name in enumerate(names)
+    ]
+    settings = input_schema.NodeSelect(
+        flow_id=ctx.flow_id, node_id=ctx.new_node_id(), keep_missing=True, select_input=select_input
+    )
+    return ctx.add_node(tool, "select", settings, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
 
 
 def map_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -989,6 +1625,9 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
     "TextToColumns": map_text_to_columns,
     "Union": map_union,
     "Join": map_join,
+    "DynamicRename": map_dynamic_rename,
+    "MultiFieldFormula": map_multi_field_formula,
+    "RegEx": map_regex,
     "DbFileInput": map_file_input,
     "DbFileOutput": map_file_output,
     "BrowseV2": map_browse,

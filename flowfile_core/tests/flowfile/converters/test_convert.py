@@ -2,11 +2,14 @@
 
 from pathlib import Path
 
+import polars as pl
 import pytest
 import yaml
 from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.flowfile.converters.alteryx import ConversionResult, YxmdParseError, convert_yxmd
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import schemas
 
@@ -86,6 +89,32 @@ NO_POSITIONS = b"""<?xml version="1.0"?>
 """
 
 
+def select_of_type(alteryx_type: str) -> bytes:
+    """A one-tool workflow whose Select retypes a single field."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration>
+        <SelectFields><SelectField field="value" selected="True" type="{alteryx_type}" /></SelectFields>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
 def read_fixture(name: str) -> bytes:
     return (FIXTURE_DIR / name).read_bytes()
 
@@ -156,9 +185,7 @@ def test_workflow_name_comes_from_meta_info(all_supported: ConversionResult):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "fixture", ["all_supported.yxmd", "formulas.yxmd", "containers.yxmd", "unsupported.yxmd"]
-)
+@pytest.mark.parametrize("fixture", ["all_supported.yxmd", "formulas.yxmd", "containers.yxmd", "unsupported.yxmd"])
 def test_setting_input_never_carries_envelope_keys(fixture: str):
     for node in dumped_nodes(convert(fixture)).values():
         assert node["setting_input"] is not None
@@ -237,10 +264,51 @@ def test_select_maps_renames_drops_and_unknown_checkbox(all_supported: Conversio
     assert "keep" not in by_name["id"]
 
 
-def test_select_reports_dropped_type_changes(all_supported: ConversionResult):
+def test_select_converts_alteryx_data_types(all_supported: ConversionResult):
     row = next(row for row in all_supported.report.rows if row.alteryx_tool_id == 2)
+    assert row.status == "converted"
+    by_name = {item["old_name"]: item for item in dumped_nodes(all_supported)[2]["setting_input"]["select_input"]}
+    assert by_name["amount"]["data_type"] == "Float64"
+    # A field Alteryx does not retype must not gain a cast.
+    assert "data_type" not in by_name["region"]
+    settings = next(node for node in all_supported.flow_data.nodes if node.id == 2).setting_input
+    by_old = {item.old_name: item for item in settings.select_input}
+    assert by_old["amount"].data_type_change is True
+    assert by_old["region"].data_type_change is False
+
+
+@pytest.mark.parametrize(
+    ("alteryx_type", "expected"),
+    [
+        ("Bool", "Boolean"),
+        ("Byte", "Int16"),
+        ("Int16", "Int16"),
+        ("Int32", "Int32"),
+        ("Int64", "Int64"),
+        ("Float", "Float32"),
+        ("Double", "Float64"),
+        ("FixedDecimal", "Float64"),
+        ("V_String", "String"),
+        ("V_WString", "String"),
+        ("Date", "Date"),
+        ("DateTime", "Datetime"),
+        ("Time", "Time"),
+    ],
+)
+def test_alteryx_widths_map_onto_matching_polars_types(alteryx_type: str, expected: str):
+    result = convert_yxmd(select_of_type(alteryx_type), source_name="types.yxmd")
+    item = result.flow_data.model_dump(mode="json")["nodes"][1]["setting_input"]["select_input"][0]
+    assert item["data_type"] == expected
+    assert cast_str_to_polars_type(expected) is not None
+
+
+def test_unknown_alteryx_type_is_reported_and_left_alone():
+    result = convert_yxmd(select_of_type("SpatialObj"), source_name="types.yxmd")
+    item = result.flow_data.model_dump(mode="json")["nodes"][1]["setting_input"]["select_input"][0]
+    assert "data_type" not in item
+    row = next(row for row in result.report.rows if row.alteryx_tool == "AlteryxSelect")
     assert row.status == "partial"
-    assert any("amount" in message for message in row.messages)
+    assert any("SpatialObj" in message for message in row.messages)
 
 
 def test_select_keeps_unknown_columns_when_alteryx_does(containers: ConversionResult):
@@ -284,7 +352,7 @@ def test_untranslatable_formula_on_a_new_column_keeps_a_typed_null_stub(formulas
     )
     body = node["setting_input"]["function"]["function"]
     assert body.startswith("// Alteryx formula could not be converted automatically:")
-    assert "// Original: REGEX_Match([name], \"^a.*\")" in body
+    assert '// Original: REGEX_Match([name], "^a.*")' in body
     assert body.splitlines()[-1] == "nullif(0, 0)"
     assert node["setting_input"]["function"]["field"]["data_type"] == "Boolean"
     assert node["description"].startswith("⚠")
@@ -450,11 +518,14 @@ def test_placeholders_preserve_the_graph_shape(unsupported: ConversionResult):
     [
         (
             "all_supported.yxmd",
-            {"total": 13, "converted": 10, "partial": 3, "commented": 0, "placeholder": 0, "skipped": 0},
+            {"total": 13, "converted": 11, "partial": 2, "commented": 0, "placeholder": 0, "skipped": 0},
         ),
         ("formulas.yxmd", {"total": 2, "converted": 1, "partial": 0, "commented": 1, "placeholder": 0, "skipped": 0}),
         ("containers.yxmd", {"total": 5, "converted": 4, "partial": 0, "commented": 0, "placeholder": 0, "skipped": 1}),
-        ("unsupported.yxmd", {"total": 4, "converted": 2, "partial": 0, "commented": 0, "placeholder": 2, "skipped": 0}),
+        (
+            "unsupported.yxmd",
+            {"total": 4, "converted": 2, "partial": 0, "commented": 0, "placeholder": 2, "skipped": 0},
+        ),
     ],
 )
 def test_report_counts(fixture: str, expected: dict):
@@ -576,3 +647,303 @@ def test_all_supported_flow_runs_and_writes_its_output(tmp_path: Path):
     assert run_info.success, [step for step in run_info.node_step_result if not step.success]
     assert (tmp_path / "result.csv").exists()
     assert flow.get_node(17).get_resulting_data().data_frame.collect().height > 0
+
+
+# ---------------------------------------------------------------------------
+# Dynamic Rename
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def dynamic_rename() -> ConversionResult:
+    return convert("dynamic_rename.yxmd")
+
+
+@pytest.fixture()
+def price_paid() -> ConversionResult:
+    return convert("price_paid.yxmd")
+
+
+@pytest.fixture()
+def simple_filter() -> ConversionResult:
+    return convert("simple_filter.yxmd")
+
+
+@pytest.fixture()
+def regex_and_multifield() -> ConversionResult:
+    return convert("regex_and_multifield.yxmd")
+
+
+def report_row(result: ConversionResult, tool_id: int):
+    return next(row for row in result.report.rows if row.alteryx_tool_id == tool_id)
+
+
+def test_rename_formula_mode_binds_the_column_name(dynamic_rename: ConversionResult):
+    row = report_row(dynamic_rename, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "dynamic_rename"
+    settings = dumped_nodes(dynamic_rename)[row.flowfile_node_ids[0]]["setting_input"]["dynamic_rename_input"]
+    assert settings["rename_mode"] == "formula"
+    assert settings["formula"] == "uppercase([column_name])"
+    assert settings["selection_mode"] == "all"
+
+
+def test_rename_first_row_mode_maps_natively(dynamic_rename: ConversionResult):
+    row = report_row(dynamic_rename, 3)
+    assert row.status == "converted"
+    settings = dumped_nodes(dynamic_rename)[row.flowfile_node_ids[0]]["setting_input"]["dynamic_rename_input"]
+    assert settings["rename_mode"] == "first_row"
+
+
+def test_rename_prefix_and_suffix_become_two_chained_nodes(dynamic_rename: ConversionResult):
+    row = report_row(dynamic_rename, 4)
+    assert row.status == "converted"
+    assert len(row.flowfile_node_ids) == 2
+    nodes = dumped_nodes(dynamic_rename)
+    first, second = (nodes[node_id]["setting_input"]["dynamic_rename_input"] for node_id in row.flowfile_node_ids)
+    assert (first["rename_mode"], first["prefix"]) == ("prefix", "pre_")
+    assert (second["rename_mode"], second["suffix"]) == ("suffix", "_post")
+    assert nodes[row.flowfile_node_ids[0]]["outputs"] == [row.flowfile_node_ids[1]]
+
+
+def test_unsupported_rename_mode_keeps_the_original_configuration(dynamic_rename: ConversionResult):
+    row = report_row(dynamic_rename, 5)
+    assert row.status == "placeholder"
+    code = dumped_nodes(dynamic_rename)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "RemovePrefixSuffix" in code
+    assert "<RenameMode>" in code
+
+
+def test_rename_from_right_input_rows_resolves_to_a_select(price_paid: ConversionResult):
+    row = report_row(price_paid, 4)
+    assert row.status == "partial"
+    assert row.flowfile_node_type == "select"
+    renames = dumped_nodes(price_paid)[row.flowfile_node_ids[0]]["setting_input"]["select_input"]
+    assert renames[0] == {"old_name": "Field_1", "new_name": "Transaction unique identifier"}
+    assert len(renames) == 16
+
+
+def test_the_name_source_input_is_not_wired_and_is_not_reported_as_a_dropped_edge(price_paid: ConversionResult):
+    text_input = next(node for node in price_paid.flow_data.nodes if node.type == "manual_input")
+    assert text_input.outputs == []
+    assert not any("dropped" in message for row in price_paid.report.rows for message in row.messages)
+
+
+# ---------------------------------------------------------------------------
+# Headerless reads
+# ---------------------------------------------------------------------------
+
+
+def test_headerless_read_renames_polars_columns_to_the_alteryx_names(price_paid: ConversionResult):
+    row = report_row(price_paid, 1)
+    assert row.status == "converted"
+    assert len(row.flowfile_node_ids) == 2
+    assert any("column_1" in message for message in row.messages)
+    nodes = dumped_nodes(price_paid)
+    read_id, rename_id = row.flowfile_node_ids
+    assert nodes[read_id]["type"] == "read"
+    assert nodes[read_id]["outputs"] == [rename_id]
+    renames = nodes[rename_id]["setting_input"]["select_input"]
+    assert renames[0] == {"old_name": "column_1", "new_name": "Field_1"}
+    assert len(renames) == 16
+
+
+# ---------------------------------------------------------------------------
+# Simple-mode filters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "expected"),
+    [
+        (2, '[grade] = "A"'),
+        (3, "[score] >= 15"),
+        (4, 'not((is_empty([grade]) or [grade] = ""))'),
+    ],
+)
+def test_simple_filters_are_rebuilt_into_expressions(simple_filter: ConversionResult, tool_id: int, expected: str):
+    row = report_row(simple_filter, tool_id)
+    assert row.status == "converted", row.messages
+    settings = dumped_nodes(simple_filter)[row.flowfile_node_ids[0]]["setting_input"]
+    assert settings["filter_input"]["advanced_filter"] == expected
+
+
+def test_unsupported_simple_filter_operator_keeps_the_original_configuration(simple_filter: ConversionResult):
+    row = report_row(simple_filter, 5)
+    assert row.status == "placeholder"
+    assert any("IsBetween" in message for message in row.messages)
+    code = dumped_nodes(simple_filter)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "<Operator>IsBetween</Operator>" in code
+
+
+# ---------------------------------------------------------------------------
+# Multi-Field Formula and RegEx
+# ---------------------------------------------------------------------------
+
+
+def test_multi_field_formula_becomes_one_formula_per_selected_field(regex_and_multifield: ConversionResult):
+    row = report_row(regex_and_multifield, 3)
+    assert row.status == "converted"
+    assert len(row.flowfile_node_ids) == 2
+    nodes = dumped_nodes(regex_and_multifield)
+    functions = [nodes[node_id]["setting_input"]["function"] for node_id in row.flowfile_node_ids]
+    assert [function["field"]["name"] for function in functions] == ["flag_a", "flag_b"]
+    assert functions[0]["function"] == '[flag_a] = "Y"'
+    assert functions[1]["function"] == '[flag_b] = "Y"'
+
+
+def test_regex_parse_becomes_runnable_polars_code(regex_and_multifield: ConversionResult):
+    row = report_row(regex_and_multifield, 2)
+    assert row.status == "partial"
+    assert row.flowfile_node_type == "polars_code"
+    code = dumped_nodes(regex_and_multifield)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"][
+        "polars_code"
+    ]
+    assert "_pattern = '([A-Z]{2})-([0-9]{2})'" in code
+    frame = polars_code_parser.get_executable(code, num_inputs=1)(pl.DataFrame({"code": ["AB-12", "nope"]}))
+    assert frame.to_dicts() == [
+        {"code": "AB-12", "letters": "AB", "digits": "12"},
+        {"code": "nope", "letters": None, "digits": None},
+    ]
+
+
+def test_regex_lookahead_is_rejected_instead_of_generating_failing_code(regex_and_multifield: ConversionResult):
+    row = report_row(regex_and_multifield, 4)
+    assert row.status == "placeholder"
+    assert any("lookahead" in message for message in row.messages)
+
+
+def test_every_generated_polars_code_node_is_executable(price_paid: ConversionResult):
+    for node in price_paid.flow_data.nodes:
+        if node.type != "polars_code":
+            continue
+        polars_code_parser.get_executable(
+            node.setting_input.polars_code_input.polars_code, num_inputs=max(1, len(node.input_ids))
+        )
+
+
+# ---------------------------------------------------------------------------
+# Placeholders keep the original Alteryx configuration
+# ---------------------------------------------------------------------------
+
+
+def test_placeholders_embed_the_original_configuration_and_annotation(price_paid: ConversionResult):
+    row = report_row(price_paid, 8)
+    assert row.status == "placeholder"
+    code = dumped_nodes(price_paid)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "# Alteryx annotation: 2016PPData.yxdb" in code
+    assert "2016PPData.yxdb</File>" in code
+    assert code.splitlines()[-1] == "output_df = input_df"
+
+
+def test_year_function_now_converts(price_paid: ConversionResult):
+    row = report_row(price_paid, 6)
+    assert row.status == "converted"
+    settings = dumped_nodes(price_paid)[row.flowfile_node_ids[0]]["setting_input"]
+    assert settings["filter_input"]["advanced_filter"] == "year([Date of Transfer]) = 2016"
+
+
+def test_price_paid_workflow_converts_without_placeholders_beyond_the_yxdb_writer(price_paid: ConversionResult):
+    placeholders = [row for row in price_paid.report.rows if row.status == "placeholder"]
+    assert [row.alteryx_tool for row in placeholders] == ["DbFileOutput"]
+
+
+PRICE_PAID_ROWS = [
+    (
+        "{A1}",
+        "250000",
+        "2016-05-04 00:00",
+        "SW1A 1AA",
+        "F",
+        "Y",
+        "L",
+        "10",
+        "",
+        "DOWNING ST",
+        "",
+        "LONDON",
+        "WESTMINSTER",
+        "GREATER LONDON",
+        "A",
+        "A",
+    ),
+    (
+        "{A2}",
+        "180000",
+        "2015-07-19 00:00",
+        "M1 1AE",
+        "T",
+        "N",
+        "F",
+        "12",
+        "",
+        "HIGH ST",
+        "",
+        "MANCHESTER",
+        "MANCHESTER",
+        "GREATER MANCHESTER",
+        "A",
+        "A",
+    ),
+    (
+        "{A3}",
+        "999000",
+        "2016-11-30 00:00",
+        "B1 2JQ",
+        "D",
+        "N",
+        "F",
+        "5",
+        "",
+        "BROAD ST",
+        "",
+        "BIRMINGHAM",
+        "BIRMINGHAM",
+        "WEST MIDLANDS",
+        "B",
+        "A",
+    ),
+    (
+        "{A4}",
+        "310000",
+        "2016-02-01 00:00",
+        "LS1 4AP",
+        "S",
+        "Y",
+        "L",
+        "7",
+        "A",
+        "PARK ROW",
+        "",
+        "LEEDS",
+        "LEEDS",
+        "WEST YORKSHIRE",
+        "A",
+        "A",
+    ),
+]
+
+
+def test_price_paid_workflow_runs_and_reproduces_the_alteryx_result(tmp_path: Path, price_paid: ConversionResult):
+    """The real-world fixture must run end to end and select the rows Alteryx would select."""
+    source = tmp_path / "pp-complete.csv"
+    source.write_text("\n".join(",".join(f'"{cell}"' for cell in row) for row in PRICE_PAID_ROWS), encoding="utf-8")
+    for node in price_paid.flow_data.nodes:
+        if node.type == "read":
+            received = node.setting_input.received_file
+            received.path = received.abs_file_path = str(source)
+            received.directory, received.name = str(tmp_path), source.name
+
+    flow = open_flow(write_flow(price_paid, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step for step in run_info.node_step_result if not step.success]
+
+    terminal = next(node for node in price_paid.flow_data.nodes if node.type == "polars_code" and not node.outputs)
+    frame = flow.get_node(terminal.id).get_resulting_data().data_frame.collect()
+    # Year([Date of Transfer]) = 2016 AND [PPDCategory Type] = "A"
+    assert frame["Transaction unique identifier"].to_list() == ["{A1}", "{A4}"]
+    assert frame.schema["Price"] == pl.Int32
+    assert frame.schema["Date of Transfer"] == pl.Date
+    assert frame.schema["NewBuild"] == pl.Boolean
+    assert frame["PostCodeArea"].to_list() == ["SW", "LS"]
+    assert "Record Status - monthly file only" not in frame.columns

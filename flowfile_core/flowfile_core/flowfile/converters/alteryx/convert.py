@@ -81,8 +81,11 @@ def _compute_positions(workflow: AlteryxWorkflow) -> dict[int, tuple[int, int]]:
 
 
 def _build_context(workflow: AlteryxWorkflow) -> EmitContext:
-    ctx = EmitContext(positions=_compute_positions(workflow))
-    known_tool_ids = {tool.tool_id for tool in workflow.tools}
+    ctx = EmitContext(
+        positions=_compute_positions(workflow),
+        tools={tool.tool_id: tool for tool in workflow.tools},
+    )
+    known_tool_ids = set(ctx.tools)
     for connection in workflow.connections:
         if connection.origin_tool_id in known_tool_ids:
             ctx.outbound.setdefault(connection.origin_tool_id, []).append(connection)
@@ -96,6 +99,8 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
     nodes = {node.id: node for node in ctx.nodes}
     seen: set[tuple[int, int, str]] = set()
     for connection in workflow.connections:
+        if (connection.dest_tool_id, connection.dest_anchor) in ctx.suppressed_inputs:
+            continue
         origin = ctx.output_map.get((connection.origin_tool_id, connection.origin_anchor)) or ctx.output_map.get(
             (connection.origin_tool_id, DEFAULT_OUTPUT_ANCHOR)
         )
