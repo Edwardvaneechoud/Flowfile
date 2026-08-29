@@ -1,4 +1,4 @@
-# Provider Setup (BYOK)
+# Provider Setup
 
 The [AI Assistant](index.md) runs against a built-in [on-device model](#on-device-model-no-key-required) or one of six LLM providers: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. For the hosted providers you bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. Two options work offline: the on-device model (no key or account) and Ollama (a server you run).
 

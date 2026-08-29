@@ -130,5 +130,5 @@ Each surface sends a context-aware slice of the live `FlowGraph` plus drawer-con
 
 ## Where to next
 
-- [Provider Setup (BYOK)](providers.md) — pick a provider, plug in a key, set per-surface model preferences.
+- [Provider Setup](providers.md) — providers, API keys, the on-device model, and per-surface model preferences.
 - [AI Integration Architecture](../for-developers/ai-architecture.md) — for developers extending the AI subsystem or debugging model behavior.
