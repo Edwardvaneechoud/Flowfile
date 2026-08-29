@@ -17,6 +17,8 @@ export interface DesignerActions {
   exportFile: () => void | Promise<void>
   open: () => void
   clear: () => void
+  /** Select a node and pan the canvas to it (share-import "show on canvas"). */
+  focusNode: (nodeId: number) => void
 }
 
 export const useDesignerUiStore = defineStore('designerUi', () => {

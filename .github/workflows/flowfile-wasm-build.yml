@@ -6,11 +6,17 @@ on:
     paths:
       - 'flowfile_wasm/**'
       - '.github/workflows/flowfile-wasm-build.yml'
+      # The parity suites compare against a real flowfile_core, so its flow
+      # schemas / save-load code changing must re-run them.
+      - 'flowfile_core/flowfile_core/schemas/**'
+      - 'flowfile_core/flowfile_core/flowfile/manage/**'
   pull_request:
     branches: [main]
     paths:
       - 'flowfile_wasm/**'
       - '.github/workflows/flowfile-wasm-build.yml'
+      - 'flowfile_core/flowfile_core/schemas/**'
+      - 'flowfile_core/flowfile_core/flowfile/manage/**'
   workflow_dispatch:
 
 # Explicit permissions for security
@@ -55,6 +61,43 @@ jobs:
       - name: Run tests
         working-directory: flowfile_wasm
         run: npm run test:run
+
+  core-parity:
+    # Proves the wasm↔core contract suites actually RAN. Without a Python that
+    # can import flowfile_core they ctx.skip() every comparison — green while
+    # proving nothing. FLOWFILE_REQUIRE_TEST_PYTHON turns that skip into a hard
+    # failure, so a mis-provisioned job can never pass silently.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: flowfile_wasm/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install flowfile_core (the parity ground truth)
+        run: pip install .
+
+      - name: Install dependencies
+        working-directory: flowfile_wasm
+        run: npm ci
+
+      - name: Run wasm↔core parity suites (a skip is a failure here)
+        working-directory: flowfile_wasm
+        env:
+          FLOWFILE_TEST_PYTHON: python
+          FLOWFILE_REQUIRE_TEST_PYTHON: '1'
+        run: npx vitest run tests/unit/core-execution-parity.test.ts tests/unit/flowfile-core-export.test.ts tests/unit/core-to-wasm-import.test.ts
 
   python-engine-tests:
     # Runs the in-browser Pyodide engine (src/pyodide/engine/) under CPython

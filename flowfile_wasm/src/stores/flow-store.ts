@@ -8,7 +8,9 @@ import { fileStorage, SIZE_THRESHOLD } from './file-storage'
 import { asFileContent, contentByteSize, isBinary, type FileContent } from '../types/file-content'
 import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
 import { fetchRemoteFile } from '../utils/remote-file'
+import { isPlaceholderNode as isPlaceholderNodeDef, placeholderLabel, placeholderReason } from '../utils/placeholder'
 import type {
+  BlockedInfo,
   FlowNode,
   FlowEdge,
   NodeResult,
@@ -246,42 +248,7 @@ export const useFlowStore = defineStore('flow', () => {
           const data = state.flowfileData as FlowfileData
 
           for (const flowfileNode of data.nodes) {
-            // Node types this editor renamed (see utils/coreExport.ts).
-            const nodeType = editorNodeType(flowfileNode.type)
-
-            // Migrate old settings field names
-            let settings = editorNodeSettings(flowfileNode.type, flowfileNode.setting_input) as NodeSettings
-            if (settings && (settings as any).received_table && !(settings as any).received_file) {
-              (settings as any).received_file = (settings as any).received_table
-              delete (settings as any).received_table
-            }
-            if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
-
-            // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
-            const nodeDescription = flowfileNode.description || ''
-            const nodeReference = flowfileNode.node_reference || undefined
-
-            // Sync description and node_reference to settings for backward compatibility
-            if (settings) {
-              (settings as NodeBase).description = nodeDescription
-              if (nodeReference) {
-                (settings as NodeBase).node_reference = nodeReference
-              }
-            }
-
-            const node: FlowNode = {
-              id: flowfileNode.id,
-              type: nodeType,
-              x: flowfileNode.x_position,
-              y: flowfileNode.y_position,
-              settings,
-              inputIds: flowfileNode.input_ids || [],
-              leftInputId: flowfileNode.left_input_id,
-              rightInputId: flowfileNode.right_input_id,
-              description: nodeDescription,
-              node_reference: nodeReference
-            }
-            nodes.value.set(flowfileNode.id, node)
+            nodes.value.set(flowfileNode.id, hydrateFlowfileNode(flowfileNode))
           }
 
           // Import connections - support both explicit connections array and implicit derivation
@@ -357,6 +324,100 @@ export const useFlowStore = defineStore('flow', () => {
     } catch (err) {
       console.error('Failed to load state from session storage', err)
     }
+  }
+
+  /**
+   * The single hydration path for a serialized node — used by both the
+   * sessionStorage restore and file/share/snapshot import so type renames,
+   * settings migrations and description sync can never diverge.
+   */
+  function hydrateFlowfileNode(flowfileNode: FlowfileNode): FlowNode {
+    // Node types this editor renamed, plus the core spellings the download writes.
+    const nodeType = editorNodeType(flowfileNode.type)
+
+    // Migrate old settings field names
+    let settings = editorNodeSettings(flowfileNode.type, flowfileNode.setting_input) as NodeSettings
+    if (settings && (settings as any).received_table && !(settings as any).received_file) {
+      (settings as any).received_file = (settings as any).received_table
+      delete (settings as any).received_table
+    }
+    if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
+
+    // Description and node_reference live at the FlowfileNode level (where
+    // flowfile_core stores them); sync into settings for backward compatibility.
+    const nodeDescription = flowfileNode.description || ''
+    const nodeReference = flowfileNode.node_reference || undefined
+    if (settings) {
+      (settings as NodeBase).description = nodeDescription
+      if (nodeReference) {
+        (settings as NodeBase).node_reference = nodeReference
+      }
+    }
+
+    return {
+      id: flowfileNode.id,
+      type: nodeType,
+      x: flowfileNode.x_position ?? 0,
+      y: flowfileNode.y_position ?? 0,
+      settings,
+      inputIds: flowfileNode.input_ids || [],
+      leftInputId: flowfileNode.left_input_id,
+      rightInputId: flowfileNode.right_input_id,
+      description: nodeDescription,
+      node_reference: nodeReference
+    }
+  }
+
+  /** A locked, non-runnable node (share-link placeholder or unimplemented type). */
+  function isPlaceholderNode(nodeId: number): boolean {
+    const node = nodes.value.get(nodeId)
+    return !!node && isPlaceholderNodeDef(node.type, node.settings)
+  }
+
+  /**
+   * Every node that cannot run in this build: placeholder nodes plus everything
+   * downstream of one. BFS over the edge list only (buildDownstreamGraph), never
+   * getExecutionOrder — that throws on a cycle and this must stay total.
+   */
+  const blockedNodes = computed<Map<number, BlockedInfo>>(() => {
+    const blocked = new Map<number, BlockedInfo>()
+    const roots: number[] = []
+    nodes.value.forEach((node, id) => {
+      if (isPlaceholderNodeDef(node.type, node.settings)) {
+        blocked.set(id, {
+          reason: 'placeholder',
+          message: placeholderReason(node.settings),
+          sourceNodeId: id
+        })
+        roots.push(id)
+      }
+    })
+    if (roots.length === 0) return blocked
+
+    const downstream = buildDownstreamGraph()
+    const queue = [...roots]
+    const visited = new Set<number>(roots)
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      const source = blocked.get(current)!
+      for (const next of downstream[current] || []) {
+        if (visited.has(next)) continue
+        visited.add(next)
+        const rootId = source.sourceNodeId
+        const rootNode = nodes.value.get(rootId)
+        blocked.set(next, {
+          reason: 'upstream_placeholder',
+          message: `Depends on "${rootNode ? placeholderLabel(rootNode.type, rootNode.settings) : `node ${rootId}`}" (#${rootId}), which can't run in the browser`,
+          sourceNodeId: rootId
+        })
+        queue.push(next)
+      }
+    }
+    return blocked
+  })
+
+  function getBlockedInfo(nodeId: number): BlockedInfo | undefined {
+    return blockedNodes.value.get(nodeId)
   }
 
   /**
@@ -1370,7 +1431,10 @@ gc.collect()
         if (existing) {
           newSelectInput.push({
             ...existing,
-            data_type: col.data_type,
+            // A chosen cast target must survive an upstream schema refresh; the
+            // desktop app's updateNodeSelect makes the same data_type_change
+            // exception. Everything else follows the incoming type.
+            data_type: existing.data_type_change ? existing.data_type : col.data_type,
             is_available: true,
             position: (existing as any).position ?? index
           })
@@ -1476,6 +1540,10 @@ gc.collect()
     for (const nodeId of order) {
       const node = nodes.value.get(nodeId)
       if (!node) continue
+      // A placeholder's settings must never cross the bridge (they're stubs, or
+      // sender-authored content that must not be interpreted). Its downstream
+      // still travels and resolves loudly as "Upstream schema unavailable".
+      if (isPlaceholderNodeDef(node.type, node.settings)) continue
       graphNodes[nodeId] = {
         type: node.type,
         input_ids: node.inputIds,
@@ -1524,6 +1592,8 @@ result
       const node = nodes.value.get(nodeId)
       if (!node) continue
       if (isSourceNode(node.type)) continue
+      // Keep a blocked node's marker/state untouched by propagation refreshes.
+      if (blockedNodes.value.has(nodeId)) continue
 
       const primaryInputId = node.leftInputId || node.inputIds[0]
       const inputSchema = primaryInputId ? (nodeResults.value.get(primaryInputId)?.schema || null) : null
@@ -1590,6 +1660,8 @@ result
     for (const nodeId of order) {
       const node = nodes.value.get(nodeId)
       if (!node) continue
+      // Blocked nodes never run — also guards the lazy-execution branch below.
+      if (blockedNodes.value.has(nodeId)) continue
 
       // Skip source nodes - their schema comes from actual data
       if (isSourceNode(node.type)) {
@@ -1972,12 +2044,28 @@ result
     return result
   }
 
+  /** Mark a node blocked (placeholder / downstream of one). Not a failure:
+   *  nothing was attempted, so success stays undefined. */
+  function blockNode(nodeId: number, info: BlockedInfo): NodeResult {
+    const existing = nodeResults.value.get(nodeId)
+    const result: NodeResult = { ...existing, success: undefined, error: undefined, data: undefined, blocked: info }
+    nodeResults.value.set(nodeId, result)
+    return result
+  }
+
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
       console.warn(`[flowfile] executeNode skipped: node ${nodeId} not found`)
       return { success: false, error: 'Node not found' }
     }
+
+    // The single execution choke point for blocked nodes: every run path (Run
+    // flow, Run Now, Apply, Fetch data, upstream chains, lazy propagation)
+    // funnels through here, so a placeholder's settings can never reach the
+    // Pyodide bridge.
+    const blocked = blockedNodes.value.get(nodeId)
+    if (blocked) return blockNode(nodeId, blocked)
 
     console.debug(`[flowfile] executeNode ${nodeId} (${node.type})`)
     const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
@@ -2446,11 +2534,23 @@ result
       return
     }
 
+    // A pending debounced propagation (e.g. the isReady watcher's) landing
+    // mid-run would race the executors; executeFlow ends with its own pass.
+    if (propagateTimeout) {
+      clearTimeout(propagateTimeout)
+      propagateTimeout = null
+    }
+
     isExecuting.value = true
     executionError.value = null
     nodeResults.value.clear()
     previewCache.value.clear()
     dirtyNodes.value.clear()    // Clear all dirty flags (will be re-set if execution fails)
+
+    // Re-seed blocked markers so the canvas state survives the results wipe.
+    for (const [id, info] of blockedNodes.value) {
+      nodeResults.value.set(id, { blocked: info })
+    }
 
     const runStartedAt = Date.now()
     try {
@@ -2465,6 +2565,7 @@ result
       const failedNodes: string[] = []
       for (const nodeId of order) {
         const result = await executeNode(nodeId)
+        if (result?.blocked) continue  // blocked ≠ failed: nothing was attempted
         if (result && !result.success) {
           failedNodes.push(`${nodeId}: ${result.error ?? 'unknown error'}`)
         }
@@ -2876,44 +2977,7 @@ result
 
       for (const flowfileNode of data.nodes) {
         if (flowfileNode.id > maxId) maxId = flowfileNode.id
-
-        // Renamed node types, plus the core spellings the download writes.
-        const nodeType = editorNodeType(flowfileNode.type)
-
-        // Migrate old settings field names
-        let settings = editorNodeSettings(flowfileNode.type, flowfileNode.setting_input) as NodeSettings
-        if (settings && (settings as any).received_table && !(settings as any).received_file) {
-          (settings as any).received_file = (settings as any).received_table
-          delete (settings as any).received_table
-        }
-        if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
-
-        // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
-        const nodeDescription = flowfileNode.description || ''
-        const nodeReference = flowfileNode.node_reference || undefined
-
-        // Sync description and node_reference to settings for backward compatibility
-        if (settings) {
-          (settings as NodeBase).description = nodeDescription
-          if (nodeReference) {
-            (settings as NodeBase).node_reference = nodeReference
-          }
-        }
-
-        const node: FlowNode = {
-          id: flowfileNode.id,
-          type: nodeType,
-          x: flowfileNode.x_position ?? 0,
-          y: flowfileNode.y_position ?? 0,
-          settings,
-          inputIds: flowfileNode.input_ids || [],
-          leftInputId: flowfileNode.left_input_id,
-          rightInputId: flowfileNode.right_input_id,
-          description: nodeDescription,
-          node_reference: nodeReference
-        }
-
-        nodes.value.set(flowfileNode.id, node)
+        nodes.value.set(flowfileNode.id, hydrateFlowfileNode(flowfileNode))
       }
 
       nodeIdCounter.value = maxId
@@ -3024,6 +3088,20 @@ result
    * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
    */
   async function exportFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
+    // A placeholder node's stub settings make a file the full app cannot open
+    // (core refuses the whole flow on a missing required field) — warn first.
+    const placeholderCount = Array.from(nodes.value.values())
+      .filter(n => isPlaceholderNodeDef(n.type, n.settings)).length
+    if (placeholderCount > 0) {
+      const proceed = typeof window !== 'undefined' && typeof window.confirm === 'function'
+        ? window.confirm(
+          `This flow contains ${placeholderCount} placeholder node(s) whose settings did not travel in the share link. ` +
+          'The exported file will NOT open in the full Flowfile app. Export anyway?'
+        )
+        : false
+      if (!proceed) return
+    }
+
     // Flush any pending state from open explore_data panels so saved chart
     // specs end up in the exported node settings.
     await runBeforeExportHooks()
@@ -3327,6 +3405,11 @@ result
     getMissingFileNodes,
     getRemoteSourceUrl,
     refetchRemoteFiles,
+
+    // Placeholder / blocked-node state (share-link degraded flows)
+    isPlaceholderNode,
+    blockedNodes,
+    getBlockedInfo,
 
     // Actions
     generateNodeId,

@@ -282,4 +282,32 @@ describe('Lazy schema propagation', () => {
     expect((store.getNode(selectId)?.settings as any).select_input).toBe(selectInputAfterFirst)
     expect(store.getNodeResult(selectId)).toBe(resultAfterFirst)
   })
+
+  it('keeps a chosen cast target while following the source type otherwise', async () => {
+    const store = useFlowStore()
+    const readId = store.addNode('read', 0, 0)
+    const selectId = store.addNode('select', 200, 0)
+    connect(store, readId, selectId)
+    ;(store.getNode(selectId)!.settings as any).select_input = [
+      { old_name: 'a', new_name: 'a', keep: true, position: 0, data_type: 'String', data_type_change: true },
+      { old_name: 'b', new_name: 'b', keep: true, position: 1, data_type: 'Int64' }
+    ]
+
+    const schema = [
+      { name: 'a', data_type: 'Int64' },
+      { name: 'b', data_type: 'Float64' }
+    ]
+    store.nodeResults.set(readId, { schema })
+    runPythonWithResult.mockResolvedValue({
+      [readId]: { schema, schema_resolved: true },
+      [selectId]: { schema, schema_resolved: true }
+    })
+
+    await store.propagateSchemas()
+
+    const entries = (store.getNode(selectId)?.settings as any).select_input
+    expect(entries.find((e: any) => e.old_name === 'a').data_type).toBe('String')
+    // Untouched columns still follow whatever the upstream now produces.
+    expect(entries.find((e: any) => e.old_name === 'b').data_type).toBe('Float64')
+  })
 })

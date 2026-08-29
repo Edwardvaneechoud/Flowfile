@@ -194,6 +194,19 @@ def get_kernel_manifest_datas():
         return [(manifest, _os.path.join("flowfile_core", "kernel"))]
     return []
 
+# Ship the WASM node-support manifest. flowfile/share/support.py resolves it at
+# Path(__file__).parent / "wasm_node_support.json"; without it the share-link
+# builder is fail-closed and every node travels as an unsupported placeholder.
+def get_share_manifest_datas():
+    \"\"\"Collect the WASM node support manifest for PyInstaller bundling.\"\"\"
+    import os as _os
+    manifest = _os.path.join(
+        "flowfile_core", "flowfile_core", "flowfile", "share", "wasm_node_support.json"
+    )
+    if _os.path.isfile(manifest):
+        return [(manifest, _os.path.join("flowfile_core", "flowfile", "share"))]
+    return []
+
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
@@ -203,6 +216,7 @@ code_generator_datas = get_code_generator_datas()
 demo_flows_datas = get_demo_flows_datas()
 standard_icons_datas = get_standard_icons_datas()
 kernel_manifest_datas = get_kernel_manifest_datas()
+share_manifest_datas = get_share_manifest_datas()
 
 # Polars plugins that have subpackages or compiled extensions. The plain
 # `hiddenimports=['polars_ds']` directive only adds the top-level — it does
@@ -275,7 +289,7 @@ a = Analysis(
     binaries=plugin_binaries + ai_binaries,
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
     + code_generator_datas + demo_flows_datas + standard_icons_datas
-    + kernel_manifest_datas + plugin_datas + litellm_datas + ai_datas,
+    + kernel_manifest_datas + share_manifest_datas + plugin_datas + litellm_datas + ai_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
     + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',

@@ -16,9 +16,8 @@
 import type { NodeHandle, NodeTemplate } from "../types/flow.types";
 import type { EdgeCopyValue, MultiNodeCopyValue, NodeCopyValue } from "../types/canvas.types";
 import { toSnakeCase } from "../views/DesignerView/utils";
-import { parseTabularText, copyToClipboard } from "../utils/clipboardUtils";
+import { parseTabularText, copyTextEverywhere } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE } from "../utils/outputHandle";
-import { desktop, isDesktop } from "../../lib/desktop";
 
 export interface NodeClipboardBuffer {
   sentinelId: string;
@@ -191,20 +190,10 @@ export const copyNodesToBuffer = (
 
 /**
  * Async sentinel write for paths outside a copy event (context-menu Copy).
- * Desktop uses the clipboard-manager plugin; web uses copyToClipboard's
- * insecure-context-safe fallback. Returns whether the write succeeded.
+ * Returns whether the write succeeded.
  */
-export const writeSentinelToOsClipboard = async (text: string): Promise<boolean> => {
-  if (isDesktop) {
-    try {
-      await desktop.writeClipboardText(text);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  return copyToClipboard(text);
-};
+export const writeSentinelToOsClipboard = (text: string): Promise<boolean> =>
+  copyTextEverywhere(text);
 
 /**
  * Decide what a generic (Cmd+V / menu Paste) clipboard event means for the
@@ -225,7 +214,9 @@ export const resolvePasteIntent = (args: {
   if (sentinel) {
     // A sentinel from another install/session whose uuid doesn't match the
     // local buffer must do nothing — that's the whole point of the uuid.
-    return args.buffer && args.buffer.sentinelId === sentinel.id ? { kind: "node" } : { kind: "none" };
+    return args.buffer && args.buffer.sentinelId === sentinel.id
+      ? { kind: "node" }
+      : { kind: "none" };
   }
   if (args.clipboardText) {
     const parsed = parseTabularText(args.clipboardText);
@@ -245,11 +236,13 @@ export const resolvePasteIntent = (args: {
  * coupling was half of the original bug — pane clicks clear selections, and
  * non-editable targets have no native paste to defer to).
  */
-export const hasTextSelection = (
-  selection?: { toString(): string } | null,
-): boolean => {
+export const hasTextSelection = (selection?: { toString(): string } | null): boolean => {
   const sel =
-    selection !== undefined ? selection : typeof window !== "undefined" ? window.getSelection() : null;
+    selection !== undefined
+      ? selection
+      : typeof window !== "undefined"
+        ? window.getSelection()
+        : null;
   return !!sel && sel.toString().trim().length > 0;
 };
 
@@ -264,7 +257,11 @@ export const CANVAS_PANEL_SELECTOR =
   "[data-canvas-overlay], .el-dialog, .el-drawer, .el-popper, .el-message-box, .el-overlay, .context-menu";
 
 const isEditableElement = (el: Element): boolean => {
-  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || (el as HTMLElement).isContentEditable) {
+  if (
+    el.tagName === "INPUT" ||
+    el.tagName === "TEXTAREA" ||
+    (el as HTMLElement).isContentEditable
+  ) {
     return true;
   }
   return typeof el.closest === "function" && !!el.closest(".cm-editor");

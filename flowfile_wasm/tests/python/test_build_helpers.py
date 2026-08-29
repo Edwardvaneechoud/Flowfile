@@ -3,6 +3,8 @@
 Each helper takes (LazyFrame, settings) and returns a LazyFrame with no global
 state. Settings shapes mirror `toPythonJson(node.settings)` from flow-store.ts.
 """
+import datetime
+
 import polars as pl
 import pytest
 
@@ -101,6 +103,79 @@ def test_select_ignores_missing_columns():
         ]},
     ).collect()
     assert out.columns == ["a"]
+
+
+def _select_one(frame, **entry):
+    settings = {"select_input": [{"keep": True, "position": 0, **entry}]}
+    return engine.build_select(frame, settings).collect()
+
+
+def test_select_casts_to_the_declared_data_type():
+    out = _select_one(lf(a=[1, 2]), old_name="a", new_name="a", data_type="String")
+    assert out.schema["a"] == pl.String
+    assert out["a"].to_list() == ["1", "2"]
+
+
+def test_select_cast_is_not_strict():
+    # flowfile_core casts with strict=False: what will not convert becomes null.
+    out = _select_one(lf(a=["10", "abc", None]), old_name="a", new_name="a", data_type="Int64")
+    assert out["a"].to_list() == [10, None, None]
+
+
+def test_select_cast_truncates_decimals_toward_zero():
+    out = _select_one(lf(a=[1.9, -1.9, 2.5]), old_name="a", new_name="a", data_type="Int64")
+    assert out["a"].to_list() == [1, -1, 2]
+
+
+def test_select_cast_matches_cores_friendly_type_names():
+    # SelectInput.polars_type maps integer/double/string before resolving.
+    out = _select_one(lf(a=["7"]), old_name="a", new_name="a", data_type="integer")
+    assert out["a"].to_list() == [7]
+
+
+def test_select_temporal_target_parses_text():
+    out = _select_one(lf(a=["2024-01-05", "nope"]), old_name="a", new_name="a", data_type="Date")
+    assert out.schema["a"] == pl.Date
+    assert out["a"].to_list() == [datetime.date(2024, 1, 5), None]
+
+
+def test_select_cast_applies_before_the_rename():
+    out = _select_one(lf(a=[1]), old_name="a", new_name="b", data_type="String")
+    assert out.columns == ["b"]
+    assert out["b"].to_list() == ["1"]
+
+
+def test_select_declared_type_matching_the_column_is_a_no_op():
+    # The panel records a data type for every column, changed or not; a target a
+    # column already holds must not re-cast it (core drops those transforms too).
+    out = _select_one(
+        lf(a=[1]), old_name="a", new_name="a", data_type="Int64", data_type_change=True
+    )
+    assert out.schema["a"] == pl.Int64
+
+
+def test_select_parametrised_type_name_matches_on_its_base():
+    frame = pl.LazyFrame({"a": [datetime.datetime(2024, 1, 5, 12)]})
+    out = _select_one(frame, old_name="a", new_name="a", data_type="Datetime(time_unit='us')")
+    assert out.schema["a"] == pl.Datetime(time_unit="us")
+
+
+def test_select_unknown_type_name_leaves_the_column_alone():
+    # Core falls back to String here; a stale marker must not stringify a column.
+    out = _select_one(lf(a=[1]), old_name="a", new_name="a", data_type="unknown")
+    assert out.schema["a"] == pl.Int64
+
+
+def test_select_cast_ignores_dropped_columns():
+    out = engine.build_select(
+        lf(a=[1], b=[2]),
+        {"select_input": [
+            {"old_name": "a", "new_name": "a", "keep": True, "position": 0, "data_type": "String"},
+            {"old_name": "b", "new_name": "b", "keep": False, "position": 1, "data_type": "String"},
+        ]},
+    ).collect()
+    assert out.columns == ["a"]
+    assert out["a"].to_list() == ["1"]
 
 
 # --------------------------------------------------------------------------- #

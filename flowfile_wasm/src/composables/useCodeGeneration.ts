@@ -33,6 +33,7 @@ import type {
   FilterOperator,
   AggType
 } from '../types'
+import { selectCastTarget } from '../stores/schema-inference'
 
 export interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
@@ -722,7 +723,7 @@ export class FlowToPolarsConverter {
     const inputDf = inputVars.main || 'df'
     const selectExprs: string[] = []
 
-    // `position` order, like build_select — which also never casts.
+    // `position` order, then cast, then rename — the order build_select uses.
     const kept = settings.select_input
       .filter(col => col.keep && col.is_available !== false)
       .map((col, index) => ({ col, index }))
@@ -730,6 +731,13 @@ export class FlowToPolarsConverter {
 
     for (const { col } of kept) {
       let expr = `pl.col("${col.old_name}")`
+      const target = selectCastTarget(col)
+      if (target === 'Datetime' || target === 'Date') {
+        // The engine parses temporal targets from text rather than casting.
+        expr += `.str.to_${target.toLowerCase()}(strict=False)`
+      } else if (target) {
+        expr += `.cast(pl.${target}, strict=False)`
+      }
       if (col.old_name !== col.new_name) {
         expr += `.alias("${col.new_name}")`
       }

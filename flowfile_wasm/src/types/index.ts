@@ -600,8 +600,18 @@ export interface RowInfo {
   max_rows: number
 }
 
+/** Why a node cannot run in this build. `placeholder` = the node itself is a
+ *  share-link placeholder / unsupported type; `upstream_placeholder` = an
+ *  ancestor is. Not a failure: nothing was attempted. */
+export interface BlockedInfo {
+  reason: 'placeholder' | 'upstream_placeholder'
+  message: string
+  sourceNodeId: number
+}
+
 export interface NodeResult {
   success?: boolean  // undefined = not executed yet (shows grey), true = success (green), false = error (red)
+  blocked?: BlockedInfo  // set when the node can't run in this build; success stays undefined
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]

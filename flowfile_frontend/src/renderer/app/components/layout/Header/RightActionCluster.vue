@@ -11,12 +11,14 @@ import { useItemStore } from "../../common/DraggableItem/stateStore";
 import AiAssistantTrigger from "../../../features/ai/AiAssistantTrigger.vue";
 import RunButton from "./run.vue";
 import PopOver from "../../../features/designer/editor/PopOver.vue";
+import ShareLinkDialog from "../../sharing/ShareLinkDialog.vue";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const draggableItemStore = useItemStore();
 
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
+const showShareLink = ref(false);
 
 const showFlowResult = computed(() => nodeStore.showFlowResult);
 
@@ -74,6 +76,17 @@ defineExpose({
 
     <span class="cluster-separator" aria-hidden="true" />
 
+    <pop-over content="Share as a browser link" placement="bottom">
+      <button
+        class="action-btn action-btn--icon-only"
+        type="button"
+        aria-label="Share flow as a browser link"
+        @click="showShareLink = true"
+      >
+        <span class="material-icons btn-icon" aria-hidden="true">link</span>
+      </button>
+    </pop-over>
+
     <pop-over content="Flow settings (⌘,)" placement="bottom">
       <button
         class="action-btn action-btn--icon-only"
@@ -99,6 +112,8 @@ defineExpose({
         <el-icon v-else><Minus /></el-icon>
       </button>
     </pop-over>
+
+    <share-link-dialog v-if="showShareLink" v-model="showShareLink" />
   </div>
 </template>
 
