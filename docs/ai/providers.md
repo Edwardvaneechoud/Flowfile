@@ -1,6 +1,6 @@
 # Provider Setup (BYOK)
 
-The [AI Assistant](index.md) runs against a built-in [on-device model](#on-device-model-no-key-required) or one of six LLM providers: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. For the hosted providers you bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work there are two offline paths: the on-device model, which needs no key and no account, and Ollama, which points Flowfile at a server you run.
+The [AI Assistant](index.md) runs against a built-in [on-device model](#on-device-model-no-key-required) or one of six LLM providers: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. For the hosted providers you bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. Two options work offline: the on-device model (no key or account) and Ollama (a server you run).
 
 !!! info "Not in Flowfile Lite"
     The AI Assistant (and BYOK provider setup) requires the full desktop/server build, not the browser-only [Flowfile Lite](../users/deployment/lite.md) edition.
@@ -13,10 +13,10 @@ Default models below reflect the provider classes as of 2026-07.
 
 | Provider | Default model | Tools | Streaming | Key env var | Notes |
 |----------|---------------|:-----:|:---------:|-------------|-------|
-| **Anthropic** | `claude-sonnet-4-6` | ✓ | ✓ | `ANTHROPIC_API_KEY` | Best balance of quality and tool-use reliability. Haiku 4.5 is the default for fast surfaces (Cmd+K, ghost-node, autocomplete); Opus 4.7 for `agent_complex`. |
+| **Anthropic** | `claude-sonnet-4-6` | ✓ | ✓ | `ANTHROPIC_API_KEY` | Haiku 4.5 is the default for fast surfaces (Cmd+K, ghost-node, autocomplete); Opus 4.7 for `agent_complex`. |
 | **OpenAI** | `gpt-4.1-mini` | ✓ | ✓ | `OPENAI_API_KEY` | Mini tier for the cheap surfaces; full `gpt-4.1` for `explain` / `agent_complex` / `docgen`. Strict structured outputs supported via litellm. |
-| **Google (Gemini)** | `gemini-2.5-flash` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Generous free tier (~250–1000 req/day, no card). Pro for `agent_complex`. |
-| **Groq** | `qwen/qwen3-32b` | ✓ | ✓ | `GROQ_API_KEY` | Very fast inference (~30 RPM free tier); good fit for low-TTFB surfaces (Cmd+K, ghost-node). |
+| **Google (Gemini)** | `gemini-2.5-flash` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Free tier ~250–1000 req/day, no card required. Pro for `agent_complex`. |
+| **Groq** | `qwen/qwen3-32b` | ✓ | ✓ | `GROQ_API_KEY` | Fast inference; free tier is ~30 RPM. |
 | **OpenRouter** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `OPENROUTER_API_KEY` | One key routing to many hosted models. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
 | **Ollama** | `llama3.1:8b` | ✓ (model-dependent) | ✓ | *(none — local)* | Self-hosted; talks to your local Ollama server (default `http://localhost:11434`). Tool-use works on Llama 3.1+ and most newer instruct models. |
 
@@ -29,7 +29,7 @@ The "Tools" column means the provider can return structured tool-call arguments 
 
 ## Configuring keys in the UI
 
-The recommended path is the in-app settings panel:
+In the app:
 
 1. Open **Settings → AI Providers**.
 2. Pick a provider from the list. The panel shows class-level metadata (default model, supports tools, supports streaming) plus your current credential status: **Configured** (key saved), **Env fallback** (no key saved but a recognised env var is set on the server), or **Unconfigured**.
@@ -66,7 +66,7 @@ Each AI feature is a *surface* (`explain`, `agent_staged`, `agent_live`, `agent_
 When you do want to override:
 
 1. **Per-credential default**. In the BYOK panel, set *Default model* on the provider row. This wins over the class-level default on every surface except the Agent, which prefers the provider class' own tool-capable model where one is defined (see below).
-2. **Curated model list**. Some providers (notably OpenRouter) let you pin a *list* of models you've opted into. Flowfile will use the surface's preferred model **if it's in your curated list**; otherwise it falls back to the first model in the list. Useful when you want to limit yourself to free-tier models without losing per-surface intelligence.
+2. **Curated model list**. Some providers (notably OpenRouter) let you pin a *list* of models you've opted into. Flowfile will use the surface's preferred model **if it's in your curated list**; otherwise it falls back to the first model in the list. Useful when you want to limit yourself to free-tier models without losing the per-surface defaults.
 3. **Per-request override**. The API accepts an explicit `model=...` per call. This always wins.
 
 The full resolution order, in priority:
@@ -90,7 +90,7 @@ Cap per-provider request volume via env vars on the host: `FLOWFILE_AI_<PROVIDER
 
 ## On-device model (no key required)
 
-Flowfile can run a small model on the machine itself — no account, no key, no network once it's installed. It downloads a llama.cpp `llama-server` build plus a quantized model into your Flowfile data directory and drives it over its OpenAI-compatible API. The provider id is `local`; it is deliberately kept out of the BYOK provider set above, so it never appears in the credential list and has no `/ai/providers/*` routes. The server boots lazily on the first AI call.
+Flowfile can run a small model on the machine itself. It downloads a llama.cpp `llama-server` build plus a quantized model into the Flowfile data directory and drives it over its OpenAI-compatible API; it needs no key or account and works offline once installed. The provider id is `local`; it is deliberately kept out of the BYOK provider set above, so it never appears in the credential list and has no `/ai/providers/*` routes. The server boots lazily on the first AI call.
 
 Set it up in **Settings → AI Providers → On-device AI**:
 
@@ -104,13 +104,13 @@ The catalog is three q4_k_m GGUF builds, pulled from Hugging Face on demand:
 
 | Model | Notes |
 |-------|-------|
-| **Qwen2.5-Coder 1.5B** | Fastest and lightest. Good on low-RAM machines, weaker on bigger flows. |
-| **Qwen2.5-Coder 3B** | The default. Best balance of quality and speed. |
-| **Qwen2.5 7B Instruct** | Strongest reasoning, but slow on CPU and needs roughly 6 GB free RAM. |
+| **Qwen2.5-Coder 1.5B** | ~1.1 GB download. For low-RAM machines. |
+| **Qwen2.5-Coder 3B** | ~2.0 GB download. The default. |
+| **Qwen2.5 7B Instruct** | ~4.4 GB download. Needs ~6 GB free RAM; slow on CPU. |
 
 Prebuilt runtimes exist for macOS, Linux, and Windows on x64 and arm64; elsewhere the card shows "Not available on this platform".
 
-The on-device model streams but does not do tool calls, so it backs the read-only and text surfaces — Chat, Fix With AI, Generate Documentation, Lineage Q&A, the inline ✨ actions — plus one-shot flow generation. The Agent rejects it with a `422`; it is meant for simple AI use-cases, and larger workloads belong on a provider such as Ollama or OpenRouter.
+The on-device model streams but does not do tool calls, so it backs the read-only and text surfaces — Chat, Fix With AI, Generate Documentation, Lineage Q&A, the inline ✨ actions — plus one-shot flow generation. The Agent rejects it with a `422`. For heavier work use a provider such as Ollama or OpenRouter.
 
 !!! note "Running Flowfile in Docker"
     The bundled `llama-server` needs `libgomp1` in the image. If it exits on startup, see [Troubleshooting](#troubleshooting).
@@ -121,7 +121,7 @@ The on-device model streams but does not do tool calls, so it backs the read-onl
 
 Ollama is the other offline path — a server you install and manage yourself. Quick start on macOS / Linux:
 
-1. Install and start Ollama (see [ollama.com](https://ollama.com) — link kept off this page so it doesn't rot).
+1. Install and start Ollama (see [ollama.com](https://ollama.com)).
 2. Pull a tool-capable instruct model:
 
     ```bash
