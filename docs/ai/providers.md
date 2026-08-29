@@ -1,6 +1,6 @@
 # Provider Setup (BYOK)
 
-The [AI Assistant](index.md) runs against one of six LLM providers — pick the one that fits your budget, latency needs, or compliance posture: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. You bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work, Ollama lets the entire AI layer run on your laptop with no traffic leaving your machine.
+The [AI Assistant](index.md) runs against a built-in [on-device model](#on-device-model-no-key-required) or one of six LLM providers — pick what fits your budget, latency needs, or compliance posture: Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. For the hosted providers you bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work there are two offline paths: the on-device model, which needs no key and no account, and Ollama, which points Flowfile at a server you run.
 
 !!! info "Not in Flowfile Lite"
     The AI Assistant (and BYOK provider setup) requires the full desktop/server build, not the browser-only [Flowfile Lite](../users/deployment/lite.md) edition.
@@ -38,8 +38,7 @@ The recommended path is the in-app settings panel:
 
 ![AI Providers list with status chips](../assets/images/ai/byok_provider_list.png)
 
-!!! note "📸 Screenshot pending — `byok_provider_detail.png`"
-    Detail / Configure form for a single provider (e.g. Anthropic) — API key field (masked), API base field, default model dropdown, optional curated models list, and the Save / Test / Delete buttons.
+![Configure form for a single provider — masked API key field, optional default model, curated models list, and API base URL](../assets/images/ai/byok_provider_detail.png)
 
 To remove a key, click **Delete**. The credential row and the underlying encrypted secret are removed atomically.
 
@@ -62,11 +61,11 @@ If no credential row exists for a user, Flowfile falls back to the standard prov
 
 ## Choosing models per surface
 
-Each AI feature is a *surface* (`chat`, `explain`, `agent_staged`, `agent_complex`, `cmd_k`, `ghost_node`, `settings_autocomplete`, `lineage`, `docgen`, `intent_classifier`, `cron`). Each provider class ships per-surface defaults — Haiku for fast paths, Sonnet for thinking paths, etc. — so you usually don't need to override anything.
+Each AI feature is a *surface* (`explain`, `agent_staged`, `agent_live`, `agent_complex`, `cmd_k`, `ghost_node`, `settings_autocomplete`, `lineage`, `docgen`, `intent_classifier`, `cron`; the chat drawer has no surface of its own and falls back to `explain`). Each provider class ships per-surface defaults — Haiku for fast paths, Sonnet for thinking paths, etc. — so you usually don't need to override anything.
 
 When you do want to override:
 
-1. **Per-credential default**. In the BYOK panel, set *Default model* on the provider row. This wins over the class-level default for every surface.
+1. **Per-credential default**. In the BYOK panel, set *Default model* on the provider row. This wins over the class-level default on every surface except the Agent, which prefers the provider class' own tool-capable model where one is defined (see below).
 2. **Curated model list**. Some providers (notably OpenRouter) let you pin a *list* of models you've opted into. Flowfile will use the surface's preferred model **if it's in your curated list**; otherwise it falls back to the first model in the list. Useful when you want to limit yourself to free-tier models without losing per-surface intelligence.
 3. **Per-request override**. The API accepts an explicit `model=...` per call. This always wins.
 
@@ -79,7 +78,7 @@ The full resolution order, in priority:
 5. Provider class' `surface_models[surface]`.
 6. Provider class' `default_model`.
 
-A note on the Agent surface: it requires a tool-capable model. If you pin a curated list that contains only models without tool support, agent calls will return `422` with a clear message; switch back to a tool-capable model.
+A note on the Agent surface: it requires a tool-capable model. Unless you pass an explicit `model=`, it routes to the provider class' `surface_models` entry for the agent surface where the class defines one, ahead of your credential default and curated list. A provider that cannot tool-call at all — the [on-device model](#on-device-model-no-key-required) — is refused with a `422`.
 
 ---
 
@@ -89,9 +88,38 @@ Cap per-provider request volume via env vars on the host: `FLOWFILE_AI_<PROVIDER
 
 ---
 
+## On-device model (no key required)
+
+Flowfile can run a small model on the machine itself — no account, no key, no network once it's installed. It downloads a llama.cpp `llama-server` build plus a quantized model into your Flowfile data directory and drives it over its OpenAI-compatible API. The provider id is `local`; it is deliberately kept out of the BYOK provider set above, so it never appears in the credential list and has no `/ai/providers/*` routes. The server boots lazily on the first AI call.
+
+Set it up in **Settings → AI Providers → On-device AI**:
+
+1. With nothing installed, the card offers a single **Set up On-device AI** button (labelled with the download size) that fetches the recommended model. Nothing downloads until you click it.
+2. Once installed, the card shows the active model with **Start** / **Stop**.
+3. **Advanced — choose or manage models** opens the full catalog: install another size, switch the active one with **Use**, or delete one.
+
+![On-device AI card in Settings → AI Providers before setup — the one-click Set up On-device AI button and the collapsed Advanced section](../assets/images/ai/on_device_ai_setup.png)
+
+The catalog is three q4_k_m GGUF builds, pulled from Hugging Face on demand:
+
+| Model | Notes |
+|-------|-------|
+| **Qwen2.5-Coder 1.5B** | Fastest and lightest. Good on low-RAM machines, weaker on bigger flows. |
+| **Qwen2.5-Coder 3B** | The default. Best balance of quality and speed. |
+| **Qwen2.5 7B Instruct** | Strongest reasoning, but slow on CPU and needs roughly 6 GB free RAM. |
+
+Prebuilt runtimes exist for macOS, Linux, and Windows on x64 and arm64; elsewhere the card shows "Not available on this platform".
+
+The on-device model streams but does not do tool calls, so it backs the read-only and text surfaces — Chat, Fix With AI, Generate Documentation, Lineage Q&A, the inline ✨ actions — plus one-shot flow generation. The Agent rejects it with a `422`; it is meant for simple AI use-cases, and larger workloads belong on a provider such as Ollama or OpenRouter.
+
+!!! note "Running Flowfile in Docker"
+    The bundled `llama-server` needs `libgomp1` in the image. If it exits on startup, see [Troubleshooting](#troubleshooting).
+
+---
+
 ## Self-hosted (Ollama) setup
 
-Ollama is the offline path. Quick start on macOS / Linux:
+Ollama is the other offline path — a server you install and manage yourself. Quick start on macOS / Linux:
 
 1. Install and start Ollama (see [ollama.com](https://ollama.com) — link kept off this page so it doesn't rot).
 2. Pull a tool-capable instruct model:
@@ -118,7 +146,7 @@ Tool-call quality varies by model. Llama 3.1+ instruct models do tool calls corr
 The feature flag is off. AI is on by default — this only happens if someone has explicitly set `FEATURE_FLAG_AI=false` in the env, or toggled it off at runtime via `POST /system/feature_flags/ai`. Re-enable by unsetting the env var (or setting it to `true`) and restarting, or toggle it back on via the admin endpoint.
 
 **`422 Unprocessable Entity` when starting an Agent session.**
-The picked model doesn't support tools. Check the *Tools* column in the [provider table](#supported-providers). Either switch models on the request or update your credential's `default_model`.
+The picked provider can't do tool calls — the [on-device model](#on-device-model-no-key-required) never can. Check the *Tools* column in the [provider table](#supported-providers) and switch to a tool-capable provider, or pass an explicit tool-capable `model=` on the request.
 
 **`404` from `POST /ai/providers/{name}`.**
 Provider name typo. The supported names are exactly: `anthropic`, `openai`, `google`, `groq`, `openrouter`, `ollama` (lowercase, no dashes).

@@ -14,7 +14,7 @@ How a change lands depends on the surface:
 - **Inline ✨ actions** skip the diff layer: *Explain* is read-only, *Add description* writes straight to the node's `description` once streaming finishes, and *Regenerate code* shows the new snippet for manual copy-paste.
 - **Read-only surfaces** (Chat, Lineage Q&A, Fix With AI, Generate Documentation) never propose graph mutations.
 
-No hosted Flowfile model — bring your own key (Anthropic, OpenAI, Google, Groq, OpenRouter, or a local Ollama). See [Provider Setup](providers.md).
+No hosted Flowfile service — bring your own key (Anthropic, OpenAI, Google, Groq, OpenRouter, or a local Ollama), or run the built-in [on-device model](providers.md#on-device-model-no-key-required) with no key at all. See [Provider Setup](providers.md).
 
 ---
 
