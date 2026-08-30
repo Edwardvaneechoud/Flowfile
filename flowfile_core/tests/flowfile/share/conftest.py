@@ -220,8 +220,10 @@ def build_canary_flow() -> FlowGraph:
         graph,
         9,
         8,
+        # A function call, so the expression is never translated into a basic
+        # filter — the canary has to stay on the placeholder path it guards.
         transform_schema.FilterInput(
-            mode="advanced", advanced_filter=f"[city] = '{CANARIES['filter_expression']}'"
+            mode="advanced", advanced_filter=f"contains([city], '{CANARIES['filter_expression']}')"
         ),
     )
 

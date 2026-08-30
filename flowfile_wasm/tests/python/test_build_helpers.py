@@ -58,12 +58,57 @@ def test_filter_contains():
     assert out["name"].to_list() == ["alice", "carol"]
 
 
-def test_filter_advanced_expr_is_evaluated():
+def test_filter_advanced_expr_is_a_flowfile_formula():
+    """The advanced filter speaks the formula dialect, not Python."""
     out = engine.build_filter(
         lf(a=[1, 2, 3], b=[10, 20, 30]),
-        {"filter_input": {"mode": "advanced", "advanced_filter": "pl.col('b') > 15"}},
+        {"filter_input": {"mode": "advanced", "advanced_filter": "[b] > 15"}},
     ).collect()
     assert out["a"].to_list() == [2, 3]
+
+
+def test_filter_advanced_expr_handles_functions_and_conjunctions():
+    out = engine.build_filter(
+        lf(city=["Amsterdam", "Berlin", "Rotterdam"], n=[1, 2, 3]),
+        {"filter_input": {"mode": "advanced", "advanced_filter": 'contains([city], "dam") and [n] > 1'}},
+    ).collect()
+    assert out["city"].to_list() == ["Rotterdam"]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "polars-expr-transformer <=0.5.7 executes Python from a formula: "
+        "token_classifier.standardize_quotes rewrites 'a\"b' to \"a\"b\" without escaping, "
+        "and models.Classifier.get_pl_func eval()s the result. Affects every formula "
+        "surface (formula node, advanced filter, core's settings validation), not just "
+        "this one. Drop the xfail once the pin is raised past the fix."
+    ),
+)
+def test_filter_advanced_expr_does_not_evaluate_python(tmp_path):
+    """A formula must be parsed, never executed.
+
+    The old implementation ``eval``'d the whole field, so this is what the share
+    transform's placeholder demotion is protecting against. When this test goes
+    green the expression language is safe to ship in a link, and the demotion in
+    ``flowfile_core/flowfile/share/compatibility.py`` can be reconsidered.
+    """
+    canary = tmp_path / "canary"
+    hostile = [
+        f'__import__("os").system("touch {canary}")',
+        f'open("{canary}", "w")',
+        f'[a] > 1 and open("{canary}", "w")',
+        f'"x" + str(open("{canary}", "w"))',
+        f'[a] = "x\\" + open(\\"{canary}\\", \\"w\\") + \\"y"',
+        # The live escape: a single-quoted literal carrying a double quote.
+        f"[a] = 'x\" + open(\"{canary}\", \"w\") + \"y'",
+    ]
+    for expression in hostile:
+        try:
+            engine.build_filter(lf(a=[1, 2]), {"filter_input": {"mode": "advanced", "advanced_filter": expression}})
+        except Exception:
+            pass
+        assert not canary.exists(), f"{expression!r} executed Python"
 
 
 def test_filter_without_field_is_passthrough():

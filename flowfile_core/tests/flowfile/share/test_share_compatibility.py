@@ -11,6 +11,7 @@ from flowfile_core.flowfile.share.compatibility import (
     classify_node,
     placeholder_type,
 )
+from flowfile_core.flowfile.share.filter_translation import rewrite_filter_settings, translate_advanced_filter
 
 
 def _classify(node_type: str, settings: dict | None = None):
@@ -174,3 +175,78 @@ def test_missing_settings_never_crash_a_predicate():
 
 def test_placeholder_type_uses_the_sentinel_suffix():
     assert placeholder_type("join") == f"join{PLACEHOLDER_SENTINEL_SUFFIX}"
+
+
+TRANSLATABLE_FILTERS = [
+    ("greater than a whole number", "[quantity] > 7", "quantity", "greater_than", "7"),
+    ("no spaces", "[quantity]>7", "quantity", "greater_than", "7"),
+    ("single equals", '[city] = "Amsterdam"', "city", "equals", "Amsterdam"),
+    ("double equals", '[city] == "Amsterdam"', "city", "equals", "Amsterdam"),
+    ("single-quoted text", "[city] = 'Amsterdam'", "city", "equals", "Amsterdam"),
+    ("not equals", "[quantity] != 7", "quantity", "not_equals", "7"),
+    ("greater than or equals", "[quantity] >= 7", "quantity", "greater_than_or_equals", "7"),
+    ("less than", "[quantity] < 7", "quantity", "less_than", "7"),
+    ("less than or equals", "[quantity] <= 7", "quantity", "less_than_or_equals", "7"),
+    ("negative bound", "[balance] > -5", "balance", "greater_than", "-5"),
+    ("parenthesised", "([quantity] > 7)", "quantity", "greater_than", "7"),
+    ("column name with a space", "[unit price] > 7", "unit price", "greater_than", "7"),
+    ("empty text", '[city] = ""', "city", "equals", ""),
+]
+
+UNTRANSLATABLE_FILTERS = [
+    ("two conditions", "[a] > 1 and [b] < 2"),
+    ("a function call", 'contains([city], "dam")'),
+    ("a computed left side", "[a] + 1 > 2"),
+    ("a wrapped left side", "length([a]) > 3"),
+    ("a negated comparison", "not([a] > 1)"),
+    ("column against column", "[a] = [b]"),
+    ("a literal on the left", "7 < [a]"),
+    # int() rejects a fractional bound on the browser's integer columns.
+    ("a fractional bound", "[price] > 7.5"),
+    ("a boolean literal", "[flag] = true"),
+    ("a null literal", "[a] = null"),
+    ("a flow parameter", "[a] > ${threshold}"),
+    ("an unparseable expression", "[a] > "),
+    ("nothing at all", ""),
+]
+
+
+@pytest.mark.parametrize(
+    "expression,field,operator,value",
+    [(e, f, o, v) for _, e, f, o, v in TRANSLATABLE_FILTERS],
+    ids=[case[0] for case in TRANSLATABLE_FILTERS],
+)
+def test_plain_comparisons_become_basic_filters(expression, field, operator, value):
+    assert translate_advanced_filter(expression) == {
+        "mode": "basic",
+        "basic_filter": {"field": field, "operator": operator, "value": value},
+        "advanced_filter": "",
+    }
+
+
+@pytest.mark.parametrize(
+    "expression", [e for _, e in UNTRANSLATABLE_FILTERS], ids=[case[0] for case in UNTRANSLATABLE_FILTERS]
+)
+def test_anything_beyond_one_comparison_is_not_translated(expression):
+    assert translate_advanced_filter(expression) is None
+
+
+def test_a_translated_filter_classifies_as_supported():
+    """The end of the chain: the rewritten settings are what the check reads."""
+    settings = {"filter_input": {"mode": "advanced", "advanced_filter": "[quantity] > 7"}}
+    assert _classify("filter", settings).status == "placeholder"
+
+    rewritten = rewrite_filter_settings(settings)
+    assert _classify("filter", rewritten).status == "supported"
+    assert "advanced_filter" not in str(rewritten["filter_input"]["basic_filter"])
+
+
+def test_translation_never_touches_a_basic_filter():
+    settings = {"filter_input": {"mode": "basic", "basic_filter": {"field": "a", "operator": "equals", "value": "1"}}}
+    assert rewrite_filter_settings(settings) is None
+
+
+def test_a_translatable_split_filter_stays_a_placeholder():
+    """Translation removes one reason to demote a node, never all of them."""
+    settings = {"filter_input": {"mode": "advanced", "advanced_filter": "[a] > 1"}, "split_mode": True}
+    assert _classify("filter", rewrite_filter_settings(settings)).status == "placeholder"

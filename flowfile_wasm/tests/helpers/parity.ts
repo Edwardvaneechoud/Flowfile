@@ -169,6 +169,35 @@ export const PARITY_FIXTURES: Fixture[] = [
   filterFixture('filter between', { field: 'revenue', operator: 'between', value: '100', value2: '200' }),
   filterFixture('filter equals on a boolean column', { field: 'flag', operator: 'equals', value: 'true' }),
 
+  // What flowfile_core's share transform rewrites a plain `[col] <op> literal`
+  // advanced filter into (flowfile/share/filter_translation.py) — a share link
+  // only stays lossless while these run here the way the expression runs there.
+  filterFixture('translated advanced filter [revenue] >= 100', {
+    field: 'revenue',
+    operator: 'greater_than_or_equals',
+    value: '100'
+  }),
+  filterFixture('translated advanced filter [revenue] < 150', {
+    field: 'revenue',
+    operator: 'less_than',
+    value: '150'
+  }),
+  filterFixture('translated advanced filter [revenue] <= 150', {
+    field: 'revenue',
+    operator: 'less_than_or_equals',
+    value: '150'
+  }),
+  filterFixture('translated advanced filter [revenue] > -1', {
+    field: 'revenue',
+    operator: 'greater_than',
+    value: '-1'
+  }),
+  filterFixture('translated advanced filter [product] != "Widget"', {
+    field: 'product',
+    operator: 'not_equals',
+    value: 'Widget'
+  }),
+
   {
     name: 'select keeps position order and renames',
     ordered: true,
@@ -773,7 +802,51 @@ export const PARITY_FIXTURES: Fixture[] = [
  * script-parity suites to diff. When one runs again its `bothRefuse` assertion
  * fails and it belongs back in PARITY_FIXTURES.
  */
+/** An advanced filter: one flowfile formula, the dialect the Formula node speaks.
+ *
+ * The plain flavour refuses these (a `list[dict]` cannot evaluate a formula), so
+ * they stay out of PARITY_FIXTURES and are spread into the two suites that can
+ * read them: the generated Polars script, and flowfile_core itself — which runs
+ * the very same `simple_function_to_expr`, so the two engines cannot disagree
+ * unless one of them stops calling it. */
+const ADVANCED_FILTER_FIXTURES: Fixture[] = [
+  {
+    name: 'advanced filter: a comparison',
+    ordered: true,
+    steps: [
+      SALES,
+      {
+        id: 2,
+        type: 'filter',
+        inputs: [1],
+        settings: { filter_input: { mode: 'advanced', advanced_filter: '[revenue] > 100' } }
+      }
+    ],
+    output: 2
+  },
+  {
+    name: 'advanced filter: two conditions and a function call',
+    ordered: true,
+    steps: [
+      SALES,
+      {
+        id: 2,
+        type: 'filter',
+        inputs: [1],
+        settings: {
+          filter_input: {
+            mode: 'advanced',
+            advanced_filter: 'contains([product], "W") and [revenue] > 60'
+          }
+        }
+      }
+    ],
+    output: 2
+  }
+]
+
 export const CORE_ONLY_FIXTURES: Fixture[] = [
+  ...ADVANCED_FILTER_FIXTURES,
   {
     name: 'pivot with no index columns over an empty table',
     // A column with no values is declared String, and neither engine sums a String.
@@ -820,6 +893,7 @@ export const CORE_ONLY_FIXTURES: Fixture[] = [
  * PLAIN_HANDLERS entry, or an emitter that raises PlainPythonUnsupported.
  */
 export const POLARS_ONLY_FIXTURES: Fixture[] = [
+  ...ADVANCED_FILTER_FIXTURES,
   {
     // A temporal target parses text rather than casting it, by sniffing the
     // format — which a list of dicts cannot reproduce, so the plain flavour

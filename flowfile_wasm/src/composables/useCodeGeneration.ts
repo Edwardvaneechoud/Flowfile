@@ -655,9 +655,10 @@ export class FlowToPolarsConverter {
     const filterInput = settings.filter_input
 
     if (filterInput.mode === 'advanced') {
-      this.addCode(`${varName} = ${inputDf}.filter(`)
-      this.addCode(`    ${filterInput.advanced_filter}`)
-      this.addCode(`)`)
+      // A flowfile formula, not Python — translated the way the engine does it.
+      this.imports.add('from polars_expr_transformer import simple_function_to_expr')
+      const expr = toPythonValue(filterInput.advanced_filter || '')
+      this.addCode(`${varName} = ${inputDf}.filter(simple_function_to_expr(${expr}))`)
     } else if (filterInput.basic_filter) {
       const filter = filterInput.basic_filter
       const filterExpr = this.createBasicFilterExpr(filter.field, filter.operator, filter.value, filter.value2)

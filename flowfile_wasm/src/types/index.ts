@@ -71,7 +71,7 @@ export interface BasicFilter {
 export interface FilterInput {
   mode: 'basic' | 'advanced'
   basic_filter?: BasicFilter  // Optional - can be None in flowfile_core
-  advanced_filter: string  // Polars expression
+  advanced_filter: string  // Flowfile formula, e.g. [quantity] > 7
 }
 
 // SELECT SCHEMAS

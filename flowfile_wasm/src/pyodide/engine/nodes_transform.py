@@ -25,7 +25,12 @@ def convert_filter_values(values: list[str], dtype) -> list:
 
 
 def build_filter(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
-    """Build the filtered LazyFrame from input + settings (no store, no collect)."""
+    """Build the filtered LazyFrame from input + settings (no store, no collect).
+
+    An advanced filter is a **flowfile formula** (``[quantity] > 7``), the same
+    dialect the formula node speaks, so it goes through the same parser rather
+    than through Python.
+    """
     refuse_placeholder(settings)
     filter_input = settings.get("filter_input", {})
     mode = filter_input.get("mode", "basic")
@@ -33,7 +38,7 @@ def build_filter(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     if mode == "advanced":
         expr = filter_input.get("advanced_filter", "")
         if expr:
-            return input_lf.filter(eval(expr))
+            return input_lf.filter(_to_expr(expr))
         return input_lf
 
     basic = filter_input.get("basic_filter", {})

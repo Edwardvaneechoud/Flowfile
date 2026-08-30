@@ -10,7 +10,6 @@ from .nodes_formula import build_formula
 from .nodes_polars_code import build_polars_code_schema
 from .nodes_transform import (
     build_dynamic_rename,
-    build_filter,
     build_head,
     build_record_id,
     build_select,
@@ -27,7 +26,10 @@ def _schema_identity(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
 
 
 _SCHEMA_BUILDERS = {
-    "filter": build_filter,
+    # A filter never changes the schema, and building one in advanced mode would
+    # need the lazily-installed expression package that data-free propagation
+    # cannot count on having.
+    "filter": _schema_identity,
     "select": build_select,
     "group_by": build_group_by,
     "sort": build_sort,

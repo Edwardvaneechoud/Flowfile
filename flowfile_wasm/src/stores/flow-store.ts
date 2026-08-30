@@ -64,6 +64,8 @@ const SINGLE_INPUT_PACKAGES: Record<string, (settings: any) => string[]> = {
   // dynamic_rename only needs the expr engine in formula mode.
   dynamic_rename: (s) =>
     s?.dynamic_rename_input?.rename_mode === 'formula' ? [EXPR_TRANSFORMER_PKG] : [],
+  // an advanced filter is a flowfile formula, so it needs the same engine.
+  filter: (s) => (s?.filter_input?.mode === 'advanced' ? [EXPR_TRANSFORMER_PKG] : []),
 }
 
 

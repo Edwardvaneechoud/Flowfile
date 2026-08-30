@@ -111,7 +111,7 @@ def test_placeholder_keeps_a_user_written_description():
         graph,
         2,
         1,
-        transform_schema.FilterInput(mode="advanced", advanced_filter="[a] > 1"),
+        transform_schema.FilterInput(mode="advanced", advanced_filter="[a] > 1 and [b] < 2"),
     )
     graph.get_node(2).setting_input.description = "Only the interesting rows"
 
@@ -119,7 +119,30 @@ def test_placeholder_keeps_a_user_written_description():
     placeholder = next(node for node in envelope["flow"]["nodes"] if node["id"] == 2)
     assert placeholder["description"] == "Only the interesting rows"
     assert placeholder["setting_input"]["description"] == "Only the interesting rows"
-    assert "[a] > 1" not in json.dumps(envelope)
+    assert "[a] > 1 and [b] < 2" not in json.dumps(envelope)
+
+
+def test_a_translated_filter_carries_its_value_but_not_its_expression():
+    """A translatable filter's literal travels; the expression body still does not.
+
+    The value is flow logic — a basic filter has always carried one, and the
+    browser cannot run the comparison without it. What must not travel is the
+    expression *string*, which the browser would ``eval`` as Python: the node
+    arrives in basic mode, so there is nothing left to eval, and the
+    auto-generated description that quoted it is dropped.
+    """
+    graph = make_graph(name="translated")
+    add_read(graph, 1, "/tmp/data.csv")
+    add_filter(graph, 2, 1, transform_schema.FilterInput(mode="advanced", advanced_filter='[city] = "Amsterdam"'))
+
+    envelope = build_share_envelope(graph).envelope
+    node = next(node for node in envelope["flow"]["nodes"] if node["id"] == 2)
+    blob = json.dumps(envelope)
+
+    assert node["setting_input"]["filter_input"]["mode"] == "basic"
+    assert node["setting_input"]["filter_input"]["basic_filter"]["value"] == "Amsterdam"
+    assert '[city] = "Amsterdam"' not in blob
+    assert node["description"] == ""
 
 
 def test_local_read_path_is_reduced_to_a_basename():

@@ -1,13 +1,16 @@
 """Rewrite a plain advanced filter as the basic filter it already is.
 
-An advanced filter can never travel as itself: core writes a flowfile formula
-into ``advanced_filter`` while the browser build ``eval``s that field as Python
-(``engine/nodes_transform.py::build_filter``), so the string is both a different
-dialect and executable code. Most advanced filters, though, say nothing that
-needs an expression — ``[quantity] > 7`` is the basic filter "quantity
-greater_than 7" spelled differently, and the browser's basic path builds exactly
-the comparison core's formula builds. Translating those keeps the node running
-in the browser instead of demoting it to a placeholder.
+The browser build executes an advanced filter correctly — it hands the formula
+to the same ``simple_function_to_expr`` core uses — but the string still cannot
+*travel*: that parser executes Python for a crafted formula (the escape is
+pinned by the xfail in ``flowfile_wasm/tests/python/test_build_helpers.py``), so
+a sender-authored expression must never reach a recipient's browser.
+
+Most advanced filters, though, say nothing that needs an expression at all —
+``[quantity] > 7`` is the basic filter "quantity greater_than 7" spelled
+differently, and a basic filter carries a column, an operator and a value, none
+of which is ever evaluated. Translating those keeps the node running in the
+browser, with no expression in the payload, instead of demoting it.
 
 The translation is deliberately narrow — exactly one comparison, a bare column
 on the left, a bare number or text literal on the right — because the browser

@@ -25,7 +25,11 @@ authed_client = get_authed_client()
 
 @pytest.fixture()
 def shared_flow(tmp_path):
-    """A two-node flow: a local read feeding an advanced (placeholder) filter."""
+    """A two-node flow: a local read feeding an advanced (placeholder) filter.
+
+    Two conditions, so the expression is not translatable into a basic filter
+    and the node stays a placeholder — which is what the assertions below read.
+    """
     flow_id = flow_file_handler.add_flow(name="share_route", flow_path=str(tmp_path / "share.yaml"), user_id=1)
     graph = flow_file_handler.get_flow(flow_id)
     graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="read"))
@@ -48,7 +52,7 @@ def shared_flow(tmp_path):
             flow_id=flow_id,
             node_id=2,
             depending_on_id=1,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 10"),
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter='[amount] > 10 and [region] = "EU"'),
         )
     )
     yield flow_id
@@ -108,6 +112,37 @@ def test_share_link_never_carries_the_filter_expression(shared_flow):
     envelope = decode_share_hash(body["url"])
     assert "[amount] > 10" not in str(envelope)
     assert envelope["v"] == 1
+
+
+def test_a_translatable_filter_makes_the_flow_compatible(tmp_path):
+    """A one-comparison filter is reported as travelling, not as a placeholder."""
+    flow_id = flow_file_handler.add_flow(name="share_route_basic", flow_path=str(tmp_path / "basic.yaml"), user_id=1)
+    graph = flow_file_handler.get_flow(flow_id)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"amount": 5}, {"amount": 20}]),
+        )
+    )
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=2, node_type="filter"))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 10"),
+        )
+    )
+    try:
+        body = authed_client.get(SHARE_LINK_URL, params={"flow_id": flow_id}).json()
+        assert body["compatible"] is True
+        assert body["placeholder_count"] == 0
+        assert {row["node_id"]: row["status"] for row in body["nodes_report"]} == {1: "supported", 2: "supported"}
+    finally:
+        flow_file_handler.delete_flow(flow_id)
 
 
 def test_building_a_link_never_saves_the_flow(shared_flow, tmp_path):
