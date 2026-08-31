@@ -16,11 +16,20 @@ class TransformHandlersMixin(ConverterMixinBase):
         input_df = input_vars.get("main", "df")
 
         group_cols = []
+        group_items = []
+        has_renamed_key = False
         agg_exprs = []
 
         for agg_col in settings.groupby_input.agg_cols:
             if agg_col.agg == "groupby":
                 group_cols.append(agg_col.old_name)
+                if agg_col.new_name and agg_col.new_name != agg_col.old_name:
+                    has_renamed_key = True
+                    old = self._py_str(agg_col.old_name)
+                    new = self._py_str(agg_col.new_name)
+                    group_items.append(f"{self.framework}.col({old}).alias({new})")
+                else:
+                    group_items.append(self._py_str(agg_col.old_name))
             else:
                 agg_func = self._get_agg_function(agg_col.agg)
                 old = self._py_str(agg_col.old_name)
@@ -28,7 +37,10 @@ class TransformHandlersMixin(ConverterMixinBase):
                 expr = f"{self.framework}.col({old}).{agg_func}().alias({new})"
                 agg_exprs.append(expr)
 
-        self._add_code(f"{var_name} = {input_df}.group_by({group_cols}).agg([")
+        if has_renamed_key:
+            self._add_code(f"{var_name} = {input_df}.group_by([{', '.join(group_items)}]).agg([")
+        else:
+            self._add_code(f"{var_name} = {input_df}.group_by({group_cols}).agg([")
         for expr in agg_exprs:
             self._add_code(f"    {expr},")
         self._add_code("])")

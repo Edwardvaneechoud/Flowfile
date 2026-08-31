@@ -160,6 +160,58 @@ _PARSE_TIME_CODES = frozenset("HIMSp")
 _REGEX_META = "$()*+.?{|"
 _REGEX_UNESCAPABLE = "[^"
 
+# Keys whose translation provably returns a non-string; IsEmpty() drops its '= ""' arm for these.
+_NON_STRING_FUNCTIONS = frozenset(
+    {
+        "datetimeparse",
+        "datetimeadd",
+        "datetimetrim",
+        "datetimefirstofmonth",
+        "datetimelastofmonth",
+        "datetimenow",
+        "datetimetoday",
+        "datetimediff",
+        "datetimeyear",
+        "datetimemonth",
+        "datetimeday",
+        "datetimehour",
+        "datetimeminute",
+        "datetimeminutes",
+        "datetimesecond",
+        "datetimeseconds",
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "tonumber",
+        "abs",
+        "ceil",
+        "floor",
+        "sqrt",
+        "exp",
+        "log",
+        "log10",
+        "pow",
+        "mod",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "round",
+        "length",
+        "findstring",
+        "isnull",
+        "isempty",
+        "contains",
+        "startswith",
+        "endswith",
+    }
+)
+
 _KEYWORDS = {"if", "then", "elseif", "else", "endif", "and", "or", "not", "in", "true", "false", "null"}
 
 _REASON_IN = (
@@ -621,7 +673,11 @@ def _emit_call(node: _Call) -> tuple[str, int]:
         return _emit_datetime_parse(node), _PREC_ATOM
     if spec.special == "isempty":
         # Alteryx IsEmpty() is true for null *and* the empty string; is_empty() only covers null.
-        rendered = _emit_child(node.args[0], _PREC_IF)
+        arg = node.args[0]
+        rendered = _emit_child(arg, _PREC_IF)
+        if isinstance(arg, _Call) and arg.name.lower() in _NON_STRING_FUNCTIONS:
+            # A non-string operand cannot be the empty string, and `= ""` on it raises at run time.
+            return f"is_empty({rendered})", _PREC_ATOM
         return f'(is_empty({rendered}) or {rendered} = "")', _PREC_ATOM
     rendered_args = ", ".join(_emit_child(arg, _PREC_IF) for arg in node.args)
     return f"{spec.target}({rendered_args})", _PREC_ATOM

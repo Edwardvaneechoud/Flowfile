@@ -1034,18 +1034,18 @@ class FlowDataEngine:
                 calculate_schema_stats=calculate_schema_stats,
             )
 
-        df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
-        group_by_columns = [n_c.new_name for n_c in group_columns]
+        # Alias keys in group_by, not via frame rename: a renamed key must not collide with dropped columns.
+        group_exprs = [pl.col(c.old_name).alias(c.new_name) for c in group_columns]
 
         if len(aggregations) == 0:
             return FlowDataEngine(
-                df.select(group_by_columns).unique(),
+                self.data_frame.select(group_exprs).unique(),
                 calculate_schema_stats=calculate_schema_stats,
             )
 
-        grouped_df = df.group_by(*group_by_columns)
-        agg_exprs = [ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations]
-        result_df = grouped_df.agg(agg_exprs)
+        result_df = self.data_frame.group_by(group_exprs).agg(
+            ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations
+        )
 
         return FlowDataEngine(
             result_df,

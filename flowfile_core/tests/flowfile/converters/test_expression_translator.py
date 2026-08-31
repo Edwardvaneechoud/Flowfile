@@ -132,6 +132,10 @@ EXTRA_FUNCTION_CASES: list[tuple[str, str]] = [
     # A simple-mode Filter renders a numeric operand unquoted.
     ("Contains([OrderID], 2024)", 'contains(lowercase([OrderID]), "2024")'),
     ("Contains([Price], 1.50)", 'contains(lowercase([Price]), "1[.]50")'),
+    # IsEmpty() over a provably non-string call drops the '= ""' arm, which would raise at run time.
+    ('IsEmpty(DateTimeParse([D], "%m/%d/%Y"))', 'is_empty(to_date([D], "%m/%d/%Y"))'),
+    ("IsEmpty(ToNumber([X]))", "is_empty(to_number([X]))"),
+    ("IsEmpty(Trim([Name]))", '(is_empty(trim([Name])) or trim([Name]) = "")'),
 ]
 
 OPERATOR_CASES: list[tuple[str, str]] = [
@@ -503,3 +507,13 @@ def test_comment_wrapped_untranslated_body_still_parses():
     outcome = try_translate("REGEX_Match([Name], \"^a\")")
     body = f"// could not be converted: {outcome.reason}\n// Original: REGEX_Match([Name], \"^a\")\n[Name]"
     _assert_reparses(body)
+
+
+def test_isempty_of_a_parsed_date_evaluates_without_a_string_comparison():
+    """The '= ""' arm on a date expression raises 'cannot compare date to string' at run time
+    (2026 Grand Prix Round 1 regression), so a non-string operand gets plain is_empty()."""
+    outcome = try_translate('IsEmpty(DateTimeParse([D], "%m/%d/%Y"))')
+    assert outcome.translated == 'is_empty(to_date([D], "%m/%d/%Y"))'
+    expr = simple_function_to_expr(outcome.translated)
+    values = pl.DataFrame({"D": ["03/15/2021", "not a date"]}).select(expr.alias("o"))["o"].to_list()
+    assert values == [False, True]
