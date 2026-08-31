@@ -264,7 +264,7 @@ describe('SelectSettings', () => {
     })
   })
 
-  it('should render a data type badge per row, with the full dtype in the title', () => {
+  it('should render a data type picker per row, with the full dtype in the title', () => {
     const wrapper = mount(SelectSettings, {
       props: {
         nodeId: 1,
@@ -283,11 +283,65 @@ describe('SelectSettings', () => {
       }
     })
 
-    const badge = wrapper.find('.type-badge')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toBe('Datetime')
-    expect(badge.classes()).toContain('badge-date')
-    expect(badge.attributes('title')).toBe("Datetime(time_unit='us', time_zone=None)")
+    const picker = wrapper.find('select.type-select')
+    expect(picker.exists()).toBe(true)
+    expect((picker.element as HTMLSelectElement).value).toBe('Datetime')
+    expect(picker.classes()).toContain('badge-date')
+    expect(wrapper.find('td.type-cell').attributes('title')).toBe(
+      "Datetime(time_unit='us', time_zone=None)"
+    )
+  })
+
+  it('should mark a column as type-changed when a new type is picked', async () => {
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: defaultSettings
+      }
+    })
+
+    await wrapper.findAll('select.type-select')[0].setValue('String')
+
+    const emitted = wrapper.emitted('update:settings')
+    expect(emitted).toBeTruthy()
+
+    const updated = (emitted!.at(-1)![0] as SelectSettingsType).select_input
+    const changed = updated.find(c => c.old_name === 'id')
+    expect(changed?.data_type).toBe('String')
+    expect(changed?.data_type_change).toBe(true)
+
+    // Every untouched column keeps its incoming type and stays unchanged.
+    const untouched = updated.find(c => c.old_name === 'name')
+    expect(untouched?.data_type).toBe('String')
+    expect(untouched?.data_type_change).toBe(false)
+  })
+
+  it('should keep the saved data_type_change of an imported cast', () => {
+    const wrapper = mount(SelectSettings, {
+      props: {
+        nodeId: 1,
+        settings: {
+          ...defaultSettings,
+          select_input: [
+            {
+              old_name: 'id',
+              new_name: 'id',
+              keep: true,
+              position: 0,
+              data_type: 'String',
+              data_type_change: true
+            }
+          ]
+        }
+      }
+    })
+
+    // Toggling something unrelated must not drop the cast.
+    wrapper.findAll('input[type="checkbox"]')[0].setValue(false)
+    const emitted = wrapper.emitted('update:settings')
+    const entry = (emitted!.at(-1)![0] as SelectSettingsType).select_input[0]
+    expect(entry.data_type).toBe('String')
+    expect(entry.data_type_change).toBe(true)
   })
 
   it('should narrow the rows to columns matching the filter', async () => {

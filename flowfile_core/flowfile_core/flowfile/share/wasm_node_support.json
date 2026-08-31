@@ -1,0 +1,248 @@
+{
+  "generator": "tools/generate_wasm_node_manifest.py",
+  "source": "flowfile_wasm/src/{config/nodeCatalog.ts,utils/coreExport.ts,pyodide/engine/nodes_aggregate.py}",
+  "nodes": {
+    "api_response": {
+      "tier": "absent"
+    },
+    "apply_model": {
+      "tier": "locked",
+      "wasm_type": "apply_model",
+      "docs_anchor": "apply-model"
+    },
+    "catalog_reader": {
+      "tier": "supported",
+      "wasm_type": "read_from_catalog"
+    },
+    "catalog_writer": {
+      "tier": "supported",
+      "wasm_type": "write_to_catalog"
+    },
+    "cloud_storage_reader": {
+      "tier": "locked",
+      "wasm_type": "cloud_storage_reader",
+      "docs_anchor": "cloud-storage-reader"
+    },
+    "cloud_storage_writer": {
+      "tier": "locked",
+      "wasm_type": "cloud_storage_writer",
+      "docs_anchor": "cloud-storage-writer"
+    },
+    "cross_join": {
+      "tier": "supported",
+      "wasm_type": "cross_join"
+    },
+    "database_reader": {
+      "tier": "locked",
+      "wasm_type": "database_reader",
+      "docs_anchor": "database-reader"
+    },
+    "database_writer": {
+      "tier": "locked",
+      "wasm_type": "database_writer",
+      "docs_anchor": "database-writer"
+    },
+    "dynamic_rename": {
+      "tier": "supported",
+      "wasm_type": "dynamic_rename"
+    },
+    "evaluate_model": {
+      "tier": "locked",
+      "wasm_type": "evaluate_model",
+      "docs_anchor": "evaluate-model"
+    },
+    "explore_data": {
+      "tier": "supported",
+      "wasm_type": "explore_data"
+    },
+    "external_source": {
+      "tier": "absent"
+    },
+    "filter": {
+      "tier": "supported",
+      "wasm_type": "filter"
+    },
+    "flow_input": {
+      "tier": "supported",
+      "wasm_type": "external_data"
+    },
+    "flow_output": {
+      "tier": "supported",
+      "wasm_type": "external_output"
+    },
+    "formula": {
+      "tier": "supported",
+      "wasm_type": "formula"
+    },
+    "fuzzy_match": {
+      "tier": "locked",
+      "wasm_type": "fuzzy_match",
+      "docs_anchor": "fuzzy-match"
+    },
+    "gate": {
+      "tier": "locked",
+      "wasm_type": "gate",
+      "docs_anchor": "gate"
+    },
+    "google_analytics_reader": {
+      "tier": "locked",
+      "wasm_type": "google_analytics_reader",
+      "docs_anchor": "google-analytics-reader"
+    },
+    "graph_solver": {
+      "tier": "locked",
+      "wasm_type": "graph_solver",
+      "docs_anchor": "graph-solver"
+    },
+    "group_by": {
+      "tier": "supported",
+      "wasm_type": "group_by"
+    },
+    "join": {
+      "tier": "supported",
+      "wasm_type": "join"
+    },
+    "kafka_source": {
+      "tier": "locked",
+      "wasm_type": "kafka_source",
+      "docs_anchor": "kafka-source"
+    },
+    "manual_input": {
+      "tier": "supported",
+      "wasm_type": "manual_input"
+    },
+    "output": {
+      "tier": "supported",
+      "wasm_type": "output"
+    },
+    "pivot": {
+      "tier": "supported",
+      "wasm_type": "pivot"
+    },
+    "polars_code": {
+      "tier": "supported",
+      "wasm_type": "polars_code"
+    },
+    "polars_lazy_frame": {
+      "tier": "absent"
+    },
+    "python_script": {
+      "tier": "locked",
+      "wasm_type": "python_script",
+      "docs_anchor": "python-script"
+    },
+    "random_split": {
+      "tier": "absent"
+    },
+    "read": {
+      "tier": "supported",
+      "wasm_type": "read"
+    },
+    "record_count": {
+      "tier": "absent"
+    },
+    "record_id": {
+      "tier": "supported",
+      "wasm_type": "record_id"
+    },
+    "rest_api_reader": {
+      "tier": "locked",
+      "wasm_type": "rest_api_reader",
+      "docs_anchor": "rest-api-reader"
+    },
+    "run_flow": {
+      "tier": "absent"
+    },
+    "sample": {
+      "tier": "supported",
+      "wasm_type": "head"
+    },
+    "select": {
+      "tier": "supported",
+      "wasm_type": "select"
+    },
+    "sort": {
+      "tier": "supported",
+      "wasm_type": "sort"
+    },
+    "sql_query": {
+      "tier": "locked",
+      "wasm_type": "sql_query",
+      "docs_anchor": "sql-query"
+    },
+    "text_to_rows": {
+      "tier": "absent"
+    },
+    "train_model": {
+      "tier": "locked",
+      "wasm_type": "train_model",
+      "docs_anchor": "train-model"
+    },
+    "union": {
+      "tier": "supported",
+      "wasm_type": "union"
+    },
+    "unique": {
+      "tier": "supported",
+      "wasm_type": "unique"
+    },
+    "unpivot": {
+      "tier": "supported",
+      "wasm_type": "unpivot"
+    },
+    "wait_for": {
+      "tier": "absent"
+    },
+    "window_functions": {
+      "tier": "locked",
+      "wasm_type": "window_functions",
+      "docs_anchor": "window-functions"
+    }
+  },
+  "dialect": {
+    "catalog_reader": "read_from_catalog",
+    "catalog_writer": "write_to_catalog",
+    "flow_input": "external_data",
+    "flow_output": "external_output",
+    "sample": "head"
+  },
+  "capabilities": {
+    "group_by_aggs": [
+      "sum",
+      "max",
+      "min",
+      "count",
+      "mean",
+      "median",
+      "first",
+      "last",
+      "n_unique",
+      "concat"
+    ],
+    "pivot_aggs": [
+      "sum",
+      "mean",
+      "min",
+      "max",
+      "count",
+      "first",
+      "last",
+      "median"
+    ],
+    "read_file_types": [
+      "csv",
+      "excel",
+      "parquet"
+    ],
+    "output_file_types": [
+      "csv",
+      "excel",
+      "parquet"
+    ]
+  },
+  "counts": {
+    "supported": 23,
+    "locked": 16,
+    "absent": 8
+  }
+}

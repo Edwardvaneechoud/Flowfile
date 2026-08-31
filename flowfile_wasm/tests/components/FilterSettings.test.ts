@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import FilterSettings from '../../src/components/nodes/FilterSettings.vue'
+import ExpressionEditor from '../../src/components/common/ExpressionEditor.vue'
 import type { FilterSettings as FilterSettingsType } from '../../src/types'
 
 vi.mock('../../src/stores/flow-store', () => ({
@@ -17,6 +18,17 @@ vi.mock('../../src/stores/flow-store', () => ({
       { name: 'active', data_type: 'Boolean' }
     ])
   })
+}))
+
+vi.mock('../../src/stores/pyodide-store', () => ({
+  usePyodideStore: () => ({ isReady: false })
+}))
+
+vi.mock('vue-codemirror', () => ({
+  Codemirror: {
+    props: ['modelValue', 'placeholder'],
+    template: '<pre class="cm-stub">{{ modelValue }}</pre>'
+  }
 }))
 
 describe('FilterSettings', () => {
@@ -305,5 +317,83 @@ describe('FilterSettings', () => {
     expect(options[2].text()).toContain('String')
     expect(options[3].text()).toContain('Float64')
     expect(options[4].text()).toContain('Boolean')
+  })
+
+  const advancedSettings: FilterSettingsType = {
+    ...defaultSettings,
+    filter_input: {
+      mode: 'advanced',
+      basic_filter: {
+        field: 'name',
+        operator: 'contains',
+        value: 'dam',
+        value2: ''
+      },
+      advanced_filter: '[quantity] > 7'
+    }
+  }
+
+  it('should render the shared expression editor in advanced mode', () => {
+    const wrapper = mount(FilterSettings, {
+      props: { nodeId: 1, settings: advancedSettings }
+    })
+
+    expect(wrapper.findComponent(ExpressionEditor).exists()).toBe(true)
+    expect(wrapper.findAll('select').length).toBe(0)
+  })
+
+  it('should keep the basic filter when switching to advanced', async () => {
+    const wrapper = mount(FilterSettings, {
+      props: {
+        nodeId: 1,
+        settings: {
+          ...defaultSettings,
+          filter_input: {
+            mode: 'basic',
+            basic_filter: {
+              field: 'name',
+              operator: 'contains',
+              value: 'dam',
+              value2: ''
+            },
+            advanced_filter: ''
+          }
+        }
+      }
+    })
+
+    const advancedButton = wrapper.findAll('.seg-btn')[1]
+    await advancedButton.trigger('click')
+
+    const emitted = wrapper.emitted('update:settings')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toMatchObject({
+      filter_input: {
+        mode: 'advanced',
+        basic_filter: {
+          field: 'name',
+          operator: 'contains',
+          value: 'dam'
+        }
+      }
+    })
+  })
+
+  it('should emit the expression the editor reports', async () => {
+    const wrapper = mount(FilterSettings, {
+      props: { nodeId: 1, settings: advancedSettings }
+    })
+
+    wrapper.findComponent(ExpressionEditor).vm.$emit('update:modelValue', 'contains([city], "dam")')
+    await wrapper.vm.$nextTick()
+
+    const emitted = wrapper.emitted('update:settings')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toMatchObject({
+      filter_input: {
+        mode: 'advanced',
+        advanced_filter: 'contains([city], "dam")'
+      }
+    })
   })
 })

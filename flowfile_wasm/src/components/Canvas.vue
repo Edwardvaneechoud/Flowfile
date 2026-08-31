@@ -160,7 +160,7 @@
     <DraggableItem
       v-if="selectedNode && showSettings"
       id="node-settings-panel"
-      :title="getNodeDescription(selectedNode.type).title"
+      :title="selectedNodePanelTitle"
       :show-right="true"
       initial-position="right"
       :initial-width="450"
@@ -170,28 +170,43 @@
       :allow-full-screen="true"
       :on-close="closeSettings"
     >
-      <NodeTitle
-        :title="getNodeDescription(selectedNode.type).title"
-        :intro="getNodeDescription(selectedNode.type).intro"
-      />
-      <NodeSettingsWrapper
-        :node-id="selectedNode.id"
-        :settings="selectedNode.settings"
-        :teaching-mode="props.teachingMode"
-      >
-        <component
-          :is="getSettingsComponent(selectedNode.type)"
+      <!-- Placeholder nodes have no settings (they never travelled) — show an
+           explanation instead of a panel, with no Apply footer. -->
+      <template v-if="selectedNodePlaceholder">
+        <NodeTitle
+          :title="selectedNodePanelTitle"
+          :intro="''"
+        />
+        <PlaceholderNodeSettings
           :key="selectedNode.id"
+          :reason="selectedNodePlaceholder.reason"
+          :docs-url="selectedNodePlaceholder.docsUrl"
+        />
+      </template>
+      <template v-else>
+        <NodeTitle
+          :title="getNodeDescription(selectedNode.type).title"
+          :intro="getNodeDescription(selectedNode.type).intro"
+        />
+        <NodeSettingsWrapper
           :node-id="selectedNode.id"
           :settings="selectedNode.settings"
-          @update:settings="updateSettings"
-        />
-      </NodeSettingsWrapper>
+          :teaching-mode="props.teachingMode"
+        >
+          <component
+            :is="getSettingsComponent(selectedNode.type)"
+            :key="selectedNode.id"
+            :node-id="selectedNode.id"
+            :settings="selectedNode.settings"
+            @update:settings="updateSettings"
+          />
+        </NodeSettingsWrapper>
+      </template>
 
       <!-- Sticky Apply footer: runs the node and refreshes its preview, mirroring
            the main editor's NodeSettingsDrawer. Settings are already applied live,
            so this re-executes to surface the result. -->
-      <template #footer>
+      <template v-if="!selectedNodePlaceholder" #footer>
         <button
           class="apply-btn"
           :class="{ applied: justApplied }"
@@ -263,6 +278,11 @@
             />
           </div>
         </template>
+
+        <!-- Blocked: this node (or an ancestor) can't run in the browser build -->
+        <div v-else-if="selectedNodeBlocked" class="no-data">
+          <p class="no-data-text">{{ selectedNodeBlocked.message }}</p>
+        </div>
 
         <!-- Error state -->
         <div v-else-if="selectedNodeResult?.error" class="error-message">
@@ -402,6 +422,15 @@ import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
 import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
+import { createNodeCategories } from '../config/nodeCatalog'
+import type { NodeCategory, NodeDefinition, SupportedNodeType } from '../config/nodeCatalog'
+import {
+  isPlaceholderNode as isPlaceholderNodeDef,
+  originalNodeType,
+  placeholderHandleCounts,
+  placeholderLabel,
+  placeholderReason
+} from '../utils/placeholder'
 import { iconUrls } from '../utils/iconUrls'
 
 import { AgGridVue } from '@ag-grid-community/vue3'
@@ -419,6 +448,7 @@ import { useStaleModifierGuard } from '../composables/useStaleModifierGuard'
 import FlowNode from './nodes/FlowNode.vue'
 import DeletableEdge from './DeletableEdge.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
+import PlaceholderNodeSettings from './nodes/PlaceholderNodeSettings.vue'
 import ReadFileSettings from './nodes/ReadFileSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
 import ExternalDataSettings from './nodes/ExternalDataSettings.vue'
@@ -560,116 +590,9 @@ function getIconUrl(iconFile: string): string {
   return iconUrls[iconFile] || new URL(`../assets/icons/${iconFile}`, import.meta.url).href
 }
 
-interface NodeDefinition {
-  type: string
-  name: string
-  icon: string
-  inputs: number
-  outputs: number
-  // false → a full-app capability that can't run in this in-browser build; shown
-  // greyed-out and locked (not draggable) so the breadth is still discoverable.
-  available?: boolean
-  // Extra search terms so the palette filter matches by concept, not just by name.
-  keywords?: string[]
-  // Heading slug appended to the category docsUrl for the locked-node "Learn more" link.
-  docsAnchor?: string
-}
-
-interface NodeCategory {
-  name: string
-  isOpen: boolean
-  // Docs page for this category's nodes; locked (full-app) nodes link here.
-  docsUrl?: string
-  nodes: NodeDefinition[]
-}
-
-// Nodes flagged `available: false` run only in the full Flowfile app (they need a
-// backend, network, or a heavier runtime than the in-browser Pyodide build). They
-// render greyed-out and locked here so the full breadth stays discoverable.
-const nodeCategories = ref<NodeCategory[]>([
-  {
-    name: 'Input Sources',
-    isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/input',
-    nodes: [
-      { type: 'read', name: 'Read File', icon: 'input_data.svg', inputs: 0, outputs: 1, keywords: ['csv', 'excel', 'parquet', 'json', 'file', 'import', 'load'] },
-      { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.svg', inputs: 0, outputs: 1, keywords: ['paste', 'type', 'create', 'test data'] },
-      { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1, keywords: ['url', 'http', 'fetch', 'remote', 'web', 'api'] },
-      { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1, keywords: ['catalog', 'table', 'dataset', 'saved'] },
-      { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'mssql', 'sqlserver', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'], docsAnchor: 'database-reader' },
-      { type: 'cloud_storage_reader', name: 'Read from Cloud', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud', 'object storage'], docsAnchor: 'cloud-storage-reader' },
-      { type: 'rest_api_reader', name: 'REST API', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['rest', 'api', 'http', 'json', 'endpoint', 'pagination', 'auth'], docsAnchor: 'rest-api-reader' },
-      { type: 'kafka_source', name: 'Kafka Source', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['kafka', 'redpanda', 'stream', 'streaming', 'topic', 'events'], docsAnchor: 'kafka-source' },
-      { type: 'google_analytics_reader', name: 'Google Analytics', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['google analytics', 'ga', 'ga4', 'analytics', 'web analytics'], docsAnchor: 'google-analytics-reader' }
-    ]
-  },
-  {
-    name: 'Transformations',
-    isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/transform',
-    nodes: [
-      { type: 'filter', name: 'Filter', icon: 'filter.svg', inputs: 1, outputs: 1, keywords: ['where', 'subset', 'condition', 'rows'] },
-      { type: 'select', name: 'Select', icon: 'select.svg', inputs: 1, outputs: 1, keywords: ['columns', 'rename', 'reorder', 'keep', 'drop'] },
-      { type: 'formula', name: 'Formula', icon: 'formula.svg', inputs: 1, outputs: 1, keywords: ['expression', 'calculate', 'compute', 'sum', 'math', 'concat', 'new column'] },
-      { type: 'sort', name: 'Sort', icon: 'sort.svg', inputs: 1, outputs: 1, keywords: ['order', 'arrange', 'rank', 'ascending', 'descending'] },
-      { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.svg', inputs: 1, outputs: 1, keywords: ['python', 'code', 'custom', 'script', 'dataframe'] },
-      { type: 'unique', name: 'Unique', icon: 'unique.svg', inputs: 1, outputs: 1, keywords: ['dedupe', 'distinct', 'drop duplicates', 'deduplicate'] },
-      { type: 'dynamic_rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1, keywords: ['rename', 'columns', 'prefix', 'suffix'] },
-      { type: 'record_id', name: 'Record ID', icon: 'record_id.svg', inputs: 1, outputs: 1, keywords: ['row number', 'index', 'id', 'sequence'] },
-      { type: 'head', name: 'Take Sample', icon: 'sample.svg', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
-      { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'], docsAnchor: 'window-functions' },
-      { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where'], docsAnchor: 'sql-query' },
-      { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'], docsAnchor: 'python-script' }
-    ]
-  },
-  {
-    name: 'Combine Operations',
-    isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/combine',
-    nodes: [
-      { type: 'join', name: 'Join', icon: 'join.svg', inputs: 2, outputs: 1, keywords: ['merge', 'lookup', 'vlookup', 'inner', 'left', 'right', 'outer'] },
-      { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.svg', inputs: 2, outputs: 1, keywords: ['cartesian', 'cross', 'combinations'] },
-      // inputs: 1 — single handle accepts multiple connections (like polars_code).
-      { type: 'union', name: 'Union', icon: 'union.svg', inputs: 1, outputs: 1, keywords: ['concat', 'append', 'stack', 'combine'] },
-      { type: 'fuzzy_match', name: 'Fuzzy Match', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['fuzzy', 'similarity', 'levenshtein', 'approximate', 'fuzzy join'], docsAnchor: 'fuzzy-match' },
-      { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'], docsAnchor: 'graph-solver' },
-      { type: 'gate', name: 'Gate', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['gate', 'condition', 'branch', 'skip', 'if'], docsAnchor: 'gate' }
-    ]
-  },
-  {
-    name: 'Aggregations',
-    isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate',
-    nodes: [
-      { type: 'group_by', name: 'Group By', icon: 'group_by.svg', inputs: 1, outputs: 1, keywords: ['aggregate', 'sum', 'mean', 'average', 'count', 'min', 'max', 'median', 'summarize'] },
-      { type: 'pivot', name: 'Pivot', icon: 'pivot.svg', inputs: 1, outputs: 1, keywords: ['crosstab', 'wide', 'reshape', 'spread'] },
-      { type: 'unpivot', name: 'Unpivot', icon: 'unpivot.svg', inputs: 1, outputs: 1, keywords: ['melt', 'long', 'reshape', 'gather'] }
-    ]
-  },
-  {
-    name: 'Machine Learning',
-    isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/ml',
-    nodes: [
-      { type: 'train_model', name: 'Train Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'train', 'model', 'regression', 'classification', 'fit', 'sklearn'], docsAnchor: 'train-model' },
-      { type: 'apply_model', name: 'Apply Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'predict', 'score', 'inference', 'model'], docsAnchor: 'apply-model' },
-      { type: 'evaluate_model', name: 'Evaluate Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'evaluate', 'metrics', 'accuracy', 'model'], docsAnchor: 'evaluate-model' }
-    ]
-  },
-  {
-    name: 'Output Operations',
-    isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/output',
-    nodes: [
-      { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.svg', inputs: 1, outputs: 0, keywords: ['profile', 'describe', 'preview', 'eda', 'visualize', 'chart'] },
-      { type: 'output', name: 'Write Data', icon: 'output.svg', inputs: 1, outputs: 0, keywords: ['csv', 'excel', 'parquet', 'write', 'save', 'export', 'file'] },
-      { type: 'write_to_catalog', name: 'Write to Catalog', icon: 'catalog_writer.svg', inputs: 1, outputs: 0, keywords: ['catalog', 'table', 'save'] },
-      { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0, keywords: ['url', 'http', 'api', 'send', 'webhook'] },
-      { type: 'database_writer', name: 'Write to Database', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['sql', 'postgres', 'mysql', 'snowflake', 'redshift', 'bigquery', 'insert', 'table', 'db'], docsAnchor: 'database-writer' },
-      { type: 'cloud_storage_writer', name: 'Write to Cloud', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud'], docsAnchor: 'cloud-storage-writer' }
-    ]
-  }
-])
+// The palette definition lives in ../config/nodeCatalog.ts (single source of
+// truth, also parsed by core's share-link manifest generator).
+const nodeCategories = ref<NodeCategory[]>(createNodeCategories())
 
 const filteredCategories = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -748,6 +671,29 @@ function closeNodeInfo() {
 const vueNodes = computed<Node[]>({
   get() {
     return Array.from(flowNodes.value.values()).map(node => {
+      if (isPlaceholderNodeDef(node.type, node.settings)) {
+        const originalType = originalNodeType(node.type, node.settings)
+        const def = findNodeDef(originalType)
+        const counts = placeholderHandleCounts(
+          node.id, node.settings, flowEdges.value,
+          def ? { inputs: def.inputs, outputs: def.outputs } : undefined
+        )
+        return {
+          id: String(node.id),
+          type: 'flow-node',
+          position: { x: node.x, y: node.y },
+          data: {
+            id: node.id,
+            type: node.type,
+            label: def?.name || placeholderLabel(node.type, node.settings),
+            inputs: counts.inputs,
+            outputs: counts.outputs,
+            result: nodeResults.value.get(node.id),
+            placeholder: { reason: placeholderReason(node.settings), originalType },
+            blocked: flowStore.getBlockedInfo(node.id)
+          }
+        }
+      }
       const def = findNodeDef(node.type)
       return {
         id: String(node.id),
@@ -759,7 +705,8 @@ const vueNodes = computed<Node[]>({
           label: def?.name || node.type,
           inputs: def?.inputs ?? 1,
           outputs: def?.outputs ?? 1,
-          result: nodeResults.value.get(node.id)
+          result: nodeResults.value.get(node.id),
+          blocked: flowStore.getBlockedInfo(node.id)
         }
       }
     })
@@ -788,6 +735,39 @@ const vueEdges = computed<Edge[]>({
 const selectedNode = computed(() => {
   if (selectedNodeId.value === null) return null
   return flowNodes.value.get(selectedNodeId.value) || null
+})
+
+// Placeholder view-model for the settings panel (null for runnable nodes).
+const selectedNodePlaceholder = computed(() => {
+  const node = selectedNode.value
+  if (!node || !isPlaceholderNodeDef(node.type, node.settings)) return null
+  const originalType = originalNodeType(node.type, node.settings)
+  let docsUrl: string | undefined
+  for (const cat of nodeCategories.value) {
+    const def = cat.nodes.find(n => n.type === originalType)
+    if (def) {
+      docsUrl = nodeDocsUrl(cat, def)
+      break
+    }
+  }
+  return {
+    reason: placeholderReason(node.settings),
+    label: placeholderLabel(node.type, node.settings),
+    docsUrl
+  }
+})
+
+const selectedNodePanelTitle = computed(() => {
+  const node = selectedNode.value
+  if (!node) return ''
+  return selectedNodePlaceholder.value
+    ? selectedNodePlaceholder.value.label
+    : getNodeDescription(node.type).title
+})
+
+const selectedNodeBlocked = computed(() => {
+  if (selectedNodeId.value === null) return null
+  return flowStore.getBlockedInfo(selectedNodeId.value) ?? null
 })
 
 const selectedNodeResult = computed(() => {
@@ -1180,7 +1160,9 @@ watch(selectedNodeId, () => {
 })
 
 function getSettingsComponent(type: string) {
-  const components: Record<string, any> = {
+  // `satisfies` pins this map to exactly the catalog's supported set — adding a
+  // palette entry without a panel (or vice versa) fails vue-tsc.
+  const components = {
     read: ReadFileSettings,
     manual_input: ManualInputSettings,
     external_data: ExternalDataSettings,
@@ -1204,8 +1186,8 @@ function getSettingsComponent(type: string) {
     output: OutputSettings,
     external_output: ExternalOutputSettings,
     write_to_catalog: WriteToCatalogSettings
-  }
-  return components[type] || null
+  } satisfies Record<SupportedNodeType, unknown>
+  return (components as Record<string, any>)[type] || null
 }
 
 const gridApi = ref<GridApi | null>(null)
@@ -1472,7 +1454,11 @@ onMounted(async () => {
     save: handleSaveFlow,
     exportFile: handleExportFlow,
     open: triggerLoadFlow,
-    clear: handleClearFlow
+    clear: handleClearFlow,
+    focusNode: (nodeId: number) => {
+      flowStore.selectNode(nodeId)
+      panToNode(nodeId)
+    }
   })
 
   await nextTick()
