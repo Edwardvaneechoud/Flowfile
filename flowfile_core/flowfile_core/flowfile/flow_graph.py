@@ -4201,6 +4201,35 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_data_cleansing(self, settings: input_schema.NodeDataCleansing) -> "FlowGraph":
+        """Adds a node that fixes common data quality issues.
+
+        Drops entirely-null rows and columns, replaces nulls with a blank or zero,
+        removes unwanted characters and whitespace, and normalises casing. The predicted
+        schema is the input schema; the only run-time divergence is columns dropped by
+        `remove_null_columns`, which is data-dependent by nature.
+
+        Args:
+            settings: The data cleansing configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.apply_data_cleansing(settings.cleansing_input)
+
+        self.add_node_step(
+            settings.node_id,
+            _func,
+            node_type="data_cleansing",
+            renew_schema=False,
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
         """Adds a node to select, rename, reorder, or drop columns.
 

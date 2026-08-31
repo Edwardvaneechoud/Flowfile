@@ -1943,6 +1943,56 @@ class NodeDynamicRename(NodeSingleInput):
         return f"{rule} on {scope}"
 
 
+class NodeDataCleansing(NodeSingleInput):
+    """Settings for a node that fixes common data quality issues.
+
+    Covers null rows/columns, null replacement, unwanted characters, whitespace and
+    casing in one pass. Every field carries a default, so a freshly dropped node is
+    already valid and useful without opening the drawer.
+    """
+
+    cleansing_input: transform_schema.DataCleansingInput = Field(default_factory=transform_schema.DataCleansingInput)
+
+    def get_default_description(self) -> str:
+        """Describes the enabled cleansing rules and the columns they apply to."""
+        s = self.cleansing_input
+        frame_rules = []
+        if s.remove_null_rows:
+            frame_rules.append("drop null rows")
+        if s.remove_null_columns:
+            frame_rules.append("drop null columns")
+
+        column_rules = []
+        if s.replace_nulls_with_blank:
+            column_rules.append("nulls to blank")
+        if s.replace_nulls_with_zero:
+            column_rules.append("nulls to zero")
+        if s.remove_letters:
+            column_rules.append("remove letters")
+        if s.remove_numbers:
+            column_rules.append("remove numbers")
+        if s.remove_punctuation:
+            column_rules.append("remove punctuation")
+        if s.remove_all_whitespace:
+            column_rules.append("remove whitespace")
+        else:
+            if s.normalize_whitespace:
+                column_rules.append("normalize whitespace")
+            if s.trim_whitespace:
+                column_rules.append("trim whitespace")
+        if s.case_mode != "none":
+            column_rules.append(s.case_mode)
+
+        parts = list(frame_rules)
+        if column_rules:
+            if s.selection_mode == "list":
+                scope = f"{len(s.selected_columns)} column(s)"
+            else:
+                scope = "all columns"
+            parts.append(", ".join(column_rules) + f" on {scope}")
+        return "; ".join(parts)
+
+
 class NodePolarsCode(NodeMultiInput):
     """Settings for a node that executes arbitrary user-provided Polars code."""
 

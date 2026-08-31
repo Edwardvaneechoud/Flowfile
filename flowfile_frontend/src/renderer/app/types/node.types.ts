@@ -558,6 +558,27 @@ export interface UniqueInput {
   strategy: UniqueSorttrategy;
 }
 
+// Data Cleansing Types
+
+export type CleansingCaseMode = "none" | "uppercase" | "lowercase" | "titlecase";
+export type CleansingSelectionMode = "all" | "list";
+
+export interface DataCleansingInput {
+  remove_null_rows: boolean;
+  remove_null_columns: boolean;
+  selection_mode: CleansingSelectionMode;
+  selected_columns: string[];
+  replace_nulls_with_blank: boolean;
+  replace_nulls_with_zero: boolean;
+  trim_whitespace: boolean;
+  normalize_whitespace: boolean;
+  remove_all_whitespace: boolean;
+  remove_letters: boolean;
+  remove_numbers: boolean;
+  remove_punctuation: boolean;
+  case_mode: CleansingCaseMode;
+}
+
 // Join Types
 
 export interface JoinMap {
@@ -1064,6 +1085,10 @@ export interface NodePythonScript extends NodeMultiInput {
 
 export interface NodeUnique extends NodeSingleInput {
   unique_input: UniqueInput;
+}
+
+export interface NodeDataCleansing extends NodeSingleInput {
+  cleansing_input: DataCleansingInput;
 }
 
 export interface NodeGraphSolver extends NodeSingleInput {

@@ -1269,6 +1269,68 @@ class DynamicRenameInput(BaseModel):
     selected_data_type: ReadableDataTypeGroup | None = None
 
 
+CleansingCaseMode = Literal["none", "uppercase", "lowercase", "titlecase"]
+CleansingSelectionMode = Literal["all", "list"]
+
+# Single source of truth for the data-cleansing character classes. The code generator
+# interpolates these very constants into exported scripts, so the patterns must never be
+# re-typed anywhere else.
+CLEANSING_LETTERS_REGEX = r"\p{L}"
+CLEANSING_NUMBERS_REGEX = r"\d"
+# The four contiguous ASCII ranges that make up exactly `string.punctuation`.
+CLEANSING_PUNCTUATION_REGEX = r"[!-/:-@\[-`{-~]"
+CLEANSING_WHITESPACE_RUN_REGEX = r"\s+"
+CLEANSING_WHITESPACE_REGEX = r"\s"
+
+
+class DataCleansingInput(BaseModel):
+    """Defines settings for a data-cleansing operation.
+
+    Bundles the common "fix the obvious data quality problems" rules into one node:
+    dropping entirely-null rows and columns, replacing nulls with a neutral value,
+    stripping unwanted characters, and normalising casing.
+
+    Two rules are frame-wide and deliberately ignore the column selection, matching
+    Alteryx's Data Cleansing tool: `remove_null_rows` drops a row only when *every*
+    column is null, and `remove_null_columns` drops a column only when it is null in
+    *every* row. An empty string is not a null, so it keeps its row/column alive.
+
+    Every other rule applies only to the columns picked by `selection_mode` /
+    `selected_columns`, and only to columns of the matching data-type group: the
+    null-to-blank and character/case rules touch String columns, `replace_nulls_with_zero`
+    touches Numeric columns, and every other dtype passes through untouched. Selected
+    columns that no longer exist are silently ignored, mirroring `DynamicRenameInput`.
+
+    Within one string column the rules run in a fixed order: fill nulls, remove letters,
+    numbers and punctuation, then clean up whitespace (so gaps left by character removal
+    are collapsed too), then apply the casing rule. `remove_all_whitespace` supersedes
+    `normalize_whitespace` and `trim_whitespace`.
+
+    Data-type groups come from `FlowfileColumn.data_type_group`, which puts `Categorical`,
+    `Enum` and the all-null `Null` dtype in "Other" rather than "String" — so no rule fires
+    on them, including `replace_nulls_with_blank` on a column polars typed as `Null`.
+    """
+
+    remove_null_rows: bool = False
+    remove_null_columns: bool = False
+
+    selection_mode: CleansingSelectionMode = "all"
+    selected_columns: list[str] = Field(default_factory=list)
+
+    replace_nulls_with_blank: bool = True
+    replace_nulls_with_zero: bool = True
+
+    trim_whitespace: bool = True
+    normalize_whitespace: bool = False
+    remove_all_whitespace: bool = False
+
+    remove_letters: bool = False
+    remove_numbers: bool = False
+    remove_punctuation: bool = False
+
+    case_mode: CleansingCaseMode = "none"
+
+
 class PolarsCodeInput(BaseModel):
     """A simple container for a string of user-provided Polars code to be executed."""
 
