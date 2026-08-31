@@ -18,24 +18,15 @@
       </div>
 
       <!-- Advanced: one flowfile formula, the same dialect the Formula node speaks -->
-      <div v-if="mode === 'advanced'" class="filter-field">
+      <div v-if="mode === 'advanced'" class="filter-field expression-field">
         <label class="filter-label">Expression</label>
-        <textarea
-          :value="advancedFilter"
-          rows="3"
-          class="input expression-input"
-          spellcheck="false"
-          placeholder="[quantity] > 7"
-          @input="updateAdvanced(($event.target as HTMLTextAreaElement).value)"
+        <ExpressionEditor
+          :node-id="props.nodeId"
+          :model-value="advancedFilter"
+          :placeholder="expressionPlaceholder"
+          @update:model-value="updateAdvanced"
         />
-        <div class="help-text" style="margin-top: 8px;">
-          Keep only the rows this is true for. Write column names as
-          <code>[name]</code>, e.g. <code>[quantity] &gt; 7</code> or
-          <code>contains([city], "dam")</code>.
-        </div>
-        <div v-if="columns.length" class="help-text" style="margin-top: 4px;">
-          Columns: {{ columns.map(c => c.name).join(', ') }}
-        </div>
+        <div class="help-text" style="margin-top: 8px;">Keep only the rows this is true for.</div>
       </div>
 
       <div v-else class="filter-row">
@@ -95,6 +86,7 @@
 import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { FilterSettings, FilterOperator, ColumnSchema } from '../../types'
+import ExpressionEditor from '../common/ExpressionEditor.vue'
 
 const props = defineProps<{
   nodeId: number
@@ -127,6 +119,10 @@ const modes = [
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
+
+const expressionPlaceholder = computed(() =>
+  columns.value.length ? `e.g. [${columns.value[0].name}] > 7` : 'e.g. [quantity] > 7'
+)
 
 const operators = [
   { value: 'equals', label: 'Equals' },
@@ -224,8 +220,7 @@ function emitUpdate() {
 </script>
 
 <style scoped>
-/* Layout comes from global styles in main.css; only the mode switch and the
-   expression box are local. */
+/* Layout comes from global styles in main.css; only the mode switch is local. */
 .mode-field {
   margin-bottom: 12px;
 }
@@ -262,9 +257,8 @@ function emitUpdate() {
   color: var(--color-text-inverse);
 }
 
-.expression-input {
-  width: 100%;
-  font-family: var(--font-mono, monospace);
-  resize: vertical;
+/* The expression editor gets the full drawer width, like the Formula node. */
+.expression-field {
+  max-width: none;
 }
 </style>
