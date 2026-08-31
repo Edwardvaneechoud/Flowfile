@@ -128,6 +128,7 @@
             <el-dropdown-item divided @click="openAlteryxDialog">
               <span class="material-icons save-as-icon">upload_file</span>
               Import Alteryx workflow…
+              <span class="beta-badge alteryx-beta">Beta</span>
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -707,6 +708,10 @@ onMounted(async () => {
   font-size: 16px;
   margin-right: var(--spacing-2);
   vertical-align: middle;
+}
+
+.alteryx-beta {
+  margin-left: var(--spacing-2);
 }
 
 .settings-modal-content {

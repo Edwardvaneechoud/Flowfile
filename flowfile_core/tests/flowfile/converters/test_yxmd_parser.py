@@ -192,7 +192,7 @@ def test_text_boxes_land_in_skipped_tools(containers: AlteryxWorkflow):
 def test_macro_node_has_macro_path_and_empty_tool_name():
     workflow = parse_yxmd(read_fixture("unsupported.yxmd"))
     tools = {tool.tool_id: tool for tool in workflow.tools}
-    assert tools[2].tool_name == "Transpose"
+    assert tools[2].tool_name == "DateTime"
     assert tools[3].tool_name == ""
     assert tools[3].plugin == "Something.yxmc"
     assert tools[3].annotation == "Team standard cleanup macro"

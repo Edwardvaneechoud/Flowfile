@@ -276,6 +276,25 @@ def _attribute(element: ET.Element | None, path: str, name: str, default: str = 
     return (found.get(name) or default).strip()
 
 
+def _flag(element: ET.Element | None, path: str) -> bool | None:
+    """Read an Alteryx boolean written either as a ``value`` attribute or as element text.
+
+    Alteryx serializes the same option both ways depending on the tool, so both shapes have to
+    be accepted. The attribute wins when present because ``<X value="True" />`` is self-closing
+    and therefore carries no text to contradict it. ``None`` means the option was not written at
+    all (or was written empty), which leaves the reader's own default in place.
+    """
+    if element is None:
+        return None
+    found = element.find(path)
+    if found is None:
+        return None
+    raw = found.get("value")
+    if raw is None:
+        raw = found.text
+    return _is_true(raw) if (raw or "").strip() else None
+
+
 def _description(tool: AlteryxTool, warning: str = "") -> str:
     parts = [part for part in (warning, tool.annotation) if part]
     return " — ".join(parts)
@@ -1130,6 +1149,48 @@ def _regex_output_names(config: ET.Element, method: str, column: str) -> tuple[l
     return [f"{root}{index + 1}" for index in range(count)], None
 
 
+def _count_capture_groups(pattern: str) -> int:
+    """Count marked groups: unescaped ``(`` outside a character class that does not open ``(?...)``."""
+    count = 0
+    escaped = False
+    in_class = False
+    for index, char in enumerate(pattern):
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif in_class:
+            in_class = char != "]"
+        elif char == "[":
+            in_class = True
+        elif char == "(" and not pattern.startswith("(?", index):
+            count += 1
+    return count
+
+
+def _tokenize_code(config: ET.Element, column: str) -> tuple[str, str | None]:
+    """Generate the Polars body for Alteryx's Tokenize (``ParseSimple``) method.
+
+    Tokenize is not capture-group extraction: the expression describes the tokens themselves and
+    every match becomes one output column. A single marked group narrows what each match
+    contributes, so the matches are re-matched to pull that group out; several marked groups have
+    no one-token-per-match meaning we can reproduce, so they are rejected instead of guessed at.
+    """
+    names, reason = _regex_output_names(config, "parsesimple", column)
+    if reason is not None:
+        return "", reason
+    groups = _count_capture_groups(_attribute(config, "RegExExpression", "value"))
+    if groups > 1:
+        return "", "the Alteryx RegEx tokenize expression marks more than one group"
+    tokens = f"pl.col({column!r}).str.extract_all(_pattern)"
+    if groups == 1:
+        tokens = f"{tokens}.list.eval(pl.element().str.extract(_pattern, 1))"
+    picks = ",\n".join(
+        f"    _tokens.list.get({index}, null_on_oob=True).alias({name!r})" for index, name in enumerate(names)
+    )
+    return f"_tokens = {tokens}\noutput_df = input_df.with_columns(\n{picks},\n)", None
+
+
 def _regex_code(config: ET.Element, method: str, column: str) -> tuple[str, str | None]:
     """Generate the Polars body for one RegEx method, or explain why it cannot be generated.
 
@@ -1137,7 +1198,7 @@ def _regex_code(config: ET.Element, method: str, column: str) -> tuple[str, str 
     not an argument here.
     """
     source = f"pl.col({column!r})"
-    if method in ("parsecomplex", "parsesimple"):
+    if method == "parsecomplex":
         names, reason = _regex_output_names(config, method, column)
         if reason is not None:
             return "", reason
@@ -1145,6 +1206,8 @@ def _regex_code(config: ET.Element, method: str, column: str) -> tuple[str, str 
             f"    {source}.str.extract(_pattern, {index + 1}).alias({name!r})" for index, name in enumerate(names)
         )
         return f"output_df = input_df.with_columns(\n{extracts},\n)", None
+    if method == "parsesimple":
+        return _tokenize_code(config, column)
     if method == "match":
         target = _text(config, "Match/Field")
         if not target:
@@ -1192,16 +1255,16 @@ def map_regex(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     known = ctx.input_columns(tool.tool_id)
     added = _regex_added_columns(config, method, column)
     ctx.tool_columns[tool.tool_id] = [*known, *[name for name in added if name not in known]] if known else None
-    return _row(
-        tool,
-        "partial",
-        [node_id],
-        "polars_code",
-        [
-            "The Alteryx RegEx tool became generated Polars code; Alteryx and Polars regex dialects differ, "
-            "so verify the output before relying on it."
-        ],
-    )
+    messages = [
+        "The Alteryx RegEx tool became generated Polars code; Alteryx and Polars regex dialects differ, "
+        "so verify the output before relying on it."
+    ]
+    if method == "parsesimple":
+        messages.append(
+            f"Tokenize splits every match of the expression in '{column}' across {len(added)} columns "
+            f"({', '.join(added)}); '{column}' itself is kept."
+        )
+    return _row(tool, "partial", [node_id], "polars_code", messages)
 
 
 def _regex_added_columns(config: ET.Element, method: str, column: str) -> list[str]:
@@ -1524,9 +1587,9 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         delimiter = _text(config, "FormatSpecificOptions/Delimeter")
         if len(delimiter) == 1:
             received.table_settings.delimiter = delimiter
-        header_element = config.find("FormatSpecificOptions/HeaderRow")
-        if header_element is not None:
-            received.table_settings.has_headers = _is_true(header_element.get("value"))
+        has_headers = _flag(config, "FormatSpecificOptions/HeaderRow")
+        if has_headers is not None:
+            received.table_settings.has_headers = has_headers
 
     settings = input_schema.NodeRead(flow_id=ctx.flow_id, node_id=ctx.new_node_id(), received_file=received)
     node_id = ctx.add_node(tool, "read", settings, description=_description(tool), is_start_node=True)
@@ -1613,6 +1676,175 @@ def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "explore_data", [])
 
 
+# ---------------------------------------------------------------------------
+# RecordID / Transpose / CrossTab / AppendFields / RunningTotal
+# ---------------------------------------------------------------------------
+
+
+def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    name = _text(config, "FieldName") or "RecordID"
+    field_type = _text(config, "FieldType")
+    if field_type and _map_alteryx_type(field_type) not in ("Int16", "Int32", "Int64"):
+        return _placeholder_row(
+            tool, ctx, [f"Alteryx Record ID type '{field_type}' is not an integer; Flowfile record IDs are integers."]
+        )
+    try:
+        offset = int(_text(config, "StartValue") or "1")
+    except ValueError:
+        return _placeholder_row(tool, ctx, ["The Alteryx Record ID start value could not be read."])
+
+    settings = input_schema.NodeRecordId(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        record_id_input=transform_schema.RecordIdInput(output_column_name=name, offset=offset),
+    )
+    node_id = ctx.add_node(tool, "record_id", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    known = ctx.input_columns(tool.tool_id)
+    ctx.tool_columns[tool.tool_id] = [name, *known] if known is not None else None
+    return _row(tool, "converted", [node_id], "record_id", [])
+
+
+def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    key_fields = [element.get("field") for element in config.findall("KeyFields/Field") if element.get("field")]
+    selected = [
+        element.get("field")
+        for element in config.findall("DataFields/Field")
+        if element.get("field") and _is_true(element.get("selected"))
+    ]
+    if not selected:
+        return _placeholder_row(tool, ctx, ["The Alteryx Transpose tool selects no data fields."])
+    if "*Unknown" in selected:
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Transpose selects '*Unknown' data fields, so the column set is not static."]
+        )
+
+    settings = input_schema.NodeUnpivot(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        unpivot_input=transform_schema.UnpivotInput(index_columns=key_fields, value_columns=selected),
+    )
+    unpivot_id = ctx.add_node(tool, "unpivot", settings, description=_description(tool))
+    # Polars unpivot names its outputs variable/value; Alteryx Transpose names them Name/Value.
+    rename = input_schema.NodeSelect(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        keep_missing=True,
+        select_input=[
+            transform_schema.SelectInput(old_name="variable", new_name="Name"),
+            transform_schema.SelectInput(old_name="value", new_name="Value"),
+        ],
+    )
+    rename_id = ctx.add_node(tool, "select", rename, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
+    _link(ctx, unpivot_id, rename_id)
+    ctx.register_all_inputs(tool.tool_id, unpivot_id)
+    ctx.register_all_outputs(tool.tool_id, rename_id)
+    ctx.tool_columns[tool.tool_id] = [*key_fields, "Name", "Value"]
+    return _row(tool, "converted", [unpivot_id, rename_id], "unpivot", [])
+
+
+def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    index_columns = [element.get("field") for element in config.findall("GroupFields/Field") if element.get("field")]
+    pivot_column = _attribute(config, "HeaderField", "field")
+    value_col = _attribute(config, "DataField", "field")
+    raw_methods = ((element.get("method") or "").strip() for element in config.findall("Methods/Method"))
+    methods = [method for method in raw_methods if method]
+    if not pivot_column or not value_col:
+        return _placeholder_row(tool, ctx, ["The Alteryx Cross Tab header or data field could not be read."])
+    if not methods:
+        return _placeholder_row(tool, ctx, ["The Alteryx Cross Tab tool has no aggregation methods configured."])
+    unmapped = [method for method in methods if _SUMMARIZE_ACTIONS.get(method.lower()) in (None, "groupby")]
+    if unmapped:
+        return _placeholder_row(tool, ctx, ["Unsupported Alteryx Cross Tab methods: " + ", ".join(unmapped)])
+
+    settings = input_schema.NodePivot(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        pivot_input=transform_schema.PivotInput(
+            index_columns=index_columns,
+            pivot_column=pivot_column,
+            value_col=value_col,
+            aggregations=[_SUMMARIZE_ACTIONS[method.lower()] for method in methods],
+        ),
+    )
+    node_id = ctx.add_node(tool, "pivot", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = None
+    return _row(
+        tool,
+        "partial",
+        [node_id],
+        "pivot",
+        [
+            "Alteryx replaces non-alphanumeric characters in the new Cross Tab column names with underscores; "
+            "Flowfile keeps the raw values, so downstream references may need updating."
+        ],
+    )
+
+
+def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    settings = input_schema.NodeCrossJoin(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        cross_join_input=transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[]),
+            right_select=transform_schema.JoinInputs(renames=[]),
+        ),
+    )
+    node_id = ctx.add_node(tool, "cross_join", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_input(tool.tool_id, DEFAULT_INPUT_ANCHOR, node_id, MAIN)
+    ctx.register_input(tool.tool_id, "Targets", node_id, MAIN)
+    ctx.register_input(tool.tool_id, "Source", node_id, RIGHT)
+    ctx.tool_columns[tool.tool_id] = None
+
+    messages: list[str] = []
+    status: ToolStatus = "converted"
+    if _config(tool).find("SelectConfiguration") is not None:
+        status = "partial"
+        messages.append(
+            "The Alteryx Append Fields field selection was not converted; "
+            "Flowfile keeps every column from both inputs."
+        )
+    return _row(tool, status, [node_id], "cross_join", messages)
+
+
+def map_running_total(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    group_fields = [element.get("field") for element in config.findall("GroupByFields/Field") if element.get("field")]
+    total_fields = list(
+        dict.fromkeys(
+            element.get("field") for element in config.findall("RunningTotalFields/Field") if element.get("field")
+        )
+    )
+    if not total_fields:
+        return _placeholder_row(tool, ctx, ["The Alteryx Running Total tool has no fields to total."])
+
+    settings = input_schema.NodeWindowFunctions(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        window_input=transform_schema.WindowFunctionsInput(
+            partition_by=group_fields,
+            window_functions=[
+                transform_schema.WindowFunctionInput(column=name, function="cum_sum", new_column_name=f"RunTot_{name}")
+                for name in total_fields
+            ],
+        ),
+    )
+    node_id = ctx.add_node(tool, "window_functions", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    known = ctx.input_columns(tool.tool_id)
+    added = [f"RunTot_{name}" for name in total_fields]
+    ctx.tool_columns[tool.tool_id] = [*known, *added] if known is not None else None
+    return _row(tool, "converted", [node_id], "window_functions", [])
+
+
 TOOL_MAPPERS: dict[str, ToolMapper] = {
     "TextInput": map_text_input,
     "AlteryxSelect": map_select,
@@ -1628,6 +1860,11 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
     "DynamicRename": map_dynamic_rename,
     "MultiFieldFormula": map_multi_field_formula,
     "RegEx": map_regex,
+    "RecordID": map_record_id,
+    "Transpose": map_transpose,
+    "CrossTab": map_cross_tab,
+    "AppendFields": map_append_fields,
+    "RunningTotal": map_running_total,
     "DbFileInput": map_file_input,
     "DbFileOutput": map_file_output,
     "BrowseV2": map_browse,

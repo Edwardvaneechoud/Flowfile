@@ -52,6 +52,7 @@ def _spec(alteryx_name: str, target: str, args: int) -> FunctionSpec:
 FUNCTION_MAP: dict[str, FunctionSpec] = {
     # conditional
     "iif": FunctionSpec("IIF", None, 3, 3, special="iif"),
+    "switch": FunctionSpec("Switch", None, 4, None, special="switch"),
     # string
     "uppercase": _spec("Uppercase", "uppercase", 1),
     "lowercase": _spec("Lowercase", "lowercase", 1),
@@ -63,11 +64,12 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     "trimleft": _spec("TrimLeft", "left_trim", 1),
     "trimright": _spec("TrimRight", "right_trim", 1),
     "length": _spec("Length", "length", 1),
-    "contains": _spec("Contains", "contains", 2),
-    "startswith": _spec("StartsWith", "starts_with", 2),
-    "endswith": _spec("EndsWith", "ends_with", 2),
+    "contains": FunctionSpec("Contains", "contains", 2, 2, special="search"),
+    "startswith": FunctionSpec("StartsWith", "starts_with", 2, 2, special="search"),
+    "endswith": FunctionSpec("EndsWith", "ends_with", 2, 2, special="search"),
     "findstring": _spec("FindString", "find_position", 2),
     "replace": _spec("Replace", "replace", 3),
+    "replacechar": FunctionSpec("ReplaceChar", None, 3, 3, special="replacechar"),
     "padleft": _spec("PadLeft", "pad_left", 3),
     "padright": _spec("PadRight", "pad_right", 3),
     "reversestring": _spec("ReverseString", "reverse", 1),
@@ -100,6 +102,8 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     "datetimeadd": FunctionSpec("DateTimeAdd", None, 3, 3, special="datetimeadd"),
     "datetimediff": FunctionSpec("DateTimeDiff", None, 3, 3, special="datetimediff"),
     "datetimetrim": FunctionSpec("DateTimeTrim", None, 2, 2, special="datetimetrim"),
+    "datetimeformat": FunctionSpec("DateTimeFormat", None, 2, 2, special="datetimeformat"),
+    "datetimeparse": FunctionSpec("DateTimeParse", None, 2, 2, special="datetimeparse"),
     "datetimeyear": _spec("DateTimeYear", "year", 1),
     "datetimemonth": _spec("DateTimeMonth", "month", 1),
     "datetimeday": _spec("DateTimeDay", "day", 1),
@@ -110,6 +114,8 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     "datetimeseconds": _spec("DateTimeSeconds", "second", 1),
     "datetimenow": FunctionSpec("DateTimeNow", "now", 0, 0),
     "datetimetoday": FunctionSpec("DateTimeToday", "today", 0, 0),
+    "datetimefirstofmonth": FunctionSpec("DateTimeFirstOfMonth", None, 0, 0, special="firstofmonth"),
+    "datetimelastofmonth": FunctionSpec("DateTimeLastOfMonth", None, 0, 0, special="lastofmonth"),
     # date / time, short forms
     "year": _spec("Year", "year", 1),
     "month": _spec("Month", "month", 1),
@@ -122,8 +128,6 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
 REJECTED_FUNCTIONS: dict[str, str] = {
     "null": "the Alteryx NULL() literal has no Flowfile formula equivalent",
     "rowcount": "RowCount() has no Flowfile formula equivalent (use a Record ID node instead)",
-    "datetimeparse": "DateTimeParse() uses Alteryx date-format syntax that does not map 1:1 onto to_date()",
-    "datetimeformat": "DateTimeFormat() uses Alteryx date-format syntax that does not map 1:1 onto format_date()",
     "getword": "GetWord() has no Flowfile formula equivalent",
     "spellnumber": "SpellNumber() has no Flowfile formula equivalent",
     "randint": "RandInt() is non-deterministic and has no verified Flowfile equivalent",
@@ -147,6 +151,14 @@ _DATETIME_DIFF_UNITS = {
 
 _DATETIME_TRIM_PARTS = {"year", "month", "day", "hour", "minute", "second"}
 _DATETIME_TRIM_CALLS = {"firstofmonth": "start_of_month", "lastofmonth": "end_of_month"}
+
+# Date-format codes that are byte-identical in the Alteryx dialect and in chrono's strftime.
+_DATE_FORMAT_CODES = frozenset("YymdHIMSpbBaAj%")
+_PARSE_TIME_CODES = frozenset("HIMSp")
+
+# Regex metacharacters, split by whether a one-character class can neutralise them.
+_REGEX_META = "$()*+.?{|"
+_REGEX_UNESCAPABLE = "[^"
 
 _KEYWORDS = {"if", "then", "elseif", "else", "endif", "and", "or", "not", "in", "true", "false", "null"}
 
@@ -542,6 +554,9 @@ def _emit(node: _Node) -> tuple[str, int]:
     if isinstance(node, _Not):
         return f"not({_emit_child(node.operand, _PREC_IF)})", _PREC_ATOM
     if isinstance(node, _Binary):
+        if node.op == "=":
+            # The Flowfile parser gives '=' maximum binding power, so compound operands need parens.
+            return f"{_emit_child(node.left, _PREC_ATOM)} = {_emit_child(node.right, _PREC_ATOM)}", node.prec
         left = _emit_child(node.left, node.prec)
         right = _emit_child(node.right, node.prec, right=True)
         return f"{left} {node.op} {right}", node.prec
@@ -582,6 +597,16 @@ def _emit_call(node: _Call) -> tuple[str, int]:
             f"if {_emit_child(condition, _PREC_OR)} then {_emit_child(when_true, _PREC_OR)} "
             f"else {_emit_child(when_false, _PREC_OR)} endif"
         ), _PREC_IF
+    if spec.special == "switch":
+        return _emit_switch(node), _PREC_IF
+    if spec.special == "replacechar":
+        return _emit_replace_char(node), _PREC_ATOM
+    if spec.special == "search":
+        return _emit_search(node, spec), _PREC_ATOM
+    if spec.special == "firstofmonth":
+        return "start_of_month(today())", _PREC_ATOM
+    if spec.special == "lastofmonth":
+        return "end_of_month(today())", _PREC_ATOM
     if spec.special == "round":
         return _emit_round(node), _PREC_ATOM
     if spec.special == "datetimeadd":
@@ -590,6 +615,10 @@ def _emit_call(node: _Call) -> tuple[str, int]:
         return _emit_datetime_diff(node), _PREC_ATOM
     if spec.special == "datetimetrim":
         return _emit_datetime_trim(node), _PREC_ATOM
+    if spec.special == "datetimeformat":
+        return _emit_datetime_format(node), _PREC_ATOM
+    if spec.special == "datetimeparse":
+        return _emit_datetime_parse(node), _PREC_ATOM
     if spec.special == "isempty":
         # Alteryx IsEmpty() is true for null *and* the empty string; is_empty() only covers null.
         rendered = _emit_child(node.args[0], _PREC_IF)
@@ -604,6 +633,91 @@ def _arity_text(spec: FunctionSpec) -> str:
     if spec.min_args == spec.max_args:
         return f"{spec.min_args} argument(s)"
     return f"between {spec.min_args} and {spec.max_args} arguments"
+
+
+def _literal_string(node: _Node, function_name: str, position: str) -> str:
+    if not isinstance(node, _Literal) or not node.text.startswith('"'):
+        raise _Untranslatable(
+            f"{function_name}() can only be converted when the {position} argument is a literal string"
+        )
+    return node.text[1:-1]
+
+
+def _emit_switch(node: _Call) -> str:
+    """Switch(v, default, c1, r1, ...) becomes an if/elseif chain.
+
+    A null value makes every emitted '=' comparison null, which falls through to the
+    ELSE default — exactly Alteryx's 'null matches no case' behaviour.
+    """
+    value, default, *pairs = node.args
+    if len(pairs) % 2:
+        raise _Untranslatable("Switch() expects case/result pairs after the default, but one case has no result")
+    branches = [
+        (_Binary("=", value, case, _PREC_CMP), result) for case, result in zip(pairs[::2], pairs[1::2], strict=True)
+    ]
+    rendered, _ = _emit(_If(branches=branches, otherwise=default))
+    return rendered
+
+
+def _emit_replace_char(node: _Call) -> str:
+    """ReplaceChar(x, chars, repl) nests one literal replace() per character.
+
+    Alteryx replaces every character in ``chars`` with the *first* character of ``repl``
+    (an empty ``repl`` deletes). Because all characters map to the same single target,
+    the nested sequential replaces are equivalent to Alteryx's simultaneous pass.
+    """
+    chars = _literal_string(node.args[1], "ReplaceChar", "second")
+    replacement = _literal_string(node.args[2], "ReplaceChar", "third")[:1]
+    if not chars:
+        raise _Untranslatable("ReplaceChar() with no characters to replace cannot be converted")
+    rendered = _emit_child(node.args[0], _PREC_IF)
+    for char in dict.fromkeys(chars):
+        rendered = f'replace({rendered}, "{char}", "{replacement}")'
+    return rendered
+
+
+def _escape_regex(text: str) -> str:
+    """Neutralise regex metacharacters as one-character classes, e.g. 'a.c' -> 'a[.]c'.
+
+    A backslash escape would work too, but the formula parser resolves a string token through
+    ``eval()``, so every emitted ``\\.`` would ride on Python's deprecated invalid-escape passthrough.
+    Character classes stay literal on both sides. '[' and '^' are the two metacharacters a class cannot
+    hold ('[[]' and '[^]' are both invalid), so a pattern containing either is rejected instead.
+    """
+    for char in text:
+        if char in _REGEX_UNESCAPABLE:
+            raise _Untranslatable(
+                f"the search string contains {char!r}, a regular-expression character that the Flowfile "
+                "contains() cannot be made to match literally"
+            )
+    return "".join(f"[{char}]" if char in _REGEX_META else char for char in text)
+
+
+def _emit_search(node: _Call, spec: FunctionSpec) -> str:
+    """Contains/StartsWith/EndsWith fold both operands to lower case, and Contains escapes its pattern.
+
+    Alteryx searches case-insensitively unless the optional third argument turns that off (the 2-argument
+    arity pin rejects the explicit form), while the target functions are case-sensitive — hence the
+    ``lowercase()`` wrappers. Wrapping the text operand also pins contains() to its regex branch: given a
+    bare string it falls back to a plain Python substring test, where escaping would be wrong.
+
+    contains() reaches ``pl.Expr.str.contains`` without ``literal=True``, so an Alteryx literal substring
+    is a regex here — 'a.c' matches 'abc' and an unbalanced '(' throws at run time. Its pattern is
+    therefore required to be a literal string, which is what makes escaping possible.
+    """
+    text = f"lowercase({_emit_child(node.args[0], _PREC_IF)})"
+    search = node.args[1]
+    is_regex = spec.target == "contains"
+    if isinstance(search, _Literal):
+        # A simple-mode Filter renders a numeric operand unquoted; it has no case to fold.
+        pattern = search.text[1:-1].lower() if search.text.startswith('"') else search.text
+        return f'{spec.target}({text}, "{_escape_regex(pattern) if is_regex else pattern}")'
+    if is_regex:
+        raise _Untranslatable(
+            f"{spec.alteryx_name}() can only be converted when the search argument is a literal string, "
+            "because the Flowfile contains() reads its pattern as a regular expression"
+        )
+    return f"{spec.target}({text}, lowercase({_emit_child(search, _PREC_IF)}))"
 
 
 def _emit_round(node: _Call) -> str:
@@ -662,6 +776,57 @@ def _emit_datetime_diff(node: _Call) -> str:
             'only "days" and "seconds" can be converted'
         )
     return f"{target}({_emit_child(node.args[0], _PREC_IF)}, {_emit_child(node.args[1], _PREC_IF)})"
+
+
+def _check_format_string(node: _Node, function_name: str, for_parse: bool) -> tuple[str, set[str]]:
+    """Validate an Alteryx date-format literal as a chrono strftime string and pass it through unchanged.
+
+    This is a whitelist of the codes verified to mean the same thing on both sides, not a translation
+    table: every '%' must introduce one of ``_DATE_FORMAT_CODES``, so anything Alteryx-specific
+    (ordinal suffixes, subsecond digits) or merely unverified (%e, %T, %U, %w, %z) is refused.
+    ``%y`` is additionally refused when parsing, because chrono's 00-68/69-99 century pivot is not
+    verified to match Alteryx's; formatting a two-digit year is unambiguous and stays allowed.
+
+    Returns the format text and the set of codes it uses, which is what picks the parse target.
+    """
+    text = _literal_string(node, function_name, "second")
+    codes: set[str] = set()
+    i = 0
+    while i < len(text):
+        if text[i] != "%":
+            i += 1
+            continue
+        code = text[i + 1 : i + 2]
+        if for_parse and code == "y":
+            raise _Untranslatable(
+                f"{function_name}() cannot be converted with the two-digit year '%y', because the century "
+                "it expands to is not verified to be the same in Alteryx and Flowfile; use '%Y' instead"
+            )
+        if code not in _DATE_FORMAT_CODES:
+            offender = f"'%{code}'" if code else "a trailing '%'"
+            raise _Untranslatable(
+                f"{function_name}() format {text!r} uses {offender}, which is not one of the date-format "
+                "codes verified to mean the same thing in Alteryx and Flowfile"
+            )
+        codes.add(code)
+        i += 2
+    return text, codes
+
+
+def _emit_datetime_format(node: _Call) -> str:
+    fmt, _ = _check_format_string(node.args[1], "DateTimeFormat", for_parse=False)
+    return f'format_date({_emit_child(node.args[0], _PREC_IF)}, "{fmt}")'
+
+
+def _emit_datetime_parse(node: _Call) -> str:
+    """DateTimeParse reaches to_datetime() only when the format carries a time part, else to_date().
+
+    Both targets pass ``strict=False`` down to ``str.to_date``/``str.to_datetime``, so a value the
+    format does not match becomes null — which is what Alteryx's DateTimeParse does too.
+    """
+    fmt, codes = _check_format_string(node.args[1], "DateTimeParse", for_parse=True)
+    target = "to_datetime" if codes & _PARSE_TIME_CODES else "to_date"
+    return f'{target}({_emit_child(node.args[0], _PREC_IF)}, "{fmt}")'
 
 
 # ---------------------------------------------------------------------------

@@ -115,6 +115,68 @@ def select_of_type(alteryx_type: str) -> bytes:
 """.encode()
 
 
+def regex_tokenize(expression: str, num_fields: str = "3", split_to_rows: str = "False") -> bytes:
+    """A two-tool workflow whose RegEx tool tokenizes the 'codes' column."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="codes" /></Fields>
+        <Data><r><c>AB-12 CD-34</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RegEx.RegEx" />
+      <Properties><Configuration>
+        <Field>codes</Field>
+        <RegExExpression value="{expression}" />
+        <Method>ParseSimple</Method>
+        <ParseSimple>
+          <SplitToRows value="{split_to_rows}" />
+          <RootName>token</RootName>
+          <NumFields value="{num_fields}" />
+          <ErrorHandling>Warn</ErrorHandling>
+        </ParseSimple>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def csv_input(header_row: str) -> bytes:
+    """A one-tool workflow reading a CSV, with the HeaderRow option written as given."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput" />
+      <Properties>
+        <Configuration>
+          <File FileFormat="0">in.csv</File>
+          <FormatSpecificOptions>
+            <Delimeter>,</Delimeter>
+            {header_row}
+          </FormatSpecificOptions>
+        </Configuration>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="Field_1" type="V_String" />
+            <Field name="Field_2" type="V_String" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+""".encode()
+
+
 def read_fixture(name: str) -> bytes:
     return (FIXTURE_DIR / name).read_bytes()
 
@@ -488,9 +550,9 @@ def test_unsupported_tool_becomes_a_documented_passthrough(unsupported: Conversi
     placeholder = nodes[2]
     code = placeholder["setting_input"]["polars_code_input"]["polars_code"]
     assert placeholder["type"] == "polars_code"
-    assert code.startswith("# Alteryx tool 'Transpose' (ToolID 2) could not be converted automatically.")
+    assert code.startswith("# Alteryx tool 'DateTime' (ToolID 2) could not be converted automatically.")
     assert code.endswith("output_df = input_df")
-    assert "Transpose" in placeholder["description"]
+    assert "DateTime" in placeholder["description"]
     assert placeholder["description"].startswith("⚠")
 
 
@@ -748,6 +810,36 @@ def test_headerless_read_renames_polars_columns_to_the_alteryx_names(price_paid:
     assert len(renames) == 16
 
 
+def read_settings(header_row: str) -> tuple:
+    result = convert_yxmd(csv_input(header_row), source_name="csv_input.yxmd")
+    row = report_row(result, 1)
+    assert row.status == "converted", row.messages
+    nodes = dumped_nodes(result)
+    return row, nodes[row.flowfile_node_ids[0]]["setting_input"]["received_file"]["table_settings"]
+
+
+@pytest.mark.parametrize("header_row", ["<HeaderRow>True</HeaderRow>", '<HeaderRow value="True" />'])
+def test_headered_csv_input_is_read_with_headers_in_both_xml_shapes(header_row: str):
+    """Input Data writes the flag as element text; the attribute shape has to keep working too."""
+    row, table_settings = read_settings(header_row)
+    assert table_settings["has_headers"] is True
+    assert len(row.flowfile_node_ids) == 1
+    assert not any("column_1" in message for message in row.messages)
+
+
+@pytest.mark.parametrize("header_row", ["<HeaderRow>False</HeaderRow>", '<HeaderRow value="False" />'])
+def test_headerless_csv_input_still_gets_the_positional_rename_in_both_xml_shapes(header_row: str):
+    row, table_settings = read_settings(header_row)
+    assert table_settings["has_headers"] is False
+    assert len(row.flowfile_node_ids) == 2
+    assert any("column_1" in message for message in row.messages)
+
+
+def test_an_unwritten_header_option_leaves_the_reader_default_alone():
+    _, table_settings = read_settings("")
+    assert table_settings["has_headers"] is True
+
+
 # ---------------------------------------------------------------------------
 # Simple-mode filters
 # ---------------------------------------------------------------------------
@@ -811,6 +903,47 @@ def test_regex_lookahead_is_rejected_instead_of_generating_failing_code(regex_an
     row = report_row(regex_and_multifield, 4)
     assert row.status == "placeholder"
     assert any("lookahead" in message for message in row.messages)
+
+
+def tokenize_code(source: bytes) -> str:
+    result = convert_yxmd(source, source_name="tokenize.yxmd")
+    row = report_row(result, 2)
+    assert row.status == "partial", row.messages
+    return dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+
+
+def test_regex_tokenize_spreads_every_match_across_the_output_columns():
+    """Tokenize is not capture-group extraction: each match of the expression is one column."""
+    code = tokenize_code(regex_tokenize("[A-Z]{2}-[0-9]{2}"))
+    assert "str.extract_all(_pattern)" in code
+    assert "str.extract(_pattern, 1)" not in code
+    frame = polars_code_parser.get_executable(code, num_inputs=1)(pl.DataFrame({"codes": ["AB-12 CD-34", "nope"]}))
+    assert frame.to_dicts() == [
+        {"codes": "AB-12 CD-34", "token1": "AB-12", "token2": "CD-34", "token3": None},
+        {"codes": "nope", "token1": None, "token2": None, "token3": None},
+    ]
+
+
+def test_regex_tokenize_returns_the_marked_group_of_each_match():
+    code = tokenize_code(regex_tokenize("([A-Z]{2})-[0-9]{2}", num_fields="2"))
+    frame = polars_code_parser.get_executable(code, num_inputs=1)(pl.DataFrame({"codes": ["AB-12 CD-34", "nope"]}))
+    assert frame.to_dicts() == [
+        {"codes": "AB-12 CD-34", "token1": "AB", "token2": "CD"},
+        {"codes": "nope", "token1": None, "token2": None},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (regex_tokenize("([A-Z]{2})-([0-9]{2})"), "more than one group"),
+        (regex_tokenize("[A-Z]{2}", split_to_rows="True"), "split to rows"),
+    ],
+)
+def test_untranslatable_tokenize_configurations_stay_placeholders(source: bytes, expected: str):
+    row = report_row(convert_yxmd(source, source_name="tokenize.yxmd"), 2)
+    assert row.status == "placeholder"
+    assert any(expected in message for message in row.messages)
 
 
 def test_every_generated_polars_code_node_is_executable(price_paid: ConversionResult):
@@ -947,3 +1080,146 @@ def test_price_paid_workflow_runs_and_reproduces_the_alteryx_result(tmp_path: Pa
     assert frame.schema["NewBuild"] == pl.Boolean
     assert frame["PostCodeArea"].to_list() == ["SW", "LS"]
     assert "Record Status - monthly file only" not in frame.columns
+
+
+# ---------------------------------------------------------------------------
+# RecordID / Transpose / CrossTab / AppendFields / RunningTotal
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def extra_tools() -> ConversionResult:
+    return convert("extra_tools.yxmd")
+
+
+def tool_after_text_input(plugin: str, config: str) -> bytes:
+    """A two-tool workflow: a Text Input feeding one tool with the given configuration."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="{plugin}" />
+      <Properties><Configuration>{config}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def test_record_id_maps_to_a_record_id_node(extra_tools: ConversionResult):
+    row = report_row(extra_tools, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "record_id"
+    settings = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["record_id_input"]
+    assert settings["output_column_name"] == "RowNr"
+    assert settings["offset"] == 1
+
+
+def test_running_total_maps_to_window_functions(extra_tools: ConversionResult):
+    row = report_row(extra_tools, 3)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "window_functions"
+    window = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["window_input"]
+    assert window["partition_by"] == ["region"]
+    assert [(w["column"], w["function"], w["new_column_name"]) for w in window["window_functions"]] == [
+        ("sales", "cum_sum", "RunTot_sales")
+    ]
+
+
+def test_transpose_becomes_unpivot_plus_rename(extra_tools: ConversionResult):
+    row = report_row(extra_tools, 4)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "unpivot"
+    unpivot, rename = (dumped_nodes(extra_tools)[node_id] for node_id in row.flowfile_node_ids)
+    assert unpivot["setting_input"]["unpivot_input"]["index_columns"] == ["region", "product"]
+    assert unpivot["setting_input"]["unpivot_input"]["value_columns"] == ["q1", "q2"]
+    renames = {s["old_name"]: s["new_name"] for s in rename["setting_input"]["select_input"]}
+    assert renames == {"variable": "Name", "value": "Value"}
+    assert rename["input_ids"] == [unpivot["id"]]
+
+
+def test_cross_tab_maps_to_pivot(extra_tools: ConversionResult):
+    row = report_row(extra_tools, 5)
+    assert row.status == "partial"
+    assert any("underscores" in message for message in row.messages)
+    pivot = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["pivot_input"]
+    assert pivot["index_columns"] == ["region"]
+    assert pivot["pivot_column"] == "product"
+    assert pivot["value_col"] == "sales"
+    assert pivot["aggregations"] == ["sum"]
+
+
+def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
+    row = report_row(extra_tools, 7)
+    assert row.status == "converted"
+    node = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]
+    assert node["type"] == "cross_join"
+    assert node["input_ids"] == [1]
+    assert node["right_input_id"] == 7
+
+
+@pytest.mark.parametrize(
+    ("case_id", "plugin", "config"),
+    [
+        (
+            "record-id-string-type",
+            "AlteryxBasePluginsGui.RecordID.RecordID",
+            "<FieldName>RecordID</FieldName><StartValue>1</StartValue><FieldType>String</FieldType>",
+        ),
+        (
+            "transpose-unknown-selected",
+            "AlteryxBasePluginsGui.Transpose.Transpose",
+            '<KeyFields /><DataFields><Field field="*Unknown" selected="True" /></DataFields>',
+        ),
+        (
+            "cross-tab-unmapped-method",
+            "AlteryxBasePluginsGui.CrossTab.CrossTab",
+            '<GroupFields /><HeaderField field="value" /><DataField field="value" />'
+            "<Methods><Method method=\"CountNonNull\" /></Methods>",
+        ),
+        (
+            "running-total-no-fields",
+            "AlteryxSpatialPluginsGui.RunningTotal.RunningTotal",
+            "<GroupByFields /><RunningTotalFields />",
+        ),
+    ],
+)
+def test_new_tools_fail_closed_to_placeholders(case_id: str, plugin: str, config: str):
+    result = convert_yxmd(tool_after_text_input(plugin, config), source_name="inline.yxmd")
+    row = report_row(result, 2)
+    assert row.status == "placeholder", case_id
+    assert row.flowfile_node_type == "polars_code"
+
+
+def test_extra_tools_flow_runs(tmp_path: Path, extra_tools: ConversionResult):
+    flow = open_flow(write_flow(extra_tools, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step for step in run_info.node_step_result if not step.success]
+
+    record_id = flow.get_node(2).get_resulting_data().data_frame.collect()
+    assert record_id["RowNr"].to_list() == [1, 2, 3]
+
+    running = flow.get_node(3).get_resulting_data().data_frame.collect()
+    assert running["RunTot_sales"].to_list() == [10, 30, 30]
+
+    transposed = flow.get_node(5).get_resulting_data().data_frame.collect()
+    assert set(transposed.columns) == {"region", "product", "Name", "Value"}
+    assert transposed.height == 6
+
+    pivoted = flow.get_node(6).get_resulting_data().data_frame.collect().sort("region")
+    assert pivoted["apples"].to_list() == [10, 30]
+    assert pivoted["pears"].to_list() == [20, 0]
+
+    appended = flow.get_node(8).get_resulting_data().data_frame.collect()
+    assert appended.height == 3
+    assert appended["tax"].to_list() == [0.2, 0.2, 0.2]

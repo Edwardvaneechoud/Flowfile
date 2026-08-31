@@ -72,7 +72,7 @@
           <article class="welcome-tile">
             <button class="tile-main" @click="emit('import-alteryx')">
               <span class="tile-icon"><span class="material-icons">upload_file</span></span>
-              <span class="tile-title">Import Alteryx</span>
+              <span class="tile-title">Import Alteryx <span class="beta-badge">Beta</span></span>
               <span class="tile-sub">Convert a .yxmd workflow into a flow</span>
             </button>
             <div class="tile-footer"></div>

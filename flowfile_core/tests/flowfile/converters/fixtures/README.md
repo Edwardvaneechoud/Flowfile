@@ -10,6 +10,7 @@
 | `regex_and_multifield.yxmd` | RegEx parse and match, Multi-Field Formula |
 | `simple_filter.yxmd` | simple-mode Filter operators, including an unsupported one |
 | `price_paid.yxmd` | a real published Alteryx workflow (UK Price Paid extract) |
+| `extra_tools.yxmd` | Record ID, Running Total, Transpose, Cross Tab, Append Fields |
 | `zero_tools.yxmd`, `invalid.xml` | parse failures |
 
 Real workflows to test against come from:

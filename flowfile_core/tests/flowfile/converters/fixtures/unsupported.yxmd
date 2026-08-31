@@ -35,27 +35,24 @@
       <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxTextInput" />
     </Node>
     <Node ToolID="2">
-      <GuiSettings Plugin="AlteryxBasePluginsGui.Transpose.Transpose">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DateTime.DateTime">
         <Position x="198" y="54" />
       </GuiSettings>
       <Properties>
         <Configuration>
-          <KeyFields>
-            <Field field="id" />
-          </KeyFields>
-          <DataFields>
-            <Field field="a" selected="True" />
-            <Field field="b" selected="True" />
-          </DataFields>
+          <IsFrom value="True" />
+          <InputFieldName>a</InputFieldName>
+          <Format>yyyy-MM-dd</Format>
+          <OutputFieldName>DateTime_Out</OutputFieldName>
         </Configuration>
         <Annotation DisplayMode="0">
           <Name />
           <DefaultAnnotationText />
-          <AnnotationText>Pivot the measures to rows</AnnotationText>
+          <AnnotationText>Parse the date column</AnnotationText>
           <Left value="False" />
         </Annotation>
       </Properties>
-      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxTranspose" />
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDateTime" />
     </Node>
     <Node ToolID="3">
       <GuiSettings>

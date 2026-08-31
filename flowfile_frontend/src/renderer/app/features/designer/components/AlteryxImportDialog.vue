@@ -11,6 +11,12 @@
     :close-on-press-escape="!isConverting"
     @update:model-value="onModelUpdate"
   >
+    <template #header>
+      <div class="ax-header">
+        <span class="el-dialog__title">{{ title }}</span>
+        <span class="beta-badge">Beta</span>
+      </div>
+    </template>
     <div v-if="phase === 'idle'">
       <p class="ax-intro">
         Flowfile converts the Alteryx tools it supports and flags everything that needs manual work
@@ -216,6 +222,12 @@ watch(
 <style scoped>
 .ax-hidden-input {
   display: none;
+}
+
+.ax-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
 }
 
 .ax-intro {

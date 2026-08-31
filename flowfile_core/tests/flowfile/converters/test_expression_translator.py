@@ -1,3 +1,7 @@
+import warnings
+from datetime import date, datetime
+
+import polars as pl
 import pytest
 from polars_expr_transformer import simple_function_to_expr
 
@@ -10,6 +14,11 @@ from flowfile_core.flowfile.converters.alteryx.expression import (
 # (FUNCTION_MAP key, Alteryx expression, expected Flowfile formula)
 FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("iif", 'IIF([Amount] > 100, "big", "small")', 'if [Amount] > 100 then "big" else "small" endif'),
+    (
+        "switch",
+        'Switch([Code], "other", 1, "one", 2, "two")',
+        'if [Code] = 1 then "one" elseif [Code] = 2 then "two" else "other" endif',
+    ),
     ("uppercase", "Uppercase([Name])", "uppercase([Name])"),
     ("lowercase", "Lowercase([Name])", "lowercase([Name])"),
     ("titlecase", "TitleCase([Name])", "titlecase([Name])"),
@@ -20,11 +29,13 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("trimleft", "TrimLeft([Name])", "left_trim([Name])"),
     ("trimright", "TrimRight([Name])", "right_trim([Name])"),
     ("length", "Length([Name])", "length([Name])"),
-    ("contains", 'Contains([Name], "abc")', 'contains([Name], "abc")'),
-    ("startswith", 'StartsWith([Name], "abc")', 'starts_with([Name], "abc")'),
-    ("endswith", 'EndsWith([Name], "abc")', 'ends_with([Name], "abc")'),
+    # Alteryx searches case-insensitively by default, so both operands are folded to lower case.
+    ("contains", 'Contains([Name], "abc")', 'contains(lowercase([Name]), "abc")'),
+    ("startswith", 'StartsWith([Name], "abc")', 'starts_with(lowercase([Name]), "abc")'),
+    ("endswith", 'EndsWith([Name], "abc")', 'ends_with(lowercase([Name]), "abc")'),
     ("findstring", 'FindString([Name], "-")', 'find_position([Name], "-")'),
     ("replace", 'Replace([Name], "a", "b")', 'replace([Name], "a", "b")'),
+    ("replacechar", 'ReplaceChar([Name], "ab", "-")', 'replace(replace([Name], "a", "-"), "b", "-")'),
     ("padleft", 'PadLeft([Name], 5, "0")', 'pad_left([Name], 5, "0")'),
     ("padright", 'PadRight([Name], 5, "0")', 'pad_right([Name], 5, "0")'),
     ("isnull", "IsNull([Amount])", "is_empty([Amount])"),
@@ -63,7 +74,13 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("datetimeseconds", "DateTimeSeconds([OrderDate])", "second([OrderDate])"),
     ("datetimenow", "DateTimeNow()", "now()"),
     ("datetimetoday", "DateTimeToday()", "today()"),
+    ("datetimefirstofmonth", "DateTimeFirstOfMonth()", "start_of_month(today())"),
+    ("datetimelastofmonth", "DateTimeLastOfMonth()", "end_of_month(today())"),
     ("datetimetrim", 'DateTimeTrim([OrderDate], "month")', 'date_trim([OrderDate], "month")'),
+    # These are re-run upper- and lower-cased below, so both casings of the format must stay whitelisted
+    # (%Y<->%y and %m<->%M are; the parse case avoids %Y because %y is rejected when parsing).
+    ("datetimeformat", 'DateTimeFormat([OrderDate], "%Y-%m")', 'format_date([OrderDate], "%Y-%m")'),
+    ("datetimeparse", 'DateTimeParse([DateText], "%m-%b")', 'to_date([DateText], "%m-%b")'),
     ("year", "Year([OrderDate])", "year([OrderDate])"),
     ("month", "Month([OrderDate])", "month([OrderDate])"),
     ("day", "Day([OrderDate])", "day([OrderDate])"),
@@ -85,9 +102,36 @@ EXTRA_FUNCTION_CASES: list[tuple[str, str]] = [
         'DateTimeDiff([ShipDate], [OrderDate], "seconds")',
         "datetime_diff_seconds([ShipDate], [OrderDate])",
     ),
+    ('DateTimeFormat([OrderDate], "%d/%m/%Y")', 'format_date([OrderDate], "%d/%m/%Y")'),
+    ('DateTimeFormat([OrderDate], "%A %d %B %Y")', 'format_date([OrderDate], "%A %d %B %Y")'),
+    ('DateTimeFormat([OrderDate], "%I:%M %p")', 'format_date([OrderDate], "%I:%M %p")'),
+    # Formatting a two-digit year is unambiguous, so %y is whitelisted in this direction only.
+    ('DateTimeFormat([OrderDate], "%d-%b-%y")', 'format_date([OrderDate], "%d-%b-%y")'),
+    ('DateTimeParse([DateText], "%d/%m/%Y")', 'to_date([DateText], "%d/%m/%Y")'),
+    ('DateTimeParse([DateText], "%Y-%m-%d %H:%M:%S")', 'to_datetime([DateText], "%Y-%m-%d %H:%M:%S")'),
+    ('DateTimeParse([DateText], "%d %b %Y %I:%M %p")', 'to_datetime([DateText], "%d %b %Y %I:%M %p")'),
+    # '%%' is an escaped percent, not a time code, so this stays on the to_date() branch.
+    ('DateTimeParse([DateText], "%d/%m/%Y 100%%H")', 'to_date([DateText], "%d/%m/%Y 100%%H")'),
     ('DateTimeTrim([OrderDate], "firstofmonth")', "start_of_month([OrderDate])"),
     ('DateTimeTrim([OrderDate], "lastofmonth")', "end_of_month([OrderDate])"),
     ('DateTimeTrim([OrderDate], "day")', 'date_trim([OrderDate], "day")'),
+    ("Switch([A] + 1, 0, 2, 20)", "if ([A] + 1) = 2 then 20 else 0 endif"),
+    ('ReplaceChar([Name], "aab", "xy")', 'replace(replace([Name], "a", "x"), "b", "x")'),
+    ('ReplaceChar([Name], "-", "")', 'replace([Name], "-", "")'),
+    # Contains() reaches a regex engine, so a literal search string is lower-cased and escaped.
+    ('Contains([Name], "A.C")', 'contains(lowercase([Name]), "a[.]c")'),
+    ('Contains([Price], "$")', 'contains(lowercase([Price]), "[$]")'),
+    ('Contains([Name], "(")', 'contains(lowercase([Name]), "[(]")'),
+    ('Contains([Name], "Smith & Co")', 'contains(lowercase([Name]), "smith & co")'),
+    ('Contains(Uppercase([Name]), "AB")', 'contains(lowercase(uppercase([Name])), "ab")'),
+    # StartsWith/EndsWith are literal in the target, so a non-literal search only needs the case fold.
+    ("StartsWith([Name], [Prefix])", "starts_with(lowercase([Name]), lowercase([Prefix]))"),
+    ("EndsWith([Name], [Suffix])", "ends_with(lowercase([Name]), lowercase([Suffix]))"),
+    ('StartsWith([Name], "SM")', 'starts_with(lowercase([Name]), "sm")'),
+    ('EndsWith([Name], "CO.")', 'ends_with(lowercase([Name]), "co.")'),
+    # A simple-mode Filter renders a numeric operand unquoted.
+    ("Contains([OrderID], 2024)", 'contains(lowercase([OrderID]), "2024")'),
+    ("Contains([Price], 1.50)", 'contains(lowercase([Price]), "1[.]50")'),
 ]
 
 OPERATOR_CASES: list[tuple[str, str]] = [
@@ -128,6 +172,9 @@ PRECEDENCE_CASES: list[tuple[str, str]] = [
     ("[A] > 1 AND [B] < 3 OR [C] = 2", "[A] > 1 and [B] < 3 or [C] = 2"),
     ("[A] > 1 AND ([B] < 3 OR [C] = 2)", "[A] > 1 and ([B] < 3 or [C] = 2)"),
     ("[A] + 1 > 2", "[A] + 1 > 2"),
+    ("[A] = [B] + 1", "[A] = ([B] + 1)"),
+    ("[A] + 1 = [B]", "([A] + 1) = [B]"),
+    ("[A] * 2 == [B] - 3", "([A] * 2) = ([B] - 3)"),
     ("IIF([A] = 1, 1, 2) + 1", "(if [A] = 1 then 1 else 2 endif) + 1"),
     ("Uppercase(IIF([A] = 1, [B], [C]))", "uppercase(if [A] = 1 then [B] else [C] endif)"),
     ("Left(Trim([Name]), 3)", "left(trim([Name]), 3)"),
@@ -198,8 +245,16 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("unbracketed-field", "Amount + 1"),
     ("power-operator", "[Amount] ^ 2"),
     ("rowcount", "RowCount()"),
-    ("datetimeparse", 'DateTimeParse([D], "%d/%m/%Y")'),
-    ("datetimeformat", 'DateTimeFormat([D], "%d/%m/%Y")'),
+    # Only the format codes verified byte-identical in both dialects pass the whitelist.
+    ("datetimeformat-unverified-code", 'DateTimeFormat([D], "%e %b %Y")'),
+    ("datetimeformat-trailing-percent", 'DateTimeFormat([D], "%Y-%m-%")'),
+    ("datetimeformat-non-literal-format", "DateTimeFormat([D], [Fmt])"),
+    ("datetimeformat-language-argument", 'DateTimeFormat([D], "%d/%m/%Y", "English")'),
+    ("datetimeparse-unverified-code", 'DateTimeParse([D], "%Y-%m-%d %T")'),
+    # chrono's two-digit-year century pivot is not verified to match Alteryx's.
+    ("datetimeparse-two-digit-year", 'DateTimeParse([D], "%d/%m/%y")'),
+    ("datetimeparse-non-literal-format", "DateTimeParse([D], [Fmt])"),
+    ("datetimeparse-language-argument", 'DateTimeParse([D], "%d/%m/%Y", "English")'),
     ("if-without-else", 'IF [A] = 1 THEN "one" ENDIF'),
     ("unbalanced-parenthesis", "([Amount] + 1"),
     ("dangling-operator", "[Amount] +"),
@@ -207,6 +262,18 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("unterminated-field-reference", "[Amount"),
     ("unsupported-character", "[Amount] @ 1"),
     ("string-concat-of-nested-quotes", "'he said \"hi\"'"),
+    ("switch-odd-arguments", 'Switch([Code], "other", 1, "one", 2)'),
+    ("replacechar-non-literal-chars", 'ReplaceChar([Name], [Chars], "-")'),
+    ("replacechar-empty-chars", 'ReplaceChar([Name], "", "-")'),
+    # A column pattern cannot be regex-escaped at translation time.
+    ("contains-non-literal-search", "Contains([Name], [Other])"),
+    # '[' and '^' are the metacharacters a one-character class cannot neutralise.
+    ("contains-open-bracket", 'Contains([Name], "[tag]")'),
+    ("contains-caret", 'Contains([Name], "a^b")'),
+    # The explicit CaseInsensitive argument asks for semantics the emitted lowercase() fold cannot express.
+    ("contains-explicit-case-flag", 'Contains([Name], "abc", 0)'),
+    ("startswith-explicit-case-flag", 'StartsWith([Name], "abc", 0)'),
+    ("endswith-explicit-case-flag", 'EndsWith([Name], "abc", 0)'),
 ]
 
 
@@ -313,6 +380,103 @@ def test_arity_reason_names_the_function():
 def test_none_and_non_string_input_fail_closed():
     assert try_translate(None).translated is None  # type: ignore[arg-type]
     assert try_translate(None).reason  # type: ignore[arg-type]
+
+
+def test_equality_with_compound_operands_evaluates_as_a_comparison():
+    """polars_expr_transformer gives '=' maximum binding power, so without operand parens
+    '[A] = [B] + 1' silently evaluates as ([A] = [B]) + 1 and yields numbers."""
+    expr = simple_function_to_expr(try_translate("[A] = [B] + 1").translated)
+    values = pl.DataFrame({"A": [2, 3], "B": [1, 3]}).select(expr.alias("out"))["out"].to_list()
+    assert values == [True, False]
+
+
+def _evaluate(alteryx: str, frame: pl.DataFrame) -> list:
+    outcome = try_translate(alteryx)
+    assert outcome.translated is not None, outcome.reason
+    return frame.select(simple_function_to_expr(outcome.translated).alias("out"))["out"].to_list()
+
+
+def test_contains_search_string_is_matched_literally_not_as_a_regex():
+    """The target contains() reaches pl.Expr.str.contains without literal=True, so an unescaped
+    Alteryx search string would be read as a regex: '$' matched every row and 'a.c' matched 'abc'."""
+    frame = pl.DataFrame({"Name": ["a$b", "abc", "a.c", "plain"]})
+    assert _evaluate('Contains([Name], "$")', frame) == [True, False, False, False]
+    assert _evaluate('Contains([Name], "a.c")', frame) == [False, False, True, False]
+
+
+def test_contains_unbalanced_metacharacter_evaluates_instead_of_raising():
+    # An unescaped '(' passed the fail-closed gate (the parser only parses) and raised
+    # ComputeError once polars compiled the regex at run time.
+    frame = pl.DataFrame({"Name": ["x(y", "plain"]})
+    assert _evaluate('Contains([Name], "(")', frame) == [True, False]
+
+
+@pytest.mark.parametrize(
+    ("alteryx", "expected"),
+    [
+        ('Contains([Name], "MITH")', [True, True, False]),
+        ('StartsWith([Name], "smith")', [True, True, False]),
+        ('EndsWith([Name], "CO")', [True, True, False]),
+    ],
+)
+def test_search_functions_are_case_insensitive_like_alteryx(alteryx: str, expected: list):
+    # Alteryx defaults these to case-insensitive; the target functions are case-sensitive.
+    frame = pl.DataFrame({"Name": ["Smith & Co", "SMITH & CO", "Jones Ltd"]})
+    assert _evaluate(alteryx, frame) == expected
+
+
+def test_datetime_format_and_parse_evaluate_against_real_columns():
+    """format_date reaches dt.to_string (chrono strftime) and to_date reaches str.to_date with
+    strict=False, so a value the format does not match becomes null, like Alteryx's DateTimeParse."""
+    frame = pl.DataFrame(
+        {"D": [date(2021, 3, 15), date(2020, 12, 1)], "S": ["15/03/2021", "not a date"]},
+    )
+    assert _evaluate('DateTimeFormat([D], "%d/%m/%Y")', frame) == ["15/03/2021", "01/12/2020"]
+    assert _evaluate('DateTimeFormat([D], "%b %Y")', frame) == ["Mar 2021", "Dec 2020"]
+    assert _evaluate('DateTimeParse([S], "%d/%m/%Y")', frame) == [date(2021, 3, 15), None]
+
+
+def test_datetimeparse_with_a_time_code_yields_a_datetime():
+    frame = pl.DataFrame({"S": ["2021-03-15 14:30:00"]})
+    assert _evaluate('DateTimeParse([S], "%Y-%m-%d %H:%M:%S")', frame) == [datetime(2021, 3, 15, 14, 30)]
+
+
+def test_unverified_format_code_rejection_names_the_code():
+    assert "%T" in try_translate('DateTimeParse([D], "%Y-%m-%d %T")').reason
+    assert "%e" in try_translate('DateTimeFormat([D], "%e %b %Y")').reason
+
+
+def test_two_digit_year_is_rejected_only_in_the_parse_direction():
+    assert try_translate('DateTimeFormat([D], "%d-%b-%y")').translated == 'format_date([D], "%d-%b-%y")'
+    assert "%y" in try_translate('DateTimeParse([D], "%d-%b-%y")').reason
+
+
+def test_startswith_with_a_column_search_is_case_insensitive():
+    frame = pl.DataFrame({"Name": ["Smith & Co", "Jones Ltd"], "Prefix": ["SMITH", "smith"]})
+    assert _evaluate("StartsWith([Name], [Prefix])", frame) == [True, False]
+
+
+_SEARCHABLE_ASCII = [chr(c) for c in range(32, 127) if chr(c) not in '"\\[^']
+
+
+@pytest.mark.parametrize("char", _SEARCHABLE_ASCII)
+def test_every_printable_ascii_search_character_matches_itself(char: str):
+    # `"` and `\` are unreachable (the Alteryx tokenizer rejects nested quotes and backslash escapes);
+    # `[` and `^` are rejected by the translator and covered in REJECTED_CASES.
+    frame = pl.DataFrame({"Name": [f"x{char}y", "§§§"]})
+    assert _evaluate(f'Contains([Name], "{char}")', frame) == [True, False]
+
+
+def test_escaped_search_patterns_do_not_rely_on_python_escape_sequences():
+    """The formula parser resolves a string token through eval(), so a backslash-escaped pattern would
+    ride on Python's deprecated invalid-escape passthrough. Character-class escaping keeps it clean."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        warnings.simplefilter("error", SyntaxWarning)
+        for char in _SEARCHABLE_ASCII:
+            translated = try_translate(f'Contains([Name], "{char}")').translated
+            assert translated is not None and "\\" not in translated
+            _assert_reparses(translated)
 
 
 def test_unary_minus_over_parenthesised_expression_is_rejected_by_verification():
