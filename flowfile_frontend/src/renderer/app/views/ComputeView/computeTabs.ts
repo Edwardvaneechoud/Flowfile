@@ -3,7 +3,7 @@
 // dependency-free (pure data) so it can be imported from the sidebar without
 // risking an import cycle.
 
-export const COMPUTE_TAB_KEYS = ["kernels", "performance"] as const;
+export const COMPUTE_TAB_KEYS = ["kernels", "performance", "privacy"] as const;
 
 export type ComputeTabKey = (typeof COMPUTE_TAB_KEYS)[number];
 
@@ -28,5 +28,11 @@ export const computeTabs: ComputeTabDef[] = [
     icon: "fa-solid fa-gauge-high",
     sidebarKey: "menu.computePerformance",
     requiresAdmin: true,
+  },
+  {
+    key: "privacy",
+    label: "Privacy",
+    icon: "fa-solid fa-shield-halved",
+    sidebarKey: "menu.computePrivacy",
   },
 ];

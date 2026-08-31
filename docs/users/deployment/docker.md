@@ -138,10 +138,16 @@ volumes:
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 | `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/images.py`) |
+| `FLOWFILE_TELEMETRY` | Kill switch for anonymous usage telemetry. A falsy value (`0`/`false`/`no`/`off`) hard-disables it before any prompt or send; any other value grants nothing by itself. | `0` in the bundled compose |
+| `FLOWFILE_TELEMETRY_ENDPOINT` | Collector URL for anonymous usage telemetry, used verbatim; overrides the built-in default (none ships today, so unset ⇒ disabled). | Unset |
 
 ### Git project tracking
 
 When `FLOWFILE_ENABLE_PROJECTS` is on, Flowfile can mirror your flows, connections and schedules into a versioned, secret-free git folder. In Docker it is **administrator-only**, and each user's projects are confined to their own `/app/user_data/projects/<owner_id>` area, so tenants stay isolated. Turn it off with `FLOWFILE_ENABLE_PROJECTS=false`.
+
+### Anonymous usage telemetry
+
+Flowfile's opt-in usage telemetry is hard-off in the bundled compose: it ships `FLOWFILE_TELEMETRY=0`, which disables everything before any consent prompt, file read, or send. To allow it, remove the kill switch and set `FLOWFILE_TELEMETRY_ENDPOINT` to a collector URL, then have an administrator turn it on in the UI. Consent here is not a per-user choice: it is one deployment-wide setting an administrator grants on behalf of every user of that server, so other users never see the consent dialog and view the state read-only under **Compute → Privacy**. [Telemetry & Privacy](../telemetry.md) documents every event and field that can be sent.
 
 ## .env Example
 

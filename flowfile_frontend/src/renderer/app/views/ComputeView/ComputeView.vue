@@ -16,6 +16,7 @@
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <PerformancePanel v-else-if="activeTab === 'performance'" />
+      <PrivacyPanel v-else-if="activeTab === 'privacy'" />
     </div>
   </div>
 </template>
@@ -25,6 +26,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import KernelManagerView from "../KernelManagerView/KernelManagerView.vue";
 import PerformancePanel from "./PerformancePanel.vue";
+import PrivacyPanel from "./PrivacyPanel.vue";
 import { computeTabs, COMPUTE_TAB_KEYS } from "./computeTabs";
 import type { ComputeTabKey } from "./computeTabs";
 import { useAuthStore } from "../../stores/auth-store";

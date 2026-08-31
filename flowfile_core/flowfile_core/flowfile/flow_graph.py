@@ -39,6 +39,7 @@ from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing
 from flowfile_core.configs.node_store.nodes import get_source_node_types, get_source_node_types_str
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.events import publish
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -6685,6 +6686,8 @@ class FlowGraph:
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
 
+            publish("flow_run_started", graph=self)
+
             self._refresh_catalog_reader_freshness()
             self._refresh_read_source_freshness()
 
@@ -6723,8 +6726,11 @@ class FlowGraph:
             self.release_run()
             if self.flow_settings.is_canceled:
                 self.flow_logger.info("Flow canceled")
-            return self.get_run_info()
+            run_info = self.get_run_info()
+            publish("flow_run_finished", graph=self, run_info=run_info)
+            return run_info
         except Exception as e:
+            publish("flow_run_crashed", graph=self, error=e)
             raise e
         finally:
             self.release_run()

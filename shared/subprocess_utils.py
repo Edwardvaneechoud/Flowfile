@@ -13,17 +13,28 @@ import subprocess
 import sys
 
 from shared.run_logs import run_log_path
+from shared.telemetry import ENV_KILL_SWITCH as _TELEMETRY_KILL_SWITCH
 
 logger = logging.getLogger("flowfile.subprocess")
 
 
-def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
+def spawn_flow_subprocess(
+    flow_path: str,
+    run_id: int,
+    extra_env: dict[str, str] | None = None,
+    *,
+    suppress_telemetry: bool = False,
+) -> int | None:
     """Fire-and-forget a ``flowfile run flow`` subprocess.
 
     Uses ``os.open`` / ``os.close`` to pass a raw file descriptor to
     ``Popen``.  ``Popen`` internally duplicates the fd for the child
     process, so closing it in the parent afterwards is safe — no race
     condition with child fd inheritance.
+
+    ``extra_env`` is merged over the inherited environment for this child only;
+    the parent's ``os.environ`` is never mutated. ``suppress_telemetry`` adds
+    the telemetry kill switch to that merge, for runs the app itself started.
 
     Returns the child PID on success, or ``None`` on failure.
     """
@@ -34,6 +45,10 @@ def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
     else:
         cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
     logger.info("Spawning: %s", " ".join(cmd))
+    overrides = dict(extra_env or {})
+    if suppress_telemetry:
+        overrides[_TELEMETRY_KILL_SWITCH] = "0"
+    env = {**os.environ, **overrides} if overrides else None
     try:
         log_file = run_log_path(run_id)
         log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -44,6 +59,7 @@ def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
                 stdout=fd,
                 stderr=fd,
                 start_new_session=True,
+                env=env,
             )
         finally:
             os.close(fd)

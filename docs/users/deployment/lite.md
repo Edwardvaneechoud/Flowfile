@@ -120,6 +120,7 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 | Graphic Walker visualization | ✓ | ✓ |
 | Python API (`flowfile_frame`) | ✓ | ✗ |
 | Data privacy | Sent to your backend/services as configured | Never leaves your browser |
+| [Anonymous usage telemetry](../telemetry.md) | Opt-in, off by default | Not present |
 
 ---
 

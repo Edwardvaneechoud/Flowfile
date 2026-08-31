@@ -381,6 +381,8 @@ environment in local/desktop runs.
 | `FLOWFILE_ENABLE_PROJECTS` | Enable the git project-tracking router in docker mode (truthy `true`/`1`/`yes`/`on`); otherwise `/project/*` 404s. Always on in electron/package mode. |
 | `FLOWFILE_CATALOG_STORAGE_URI` / `_CONNECTION` | Optional object-storage backend for **new** catalog table data (S3). Set the URI (e.g. `s3://bucket/catalog`) **and** the name of an existing `CloudStorageConnection` for credentials. Unset ⇒ local Delta dirs (today's behavior); existing local tables are never moved; the metadata DB stays local. Resolved via `flowfile_core/catalog/storage_backend.py::resolve_catalog_storage`. |
 | `FLOWFILE_KERNEL_IMAGE` / `_BASE` / `_ML` / `_LITE` | Override kernel container images; unset uses the registry default. |
+| `FLOWFILE_TELEMETRY` | Anonymous-usage-telemetry kill switch: a falsy value (`0`/`false`/`no`/`off`, case-insensitive) hard-disables before any consent prompt or send; any other value grants nothing (consent is separate). `TESTING=True` also hard-disables. Read per call in `shared/telemetry.py`; compose ships `0`. |
+| `FLOWFILE_TELEMETRY_ENDPOINT` | Telemetry collector URL, POSTed to verbatim. Unset ⇒ telemetry fully disabled. Consent + the random install id live in `telemetry.yaml` under internal storage (sibling of `worker_pool.yaml`) — no DB. |
 
 **AI subsystem (see `.env.example`):**
 

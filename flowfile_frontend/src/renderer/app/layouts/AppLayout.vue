@@ -22,6 +22,9 @@
 
     <!-- Floating Tutorial Start Button -->
     <TutorialStartButton />
+
+    <!-- One-time anonymous telemetry opt-in (shows itself only when undecided) -->
+    <TelemetryConsentModal />
   </div>
 </template>
 
@@ -31,16 +34,21 @@ import Sidebar from "../components/layout/Sidebar/Sidebar.vue";
 import ChangePasswordModal from "../components/common/ChangePasswordModal/ChangePasswordModal.vue";
 import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
 import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
+import TelemetryConsentModal from "../components/settings/TelemetryConsentModal.vue";
 import { useAuthStore } from "../stores/auth-store";
 import { useProjectStore } from "../stores/project-store";
+import { useTelemetryStore } from "../stores/telemetry-store";
 import authService from "../services/auth.service";
 
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
+const telemetryStore = useTelemetryStore();
 
 onMounted(() => {
   // Pick up the active project (if any) so the header sync pill is correct on boot.
   projectStore.refreshActive();
+  // Lazy, non-blocking: the consent modal only appears once this resolves.
+  void telemetryStore.loadStatus();
 });
 
 const isCollapse = ref(true);

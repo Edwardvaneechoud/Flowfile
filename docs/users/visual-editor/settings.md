@@ -56,7 +56,12 @@ Deleting a user removes their:
 
 Flow definitions are preserved.
 
+## Usage telemetry
+
+Flowfile can send anonymous usage events — opt-in, off by default, and never enabled without your explicit consent. Manage your answer any time under **Compute → Privacy**; the one-time consent dialog never asks again after you decline. [Telemetry & Privacy](../telemetry.md) documents every event and field that can be sent.
+
 ## Related
 
 - [Secrets](catalog/secrets.md) - Encrypted credential storage
 - [Docker](../deployment/docker.md) - Docker deployment
+- [Telemetry & Privacy](../telemetry.md) - What anonymous usage telemetry sends, and how to turn it off

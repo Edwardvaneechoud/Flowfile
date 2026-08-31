@@ -19,6 +19,7 @@ import docker.types
 import httpx
 
 from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.events import publish
 
 # Re-exported: the image tags moved to a docker-free module so matching.py can
 # read them, but manager stays their public home for existing callers/tests.
@@ -1933,6 +1934,7 @@ class KernelManager:
             return ExecuteResult(success=False, error="Execution cancelled by user")
         try:
             self._active_execs[kernel_id] = request.exec_token
+            publish("kernel_exec")
             return self._execute_locked(kernel_id, kernel, request, flow_logger, cancel_event)
         finally:
             if self._active_execs.get(kernel_id) == request.exec_token:

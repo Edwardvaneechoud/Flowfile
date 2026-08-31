@@ -144,6 +144,7 @@ class NodeExecutor:
 
         try:
             self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger)
+            self.node._last_exception_class = None  # got here without raising; drop a retried attempt's class
             if pending_source_info is not None:
                 state.source_file_info = pending_source_info
             self._sync_state_to_legacy(state)
@@ -422,6 +423,7 @@ class NodeExecutor:
         state.mark_failed(error_str)
         self._sync_state_to_legacy(state)
         self.node.results.errors = error_str
+        self.node._last_exception_class = type(error).__name__  # class name only, never the message
 
         # Retry on missing file errors (upstream cache was cleared)
         if "No such file or directory (os error" in error_str and retry:

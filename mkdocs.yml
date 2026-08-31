@@ -197,6 +197,7 @@ nav:
     - Docker: users/deployment/docker.md
     - Users, Groups & Sharing: users/deployment/sharing.md
     - Headless Runs & CLI: users/deployment/cli.md
+    - Telemetry & Privacy: users/telemetry.md
 
   - For Developers:
     - Introduction: for-developers/index.md

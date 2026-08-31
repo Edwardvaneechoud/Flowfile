@@ -1,0 +1,10 @@
+services:
+  collector:
+    build: .
+    ports:
+      - "8300:8300"
+    volumes:
+      - ./data:/data
+    environment:
+      TELEMETRY_DATA_DIR: /data
+    restart: unless-stopped

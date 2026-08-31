@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core import telemetry as core_telemetry
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
@@ -24,6 +25,7 @@ from flowfile_core.configs.settings import (
     WORKER_PORT,
     WORKER_URL,
 )
+from flowfile_core.events import publish
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
@@ -49,6 +51,7 @@ from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.storage_browser import router as storage_browser_router
 from flowfile_core.routes.system_worker import router as system_worker_router
+from flowfile_core.routes.telemetry import router as telemetry_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
@@ -102,6 +105,8 @@ async def shutdown_handler(app: FastAPI):
             print(f"Removed {removed} expired log file(s)")
     except Exception:
         logging.getLogger(__name__).exception("Startup log retention sweep failed")
+
+    publish("app_started")
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
@@ -228,12 +233,15 @@ app.include_router(community_github_router, prefix="/community_nodes/github", ta
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
+app.include_router(telemetry_router)
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
 # Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip
 # a gate from the UI without first satisfying the gate they're trying to flip.
 app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
 app.include_router(system_worker_router, prefix="/system", tags=["system"])
+
+core_telemetry.install(app)
 
 
 @app.post("/shutdown")
@@ -376,6 +384,7 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
 
     resolve_source_registration_id(flow)
 
+    core_telemetry.install_headless()
     try:
         result = flow.run_graph()
     except Exception as e:
@@ -414,14 +423,18 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
         if result.start_time and result.end_time:
             duration = f" in {(result.end_time - result.start_time).total_seconds():.2f}s"
         _cli_logger.debug("Flow completed successfully%s", duration)
-        return 0
+        exit_code = 0
     else:
         _cli_logger.error("Flow execution failed")
         for node_result in result.node_step_result:
             if not node_result.success and node_result.error:
                 node_name = node_result.node_name or f"Node {node_result.node_id}"
                 _cli_logger.error("  - %s: %s", node_name, node_result.error)
-        return 1
+        exit_code = 1
+
+    # This process exits right after; drain after the summary so nobody waits on it.
+    core_telemetry.flush(2.0)
+    return exit_code
 
 
 def _complete_run(
