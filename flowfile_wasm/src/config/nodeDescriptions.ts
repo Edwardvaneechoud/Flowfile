@@ -22,7 +22,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   },
   filter: {
     title: 'Filter',
-    intro: 'Filter rows based on conditions. Use basic mode for simple filters or advanced mode for custom Polars expressions.'
+    intro: 'Filter rows based on conditions. Use basic mode for a single comparison, or advanced mode to write a formula like [quantity] > 7.'
   },
   select: {
     title: 'Select',

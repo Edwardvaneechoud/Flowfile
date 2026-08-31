@@ -191,3 +191,78 @@ def test_pivot_without_known_reports_run_the_flow():
     res = engine.propagate_schemas(graph, source_schemas)
     assert res["2"]["schema_resolved"] is False
     assert "run the flow" in res["2"]["error"].lower()
+
+
+def test_placeholder_node_is_skipped_and_never_execed():
+    """A share-link placeholder — even one smuggling a polars_code body in its
+    stub — is never built: no exec, unresolved schema, downstream reports
+    'Upstream schema unavailable' instead of resolving through it."""
+    canary = "CANARY = __import__('js')"
+    graph = {
+        "order": [1, 2, 3],
+        "nodes": {
+            "1": {
+                "type": "polars_code",
+                "input_ids": [],
+                "left": None,
+                "right": None,
+                "settings": {"polars_code_input": {"polars_code": "output_df = pl.LazyFrame({'a': [1]})"}},
+            },
+            "2": {
+                "type": "polars_code",
+                "input_ids": [1],
+                "left": None,
+                "right": None,
+                "settings": {"is_placeholder": True, "polars_code_input": {"polars_code": canary}},
+            },
+            "3": {
+                "type": "select",
+                "input_ids": [2],
+                "left": None,
+                "right": None,
+                "settings": {"select_input": []},
+            },
+        },
+    }
+    res = engine.propagate_schemas(graph, {})
+    assert res["1"]["schema_resolved"] is True
+    assert res["2"]["schema_resolved"] is False
+    assert "Not supported in the browser version" in res["2"]["error"]
+    assert res["3"]["schema_resolved"] is False
+    assert res["3"]["error"] == "Upstream schema unavailable"
+
+
+def test_sentinel_type_is_skipped_without_flag():
+    """The `__unsupported` type suffix alone is enough to skip a node."""
+    graph = {
+        "order": [1],
+        "nodes": {
+            "1": {
+                "type": "database_reader__unsupported",
+                "input_ids": [],
+                "left": None,
+                "right": None,
+                "settings": {},
+            },
+        },
+    }
+    res = engine.propagate_schemas(graph, {})
+    assert res["1"]["schema_resolved"] is False
+    assert "Not supported in the browser version" in res["1"]["error"]
+
+
+def test_exec_sinks_refuse_placeholder_stubs():
+    """Defense in depth: the exec/eval sinks themselves refuse a stub even if a
+    future caller forgets the propagation-level skip."""
+    import polars as pl
+    import pytest
+
+    stub = {"is_placeholder": True, "polars_code_input": {"polars_code": "1"}}
+    with pytest.raises(ValueError, match="placeholder"):
+        engine.build_polars_code_schema([pl.LazyFrame({"a": [1]})], stub)
+
+    with pytest.raises(ValueError, match="placeholder"):
+        engine.execute_polars_code(99991, [], stub)
+
+    with pytest.raises(ValueError, match="placeholder"):
+        engine.build_filter(pl.LazyFrame({"a": [1]}), {"is_placeholder": True})

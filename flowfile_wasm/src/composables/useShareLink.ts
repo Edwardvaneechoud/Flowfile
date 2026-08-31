@@ -8,12 +8,24 @@
  * deals in hash strings, which keeps it testable without router mocks.
  */
 
+import { usePyodideStore } from '../stores/pyodide-store'
 import { useFlowStore } from '../stores/flow-store'
 import { useFlowTabsStore } from '../stores/flow-tabs-store'
 import { encodeShareHash, decodeShareHash, hasShareHash } from '../utils/share-link'
+import { placeholderLabel } from '../utils/placeholder'
+
+export interface SharePlaceholderInfo {
+  nodeId: number
+  label: string
+  reason: string
+}
 
 export type ShareImportResult =
-  | { status: 'imported'; missingFiles: Array<{ nodeId: number; fileName: string }> }
+  | {
+      status: 'imported'
+      missingFiles: Array<{ nodeId: number; fileName: string }>
+      placeholders: SharePlaceholderInfo[]
+    }
   | { status: 'none' | 'cancelled' | 'invalid' | 'failed' }
 
 export function useShareLink() {
@@ -68,8 +80,40 @@ export function useShareLink() {
     })
     if (!ok) return { status: 'failed' }
 
-    return { status: 'imported', missingFiles: flowStore.getMissingFileNodes() }
+    return {
+      status: 'imported',
+      missingFiles: flowStore.getMissingFileNodes(),
+      placeholders: listPlaceholders(),
+    }
   }
 
-  return { generateShareUrl, importShareHash }
+  /** Placeholder roots (not their downstream) for the import warning banner. */
+  function listPlaceholders(): SharePlaceholderInfo[] {
+    const out: SharePlaceholderInfo[] = []
+    for (const [nodeId, info] of flowStore.blockedNodes) {
+      if (info.reason !== 'placeholder') continue
+      const node = flowStore.getNode(nodeId)
+      out.push({
+        nodeId,
+        label: node ? placeholderLabel(node.type, node.settings) : `Node ${nodeId}`,
+        reason: info.message,
+      })
+    }
+    return out.sort((a, b) => a.nodeId - b.nodeId)
+  }
+
+  /**
+   * Run what this browser can run after a share import — the one documented
+   * exception to the explicit-only execution rule (a share link is a deliberate
+   * "show me this flow" action). Blocked nodes are skipped by executeNode's own
+   * guard, so this is a plain run of a possibly-partly-blocked graph.
+   */
+  async function autoRunSharedFlow(): Promise<void> {
+    const pyodideStore = usePyodideStore()
+    if (!pyodideStore.isReady || flowStore.nodes.size === 0) return
+    await flowStore.refetchRemoteFiles()
+    await flowStore.executeFlow()
+  }
+
+  return { generateShareUrl, importShareHash, autoRunSharedFlow }
 }
