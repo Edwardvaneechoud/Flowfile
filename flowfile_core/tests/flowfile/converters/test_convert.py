@@ -223,9 +223,6 @@ def unsupported() -> ConversionResult:
     return convert("unsupported.yxmd")
 
 
-# ---------------------------------------------------------------------------
-# Parse failures propagate
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("fixture", ["zero_tools.yxmd", "invalid.xml"])
@@ -242,9 +239,6 @@ def test_workflow_name_comes_from_meta_info(all_supported: ConversionResult):
     assert all_supported.flow_data.flowfile_name == "All Supported Tools"
 
 
-# ---------------------------------------------------------------------------
-# Envelope / serialization contract
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("fixture", ["all_supported.yxmd", "formulas.yxmd", "containers.yxmd", "unsupported.yxmd"])
@@ -266,9 +260,6 @@ def test_outputs_and_output_handles_stay_parallel(all_supported: ConversionResul
         assert len(node["outputs"]) == len(node["output_handles"]), node
 
 
-# ---------------------------------------------------------------------------
-# Positions
-# ---------------------------------------------------------------------------
 
 
 def test_positions_are_normalised_and_scaled(all_supported: ConversionResult):
@@ -294,9 +285,6 @@ def test_workflow_without_positions_gets_a_synthetic_layered_layout():
     assert sorted(node["y_position"] for node in downstream) == [100, 300]
 
 
-# ---------------------------------------------------------------------------
-# Per-mapper assertions
-# ---------------------------------------------------------------------------
 
 
 def test_text_input_becomes_columnar_raw_data(all_supported: ConversionResult):
@@ -502,9 +490,6 @@ def test_union_maps_by_name_to_relaxed(all_supported: ConversionResult):
     assert union_node["right_input_id"] is None
 
 
-# ---------------------------------------------------------------------------
-# Join fan-out
-# ---------------------------------------------------------------------------
 
 
 def test_join_fans_out_to_inner_and_two_anti_joins(all_supported: ConversionResult):
@@ -540,9 +525,6 @@ def test_edges_to_unknown_tools_are_dropped_without_failing():
     assert anti_right["outputs"] == []
 
 
-# ---------------------------------------------------------------------------
-# Placeholders
-# ---------------------------------------------------------------------------
 
 
 def test_unsupported_tool_becomes_a_documented_passthrough(unsupported: ConversionResult):
@@ -570,9 +552,6 @@ def test_placeholders_preserve_the_graph_shape(unsupported: ConversionResult):
     assert nodes[4]["type"] == "output"
 
 
-# ---------------------------------------------------------------------------
-# Report
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -611,9 +590,6 @@ def test_commented_formula_rows_name_the_field_and_reason(formulas: ConversionRe
     assert any("name_flag" in message for message in row.messages)
 
 
-# ---------------------------------------------------------------------------
-# End-to-end: YAML -> open_flow
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -680,9 +656,6 @@ def test_descriptions_survive_the_round_trip(tmp_path: Path, all_supported: Conv
     assert flow.get_node(10).setting_input.description.startswith("⚠")
 
 
-# ---------------------------------------------------------------------------
-# End-to-end: hermetic runs
-# ---------------------------------------------------------------------------
 
 
 def test_formula_flow_runs(tmp_path: Path, formulas: ConversionResult):
@@ -711,9 +684,6 @@ def test_all_supported_flow_runs_and_writes_its_output(tmp_path: Path):
     assert flow.get_node(17).get_resulting_data().data_frame.collect().height > 0
 
 
-# ---------------------------------------------------------------------------
-# Dynamic Rename
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -791,9 +761,6 @@ def test_the_name_source_input_is_not_wired_and_is_not_reported_as_a_dropped_edg
     assert not any("dropped" in message for row in price_paid.report.rows for message in row.messages)
 
 
-# ---------------------------------------------------------------------------
-# Headerless reads
-# ---------------------------------------------------------------------------
 
 
 def test_headerless_read_renames_polars_columns_to_the_alteryx_names(price_paid: ConversionResult):
@@ -840,9 +807,6 @@ def test_an_unwritten_header_option_leaves_the_reader_default_alone():
     assert table_settings["has_headers"] is True
 
 
-# ---------------------------------------------------------------------------
-# Simple-mode filters
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -868,9 +832,6 @@ def test_unsupported_simple_filter_operator_keeps_the_original_configuration(sim
     assert "<Operator>IsBetween</Operator>" in code
 
 
-# ---------------------------------------------------------------------------
-# Multi-Field Formula and RegEx
-# ---------------------------------------------------------------------------
 
 
 def test_multi_field_formula_becomes_one_formula_per_selected_field(regex_and_multifield: ConversionResult):
@@ -955,9 +916,6 @@ def test_every_generated_polars_code_node_is_executable(price_paid: ConversionRe
         )
 
 
-# ---------------------------------------------------------------------------
-# Placeholders keep the original Alteryx configuration
-# ---------------------------------------------------------------------------
 
 
 def test_placeholders_embed_the_original_configuration_and_annotation(price_paid: ConversionResult):
@@ -1082,9 +1040,6 @@ def test_price_paid_workflow_runs_and_reproduces_the_alteryx_result(tmp_path: Pa
     assert "Record Status - monthly file only" not in frame.columns
 
 
-# ---------------------------------------------------------------------------
-# RecordID / Transpose / CrossTab / AppendFields / RunningTotal
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()

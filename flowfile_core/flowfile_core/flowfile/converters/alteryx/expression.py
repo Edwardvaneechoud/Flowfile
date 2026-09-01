@@ -29,11 +29,6 @@ class _Untranslatable(Exception):
         self.reason = reason
 
 
-# ---------------------------------------------------------------------------
-# Function mapping
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class FunctionSpec:
     """One verified Alteryx -> Flowfile function mapping."""
@@ -218,9 +213,6 @@ _REASON_IN = (
     "the IN operator has no Flowfile formula equivalent; rewrite it as a chain of '=' comparisons joined by 'or'"
 )
 
-# ---------------------------------------------------------------------------
-# Tokenizer
-# ---------------------------------------------------------------------------
 
 _MULTI_CHAR_OPS = (">=", "<=", "!=", "<>", "==", "&&", "||")
 _SINGLE_CHAR_OPS = "=<>+-*/"
@@ -330,10 +322,6 @@ def _read_string(text: str, start: int) -> tuple[str, int]:
     raise _Untranslatable(f"unterminated string literal starting at position {start + 1}")
 
 
-# ---------------------------------------------------------------------------
-# AST
-# ---------------------------------------------------------------------------
-
 _PREC_IF = 0
 _PREC_OR = 1
 _PREC_AND = 2
@@ -393,11 +381,6 @@ class _If(_Node):
 _CMP_OPS = {"=": "=", "==": "=", "!=": "!=", "<>": "!=", ">": ">", "<": "<", ">=": ">=", "<=": "<="}
 
 
-# ---------------------------------------------------------------------------
-# Parser
-# ---------------------------------------------------------------------------
-
-
 class _Parser:
     def __init__(self, tokens: list[_Token]) -> None:
         self._tokens = tokens
@@ -409,8 +392,6 @@ class _Parser:
             tok = self._peek()
             raise _Untranslatable(f"unexpected trailing input {tok.value!r} at position {tok.pos + 1}")
         return node
-
-    # -- token helpers -----------------------------------------------------
 
     def _peek(self) -> _Token | None:
         return self._tokens[self._i] if self._i < len(self._tokens) else None
@@ -436,8 +417,6 @@ class _Parser:
             found = "the end of the expression" if tok is None else repr(tok.value)
             raise _Untranslatable(f"expected {keyword.upper()!r} in {context} but found {found}")
         self._i += 1
-
-    # -- grammar -----------------------------------------------------------
 
     def _expr(self) -> _Node:
         return self._or_expr()
@@ -589,11 +568,6 @@ def _check_field_name(name: str) -> str:
     if "]" in name or "[" in name:
         raise _Untranslatable(f"malformed field reference '[{name}]'")
     return name
-
-
-# ---------------------------------------------------------------------------
-# Renderer
-# ---------------------------------------------------------------------------
 
 
 def _emit(node: _Node) -> tuple[str, int]:
@@ -883,11 +857,6 @@ def _emit_datetime_parse(node: _Call) -> str:
     fmt, codes = _check_format_string(node.args[1], "DateTimeParse", for_parse=True)
     target = "to_datetime" if codes & _PARSE_TIME_CODES else "to_date"
     return f'{target}({_emit_child(node.args[0], _PREC_IF)}, "{fmt}")'
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def _clean_reason(reason: str) -> str:

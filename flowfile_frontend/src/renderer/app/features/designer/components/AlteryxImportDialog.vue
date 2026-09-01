@@ -185,8 +185,6 @@ function handleDrop(event: DragEvent) {
   if (file) controller.start(file);
 }
 
-// State is reset on open, not on close, so the body doesn't flicker while the
-// dialog animates away.
 function close() {
   emit("update:visible", false);
 }
@@ -212,6 +210,7 @@ function openImportedFlow() {
 watch(
   () => props.visible,
   (open) => {
+    // Reset on open, not close, so the body doesn't flicker during the exit animation.
     if (open) controller.reset();
     isDragging.value = false;
   },

@@ -1,5 +1,4 @@
-// Pure presentation helpers for the Alteryx conversion report. No Vue/axios
-// imports so they unit-test as a plain module.
+// No Vue/axios imports here, so these helpers unit-test as a plain module.
 import type {
   AlteryxConversionReport,
   AlteryxToolRow,
@@ -20,8 +19,7 @@ const CHIPS: Record<AlteryxToolStatus, StatusChip> = {
   converted: { label: "Converted", className: "status-badge--success" },
 };
 
-// Rows needing manual work first — that is the only part of the report the user
-// has to act on.
+// Rows needing manual work sort first — that's the only part the user must act on.
 const STATUS_RANK: Record<AlteryxToolStatus, number> = {
   placeholder: 0,
   commented: 1,

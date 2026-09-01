@@ -77,8 +77,7 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("datetimefirstofmonth", "DateTimeFirstOfMonth()", "start_of_month(today())"),
     ("datetimelastofmonth", "DateTimeLastOfMonth()", "end_of_month(today())"),
     ("datetimetrim", 'DateTimeTrim([OrderDate], "month")', 'date_trim([OrderDate], "month")'),
-    # These are re-run upper- and lower-cased below, so both casings of the format must stay whitelisted
-    # (%Y<->%y and %m<->%M are; the parse case avoids %Y because %y is rejected when parsing).
+    # Re-run case-swapped below, so both casings of each code must stay whitelisted (%y is parse-rejected).
     ("datetimeformat", 'DateTimeFormat([OrderDate], "%Y-%m")', 'format_date([OrderDate], "%Y-%m")'),
     ("datetimeparse", 'DateTimeParse([DateText], "%m-%b")', 'to_date([DateText], "%m-%b")'),
     ("year", "Year([OrderDate])", "year([OrderDate])"),
@@ -409,8 +408,7 @@ def test_contains_search_string_is_matched_literally_not_as_a_regex():
 
 
 def test_contains_unbalanced_metacharacter_evaluates_instead_of_raising():
-    # An unescaped '(' passed the fail-closed gate (the parser only parses) and raised
-    # ComputeError once polars compiled the regex at run time.
+    # The fail-closed gate only parses, so an unescaped '(' reaches polars' regex compiler.
     frame = pl.DataFrame({"Name": ["x(y", "plain"]})
     assert _evaluate('Contains([Name], "(")', frame) == [True, False]
 
@@ -465,8 +463,7 @@ _SEARCHABLE_ASCII = [chr(c) for c in range(32, 127) if chr(c) not in '"\\[^']
 
 @pytest.mark.parametrize("char", _SEARCHABLE_ASCII)
 def test_every_printable_ascii_search_character_matches_itself(char: str):
-    # `"` and `\` are unreachable (the Alteryx tokenizer rejects nested quotes and backslash escapes);
-    # `[` and `^` are rejected by the translator and covered in REJECTED_CASES.
+    # The four excluded chars are tokenizer-unreachable or covered by REJECTED_CASES.
     frame = pl.DataFrame({"Name": [f"x{char}y", "§§§"]})
     assert _evaluate(f'Contains([Name], "{char}")', frame) == [True, False]
 

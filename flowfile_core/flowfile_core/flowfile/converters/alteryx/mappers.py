@@ -37,8 +37,7 @@ FORMULA_STEP_DY = 110
 ANTI_DX = 180
 ANTI_DY = 160
 
-# Alteryx widths matter: Float is 4-byte, Byte is an unsigned 8-bit integer. Byte widens to
-# Int16 rather than UInt8 because Int16 is one of the types the select node's UI offers.
+# Byte widens to Int16, not UInt8, because Int16 is a type the select node's UI offers.
 _ALTERYX_TYPE_MAP: dict[str, str] = {
     "bool": "Boolean",
     "byte": "Int16",
@@ -112,11 +111,6 @@ _OUTPUT_TABLE_SETTINGS: dict[str, type] = {
     "ndjson": input_schema.OutputNdjsonTable,
     "avro": input_schema.OutputAvroTable,
 }
-
-
-# ---------------------------------------------------------------------------
-# Emit context
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -221,11 +215,6 @@ class EmitContext:
 
 
 ToolMapper = Callable[[AlteryxTool, EmitContext], ToolReportRow]
-
-
-# ---------------------------------------------------------------------------
-# Small helpers
-# ---------------------------------------------------------------------------
 
 
 def tool_label(tool: AlteryxTool) -> str:
@@ -362,11 +351,6 @@ def _original_config_lines(tool: AlteryxTool) -> list[str]:
     return lines
 
 
-# ---------------------------------------------------------------------------
-# Placeholder
-# ---------------------------------------------------------------------------
-
-
 def _placeholder_code(tool: AlteryxTool, num_inputs: int, notes: list[str]) -> str:
     lines = [
         f"# Alteryx tool '{tool_label(tool)}' (ToolID {tool.tool_id}) could not be converted automatically.",
@@ -428,11 +412,6 @@ def _placeholder_row(tool: AlteryxTool, ctx: EmitContext, messages: list[str]) -
     node_id = emit_placeholder(tool, ctx, messages)
     ctx.tool_columns[tool.tool_id] = None
     return _row(tool, "placeholder", [node_id], "polars_code", messages)
-
-
-# ---------------------------------------------------------------------------
-# Text Input
-# ---------------------------------------------------------------------------
 
 
 def _parse_number(value: str) -> tuple[bool, bool]:
@@ -503,11 +482,6 @@ def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "manual_input", messages)
 
 
-# ---------------------------------------------------------------------------
-# Select
-# ---------------------------------------------------------------------------
-
-
 def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     keep_missing = True
@@ -556,13 +530,7 @@ def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, status, [node_id], "select", messages)
 
 
-# ---------------------------------------------------------------------------
-# Filter
-# ---------------------------------------------------------------------------
-
-
-# Alteryx "simple" filters store a field/operator/operand triple instead of an expression.
-# Rebuilding the Alteryx expression and translating that reuses the fail-closed pipeline.
+# Rebuilding the Alteryx expression from the simple-mode triple reuses the fail-closed translator.
 _SIMPLE_FILTER_TEMPLATES: dict[str, tuple[str, int]] = {
     "=": ("{field} = {operand}", 1),
     "==": ("{field} = {operand}", 1),
@@ -657,11 +625,6 @@ def map_filter(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
     return _row(tool, "converted", [node_id], "filter", [])
-
-
-# ---------------------------------------------------------------------------
-# Formula
-# ---------------------------------------------------------------------------
 
 
 def _commented_formula_body(expression: str, reason: str, stub: str) -> str:
@@ -792,10 +755,6 @@ def _link(ctx: EmitContext, from_id: int, to_id: int, handle: str = PASS_HANDLE)
     source.output_handles.append(handle)
     target.input_ids.append(from_id)
 
-
-# ---------------------------------------------------------------------------
-# Dynamic Rename
-# ---------------------------------------------------------------------------
 
 DYNAMIC_RENAME_SOURCE_ANCHORS = ("Source", "Right", "R")
 DYNAMIC_RENAME_TARGET_ANCHORS = ("Targets", "Input", "Left", "T")
@@ -1032,10 +991,6 @@ def _emit_prefix_suffix_rename(
     return _row(tool, "converted", node_ids, "dynamic_rename", messages)
 
 
-# ---------------------------------------------------------------------------
-# Multi Field Formula
-# ---------------------------------------------------------------------------
-
 _CURRENT_FIELD_RE = re.compile(r"\[_CurrentField_\]", re.IGNORECASE)
 _CURRENT_FIELD_NAME_RE = re.compile(r"\[_CurrentFieldName_\]", re.IGNORECASE)
 _SPECIAL_FIELD_RE = re.compile(r"\[_[A-Za-z]\w*_\]")
@@ -1103,10 +1058,6 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
         )
     return row
 
-
-# ---------------------------------------------------------------------------
-# RegEx
-# ---------------------------------------------------------------------------
 
 _REGEX_UNSUPPORTED = (("(?=", "lookahead"), ("(?!", "negative lookahead"), ("(?<", "lookbehind"))
 _REGEX_BACKREF_RE = re.compile(r"\\[1-9]")
@@ -1273,11 +1224,6 @@ def _regex_added_columns(config: ET.Element, method: str, column: str) -> list[s
     if method == "match":
         return [name for name in [_text(config, "Match/Field")] if name]
     return []
-
-
-# ---------------------------------------------------------------------------
-# Sort / Summarize / Sample / Unique / TextToColumns / Union
-# ---------------------------------------------------------------------------
 
 
 def map_sort(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1457,11 +1403,6 @@ def map_union(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, status, [node_id], "union", messages)
 
 
-# ---------------------------------------------------------------------------
-# Join
-# ---------------------------------------------------------------------------
-
-
 def _join_settings(ctx: EmitContext, mapping: list[tuple[str, str]], how: str, swap: bool) -> input_schema.NodeJoin:
     join_mapping = [
         transform_schema.JoinMap(left_col=right, right_col=left)
@@ -1545,11 +1486,6 @@ def map_join(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, status, node_ids, "join", messages)
 
 
-# ---------------------------------------------------------------------------
-# File input / output / browse
-# ---------------------------------------------------------------------------
-
-
 def _file_element_path(config: ET.Element) -> tuple[str, str]:
     """Return (path, sheet) for an Alteryx File element, splitting the ``|||sheet$`` suffix."""
     element = config.find("File")
@@ -1578,8 +1514,7 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     received.name = filename
     received.directory = directory or None
     if _is_foreign_absolute_path(path):
-        # Keep the workflow's own path instead of resolving it against this machine's cwd,
-        # which would invent an absolute path that points nowhere.
+        # Resolving a foreign path against this machine's cwd would invent a path that points nowhere.
         received.abs_file_path = path
     if file_type == "excel" and sheet:
         received.table_settings.sheet_name = sheet
@@ -1600,8 +1535,7 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     headerless = received.table_settings.has_headers is False
     if headerless and tool.output_fields:
-        # Alteryx calls headerless columns Field_1..Field_N; Polars calls them column_1..column_N.
-        # Without this rename every downstream reference to an Alteryx name silently misses.
+        # Without this rename, references to Alteryx's Field_N names silently miss Polars' column_N.
         rename_id = _emit_positional_header_rename(tool, ctx, tool.output_fields)
         node_ids.append(rename_id)
         _link(ctx, node_id, rename_id)
@@ -1674,11 +1608,6 @@ def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
     return _row(tool, "converted", [node_id], "explore_data", [])
-
-
-# ---------------------------------------------------------------------------
-# RecordID / Transpose / CrossTab / AppendFields / RunningTotal
-# ---------------------------------------------------------------------------
 
 
 def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:

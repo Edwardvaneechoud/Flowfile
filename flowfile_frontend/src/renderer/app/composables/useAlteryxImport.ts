@@ -1,5 +1,3 @@
-// Controller for the Alteryx (.yxmd) import dialog: file pre-checks, the upload
-// lifecycle and the conversion report the backend hands back.
 import { ref } from "vue";
 
 import { AlteryxApi, type AlteryxImportResponse } from "../api/alteryx.api";

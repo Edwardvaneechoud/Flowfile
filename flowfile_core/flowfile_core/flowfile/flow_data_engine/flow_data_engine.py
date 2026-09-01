@@ -1034,7 +1034,7 @@ class FlowDataEngine:
                 calculate_schema_stats=calculate_schema_stats,
             )
 
-        # Alias keys in group_by, not via frame rename: a renamed key must not collide with dropped columns.
+        # A renamed group key must not collide with a dropped column.
         group_exprs = [pl.col(c.old_name).alias(c.new_name) for c in group_columns]
 
         if len(aggregations) == 0:
