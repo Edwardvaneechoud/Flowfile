@@ -219,3 +219,29 @@ class ProjectSaveResponse(BaseModel):
 
     saved_to: str
     file_count: int
+
+
+class ShareLinkNodeReport(BaseModel):
+    """How one node fares in a browser share link."""
+
+    node_id: int
+    node_type: str
+    status: Literal["supported", "placeholder"]
+    reason: str | None = None
+
+
+class ShareLinkResponse(BaseModel):
+    """A flow encoded as a browser (WASM) share link, plus what it cost.
+
+    ``url`` is null only on a hard refusal (the payload is too large to share as
+    a link). A degraded share — one with placeholder nodes — still returns a
+    usable url with ``compatible=False``.
+    """
+
+    url: str | None = None
+    hash_chars: int = 0
+    compatible: bool
+    nodes_report: list[ShareLinkNodeReport] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    placeholder_count: int = 0
+    local_file_nodes: list[int] = Field(default_factory=list)

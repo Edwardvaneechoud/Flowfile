@@ -3580,6 +3580,126 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id)
 
+    def data_cleansing(
+        self,
+        columns: list[str] | None = None,
+        *,
+        remove_null_rows: bool = False,
+        remove_null_columns: bool = False,
+        replace_nulls_with_blank: bool = True,
+        replace_nulls_with_zero: bool = True,
+        trim_whitespace: bool = True,
+        normalize_whitespace: bool = False,
+        remove_all_whitespace: bool = False,
+        remove_letters: bool = False,
+        remove_numbers: bool = False,
+        remove_punctuation: bool = False,
+        case_mode: Literal["none", "uppercase", "lowercase", "titlecase"] = "none",
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Fix common data quality issues in one node.
+
+        Bundles the usual "clean this up before I can work with it" rules: dropping
+        entirely-null rows and columns, replacing nulls with a neutral value, stripping
+        unwanted characters and whitespace, and normalising casing.
+
+        Two rules are frame-wide and deliberately ignore *columns*: ``remove_null_rows``
+        drops a row only when *every* column in it is null, and ``remove_null_columns``
+        drops a column only when it is null in *every* row. An empty string is not a
+        null, so it keeps its row/column alive.
+
+        Every other rule applies only to the selected columns, and only to columns of
+        the matching data-type group: the null-to-blank and character/case rules touch
+        String columns, ``replace_nulls_with_zero`` touches Numeric columns, and every
+        other dtype passes through untouched even when selected. Selected columns that
+        do not exist are silently ignored.
+
+        Within one string column the rules run in a fixed order: fill nulls, remove
+        letters, then numbers, then punctuation, then clean up whitespace (so gaps left
+        by character removal are collapsed too), then apply the casing rule. Titlecasing
+        follows polars, which capitalises the letter after any non-letter — so
+        ``"3rd street"`` becomes ``"3Rd Street"``.
+
+        Unlike every other keyword, ``remove_null_columns=True`` is resolved eagerly:
+        the drop list comes from a bounded null-count aggregation (worker-first) taken
+        when this method is called, not when the frame is collected.
+
+        Parameters
+        ----------
+        columns : list of str, optional
+            Columns to cleanse. ``None`` (default) cleanses every column.
+        remove_null_rows : bool, default False
+            Drop rows where every column is null.
+        remove_null_columns : bool, default False
+            Drop columns that are null in every row. Data-dependent: the column is
+            decided when the node runs, not when the graph is built.
+        replace_nulls_with_blank : bool, default True
+            Replace nulls with ``""`` in selected String columns.
+        replace_nulls_with_zero : bool, default True
+            Replace nulls with ``0`` in selected Numeric columns.
+        trim_whitespace : bool, default True
+            Strip leading and trailing whitespace from selected String columns.
+        normalize_whitespace : bool, default False
+            Collapse every run of whitespace (tabs and line breaks included) into a
+            single space.
+        remove_all_whitespace : bool, default False
+            Remove whitespace entirely. Supersedes *trim_whitespace* and
+            *normalize_whitespace*.
+        remove_letters : bool, default False
+            Remove letters, Unicode included (``À``, ``é`` and ``ö`` all go).
+        remove_numbers : bool, default False
+            Remove digits.
+        remove_punctuation : bool, default False
+            Remove ASCII punctuation (Python's ``string.punctuation`` set).
+        case_mode : {'none', 'uppercase', 'lowercase', 'titlecase'}, default 'none'
+            Casing applied to selected String columns after every other rule.
+        description : str, optional
+            Description of this operation for the ETL graph. Defaults to a summary of
+            the enabled rules.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with the cleansing rules applied. Dtypes, column order and
+            column names are unchanged; only ``remove_null_columns`` removes columns.
+        """
+        if isinstance(columns, str):
+            columns = [columns]
+
+        new_node_id = generate_node_id()
+
+        cleansing_input = transform_schema.DataCleansingInput(
+            remove_null_rows=remove_null_rows,
+            remove_null_columns=remove_null_columns,
+            selection_mode="all" if columns is None else "list",
+            selected_columns=list(columns or []),
+            replace_nulls_with_blank=replace_nulls_with_blank,
+            replace_nulls_with_zero=replace_nulls_with_zero,
+            trim_whitespace=trim_whitespace,
+            normalize_whitespace=normalize_whitespace,
+            remove_all_whitespace=remove_all_whitespace,
+            remove_letters=remove_letters,
+            remove_numbers=remove_numbers,
+            remove_punctuation=remove_punctuation,
+            case_mode=case_mode,
+        )
+
+        cleansing_settings = input_schema.NodeDataCleansing(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            cleansing_input=cleansing_input,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+
+        self.flow_graph.add_data_cleansing(cleansing_settings)
+
+        return self._create_child_frame(new_node_id)
+
     @property
     def columns(self) -> list[str]:
         """Get the column names."""

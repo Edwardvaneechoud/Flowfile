@@ -15,6 +15,22 @@ SETTING_INPUT_EXCLUDE = {
 }
 
 
+def is_placeholder_settings(settings: Any) -> bool:
+    """A share-link placeholder stub — a node whose real settings never travelled.
+
+    Guarded here (and re-checked at every exec/eval sink) so sender-authored
+    content can never be interpreted, even if a future JS caller forgets the
+    store-side skip.
+    """
+    return isinstance(settings, dict) and settings.get("is_placeholder") is True
+
+
+def refuse_placeholder(settings: Any) -> None:
+    """Raise when a placeholder stub reaches a builder/executor."""
+    if is_placeholder_settings(settings):
+        raise ValueError("Not supported in the browser version (placeholder node)")
+
+
 _pydantic_loaded = False
 
 

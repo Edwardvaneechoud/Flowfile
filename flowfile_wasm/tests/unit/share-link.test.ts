@@ -152,4 +152,23 @@ describe('encodeShareHash / decodeShareHash', () => {
       decodeShareHash(await reEncode({ v: 1, flow: makeFlow(), files: { 1: 42 } })),
     ).resolves.toBeNull()
   })
+
+  it('rejects non-numeric file keys (they would become setFileContent(NaN, …))', async () => {
+    const good = await encodeShareHash(makeFlow(), { 7: 'a,b\n1,2' })
+    await expect(decodeShareHash(good)).resolves.toBeTruthy()
+
+    // Bypass encodeShareHash's typed signature to smuggle a bad key in.
+    const bad = await encodeShareHash(makeFlow(), { evil: 'x' } as unknown as Record<number, string>)
+    await expect(decodeShareHash(bad)).resolves.toBeNull()
+  })
+
+  it('rejects a zip bomb: a small blob inflating past the decode ceiling', async () => {
+    // ~200MB of zeros deflates to well under 1MB but inflates past the 32MB cap.
+    const bomb = await encodeShareHash({
+      ...makeFlow(),
+      flowfile_name: 'x'.repeat(200 * 1024 * 1024),
+    })
+    expect(bomb.length).toBeLessThan(1024 * 1024)
+    await expect(decodeShareHash(bomb)).resolves.toBeNull()
+  }, 60_000)
 })

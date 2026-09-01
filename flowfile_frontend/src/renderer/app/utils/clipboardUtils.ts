@@ -1,3 +1,5 @@
+import { desktop, isDesktop } from "../../lib/desktop";
+
 /**
  * Writes text to the clipboard, with a fallback for insecure contexts.
  *
@@ -31,6 +33,23 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+/**
+ * Writes text to the clipboard from either run mode. Desktop goes through the
+ * clipboard-manager plugin (no macOS paste pill); web uses copyToClipboard's
+ * insecure-context-safe fallback. Returns whether the write succeeded.
+ */
+export const copyTextEverywhere = async (text: string): Promise<boolean> => {
+  if (isDesktop) {
+    try {
+      await desktop.writeClipboardText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return copyToClipboard(text);
 };
 
 /**

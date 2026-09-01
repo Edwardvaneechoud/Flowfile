@@ -25,8 +25,10 @@ import type { Fixture } from '../helpers/parity'
 const FIXTURES: Fixture[] = [...PARITY_FIXTURES, ...CORE_ONLY_FIXTURES]
 
 /** A `bothRefuse` marker as the two sides it always means, whichever form it took. */
-function refusalPhrases(marker: NonNullable<Fixture['bothRefuse']>): { core: string; engine: string } {
-  return typeof marker === 'string' ? { core: marker, engine: marker } : marker
+function refusalPhrases(marker: NonNullable<Fixture['bothRefuse']>): { core: string[]; engine: string[] } {
+  if (typeof marker === 'string') return { core: [marker], engine: [marker] }
+  const list = (v: string | string[]) => (Array.isArray(v) ? v : [v])
+  return { core: list(marker.core), engine: list(marker.engine) }
 }
 
 // Importing flowfile_core runs its migrations, and then 49 flows execute.
@@ -193,14 +195,22 @@ describe('flowfile_core runs the exported flow and gets the same rows', () => {
 
       if (fixture.bothRefuse) {
         // Either side accepting it, or refusing for another reason, fails here.
+        // A phrase list means any of those refusals is acceptable (some flows
+        // hit one of several failure paths nondeterministically).
         const phrase = refusalPhrases(fixture.bothRefuse)
-        expect(result.ran, `core now runs this flow; drop bothRefuse: ${phrase.core}`).toBe(false)
-        expect(result.error, 'core still refuses, but no longer for this reason').toContain(phrase.core)
+        expect(result.ran, `core now runs this flow; drop bothRefuse: ${phrase.core.join(' | ')}`).toBe(false)
+        expect(
+          phrase.core.some(p => (result.error ?? '').includes(p)),
+          `core still refuses, but no longer for this reason — got: ${result.error}`
+        ).toBe(true)
         expect(
           result.engineError,
-          `the browser engine now runs this flow; drop bothRefuse: ${phrase.engine}`
+          `the browser engine now runs this flow; drop bothRefuse: ${phrase.engine.join(' | ')}`
         ).toBeTruthy()
-        expect(result.engineError, 'the engine still refuses, but no longer for this reason').toContain(phrase.engine)
+        expect(
+          phrase.engine.some(p => (result.engineError ?? '').includes(p)),
+          `the engine still refuses, but no longer for this reason — got: ${result.engineError}`
+        ).toBe(true)
         return
       }
 

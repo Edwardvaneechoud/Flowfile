@@ -688,28 +688,44 @@ describe('Code Generation', () => {
   })
 
   describe('Type Casting in Select', () => {
-    // build_select renames and reorders; it never changes a dtype.
-    it('does not cast, even when the settings ask for a data type change', () => {
+    const castingSelect = (entry: Record<string, unknown>) => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'select', {
+        select_input: [{ old_name: 'value', new_name: 'value', keep: true, is_available: true, ...entry }]
+      }, [1]))
+      return generateCode({ nodes, edges: createEdges([[1, 2]]) })
+    }
+
+    // build_select casts non-strictly, under the incoming name.
+    it('casts when the settings ask for a data type change', () => {
+      const code = castingSelect({ data_type_change: true, data_type: 'Integer' })
+      expect(code).toContain('pl.col("value").cast(pl.Int64, strict=False)')
+    })
+
+    it('parses text rather than casting for a temporal target', () => {
+      const code = castingSelect({ data_type_change: true, data_type: 'Date' })
+      expect(code).toContain('pl.col("value").str.to_date(strict=False)')
+    })
+
+    it('casts before the rename', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'select', {
         select_input: [
           {
-            old_name: 'value',
-            new_name: 'value',
-            keep: true,
-            is_available: true,
-            data_type_change: true,
-            data_type: 'Integer'
+            old_name: 'value', new_name: 'text', keep: true, is_available: true,
+            data_type_change: true, data_type: 'String'
           }
         ]
       }, [1]))
+      const code = generateCode({ nodes, edges: createEdges([[1, 2]]) })
+      expect(code).toContain('pl.col("value").cast(pl.String, strict=False).alias("text")')
+    })
 
-      const code = generateCode({
-        nodes,
-        edges: createEdges([[1, 2]])
-      })
-
+    // The panel records a data type for every column, changed or not.
+    it('does not cast a column whose recorded type is the one it already has', () => {
+      const code = castingSelect({ data_type: 'Integer' })
       expect(code).not.toContain('.cast(')
       expect(code).toContain('pl.col("value")')
     })

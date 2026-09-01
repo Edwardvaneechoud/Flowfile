@@ -33,6 +33,7 @@ jobs:
       backend_flowfile: ${{ steps.filter.outputs.backend_flowfile }}
       kernel: ${{ steps.filter.outputs.kernel }}
       kernel_packaging: ${{ steps.filter.outputs.kernel_packaging }}
+      share_manifest: ${{ steps.filter.outputs.share_manifest }}
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
       formula_docs: ${{ steps.filter.outputs.formula_docs }}
@@ -68,6 +69,15 @@ jobs:
               - 'tools/generate_kernel_manifest.py'
               - 'build_backends/**'
               - 'flowfile_core/Dockerfile'
+              - 'pyproject.toml'
+            share_manifest:
+              - 'flowfile_wasm/src/config/nodeCatalog.ts'
+              - 'flowfile_wasm/src/utils/coreExport.ts'
+              - 'flowfile_wasm/src/pyodide/engine/nodes_aggregate.py'
+              - 'flowfile_core/flowfile_core/flowfile/share/**'
+              - 'flowfile_core/tests/test_share_packaging_gate.py'
+              - 'tools/generate_wasm_node_manifest.py'
+              - 'flowfile_core/flowfile_core/configs/node_store/nodes.py'
               - 'pyproject.toml'
             frontend:
               - 'flowfile_frontend/**'
@@ -727,6 +737,37 @@ jobs:
 
       - name: Check kernel manifest drift and packaging coverage
         run: make check_kernel_data
+
+  # The WASM node-support manifest is generated data derived from flowfile_wasm's
+  # palette/dialect/engine. It must match those sources and actually ship, or the
+  # share-link builder falls back to "nothing is supported" in every shipped
+  # artifact. No Docker, Node or Rust needed.
+  check-share-data:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.share_manifest == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi --with dev
+
+      - name: Check share manifest drift and packaging coverage
+        run: make check_share_data
 
   # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:

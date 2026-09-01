@@ -3,6 +3,8 @@
 Each helper takes (LazyFrame, settings) and returns a LazyFrame with no global
 state. Settings shapes mirror `toPythonJson(node.settings)` from flow-store.ts.
 """
+import datetime
+
 import polars as pl
 import pytest
 
@@ -56,12 +58,57 @@ def test_filter_contains():
     assert out["name"].to_list() == ["alice", "carol"]
 
 
-def test_filter_advanced_expr_is_evaluated():
+def test_filter_advanced_expr_is_a_flowfile_formula():
+    """The advanced filter speaks the formula dialect, not Python."""
     out = engine.build_filter(
         lf(a=[1, 2, 3], b=[10, 20, 30]),
-        {"filter_input": {"mode": "advanced", "advanced_filter": "pl.col('b') > 15"}},
+        {"filter_input": {"mode": "advanced", "advanced_filter": "[b] > 15"}},
     ).collect()
     assert out["a"].to_list() == [2, 3]
+
+
+def test_filter_advanced_expr_handles_functions_and_conjunctions():
+    out = engine.build_filter(
+        lf(city=["Amsterdam", "Berlin", "Rotterdam"], n=[1, 2, 3]),
+        {"filter_input": {"mode": "advanced", "advanced_filter": 'contains([city], "dam") and [n] > 1'}},
+    ).collect()
+    assert out["city"].to_list() == ["Rotterdam"]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "polars-expr-transformer <=0.5.7 executes Python from a formula: "
+        "token_classifier.standardize_quotes rewrites 'a\"b' to \"a\"b\" without escaping, "
+        "and models.Classifier.get_pl_func eval()s the result. Affects every formula "
+        "surface (formula node, advanced filter, core's settings validation), not just "
+        "this one. Drop the xfail once the pin is raised past the fix."
+    ),
+)
+def test_filter_advanced_expr_does_not_evaluate_python(tmp_path):
+    """A formula must be parsed, never executed.
+
+    The old implementation ``eval``'d the whole field, so this is what the share
+    transform's placeholder demotion is protecting against. When this test goes
+    green the expression language is safe to ship in a link, and the demotion in
+    ``flowfile_core/flowfile/share/compatibility.py`` can be reconsidered.
+    """
+    canary = tmp_path / "canary"
+    hostile = [
+        f'__import__("os").system("touch {canary}")',
+        f'open("{canary}", "w")',
+        f'[a] > 1 and open("{canary}", "w")',
+        f'"x" + str(open("{canary}", "w"))',
+        f'[a] = "x\\" + open(\\"{canary}\\", \\"w\\") + \\"y"',
+        # The live escape: a single-quoted literal carrying a double quote.
+        f"[a] = 'x\" + open(\"{canary}\", \"w\") + \"y'",
+    ]
+    for expression in hostile:
+        try:
+            engine.build_filter(lf(a=[1, 2]), {"filter_input": {"mode": "advanced", "advanced_filter": expression}})
+        except Exception:
+            pass
+        assert not canary.exists(), f"{expression!r} executed Python"
 
 
 def test_filter_without_field_is_passthrough():
@@ -101,6 +148,79 @@ def test_select_ignores_missing_columns():
         ]},
     ).collect()
     assert out.columns == ["a"]
+
+
+def _select_one(frame, **entry):
+    settings = {"select_input": [{"keep": True, "position": 0, **entry}]}
+    return engine.build_select(frame, settings).collect()
+
+
+def test_select_casts_to_the_declared_data_type():
+    out = _select_one(lf(a=[1, 2]), old_name="a", new_name="a", data_type="String")
+    assert out.schema["a"] == pl.String
+    assert out["a"].to_list() == ["1", "2"]
+
+
+def test_select_cast_is_not_strict():
+    # flowfile_core casts with strict=False: what will not convert becomes null.
+    out = _select_one(lf(a=["10", "abc", None]), old_name="a", new_name="a", data_type="Int64")
+    assert out["a"].to_list() == [10, None, None]
+
+
+def test_select_cast_truncates_decimals_toward_zero():
+    out = _select_one(lf(a=[1.9, -1.9, 2.5]), old_name="a", new_name="a", data_type="Int64")
+    assert out["a"].to_list() == [1, -1, 2]
+
+
+def test_select_cast_matches_cores_friendly_type_names():
+    # SelectInput.polars_type maps integer/double/string before resolving.
+    out = _select_one(lf(a=["7"]), old_name="a", new_name="a", data_type="integer")
+    assert out["a"].to_list() == [7]
+
+
+def test_select_temporal_target_parses_text():
+    out = _select_one(lf(a=["2024-01-05", "nope"]), old_name="a", new_name="a", data_type="Date")
+    assert out.schema["a"] == pl.Date
+    assert out["a"].to_list() == [datetime.date(2024, 1, 5), None]
+
+
+def test_select_cast_applies_before_the_rename():
+    out = _select_one(lf(a=[1]), old_name="a", new_name="b", data_type="String")
+    assert out.columns == ["b"]
+    assert out["b"].to_list() == ["1"]
+
+
+def test_select_declared_type_matching_the_column_is_a_no_op():
+    # The panel records a data type for every column, changed or not; a target a
+    # column already holds must not re-cast it (core drops those transforms too).
+    out = _select_one(
+        lf(a=[1]), old_name="a", new_name="a", data_type="Int64", data_type_change=True
+    )
+    assert out.schema["a"] == pl.Int64
+
+
+def test_select_parametrised_type_name_matches_on_its_base():
+    frame = pl.LazyFrame({"a": [datetime.datetime(2024, 1, 5, 12)]})
+    out = _select_one(frame, old_name="a", new_name="a", data_type="Datetime(time_unit='us')")
+    assert out.schema["a"] == pl.Datetime(time_unit="us")
+
+
+def test_select_unknown_type_name_leaves_the_column_alone():
+    # Core falls back to String here; a stale marker must not stringify a column.
+    out = _select_one(lf(a=[1]), old_name="a", new_name="a", data_type="unknown")
+    assert out.schema["a"] == pl.Int64
+
+
+def test_select_cast_ignores_dropped_columns():
+    out = engine.build_select(
+        lf(a=[1], b=[2]),
+        {"select_input": [
+            {"old_name": "a", "new_name": "a", "keep": True, "position": 0, "data_type": "String"},
+            {"old_name": "b", "new_name": "b", "keep": False, "position": 1, "data_type": "String"},
+        ]},
+    ).collect()
+    assert out.columns == ["a"]
+    assert out["a"].to_list() == ["1"]
 
 
 # --------------------------------------------------------------------------- #

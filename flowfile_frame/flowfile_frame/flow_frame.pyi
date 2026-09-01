@@ -181,6 +181,9 @@ class FlowFrame:
     # Simple naive implementation of creating the frame from any type. It converts the data to a polars frame,
     def create_from_any_type(self, data: FrameInitTypes = None, schema: SchemaDefinition | None = None, schema_overrides: SchemaDict | None = None, strict: bool = True, orient: Orientation | None = None, infer_schema_length: int | None = 100, nan_to_null: bool = False, flow_graph = None, node_id = None, parent_node_id = None, description: Optional[str] = None) -> Any: ...
 
+    # Fix common data quality issues in one node.
+    def data_cleansing(self, columns: list[str] | None = None, remove_null_rows: bool = False, remove_null_columns: bool = False, replace_nulls_with_blank: bool = True, replace_nulls_with_zero: bool = True, trim_whitespace: bool = True, normalize_whitespace: bool = False, remove_all_whitespace: bool = False, remove_letters: bool = False, remove_numbers: bool = False, remove_punctuation: bool = False, case_mode: Literal['none', 'uppercase', 'lowercase', 'titlecase'] = 'none', description: str | None = None) -> 'FlowFrame': ...
+
     # Creates a summary of statistics for a LazyFrame, returning a DataFrame.
     def describe(self, percentiles: Sequence[float] | float | None = ..., interpolation: QuantileMethod = 'nearest') -> DataFrame: ...
 

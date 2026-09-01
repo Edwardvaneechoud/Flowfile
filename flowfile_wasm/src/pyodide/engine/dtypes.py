@@ -99,6 +99,67 @@ def readable_data_type_group(data_type: str) -> str:
     return "Other"
 
 
+_CAST_NAME_ALIASES: dict[str, Any] = {
+    # flowfile_core's dtype_to_pl plus SelectInput.polars_type's friendly names.
+    "int": pl.Int64,
+    "integer": pl.Int64,
+    "char": pl.String,
+    "fixed decimal": pl.Float32,
+    "double": pl.Float64,
+    "float": pl.Float64,
+    "bool": pl.Boolean,
+    "byte": pl.UInt8,
+    "bit": pl.Binary,
+    "date": pl.Date,
+    "datetime": pl.Datetime,
+    "string": pl.String,
+    "str": pl.String,
+    "time": pl.Time,
+}
+
+for _dtname in (
+    "Int8", "Int16", "Int32", "Int64", "Int128",
+    "UInt8", "UInt16", "UInt32", "UInt64",
+    "Float32", "Float64",
+    "Boolean", "String", "Utf8", "Binary",
+    "Date", "Time", "Datetime", "Duration", "Categorical", "Null",
+):
+    _dt = getattr(pl, _dtname, None)
+    if _dt is not None:
+        _CAST_NAME_ALIASES.setdefault(_dtname.lower(), _dt)
+
+
+def polars_type_from_name(name: str):
+    """Resolve a declared data-type name to a Polars dtype, or None if unknown.
+
+    Mirrors flowfile_core's SelectInput.polars_type + get_polars_type: both the
+    friendly names ("integer", "double", "string") and the Polars ones resolve,
+    and a parametrised name ("Datetime(time_unit='us')") matches on its base.
+    The one deliberate divergence is the fallback: core turns an unrecognised
+    name into String, which would let a stale marker silently stringify a
+    column, so an unknown name here means "no type was asked for".
+    """
+    if not name:
+        return None
+    base = str(name).split("(")[0].strip().lower()
+    return _CAST_NAME_ALIASES.get(base)
+
+
+def select_cast_dtype(declared: str | None, current_dtype) -> Any | None:
+    """The dtype a select entry asks a column to become, or None for no change.
+
+    flowfile_core's change_column_types drops any transform whose target already
+    equals the column's base dtype, which is what makes the data type the select
+    panel records for every column (changed or not) a no-op.
+    """
+    target = polars_type_from_name(declared)
+    if target is None:
+        return None
+    if current_dtype is not None and target == current_dtype.base_type():
+        return None
+    return target
+
+
 def build_empty_lf_from_schema(schema_list: list[dict[str, str]]) -> pl.LazyFrame:
     """Build an empty (0-row) LazyFrame carrying only the given schema.
 

@@ -1,7 +1,35 @@
 <template>
   <div class="listbox-wrapper">
     <div class="filter-section">
-      <div class="filter-row">
+      <div class="filter-field mode-field">
+        <label class="filter-label">Condition</label>
+        <div class="segmented">
+          <button
+            v-for="m in modes"
+            :key="m.value"
+            type="button"
+            class="seg-btn"
+            :class="{ active: mode === m.value }"
+            @click="setMode(m.value)"
+          >
+            {{ m.label }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Advanced: one flowfile formula, the same dialect the Formula node speaks -->
+      <div v-if="mode === 'advanced'" class="filter-field expression-field">
+        <label class="filter-label">Expression</label>
+        <ExpressionEditor
+          :node-id="props.nodeId"
+          :model-value="advancedFilter"
+          :placeholder="expressionPlaceholder"
+          @update:model-value="updateAdvanced"
+        />
+        <div class="help-text" style="margin-top: 8px;">Keep only the rows this is true for.</div>
+      </div>
+
+      <div v-else class="filter-row">
         <!-- Column Selector -->
         <div class="filter-field">
           <label class="filter-label">Column</label>
@@ -49,7 +77,7 @@
       </div>
 
       <!-- Help text for special operators -->
-      <div v-if="helpText" class="help-text" style="margin-top: 8px;">{{ helpText }}</div>
+      <div v-if="mode === 'basic' && helpText" class="help-text" style="margin-top: 8px;">{{ helpText }}</div>
     </div>
   </div>
 </template>
@@ -58,6 +86,7 @@
 import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { FilterSettings, FilterOperator, ColumnSchema } from '../../types'
+import ExpressionEditor from '../common/ExpressionEditor.vue'
 
 const props = defineProps<{
   nodeId: number
@@ -70,7 +99,11 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize directly from props - basic filter only in WASM version
+// Both halves are kept in state, so switching modes never discards the other one.
+const mode = ref<'basic' | 'advanced'>(
+  props.settings.filter_input?.mode === 'advanced' ? 'advanced' : 'basic'
+)
+const advancedFilter = ref(props.settings.filter_input?.advanced_filter || '')
 const basicFilter = ref({
   field: props.settings.filter_input?.basic_filter?.field || '',
   operator: (props.settings.filter_input?.basic_filter?.operator || 'equals') as FilterOperator,
@@ -78,9 +111,18 @@ const basicFilter = ref({
   value2: props.settings.filter_input?.basic_filter?.value2 || ''
 })
 
+const modes = [
+  { value: 'basic' as const, label: 'Basic' },
+  { value: 'advanced' as const, label: 'Advanced' }
+]
+
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
+
+const expressionPlaceholder = computed(() =>
+  columns.value.length ? `e.g. [${columns.value[0].name}] > 7` : 'e.g. [quantity] > 7'
+)
 
 const operators = [
   { value: 'equals', label: 'Equals' },
@@ -152,14 +194,25 @@ function updateValue2(value: string) {
   emitUpdate()
 }
 
+function updateAdvanced(value: string) {
+  advancedFilter.value = value
+  emitUpdate()
+}
+
+function setMode(value: 'basic' | 'advanced') {
+  if (mode.value === value) return
+  mode.value = value
+  emitUpdate()
+}
+
 function emitUpdate() {
   const settings: FilterSettings = {
     ...props.settings,
     is_setup: true,
     filter_input: {
-      mode: 'basic',  // Always basic in WASM version
+      mode: mode.value,
       basic_filter: { ...basicFilter.value },
-      advanced_filter: ''  // Keep schema compatible but don't use in WASM
+      advanced_filter: advancedFilter.value
     }
   }
   emit('update:settings', settings)
@@ -167,5 +220,45 @@ function emitUpdate() {
 </script>
 
 <style scoped>
-/* Component uses global styles from main.css */
+/* Layout comes from global styles in main.css; only the mode switch is local. */
+.mode-field {
+  margin-bottom: 12px;
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.seg-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  border: none;
+  border-right: 1px solid var(--color-border-primary);
+  cursor: pointer;
+}
+
+.seg-btn:last-child {
+  border-right: none;
+}
+
+.seg-btn:hover {
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+.seg-btn.active {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+/* The expression editor gets the full drawer width, like the Formula node. */
+.expression-field {
+  max-width: none;
+}
 </style>

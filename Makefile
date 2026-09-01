@@ -336,6 +336,25 @@ check_kernel_manifest: kernel_manifest
 check_kernel_data: check_kernel_manifest
 	$(POETRY_RUN) pytest flowfile_core/tests/test_kernel_packaging_gate.py -q
 
+# Regenerate the WASM node-support manifest the share-link builder reads.
+# Run after changing flowfile_wasm's node palette, its core dialect map, or the
+# aggregations its Pyodide engine implements.
+wasm_node_manifest:
+	@echo "Generating WASM node support manifest..."
+	$(POETRY_RUN) python tools/generate_wasm_node_manifest.py
+
+# Drift check: regenerate and fail if the committed manifest changed.
+check_wasm_node_manifest: wasm_node_manifest
+	@if ! git diff --exit-code -- flowfile_core/flowfile_core/flowfile/share/wasm_node_support.json; then \
+		echo "ERROR: the WASM node support manifest is out of sync with flowfile_wasm. Run 'make wasm_node_manifest' and commit the result."; \
+		exit 1; \
+	fi
+	@echo "WASM node support manifest is in sync."
+
+# Regenerate + verify the manifest actually ships in every packaging manifest.
+check_share_data: check_wasm_node_manifest
+	$(POETRY_RUN) pytest flowfile_core/tests/test_share_packaging_gate.py -q
+
 # Bump the app version everywhere (pyproject / package.json / tauri.conf.json / Cargo.toml).
 # Usage: make bump-version VERSION=X.Y.Z
 bump-version:
@@ -355,4 +374,4 @@ bump-version-kernel:
 	@$(MAKE) kernel_manifest
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data bump-version check-version bump-version-kernel
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel

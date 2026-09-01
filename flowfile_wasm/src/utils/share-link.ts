@@ -22,6 +22,7 @@ export function hasShareHash(hash: string): boolean {
 async function pumpThrough(
   ts: CompressionStream | DecompressionStream,
   input: Uint8Array,
+  maxBytes?: number,
 ): Promise<Uint8Array> {
   const writer = ts.writable.getWriter()
   let writeError: unknown = null
@@ -41,6 +42,13 @@ async function pumpThrough(
     if (done) break
     chunks.push(value)
     total += value.length
+    if (maxBytes !== undefined && total > maxBytes) {
+      // Zip-bomb guard for third-party links: a small deflate blob can inflate
+      // to hundreds of MB. Cancel and bail before the tab dies.
+      await reader.cancel().catch(() => {})
+      await writeDone
+      throw new Error(`decompressed payload exceeds ${maxBytes} bytes`)
+    }
   }
   await writeDone
   if (writeError) throw writeError
@@ -82,20 +90,26 @@ export async function encodeShareHash(
   return SHARE_HASH_PREFIX + bytesToBase64Url(compressed)
 }
 
+/** Inflation ceiling for inbound (third-party) links. */
+const MAX_DECODED_BYTES = 32 * 1024 * 1024
+
 /** Returns null on any malformed input (bad base64, bad deflate, bad JSON,
- * unknown version, missing flow) — never throws. */
+ * unknown version, missing flow, non-numeric file keys, oversized payload) —
+ * never throws. */
 export async function decodeShareHash(hash: string): Promise<ShareEnvelopeV1 | null> {
   if (!hasShareHash(hash)) return null
   try {
     const bytes = base64UrlToBytes(hash.slice(SHARE_HASH_PREFIX.length))
-    const json = await pumpThrough(new DecompressionStream('deflate-raw'), bytes)
+    const json = await pumpThrough(new DecompressionStream('deflate-raw'), bytes, MAX_DECODED_BYTES)
     const envelope = JSON.parse(new TextDecoder().decode(json))
     if (!envelope || typeof envelope !== 'object' || envelope.v !== 1) return null
     const flow = envelope.flow
     if (!flow || typeof flow !== 'object' || !Array.isArray(flow.nodes)) return null
     if (envelope.files !== undefined) {
       if (typeof envelope.files !== 'object' || envelope.files === null) return null
-      for (const value of Object.values(envelope.files)) {
+      for (const [key, value] of Object.entries(envelope.files)) {
+        // Keys are node ids: a non-numeric key would become setFileContent(NaN, …).
+        if (!/^\d+$/.test(key)) return null
         if (typeof value !== 'string') return null
       }
     }

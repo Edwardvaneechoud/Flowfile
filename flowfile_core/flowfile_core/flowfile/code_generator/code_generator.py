@@ -143,6 +143,7 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "formula": "computed",
     "select": "selected",
     "dynamic_rename": "renamed",
+    "data_cleansing": "cleansed",
     "sort": "ordered",
     "group_by": "grouped",
     "pivot": "pivoted",
@@ -953,6 +954,145 @@ class FlowGraphCodeConverter(
         self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
         self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
         self.node_var_mapping[node_id] = pass_var
+        self._add_code("")
+
+    def _cleansing_target_columns(self, settings: input_schema.NodeDataCleansing) -> tuple[list[str], list[str]]:
+        """String- and Numeric-group cleansing targets from the node's export-time schema.
+
+        Data cleansing is schema-preserving, so the node's own predicted schema carries
+        the incoming columns and dtypes. Targeting keys off ``data_type_group`` exactly
+        like FlowDataEngine.build_data_cleansing_expressions; columns of any other group
+        (and selected names that no longer exist) simply drop out.
+        """
+        cleansing = settings.cleansing_input
+        try:
+            node = self.flow_graph.get_node(settings.node_id)
+            schema = node.get_predicted_schema() if node is not None else None
+        except Exception:
+            schema = None
+        columns = [(col.column_name, col.data_type_group) for col in schema or []]
+        if cleansing.selection_mode == "list":
+            selected = set(cleansing.selected_columns)
+            columns = [(name, group) for name, group in columns if name in selected]
+        string_columns = [name for name, group in columns if group == "String"]
+        numeric_columns = [name for name, group in columns if group == "Numeric"]
+        return string_columns, numeric_columns
+
+    def _cleansing_drops_columns(self, node_id: int) -> bool:
+        """True when this node or any ancestor can drop columns at run time.
+
+        ``remove_null_columns`` is data-dependent while schema prediction is static, so
+        this node's export-time column list can name a column that an upstream cleansing
+        node — or this one — has already removed by the time the script reaches it.
+        """
+        seen: set[int] = {node_id}
+        stack = [node_id]
+        while stack:
+            node = self.flow_graph.get_node(stack.pop())
+            if node is None:
+                continue
+            cleansing = getattr(node.setting_input, "cleansing_input", None)
+            if cleansing is not None and cleansing.remove_null_columns:
+                return True
+            for producer_id in self._raw_producer_ids(node):
+                if producer_id not in seen:
+                    seen.add(producer_id)
+                    stack.append(producer_id)
+        return False
+
+    def _cleansing_col_expr(self, columns: list[str], schema_var: str | None) -> str:
+        """Render the ``pl.col(...)`` head for a group of identically-cleansed columns.
+
+        When a null-column drop is in play the export-time candidates may not all survive
+        the run, so the list is intersected with the frame's runtime schema instead of
+        being emitted as a literal.
+        """
+        literal = f"[{', '.join(self._py_str(name) for name in columns)}]"
+        if schema_var is None:
+            return f"pl.col({literal})"
+        return f"pl.col([c for c in {literal} if c in {schema_var}])"
+
+    def _cleansing_string_expr(self, settings: transform_schema.DataCleansingInput, head: str) -> str:
+        """Chain the string rules onto ``head`` in the order the engine applies them."""
+        expr = head
+        if settings.replace_nulls_with_blank:
+            expr += '.fill_null("")'
+        if settings.remove_letters:
+            expr += f'.str.replace_all({transform_schema.CLEANSING_LETTERS_REGEX!r}, "")'
+        if settings.remove_numbers:
+            expr += f'.str.replace_all({transform_schema.CLEANSING_NUMBERS_REGEX!r}, "")'
+        if settings.remove_punctuation:
+            expr += f'.str.replace_all({transform_schema.CLEANSING_PUNCTUATION_REGEX!r}, "")'
+        if settings.remove_all_whitespace:
+            expr += f'.str.replace_all({transform_schema.CLEANSING_WHITESPACE_REGEX!r}, "")'
+        else:
+            if settings.normalize_whitespace:
+                expr += f'.str.replace_all({transform_schema.CLEANSING_WHITESPACE_RUN_REGEX!r}, " ")'
+            if settings.trim_whitespace:
+                expr += ".str.strip_chars()"
+        if settings.case_mode == "uppercase":
+            expr += ".str.to_uppercase()"
+        elif settings.case_mode == "lowercase":
+            expr += ".str.to_lowercase()"
+        elif settings.case_mode == "titlecase":
+            expr += ".str.to_titlecase()"
+        return expr
+
+    def _handle_data_cleansing(
+        self, settings: input_schema.NodeDataCleansing, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle data cleansing nodes, emitting pure Polars.
+
+        Mirrors FlowDataEngine.apply_data_cleansing stage for stage: drop rows that are
+        null in every column, drop columns that are null in every row, then one
+        ``with_columns`` carrying the per-column rules. The null profile is taken from
+        the incoming frame (not the row-filtered one) because that is what the engine
+        profiles, and the character classes are interpolated from the transform_schema
+        constants so the engine and the exported script cannot drift apart.
+        """
+        self.imports.add("import polars as pl")
+        input_df = input_vars.get("main", "df")
+        cleansing = settings.cleansing_input
+        current = input_df
+
+        if cleansing.remove_null_rows:
+            self._add_code(f"{var_name} = {current}.filter(~pl.all_horizontal(pl.all().is_null()))")
+            current = var_name
+
+        if cleansing.remove_null_columns:
+            height_var = f"_dc_{settings.node_id}_height"
+            nulls_var = f"_dc_{settings.node_id}_nulls"
+            drop_var = f"_dc_{settings.node_id}_drop"
+            self._add_code(f"{height_var} = {input_df}.select(pl.len()).collect().item()")
+            self._add_code(f"{nulls_var} = {input_df}.select(pl.all().null_count()).collect().to_dicts()[0]")
+            self._add_code(
+                f"{drop_var} = [c for c, n in {nulls_var}.items() if {height_var} > 0 and n == {height_var}]"
+            )
+            self._add_code(f"{var_name} = {current}.drop({drop_var})")
+            current = var_name
+
+        schema_var = f"_dc_{settings.node_id}_cols" if self._cleansing_drops_columns(settings.node_id) else None
+        string_columns, numeric_columns = self._cleansing_target_columns(settings)
+        exprs: list[str] = []
+        if string_columns:
+            head = self._cleansing_col_expr(string_columns, schema_var)
+            string_expr = self._cleansing_string_expr(cleansing, head)
+            if string_expr != head:  # no string rule enabled -> nothing to emit
+                exprs.append(string_expr)
+        if numeric_columns and cleansing.replace_nulls_with_zero:
+            exprs.append(f'{self._cleansing_col_expr(numeric_columns, schema_var)}.fill_null(strategy="zero")')
+
+        if exprs:
+            if schema_var is not None:
+                self._add_code(f"{schema_var} = set({current}.collect_schema().names())")
+            self._add_code(f"{var_name} = {current}.with_columns(")
+            for expr in exprs:
+                self._add_code(f"    {expr},")
+            self._add_code(")")
+            current = var_name
+
+        if current == input_df:
+            self._add_code(f"{var_name} = {input_df}  # No cleansing rules enabled")
         self._add_code("")
 
     def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: dict[str, str]):
@@ -2247,6 +2387,42 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             )
             return
         self._add_code(f"{var_name} = {main_df}.wait_for({dep_df})")
+        self._add_code("")
+
+    def _handle_data_cleansing(
+        self, settings: input_schema.NodeDataCleansing, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Data Cleansing nodes — emit ``df.data_cleansing(...)``.
+
+        Every keyword is emitted explicitly rather than left to the method's defaults,
+        so a non-default flow setting survives export even if a default ever changes.
+        ``columns`` is omitted entirely for the "all columns" mode: passing an empty
+        list would select nothing instead of everything.
+        """
+        input_df = input_vars.get("main", "df")
+        cleansing = settings.cleansing_input
+        args: list[str] = []
+        if cleansing.selection_mode == "list":
+            args.append(f"columns={cleansing.selected_columns!r}")
+        args.extend(
+            [
+                f"remove_null_rows={cleansing.remove_null_rows}",
+                f"remove_null_columns={cleansing.remove_null_columns}",
+                f"replace_nulls_with_blank={cleansing.replace_nulls_with_blank}",
+                f"replace_nulls_with_zero={cleansing.replace_nulls_with_zero}",
+                f"trim_whitespace={cleansing.trim_whitespace}",
+                f"normalize_whitespace={cleansing.normalize_whitespace}",
+                f"remove_all_whitespace={cleansing.remove_all_whitespace}",
+                f"remove_letters={cleansing.remove_letters}",
+                f"remove_numbers={cleansing.remove_numbers}",
+                f"remove_punctuation={cleansing.remove_punctuation}",
+                f"case_mode={cleansing.case_mode!r}",
+            ]
+        )
+        self._add_code(f"{var_name} = {input_df}.data_cleansing(")
+        for arg in args:
+            self._add_code(f"    {arg},")
+        self._add_code(")")
         self._add_code("")
 
     def _handle_dynamic_rename(
