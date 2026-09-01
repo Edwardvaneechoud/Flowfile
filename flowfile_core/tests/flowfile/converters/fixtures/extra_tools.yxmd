@@ -78,9 +78,31 @@
         <CartesianMode>Warn</CartesianMode>
       </Configuration></Properties>
     </Node>
+    <Node ToolID="8">
+      <GuiSettings>
+        <Position x="110" y="410" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="Check Box (135)">False</Value>
+        <Value name="Check Box (136)">False</Value>
+        <Value name="List Box (11)">"region","product"</Value>
+        <Value name="Check Box (84)">True</Value>
+        <Value name="Check Box (117)">True</Value>
+        <Value name="Check Box (15)">True</Value>
+        <Value name="Check Box (109)">False</Value>
+        <Value name="Check Box (122)">False</Value>
+        <Value name="Check Box (53)">False</Value>
+        <Value name="Check Box (58)">False</Value>
+        <Value name="Check Box (70)">False</Value>
+        <Value name="Check Box (77)">True</Value>
+        <Value name="Drop Down (81)">upper</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Cleanse.yxmc" />
+    </Node>
   </Nodes>
   <Connections>
     <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="8" Connection="Input2" /></Connection>
     <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
     <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="4" Connection="Input" /></Connection>
     <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="5" Connection="Input" /></Connection>

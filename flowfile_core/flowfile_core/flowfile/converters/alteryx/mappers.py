@@ -1845,6 +1845,91 @@ def map_running_total(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "window_functions", [])
 
 
+_CLEANSE_CHECKBOXES = {
+    "Check Box (135)": "remove_null_rows",
+    "Check Box (136)": "remove_null_columns",
+    "Check Box (84)": "replace_nulls_with_blank",
+    "Check Box (117)": "replace_nulls_with_zero",
+    "Check Box (15)": "trim_whitespace",
+    "Check Box (109)": "normalize_whitespace",
+    "Check Box (122)": "remove_all_whitespace",
+    "Check Box (53)": "remove_letters",
+    "Check Box (58)": "remove_numbers",
+    "Check Box (70)": "remove_punctuation",
+}
+_CLEANSE_FIELD_LIST = "List Box (11)"
+_CLEANSE_CASE_ENABLED = "Check Box (77)"
+_CLEANSE_CASE_MODE = "Drop Down (81)"
+_CLEANSE_CASE_MODES = {"upper": "uppercase", "lower": "lowercase", "title": "titlecase"}
+
+
+def _parse_cleanse_fields(raw: str) -> list[str] | None:
+    """Parse the Cleanse field list box: comma-separated double-quoted names, or empty for none."""
+    cleaned = raw.strip()
+    if not cleaned:
+        return []
+    if not re.fullmatch(r'"[^"]*"(?:,"[^"]*")*', cleaned):
+        return None
+    return re.findall(r'"([^"]*)"', cleaned)
+
+
+def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Maps the Data Cleansing macro (Cleanse.yxmc) onto the native data_cleansing node.
+
+    The macro's configuration is a flat list of question values whose names are the
+    widget ids baked into the shipped Cleanse.yxmc. Those ids have been stable across
+    Alteryx releases for years but are not a contract, so a missing or unrecognized
+    name fails closed to a placeholder instead of guessing by position. The Flowfile
+    node was built for parity with this tool (same frame-wide null-row/column rules,
+    character classes, whitespace precedence and dtype scoping), so recognized
+    options translate one-to-one.
+    """
+    config = _config(tool)
+    values = {value.get("name", ""): (value.text or "").strip() for value in config.findall("Value")}
+    expected = {*_CLEANSE_CHECKBOXES, _CLEANSE_FIELD_LIST, _CLEANSE_CASE_ENABLED, _CLEANSE_CASE_MODE}
+    missing = sorted(expected - set(values))
+    if missing:
+        return _placeholder_row(
+            tool, ctx, ["The Data Cleansing configuration is missing expected settings: " + ", ".join(missing) + "."]
+        )
+    unrecognized = sorted(set(values) - expected)
+    if unrecognized:
+        return _placeholder_row(
+            tool, ctx, ["The Data Cleansing configuration has unrecognized settings: " + ", ".join(unrecognized) + "."]
+        )
+    fields = _parse_cleanse_fields(values[_CLEANSE_FIELD_LIST])
+    if fields is None:
+        return _placeholder_row(tool, ctx, ["The Data Cleansing field list could not be read."])
+    if "*Unknown" in fields:
+        return _placeholder_row(
+            tool, ctx, ["The Data Cleansing tool cleanses dynamic or unknown fields, which Flowfile cannot express."]
+        )
+    case_mode = "none"
+    if _is_true(values[_CLEANSE_CASE_ENABLED]):
+        case_mode = _CLEANSE_CASE_MODES.get(values[_CLEANSE_CASE_MODE].lower())
+        if case_mode is None:
+            return _placeholder_row(
+                tool, ctx, [f"The Data Cleansing case mode '{values[_CLEANSE_CASE_MODE]}' is not recognized."]
+            )
+
+    settings = input_schema.NodeDataCleansing(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        cleansing_input=transform_schema.DataCleansingInput(
+            selection_mode="list",
+            selected_columns=fields,
+            case_mode=case_mode,
+            **{target: _is_true(values[name]) for name, target in _CLEANSE_CHECKBOXES.items()},
+        ),
+    )
+    node_id = ctx.add_node(tool, "data_cleansing", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    known = ctx.input_columns(tool.tool_id)
+    ctx.tool_columns[tool.tool_id] = None if settings.cleansing_input.remove_null_columns else known
+    return _row(tool, "converted", [node_id], "data_cleansing", [])
+
+
 TOOL_MAPPERS: dict[str, ToolMapper] = {
     "TextInput": map_text_input,
     "AlteryxSelect": map_select,
@@ -1872,6 +1957,20 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
 }
 
 
+MACRO_MAPPERS: dict[str, ToolMapper] = {
+    "cleanse.yxmc": map_data_cleansing,
+}
+
+
 def get_mapper(tool: AlteryxTool) -> ToolMapper:
-    """The mapper for a tool, falling back to the placeholder mapper."""
+    """The mapper for a tool, falling back to the placeholder mapper.
+
+    Macro tools carry no plugin name (tool_name is empty), so they dispatch on the
+    macro filename instead — matched case-insensitively on the basename because the
+    shipped macros resolve against Alteryx's RuntimeData\\Macros directory while
+    user copies may carry a full path.
+    """
+    if not tool.tool_name and tool.plugin:
+        macro_file = tool.plugin.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        return MACRO_MAPPERS.get(macro_file, map_unsupported)
     return TOOL_MAPPERS.get(tool.tool_name, map_unsupported)

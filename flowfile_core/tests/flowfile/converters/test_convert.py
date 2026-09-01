@@ -1116,6 +1116,52 @@ def tool_after_text_input(plugin: str, config: str) -> bytes:
 """.encode()
 
 
+def macro_after_text_input(macro: str, config: str) -> bytes:
+    """A two-tool workflow: a Text Input feeding one macro tool with the given configuration."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings />
+      <Properties><Configuration>{config}</Configuration></Properties>
+      <EngineSettings Macro="{macro}" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input2" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def cleanse_config(overrides: dict[str, str | None] | None = None) -> str:
+    """The Cleanse macro's question values with factory defaults; None removes an entry."""
+    values = {
+        "Check Box (135)": "False",
+        "Check Box (136)": "False",
+        "List Box (11)": '"value"',
+        "Check Box (84)": "True",
+        "Check Box (117)": "True",
+        "Check Box (15)": "True",
+        "Check Box (109)": "False",
+        "Check Box (122)": "False",
+        "Check Box (53)": "False",
+        "Check Box (58)": "False",
+        "Check Box (70)": "False",
+        "Check Box (77)": "False",
+        "Drop Down (81)": "upper",
+    }
+    values.update(overrides or {})
+    return "".join(f'<Value name="{name}">{text}</Value>' for name, text in values.items() if text is not None)
+
+
 def test_record_id_maps_to_a_record_id_node(extra_tools: ConversionResult):
     row = report_row(extra_tools, 2)
     assert row.status == "converted"
@@ -1166,6 +1212,65 @@ def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
     assert node["type"] == "cross_join"
     assert node["input_ids"] == [1]
     assert node["right_input_id"] == 7
+
+
+def test_data_cleansing_maps_the_cleanse_macro(extra_tools: ConversionResult):
+    row = report_row(extra_tools, 8)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "data_cleansing"
+    cleansing = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert cleansing["selection_mode"] == "list"
+    assert cleansing["selected_columns"] == ["region", "product"]
+    assert cleansing["case_mode"] == "uppercase"
+    enabled = {flag for flag in cleansing if cleansing[flag] is True}
+    assert enabled == {"replace_nulls_with_blank", "replace_nulls_with_zero", "trim_whitespace"}
+
+
+def test_data_cleansing_ignores_the_case_dropdown_when_case_is_disabled():
+    config = cleanse_config({"Check Box (77)": "False", "Drop Down (81)": "upper"})
+    result = convert_yxmd(macro_after_text_input("Cleanse.yxmc", config), source_name="inline.yxmd")
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    cleansing = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert cleansing["case_mode"] == "none"
+
+
+def test_data_cleansing_with_an_empty_field_list_cleanses_no_columns():
+    result = convert_yxmd(
+        macro_after_text_input("Cleanse.yxmc", cleanse_config({"List Box (11)": ""})), source_name="inline.yxmd"
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    cleansing = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert cleansing["selection_mode"] == "list"
+    assert cleansing["selected_columns"] == []
+
+
+def test_data_cleansing_matches_the_macro_by_basename():
+    result = convert_yxmd(
+        macro_after_text_input("Macros\\Cleanse.yxmc", cleanse_config()), source_name="inline.yxmd"
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "data_cleansing"
+
+
+@pytest.mark.parametrize(
+    ("case_id", "overrides"),
+    [
+        ("missing-question", {"Check Box (15)": None}),
+        ("unrecognized-question", {"Check Box (999)": "True"}),
+        ("unknown-case-mode", {"Check Box (77)": "True", "Drop Down (81)": "sentence"}),
+        ("unquoted-field-list", {"List Box (11)": "value"}),
+        ("dynamic-unknown-fields", {"List Box (11)": '"value","*Unknown"'}),
+    ],
+)
+def test_data_cleansing_fails_closed_to_a_placeholder(case_id: str, overrides: dict):
+    document = macro_after_text_input("Cleanse.yxmc", cleanse_config(overrides))
+    row = report_row(convert_yxmd(document, source_name="inline.yxmd"), 2)
+    assert row.status == "placeholder", case_id
+    assert row.flowfile_node_type == "polars_code"
+    assert row.messages
 
 
 @pytest.mark.parametrize(
@@ -1223,3 +1328,8 @@ def test_extra_tools_flow_runs(tmp_path: Path, extra_tools: ConversionResult):
     appended = flow.get_node(8).get_resulting_data().data_frame.collect()
     assert appended.height == 3
     assert appended["tax"].to_list() == [0.2, 0.2, 0.2]
+
+    cleansed_id = report_row(extra_tools, 8).flowfile_node_ids[0]
+    cleansed = flow.get_node(cleansed_id).get_resulting_data().data_frame.collect()
+    assert cleansed["region"].to_list() == ["NORTH", "NORTH", "SOUTH"]
+    assert cleansed["product"].to_list() == ["APPLES", "PEARS", "APPLES"]
