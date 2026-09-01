@@ -172,6 +172,8 @@ def test_env_flags_are_reflected(admin_client: TestClient, monkeypatch) -> None:
 
     monkeypatch.delenv(telemetry.ENV_KILL_SWITCH, raising=False)
     monkeypatch.delenv("FLOWFILE_TELEMETRY_ENDPOINT", raising=False)
+    # Releases bake in DEFAULT_ENDPOINT, so "no endpoint" needs that cleared too.
+    monkeypatch.setattr(telemetry, "DEFAULT_ENDPOINT", "")
     body = admin_client.get("/telemetry/status").json()
     assert body["endpoint_configured"] is False
     assert body["available"] is False

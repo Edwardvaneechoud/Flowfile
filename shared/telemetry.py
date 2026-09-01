@@ -35,7 +35,7 @@ logger = logging.getLogger("flowfile.telemetry")
 
 ENV_KILL_SWITCH = "FLOWFILE_TELEMETRY"
 ENV_ENDPOINT = "FLOWFILE_TELEMETRY_ENDPOINT"
-DEFAULT_ENDPOINT = ""  # project collector URL baked in at release; "" = none ships, telemetry disabled unless env-set
+DEFAULT_ENDPOINT = "https://events.flowfile.app/events"  # project collector; "" = none ships, telemetry off unless env-set
 FALSY = ("false", "0", "no", "off")
 KNOWN_MODES = ("electron", "docker", "package")
 

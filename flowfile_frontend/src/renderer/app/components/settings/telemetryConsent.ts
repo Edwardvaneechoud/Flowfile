@@ -27,9 +27,10 @@ export const CONSENT_COPY = {
   headline: "Help improve Flowfile?",
   body:
     "Flowfile can send anonymous usage events to help prioritise development. " +
-    "This is opt-in and off by default. " +
-    "Events describe which features are used — never your data, file paths, column names, " +
-    "formulas, or anything you type.",
+    "This is turned off by default. " +
+    "Events describe features you use — never your data, file paths, column names, " +
+    "formulas, or anything you type. " +
+    "It would be very helpful to understand better how you use Flowfile!",
   // Split so the modal can wrap the env var in <code> without duplicating copy.
   envVarLine: {
     prefix: "Operators can hard-disable this with ",

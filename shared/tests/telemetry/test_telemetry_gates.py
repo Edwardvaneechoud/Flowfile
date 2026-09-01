@@ -89,6 +89,7 @@ def test_testing_check_is_the_exact_capital_t_string(value, enabled, posts, monk
 @pytest.mark.parametrize("value", [None, ""])
 def test_missing_endpoint_disables(value, posts, monkeypatch):
     telemetry.set_consent(True)
+    monkeypatch.setattr(telemetry, "DEFAULT_ENDPOINT", "")
     if value is None:
         monkeypatch.delenv("FLOWFILE_TELEMETRY_ENDPOINT", raising=False)
     else:
@@ -152,6 +153,9 @@ def test_revoking_consent_stops_an_already_sending_install(enabled, posts):
 
 class TestStatus:
     def test_status_reports_every_gate(self, monkeypatch):
+        # The baseline this asserts is "nothing resolves at all", which a
+        # release shipping DEFAULT_ENDPOINT no longer reaches on its own.
+        monkeypatch.setattr(telemetry, "DEFAULT_ENDPOINT", "")
         status = telemetry.get_status()
         assert status.as_dict() == {
             "available": False,

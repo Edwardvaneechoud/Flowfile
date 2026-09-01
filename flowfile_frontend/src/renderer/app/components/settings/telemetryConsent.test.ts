@@ -107,7 +107,7 @@ describe("consent copy", () => {
   it("keeps the decline and accept labels factual, with No as the plain option", () => {
     expect(CONSENT_COPY.declineLabel).toBe("No thanks");
     expect(CONSENT_COPY.acceptLabel).toBe("Share anonymous usage data");
-    expect(CONSENT_COPY.body).toMatch(/opt-in/i);
-    expect(CONSENT_COPY.body).toMatch(/off by default/i);
+    expect(CONSENT_COPY.body).toMatch(/turned off by default/i);
+    expect(CONSENT_COPY.body).toMatch(/never your data/i);
   });
 });

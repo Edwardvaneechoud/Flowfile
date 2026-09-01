@@ -3,8 +3,8 @@
     <div class="mb-3">
       <h2 class="page-title">Privacy</h2>
       <p class="page-description">
-        Control what Flowfile shares. Anonymous usage telemetry is opt-in and off by default —
-        nothing is ever sent without consent.
+        Control what Flowfile shares. Anonymous usage telemetry is turned off by default — nothing
+        is ever sent without consent.
       </p>
     </div>
 

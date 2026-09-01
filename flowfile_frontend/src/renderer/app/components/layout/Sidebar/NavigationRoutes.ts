@@ -1,6 +1,6 @@
 import { connectionTypes } from "../../../views/ConnectionsView/connectionTypes";
 import { CATALOG_TAB_GROUP_KEYS, catalogTabs } from "../../../views/CatalogView/catalogTabs";
-import { computeTabs } from "../../../views/ComputeView/computeTabs";
+import { COMPUTE_TAB_GROUP_KEYS, computeTabs } from "../../../views/ComputeView/computeTabs";
 
 export interface INavigationRoute {
   name: string;
@@ -107,6 +107,7 @@ export default {
         displayName: t.sidebarKey,
         meta: { icon: t.icon },
         requiresAdmin: t.requiresAdmin,
+        group: { key: t.group, labelKey: COMPUTE_TAB_GROUP_KEYS[t.group] },
       })),
     },
     {

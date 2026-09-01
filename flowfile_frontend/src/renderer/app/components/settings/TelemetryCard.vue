@@ -4,8 +4,8 @@
       <div>
         <h3 class="telemetry-card-title">Anonymous usage telemetry</h3>
         <p class="telemetry-card-description">
-          Share anonymous usage events to help prioritise Flowfile development. Off by default.
-          Events describe which features are used — never your data, file paths, column names,
+          Share anonymous usage events to help prioritise Flowfile development. Turned off by
+          default. Events describe features you use — never your data, file paths, column names,
           formulas, or anything you type.
         </p>
       </div>
