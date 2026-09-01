@@ -28,7 +28,7 @@ def test_tier_counts_match_the_browser_palette(manifest):
     counts = {tier: 0 for tier in ("supported", "locked", "absent")}
     for entry in manifest["nodes"].values():
         counts[entry["tier"]] += 1
-    assert counts == {"supported": 23, "locked": 16, "absent": 8}
+    assert counts == {"supported": 23, "locked": 16, "absent": 9}
     assert manifest["counts"] == counts
 
 

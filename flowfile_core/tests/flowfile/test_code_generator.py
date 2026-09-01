@@ -1,5 +1,6 @@
 import ast
 import json
+import string
 from pathlib import Path
 from uuid import uuid4
 
@@ -2335,6 +2336,322 @@ def test_sort_and_unique_operations(export_func):
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
     assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def add_cleansing_source(flow: FlowGraph, node_id: int, columns: list[tuple[str, str]], data: list[list]) -> None:
+    """Add a manual input with explicit per-column dtypes.
+
+    RawData.from_pylist would stringify any column mixing None with numbers, which
+    would silently hide the numeric-only cleansing rules.
+    """
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow.flow_id,
+            node_id=node_id,
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name=name, data_type=data_type) for name, data_type in columns],
+                data=data,
+            ),
+        )
+    )
+
+
+def add_data_cleansing(flow: FlowGraph, node_id: int, depending_on_id: int, **kwargs) -> None:
+    flow.add_data_cleansing(
+        input_schema.NodeDataCleansing(
+            flow_id=flow.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            cleansing_input=transform_schema.DataCleansingInput(**kwargs),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_defaults(export_func):
+    """Data cleansing with its default settings: blank-fill, zero-fill and trim."""
+    flow = create_basic_flow()
+    add_cleansing_source(
+        flow,
+        node_id=1,
+        columns=[("name", "String"), ("score", "Integer"), ("flag", "Boolean")],
+        data=[["  Alice ", None, "Bob\t"], [85, None, 95], [True, None, False]],
+    )
+    add_data_cleansing(flow, node_id=2, depending_on_id=1)
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code,
+            'pl.col(["name"]).fill_null("").str.strip_chars()',
+            'pl.col(["score"]).fill_null(strategy="zero")',
+        )
+    else:
+        verify_code_contains(code, ".data_cleansing(", "trim_whitespace=True", "case_mode='none'")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df["name"].to_list() == ["Alice", "", "Bob"]
+    assert result_df["score"].to_list() == [85, 0, 95]
+    assert result_df["flag"].to_list() == [True, None, False]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_every_string_rule(export_func):
+    """Every character/whitespace/case rule at once, on unicode and full ASCII punctuation."""
+    flow = create_basic_flow()
+    add_cleansing_source(
+        flow,
+        node_id=1,
+        columns=[("messy", "String"), ("amount", "Float"), ("ok", "Boolean")],
+        data=[
+            ["  Héllo,\tW0rld!  ", f"À1{string.punctuation}é", None],
+            [1.5, None, 2.5],
+            [True, None, False],
+        ],
+    )
+    add_data_cleansing(
+        flow,
+        node_id=2,
+        depending_on_id=1,
+        remove_numbers=True,
+        remove_punctuation=True,
+        normalize_whitespace=True,
+        trim_whitespace=True,
+        case_mode="lowercase",
+    )
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code,
+            f'.str.replace_all({transform_schema.CLEANSING_NUMBERS_REGEX!r}, "")',
+            f'.str.replace_all({transform_schema.CLEANSING_PUNCTUATION_REGEX!r}, "")',
+            f'.str.replace_all({transform_schema.CLEANSING_WHITESPACE_RUN_REGEX!r}, " ")',
+            ".str.strip_chars().str.to_lowercase()",
+            'pl.col(["amount"]).fill_null(strategy="zero")',
+        )
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    cleaned = result_df["messy"].to_list()
+    assert all(not any(char.isdigit() or char in string.punctuation for char in value) for value in cleaned)
+    assert cleaned[0] == "héllo wrld"
+    assert cleaned[2] == ""
+    assert result_df["amount"].to_list() == [1.5, 0.0, 2.5]
+    assert result_df["ok"].to_list() == [True, None, False]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_remove_letters(export_func):
+    """Letter removal is unicode-aware and runs before the whitespace clean-up."""
+    flow = create_basic_flow()
+    add_cleansing_source(flow, node_id=1, columns=[("mixed", "String")], data=[["Àbé ö9! x", None]])
+    add_data_cleansing(flow, node_id=2, depending_on_id=1, remove_letters=True)
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, f'.str.replace_all({transform_schema.CLEANSING_LETTERS_REGEX!r}, "")')
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df["mixed"].to_list() == ["9!", ""]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_remove_all_whitespace_supersedes_trim_and_normalize(export_func):
+    """remove_all_whitespace replaces trimming and normalising, and casing still runs."""
+    flow = create_basic_flow()
+    add_cleansing_source(flow, node_id=1, columns=[("text", "String")], data=[["  hello   wORLD \t", None]])
+    add_data_cleansing(
+        flow,
+        node_id=2,
+        depending_on_id=1,
+        trim_whitespace=True,
+        normalize_whitespace=True,
+        remove_all_whitespace=True,
+        case_mode="titlecase",
+    )
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, f'.str.replace_all({transform_schema.CLEANSING_WHITESPACE_REGEX!r}, "")')
+        assert ".str.strip_chars()" not in code
+        assert repr(transform_schema.CLEANSING_WHITESPACE_RUN_REGEX) not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df["text"].to_list() == ["Helloworld", ""]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_null_rows_and_columns_with_column_list(export_func):
+    """remove_null_rows + remove_null_columns + string rules on a column list.
+
+    The generated Polars code must resolve its target columns at runtime here: the
+    export-time candidates can be dropped by the (data-dependent) null-column rule.
+    """
+    flow = create_basic_flow()
+    add_cleansing_source(
+        flow,
+        node_id=1,
+        columns=[("name", "String"), ("nickname", "String"), ("empty", "String"), ("score", "Integer")],
+        data=[
+            ["  alice ", None, "  bob  ", None],
+            ["  ali ", None, "  bo  ", None],
+            [None, None, None, None],
+            [85, None, 95, None],
+        ],
+    )
+    add_data_cleansing(
+        flow,
+        node_id=2,
+        depending_on_id=1,
+        remove_null_rows=True,
+        remove_null_columns=True,
+        selection_mode="list",
+        selected_columns=["name", "empty"],
+        case_mode="uppercase",
+    )
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code,
+            ".filter(~pl.all_horizontal(pl.all().is_null()))",
+            ".select(pl.all().null_count()).collect().to_dicts()[0]",
+            '[c for c in ["name", "empty"] if c in _dc_2_cols]',
+        )
+    else:
+        verify_code_contains(code, "columns=['name', 'empty']", "remove_null_columns=True")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df.columns == ["name", "nickname", "score"]
+    assert result_df["name"].to_list() == ["ALICE", "BOB"]
+    assert result_df["nickname"].to_list() == ["  ali ", "  bo  "]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_all_null_frame_drops_every_column(export_func):
+    """A frame that is null everywhere loses every column, matching the engine.
+
+    The engine profiles null counts on the *incoming* frame, so the exported code
+    must too — profiling after the null-row filter would see height 0 and keep
+    every column.
+    """
+    flow = create_basic_flow()
+    add_cleansing_source(
+        flow,
+        node_id=1,
+        columns=[("a", "String"), ("b", "String")],
+        data=[[None, None], [None, None]],
+    )
+    add_data_cleansing(flow, node_id=2, depending_on_id=1, remove_null_rows=True, remove_null_columns=True)
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df.shape == (0, 0)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_chained_nodes(export_func):
+    """Two cleansing nodes in one flow keep their runtime helper variables apart."""
+    flow = create_basic_flow()
+    add_cleansing_source(
+        flow,
+        node_id=1,
+        columns=[("a", "String"), ("b", "String")],
+        data=[["  x! ", "y"], [None, None]],
+    )
+    add_data_cleansing(flow, node_id=2, depending_on_id=1, remove_null_columns=True, remove_punctuation=True)
+    add_data_cleansing(flow, node_id=3, depending_on_id=2, remove_null_columns=True, case_mode="uppercase")
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, "_dc_2_drop", "_dc_3_drop", "_dc_2_cols", "_dc_3_cols")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df.columns == ["a"]
+    assert result_df["a"].to_list() == ["X", "Y"]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_downstream_of_a_null_column_drop(export_func):
+    """A node that drops no columns itself still must not target an upstream drop.
+
+    Schema prediction is static, so node 3's export-time candidates still contain the
+    column node 2 removed at run time; the generated code has to filter them against
+    the live schema or the script dies with ColumnNotFoundError.
+    """
+    flow = create_basic_flow()
+    add_cleansing_source(
+        flow,
+        node_id=1,
+        columns=[("a", "String"), ("gone", "String")],
+        data=[["  x! ", "y"], [None, None]],
+    )
+    add_data_cleansing(flow, node_id=2, depending_on_id=1, remove_null_columns=True)
+    add_data_cleansing(flow, node_id=3, depending_on_id=2, case_mode="uppercase")
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, '[c for c in ["a", "gone"] if c in _dc_3_cols]')
+        assert "_dc_3_drop" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df.columns == ["a"]
+    assert result_df["a"].to_list() == ["X!", "Y"]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_data_cleansing_without_any_rule_is_a_passthrough(export_func):
+    """Every rule off: the node still exports, and changes nothing."""
+    flow = create_basic_flow()
+    add_cleansing_source(flow, node_id=1, columns=[("a", "String")], data=[["  x  ", None]])
+    add_data_cleansing(
+        flow,
+        node_id=2,
+        depending_on_id=1,
+        replace_nulls_with_blank=False,
+        replace_nulls_with_zero=False,
+        trim_whitespace=False,
+    )
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+    assert result_df["a"].to_list() == ["  x  ", None]
+
+
+def test_data_cleansing_project_export():
+    """The project exporter inherits the FlowFrame handler — no override needed."""
+    from flowfile_core.flowfile.code_generator.project_exporter import export_flow_to_project
+
+    flow = create_basic_flow(name="cleansing_flow")
+    add_cleansing_source(flow, node_id=1, columns=[("a", "String")], data=[["  x  ", None]])
+    add_data_cleansing(flow, node_id=2, depending_on_id=1, selection_mode="list", selected_columns=["a"])
+
+    manifest = export_flow_to_project(flow)
+    pipeline = next(file.content for file in manifest.files if file.path == "pipeline.py")
+    assert ".data_cleansing(" in pipeline
+    assert "columns=['a']" in pipeline
+    assert manifest.warnings == []
 
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])

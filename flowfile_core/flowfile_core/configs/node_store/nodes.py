@@ -157,6 +157,20 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             tags=[NodeTag.RENAME, NodeTag.COLUMNS],
         ),
         NodeTemplate(
+            name="Data cleansing",
+            item="data_cleansing",
+            input=1,
+            output=1,
+            transform_type="narrow",
+            node_type="process",
+            image="data_cleansing.svg",
+            node_group="transform",
+            drawer_title="Data Cleansing",
+            drawer_intro="Fix nulls, whitespace, unwanted characters and casing in one step",
+            laziness="lazy",
+            tags=[NodeTag.CLEAN, NodeTag.CLEANSE, NodeTag.TRIM, NodeTag.WHITESPACE, NodeTag.NULLS],
+        ),
+        NodeTemplate(
             name="Filter data",
             item="filter",
             input=1,
@@ -781,7 +795,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
         ),
     ]
     nodes_list.sort(key=lambda x: x.name)
-    nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}
+    nodes_with_defaults = {"sample", "sort", "union", "select", "record_count", "data_cleansing"}
 
     def check_if_has_default_setting(node_item: str):
         return node_item in nodes_with_defaults

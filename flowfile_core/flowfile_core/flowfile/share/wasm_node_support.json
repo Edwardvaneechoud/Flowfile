@@ -32,6 +32,9 @@
       "tier": "supported",
       "wasm_type": "cross_join"
     },
+    "data_cleansing": {
+      "tier": "absent"
+    },
     "database_reader": {
       "tier": "locked",
       "wasm_type": "database_reader",
@@ -243,6 +246,6 @@
   "counts": {
     "supported": 23,
     "locked": 16,
-    "absent": 8
+    "absent": 9
   }
 }

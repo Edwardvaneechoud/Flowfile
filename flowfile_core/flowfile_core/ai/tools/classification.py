@@ -42,6 +42,11 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "formula": "static",
     "select": "static",
     "dynamic_rename": "dynamic",
+    # data_cleansing never changes a dtype and registers no schema_callback, so the
+    # mirror predicts input schema verbatim. remove_null_columns can drop columns at
+    # run time, but that is data-dependent the way filter's row count is — the
+    # prediction path itself reads no data.
+    "data_cleansing": "static",
     "sort": "static",
     "record_id": "static",
     "sample": "static",
