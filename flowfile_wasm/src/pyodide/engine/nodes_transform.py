@@ -1,10 +1,11 @@
 import polars as pl
 
-from .dtypes import readable_data_type_group
+from .dtypes import readable_data_type_group, select_cast_dtype
 from .errors import format_error_lf
 from .log import log_node
 from .nodes_formula import _to_expr
 from .state import get_lazyframe, get_schema, store_lazyframe
+from .validation import refuse_placeholder
 
 
 def convert_filter_value(value: str, dtype) -> any:
@@ -24,14 +25,20 @@ def convert_filter_values(values: list[str], dtype) -> list:
 
 
 def build_filter(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
-    """Build the filtered LazyFrame from input + settings (no store, no collect)."""
+    """Build the filtered LazyFrame from input + settings (no store, no collect).
+
+    An advanced filter is a **flowfile formula** (``[quantity] > 7``), the same
+    dialect the formula node speaks, so it goes through the same parser rather
+    than through Python.
+    """
+    refuse_placeholder(settings)
     filter_input = settings.get("filter_input", {})
     mode = filter_input.get("mode", "basic")
 
     if mode == "advanced":
         expr = filter_input.get("advanced_filter", "")
         if expr:
-            return input_lf.filter(eval(expr))
+            return input_lf.filter(_to_expr(expr))
         return input_lf
 
     basic = filter_input.get("basic_filter", {})
@@ -104,8 +111,25 @@ def execute_filter(node_id: int, input_id: int, settings: dict) -> dict:
         return {"success": False, "error": format_error_lf("filter", node_id, e, input_lf, field)}
 
 
+def _apply_select_cast(expr: pl.Expr, target) -> pl.Expr:
+    """Cast one column the way flowfile_core's define_pl_col_transformation does.
+
+    Temporal targets parse from text instead of casting, and every conversion is
+    non-strict: a value that will not convert becomes null rather than raising.
+    """
+    if target == pl.Datetime:
+        return expr.str.to_datetime(strict=False)
+    if target == pl.Date:
+        return expr.str.to_date(strict=False)
+    return expr.cast(target, strict=False)
+
+
 def build_select(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
-    """Build the column-selected/renamed LazyFrame (no store, no collect)."""
+    """Build the column-selected/renamed/re-typed LazyFrame (no store, no collect).
+
+    Order matches flowfile_core's do_select: drop, then cast under the incoming
+    name, then rename, then order by `position`.
+    """
     select_input = settings.get("select_input", [])
     if not select_input:
         return input_lf
@@ -120,12 +144,14 @@ def build_select(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     exprs = []
     for s in kept:
         old_name = s.get("old_name", "")
-        new_name = s.get("new_name", old_name)
-        if old_name in available_cols:
-            if old_name != new_name:
-                exprs.append(pl.col(old_name).alias(new_name))
-            else:
-                exprs.append(pl.col(old_name))
+        if old_name not in available_cols:
+            continue
+        new_name = s.get("new_name") or old_name
+        expr = pl.col(old_name)
+        target = select_cast_dtype(s.get("data_type"), schema[old_name])
+        if target is not None:
+            expr = _apply_select_cast(expr, target)
+        exprs.append(expr.alias(new_name) if old_name != new_name else expr)
 
     return input_lf.select(exprs) if exprs else input_lf
 

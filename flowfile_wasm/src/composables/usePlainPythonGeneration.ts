@@ -13,6 +13,7 @@
 import { FlowToPolarsConverter, RESERVED_NAMES, toPythonValue } from './useCodeGeneration'
 import type { CodeGenerationOptions } from './useCodeGeneration'
 import { getNodeDescription } from '../config/nodeDescriptions'
+import { selectCastTarget } from '../stores/schema-inference'
 import type {
   FlowNode,
   NodeReadSettings,
@@ -578,6 +579,49 @@ const HELPER_SOURCES: Record<string, string[]> = {
     '        return "true" if value else "false"',
     '    return str(value)'
   ],
+  as_whole_number: [
+    'def as_whole_number(value, low=-(2 ** 63), high=2 ** 63 - 1):',
+    '    """Read a value as a whole number the way Polars converts a column to one.',
+    '',
+    '    Polars converts without complaining: anything that will not parse — or',
+    '    will not fit the width asked for — comes out missing rather than raising.',
+    '    Decimals are truncated toward zero, never rounded.',
+    '    """',
+    '    if value is None:',
+    '        return None',
+    '    if isinstance(value, (bool, int, float)):',
+    '        try:',
+    '            number = int(value)',
+    '        except (ValueError, OverflowError):',
+    '            return None',
+    '    else:',
+    '        text = str(value)',
+    '        if text != text.strip():',
+    '            return None  # Polars will not parse padded text',
+    '        try:',
+    '            number = int(text)',
+    '        except ValueError:',
+    '            return None',
+    '    return number if low <= number <= high else None'
+  ],
+  as_decimal_number: [
+    'def as_decimal_number(value):',
+    '    """Read a value as a decimal number, the way Polars converts a column to one.',
+    '',
+    '    Same rule as as_whole_number: text that will not parse comes out missing.',
+    '    """',
+    '    if value is None:',
+    '        return None',
+    '    if isinstance(value, (bool, int, float)):',
+    '        return float(value)',
+    '    text = str(value)',
+    '    if text != text.strip():',
+    '        return None',
+    '    try:',
+    '        return float(text)',
+    '    except ValueError:',
+    '        return None'
+  ],
   values_of: [
     'def values_of(rows, column):',
     '    """One column\'s values, with the missing ones (None) dropped.',
@@ -610,6 +654,27 @@ const HELPER_SOURCES: Record<string, string[]> = {
 /** Helpers that pull in other helpers. */
 const HELPER_DEPENDENCIES: Record<string, string[]> = {
   read_csv_file: ['pick_column_type']
+}
+
+/**
+ * The plain-Python conversion for a select node's cast target.
+ *
+ * Only the conversions a `list[dict]` can honour exactly are here. Polars parses
+ * text into temporals by sniffing formats, refuses text→Boolean outright, and
+ * loses precision on Float32 — none of which a loop reproduces, so those targets
+ * throw and the node becomes a done-by-the-canvas note.
+ */
+const PLAIN_CAST_CONVERSIONS: Record<string, { helper: string; bounds?: string }> = {
+  String: { helper: 'as_text' },
+  Float64: { helper: 'as_decimal_number' },
+  Int64: { helper: 'as_whole_number' },
+  Int32: { helper: 'as_whole_number', bounds: '-(2 ** 31), 2 ** 31 - 1' },
+  Int16: { helper: 'as_whole_number', bounds: '-(2 ** 15), 2 ** 15 - 1' },
+  Int8: { helper: 'as_whole_number', bounds: '-(2 ** 7), 2 ** 7 - 1' },
+  UInt64: { helper: 'as_whole_number', bounds: '0, 2 ** 64 - 1' },
+  UInt32: { helper: 'as_whole_number', bounds: '0, 2 ** 32 - 1' },
+  UInt16: { helper: 'as_whole_number', bounds: '0, 2 ** 16 - 1' },
+  UInt8: { helper: 'as_whole_number', bounds: '0, 2 ** 8 - 1' }
 }
 
 /** One manual-input cell as its declared dtype, or unchanged when it will not convert. */
@@ -1147,18 +1212,39 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
       return
     }
 
+    // Resolve every conversion before emitting: a refusal must roll back cleanly,
+    // and a helper registered for a rolled-back block would still be written out.
+    const needed = new Set<string>()
+    const cells = kept.map(column => {
+      const value = this.cell('row', column.old_name)
+      const target = selectCastTarget(column)
+      if (!target) return value
+      const conversion = PLAIN_CAST_CONVERSIONS[target]
+      if (!conversion) {
+        throw new PlainPythonUnsupported(
+          `Converting a column to ${target} follows Polars' own parsing rules, which a list of dicts cannot reproduce.`
+        )
+      }
+      needed.add(conversion.helper)
+      return `${conversion.helper}(${value}${conversion.bounds ? `, ${conversion.bounds}` : ''})`
+    })
+    for (const helper of needed) this.useHelper(helper)
+
     this.section('Select columns')
     this.teach(
       'Rebuild each row as a new dict holding only the columns you asked for.',
       'Renaming is free here: you simply write the new key.'
     )
+    if (needed.size > 0) {
+      this.teach('A column whose type changed is converted cell by cell on the way in.')
+    }
     this.addCode(`${varName} = []`)
     this.addCode(`for row in ${input}:`)
     this.addCode(`    ${varName}.append({`)
-    for (const column of kept) {
+    kept.forEach((column, index) => {
       const newName = column.new_name || column.old_name
-      this.addCode(`        ${toPythonValue(newName)}: ${this.cell('row', column.old_name)},`)
-    }
+      this.addCode(`        ${toPythonValue(newName)}: ${cells[index]},`)
+    })
     this.addCode('    })')
     this.addCode('')
   }

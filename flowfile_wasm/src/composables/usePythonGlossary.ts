@@ -296,6 +296,8 @@ export const PYTHON_GLOSSARY: Record<string, GlossaryEntry> = {
     summary: 'Generated helper: the non-null values of one column. Aggregates skip missing values, and this is where that happens.'
   },
   as_text: { summary: 'Generated helper: renders a value the way Polars does when casting to text (True becomes "true").' },
+  as_whole_number: { summary: 'Generated helper: reads a value as a whole number the way Polars converts a column to one — anything that will not parse or fit comes out missing.' },
+  as_decimal_number: { summary: 'Generated helper: reads a value as a decimal number, with text that will not parse coming out missing.' },
   average: { summary: 'Generated helper: the mean, or None when there is nothing to average.' },
   middle_value: { summary: 'Generated helper: the median, or None when there is nothing to take it of.' },
   write_csv_file: { summary: 'Generated helper: writes a list of dicts to a CSV, taking the columns from the first row.' },

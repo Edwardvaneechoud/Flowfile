@@ -58,8 +58,27 @@
 
       <FlowTabs v-if="route.name === 'designer'" />
 
+      <!-- Share-import notice: placeholder warning or invalid-link error. In
+           flow (not floating) so it never paints over the canvas panels. -->
+      <ShareImportNotice
+        v-if="shareNotice"
+        :variant="shareNotice.variant"
+        :title="shareNotice.title"
+        :detail="shareNotice.detail"
+        :placeholders="shareNotice.placeholders"
+        @close="shareNotice = null"
+        @focus-node="focusShareNode"
+      />
+
       <main class="app-page"><router-view /></main>
     </div>
+
+    <MissingFilesModal
+      :is-open="showShareMissingFiles"
+      :missing-files="shareMissingFiles"
+      @close="showShareMissingFiles = false"
+      @complete="onShareFilesComplete"
+    />
 
     <DocsModal :is-open="uiStore.showDocs" @close="uiStore.showDocs = false" />
     <AboutDialog v-model:visible="uiStore.showAbout" :version="version" />
@@ -89,6 +108,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import IconRail from '../components/layout/IconRail.vue'
 import FlowTabs from '../components/FlowTabs.vue'
+import MissingFilesModal from '../components/MissingFilesModal.vue'
+import ShareImportNotice from '../components/ShareImportNotice.vue'
 import DocsModal from '../components/DocsModal.vue'
 import SaveFlowModal from '../components/SaveFlowModal.vue'
 import ShareModal from '../components/ShareModal.vue'
@@ -102,6 +123,7 @@ import { useSavedFlowsStore } from '../stores/saved-flows-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { useDemo } from '../composables/useDemo'
 import { useShareLink } from '../composables/useShareLink'
+import type { SharePlaceholderInfo } from '../composables/useShareLink'
 import { hasShareHash } from '../utils/share-link'
 
 const route = useRoute()
@@ -121,8 +143,28 @@ const urlParams = new URLSearchParams(window.location.search)
 // A share link wins over ?demo=true when both are present.
 const shouldAutoLoadDemo = urlParams.get('demo') === 'true' && !hasShareHash(window.location.hash)
 
-const { importShareHash } = useShareLink()
+const { importShareHash, autoRunSharedFlow } = useShareLink()
 const showShareModal = ref(false)
+
+// Share-import UI state (banner + missing-files modal).
+const shareNotice = ref<{
+  variant: 'warning' | 'error'
+  title: string
+  detail?: string
+  placeholders: SharePlaceholderInfo[]
+} | null>(null)
+const shareMissingFiles = ref<Array<{ nodeId: number; fileName: string }>>([])
+const showShareMissingFiles = ref(false)
+
+function focusShareNode(nodeId: number) {
+  if (route.name !== 'designer') router.push({ name: 'designer' })
+  uiStore.actions?.focusNode(nodeId)
+}
+
+async function onShareFilesComplete() {
+  showShareMissingFiles.value = false
+  await autoRunSharedFlow()
+}
 
 const openInput = ref<HTMLInputElement | null>(null)
 
@@ -188,32 +230,53 @@ function onDemoLoaded() {
 onMounted(async () => {
   themeStore.initialize()
   flowTabsStore.init()
-  await handleShareHash()
+  const imported = await handleShareHash()
+  const tabAtImport = flowTabsStore.activeTabId
   await pyodideStore.initialize()
+  // Auto-run the shared flow (the documented exception to explicit-only
+  // execution) — unless the user switched tabs during the Pyodide boot, or
+  // input files are still missing (the modal's Continue re-runs instead).
+  if (imported && flowTabsStore.activeTabId === tabAtImport && !showShareMissingFiles.value) {
+    await autoRunSharedFlow()
+  }
 })
 
 // Import a shared flow from the URL fragment (#flow=...). Runs before Pyodide
 // init — schema propagation re-fires via the isReady watcher once the runtime
 // is up. On success the hash is consumed (router.replace drops it); a cancelled
 // confirm keeps it so a reload can re-offer the flow.
-async function handleShareHash() {
+async function handleShareHash(): Promise<boolean> {
   const result = await importShareHash(window.location.hash)
   switch (result.status) {
     case 'imported':
+      if (result.placeholders.length) {
+        const n = result.placeholders.length
+        shareNotice.value = {
+          variant: 'warning',
+          title: `${n} node${n === 1 ? " isn't" : "s aren't"} supported in the browser version`,
+          detail: "They're shown locked on the canvas, and anything downstream of them can't run here.",
+          placeholders: result.placeholders,
+        }
+      }
       if (result.missingFiles.length) {
-        const names = result.missingFiles.map((m) => m.fileName).join(', ')
-        alert(`Flow opened. Some input files need to be re-loaded: ${names}`)
+        shareMissingFiles.value = result.missingFiles
+        showShareMissingFiles.value = true
       }
       router.replace({ name: 'designer' })
-      break
+      return true
     case 'invalid':
     case 'failed':
-      alert('This share link is invalid or truncated.')
+      shareNotice.value = {
+        variant: 'error',
+        title: 'This share link is invalid or truncated.',
+        placeholders: [],
+      }
       // Pass history.state through: replacing it with null clobbers vue-router's
       // scroll-position state.
       history.replaceState(history.state, '', window.location.pathname + window.location.search)
-      break
+      return false
   }
+  return false
 }
 
 if (shouldAutoLoadDemo) {

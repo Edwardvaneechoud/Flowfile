@@ -23,6 +23,42 @@ import type {
 import { dataTypeGroup } from '../utils/dtypeGroup'
 
 /**
+ * Canonical Polars name for a declared data type, or null when the name means
+ * nothing here. Mirrors `polars_type_from_name` in the engine's dtypes.py:
+ * flowfile_core's friendly aliases resolve, a parametrised name matches on its
+ * base, and an unrecognised name reads as "no type was asked for" rather than
+ * as a silent String.
+ */
+const CAST_TYPE_ALIASES: Record<string, string> = {
+  int: 'Int64', integer: 'Int64', char: 'String', 'fixed decimal': 'Float32',
+  double: 'Float64', float: 'Float64', bool: 'Boolean', byte: 'UInt8',
+  bit: 'Binary', date: 'Date', datetime: 'Datetime', string: 'String',
+  str: 'String', time: 'Time',
+  int8: 'Int8', int16: 'Int16', int32: 'Int32', int64: 'Int64', int128: 'Int128',
+  uint8: 'UInt8', uint16: 'UInt16', uint32: 'UInt32', uint64: 'UInt64',
+  float32: 'Float32', float64: 'Float64', boolean: 'Boolean', utf8: 'String',
+  binary: 'Binary', duration: 'Duration', categorical: 'Categorical', null: 'Null'
+}
+
+export function canonicalCastType(name: string | null | undefined): string | null {
+  if (!name) return null
+  return CAST_TYPE_ALIASES[String(name).split('(')[0].trim().toLowerCase()] ?? null
+}
+
+/**
+ * The dtype a select entry casts its column to, or null for no cast.
+ *
+ * The engine compares the declared type against the column's live dtype, which
+ * a code generator has no access to; `data_type_change` is defined as exactly
+ * that comparison (both editors stamp it on save, and both flow-file dialects
+ * carry it), so the two agree — and a cast to the type a column already holds
+ * is a no-op anyway.
+ */
+export function selectCastTarget(entry: SelectInput): string | null {
+  return entry.data_type_change ? canonicalCastType(entry.data_type) : null
+}
+
+/**
  * Infer the output type for an aggregation function
  */
 function inferAggOutputType(agg: AggType, inputType: string): string {
@@ -85,9 +121,13 @@ function inferSelectSchema(
   for (const selectCol of keptColumns) {
     const inputCol = findColumn(inputSchema, selectCol.old_name)
     if (inputCol) {
+      // build_select casts only where the declared type differs from the one
+      // arriving; the panel records a type for every column, changed or not.
+      const target = canonicalCastType(selectCol.data_type)
+      const cast = target && target !== canonicalCastType(inputCol.data_type)
       result.push({
         name: selectCol.new_name || selectCol.old_name,
-        data_type: selectCol.data_type || inputCol.data_type
+        data_type: cast ? target : inputCol.data_type
       })
     }
   }

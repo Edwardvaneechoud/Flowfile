@@ -22,15 +22,21 @@
     </div>
 
     <!-- Node body -->
-    <div class="custom-node" @contextmenu.prevent="showContextMenu">
+    <div class="custom-node" :class="{ 'is-placeholder': !!data.placeholder }" @contextmenu.prevent="showContextMenu">
       <!-- Node button with icon -->
       <div class="component-wrapper">
         <div class="status-indicator" :class="statusClass">
           <span class="tooltip-text">{{ statusTooltip }}</span>
         </div>
         <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-          <img :src="iconUrl" :alt="data.label" width="40" />
+          <img v-if="iconUrl" :src="iconUrl" :alt="data.label" width="40" />
+          <span v-else class="lock-glyph" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
         </button>
+        <span v-if="data.placeholder && iconUrl" class="lock-badge" aria-hidden="true">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </span>
       </div>
 
       <!-- Input handles -->
@@ -56,14 +62,14 @@
       <!-- Context Menu: teleported to Canvas container (inherits CSS vars, avoids VueFlow transform) -->
       <Teleport v-if="menuVisible" to="#flowfile-context-menu-container">
         <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
-          <div class="context-menu-item" @click="editNode">
+          <div v-if="!data.placeholder" class="context-menu-item" @click="editNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
             <span>Edit</span>
           </div>
-          <div class="context-menu-item" @click="viewData">
+          <div v-if="!data.placeholder" class="context-menu-item" @click="viewData">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 3h18v18H3z"></path>
               <path d="M3 9h18M3 15h18M9 3v18"></path>
@@ -74,8 +80,8 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             <span>Learn about this node</span>
           </div>
-          <div class="context-menu-divider"></div>
-          <div class="context-menu-item" @click="runNode">
+          <div v-if="!data.placeholder" class="context-menu-divider"></div>
+          <div v-if="!data.placeholder" class="context-menu-item" @click="runNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
@@ -90,7 +96,7 @@
             <span>Save to catalog</span>
           </div>
           <div class="context-menu-divider"></div>
-          <div class="context-menu-item" @click="copyNode">
+          <div v-if="!data.placeholder" class="context-menu-item" @click="copyNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -114,7 +120,7 @@
 <script setup lang="ts">
 import { computed, ref, onUnmounted, nextTick, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import type { NodeResult } from '../../types'
+import type { BlockedInfo, NodeResult } from '../../types'
 import { useFlowStore } from '../../stores/flow-store'
 import { iconUrls } from '../../utils/iconUrls'
 
@@ -151,6 +157,10 @@ interface NodeData {
   inputs: number
   outputs: number
   result?: NodeResult
+  /** Set for share-link placeholder nodes (settings never travelled). */
+  placeholder?: { reason: string; originalType: string }
+  /** Set when this node (or an ancestor) can't run in this build. */
+  blocked?: BlockedInfo
 }
 
 const props = defineProps<{
@@ -206,11 +216,21 @@ const contextMenuY = ref(0)
 const isSelected = computed(() => flowStore.selectedNodeId === props.data.id)
 
 const iconUrl = computed(() => {
+  // A placeholder shows the original node's icon greyed with a lock badge, or
+  // the lock glyph alone when no icon exists (a generic fallback would lie).
+  if (props.data.placeholder) {
+    const iconFile = iconMap[props.data.placeholder.originalType]
+    if (!iconFile) return null
+    return iconUrls[iconFile] || new URL(`../../assets/icons/${iconFile}`, import.meta.url).href
+  }
   const iconFile = iconMap[props.data.type] || 'view.png'
   return iconUrls[iconFile] || new URL(`../../assets/icons/${iconFile}`, import.meta.url).href
 })
 
 const statusClass = computed(() => {
+  // Blocked wins over dirty: dirtiness is meaningless for a node that can't run.
+  if (props.data.blocked || props.data.result?.blocked) return 'blocked'
+
   const isDirty = flowStore.isNodeDirty(props.data.id)
   if (isDirty) return 'unknown'
 
@@ -221,9 +241,16 @@ const statusClass = computed(() => {
 })
 
 const statusTooltip = computed(() => {
+  const blocked = props.data.blocked ?? props.data.result?.blocked
+  if (blocked) {
+    return blocked.reason === 'placeholder'
+      ? `Not supported in the browser version — ${blocked.message}`
+      : `Blocked: ${blocked.message}`
+  }
+
   const isDirty = flowStore.isNodeDirty(props.data.id)
   if (isDirty) return 'Node has changes - run flow to update'
-  
+
   if (!props.data.result) return 'Not executed yet'
   if (props.data.result.success) {
     const rows = props.data.result.data?.total_rows
@@ -335,7 +362,10 @@ function viewData() {
 }
 
 function learnAboutNode(event: MouseEvent) {
-  emit('show-info', props.data.type, { x: event.clientX, y: event.clientY })
+  // For placeholders, resolve info by the original type so the palette's
+  // locked-node entry (name, intro, docs link) is found.
+  const infoType = props.data.placeholder?.originalType ?? props.data.type
+  emit('show-info', infoType, { x: event.clientX, y: event.clientY })
   closeContextMenu()
 }
 
@@ -481,6 +511,51 @@ onUnmounted(() => {
 
 .status-indicator.unknown::before {
   background-color: var(--color-text-muted);
+}
+
+/* Blocked: hollow ring — nothing ran, nothing failed. */
+.status-indicator.blocked::before {
+  background-color: transparent;
+  border: 2px dashed var(--color-text-muted);
+  width: 8px;
+  height: 8px;
+}
+
+.custom-node.is-placeholder {
+  border: 1px dashed var(--color-text-muted);
+  background-color: transparent;
+}
+
+.custom-node.is-placeholder .node-button {
+  cursor: default;
+}
+
+.custom-node.is-placeholder .node-button img {
+  filter: grayscale(1) opacity(0.55);
+}
+
+.lock-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  color: var(--color-text-muted);
+}
+
+.lock-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--color-text-muted);
 }
 
 .status-indicator.running::before {

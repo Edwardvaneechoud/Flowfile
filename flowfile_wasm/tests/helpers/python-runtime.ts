@@ -53,5 +53,14 @@ export function findPython(options: FindPythonOptions = {}): string | null {
       /* try the next one */
     }
   }
+  // The CI parity job sets this so a mis-provisioned environment FAILS the
+  // suite instead of silently skipping every comparison (green-while-proving-
+  // nothing). Local runs without it keep today's skip behavior.
+  if (process.env.FLOWFILE_REQUIRE_TEST_PYTHON) {
+    throw new Error(
+      `FLOWFILE_REQUIRE_TEST_PYTHON is set but no interpreter passed the probe ${JSON.stringify(probe)} — ` +
+      'the parity suites would silently skip; fix the environment instead'
+    )
+  }
   return null
 }
