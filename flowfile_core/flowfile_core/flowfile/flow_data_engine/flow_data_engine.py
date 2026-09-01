@@ -2700,6 +2700,190 @@ class FlowDataEngine:
             )
         return FlowDataEngine(new_df, number_of_records=self.number_of_records)
 
+    @staticmethod
+    def _select_cleansing_targets(
+        columns: list[tuple[str, str]],
+        settings: transform_schemas.DataCleansingInput,
+    ) -> list[str]:
+        """Return the ordered column names the per-column cleansing rules apply to.
+
+        Unknown names in `settings.selected_columns` are silently dropped so stale UI
+        state does not break execution, mirroring `_select_rename_targets`.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
+            settings: The data cleansing configuration.
+
+        Returns:
+            The target column names, in schema order.
+        """
+        if settings.selection_mode == "all":
+            return [name for name, _ in columns]
+        if settings.selection_mode == "list":
+            available = {name for name, _ in columns}
+            return [c for c in settings.selected_columns if c in available]
+        return []
+
+    @staticmethod
+    def build_data_cleansing_expressions(
+        columns: list[tuple[str, str]],
+        settings: transform_schemas.DataCleansingInput,
+    ) -> list[pl.Expr]:
+        """Build the per-column cleansing expressions for a single `with_columns` call.
+
+        Pure function — takes the incoming schema as `(name, data_type_group)` tuples
+        (where `data_type_group` is `FlowfileColumn.data_type_group`) plus the user's
+        settings, and returns one expression per column the rules actually change.
+        Columns that are not targeted, or whose data-type group no rule applies to, are
+        simply absent from the result and therefore pass through untouched.
+
+        String columns get a single chained expression in a fixed order: fill nulls,
+        remove letters, numbers and punctuation, clean up whitespace (after character
+        removal, so the gaps it leaves are collapsed too), then apply the casing rule.
+        `remove_all_whitespace` supersedes trimming and normalising. Numeric columns only
+        ever get a zero-fill, expressed as `fill_null(strategy="zero")` rather than
+        `fill_null(0)` because the literal form promotes a `Decimal(p, s)` column to
+        `Decimal(38, s)`. No rule changes a dtype, so the output schema equals the input
+        schema.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
+            settings: The data cleansing configuration.
+
+        Returns:
+            The expressions to pass to a single `with_columns` call, in schema order.
+        """
+        targets = set(FlowDataEngine._select_cleansing_targets(columns, settings))
+        exprs: list[pl.Expr] = []
+        for name, data_type_group in columns:
+            if name not in targets:
+                continue
+            if data_type_group == "Numeric":
+                if settings.replace_nulls_with_zero:
+                    exprs.append(pl.col(name).fill_null(strategy="zero"))
+                continue
+            if data_type_group != "String":
+                continue
+
+            expr = pl.col(name)
+            touched = False
+            if settings.replace_nulls_with_blank:
+                expr = expr.fill_null("")
+                touched = True
+            if settings.remove_letters:
+                expr = expr.str.replace_all(transform_schemas.CLEANSING_LETTERS_REGEX, "")
+                touched = True
+            if settings.remove_numbers:
+                expr = expr.str.replace_all(transform_schemas.CLEANSING_NUMBERS_REGEX, "")
+                touched = True
+            if settings.remove_punctuation:
+                expr = expr.str.replace_all(transform_schemas.CLEANSING_PUNCTUATION_REGEX, "")
+                touched = True
+            if settings.remove_all_whitespace:
+                expr = expr.str.replace_all(transform_schemas.CLEANSING_WHITESPACE_REGEX, "")
+                touched = True
+            else:
+                if settings.normalize_whitespace:
+                    expr = expr.str.replace_all(transform_schemas.CLEANSING_WHITESPACE_RUN_REGEX, " ")
+                    touched = True
+                if settings.trim_whitespace:
+                    expr = expr.str.strip_chars()
+                    touched = True
+            if settings.case_mode == "uppercase":
+                expr = expr.str.to_uppercase()
+                touched = True
+            elif settings.case_mode == "lowercase":
+                expr = expr.str.to_lowercase()
+                touched = True
+            elif settings.case_mode == "titlecase":
+                expr = expr.str.to_titlecase()
+                touched = True
+            if touched:
+                exprs.append(expr)
+        return exprs
+
+    def _fetch_null_profile(self) -> tuple[int, dict[str, int]]:
+        """Return `(height, {column: null_count})` for the incoming frame.
+
+        Dropping all-null columns is data-dependent, and a lazy plan cannot change its
+        schema based on the data flowing through it, so the keep-list has to be resolved
+        before the rest of the plan is built. The aggregation is bounded to a single row,
+        and runs on the external worker via `ExternalDfFetcher` (same pattern as
+        `_peek_first_row_as_dict` / `fetch_unique_values`) so core stays collect-free on
+        the hot path; it falls back to an in-core streaming collect only when the worker
+        is unavailable.
+
+        Returns:
+            The frame height and the per-column null count, both from one aggregation.
+        """
+        df = self.data_frame
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        names = lf.collect_schema().names()
+        if not names:
+            return 0, {}
+
+        height_alias = "__ff_height__"
+        while height_alias in names:
+            height_alias += "_"
+        agg_lf = lf.select([pl.len().alias(height_alias), *[pl.col(name).null_count() for name in names]])
+
+        table = None
+        try:
+            external = ExternalDfFetcher(lf=agg_lf, flow_id=1, node_id=-1, wait_on_completion=True)
+            if external.status is not None and external.status.status == "Completed":
+                table = arrow_read(external.status.file_ref)
+        except Exception as e:  # noqa: BLE001 - worker availability is best-effort
+            logger.debug(f"ExternalDfFetcher unavailable for null profile ({e}); using in-core fallback")
+
+        if table is not None:
+            row = {name: table.column(name)[0].as_py() for name in table.column_names}
+        else:
+            row = agg_lf.collect(engine="streaming").to_dicts()[0]
+        height = int(row.pop(height_alias))
+        return height, {name: int(row[name]) for name in names}
+
+    def apply_data_cleansing(self, cleansing_input: transform_schemas.DataCleansingInput) -> FlowDataEngine:
+        """Fixes common data quality issues in a single pass.
+
+        Applies three stages in order: drop rows that are null in every column, drop
+        columns that are null in every row, then apply the per-column rules (null
+        replacement, character removal, whitespace handling, casing) to the selected
+        columns. The first two stages deliberately ignore the column selection, matching
+        Alteryx's Data Cleansing tool.
+
+        Everything stays a lazy plan except the bounded null-count aggregation that
+        `remove_null_columns` needs — see `_fetch_null_profile`. That fetch is skipped
+        entirely when the rule is off or when this engine is a schema-only prediction
+        placeholder (`number_of_records == 0`), so schema prediction never touches data
+        and predicted schema equals the input schema.
+
+        Args:
+            cleansing_input: The data cleansing configuration.
+
+        Returns:
+            A new `FlowDataEngine` with the cleansing rules applied.
+        """
+        new_df = self.data_frame
+        if cleansing_input.remove_null_rows:
+            new_df = new_df.filter(~pl.all_horizontal(pl.all().is_null()))
+
+        dropped: set[str] = set()
+        if cleansing_input.remove_null_columns and self.number_of_records != 0:
+            height, null_counts = self._fetch_null_profile()
+            if height > 0:
+                dropped = {name for name, null_count in null_counts.items() if null_count == height}
+            if dropped:
+                new_df = new_df.drop([name for name in null_counts if name in dropped])
+
+        columns = [(c.column_name, c.data_type_group) for c in self.schema if c.column_name not in dropped]
+        exprs = self.build_data_cleansing_expressions(columns, cleansing_input)
+        if exprs:
+            new_df = new_df.with_columns(exprs)
+
+        if cleansing_input.remove_null_rows:
+            return FlowDataEngine(new_df, streamable=self._streamable)
+        return FlowDataEngine(new_df, number_of_records=self.number_of_records, streamable=self._streamable)
+
     def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
         """Applies an SQL-style formula using `pl.sql_expr`.
 

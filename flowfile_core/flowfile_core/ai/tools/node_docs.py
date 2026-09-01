@@ -165,6 +165,24 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         '{"dynamic_rename_input": {"rename_mode": "prefix", "prefix": "src_", '
         '"selection_mode": "all"}}.'
     ),
+    "data_cleansing": (
+        "Fix the usual data-quality problems in one pass: drop rows/columns that are "
+        "null in every field, replace nulls with a blank (string columns) or zero "
+        "(numeric columns), strip letters/numbers/punctuation/whitespace out of text, "
+        "and force upper, lower or title case. Use when the user says 'clean this up', "
+        "'trim the whitespace', 'remove the empty rows', 'strip the currency symbols', "
+        "or 'uppercase the codes'. Row and column dropping always look at every column; "
+        "the other rules only touch the columns you select, and only the ones whose type "
+        "matches (string rules skip numbers, zero-fill skips text, dates and booleans "
+        "pass through). Don't use it for conditional edits or per-column arithmetic — "
+        "that's 'formula' — and don't use it to drop rows on a predicate, which is "
+        "'filter'. Example: "
+        '{"cleansing_input": {"remove_null_rows": true, "trim_whitespace": true, '
+        '"remove_punctuation": true, "case_mode": "uppercase", '
+        '"selection_mode": "list", "selected_columns": ["product_code"]}}. '
+        "Often paired upstream of 'unique' (dedupe only works once values are "
+        "normalised) or 'join' (keys must match exactly)."
+    ),
     "sort": (
         "Order rows by one or more columns ascending or descending. Use when the "
         "user wants 'sorted by X', 'top N by Y' (sort then 'sample'), or 'order by'. "
@@ -675,6 +693,25 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "Prefix=raw_. Pitfall: to rename specific columns one-by-one use "
         "'Select data'; in First row mode the new names are read at run "
         "time and the first row is dropped from the data."
+    ),
+    "data_cleansing": (
+        "Settings panel: five sections — 'Remove null data' (Remove null "
+        "rows / Remove null columns), 'Columns to cleanse' (All columns vs "
+        "Selected columns), 'Replace nulls' (with blank for text, with zero "
+        "for numbers), 'Remove unwanted characters' (Trim whitespace, "
+        "Normalize whitespace, Remove all whitespace, Letters, Numbers, "
+        "Punctuation) and 'Modify case' (None / Uppercase / Lowercase / "
+        "Titlecase). Worked example: 'strip the spaces and symbols off the "
+        "product codes and uppercase them' -> drag 'Data cleansing' from "
+        "Transformations, set Columns to cleanse = Selected columns and pick "
+        "`product_code`, tick Remove punctuation, leave Trim whitespace on, "
+        "set Modify case = Uppercase. Pitfalls: 'Remove null rows' only "
+        "drops a row where EVERY column is null (and an empty string is not "
+        "a null) — to drop rows on one column being empty use 'Filter data' "
+        "instead; the same is true of 'Remove null columns'. Both null "
+        "rules ignore the column selection on purpose. Text rules never "
+        "touch numeric columns and 'with zero' never touches text, so a "
+        "column that looks unchanged is usually the wrong type."
     ),
     "sort": (
         "Settings panel: a 'Columns' list where the user adds sort keys, "
