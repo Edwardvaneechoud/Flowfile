@@ -21,6 +21,7 @@ import polars as pl
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
+from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
 
@@ -210,7 +211,7 @@ def streaming_start(
     ws_url = _get_ws_url() + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
-    ws = connect(ws_url)
+    ws = connect(ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()})
     try:
         ws.send(json.dumps(metadata))
         ws.send(lf_bytes)

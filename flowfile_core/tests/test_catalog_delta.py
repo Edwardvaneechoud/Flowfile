@@ -982,7 +982,7 @@ class TestTriggerDeltaVersionPreviewMapping:
             ok = False
             text = '{"detail": "Version 99 is no longer available."}'
 
-        monkeypatch.setattr(subops.requests, "post", lambda *a, **kw: _FakeResponse())
+        monkeypatch.setattr(subops._worker_session, "post", lambda *a, **kw: _FakeResponse())
 
         with pytest.raises(TableVersionUnavailableError):
             subops.trigger_delta_version_preview("some_table", version=99, n_rows=100)

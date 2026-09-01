@@ -21,7 +21,6 @@ log = logging.getLogger("flowfile.e2e")
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 COMPOSE_FILE = os.path.join(REPO_ROOT, "docker-compose.yml")
 CORE_URL = "http://localhost:63578"
-WORKER_URL = "http://localhost:63579"
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +64,25 @@ def _wait_for_service(url: str, label: str, path: str = "/health/status", timeou
         if attempt % 5 == 0:
             elapsed = int(timeout - (deadline - time.monotonic()))
             log.info("[%s] still waiting... (%ds / %ds)", label, elapsed, int(timeout))
+        time.sleep(2)
+    return False
+
+
+def _wait_for_worker_in_network(timeout: float = 120) -> bool:
+    """The worker no longer publishes a host port, so probe it from inside the network."""
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        probe = _compose(
+            "exec", "-T", "flowfile-worker", "curl", "-fs", "http://localhost:63579/docs", timeout=30
+        )
+        if probe.returncode == 0:
+            log.info("[worker] healthy after %d attempts", attempt)
+            return True
+        if attempt % 5 == 0:
+            elapsed = int(timeout - (deadline - time.monotonic()))
+            log.info("[worker] still waiting... (%ds / %ds)", elapsed, int(timeout))
         time.sleep(2)
     return False
 
@@ -182,8 +200,8 @@ def compose_services():
                 logs = _dump_compose_logs(["flowfile-core"])
                 pytest.fail(f"Core service did not become healthy.{logs}")
 
-            log.info("Waiting for worker to become healthy (%s)...", WORKER_URL)
-            if not _wait_for_service(WORKER_URL, "worker", path="/docs", timeout=120):
+            log.info("Waiting for worker to become healthy (in-network)...")
+            if not _wait_for_worker_in_network(timeout=120):
                 logs = _dump_compose_logs(["flowfile-worker"])
                 pytest.fail(f"Worker service did not become healthy.{logs}")
 

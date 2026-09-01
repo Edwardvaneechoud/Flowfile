@@ -20,8 +20,9 @@ from fastapi.testclient import TestClient
 from flowfile_worker import main, models, pool, status_dict, status_dict_lock
 from flowfile_worker.pool import POOLABLE_OPERATIONS, TaskPool
 from flowfile_worker.spawner import process_manager, start_process
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
-client = TestClient(main.app)
+client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 pytestmark = [pytest.mark.worker, pytest.mark.timeout(120)]
 
@@ -89,6 +90,7 @@ class _FakeWebSocket:
         self.metadata = metadata
         self.payload = payload
         self.fail_on = fail_on
+        self.headers = INTERNAL_AUTH_HEADERS
 
     async def accept(self):
         pass
@@ -297,7 +299,7 @@ class TestWebSocketPath:
         lf = pl.LazyFrame({"a": [1, 2, 3, 4]})
 
         def submit(task_id: str):
-            with client.websocket_connect("/ws/submit") as ws:
+            with client.websocket_connect("/ws/submit", headers=INTERNAL_AUTH_HEADERS) as ws:
                 ws.send_json({"task_id": task_id, "operation": "store", "flow_id": 1, "node_id": -1})
                 ws.send_bytes(lf.serialize())
                 while True:
@@ -326,7 +328,7 @@ class TestWebSocketPath:
         CancelledError skips both excepts, ``envelope_received`` is never assigned, and the finally
         retires a healthy member. POSIX wins that race by ~0.2ms; Windows does not.
         """
-        with client.websocket_connect("/ws/submit") as ws:
+        with client.websocket_connect("/ws/submit", headers=INTERNAL_AUTH_HEADERS) as ws:
             ws.send_json({"task_id": "pool-ws-err", "operation": "store", "flow_id": 1, "node_id": -1})
             ws.send_bytes(b"garbage")
             while True:

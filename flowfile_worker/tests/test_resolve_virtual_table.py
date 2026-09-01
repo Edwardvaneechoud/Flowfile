@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_worker import funcs, main, models
 from shared.storage_config import storage
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +33,7 @@ def _plan_bytes() -> bytes:
 
 @pytest.mark.worker
 def test_resolve_virtual_table_round_trip():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "table_id": 7,
         "plan_bytes": b64encode(_plan_bytes()).decode("ascii"),
@@ -60,7 +61,7 @@ def test_resolve_virtual_table_is_idempotent_on_versions_hash():
 
     The cache file's mtime must not change and the spawn helper must not run.
     """
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "table_id": 11,
         "plan_bytes": b64encode(_plan_bytes()).decode("ascii"),
@@ -87,7 +88,7 @@ def test_resolve_virtual_table_is_idempotent_on_versions_hash():
 
 @pytest.mark.worker
 def test_resolve_virtual_table_invalid_plan_returns_500():
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "table_id": 99,
         "plan_bytes": b64encode(b"not a valid polars plan").decode("ascii"),

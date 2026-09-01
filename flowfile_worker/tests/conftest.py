@@ -6,6 +6,9 @@ import sys
 import pytest
 
 os.environ["TEST_MODE"] = "1"
+os.environ.setdefault("FLOWFILE_INTERNAL_TOKEN", "flowfile-test-internal-token")
+
+INTERNAL_AUTH_HEADERS = {"X-Flowfile-Internal": os.environ["FLOWFILE_INTERNAL_TOKEN"]}
 
 from tests.utils import is_docker_available
 
