@@ -1223,6 +1223,35 @@ def test_group_by_aggregation(export_func):
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_group_by_key_renamed_onto_a_dropped_column(export_func):
+    """A key renamed to the name of a non-grouped column must not collide with it — the
+    aggregation drops that column anyway (regression: 'column X is duplicate')."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+
+    groupby_node = input_schema.NodeGroupBy(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        groupby_input=transform_schema.GroupByInput(
+            agg_cols=[
+                transform_schema.AggColl("product", "groupby", "region"),
+                transform_schema.AggColl("quantity", "sum", "total_quantity"),
+            ]
+        ),
+    )
+    flow.add_group_by(groupby_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert sorted(result_df.columns) == ["region", "total_quantity"]
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
     export_flow_to_flowframe,

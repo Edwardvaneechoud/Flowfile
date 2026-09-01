@@ -13,6 +13,11 @@
           <span class="material-icons btn-icon">folder_open</span>
           <span>Open flow</span>
         </button>
+        <button type="button" class="empty-btn" @click="emit('import-flow')">
+          <span class="material-icons btn-icon">upload_file</span>
+          <span>Import Alteryx</span>
+          <span class="beta-badge">Beta</span>
+        </button>
       </div>
       <p class="empty-kbd-hint">
         <span class="kbd-group"
@@ -72,6 +77,7 @@ import { MODIFIER_LABEL } from "../../utils/shortcuts";
 const emit = defineEmits<{
   (e: "new-flow"): void;
   (e: "open-flow"): void;
+  (e: "import-flow"): void;
   (e: "open-recent", flow: RecentFlow): void;
 }>();
 
@@ -135,6 +141,8 @@ onMounted(() => {
 
 .empty-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: var(--spacing-3);
 }
 

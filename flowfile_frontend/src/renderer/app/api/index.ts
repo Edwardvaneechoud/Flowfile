@@ -8,6 +8,7 @@ export { ExpressionsApi } from "./expressions.api";
 export { CatalogApi } from "./catalog.api";
 export { NotificationsApi } from "./notifications.api";
 export { TemplatesApi } from "./templates.api";
+export { AlteryxApi } from "./alteryx.api";
 
 export {
   getDirectoryContents,

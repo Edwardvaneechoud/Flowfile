@@ -6,6 +6,7 @@
     @create-at-location="createDialogVisible = true"
     @open="openDialogVisible = true"
     @browse-templates="browseTemplates"
+    @import-alteryx="alteryxDialogVisible = true"
     @open-recent="handleOpenRecent"
     @open-session="handleOpenSession"
     @remove-recent="handleRemoveRecent"
@@ -14,6 +15,7 @@
 
   <open-dialog v-model:visible="openDialogVisible" @open-flow="handleOpenFromDialog" />
   <create-dialog v-model:visible="createDialogVisible" @create-complete="handleCreateComplete" />
+  <alteryx-import-dialog v-model:visible="alteryxDialogVisible" />
 </template>
 
 <script setup lang="ts">
@@ -23,6 +25,7 @@ import { ElMessage } from "element-plus";
 import WelcomeScreen from "./WelcomeScreen.vue";
 import OpenDialog from "../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../features/designer/components/CreateDialog.vue";
+import AlteryxImportDialog from "../../features/designer/components/AlteryxImportDialog.vue";
 import { createFlow, getFlowSettings } from "../../components/nodes/nodeLogic";
 import { FlowApi } from "../../api";
 import type { FlowSettings } from "../../types";
@@ -41,6 +44,7 @@ const { openFlow } = useFlowOpener();
 
 const openDialogVisible = ref(false);
 const createDialogVisible = ref(false);
+const alteryxDialogVisible = ref(false);
 const openFlows = ref<FlowSettings[]>([]);
 
 const loadOpenFlows = async () => {

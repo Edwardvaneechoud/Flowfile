@@ -24,7 +24,7 @@ export const useNodeStore = defineStore("node", {
     nodeExists: false,
     isLoaded: false,
     sizeDataPreview: 300 as number,
-    dataTypes: ["String", "Datetime", "Int64", "Int32", "Int16", "Float64", "Float32", "Boolean"],
+    dataTypes: ["String", "Date", "Datetime", "Time", "Int64", "Int32", "Int16", "Float64", "Float32", "Boolean"],
     nodeDescriptions: {} as NodeDescriptionDictionary,
     nodeReferences: {} as NodeReferenceDictionary,
     allExpressions: null as null | ExpressionsOverview[],

@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Fields><Field name="code" /><Field name="flag_a" /><Field name="flag_b" /></Fields>
+        <Data>
+          <r><c>AB-12</c><c>Y</c><c>N</c></r>
+          <r><c>ZZ-99</c><c>N</c><c>Y</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RegEx.RegEx">
+        <Position x="110" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Field>code</Field>
+        <RegExExpression value="([A-Z]{2})-([0-9]{2})" />
+        <CaseInsensitve value="False" />
+        <Method>ParseComplex</Method>
+        <ParseComplex>
+          <Field field="letters" type="String" size="2" />
+          <Field field="digits" type="String" size="2" />
+        </ParseComplex>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="210" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields orderChanged="False">
+          <Field name="flag_a" />
+          <Field name="flag_b" />
+          <Field name="code" selected="False" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <CopyOutput value="False" />
+        <Expression>[_CurrentField_]='Y'</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RegEx.RegEx">
+        <Position x="310" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Field>code</Field>
+        <RegExExpression value="^(?=AB)" />
+        <Method>Match</Method>
+        <Match><Field>is_ab</Field></Match>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="3" Connection="Output" /><Destination ToolID="4" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>RegEx and multi-field formula</Name></MetaInfo></Properties>
+</AlteryxDocument>
