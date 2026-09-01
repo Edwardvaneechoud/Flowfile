@@ -206,7 +206,8 @@ def managed_kernel(
     if start_core:
         # Save original values to restore later
         original_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-        internal_token = secrets.token_hex(32)
+        # Reuse an existing token: a session worker may already have latched it.
+        internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN") or secrets.token_hex(32)
         os.environ["FLOWFILE_INTERNAL_TOKEN"] = internal_token
         # The module cache may already be warm from an earlier test, which would
         # silently ignore the fresh token above.

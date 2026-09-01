@@ -8,7 +8,7 @@ logging.basicConfig(format="%(asctime)s: %(message)s")
 logger = logging.getLogger("FlowfileWorker")
 logger.setLevel(logging.INFO)
 
-DEFAULT_SERVICE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
+DEFAULT_SERVICE_HOST = "127.0.0.1"
 DEFAULT_SERVICE_PORT = 63579
 # Check environment variable for core host (used in Docker mode)
 DEFAULT_CORE_HOST = os.environ.get("CORE_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")

@@ -7,6 +7,7 @@ import pytest
 
 from flowfile_worker.funcs import execute_sql_query
 from shared.storage_config import storage
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
 
 @pytest.fixture(autouse=True)
@@ -180,7 +181,7 @@ def test_physical_table_route_sees_out_of_band_delta_write(delta_tables):
 
     from flowfile_worker import main
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {"query": "SELECT city, COUNT(*) AS n FROM customers GROUP BY city", "tables": delta_tables}
 
     r1 = client.post("/catalog/sql_query", json=payload)

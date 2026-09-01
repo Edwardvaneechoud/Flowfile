@@ -10,10 +10,9 @@ from pathlib import Path
 
 import pytest
 
-import requests
-
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import custom_node_task_id
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import _worker_session
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.user_defined.registry import registry as singleton_registry
@@ -114,7 +113,7 @@ def run_and_check(graph: FlowGraph):
 def worker_executed_custom_node(node) -> bool:
     """The custom-node worker task is keyed by the node hash (suffixed to stay distinct
     from the result-store task); a Completed status proves offload."""
-    response = requests.get(f"{WORKER_URL}/status/{custom_node_task_id(node.hash)}", timeout=10)
+    response = _worker_session.get(f"{WORKER_URL}/status/{custom_node_task_id(node.hash)}", timeout=10)
     if not response.ok:
         return False
     payload = response.json()

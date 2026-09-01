@@ -23,6 +23,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    _worker_session,
     trigger_custom_node_operation,
 )
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
@@ -253,7 +254,7 @@ def _poll_worker(task_id: str, deadline: float) -> tuple[dict | None, DryRunResp
             _cancel(task_id)
             return None, _fail("timeout", "Dry run exceeded the time limit and was cancelled.")
         try:
-            resp = requests.get(f"{WORKER_URL}/status/{task_id}", timeout=10)
+            resp = _worker_session.get(f"{WORKER_URL}/status/{task_id}", timeout=10)
         except requests.RequestException as e:
             return None, _fail("load", f"The compute worker is unavailable: {e}")
         if resp.status_code == 404:
@@ -283,14 +284,14 @@ def _split_traceback(message: str) -> tuple[str, str | None]:
 
 def _cancel(task_id: str) -> None:
     try:
-        requests.post(f"{WORKER_URL}/cancel_task/{task_id}", timeout=10)
+        _worker_session.post(f"{WORKER_URL}/cancel_task/{task_id}", timeout=10)
     except requests.RequestException:
         logger.debug("Dry-run cancel for task %s failed (worker unreachable)", task_id)
 
 
 def _clear(task_id: str) -> None:
     try:
-        requests.delete(f"{WORKER_URL}/clear_task/{task_id}", timeout=10)
+        _worker_session.delete(f"{WORKER_URL}/clear_task/{task_id}", timeout=10)
     except requests.RequestException:
         logger.debug("Dry-run clear for task %s failed (worker unreachable)", task_id)
 
