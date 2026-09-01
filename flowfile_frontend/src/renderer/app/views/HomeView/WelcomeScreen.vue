@@ -68,6 +68,15 @@
             </button>
             <div class="tile-footer"></div>
           </article>
+
+          <article class="welcome-tile">
+            <button class="tile-main" @click="emit('import-alteryx')">
+              <span class="tile-icon"><span class="material-icons">upload_file</span></span>
+              <span class="tile-title">Import Alteryx <span class="beta-badge">Beta</span></span>
+              <span class="tile-sub">Convert a .yxmd workflow into a flow</span>
+            </button>
+            <div class="tile-footer"></div>
+          </article>
         </div>
       </section>
 
@@ -275,6 +284,7 @@ const emit = defineEmits<{
   (e: "create-at-location"): void;
   (e: "open"): void;
   (e: "browse-templates"): void;
+  (e: "import-alteryx"): void;
   (e: "open-recent", path: string): void;
   (e: "open-session", flowId: number): void;
   (e: "remove-recent", path: string): void;
@@ -481,21 +491,11 @@ function relativeTime(timestamp: number): string {
 }
 
 /* Primary action tiles. Explicit column counts (not auto-fit) so no row is
-   ever left with a lone orphan tile. */
+   ever left with a lone orphan tile — four tiles read as a 2×2 block. */
 .welcome-primary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--spacing-4);
-}
-
-@media (max-width: 1024px) {
-  .welcome-primary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .welcome-tile--primary {
-    grid-column: 1 / -1;
-  }
 }
 
 @media (max-width: 560px) {

@@ -9,6 +9,7 @@ import polars as pl
 from .errors import format_error_lf
 from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
+from .validation import refuse_placeholder
 
 
 def _build_local_vars(node_id: int, input_ids: list[int]) -> tuple[dict, dict | None, list[str]]:
@@ -152,6 +153,7 @@ def _extract_result(
 def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> dict:
     """Execute polars code node - supports zero, single, or multiple inputs.
     Memory-optimized: cleans up materialized DataFrames after execution."""
+    refuse_placeholder(settings)
 
     # Build inputs
     local_vars, error, df_keys_to_cleanup = _build_local_vars(node_id, input_ids)
@@ -245,6 +247,7 @@ def _silenced_user_stdout():
 def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> pl.LazyFrame:
     """Resolve a polars_code node's output schema by running the user code
     against EMPTY (0-row) input frames. Raises on failure (caught upstream)."""
+    refuse_placeholder(settings)
     local_vars = {"pl": pl, "output_df": None, "output_lf": None}
     if len(input_lfs) == 1:
         local_vars["input_df"] = input_lfs[0].collect()

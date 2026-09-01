@@ -49,6 +49,7 @@
         v-if="!hasOpenFlow"
         @new-flow="headerButtons?.handleQuickCreate()"
         @open-flow="headerButtons?.openOpenDialog()"
+        @import-flow="headerButtons?.openAlteryxDialog()"
         @open-recent="handleOpenRecent"
       />
       <div v-if="showSwitchIndicator" class="switch-indicator" aria-live="polite">

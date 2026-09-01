@@ -78,13 +78,21 @@ def cache_polars_frame_to_temp(_df: pl.LazyFrame | pl.DataFrame, tempdir: str = 
         raise Exception("Could not cache the data")
 
 
-def define_pl_col_transformation(col_name: str, col_type: pl.DataType) -> pl.Expr:
-    if col_type == pl.Datetime:
+def define_pl_col_transformation(
+    col_name: str, col_type: pl.DataType, source_type: pl.DataType | None = None
+) -> pl.Expr:
+    """Cast one column, parsing dates out of text but casting everything else directly.
+
+    ``str.to_date`` / ``str.to_datetime`` raise on a non-string input, so they are only used
+    when the source column is text (or its type is unknown, which keeps the historical
+    behaviour for callers that do not pass ``source_type``).
+    """
+    from_text = source_type is None or source_type == pl.String
+    if col_type == pl.Datetime and from_text:
         return pl.col(col_name).str.to_datetime(strict=False)
-    elif col_type == pl.Date:
+    if col_type == pl.Date and from_text:
         return pl.col(col_name).str.to_date(strict=False)
-    else:
-        return pl.col(col_name).cast(col_type, strict=False)
+    return pl.col(col_name).cast(col_type, strict=False)
 
 
 def execute_write_method(

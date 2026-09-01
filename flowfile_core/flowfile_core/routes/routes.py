@@ -92,6 +92,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
+from flowfile_core.flowfile.share import build_share_link
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
     build_rest_api_worker_settings,
     infer_schema_from_sample,
@@ -1007,6 +1008,20 @@ def get_generated_flowframe_code(flow_id: int) -> str:
         return export_flow_to_flowframe(flow)
     except UnsupportedNodeError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.get("/editor/share_link", tags=["editor"], response_model=output_model.ShareLinkResponse)
+def get_share_link(flow_id: int) -> output_model.ShareLinkResponse:
+    """Encodes the live flow as a link that opens it in the browser-only editor.
+
+    Serialises the in-memory graph only — no disk I/O, no save. Nodes the
+    browser build cannot run identically travel as settings-free placeholders,
+    which is also what keeps executable settings out of the link.
+    """
+    flow = flow_file_handler.get_flow(int(flow_id))
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    return build_share_link(flow)
 
 
 def _export_project_manifest(flow_id: int) -> output_model.ProjectExportManifest:

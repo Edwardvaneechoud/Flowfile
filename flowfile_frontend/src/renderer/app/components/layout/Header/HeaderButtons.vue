@@ -125,6 +125,11 @@
               <span class="material-icons save-as-icon">folder_open</span>
               Create at specific location…
             </el-dropdown-item>
+            <el-dropdown-item divided @click="openAlteryxDialog">
+              <span class="material-icons save-as-icon">upload_file</span>
+              Import Alteryx workflow…
+              <span class="beta-badge alteryx-beta">Beta</span>
+            </el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -157,6 +162,8 @@
     v-model:visible="modalVisibleForCreate"
     @create-complete="handleCreateComplete"
   />
+
+  <alteryx-import-dialog v-model:visible="modalVisibleForAlteryx" @imported="emit('refreshFlow')" />
 
   <el-dialog
     v-model="modalVisibleForSettings"
@@ -274,6 +281,7 @@ import ParameterSettings from "./ParameterSettings.vue";
 import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
+import AlteryxImportDialog from "../../../features/designer/components/AlteryxImportDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -303,6 +311,7 @@ const { recordFlow, recordFlowFromSettings, reconcileWithCatalog, removeFlow } =
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
+const modalVisibleForAlteryx = ref(false);
 const modalVisibleForSettings = ref(false);
 
 // Save is a no-op when no flow is loaded; hide the button entirely rather
@@ -333,6 +342,10 @@ const handleQuickCreate = async () => {
 
 const openCreateDialog = () => {
   modalVisibleForCreate.value = true;
+};
+
+const openAlteryxDialog = () => {
+  modalVisibleForAlteryx.value = true;
 };
 
 const handleCreateComplete = async (flowId: number, catalogRef?: string) => {
@@ -549,6 +562,7 @@ watch(
 defineExpose({
   loadFlowSettings,
   openCreateDialog,
+  openAlteryxDialog,
   handleQuickCreate,
   openOpenDialog: () => (modalVisibleForOpen.value = true),
   openSaveModal,
@@ -694,6 +708,10 @@ onMounted(async () => {
   font-size: 16px;
   margin-right: var(--spacing-2);
   vertical-align: middle;
+}
+
+.alteryx-beta {
+  margin-left: var(--spacing-2);
 }
 
 .settings-modal-content {

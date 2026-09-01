@@ -12,6 +12,7 @@ const SVG_NODE_ICONS = [
   "cloud_storage_reader.svg",
   "cloud_storage_writer.svg",
   "cross_join.svg",
+  "data_cleansing.svg",
   "database_reader.svg",
   "database_writer.svg",
   "dynamic_rename.svg",

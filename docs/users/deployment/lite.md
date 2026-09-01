@@ -91,6 +91,40 @@ Memory is bounded by the browser heap, and the Explore Data view materializes at
 
 ---
 
+## Share links
+
+Any flow can be shared as a plain URL that opens in Flowfile Lite — no account, no
+upload, no backend:
+
+- **From Flowfile Lite itself**: the **Share** button in the header copies a link for
+  the current flow.
+- **From the full Flowfile app**: the **Share link** button in the designer header
+  builds the same kind of link for the flow you have open.
+
+**How it works.** The entire flow travels *inside the link* — compressed and encoded
+into the URL's `#flow=` fragment. Fragments are never sent to any server, so the
+flow definition stays between the sender and whoever opens the link. Opening one
+loads the flow onto the canvas and runs it automatically once the browser engine
+is ready.
+
+**What travels, and what doesn't:**
+
+- The flow's structure and node settings travel. Small text inputs (under 5 MB)
+  pasted or loaded in Lite travel too; links minted from the full app carry the
+  flow only.
+- Inputs that read from a public URL re-download on open — this is the best way to
+  share a flow *with* its data.
+- Local files never travel; recipients are prompted to supply them.
+- Nodes the browser build can't run (databases, cloud storage, custom Python code,
+  and a few settings variants) travel as **locked placeholders**: they keep their
+  place on the canvas with an explanation, and anything downstream of them is
+  marked blocked rather than failing. Their settings are stripped before the link
+  is built, so connection names, hostnames, file paths, and code never end up in
+  a pasteable URL. The share dialog lists exactly which nodes were demoted before
+  you copy the link.
+
+---
+
 ## Feature comparison
 
 | Feature | Full Flowfile | Flowfile Lite |

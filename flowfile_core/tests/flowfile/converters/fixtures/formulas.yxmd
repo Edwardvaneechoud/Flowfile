@@ -1,0 +1,78 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="54" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <NumRows value="3" />
+          <Fields>
+            <Field name="id" />
+            <Field name="name" />
+            <Field name="amount" />
+          </Fields>
+          <Data>
+            <r>
+              <c>1</c>
+              <c>alice</c>
+              <c>150</c>
+            </r>
+            <r>
+              <c>2</c>
+              <c>bob</c>
+              <c>80</c>
+            </r>
+            <r>
+              <c>3</c>
+              <c>carol</c>
+              <c>220</c>
+            </r>
+          </Data>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxTextInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="198" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="[amount] * 2" field="total" size="8" type="Double" />
+            <FormulaField expression="Uppercase([name])" field="name" size="254" type="V_WString" />
+            <FormulaField expression="REGEX_Match([name], &quot;^a.*&quot;)" field="name_flag" size="1" type="Bool" />
+            <FormulaField expression="ToNumber(REGEX_Replace(ToString([amount]), &quot;[^0-9]&quot;, &quot;&quot;))" field="amount" size="8" type="Double" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <AnnotationText>Four assignments, two of them regex based</AnnotationText>
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <MetaInfo>
+      <NameIsFileName value="True" />
+      <Description />
+    </MetaInfo>
+  </Properties>
+</AlteryxDocument>

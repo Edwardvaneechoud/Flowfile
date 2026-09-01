@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="100">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="54" y="54" width="300" height="120" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Notes only</Caption>
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+          <Left value="False" />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="1">
+          <GuiSettings Plugin="AlteryxGuiToolkit.TextBox.TextBox">
+            <Position x="90" y="90" width="200" height="60" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Text>Workflow still to be built.</Text>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText />
+              <Left value="False" />
+            </Annotation>
+          </Properties>
+        </Node>
+      </ChildNodes>
+    </Node>
+  </Nodes>
+  <Connections />
+  <Properties>
+    <Memory default="True" />
+    <MetaInfo>
+      <NameIsFileName value="False" />
+      <Name>Empty Workflow</Name>
+      <Description />
+    </MetaInfo>
+  </Properties>
+</AlteryxDocument>

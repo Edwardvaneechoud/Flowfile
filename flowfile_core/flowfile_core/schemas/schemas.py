@@ -30,6 +30,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "filter": input_schema.NodeFilter,
     "formula": input_schema.NodeFormula,
     "dynamic_rename": input_schema.NodeDynamicRename,
+    "data_cleansing": input_schema.NodeDataCleansing,
     "select": input_schema.NodeSelect,
     "sort": input_schema.NodeSort,
     "record_id": input_schema.NodeRecordId,
@@ -493,6 +494,13 @@ class NodeTag(str, Enum):
     MATH = "math"
     CONCAT = "concat"
     TRANSFORM = "transform"
+
+    # Data quality & cleansing
+    CLEAN = "clean"
+    CLEANSE = "cleanse"
+    TRIM = "trim"
+    WHITESPACE = "whitespace"
+    NULLS = "nulls"
 
     # Aggregation
     GROUP_BY = "group by"
