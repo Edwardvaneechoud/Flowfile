@@ -14,7 +14,7 @@ import logging
 from collections.abc import Iterator
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 
 from flowfile_core import events
@@ -74,6 +74,7 @@ class FakeRunInfo:
 def sent(tmp_path, monkeypatch) -> Iterator[list[dict]]:
     """All four gates open, delivery captured, worker thread disabled."""
     monkeypatch.setattr(client, "_settings_file", lambda: tmp_path / "telemetry.yaml")
+    monkeypatch.setattr(client, "_spool_file", lambda: tmp_path / "telemetry_spool.jsonl")
     client._reset_for_tests()
     monkeypatch.delenv("TESTING", raising=False)
     monkeypatch.delenv(client.ENV_KILL_SWITCH, raising=False)
@@ -234,7 +235,7 @@ class TestRunEvents:
             "duration_bucket": "1-10s",
             "used_sample_data": False,
         }
-        assert set(succeeded) == {"event", "install_id", "app_version", "platform", "mode", "ts", "props"}
+        assert set(succeeded) == {"event", "event_id", "install_id", "app_version", "platform", "mode", "ts", "props"}
         assert graph not in glue._snapshots, "the snapshot is dropped when the run ends"
 
     def test_finished_reports_the_error_class_of_a_node_that_failed_this_run(self, sent, subscribed) -> None:
@@ -346,7 +347,7 @@ def test_succeeded_payload_is_bucketed(sent) -> None:
         "duration_bucket": "1-10s",
         "used_sample_data": False,
     }
-    assert set(succeeded) == {"event", "install_id", "app_version", "platform", "mode", "ts", "props"}
+    assert set(succeeded) == {"event", "event_id", "install_id", "app_version", "platform", "mode", "ts", "props"}
 
 
 @pytest.mark.parametrize("node_count", [2, 4])
@@ -454,6 +455,12 @@ class TestRouteMiddleware:
                 raise HTTPException(422, "nope")
             return "df = pl.LazyFrame()"
 
+        @app.post("/editor/code_to_polars/exported", status_code=204, response_class=Response)
+        def _polars_exported(fail: bool = False):
+            if fail:
+                raise HTTPException(422, "nope")
+            return Response(status_code=204)
+
         @app.get("/editor/code_to_project/zip")
         def _zip():
             raise RuntimeError("kaboom")
@@ -471,10 +478,15 @@ class TestRouteMiddleware:
             yield testclient
 
     def test_a_mapped_route_emits_its_event_with_its_props(self, sent, http) -> None:
-        assert http.get("/editor/code_to_polars").status_code == 200
+        assert http.post("/editor/code_to_polars/exported").status_code == 204
         emitted = drain(sent)
         assert [e["event"] for e in emitted] == ["export_code_used"]
         assert emitted[0]["props"] == {"target": "polars"}
+
+    def test_rendering_the_code_panel_is_not_an_export(self, sent, http) -> None:
+        """The Code tab GETs its code on every tab switch; only the button exports."""
+        assert http.get("/editor/code_to_polars").status_code == 200
+        assert names(sent) == []
 
     def test_a_mapped_route_without_props(self, sent, http) -> None:
         assert http.post("/editor/create_flow/").status_code == 200
@@ -484,7 +496,10 @@ class TestRouteMiddleware:
 
     @pytest.mark.parametrize(
         ("method", "path"),
-        [("get", "/editor/code_to_polars?fail=true"), ("post", "/editor/create_flow/?fail=true")],
+        [
+            ("post", "/editor/code_to_polars/exported?fail=true"),
+            ("post", "/editor/create_flow/?fail=true"),
+        ],
     )
     def test_a_client_error_emits_nothing(self, sent, http, method, path) -> None:
         assert getattr(http, method)(path).status_code == 422
@@ -499,7 +514,7 @@ class TestRouteMiddleware:
         assert names(sent) == []
 
     def test_an_unmapped_method_on_a_mapped_path_emits_nothing(self, sent, http) -> None:
-        assert http.post("/editor/code_to_polars").status_code == 405
+        assert http.get("/editor/code_to_polars/exported").status_code == 405
         assert names(sent) == []
 
 
@@ -548,6 +563,221 @@ def test_every_mapped_route_exists_on_the_app() -> None:
     real = {(method, route.path) for route in app.routes for method in getattr(route, "methods", None) or ()}
     missing = sorted(key for key in glue.ROUTE_EVENTS if key not in real)
     assert missing == [], f"telemetry route table names routes that do not exist: {missing}"
+
+
+@pytest.mark.parametrize(
+    "path", ["/editor/code_to_polars", "/editor/code_to_flowframe", "/editor/code_to_project"]
+)
+def test_code_render_routes_are_not_mapped_as_exports(path) -> None:
+    """Those GETs render the Code panel; mapping them counted looking at code as exporting it."""
+    assert ("GET", path) not in glue.ROUTE_EVENTS
+
+
+def test_the_export_confirmation_routes_are_jwt_gated_no_ops() -> None:
+    """They exist only so the middleware has a deliberate-export signal to read."""
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import get_current_active_user, get_current_user
+    from flowfile_core.auth.models import User as PydanticUser
+
+    paths = ("/editor/code_to_polars/exported", "/editor/code_to_flowframe/exported")
+    saved = dict(main.app.dependency_overrides)
+    try:
+        main.app.dependency_overrides.clear()
+        anonymous = TestClient(main.app)
+        for path in paths:
+            assert anonymous.post(path).status_code == 401
+
+        user = PydanticUser(username="u", id=1, disabled=False, is_admin=True, must_change_password=False)
+        main.app.dependency_overrides[get_current_active_user] = lambda: user
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        authenticated = TestClient(main.app)
+        for path in paths:
+            response = authenticated.post(path)
+            assert (response.status_code, response.content) == (204, b"")
+    finally:
+        main.app.dependency_overrides.clear()
+        main.app.dependency_overrides.update(saved)
+
+
+def test_the_deliberate_export_confirmations_are_the_mapped_ones() -> None:
+    assert glue.ROUTE_EVENTS[("POST", "/editor/code_to_polars/exported")] == (
+        "export_code_used",
+        {"target": "polars"},
+    )
+    assert glue.ROUTE_EVENTS[("POST", "/editor/code_to_flowframe/exported")] == (
+        "export_code_used",
+        {"target": "flowframe"},
+    )
+
+
+class TestErrorClassRecovery:
+    """A worker-offloaded failure must keep whatever class signal is recoverable."""
+
+    @staticmethod
+    def _wrapped(original: Exception) -> Exception:
+        try:
+            raise original
+        except Exception as inner:
+            try:
+                raise Exception("the worker reported a failure") from inner
+            except Exception as wrapper:
+                return wrapper
+
+    def test_the_cause_chain_is_preferred(self) -> None:
+        from flowfile_core.flowfile.flow_node.models import recover_error_class
+
+        wrapper = self._wrapped(ValueError("bad literal"))
+        assert recover_error_class(wrapper, "some worker message") == "ValueError"
+
+    @pytest.mark.parametrize(
+        ("description", "expected"),
+        [
+            ("ComputeError: could not cast", "ComputeError"),
+            ('unable to find column "x"; valid columns: ["a"]', None),
+            ("", None),
+            (None, None),
+        ],
+    )
+    def test_a_class_prefix_is_the_fallback(self, description, expected) -> None:
+        from flowfile_core.flowfile.flow_node.models import recover_error_class
+
+        assert recover_error_class(None, description) == expected
+
+    def test_the_wrapper_keeps_the_message_and_the_class(self) -> None:
+        from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
+
+        error = RemoteExecutionError("worker failed on the read", "ComputeError")
+        assert str(error) == "worker failed on the read"
+        assert error.original_class == "ComputeError"
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (ValueError("plain"), "ValueError"),
+            (Exception("bare worker wrapper"), "Exception"),
+        ],
+    )
+    def test_the_recorder_falls_back_to_the_real_class(self, error, expected) -> None:
+        assert _record_node_error(error) == expected
+
+    def test_the_recorder_prefers_a_wrapped_original_class(self) -> None:
+        from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
+
+        assert _record_node_error(RemoteExecutionError("worker failed", "ComputeError")) == "ComputeError"
+
+
+class _Bag:
+    def __init__(self, **kwargs) -> None:
+        self.__dict__.update(kwargs)
+
+
+class _FakeState:
+    def __init__(self) -> None:
+        self.error = None
+        self.has_run_with_current_setup = False
+        self.has_completed_last_run = False
+        self.is_canceled = False
+
+    def mark_failed(self, message: str) -> None:
+        self.error = message
+
+
+class _QuietLogger:
+    def error(self, *args, **kwargs) -> None: ...
+
+    def warning(self, *args, **kwargs) -> None: ...
+
+
+def _record_node_error(error: Exception) -> str:
+    """Run the executor's error recorder over a duck-typed node, return the stamped class."""
+    from flowfile_core.flowfile.flow_node.executor import NodeExecutor
+
+    node = _Bag(node_stats=_Bag(), results=_Bag(errors=None), node_id=1, parent_uuid="uuid")
+    executor = NodeExecutor.__new__(NodeExecutor)
+    executor.node = node
+    executor.state_provider = None
+    executor._handle_error(_FakeState(), error, "remote", False, False, _QuietLogger())
+    return node._last_exception_class
+
+
+def test_flow_as_api_runs_are_marked_as_system_runs(monkeypatch) -> None:
+    """A published flow answers machine traffic; one graph per request must stay silent."""
+    from flowfile_core.flowfile import api_runner
+
+    seen: dict = {}
+
+    class _ApiNode:
+        node_type = "api_response"
+        node_id = 1
+        hash = "h"
+        setting_input = object()
+
+        def get_resulting_data(self):
+            return None
+
+    class _Flow:
+        flow_id = 55
+
+        def __init__(self) -> None:
+            self.nodes = [_ApiNode()]
+            self.flow_settings = _Bag(parameters=[], execution_location="local", execution_mode="Development")
+
+        def run_graph(self):
+            seen["skipped_by_telemetry"] = glue._skip(self)
+            return _Bag(success=True, node_step_result=[])
+
+    monkeypatch.setattr(api_runner, "open_flow", lambda *args, **kwargs: _Flow())
+    with pytest.raises(api_runner.ApiExecutionError):
+        api_runner.run_flow_as_api("/tmp/published.yaml", owner_id=1, param_specs=[], query={})
+
+    assert seen["skipped_by_telemetry"] is True
+
+
+def test_a_panic_publishes_a_crash_and_still_propagates(sent, subscribed, monkeypatch) -> None:
+    """A pyo3 panic is a BaseException: the crash guard has to see it, and re-raise it."""
+    from polars.exceptions import PanicException
+
+    from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+
+    assert not issubclass(PanicException, Exception), "the whole point of this test"
+
+    graph = create_test_graph(flow_id=9901)
+    add_test_manual_input(graph, [{"a": 1}], node_id=1)
+
+    def _panic(*args, **kwargs):
+        raise PanicException("called `Option::unwrap()` on a `None` value")
+
+    monkeypatch.setattr(graph, "_execute_stages", _panic)
+
+    with pytest.raises(PanicException):
+        graph.run_graph()
+
+    emitted = drain(sent)
+    assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+    assert emitted[1]["props"] == {"error_class": "PanicException"}
+
+
+def test_a_failure_before_the_node_ran_reports_no_stale_class(sent, subscribed, monkeypatch) -> None:
+    """Failing at parameter resolution must not report the class of an earlier run."""
+    from flowfile_core.flowfile import flow_graph as flow_graph_module
+    from flowfile_core.flowfile.param_types import FlowParameter
+    from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+
+    graph = create_test_graph(flow_id=9902)
+    add_test_manual_input(graph, [{"a": 1}], node_id=1)
+    graph.flow_settings.parameters = [FlowParameter(name="threshold", default_value="1", type="integer")]
+    graph.get_node(1)._last_exception_class = "FileNotFoundError"
+
+    def _unresolved(*args, **kwargs):
+        raise ValueError("Unresolved parameter references in node settings")
+
+    monkeypatch.setattr(flow_graph_module, "apply_parameters_in_place", _unresolved)
+    run_info = graph.run_graph()
+
+    assert run_info.success is False
+    emitted = drain(sent)
+    assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+    assert emitted[1]["props"] == {"error_class": "OtherError"}
 
 
 class FakeSpawnRepo:

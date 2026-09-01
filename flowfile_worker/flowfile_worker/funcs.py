@@ -23,6 +23,7 @@ import polars as pl
 
 from flowfile_worker import mp_context
 from flowfile_worker.flow_logger import get_worker_logger
+from flowfile_worker.task_errors import record_task_failure, record_task_failure_text
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 from shared.storage_config import storage
 
@@ -137,13 +138,11 @@ def train_model_task(
         queue.put({"sha256": sha256, "size_bytes": size_bytes, "model_type": model_type})
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
+    except BaseException as e:
         flowfile_logger.error(f"Error during train_model_task: {str(e)}")
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def apply_model_task(
@@ -177,13 +176,11 @@ def apply_model_task(
         scored_df = collect_lazy_frame(scored_lf)
         scored_df.write_ipc(file_path)
         flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows")
-    except Exception as e:
+    except BaseException as e:
         flowfile_logger.error(f"Error during apply_model_task: {str(e)}")
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
         # Intentional early return: file_path was never written, so the
         # scan_ipc/queue.put below would either crash or push a serialised
         # plan over a non-existent file. The framework already inspects
@@ -222,12 +219,10 @@ def fuzzy_join_task(
         fuzzy_match_result.write_ipc(file_path)
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:256]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+    except BaseException as e:
+        record_task_failure(error_message, progress, e, limit=256)
+        if not isinstance(e, Exception):
+            raise
         flowfile_logger.error(f"Error during fuzzy join operation: {str(e)}")
         return
     lf = pl.scan_ipc(file_path)
@@ -255,13 +250,11 @@ def process_and_cache(
         df.write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
         return df.height
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during process and cache operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
         return None
 
 
@@ -283,13 +276,11 @@ def store_sample(
         flowfile_logger.info("Store sample operation completed successfully")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
+    except BaseException as e:
         flowfile_logger.error(f"Error during store sample operation: {str(e)}")
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        error_msg = record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
         return error_msg
 
 
@@ -389,13 +380,11 @@ def calculate_schema(
         flowfile_logger.info("Schema calculation completed successfully")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:256]
+    except BaseException as e:
         flowfile_logger.error("error", e)
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=256)
+        if not isinstance(e, Exception):
+            raise
 
 
 def calculate_number_of_records(
@@ -418,13 +407,11 @@ def calculate_number_of_records(
         flowfile_logger.debug(f"n_records {n_records}")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
+    except BaseException as e:
         flowfile_logger.error("error", e)
-        error_msg = str(e).encode()[:256]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=256)
+        if not isinstance(e, Exception):
+            raise
         return b"error"
 
 
@@ -482,13 +469,11 @@ def write_to_database(
         flowfile_logger.info("Write operation completed successfully")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during write operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def write_to_cloud_storage(
@@ -527,13 +512,11 @@ def write_to_cloud_storage(
         flowfile_logger.info("Write operation completed successfully")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during write operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def write_output(
@@ -599,13 +582,11 @@ def write_output(
             raise Exception("Write method not found")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
+    except BaseException as e:
         flowfile_logger.error(f"Error during write operation: {e}")
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def write_parquet(
@@ -637,13 +618,11 @@ def write_parquet(
         flowfile_logger.info(f"write_parquet completed: {len(df)} records written to {output_path}")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during write_parquet operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def write_delta(
@@ -700,13 +679,11 @@ def write_delta(
         flowfile_logger.info(f"write_delta completed: {df.height} records written to {output_path}")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during write_delta operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def merge_delta(
@@ -774,13 +751,11 @@ def merge_delta(
         flowfile_logger.info(f"merge_delta ({merge_mode}) completed: {row_count} rows in {output_path}")
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during merge_delta operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def scd2_delta(
@@ -873,13 +848,11 @@ def scd2_delta(
         )
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
+    except BaseException as e:
         flowfile_logger.error(f"Error during scd2_delta operation: {str(e)}")
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def materialize_catalog_table_task(
@@ -927,12 +900,10 @@ def materialize_catalog_table_task(
         )
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+    except BaseException as e:
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def optimize_catalog_table_task(
@@ -956,12 +927,10 @@ def optimize_catalog_table_task(
         queue.put({"metrics": metrics, "size_bytes": size_bytes})
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+    except BaseException as e:
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def vacuum_catalog_table_task(
@@ -993,12 +962,10 @@ def vacuum_catalog_table_task(
         )
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+    except BaseException as e:
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def apply_catalog_table_edits_task(
@@ -1043,12 +1010,11 @@ def apply_catalog_table_edits_task(
         queue.put(result)
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+    except BaseException as e:
+        # The route parses these sentinels by prefix, so no class name is stamped here.
+        record_task_failure_text(error_message, progress, str(e), limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def add_catalog_key_column_task(
@@ -1078,12 +1044,11 @@ def add_catalog_key_column_task(
         queue.put(result)
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+    except BaseException as e:
+        # The route parses these sentinels by prefix, so no class name is stamped here.
+        record_task_failure_text(error_message, progress, str(e), limit=1024)
+        if not isinstance(e, Exception):
+            raise
 
 
 def execute_sql_query(
@@ -1313,13 +1278,11 @@ def generic_task(
         else:
             raise Exception("Returned object is not a DataFrame, LazyFrame, or None")
         flowfile_logger.info("Task completed successfully")
-    except Exception as e:
+    except BaseException as e:
         flowfile_logger.error(f"Error during task execution: {str(e)}")
-        error_msg = str(e).encode()[:1024]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
         return
 
     lf = pl.scan_ipc(file_path)

@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 MAX_BODY_BYTES = 256 * 1024
@@ -127,7 +127,15 @@ def _validate_event(raw: object) -> dict | None:
     for key, value in props.items():
         if key not in allowed or not _valid_prop(key, value):
             return None
-    return {
+    event_id = raw.get("event_id")
+    if event_id is not None:
+        if not isinstance(event_id, str) or len(event_id) > MAX_STRING_LEN:
+            return None
+        try:
+            uuid.UUID(event_id)
+        except ValueError:
+            return None
+    cleaned = {
         "event": event,
         "install_id": install_id,
         "app_version": app_version,
@@ -136,6 +144,9 @@ def _validate_event(raw: object) -> dict | None:
         "ts": ts,
         "props": props,
     }
+    if event_id is not None:
+        cleaned["event_id"] = event_id  # optional: pre-spool clients never sent one
+    return cleaned
 
 
 async def _read_capped_body(request: Request) -> bytes | None:
@@ -161,8 +172,7 @@ def _append_lines(lines: list[str]) -> None:
     directory = _data_dir()
     directory.mkdir(parents=True, exist_ok=True)
     with _write_lock, open(directory / "events.jsonl", "a", encoding="utf-8") as handle:
-        for line in lines:
-            handle.write(line + "\n")
+        handle.write("".join(line + "\n" for line in lines))
 
 
 @app.get("/health")
@@ -171,8 +181,13 @@ def health() -> dict:
 
 
 @app.post("/events")
-async def ingest(request: Request) -> JSONResponse:
-    body = await _read_capped_body(request)
+def ingest(body: bytes | None = Depends(_read_capped_body)) -> JSONResponse:
+    """Plain ``def`` on purpose: FastAPI runs it in the threadpool, so the append never blocks the loop.
+
+    The body is read by the async dependency above — that part must stay on the
+    event loop; everything after it (parse, validate, write) is what benefits
+    from leaving it.
+    """
     if body is None:
         return JSONResponse(status_code=413, content={"detail": "request body too large"})
     try:
@@ -199,5 +214,8 @@ async def ingest(request: Request) -> JSONResponse:
         cleaned["received_at"] = received_at
         accepted.append(json.dumps(cleaned, separators=(",", ":")))
     if accepted:
-        _append_lines(accepted)
+        try:
+            _append_lines(accepted)
+        except OSError:  # a full or read-only disk answers 500, and the client re-sends later
+            return JSONResponse(status_code=500, content={"detail": "could not store events"})
     return JSONResponse(status_code=202, content={"accepted": len(accepted), "rejected": rejected})

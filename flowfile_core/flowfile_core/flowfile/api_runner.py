@@ -227,6 +227,8 @@ def run_flow_as_api(
         ApiExecutionError: The flow failed or produced no data.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
+    # Machine traffic, not a user pressing Run.
+    flow._system_run = True
 
     api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
     if len(api_nodes) == 0:

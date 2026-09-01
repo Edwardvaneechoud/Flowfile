@@ -17,6 +17,7 @@ from tools.telemetry_collector import app as collector
 
 EXAMPLE_EVENT: dict[str, Any] = {
     "event": "flow_run_succeeded",
+    "event_id": "b7a1d9c4-3e52-4f18-9a6b-0c5d2e7f8a13",
     "install_id": "3f6b1c2e-8a94-4c50-9d0e-2f7a61b8c4d1",
     "app_version": "0.12.7",
     "platform": "darwin",
@@ -82,6 +83,15 @@ def test_canonical_example_event_passes_the_collector_validator():
     cleaned = collector._validate_event(EXAMPLE_EVENT)
     assert cleaned is not None, "the documented example event must be accepted"
     assert cleaned == EXAMPLE_EVENT
+
+
+def test_event_id_is_optional_and_validated_as_a_uuid():
+    without = {key: value for key, value in EXAMPLE_EVENT.items() if key != "event_id"}
+    cleaned = collector._validate_event(without)
+    assert cleaned == without, "a pre-spool client sends no event_id and must still be accepted"
+
+    for bad in ["not-a-uuid", "", 42, "x" * 70]:
+        assert collector._validate_event({**EXAMPLE_EVENT, "event_id": bad}) is None, bad
 
 
 def test_every_client_built_envelope_validates_on_the_collector():

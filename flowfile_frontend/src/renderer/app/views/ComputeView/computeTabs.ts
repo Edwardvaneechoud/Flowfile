@@ -7,9 +7,7 @@ export const COMPUTE_TAB_KEYS = ["kernels", "performance", "privacy"] as const;
 
 export type ComputeTabKey = (typeof COMPUTE_TAB_KEYS)[number];
 
-// "preferences" holds app-wide settings that are not about compute at all; it
-// is the seam along which they'd move to their own route once there are enough
-// of them to justify one.
+// "preferences" is app-wide settings parked under Compute until they earn their own route.
 export type ComputeTabGroup = "execution" | "preferences";
 
 /** Sidebar group-header labels (i18n keys), keyed by tab group. */

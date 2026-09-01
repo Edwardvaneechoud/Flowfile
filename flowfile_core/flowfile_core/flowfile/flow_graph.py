@@ -6163,6 +6163,8 @@ class FlowGraph:
                 node_result.end_timestamp = time()
                 node_result.run_time_ms = 0
                 node_result.is_running = False
+                # Never executed this run: a stale class must not describe this failure.
+                node._last_exception_class = None
                 node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
                 return node_result, node
 
@@ -6374,6 +6376,8 @@ class FlowGraph:
                             except Exception as e:
                                 node_result.success = False
                                 node_result.error = f"Gate formula evaluation failed: {e}"
+                                # The node itself ran fine; no stale class may describe this failure.
+                                node._last_exception_class = None
                                 statuses[node.node_id] = NodeRunStatus.FAILED
                                 failed_node_ids.add(node.node_id)
                                 skip_node_ids.add(node.node_id)
@@ -6758,9 +6762,10 @@ class FlowGraph:
             run_info = self.get_run_info()
             publish("flow_run_finished", graph=self, run_info=run_info)
             return run_info
-        except Exception as e:
+        except BaseException as e:
+            # A pyo3 panic is BaseException-only; `except Exception` would miss it.
             publish("flow_run_crashed", graph=self, error=e)
-            raise e
+            raise
         finally:
             self.release_run()
 

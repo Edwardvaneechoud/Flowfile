@@ -1,8 +1,11 @@
 """Isolation fixtures for the telemetry client.
 
-Every test gets its own consent file, a clean environment for the three gate env
-vars, and a module reset on both sides of the test so queue/thread/caches never
-leak between tests.
+Every test gets its own consent file and spool file, a clean environment for the
+three gate env vars, and a module reset on both sides of the test so
+queue/thread/caches never leak between tests. Both paths are redirected at their
+own seam rather than through the environment: ``storage_config`` memoises the
+base directory on first access, so a late ``FLOWFILE_STORAGE_DIR`` would leave
+the spool pointing at the developer's real ``~/.flowfile``.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ class Posts:
 def _isolated_telemetry(tmp_path, monkeypatch):
     """Keep consent away from the developer's real ~/.flowfile and CI env."""
     monkeypatch.setattr(telemetry, "_settings_file", lambda: tmp_path / "telemetry.yaml")
+    monkeypatch.setattr(telemetry, "_spool_file", lambda: tmp_path / "telemetry_spool.jsonl")
     monkeypatch.delenv("TESTING", raising=False)
     monkeypatch.delenv("FLOWFILE_TELEMETRY", raising=False)
     monkeypatch.delenv("FLOWFILE_TELEMETRY_ENDPOINT", raising=False)

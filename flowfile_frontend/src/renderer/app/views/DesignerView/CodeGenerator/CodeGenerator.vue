@@ -103,6 +103,11 @@ const endpointMap: Partial<Record<CodeMode, string>> = {
   polars: "/editor/code_to_polars",
 };
 
+const exportConfirmMap: Partial<Record<CodeMode, string>> = {
+  flowframe: "/editor/code_to_flowframe/exported",
+  polars: "/editor/code_to_polars/exported",
+};
+
 const fetchCode = async () => {
   // Project mode fetches its own manifest in ProjectExport.vue.
   if (codeMode.value === "project") return;
@@ -170,6 +175,12 @@ const exportCode = () => {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+
+  const confirmEndpoint = exportConfirmMap[codeMode.value];
+  if (confirmEndpoint) {
+    // Fire-and-forget: confirming the export must never affect the download.
+    void axios.post(confirmEndpoint).catch(() => undefined);
+  }
 };
 </script>
 

@@ -50,6 +50,16 @@ class TestRoundTrip:
         leftovers = list(telemetry._settings_file().parent.glob("*.tmp"))
         assert leftovers == [], f"the atomic write leaked a temp file: {leftovers}"
 
+    def test_a_failed_replace_leaves_no_temp_file_holding_the_install_id(self, monkeypatch):
+        def _boom(src, dst):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr(os, "replace", _boom)
+        assert telemetry.set_consent(True).persisted is False
+
+        leftovers = list(telemetry._settings_file().parent.glob("*.tmp"))
+        assert leftovers == [], f"a write that did not stick left an on-disk artifact: {leftovers}"
+
     def test_regranting_keeps_the_same_install_id(self):
         telemetry.set_consent(True)
         first = telemetry.install_id()

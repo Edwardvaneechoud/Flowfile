@@ -10,7 +10,7 @@
         </p>
       </div>
       <div class="telemetry-toggle">
-        <span class="telemetry-toggle__word">{{ consentOn ? "On" : "Off" }}</span>
+        <span class="telemetry-toggle__word">{{ toggleWord }}</span>
         <el-switch
           :model-value="consentOn"
           :disabled="switchDisabled"
@@ -28,7 +28,15 @@
       </button>
     </p>
 
-    <div v-if="status && !status.canManage" class="telemetry-locked">
+    <p v-if="statusUnknown" class="pool-hint--warning" role="alert">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <span>
+        Couldn't read the telemetry setting, so its current state is unknown — it may be on or off.
+        <button class="link-btn" type="button" :disabled="loading" @click="refresh">Retry</button>
+      </span>
+    </p>
+
+    <div v-else-if="status && !status.canManage" class="telemetry-locked">
       <i class="fa-solid fa-lock"></i>
       <h4>Administrator setting</h4>
       <p>
@@ -66,17 +74,41 @@ import { TELEMETRY_DOCS_URL } from "./telemetryConsent";
 const telemetryStore = useTelemetryStore();
 
 const applying = ref(false);
+const loading = ref(true);
 
 const status = computed(() => telemetryStore.status);
 const consentOn = computed(() => status.value?.consent === true);
+// A failed read is "unknown", never "Off" — never claim telemetry is off while it may be on.
+const statusUnknown = computed(
+  () => !loading.value && (telemetryStore.loadFailed || !status.value),
+);
+const toggleWord = computed(() => {
+  if (loading.value) return "…";
+  if (statusUnknown.value) return "Unknown";
+  return consentOn.value ? "On" : "Off";
+});
 const switchDisabled = computed(
-  () => applying.value || !status.value || !status.value.available || !status.value.canManage,
+  () =>
+    applying.value ||
+    loading.value ||
+    statusUnknown.value ||
+    !status.value ||
+    !status.value.available ||
+    !status.value.canManage,
 );
 
+const refresh = async () => {
+  loading.value = true;
+  try {
+    await telemetryStore.loadStatus(true);
+  } finally {
+    loading.value = false;
+  }
+};
+
 onMounted(() => {
-  // Fresh state each visit: the endpoint/kill-switch situation can change
-  // across backend restarts.
-  void telemetryStore.loadStatus(true);
+  // Refetch every visit: the endpoint/kill-switch state can change across backend restarts.
+  void refresh();
 });
 
 const onToggle = async (enabled: boolean | string | number) => {
@@ -87,8 +119,7 @@ const onToggle = async (enabled: boolean | string | number) => {
       next.consent ? "Anonymous usage telemetry turned on" : "Anonymous usage telemetry turned off",
     );
   } catch {
-    // Includes the 503 the backend returns when telemetry.yaml cannot be
-    // written: consent is unchanged, so never claim a saved setting.
+    // Covers the backend's 503 when telemetry.yaml can't be written: nothing was saved.
     ElMessage.error("Couldn't save the telemetry setting");
   } finally {
     applying.value = false;
@@ -167,6 +198,12 @@ function openDocs() {
 
 .link-btn:hover {
   text-decoration: underline;
+}
+
+.link-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+  text-decoration: none;
 }
 
 .telemetry-locked {

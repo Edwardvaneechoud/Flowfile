@@ -12,8 +12,13 @@ Frozen funnel definitions:
 Usage: python -m tools.telemetry_collector.funnel <path-to-events.jsonl> [--days N]
 
 ``--days N`` restricts the computation to events within the last N days from
-the maximum ts in the file. Malformed lines are skipped, counted, and
+the maximum timestamp in the file. Malformed lines are skipped, counted, and
 reported to stderr. Stdlib only.
+
+Every timestamp comes from the server-stamped ``received_at``, falling back to
+the client's ``ts`` only for lines written before the collector stamped one: a
+single event claiming to be from the year 9999 would otherwise push the
+``--days`` cutoff past every genuine event and report zeros.
 """
 
 from __future__ import annotations
@@ -59,7 +64,7 @@ def _parse_line(line: str) -> tuple[str, str, datetime] | None:
         return None
     install_id = raw.get("install_id")
     event = raw.get("event")
-    ts = _parse_ts(raw.get("ts"))
+    ts = _parse_ts(raw.get("received_at")) or _parse_ts(raw.get("ts"))
     if not isinstance(install_id, str) or not install_id or not isinstance(event, str) or not event or ts is None:
         return None
     return install_id, event, ts

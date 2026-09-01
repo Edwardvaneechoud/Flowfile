@@ -22,6 +22,7 @@ from pydantic import SecretStr
 
 from flowfile_worker.flow_logger import FlowfileLogHandler, get_worker_logger
 from flowfile_worker.secrets import decrypt_secret
+from flowfile_worker.task_errors import describe_exception, record_task_failure, record_task_failure_text
 from flowfile_worker.utils import collect_lazy_frame
 
 PREVIEW_ROW_LIMIT_DEFAULT = 100
@@ -221,19 +222,19 @@ def execute_custom_node_task(
         queue.put(json.dumps(payload, default=_json_default))
         with progress.get_lock():
             progress.value = 100
-    except Exception as e:
+    except BaseException as e:
         if dry_run:
             # Full traceback rides back in the error message for the Test panel;
             # the 1024-byte Array truncates, so keep the exception first.
-            error_msg = f"{e}\n{traceback.format_exc()}".encode()[:1020]
+            record_task_failure_text(
+                error_message, progress, f"{describe_exception(e)}\n{traceback.format_exc()}", limit=1020
+            )
         else:
             flowfile_logger.error(f"Error executing custom node: {e}")
             flowfile_logger.error(traceback.format_exc())
-            error_msg = str(e).encode()[:1020]
-        with error_message.get_lock():
-            error_message[: len(error_msg)] = error_msg
-        with progress.get_lock():
-            progress.value = -1
+            record_task_failure(error_message, progress, e, limit=1020)
+        if not isinstance(e, Exception):
+            raise
     finally:
         if root_capture_handler is not None:
             root_logger.removeHandler(root_capture_handler)

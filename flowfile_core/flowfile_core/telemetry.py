@@ -97,9 +97,9 @@ NODE_ERROR_ATTR = "_last_exception_class"
 
 ROUTE_EVENTS: dict[tuple[str, str], tuple[str, dict[str, Any] | None]] = {
     ("POST", "/editor/create_flow/"): ("flow_created", None),
-    ("GET", "/editor/code_to_polars"): ("export_code_used", {"target": "polars"}),
-    ("GET", "/editor/code_to_flowframe"): ("export_code_used", {"target": "flowframe"}),
-    ("GET", "/editor/code_to_project"): ("export_code_used", {"target": "project"}),
+    # The code panel's GET fires on every render, so export is confirmed by its own POST.
+    ("POST", "/editor/code_to_polars/exported"): ("export_code_used", {"target": "polars"}),
+    ("POST", "/editor/code_to_flowframe/exported"): ("export_code_used", {"target": "flowframe"}),
     ("GET", "/editor/code_to_project/zip"): ("export_code_used", {"target": "project_zip"}),
     ("POST", "/editor/code_to_project/save"): ("export_code_used", {"target": "project_save"}),
     ("POST", "/ai/diff/{diff_id}/accept"): ("ai_diff_accepted", None),

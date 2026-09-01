@@ -1,7 +1,4 @@
-// Axios wrappers for the /telemetry endpoints (anonymous, opt-in usage
-// telemetry). TS-side camelCase, snake_case mapper at the boundary. Paths match
-// the FastAPI decorators exactly (no trailing slash) to avoid the 307 redirect
-// trap.
+// Paths match the FastAPI decorators exactly: a trailing slash would answer 307.
 
 import axios from "../services/axios.config";
 

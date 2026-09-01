@@ -12,6 +12,12 @@ vi.mock("../api/telemetry.api", () => ({
   setTelemetryConsent: setConsentMock,
 }));
 
+// Mocked because the real auth service reaches DOM globals through axios.config at import time.
+vi.mock("../services/auth.service", () => ({
+  default: { logout: vi.fn() },
+}));
+
+import { useAuthStore } from "./auth-store";
 import { useTelemetryStore } from "./telemetry-store";
 
 const status = (overrides: Partial<TelemetryStatus> = {}): TelemetryStatus => ({
@@ -60,6 +66,33 @@ describe("telemetry-store", () => {
 
     expect(store.loaded).toBe(false);
     expect(store.status).toBeNull();
+    // The card must be able to say "unknown" instead of rendering a plain Off.
+    expect(store.loadFailed).toBe(true);
+  });
+
+  it("flags a failed refresh as unknown while keeping the stale status", async () => {
+    const store = useTelemetryStore();
+    getStatusMock.mockResolvedValueOnce(status({ consent: true }));
+    await store.loadStatus();
+    expect(store.loadFailed).toBe(false);
+
+    getStatusMock.mockRejectedValueOnce(new Error("network"));
+    await store.loadStatus(true);
+
+    expect(store.loadFailed).toBe(true);
+    expect(store.status?.consent).toBe(true);
+  });
+
+  it("clears the unknown flag once a read or a write succeeds", async () => {
+    const store = useTelemetryStore();
+    getStatusMock.mockRejectedValueOnce(new Error("network"));
+    await store.loadStatus();
+    expect(store.loadFailed).toBe(true);
+
+    setConsentMock.mockResolvedValue(status({ consent: true }));
+    await store.setConsent(true);
+
+    expect(store.loadFailed).toBe(false);
   });
 
   it("never POSTs spontaneously while consent is undecided", async () => {
@@ -98,5 +131,22 @@ describe("telemetry-store", () => {
 
     expect(store.status?.consent).toBeNull();
     expect(store.loaded).toBe(true);
+  });
+
+  it("is dropped on logout so the next user is not judged by this one's authority", async () => {
+    const store = useTelemetryStore();
+    getStatusMock.mockResolvedValue(status({ canManage: true }));
+    await store.loadStatus();
+
+    useAuthStore().logout();
+
+    expect(store.status).toBeNull();
+    expect(store.loaded).toBe(false);
+    expect(store.loadFailed).toBe(false);
+
+    getStatusMock.mockResolvedValue(status({ canManage: false }));
+    await store.loadStatus();
+    expect(getStatusMock).toHaveBeenCalledTimes(2);
+    expect(store.status?.canManage).toBe(false);
   });
 });

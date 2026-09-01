@@ -171,6 +171,45 @@ def test_disallowed_prop_key_is_rejected(client, data_dir):
     assert response.json() == {"accepted": 0, "rejected": 1}
 
 
+def test_event_id_is_stored_when_present_and_absent_when_not(client, data_dir):
+    identifier = str(uuid.uuid4())
+    events = [make_event("app_started", event_id=identifier), make_event("flow_created")]
+    response = client.post("/events", json={"events": events})
+    assert response.status_code == 202
+    assert response.json() == {"accepted": 2, "rejected": 0}
+
+    lines = read_lines(data_dir)
+    assert lines[0]["event_id"] == identifier
+    assert "event_id" not in lines[1], "a pre-spool client sends none, and none is stored"
+
+
+@pytest.mark.parametrize("event_id", ["not-a-uuid", "", 42, "x" * 70])
+def test_a_malformed_event_id_rejects_the_event(client, data_dir, event_id):
+    response = client.post("/events", json={"events": [make_event("app_started", event_id=event_id)]})
+    assert response.status_code == 202
+    assert response.json() == {"accepted": 0, "rejected": 1}
+    assert read_lines(data_dir) == []
+
+
+def test_unknown_top_level_keys_are_still_dropped(client, data_dir):
+    response = client.post("/events", json={"events": [make_event("app_started", seq=7, junk="x")]})
+    assert response.status_code == 202
+    stored = read_lines(data_dir)[0]
+    assert set(stored) == {"event", "install_id", "app_version", "platform", "mode", "ts", "props", "received_at"}
+
+
+def test_a_disk_that_cannot_be_written_answers_500_without_a_traceback(client, data_dir, monkeypatch):
+    from tools.telemetry_collector import app as collector
+
+    def _boom(lines):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(collector, "_append_lines", _boom)
+    response = client.post("/events", json={"events": [make_event("app_started")]})
+    assert response.status_code == 500
+    assert response.json() == {"detail": "could not store events"}
+
+
 def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200

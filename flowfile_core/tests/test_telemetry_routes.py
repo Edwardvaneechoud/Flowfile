@@ -62,9 +62,10 @@ def unauth_client() -> Iterator[TestClient]:
 
 @pytest.fixture(autouse=True)
 def isolated_consent_file(tmp_path, monkeypatch) -> Iterator[None]:
-    """Point the consent store at tmp_path and clear the client's cached state."""
+    """Point the consent store and the spool at tmp_path, and clear the client's cached state."""
     target = tmp_path / "telemetry.yaml"
     monkeypatch.setattr(telemetry, "_settings_file", lambda: target)
+    monkeypatch.setattr(telemetry, "_spool_file", lambda: tmp_path / "telemetry_spool.jsonl")
     telemetry._reset_for_tests()
     yield
     telemetry._reset_for_tests()

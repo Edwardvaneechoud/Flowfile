@@ -1,5 +1,3 @@
-// @vue/test-utils is not a dependency, so the consent modal's meaningful logic
-// lives in telemetryConsent.ts and is unit-tested here directly.
 import { describe, expect, it } from "vitest";
 
 import { docsUrl } from "../../lib/docsLinks";
@@ -7,6 +5,7 @@ import {
   CONSENT_COPY,
   EXAMPLE_EVENT,
   TELEMETRY_DOCS_URL,
+  decideConsentClose,
   shouldShowConsentModal,
   type ConsentModalGates,
 } from "./telemetryConsent";
@@ -52,8 +51,50 @@ describe("shouldShowConsentModal", () => {
   });
 });
 
+describe("decideConsentClose", () => {
+  it("treats a gate-driven close as no answer at all", () => {
+    expect(decideConsentClose("gate", false)).toEqual({
+      consent: null,
+      tombstone: "never",
+      closeImmediately: true,
+    });
+  });
+
+  it("confirms an accept against the backend before marking the ask answered", () => {
+    expect(decideConsentClose("accept", false)).toEqual({
+      consent: true,
+      tombstone: "on-success",
+      closeImmediately: false,
+    });
+  });
+
+  it("takes a decline immediately and never re-asks", () => {
+    expect(decideConsentClose("decline", false)).toEqual({
+      consent: false,
+      tombstone: "now",
+      closeImmediately: true,
+    });
+  });
+
+  it("posts at most one answer", () => {
+    for (const reason of ["accept", "decline", "gate"] as const) {
+      expect(decideConsentClose(reason, true).consent).toBeNull();
+      expect(decideConsentClose(reason, true).tombstone).toBe("never");
+    }
+  });
+});
+
 describe("EXAMPLE_EVENT contract", () => {
-  const ENVELOPE_KEYS = ["event", "install_id", "app_version", "platform", "mode", "ts", "props"];
+  const ENVELOPE_KEYS = [
+    "event",
+    "event_id",
+    "install_id",
+    "app_version",
+    "platform",
+    "mode",
+    "ts",
+    "props",
+  ];
   const FLOW_RUN_SUCCEEDED_PROPS = [
     "node_count_bucket",
     "node_types",
@@ -61,7 +102,7 @@ describe("EXAMPLE_EVENT contract", () => {
     "used_sample_data",
   ];
 
-  it("carries exactly the 7 envelope keys", () => {
+  it("carries exactly the 8 envelope keys", () => {
     expect(Object.keys(EXAMPLE_EVENT).sort()).toEqual([...ENVELOPE_KEYS].sort());
   });
 
@@ -77,6 +118,9 @@ describe("EXAMPLE_EVENT contract", () => {
     expect(EXAMPLE_EVENT.mode).toBe("electron");
     expect(EXAMPLE_EVENT.install_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(EXAMPLE_EVENT.event_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
     expect(EXAMPLE_EVENT.ts).toBe("2026-08-29T12:00:00Z");
     expect(EXAMPLE_EVENT.props.node_count_bucket).toBe("4-7");
@@ -102,6 +146,24 @@ describe("consent copy", () => {
     expect(TELEMETRY_DOCS_URL).toBe(
       "https://edwardvaneechoud.github.io/Flowfile/users/telemetry.html",
     );
+  });
+
+  it("names the destination the events are sent to", () => {
+    expect(CONSENT_COPY.body).toContain("events.flowfile.app");
+  });
+
+  it("says where the choice can be changed later", () => {
+    expect(CONSENT_COPY.recoveryLine).toMatch(/Compute/);
+    expect(CONSENT_COPY.recoveryLine).toMatch(/Privacy/);
+  });
+
+  it("warns multi-user deployments that the choice covers everyone", () => {
+    expect(CONSENT_COPY.serverWideLine).toMatch(/everyone/i);
+  });
+
+  it("offers a recoverable failure path rather than a silent drop", () => {
+    expect(CONSENT_COPY.saveErrorLine).toMatch(/n't save/i);
+    expect(CONSENT_COPY.retryLabel).toBe("Try again");
   });
 
   it("keeps the decline and accept labels factual, with No as the plain option", () => {

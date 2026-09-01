@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from typing import Any
@@ -12,7 +13,7 @@ import pytest
 from shared import telemetry
 
 ENDPOINT = "https://collector.example.invalid/events"
-WIRE_KEYS = {"event", "install_id", "app_version", "platform", "mode", "ts", "props"}
+WIRE_KEYS = {"event", "event_id", "install_id", "app_version", "platform", "mode", "ts", "props"}
 
 MAXIMAL_PROPS: dict[str, dict[str, Any]] = {
     "flow_run_succeeded": {
@@ -62,7 +63,7 @@ def _walk_strings(value: Any):
 
 
 class TestEnvelope:
-    def test_envelope_has_exactly_the_seven_wire_keys(self, enabled, no_background, posts):
+    def test_envelope_has_exactly_the_eight_wire_keys(self, enabled, no_background, posts):
         telemetry.emit("flow_run_succeeded", MAXIMAL_PROPS["flow_run_succeeded"])
         telemetry.flush()
 
@@ -73,6 +74,7 @@ class TestEnvelope:
         event = _sent_event(posts)
         assert set(event) == WIRE_KEYS
         assert event["event"] == "flow_run_succeeded"
+        assert uuid.UUID(event["event_id"]).version == 4
         assert uuid.UUID(event["install_id"]) is not None
         assert event["install_id"] == telemetry.install_id()
         assert isinstance(event["app_version"], str) and event["app_version"]
@@ -242,6 +244,14 @@ class TestDelivery:
         assert posts.sent == [], "an exhausted budget must not start a request"
         assert telemetry._queue.qsize() == 1
 
+    def test_every_event_gets_its_own_event_id(self, enabled, no_background, posts):
+        for _ in range(3):
+            telemetry.emit("flow_created")
+        telemetry.flush()
+
+        ids = [event["event_id"] for event in posts.events]
+        assert len(set(ids)) == 3, "same install, same second, same props — only the id separates them"
+
     def test_emit_once_dedupes_per_process(self, enabled, no_background, posts):
         for _ in range(5):
             telemetry.emit_once("app_started")
@@ -265,6 +275,67 @@ class TestDelivery:
         telemetry.emit_once("app_started")
         telemetry.flush()
         assert len(posts.events) == 1, "a dropped emit must not burn the once-per-process slot"
+
+
+class TestFlushWaitsForTheBackgroundThread:
+    """The real daemon thread runs here: ``_ensure_worker`` is deliberately not stubbed.
+
+    ``_enqueue`` wakes the daemon immediately, so by the time a short-lived
+    process calls ``flush`` the terminal batch is usually already out of the
+    queue and in flight. A flush that only drains the queue returns instantly
+    and the interpreter kills the POST on the way out.
+    """
+
+    @staticmethod
+    def _wait_until_taken(deadline: float = 5.0) -> None:
+        limit = time.monotonic() + deadline
+        while telemetry._queue is not None and telemetry._queue.qsize() and time.monotonic() < limit:
+            time.sleep(0.005)
+        assert telemetry._queue is not None and telemetry._queue.qsize() == 0, "the daemon never took the batch"
+
+    def test_flush_waits_for_a_send_the_daemon_already_took(self, enabled, monkeypatch):
+        senders: list[str] = []
+        completed = threading.Event()
+
+        def _slow_post(url: str, json: dict[str, Any], timeout: float | None = None) -> None:
+            senders.append(threading.current_thread().name)
+            time.sleep(0.25)
+            completed.set()
+
+        monkeypatch.setattr(telemetry, "_post", _slow_post)
+        telemetry.emit("app_started")
+        time.sleep(0.01)
+        self._wait_until_taken()
+
+        started = time.monotonic()
+        telemetry.flush(2.0)
+        elapsed = time.monotonic() - started
+
+        assert completed.is_set(), "flush returned while the daemon's POST was still in flight"
+        assert senders == ["telemetry-flush"], senders
+        assert elapsed < 2.0, "flush must not burn its whole budget on a send that finished"
+
+    def test_flush_does_not_wait_past_its_budget_for_a_stalled_send(self, enabled, monkeypatch):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def _stalled_post(url: str, json: dict[str, Any], timeout: float | None = None) -> None:
+            entered.set()
+            release.wait(10.0)
+
+        monkeypatch.setattr(telemetry, "_post", _stalled_post)
+        telemetry.emit("app_started")
+        assert entered.wait(5.0), "the daemon never started the send"
+
+        started = time.monotonic()
+        try:
+            telemetry.flush(0.3)
+            elapsed = time.monotonic() - started
+        finally:
+            release.set()
+
+        assert elapsed >= 0.2, "flush must wait for the in-flight send"
+        assert elapsed < 1.5, f"a stalled collector must not extend flush beyond its budget: {elapsed}"
 
 
 class TestFailuresAreSilent:

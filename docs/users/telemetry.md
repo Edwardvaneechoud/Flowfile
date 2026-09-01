@@ -13,7 +13,7 @@ Four gates, checked in this order. Each short-circuits before the next does any 
 
 1. **The `FLOWFILE_TELEMETRY` kill switch.** Any falsy value (`0`/`false`/`no`/`off`, case-insensitive) disables telemetry outright — before any consent prompt, any file read, any send. A fleet deployed with `FLOWFILE_TELEMETRY=0` never phones home once. Unset changes nothing; a truthy value grants nothing.
 2. **`TESTING=True`.** Test runs never send.
-3. **A collector endpoint must resolve.** `FLOWFILE_TELEMETRY_ENDPOINT` overrides the built-in default; no default ships today, so with the variable unset telemetry is disabled.
+3. **A collector endpoint must resolve.** Flowfile ships with one built in — the project's own collector at `events.flowfile.app` ([details below](#where-it-goes)) — so there is nothing to configure. `FLOWFILE_TELEMETRY_ENDPOINT` redirects events to a collector you run instead; an empty value falls back to the built-in one. Blanking it is not a way to switch telemetry off — that is `FLOWFILE_TELEMETRY=0`, or simply never consenting.
 4. **Your consent, stored locally.** Nothing is sent until you say yes in the app. The answer lives in a local file you can read and edit ([see below](#where-consent-lives)) — never in a remote service.
 
 Declining the one-time dialog is silent and permanent — you are never asked again. Change your answer any time under **Compute → Privacy**.
@@ -28,6 +28,7 @@ Every event is a flat JSON object with a fixed envelope. The canonical example �
 ```json
 {
   "event": "flow_run_succeeded",
+  "event_id": "b7a1d9c4-3e52-4f18-9a6b-0c5d2e7f8a13",
   "install_id": "3f6b1c2e-8a94-4c50-9d0e-2f7a61b8c4d1",
   "app_version": "0.12.7",
   "platform": "darwin",
@@ -42,7 +43,7 @@ Every event is a flat JSON object with a fixed envelope. The canonical example �
 }
 ```
 
-The envelope: event name, random install id, app version, platform (`darwin`/`linux`/`windows`/`other`), run mode (`electron`/`docker`/`package`/`other`), UTC timestamp. Event-specific fields live in `props`. The schema is closed — twelve events, fixed props, fixed value sets — and the client drops anything outside it before sending.
+The envelope: event name, a random per-event id (so a re-sent event can be recognised as the same one, [see below](#where-it-goes)), random install id, app version, platform (`darwin`/`linux`/`windows`/`other`), run mode (`electron`/`docker`/`package`/`other`), UTC timestamp. Event-specific fields live in `props`. The schema is closed — twelve events, fixed props, fixed value sets — and the client drops anything outside it before sending.
 
 | Event | When it fires |
 |---|---|
@@ -93,13 +94,20 @@ No payload ever contains:
 
 The only identifier is the install id: a random UUID created the moment you opt in, and at no other time. Turning telemetry off deletes it; opting back in creates a new one, unlinkable to the old. No account, no email, no fingerprint.
 
+## Where it goes
+
+Consented events are sent to `https://events.flowfile.app/events` — the Flowfile project's own collector. It is the same open-source service you can [run yourself](#self-hosting-the-collector): it validates each event against the schema above and appends it to a JSON-lines file. Nothing goes anywhere else — no analytics vendor, no ad network, no third-party SDK.
+
+Sending happens on a background thread and never blocks or slows anything you are doing. If the collector is unreachable, the batch is written to a local buffer file instead of being lost, and re-sent the next time Flowfile starts — which is why each event carries its own `event_id`. Undelivered events are buffered locally for at most 30 days and 16 MiB (oldest dropped first), and the buffer is deleted immediately if telemetry is turned off. Nothing is recorded about your machine beyond the fields listed above.
+
 ## Where consent lives
 
 | Path | Contents |
 |---|---|
 | `<internal storage>/telemetry.yaml` | Your consent answer and — only while consented — the install id. |
+| `<internal storage>/telemetry_spool.jsonl` | Events that could not be delivered yet, one per line, in exactly the shape shown above. Present only after a failed send; deleted as soon as they are delivered, when they age past 30 days, and immediately when you turn telemetry off. |
 
-Internal storage is `~/.flowfile` locally, `$FLOWFILE_STORAGE_DIR` when set, and `/app/internal_storage` in Docker. The whole file:
+Internal storage is `~/.flowfile` locally, `$FLOWFILE_STORAGE_DIR` when set, and `/app/internal_storage` in Docker. The whole consent file:
 
 ```yaml
 # Anonymous usage telemetry — managed from the Flowfile UI (Compute -> Privacy).
@@ -109,7 +117,7 @@ consent: true
 install_id: 3f6b1c2e-8a94-4c50-9d0e-2f7a61b8c4d1
 ```
 
-Declined consent is the same file with `consent: false` and no `install_id` line. Hand-editable; there is no database record behind it.
+Declined consent is the same file with `consent: false` and no `install_id` line. Hand-editable; there is no database record behind either file. Deleting the buffer file by hand simply discards whatever had not been delivered — turning telemetry off does exactly that for you.
 
 ## Self-hosting the collector
 
@@ -120,16 +128,16 @@ cd tools/telemetry_collector
 docker compose up -d
 ```
 
-Point an install at it with `FLOWFILE_TELEMETRY_ENDPOINT=http://<host>:8300/events` and opt in.
+Point an install at it with `FLOWFILE_TELEMETRY_ENDPOINT=http://<host>:8300/events` and opt in. That replaces the project's collector for that install; nothing is sent to both.
 
 ## For operators
 
 | Variable | Effect |
 |---|---|
 | `FLOWFILE_TELEMETRY` | Kill switch, not a consent switch. Falsy (`0`/`false`/`no`/`off`, case-insensitive) hard-disables before any prompt, file read, or send. Unset changes nothing; truthy grants nothing — consent always comes from the user. |
-| `FLOWFILE_TELEMETRY_ENDPOINT` | Collector URL, used verbatim; overrides the built-in default. No default ships today, so unset means disabled. |
+| `FLOWFILE_TELEMETRY_ENDPOINT` | Collector URL, used verbatim; overrides the built-in default `https://events.flowfile.app/events`. Unset — or set but empty — uses that default, so blanking it does not disable telemetry. |
 
-Both are read per call. `TESTING=True` also hard-disables, so CI and test runs never send. The bundled `docker-compose.yml` ships `FLOWFILE_TELEMETRY=0`: multi-user deployments are hard-off unless the operator lifts the kill switch and configures an endpoint, and consent there is admin-only.
+Both are read per call. `TESTING=True` also hard-disables, so CI and test runs never send. The bundled `docker-compose.yml` ships `FLOWFILE_TELEMETRY=0`: multi-user deployments are hard-off until the operator lifts the kill switch, and consent there is admin-only. That compose file also passes `FLOWFILE_TELEMETRY_ENDPOINT` through as an empty value, which resolves to the built-in collector — an operator who lifts the kill switch and wants their own destination must set the variable to a real URL.
 
 ## Related
 

@@ -47,7 +47,7 @@ const telemetryStore = useTelemetryStore();
 onMounted(() => {
   // Pick up the active project (if any) so the header sync pill is correct on boot.
   projectStore.refreshActive();
-  // Lazy, non-blocking: the consent modal only appears once this resolves.
+  // The consent modal only appears once this resolves.
   void telemetryStore.loadStatus();
 });
 

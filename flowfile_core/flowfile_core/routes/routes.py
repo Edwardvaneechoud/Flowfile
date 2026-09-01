@@ -1010,6 +1010,23 @@ def get_generated_flowframe_code(flow_id: int) -> str:
         raise HTTPException(422, str(e)) from e
 
 
+@router.post("/editor/code_to_polars/exported", tags=["editor"], status_code=204, response_class=Response)
+def confirm_polars_code_export() -> Response:
+    """Confirms the user deliberately exported the generated Polars code.
+
+    The export itself is a client-side download, and the GET above fires on every
+    render of the code panel, so the deliberate action needs a signal of its own.
+    Handlers stay dumb: the telemetry middleware is what reads this route.
+    """
+    return Response(status_code=204)
+
+
+@router.post("/editor/code_to_flowframe/exported", tags=["editor"], status_code=204, response_class=Response)
+def confirm_flowframe_code_export() -> Response:
+    """Confirms the user deliberately exported the generated FlowFrame code."""
+    return Response(status_code=204)
+
+
 @router.get("/editor/share_link", tags=["editor"], response_model=output_model.ShareLinkResponse)
 def get_share_link(flow_id: int) -> output_model.ShareLinkResponse:
     """Encodes the live flow as a link that opens it in the browser-only editor.

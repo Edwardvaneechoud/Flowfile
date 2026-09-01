@@ -34,6 +34,8 @@ from flowfile_core.flowfile.flow_node.models import (
     NodeStepInputs,
     NodeStepSettings,
     NodeStepStats,
+    RemoteExecutionError,
+    recover_error_class,
 )
 from flowfile_core.flowfile.flow_node.multi_output import (
     DEFAULT_OUTPUT_HANDLE,
@@ -1548,7 +1550,7 @@ class FlowNode:
             # which calls .collect() on the LazyFrame and can cause issues
             if result_data is None:
                 self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
-                raise Exception("get_resulting_data returned None")
+                raise RemoteExecutionError("get_resulting_data returned None")
         except Exception as e:
             self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
             raise e
@@ -1609,7 +1611,9 @@ class FlowNode:
                             "every column as text, or enable 'Ignore Errors' to null the unparseable values."
                         )
                         self.results.errors = guidance
-                        raise Exception(guidance) from e
+                        raise RemoteExecutionError(
+                            guidance, recover_error_class(e, external_df_fetcher.error_description)
+                        ) from e
                     # Never degrade-gracefully on a canceled node: the raise below
                     # feeds the executor's clean-cancel reclassification instead.
                     if external_df_fetcher.error_code == -1 and not self._execution_state.is_canceled:
@@ -1629,7 +1633,10 @@ class FlowNode:
                         raise e
                     else:
                         self.results.errors = external_df_fetcher.error_description
-                        raise Exception(external_df_fetcher.error_description) from e
+                        raise RemoteExecutionError(
+                            external_df_fetcher.error_description,
+                            recover_error_class(e, external_df_fetcher.error_description),
+                        ) from e
                     break
                 finally:
                     self._fetch_cached_df = None

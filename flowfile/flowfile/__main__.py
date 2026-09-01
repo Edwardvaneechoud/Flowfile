@@ -139,11 +139,11 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
                 print(f"  - {node_name}: {node_result.error}", file=sys.stderr)
         exit_code = 1
 
-    # This process exits right after; drain after the summary so nobody waits on it.
+    # This process exits right after; a short budget, and whatever misses it is spooled for a later run.
     try:
         from flowfile_core import telemetry
 
-        telemetry.flush(2.0)
+        telemetry.flush(0.3)
     except Exception:
         pass
 

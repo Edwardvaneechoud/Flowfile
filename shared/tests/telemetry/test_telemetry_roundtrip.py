@@ -25,7 +25,7 @@ from tools.telemetry_collector import app as collector
 
 pytestmark = pytest.mark.timeout(60)
 
-WIRE_KEYS = {"event", "install_id", "app_version", "platform", "mode", "ts", "props"}
+WIRE_KEYS = {"event", "event_id", "install_id", "app_version", "platform", "mode", "ts", "props"}
 
 
 @pytest.fixture
@@ -146,8 +146,13 @@ def test_a_dead_endpoint_is_swallowed_below_debug_noise(dead_endpoint, no_backgr
     ]
 
 
-def test_events_dropped_while_dead_never_resurface(live_collector, dead_endpoint, no_background, tmp_path, monkeypatch):
-    """No retry queue by design: a batch that failed to send is gone for good."""
+def test_events_spooled_while_dead_arrive_after_recovery(live_collector, dead_endpoint, tmp_path, monkeypatch):
+    """The spool reverses the old contract: a batch that failed to send is delivered later.
+
+    Delivery is at-least-once from here on, so the two things worth pinning are
+    that the events come back with their original ``event_id``s and that each
+    lands exactly once.
+    """
     events_file = tmp_path / "events.jsonl"
     monkeypatch.setenv("FLOWFILE_TELEMETRY_ENDPOINT", dead_endpoint)
     telemetry.set_consent(True)
@@ -157,9 +162,16 @@ def test_events_dropped_while_dead_never_resurface(live_collector, dead_endpoint
     telemetry.flush(timeout=10.0)
     assert not events_file.exists(), "nothing can land while the endpoint is dead"
 
-    monkeypatch.setenv("FLOWFILE_TELEMETRY_ENDPOINT", live_collector)
-    telemetry.emit("app_started")
-    telemetry.flush(timeout=10.0)
+    spooled = [json.loads(line) for line in telemetry._spool_file().read_text(encoding="utf-8").splitlines() if line]
+    parked = [entry["event_id"] for entry in spooled]
+    assert [entry["event"] for entry in spooled] == ["flow_created", "flow_created"]
 
-    landed = _collected_events(events_file, 1)
-    assert [entry["event"] for entry in landed] == ["app_started"], "the fresh emit arrives alone"
+    telemetry._reset_for_tests()  # a later process start: fresh queue, fresh daemon, same consent file
+    monkeypatch.setenv("FLOWFILE_TELEMETRY_ENDPOINT", live_collector)
+    telemetry.emit("app_started")  # no flush: the daemon is what drains the spool, before the live queue
+
+    landed = _collected_events(events_file, 3)
+    assert [entry["event"] for entry in landed] == ["flow_created", "flow_created", "app_started"], "spool first"
+    assert [entry["event_id"] for entry in landed[:2]] == parked, "the original ids come back"
+    assert len({entry["event_id"] for entry in landed}) == 3, "no event is delivered twice"
+    assert not telemetry._spool_file().exists(), "a delivered spool is removed"

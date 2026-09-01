@@ -9,6 +9,11 @@ repo_url: https://github.com/edwardvaneechoud/Flowfile
 # Explicitly set the URL style for consistency and planning
 use_directory_urls: false
 
+# Working notes and decision records live in the repo, not on the docs site.
+exclude_docs: |
+  notes/
+  decisions/
+
 theme:
   name: material
   logo: assets/images/logo.png

@@ -186,7 +186,8 @@ const handleOpenDocumentation = () => {
 };
 
 const handleLogout = () => {
-  authService.logout();
+  // Store logout, not authService: per-user store state must be torn down too.
+  authStore.logout();
   router.push({ name: "login" });
 };
 </script>

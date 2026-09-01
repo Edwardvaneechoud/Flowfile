@@ -36,6 +36,41 @@ class InvalidationReason(Enum):
     PERFORMANCE_MODE = auto()  # Running in performance mode (no caching)
 
 
+_OPAQUE_ERROR_CLASSES = frozenset({"Exception", "BaseException", "RemoteExecutionError"})
+
+
+class RemoteExecutionError(Exception):
+    """A worker-offloaded node failed.
+
+    The worker ships a message, not an exception type, so wrapping its failure in a
+    bare ``Exception`` used to erase the only class signal core had. This keeps
+    whatever class could be recovered on ``original_class`` (None when none could)
+    while leaving the user-facing message exactly as it was.
+    """
+
+    def __init__(self, message: str, original_class: str | None = None) -> None:
+        super().__init__(message)
+        self.original_class = original_class
+
+
+def recover_error_class(cause: BaseException | None = None, description: str | None = None) -> str | None:
+    """Best available original exception class name for a worker-side failure.
+
+    Walks the explicit ``__cause__`` chain first (implicit ``__context__`` is
+    deliberately ignored — it can name an unrelated exception), then falls back to a
+    ``ClassName: message`` prefix on the worker's error description. Returns None
+    when neither is conclusive; callers still map the result through their own
+    allowlist, so an unexpected token can never travel.
+    """
+    while cause is not None:
+        name = type(cause).__name__
+        if name not in _OPAQUE_ERROR_CLASSES:
+            return name
+        cause = cause.__cause__
+    head, separator, _ = (description or "").partition(":")
+    return head if separator and head.isidentifier() else None
+
+
 @dataclass
 class ExecutionDecision:
     """

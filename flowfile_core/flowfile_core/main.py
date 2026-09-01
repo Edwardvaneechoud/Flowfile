@@ -434,8 +434,8 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
                 _cli_logger.error("  - %s: %s", node_name, node_result.error)
         exit_code = 1
 
-    # This process exits right after; drain after the summary so nobody waits on it.
-    core_telemetry.flush(2.0)
+    # Process exits right after; whatever misses this budget is spooled for a later run.
+    core_telemetry.flush(0.3)
     return exit_code
 
 

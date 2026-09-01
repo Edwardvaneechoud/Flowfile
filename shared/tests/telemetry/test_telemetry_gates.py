@@ -153,8 +153,6 @@ def test_revoking_consent_stops_an_already_sending_install(enabled, posts):
 
 class TestStatus:
     def test_status_reports_every_gate(self, monkeypatch):
-        # The baseline this asserts is "nothing resolves at all", which a
-        # release shipping DEFAULT_ENDPOINT no longer reaches on its own.
         monkeypatch.setattr(telemetry, "DEFAULT_ENDPOINT", "")
         status = telemetry.get_status()
         assert status.as_dict() == {

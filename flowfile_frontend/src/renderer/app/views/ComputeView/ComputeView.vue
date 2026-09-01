@@ -39,8 +39,7 @@ const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 
-// Group captions derive from the *visible* list, so hiding an admin-only tab
-// can't leave a caption stranded over the wrong cluster.
+// Captions derive from the visible list: hiding an admin tab must not strand one.
 const visibleTabs = computed(() => {
   const shown = computeTabs.filter((t) => !t.requiresAdmin || authStore.isAdmin);
   return shown.map((tab, i) => ({
@@ -115,7 +114,6 @@ watch(
   background: var(--color-border-primary);
 }
 
-/* Whisper-quiet group caption at the start of each tab cluster. */
 .tab-group-label {
   flex-shrink: 0;
   align-self: center;
