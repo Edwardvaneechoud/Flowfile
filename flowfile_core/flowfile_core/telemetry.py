@@ -111,6 +111,7 @@ _builtin_node_types: frozenset[str] | None = None
 _snapshots: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _middleware_installed = False
 _subscribed = False
+_launch_published = False
 
 
 def emit(event: str, props: dict[str, Any] | None = None) -> None:
@@ -327,8 +328,23 @@ def install(app) -> None:
 
 
 def install_headless() -> None:
-    """Subscribe without an HTTP app, for the CLI run paths. Idempotent."""
+    """Subscribe without an HTTP app, for the CLI run paths. Idempotent.
+
+    Publishes ``app_started`` once per process: a headless run has no lifespan,
+    so a scheduled- or CLI-only install would otherwise never register a launch
+    at all. The guard is its own flag rather than the subscription, because the
+    in-process ``--run-flow`` path imports ``main`` — where :func:`install`
+    already subscribed — before it gets here. Nothing else calls this, so the
+    server's lifespan publish and a consent grant's cannot be duplicated.
+    Publishing once per headless process cannot inflate the funnel, which counts
+    installs that ever launched, not launches.
+    """
+    global _launch_published
     _subscribe()
+    if _launch_published:
+        return
+    _launch_published = True
+    events.publish("app_started")
 
 
 def flush(timeout: float = 2.0) -> None:

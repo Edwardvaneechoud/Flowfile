@@ -108,15 +108,6 @@ class TestEnvelope:
         telemetry.flush()
         assert _sent_event(posts)["mode"] == "electron"
 
-    def test_unknown_app_version_never_breaks_the_envelope(self, enabled, no_background, posts, monkeypatch):
-        def _boom(name):
-            raise LookupError(name)
-
-        monkeypatch.setattr("importlib.metadata.version", _boom)
-        telemetry.emit("app_started")
-        telemetry.flush()
-        assert _sent_event(posts)["app_version"] == "unknown"
-
 
 class TestValidation:
     @pytest.mark.parametrize("event", ["", "app_launched", "flow_run", "drop_table", "APP_STARTED"])
@@ -257,13 +248,13 @@ class TestDelivery:
             telemetry.emit_once("app_started")
         telemetry.emit_once("export_code_used", {"target": "polars"})
         telemetry.emit_once("export_code_used", {"target": "polars"})
-        telemetry.emit_once("export_code_used", {"target": "project"})
+        telemetry.emit_once("export_code_used", {"target": "project_zip"})
         telemetry.flush()
 
         assert [(event["event"], event["props"]) for event in posts.events] == [
             ("app_started", {}),
             ("export_code_used", {"target": "polars"}),
-            ("export_code_used", {"target": "project"}),
+            ("export_code_used", {"target": "project_zip"}),
         ]
 
     def test_emit_once_stays_armed_while_telemetry_is_disabled(self, no_background, posts, monkeypatch):
@@ -414,3 +405,56 @@ class TestPoisonScan:
                     assert value.isidentifier()
                 else:
                     assert value in allowed_values, f"{key}={value!r} is not a declared value"
+
+
+class _Responds:
+    """Stand-in for the collector's 2xx response, with whatever body the test needs."""
+
+    status_code = 202
+    text = ""
+
+    def __init__(self, body: Any):
+        self._body = body
+
+    def json(self) -> Any:
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+class TestCollectorResponseBody:
+    """Reading the collector's 2xx body must never break delivery, whatever it contains."""
+
+    def _records(self, caplog):
+        return [record for record in caplog.records if record.name == "flowfile.telemetry"]
+
+    def _send_against(self, monkeypatch, response: Any) -> str:
+        monkeypatch.setattr(telemetry, "_post", lambda url, json, timeout=None: response)
+        return telemetry._send([{"event": "app_started"}], spool_on_failure=False)
+
+    def test_a_rejected_count_is_warned_about(self, enabled, no_background, monkeypatch, caplog):
+        with caplog.at_level(logging.DEBUG, logger="flowfile.telemetry"):
+            outcome = self._send_against(monkeypatch, _Responds({"accepted": 0, "rejected": 1}))
+
+        assert outcome == telemetry.SEND_OK
+        warnings = [record for record in self._records(caplog) if record.levelno >= logging.WARNING]
+        assert len(warnings) == 1
+        assert "1" in warnings[0].getMessage()
+
+    @pytest.mark.parametrize(
+        "make_response",
+        [
+            pytest.param(lambda: type("_NoJson", (), {"status_code": 202, "text": "ok"})(), id="no_json_method"),
+            pytest.param(lambda: _Responds(ValueError("not json")), id="body_is_not_json"),
+            pytest.param(lambda: _Responds("<html>"), id="body_is_a_string"),
+            pytest.param(lambda: _Responds({"accepted": 1}), id="no_rejected_key"),
+            pytest.param(lambda: _Responds({"rejected": "some"}), id="rejected_is_not_a_number"),
+            pytest.param(lambda: _Responds({"accepted": 1, "rejected": 0}), id="nothing_rejected"),
+        ],
+    )
+    def test_an_unreadable_body_changes_nothing(self, make_response, enabled, no_background, monkeypatch, caplog):
+        with caplog.at_level(logging.DEBUG, logger="flowfile.telemetry"):
+            outcome = self._send_against(monkeypatch, make_response())
+
+        assert outcome == telemetry.SEND_OK
+        assert [record for record in self._records(caplog) if record.levelno >= logging.WARNING] == []

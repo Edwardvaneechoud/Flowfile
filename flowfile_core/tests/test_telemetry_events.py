@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, HTTPException, Response
@@ -95,11 +96,15 @@ def sent(tmp_path, monkeypatch) -> Iterator[list[dict]]:
 
 @pytest.fixture
 def subscribed() -> Iterator[None]:
-    """A clean event bus with exactly the telemetry observer on it."""
+    """A clean event bus with exactly the telemetry observer on it.
+
+    Subscribes directly rather than through ``install_headless``, which also
+    publishes a launch of its own.
+    """
     events._reset_for_tests()
     glue._subscribed = False
     glue._snapshots.clear()
-    glue.install_headless()
+    glue._subscribe()
     yield
     events._reset_for_tests()
     glue._snapshots.clear()
@@ -538,6 +543,7 @@ class TestInstall:
 
     def test_install_headless_subscribes_without_an_app(self, monkeypatch) -> None:
         monkeypatch.setattr(glue, "_subscribed", False)
+        monkeypatch.setattr(glue, "_launch_published", False)
         events._reset_for_tests()
         try:
             glue.install_headless()
@@ -555,6 +561,57 @@ class TestInstall:
             glue._subscribed = False
             glue._subscribe()
 
+    def test_install_headless_publishes_one_launch_when_consent_is_granted(self, sent) -> None:
+        """A headless run has no lifespan, so this is the only launch a CLI-only install reports."""
+        events._reset_for_tests()
+        glue._subscribed = False
+        glue._launch_published = False
+        try:
+            glue.install_headless()
+            glue.install_headless()
+            assert names(sent) == ["app_started"]
+        finally:
+            events._reset_for_tests()
+            glue._subscribed = False
+            glue._launch_published = False
+            glue._subscribe()
+
+    def test_install_headless_publishes_even_when_install_already_subscribed(self, sent) -> None:
+        """``--run-flow`` imports ``main``, so ``install(app)`` subscribed long before this call."""
+        from flowfile_core import main  # noqa: F401  — importing it is what runs install(app)
+
+        assert glue._subscribed is True, "importing main.py must leave the observer subscribed"
+        glue._launch_published = False
+        try:
+            glue.install_headless()
+            glue.install_headless()
+            assert names(sent) == ["app_started"]
+        finally:
+            glue._launch_published = False
+
+    def test_install_headless_without_consent_sends_nothing(self, sent) -> None:
+        client.set_consent(False)
+        events._reset_for_tests()
+        glue._subscribed = False
+        glue._launch_published = False
+        try:
+            glue.install_headless()
+            assert names(sent) == []
+        finally:
+            events._reset_for_tests()
+            glue._subscribed = False
+            glue._launch_published = False
+            glue._subscribe()
+
+
+def test_the_lifespan_publishes_app_started(sent, subscribed) -> None:
+    """The publish site itself: opening the app's lifespan is what a core start does."""
+    from flowfile_core import main
+
+    with TestClient(main.app):
+        pass
+    assert "app_started" in names(sent)
+
 
 def test_every_mapped_route_exists_on_the_app() -> None:
     """Route drift would silently stop an HTTP event; this is the tripwire."""
@@ -565,9 +622,34 @@ def test_every_mapped_route_exists_on_the_app() -> None:
     assert missing == [], f"telemetry route table names routes that do not exist: {missing}"
 
 
-@pytest.mark.parametrize(
-    "path", ["/editor/code_to_polars", "/editor/code_to_flowframe", "/editor/code_to_project"]
-)
+def test_every_mapped_route_event_is_in_the_client_schema() -> None:
+    """The mirror of the route tripwire: a row the client would drop emits nothing."""
+    for key, (event, props) in glue.ROUTE_EVENTS.items():
+        assert event in client.EVENTS, f"{key} maps to unknown event {event!r}"
+        assert set(props or {}) <= client.EVENTS[event], f"{key} names props outside the schema of {event!r}"
+
+
+def test_every_event_the_observer_emits_is_in_the_client_schema() -> None:
+    """Same check for the subscriber side, read off the literal emit calls."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(glue))
+    emitted = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) in {"emit", "emit_once"}
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    assert "flow_run_started" in emitted, "the scan found no emit() literals, so it proves nothing"
+    unknown = sorted(emitted - set(client.EVENTS))
+    assert unknown == [], f"the observer emits events the client would drop: {unknown}"
+
+
+@pytest.mark.parametrize("path", ["/editor/code_to_polars", "/editor/code_to_flowframe", "/editor/code_to_project"])
 def test_code_render_routes_are_not_mapped_as_exports(path) -> None:
     """Those GETs render the Code panel; mapping them counted looking at code as exporting it."""
     assert ("GET", path) not in glue.ROUTE_EVENTS
@@ -608,6 +690,22 @@ def test_the_deliberate_export_confirmations_are_the_mapped_ones() -> None:
         "export_code_used",
         {"target": "flowframe"},
     )
+
+
+def test_documented_export_targets_are_exactly_the_ones_routes_emit() -> None:
+    """The telemetry page promises every value that can leave the machine.
+
+    ``shared.telemetry.EXPORT_TARGETS`` is a frozen validator allowlist and may
+    legitimately be wider than what any route emits, so the page is checked
+    against the route table rather than against the schema enum.
+    """
+    docs = Path(__file__).resolve().parents[2] / "docs" / "users" / "telemetry.md"
+    rows = [line for line in docs.read_text(encoding="utf-8").splitlines() if line.startswith("| `target` |")]
+    assert len(rows) == 1, "expected exactly one documented `target` row"
+    cell = rows[0].strip().strip("|").split("|")[2]
+    documented = {token.strip().strip("`") for token in cell.split("·")}
+    emitted = {props["target"] for _, props in glue.ROUTE_EVENTS.values() if props and "target" in props}
+    assert documented == emitted
 
 
 class TestErrorClassRecovery:
@@ -911,3 +1009,103 @@ def test_spawn_flow_subprocess_still_merges_extra_env(monkeypatch, tmp_path) -> 
     subprocess_utils.spawn_flow_subprocess("/tmp/flow.yaml", 1, {"FLOWFILE_EXTRA": "1"}, suppress_telemetry=True)
     assert captured["env"]["FLOWFILE_EXTRA"] == "1"
     assert captured["env"][client.ENV_KILL_SWITCH] == "0"
+
+
+@pytest.fixture
+def remote_worker_active() -> None:
+    """Skip unless worker offload is genuinely active for this session.
+
+    Same guard as the ``execution_location`` fixture's ``remote`` param: a live
+    worker is necessary but not sufficient, because ``FLOWFILE_OFFLOAD_TO_WORKER=0``
+    silently downgrades "remote" to "local" and the failure would never leave core.
+    """
+    from flowfile_core.schemas.schemas import (
+        is_valid_execution_location_in_current_global_settings,
+    )
+    from tests.conftest import is_worker_running
+
+    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
+        pytest.skip("Remote execution not active")
+
+
+class TestWorkerOffloadedFailuresKeepTheirClass:
+    """A failure that only happens inside the worker must still reach the wire as itself.
+
+    These run against the real ``flowfile_worker`` (session-autouse fixture in
+    ``tests/conftest.py``). The strict cast of ``"abc"`` to Int64 resolves fine as a
+    schema and fails only when the plan is collected — which happens in a worker
+    child — so the class can travel to ``flow_run_failed`` only through the
+    description core parses back out.
+
+    That description is the precondition: the worker must be built from a branch
+    that prefixes failures with the exception class. The fixture reuses whatever
+    already answers on the worker port, so a running desktop app's packaged
+    worker is what these bind to — and an older one reports ``OtherError`` here.
+    Start your own (``poetry run flowfile_worker --port 63679``) and point the
+    suite at it with ``FLOWFILE_WORKER_PORT=63679``.
+    """
+
+    @staticmethod
+    def _graph_with_a_collect_time_failure(flow_id: int, execution_mode: str):
+        from flowfile_core.flowfile.flow_graph import add_connection
+        from flowfile_core.schemas import input_schema, transform_schema
+        from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+
+        graph = create_test_graph(flow_id=flow_id, execution_location="remote")
+        graph.flow_settings.execution_mode = execution_mode
+        add_test_manual_input(graph, [{"a": "abc"}], node_id=1)
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="polars_code"))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_polars_code(
+            input_schema.NodePolarsCode(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_ids=[1],
+                polars_code_input=transform_schema.PolarsCodeInput(
+                    polars_code='output_df = input_df.with_columns(pl.col("a").cast(pl.Int64))'
+                ),
+            )
+        )
+        return graph
+
+    def test_the_sampler_path_reports_the_real_class(self, sent, subscribed, remote_worker_active) -> None:
+        """Development mode: a narrow transform fails in the ExternalSampler."""
+        graph = self._graph_with_a_collect_time_failure(9903, "Development")
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+        assert emitted[1]["props"] == {"error_class": "InvalidOperationError"}
+
+    def test_the_output_writer_path_reports_the_real_class(
+        self, sent, subscribed, remote_worker_active, tmp_path
+    ) -> None:
+        """Performance mode: no sampler runs, so the write is what fails in the worker."""
+        from flowfile_core.flowfile.flow_graph import add_connection
+        from flowfile_core.schemas import input_schema
+
+        graph = self._graph_with_a_collect_time_failure(9904, "Performance")
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=3, node_type="output"))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+        graph.add_output(
+            input_schema.NodeOutput(
+                flow_id=graph.flow_id,
+                node_id=3,
+                output_settings=input_schema.OutputSettings(
+                    name="cast_failure.parquet",
+                    directory=str(tmp_path),
+                    file_type="parquet",
+                    write_mode="overwrite",
+                    table_settings=input_schema.OutputParquetTable(),
+                ),
+            )
+        )
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+        assert emitted[1]["props"] == {"error_class": "InvalidOperationError"}

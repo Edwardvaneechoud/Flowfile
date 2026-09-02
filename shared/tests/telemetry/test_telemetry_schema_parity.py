@@ -25,7 +25,7 @@ EXAMPLE_EVENT: dict[str, Any] = {
     "ts": "2026-08-29T12:00:00Z",
     "props": {
         "node_count_bucket": "4-7",
-        "node_types": ["filter", "read", "write_output"],
+        "node_types": ["filter", "output", "read"],
         "duration_bucket": "1-10s",
         "used_sample_data": False,
     },
@@ -34,13 +34,19 @@ EXAMPLE_EVENT: dict[str, Any] = {
 MAXIMAL_PROPS: dict[str, dict[str, Any]] = {
     "flow_run_succeeded": {
         "node_count_bucket": "4-7",
-        "node_types": ["write_output", "filter", "read"],
+        "node_types": ["filter", "output", "read"],
         "duration_bucket": "1-10s",
         "used_sample_data": False,
     },
     "flow_run_failed": {"error_class": "ColumnNotFoundError"},
     "export_code_used": {"target": "polars"},
 }
+
+
+def test_maximal_props_cover_every_allowlisted_prop():
+    """``MAXIMAL_PROPS`` is what the envelope test exercises, so a gap here silently opts an event out."""
+    for event, keys in telemetry.EVENTS.items():
+        assert set(MAXIMAL_PROPS.get(event, {})) == set(keys), event
 
 
 def test_event_name_sets_are_identical():
@@ -98,6 +104,7 @@ def test_every_client_built_envelope_validates_on_the_collector():
     identifier = str(uuid.uuid4())
     for event in telemetry.EVENTS:
         envelope = telemetry._envelope(event, MAXIMAL_PROPS.get(event, {}), identifier)
+        assert set(envelope["props"]) == telemetry.EVENTS[event], f"{event}: a prop the client cannot build"
         cleaned = collector._validate_event(envelope)
         assert cleaned is not None, f"collector rejected a client-built {event} envelope: {envelope}"
         assert cleaned == envelope

@@ -175,3 +175,28 @@ def test_events_spooled_while_dead_arrive_after_recovery(live_collector, dead_en
     assert [entry["event_id"] for entry in landed[:2]] == parked, "the original ids come back"
     assert len({entry["event_id"] for entry in landed}) == 3, "no event is delivered twice"
     assert not telemetry._spool_file().exists(), "a delivered spool is removed"
+
+
+def test_a_collector_older_than_this_client_is_warned_about(
+    live_collector, no_background, tmp_path, monkeypatch, caplog
+):
+    """The schema-ahead case, end to end: the collector drops the event and the client must say so.
+
+    The deployed collector is simulated by removing a prop this client sends,
+    which is exactly what shipping a client before redeploying looks like.
+    """
+    older = dict(collector.EVENT_PROPS)
+    older["export_code_used"] = frozenset()
+    monkeypatch.setattr(collector, "EVENT_PROPS", older)
+    monkeypatch.setenv("FLOWFILE_TELEMETRY_ENDPOINT", live_collector)
+    telemetry.set_consent(True)
+
+    with caplog.at_level(logging.DEBUG, logger="flowfile.telemetry"):
+        telemetry.emit("export_code_used", {"target": "polars"})
+        telemetry.flush(timeout=10.0)
+
+    assert not (tmp_path / "events.jsonl").exists(), "the older collector really did drop it"
+    warnings = [record for record in _telemetry_records(caplog) if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1, [(record.levelname, record.getMessage()) for record in _telemetry_records(caplog)]
+    assert "1" in warnings[0].getMessage()
+    assert not telemetry._spool_file().exists(), "a 2xx is still a delivery: nothing is retried"

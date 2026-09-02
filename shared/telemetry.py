@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shared import telemetry_spool as spool
+from shared._version import get_version
 from shared.storage_config import storage
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ SEND_PERMANENT = "permanent"
 NODE_COUNT_BUCKETS = ("1-3", "4-7", "8-15", "16-30", "31+")
 DURATION_BUCKETS = ("<1s", "1-10s", "10-60s", "1-5m", "5-30m", "30m+")
 ROW_BUCKETS = ("0", "1-100", "101-10k", "10k-1M", "1M+")
-EXPORT_TARGETS = ("polars", "flowframe", "project", "project_zip", "project_save")
+EXPORT_TARGETS = ("polars", "flowframe", "project_zip", "project_save")
 
 MAX_IDENTIFIER_LENGTH = 64
 MAX_NODE_TYPES = 60
@@ -100,7 +101,6 @@ _stop: threading.Event | None = None
 _thread: threading.Thread | None = None
 _emitted_once: set[str] = set()
 _state_cache: Any = _UNSET
-_version_cache: str | None = None
 _atexit_registered = False
 
 
@@ -315,20 +315,16 @@ def set_consent(enabled: bool) -> ConsentResult:
     persisted = persist_state(enabled, identifier)
     _invalidate_state_cache()
     if not enabled:
-        _purge_spool()  # buffered events carry the id that was just forgotten
+        # buffered events carry the id that was just forgotten
+        _purge_queue()
+        _purge_spool()
     return ConsentResult(status=get_status(), persisted=persisted and consent() is enabled)
 
 
 def _app_version() -> str:
-    global _version_cache
-    if _version_cache is None:
-        try:
-            from importlib.metadata import version
-
-            _version_cache = version("flowfile")
-        except Exception:
-            _version_cache = "unknown"
-    return _version_cache
+    """The in-source version, not importlib.metadata: the Docker images run
+    ``poetry install --no-root``, so no dist-info exists to look up."""
+    return get_version()
 
 
 def _platform() -> str:
@@ -411,6 +407,28 @@ def _post(url: str, json: dict[str, Any], timeout: float | None = None) -> httpx
     return httpx.post(url, json=json, timeout=httpx.Timeout(budget, connect=connect), follow_redirects=False)
 
 
+def _warn_on_rejected(response: Any, sent: int) -> None:
+    """Surface a collector that accepted the request but dropped events from it.
+
+    A 2xx with a non-zero ``rejected`` count means the collector's schema is
+    older than this client's — the events are gone and no retry will help, so
+    the log line is the only signal an operator gets. The body is untrusted:
+    anything unreadable is ignored.
+    """
+    try:
+        body = response.json()
+        rejected = body["rejected"]
+        if not isinstance(rejected, int) or isinstance(rejected, bool) or rejected <= 0:
+            return
+    except Exception:
+        return
+    logger.warning(
+        "telemetry collector rejected %d of %d event(s); redeploy the collector to match this client's schema",
+        rejected,
+        sent,
+    )
+
+
 def _send(batch: list[dict[str, Any]], timeout: float | None = None, spool_on_failure: bool = True) -> str:
     """Post one batch and report how it went.
 
@@ -419,7 +437,12 @@ def _send(batch: list[dict[str, Any]], timeout: float | None = None, spool_on_fa
     drain. 413 and 422 are permanent: the same bytes would be refused again, so
     they are dropped exactly as they were before the spool existed. The drain
     itself passes ``spool_on_failure=False``; its lines are already on disk.
+
+    The gate is re-read here rather than trusted from the caller: a revoke can
+    land between an enqueue and this post, and those bytes must never leave.
     """
+    if not is_enabled():
+        return SEND_PERMANENT
     url = _endpoint()
     if not url:
         return SEND_PERMANENT
@@ -430,6 +453,7 @@ def _send(batch: list[dict[str, Any]], timeout: float | None = None, spool_on_fa
             response = _post(url, {"events": batch}, timeout=timeout)
         status = getattr(response, "status_code", 200)
         if 200 <= status < 300:
+            _warn_on_rejected(response, len(batch))
             return SEND_OK
         if status in PERMANENT_STATUSES:
             return SEND_PERMANENT
@@ -440,10 +464,29 @@ def _send(batch: list[dict[str, Any]], timeout: float | None = None, spool_on_fa
     return SEND_TRANSIENT
 
 
+def _purge_queue() -> None:
+    """Discard whatever is queued in memory. Called when consent is revoked, never otherwise."""
+    with _lock:
+        q = _queue
+    if q is None:
+        return
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            return
+
+
 def _purge_spool() -> None:
-    """Delete everything buffered. Called when consent is revoked, never otherwise."""
+    """Delete everything buffered. Called when consent is revoked, never otherwise.
+
+    The generation bump is what stops a drain that already read these lines: it
+    is holding offsets into a file that no longer exists.
+    """
+    global _spool_generation
     with _spool_lock:
         spool.purge(_spool_file())
+        _spool_generation += 1
 
 
 def _spool_append(batch: list[dict[str, Any]]) -> None:
@@ -498,9 +541,11 @@ def _drain_spool() -> None:
     A transient failure stops the pass with the survivors still on disk; the next
     process start picks them up. Lines that were delivered, permanently rejected,
     corrupt or older than ``SPOOL_MAX_AGE_SECONDS`` are dropped in one rewrite at
-    the end — unless a compaction rewrote the file underneath us, in which case
-    the pass gives up its offsets and lets the next drain re-send (at-least-once
-    is why the envelope carries ``event_id``).
+    the end — unless a compaction or a revoke rewrote the file underneath us, in
+    which case the pass gives up its offsets and lets the next drain re-send
+    (at-least-once is why the envelope carries ``event_id``). Consent and the
+    generation are re-read at every batch boundary, so a revoke stops the pass
+    within one batch instead of delivering the rest under an erased id.
     """
     if not is_enabled():
         return
@@ -515,6 +560,10 @@ def _drain_spool() -> None:
     resolved = 0
     completed = True
     for batch, consumed in _spool_batches(entries, cutoff):
+        with _spool_lock:
+            stale = _spool_generation != generation
+        if stale or not is_enabled():
+            return
         with _send_guard:
             outcome = _send(batch, spool_on_failure=False)
         if outcome == SEND_TRANSIENT:
@@ -558,6 +607,8 @@ def _loop(q: queue.Queue, wake: threading.Event, stop: threading.Event) -> None:
         wake.clear()
         while not stop.is_set():
             with _send_guard:
+                if not is_enabled():
+                    break
                 batch = _take_batch(q)
                 if not batch:
                     break
@@ -670,7 +721,7 @@ def _reset_for_tests() -> None:
     already past its ``stop`` check would otherwise resolve ``_post`` and
     ``_endpoint`` after monkeypatch teardown and post to the real collector.
     """
-    global _queue, _wake, _stop, _thread, _state_cache, _version_cache, _spool_generation
+    global _queue, _wake, _stop, _thread, _state_cache, _spool_generation
     with _lock:
         stale = _thread
         if _stop is not None:
@@ -683,7 +734,6 @@ def _reset_for_tests() -> None:
         _thread = None
         _emitted_once.clear()
         _state_cache = _UNSET
-        _version_cache = None
         _spool_generation = 0  # the spool file itself belongs to the fixture that redirected it
     if stale is not None and stale is not threading.current_thread():
         stale.join(0.5)

@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 
 import flowfile_core.flowfile.community_nodes.client as client_mod
-from flowfile_core.flowfile.community_nodes import installer
+from flowfile_core.flowfile.community_nodes import installer, models
 from flowfile_core.flowfile.community_nodes.client import PinMismatchError, get_community_client
 from flowfile_core.flowfile.community_nodes.models import InstallRequest
 from flowfile_core.flowfile.community_nodes.receipts import load_receipts
 from flowfile_core.flowfile.user_defined.registry import registry
-from shared import storage
+from shared import _version, storage
 
 BENIGN_NODE = '''
 import polars as pl
@@ -472,6 +472,22 @@ def test_incompatible_version_refused_at_install(isolated_storage, make_registry
     with pytest.raises(installer.IncompatibleVersionError):
         _install(node_id)
     assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+
+
+def test_incompatible_version_refused_without_dist_info(isolated_storage, make_registry, monkeypatch):
+    """The Docker images install with --no-root, so importlib.metadata finds nothing."""
+    import importlib.metadata
+
+    def _missing(name, *args, **kwargs):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", _missing)
+    _index, node_id, _name, _dir = make_registry(min_version="99.0.0")
+
+    with pytest.raises(installer.IncompatibleVersionError):
+        _install(node_id)
+    assert not (storage.user_defined_nodes_directory / f"{node_id}.py").exists()
+    assert models.get_app_version() == _version.__version__
 
 
 def test_incompatible_update_not_offered(isolated_storage, make_registry):

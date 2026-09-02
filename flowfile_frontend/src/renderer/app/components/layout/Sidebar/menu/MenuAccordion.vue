@@ -168,6 +168,7 @@ function readCollapsedGroups(): Set<string> {
   }
 }
 
+// Must precede the immediate activeIndex watcher below, which reads it during setup.
 const collapsedGroups = ref<Set<string>>(readCollapsedGroups());
 
 function setCollapsedGroups(next: Set<string>) {

@@ -13,6 +13,7 @@ this service must deploy from this directory alone.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -51,6 +52,11 @@ EVENT_PROPS: dict[str, frozenset[str]] = {
     "export_code_used": frozenset({"target"}),
 }
 ALLOWED_EVENTS = frozenset(EVENT_PROPS)
+
+LABEL_CHARS = re.compile(r"[^0-9A-Za-z_.-]")
+MAX_LOGGED_LABELS = 10
+
+logger = logging.getLogger("telemetry_collector")
 
 app = FastAPI(title="Flowfile telemetry collector")
 _write_lock = threading.Lock()
@@ -149,6 +155,35 @@ def _validate_event(raw: object) -> dict | None:
     return cleaned
 
 
+def _safe_label(value: str) -> str:
+    """A sender-supplied name, stripped to schema-shaped characters before it reaches the log."""
+    return LABEL_CHARS.sub("", value)[:MAX_STRING_LEN] or "?"
+
+
+def _schema_gap(raw: object) -> str | None:
+    """Name the unknown event or prop key in a rejected event, if that is what it tripped on.
+
+    This is what a client deployed ahead of this collector looks like; every
+    other rejection reason (bad uuid, bad version string, unparseable ts) is
+    only counted. Values are never returned — names only.
+    """
+    if not isinstance(raw, dict):
+        return None
+    event = raw.get("event")
+    if not isinstance(event, str):
+        return None
+    if event not in ALLOWED_EVENTS:
+        return f"event={_safe_label(event)}"
+    props = raw.get("props")
+    if not isinstance(props, dict):
+        return None
+    allowed = EVENT_PROPS[event]
+    unknown = sorted(_safe_label(key) for key in props if isinstance(key, str) and key not in allowed)
+    if unknown:
+        return f"{_safe_label(event)}.props={'+'.join(unknown)}"
+    return None
+
+
 async def _read_capped_body(request: Request) -> bytes | None:
     """Read the body without ever buffering more than MAX_BODY_BYTES; None means too large."""
     declared = request.headers.get("content-length")
@@ -177,7 +212,8 @@ def _append_lines(lines: list[str]) -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    """Reports the deployed event schema so an operator can compare it with a client before shipping one."""
+    return {"status": "ok", "schema": {event: sorted(props) for event, props in EVENT_PROPS.items()}}
 
 
 @app.post("/events")
@@ -203,6 +239,7 @@ def ingest(body: bytes | None = Depends(_read_capped_body)) -> JSONResponse:
     received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     accepted: list[str] = []
     rejected = 0
+    gaps: set[str] = set()
     for raw in events:
         try:
             cleaned = _validate_event(raw)
@@ -210,9 +247,18 @@ def ingest(body: bytes | None = Depends(_read_capped_body)) -> JSONResponse:
             cleaned = None
         if cleaned is None:
             rejected += 1
+            try:
+                gap = _schema_gap(raw)
+            except Exception:
+                gap = None
+            if gap is not None:
+                gaps.add(gap)
             continue
         cleaned["received_at"] = received_at
         accepted.append(json.dumps(cleaned, separators=(",", ":")))
+    if rejected:
+        detail = ", ".join(sorted(gaps)[:MAX_LOGGED_LABELS]) if gaps else "no unknown name; a field failed validation"
+        logger.warning("rejected %d of %d event(s): %s", rejected, len(events), detail)
     if accepted:
         try:
             _append_lines(accepted)

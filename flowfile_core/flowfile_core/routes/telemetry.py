@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.events import publish
 from shared import telemetry
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
@@ -65,12 +66,21 @@ def set_telemetry_consent(
     body: TelemetryConsentInput,
     current_user=Depends(get_current_active_user),
 ) -> TelemetryStatusOut:
-    """Grant or revoke consent. Declining also forgets the install id."""
+    """Grant or revoke consent. Declining also forgets the install id.
+
+    A fresh grant publishes ``app_started``: the lifespan publish always happens
+    before consent exists and is dropped, so an install that consents once and
+    never relaunches would otherwise report zero launches and read as a failed
+    startup rather than the churn it is. Re-granting publishes nothing (the
+    install id is unchanged, so it would only duplicate), and neither does a
+    revoke or a grant that failed to persist.
+    """
     if not _can_manage(current_user):
         raise HTTPException(
             status_code=403,
             detail={"error_code": "TELEMETRY_ADMIN_ONLY", "message": "Only an admin can change telemetry consent."},
         )
+    was_granted = telemetry.consent() is True
     result = telemetry.set_consent(body.enabled)
     if not result.persisted:
         raise HTTPException(
@@ -80,4 +90,6 @@ def set_telemetry_consent(
                 "message": "Could not save the telemetry choice; it was not applied.",
             },
         )
+    if body.enabled and not was_granted:
+        publish("app_started")
     return _status(current_user)

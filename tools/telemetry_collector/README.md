@@ -21,6 +21,29 @@ in from the UI:
 export FLOWFILE_TELEMETRY_ENDPOINT=http://<host>:8300/events
 ```
 
+## Deploy order
+
+**Redeploy the collector before shipping a client that adds an event or a
+prop.** The collector validates against its own frozen schema and drops any
+event carrying a name it does not know; the sender is fire-and-forget, so those
+events are lost for good — a later collector upgrade cannot recover them. A
+rejection is visible on both sides now (the collector logs `rejected N of M`
+with the offending names, the client logs a warning naming the count), but only
+after the data is already gone.
+
+To check what is actually deployed before tagging a release, read the schema
+back over HTTP:
+
+```bash
+curl -s https://events.flowfile.app/health | jq .schema
+```
+
+`/health` reports `{"status": "ok", "schema": {<event>: [<prop>, ...]}}` —
+compare it with `EVENT_PROPS` in `app.py` (and `EVENTS` in
+`shared/telemetry.py`, which the parity tests keep identical). A deployment
+predating this field answers `{"status": "ok"}` alone, which is itself the
+answer: it is older than this commit and must be redeployed.
+
 Funnel report over the collected data:
 
 ```bash
@@ -99,7 +122,31 @@ present at all, must parse as a UUID; `error_class` and each entry of
 within the length cap. One field cannot be enumerated: `app_version` is a
 version string, so it is capped in shape and length rather than checked
 against a list of known releases. Treat it as a short constrained string, not
-as a closed value set.
+as a closed value set. Clients from 0.16.0 on always send the version baked
+into the source, so the literal `unknown` only appears in rows banked by older
+Docker-deployed clients that looked the version up in package metadata that
+`--no-root` never installed.
+
+### What the server sees, and what it keeps
+
+Both entry points start uvicorn with the access log off — `access_log=False` in
+`python -m tools.telemetry_collector`, `--no-access-log` in the Dockerfile
+`CMD`. uvicorn's request lines carry the connecting address, which next to a
+timestamp is enough to correlate an install id with an IP even though no event
+field contains one, so the collector writes none: the only thing it puts on
+disk is the validated envelope above. The application log is not silent — a
+batch with rejections logs the count and the offending event/prop *names* (see
+Deploy order) — but it carries no address, install id or prop value. The compose
+file also caps the container's own json-file logs at 10 MiB × 3 so the startup
+lines cannot grow without bound.
+
+Whatever you put in front of it still sees the connection. A reverse proxy,
+tunnel or CDN — Cloudflare Tunnel included — terminates TLS and keeps its own
+request logs under its own retention; that is a separate setting you have to
+check and, if it matters to your users, turn down. Retention of
+`events.jsonl` is entirely yours as well: nothing here rotates or expires it.
+Decide a policy, and if the install is not just your own, say in your privacy
+note who operates the collector and how long the file is kept.
 
 To rotate or archive, stop the collector (or just accept a seam), move
 `events.jsonl` aside (e.g. `events-2026-08.jsonl`), and restart — the file

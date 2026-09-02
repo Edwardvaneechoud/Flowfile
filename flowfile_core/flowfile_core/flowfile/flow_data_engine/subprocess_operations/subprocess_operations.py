@@ -959,8 +959,13 @@ class BaseFetcher:
             The fetched result.
 
         Raises:
-            Exception: If an error occurred during fetching.
+            RemoteExecutionError: If an error occurred during fetching. It carries the
+                worker-side exception class recovered from the description, so callers
+                that never wrap the raise themselves still report the real class.
         """
+        # imported here: flow_node imports this module, so a top-level import cycles
+        from flowfile_core.flowfile.flow_node.models import RemoteExecutionError, recover_error_class
+
         # Start if not already started (for manual usage)
         with self._lock:
             if not self._started:
@@ -974,7 +979,7 @@ class BaseFetcher:
 
         with self._lock:
             if self._error_description is not None:
-                raise Exception(self._error_description)
+                raise RemoteExecutionError(self._error_description, recover_error_class(None, self._error_description))
             return self._result
 
     @property

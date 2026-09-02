@@ -9,4 +9,4 @@ COPY app.py funnel.py ./
 
 EXPOSE 8300
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8300"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8300", "--no-access-log"]

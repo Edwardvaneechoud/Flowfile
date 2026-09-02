@@ -47,7 +47,7 @@ The envelope: event name, a random per-event id (so a re-sent event can be recog
 
 | Event | When it fires |
 |---|---|
-| `app_started` | The backend starts. |
+| `app_started` | The backend starts, you switch telemetry on, or a flow runs headlessly (from the command line, a schedule, or Run now in the catalog). |
 | `flow_created` | A flow is created. |
 | `flow_run_started` | A flow run begins. |
 | `flow_run_succeeded` | A flow run completes successfully. |
@@ -69,11 +69,11 @@ Only three events carry props at all:
 | `duration_bucket` | `flow_run_succeeded` | `<1s` · `1-10s` · `10-60s` · `1-5m` · `5-30m` · `30m+` |
 | `used_sample_data` | `flow_run_succeeded` | `true` · `false` |
 | `error_class` | `flow_run_failed` | An exception class name from a fixed allowlist, or `OtherError` — never the error message |
-| `target` | `export_code_used` | `polars` · `flowframe` · `project` · `project_zip` · `project_save` |
+| `target` | `export_code_used` | `polars` · `flowframe` · `project_zip` · `project_save` |
 
 Fine print, so the tables can't mislead:
 
-- `export_code_used` with target `polars` or `flowframe` fires when the generated code is *viewed* — the actual download happens client-side and is not observed.
+- `export_code_used` fires when you press Export or Download (or save a project to a folder), never when you open or switch the Code tab. The `polars` and `flowframe` downloads are built in the browser, so the app posts a small empty confirmation to `/editor/code_to_*/exported` to record it.
 - A run you cancel sends no completion event — only the `flow_run_started` that fired when it began.
 - `activation`, `catalog_used`, and `kernel_used` fire at most once per app session.
 - Seeding the built-in Demo catalog runs its flows with telemetry suppressed — Flowfile's own demo runs never count. Later runs of the demo's daily schedule, while the scheduler is enabled, count like any other scheduled run.
@@ -96,9 +96,11 @@ The only identifier is the install id: a random UUID created the moment you opt 
 
 ## Where it goes
 
-Consented events are sent to `https://events.flowfile.app/events` — the Flowfile project's own collector. It is the same open-source service you can [run yourself](#self-hosting-the-collector): it validates each event against the schema above and appends it to a JSON-lines file. Nothing goes anywhere else — no analytics vendor, no ad network, no third-party SDK.
+Consented events are sent to `https://events.flowfile.app/events` — the Flowfile project's own collector. It is the same open-source service you can [run yourself](#self-hosting-the-collector): it validates each event against the schema above and appends it to a JSON-lines file. Nothing goes anywhere else — no analytics vendor, no ad network, no third-party SDK inside Flowfile. The one third party in the path is the CDN in front of the collector, described below.
 
-Sending happens on a background thread and never blocks or slows anything you are doing. If the collector is unreachable, the batch is written to a local buffer file instead of being lost, and re-sent the next time Flowfile starts — which is why each event carries its own `event_id`. Undelivered events are buffered locally for at most 30 days and 16 MiB (oldest dropped first), and the buffer is deleted immediately if telemetry is turned off. Nothing is recorded about your machine beyond the fields listed above.
+Sending happens on a background thread and never blocks or slows anything you are doing. If the collector is unreachable, the batch is written to a local buffer file instead of being lost, and re-sent the next time Flowfile starts — which is why each event carries its own `event_id`. Undelivered events are buffered locally for at most 30 days and 16 MiB (oldest dropped first), and the buffer is deleted immediately if telemetry is turned off.
+
+The stored event is exactly the fields above plus a server-side receive timestamp. As with any web request, the receiving server and the CDN in front of it see the connecting IP address. `events.flowfile.app` is served through Cloudflare, which terminates TLS and keeps its own request logs under Cloudflare's retention, not a Flowfile setting. The collector itself runs with its access log switched off, so no request line — and so no IP address — is written on the origin; the only thing that lands on disk there is the validated event, in `events.jsonl`. The collector is run by the Flowfile maintainers, and nothing in it rotates or expires that file, so an accepted event stays until a maintainer removes it. To have the events for your install id removed, ask in [GitHub Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/q-a) with that id — it is the only thing the stored events can be matched on.
 
 ## Where consent lives
 

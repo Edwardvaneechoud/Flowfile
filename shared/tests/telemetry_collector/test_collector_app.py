@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 
 import pytest
@@ -213,4 +214,63 @@ def test_a_disk_that_cannot_be_written_answers_500_without_a_traceback(client, d
 def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
+
+
+class TestRejectionsAreVisible:
+    """A client shipping ahead of this collector must leave a trace in its log.
+
+    The response already carries a ``rejected`` count, but the sender is
+    fire-and-forget, so the collector's own log is the only place an operator
+    can see that a newer client's events are being dropped.
+    """
+
+    def _warnings(self, caplog):
+        return [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+    def test_a_clean_batch_logs_nothing(self, client, data_dir, caplog):
+        with caplog.at_level(logging.DEBUG):
+            response = client.post("/events", json={"events": [make_event("app_started")]})
+        assert response.json() == {"accepted": 1, "rejected": 0}
+        assert self._warnings(caplog) == []
+
+    def test_an_unknown_prop_is_named_with_the_count(self, client, data_dir, caplog):
+        event = make_event("app_started", props={"flow_name": "quarterly_revenue"})
+        with caplog.at_level(logging.WARNING):
+            response = client.post("/events", json={"events": [event, make_event("flow_created")]})
+
+        assert response.json() == {"accepted": 1, "rejected": 1}
+        warnings = self._warnings(caplog)
+        assert len(warnings) == 1, [record.getMessage() for record in warnings]
+        message = warnings[0].getMessage()
+        assert "flow_name" in message
+        assert "1" in message
+        assert "quarterly_revenue" not in message, "prop values never reach the log"
+        assert event["install_id"] not in message, "install ids never reach the log"
+
+    def test_an_unknown_event_name_is_named(self, client, data_dir, caplog):
+        with caplog.at_level(logging.WARNING):
+            response = client.post("/events", json={"events": [make_event("flow_deleted")]})
+
+        assert response.json() == {"accepted": 0, "rejected": 1}
+        warnings = self._warnings(caplog)
+        assert len(warnings) == 1, [record.getMessage() for record in warnings]
+        assert "flow_deleted" in warnings[0].getMessage()
+
+    def test_a_rejection_that_is_not_a_schema_gap_still_warns(self, client, data_dir, caplog):
+        with caplog.at_level(logging.WARNING):
+            response = client.post("/events", json={"events": [make_event("app_started", install_id="nope")]})
+
+        assert response.json() == {"accepted": 0, "rejected": 1}
+        warnings = self._warnings(caplog)
+        assert len(warnings) == 1, [record.getMessage() for record in warnings]
+        assert "nope" not in warnings[0].getMessage()
+
+
+def test_health_reports_the_deployed_schema(client):
+    """An operator must be able to read the deployed schema over HTTP before tagging a release."""
+    from tools.telemetry_collector import app as collector
+
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["schema"] == {event: sorted(props) for event, props in collector.EVENT_PROPS.items()}

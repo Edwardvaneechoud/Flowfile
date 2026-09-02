@@ -2,7 +2,12 @@
 
 Frozen funnel definitions:
     installs      = distinct install_id across all events
-    launched      = distinct install_id with >=1 app_started
+    launched      = distinct install_id with >=1 app_started. That event also
+                    arrives from a fresh consent grant and from a headless run,
+                    so "launched" means "ever reported a launch of any kind",
+                    not "started the desktop app". One app_started arrives per
+                    headless run, so only this distinct-install reading is
+                    meaningful — raw app_started counts are not launch counts
     run_attempted = distinct install_id with >=1 flow_run_started
     activated     = distinct install_id with >=1 activation
     week2_return  = distinct install_id with >=1 event whose ts is in
