@@ -154,6 +154,7 @@ is ready.
 | Graphic Walker visualization | ✓ | ✓ |
 | Python API (`flowfile_frame`) | ✓ | ✗ |
 | Data privacy | Sent to your backend/services as configured | Never leaves your browser |
+| [Anonymous usage telemetry](../telemetry.md) | Opt-in, off by default | Not present |
 
 ---
 

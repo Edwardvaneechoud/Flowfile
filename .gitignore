@@ -112,3 +112,7 @@ flowfile_frontend/src-tauri/SIGNING_CHECKLIST.md
 DOCS_IMAGE_TODO.md
 DOCS_DIAGRAMS_AGENT_PROMPT.md
 /notes/
+
+# Collected telemetry (the compose file bind-mounts this into the working tree)
+tools/telemetry_collector/data/
+/scratch/

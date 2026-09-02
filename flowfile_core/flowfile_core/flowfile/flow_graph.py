@@ -39,6 +39,7 @@ from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing
 from flowfile_core.configs.node_store.nodes import get_source_node_types, get_source_node_types_str
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.events import publish
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -6162,6 +6163,8 @@ class FlowGraph:
                 node_result.end_timestamp = time()
                 node_result.run_time_ms = 0
                 node_result.is_running = False
+                # Never executed this run: a stale class must not describe this failure.
+                node._last_exception_class = None
                 node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
                 return node_result, node
 
@@ -6373,6 +6376,8 @@ class FlowGraph:
                             except Exception as e:
                                 node_result.success = False
                                 node_result.error = f"Gate formula evaluation failed: {e}"
+                                # The node itself ran fine; no stale class may describe this failure.
+                                node._last_exception_class = None
                                 statuses[node.node_id] = NodeRunStatus.FAILED
                                 failed_node_ids.add(node.node_id)
                                 skip_node_ids.add(node.node_id)
@@ -6714,6 +6719,8 @@ class FlowGraph:
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
 
+            publish("flow_run_started", graph=self)
+
             self._refresh_catalog_reader_freshness()
             self._refresh_read_source_freshness()
 
@@ -6752,9 +6759,13 @@ class FlowGraph:
             self.release_run()
             if self.flow_settings.is_canceled:
                 self.flow_logger.info("Flow canceled")
-            return self.get_run_info()
-        except Exception as e:
-            raise e
+            run_info = self.get_run_info()
+            publish("flow_run_finished", graph=self, run_info=run_info)
+            return run_info
+        except BaseException as e:
+            # A pyo3 panic is BaseException-only; `except Exception` would miss it.
+            publish("flow_run_crashed", graph=self, error=e)
+            raise
         finally:
             self.release_run()
 

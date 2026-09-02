@@ -1426,12 +1426,12 @@ class CatalogService:
         self._require_use("flow", registration_id)
         return self._runs.run_flow_now(registration_id, user_id)
 
-    def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
+    def trigger_schedule_now(self, schedule_id: int, user_id: int, *, suppress_telemetry: bool = False) -> FlowRunOut:
         """Manually trigger a scheduled flow immediately."""
         if self._restricted:
             schedule = self._schedules.get_schedule(schedule_id)
             self._require_use("flow", schedule.registration_id)
-        return self._schedules.trigger_schedule_now(schedule_id, user_id)
+        return self._schedules.trigger_schedule_now(schedule_id, user_id, suppress_telemetry=suppress_telemetry)
 
     # ------------------------------------------------------------------ #
     # Active runs + cancel

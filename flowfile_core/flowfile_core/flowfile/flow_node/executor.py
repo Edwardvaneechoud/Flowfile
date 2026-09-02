@@ -138,6 +138,7 @@ class NodeExecutor:
 
         self._prepare_for_execution(state)
         self.node.reset()
+        self.node._last_exception_class = None  # a previous run's class must never describe this one
 
         # Snapshot before the scan so files arriving mid-run are not silently marked as seen.
         pending_source_info = self._pending_source_snapshot()
@@ -422,6 +423,8 @@ class NodeExecutor:
         state.mark_failed(error_str)
         self._sync_state_to_legacy(state)
         self.node.results.errors = error_str
+        # Class name only, never the message; a worker wrapper carries the original class.
+        self.node._last_exception_class = getattr(error, "original_class", None) or type(error).__name__
 
         # Retry on missing file errors (upstream cache was cleared)
         if "No such file or directory (os error" in error_str and retry:

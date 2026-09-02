@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from shared._version import get_version
+
 MANIFEST_SCHEMA_VERSION = 1
 INDEX_SCHEMA_VERSION = 1
 
@@ -57,12 +59,10 @@ def is_version_compatible(min_flowfile_version: str, app_version: str) -> bool:
 
 
 def get_app_version() -> str:
-    try:
-        from importlib.metadata import version
-
-        return version("Flowfile")
-    except Exception:
-        return ""
+    """The in-source version, not importlib.metadata: the Docker images run
+    ``poetry install --no-root``, so no dist-info exists to look up — and an
+    unparseable version silently disables ``min_flowfile_version`` gating."""
+    return get_version()
 
 
 class CommunityAuthor(BaseModel):

@@ -239,8 +239,12 @@ class ScheduleService:
         schedules = self.repo.list_schedules(registration_id=registration_id)
         return [self._schedule_to_out(s) for s in schedules]
 
-    def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
-        """Manually trigger a scheduled flow immediately."""
+    def trigger_schedule_now(self, schedule_id: int, user_id: int, *, suppress_telemetry: bool = False) -> FlowRunOut:
+        """Manually trigger a scheduled flow immediately.
+
+        ``suppress_telemetry`` is for app-driven triggers (the demo seeder), whose
+        run is not the user's and must stay out of telemetry in the spawned child.
+        """
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
@@ -252,7 +256,13 @@ class ScheduleService:
         if self.repo.has_active_run(schedule.registration_id):
             raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
 
-        run = self._runs.spawn_flow_run(flow, user_id=user_id, run_type="on_demand", schedule_id=schedule.id)
+        run = self._runs.spawn_flow_run(
+            flow,
+            user_id=user_id,
+            run_type="on_demand",
+            schedule_id=schedule.id,
+            suppress_telemetry=suppress_telemetry,
+        )
         return self._runs.run_to_out(run)
 
     def fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:

@@ -33,6 +33,10 @@
               <span class="material-icons">school</span>
               <span>Interactive tutorial</span>
             </button>
+            <button class="sidebar-more-item" @click="handleOpenPrivacy">
+              <i class="fa-solid fa-shield-halved"></i>
+              <span>Privacy &amp; data collection</span>
+            </button>
           </div>
         </el-popover>
       </div>
@@ -173,12 +177,17 @@ const handleOpenTemplates = () => {
   router.push({ name: "templates" });
 };
 
+const handleOpenPrivacy = () => {
+  router.push({ name: "compute", query: { tab: "privacy" } });
+};
+
 const handleOpenDocumentation = () => {
   void desktop.openExternal(DOCS_BASE_URL);
 };
 
 const handleLogout = () => {
-  authService.logout();
+  // Store logout, not authService: per-user store state must be torn down too.
+  authStore.logout();
   router.push({ name: "login" });
 };
 </script>

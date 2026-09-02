@@ -244,12 +244,12 @@ class FlowRunService:
         return run.flow_snapshot
 
     @staticmethod
-    def _spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
+    def _spawn_flow_subprocess(flow_path: str, run_id: int, *, suppress_telemetry: bool = False) -> int | None:
         """Fire-and-forget a ``flowfile run flow`` subprocess.
 
         Returns the child PID on success, or ``None`` on failure.
         """
-        return spawn_flow_subprocess(flow_path, run_id)
+        return spawn_flow_subprocess(flow_path, run_id, suppress_telemetry=suppress_telemetry)
 
     def spawn_flow_run(
         self,
@@ -257,10 +257,15 @@ class FlowRunService:
         user_id: int,
         run_type: RunType,
         schedule_id: int | None = None,
+        *,
+        suppress_telemetry: bool = False,
     ) -> FlowRun:
         """Create a FlowRun record and spawn the subprocess.
 
         On spawn failure the run is marked as failed immediately.
+
+        ``suppress_telemetry`` is forwarded to the child only (the demo seeder's
+        runs are ours, not the user's).
         """
         now = datetime.now(timezone.utc)
         run = FlowRun(
@@ -276,7 +281,7 @@ class FlowRunService:
         )
         run = self.repo.create_run(run)
 
-        pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
+        pid = self._spawn_flow_subprocess(flow.flow_path, run.id, suppress_telemetry=suppress_telemetry)
         if pid is not None:
             run.pid = pid
         else:

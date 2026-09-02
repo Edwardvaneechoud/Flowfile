@@ -1,0 +1,1111 @@
+"""Unit tests for the telemetry observer and the event seam it hangs off.
+
+No DB, no flow execution: the graph is a duck-typed fake and events are
+published the way product code publishes them, so these tests pin the payload
+contract rather than the engine. Events are captured at the shared client's
+``_post`` seam with the background thread disabled, so every assertion sees
+exactly the bytes that would have gone over the wire.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.testclient import TestClient
+
+from flowfile_core import events
+from flowfile_core import telemetry as glue
+from shared import telemetry as client
+
+POISON = (
+    "/Users/x/secret.csv",
+    "SELECT * FROM t",
+    "password=hunter2",
+    "Quarterly Revenue (confidential)",
+    "customer_email",
+)
+
+
+class FakeTemplate:
+    def __init__(self, input_count: int) -> None:
+        self.input = input_count
+
+
+class FakeNode:
+    def __init__(self, node_type: str, input_count: int = 1, node_id: int = 1, **extra) -> None:
+        self.node_type = node_type
+        self.node_id = node_id
+        self.node_template = FakeTemplate(input_count)
+        for key, value in extra.items():
+            setattr(self, key, value)
+
+
+class FakeSettings:
+    def __init__(self, is_canceled: bool = False) -> None:
+        self.is_canceled = is_canceled
+
+
+class FakeGraph:
+    def __init__(self, nodes: list[FakeNode], is_canceled: bool = False) -> None:
+        self.nodes = nodes
+        self.flow_settings = FakeSettings(is_canceled)
+
+
+class FakeNodeResult:
+    def __init__(self, node_id: int, success: bool | None, skipped: bool = False) -> None:
+        self.node_id = node_id
+        self.success = success
+        self.skipped = skipped
+
+
+class FakeRunInfo:
+    def __init__(self, success: bool, start_time=None, end_time=None, node_step_result=None) -> None:
+        self.success = success
+        self.start_time = start_time
+        self.end_time = end_time
+        self.node_step_result = node_step_result or []
+
+
+@pytest.fixture
+def sent(tmp_path, monkeypatch) -> Iterator[list[dict]]:
+    """All four gates open, delivery captured, worker thread disabled."""
+    monkeypatch.setattr(client, "_settings_file", lambda: tmp_path / "telemetry.yaml")
+    monkeypatch.setattr(client, "_spool_file", lambda: tmp_path / "telemetry_spool.jsonl")
+    client._reset_for_tests()
+    monkeypatch.delenv("TESTING", raising=False)
+    monkeypatch.delenv(client.ENV_KILL_SWITCH, raising=False)
+    monkeypatch.setenv(client.ENV_ENDPOINT, "https://example.invalid/events")
+    client.set_consent(True)
+
+    captured: list[dict] = []
+
+    def _capture(url: str, json_body: dict, timeout: float | None = None):
+        captured.extend(json_body["events"])
+        return None
+
+    monkeypatch.setattr(client, "_ensure_worker", lambda: None)
+    monkeypatch.setattr(client, "_post", _capture)
+    yield captured
+    client._reset_for_tests()
+
+
+@pytest.fixture
+def subscribed() -> Iterator[None]:
+    """A clean event bus with exactly the telemetry observer on it.
+
+    Subscribes directly rather than through ``install_headless``, which also
+    publishes a launch of its own.
+    """
+    events._reset_for_tests()
+    glue._subscribed = False
+    glue._snapshots.clear()
+    glue._subscribe()
+    yield
+    events._reset_for_tests()
+    glue._snapshots.clear()
+    glue._subscribed = False
+    glue._subscribe()  # leave the process wired up the way main.py left it
+
+
+def drain(captured: list[dict]) -> list[dict]:
+    client.flush(1.0)
+    return captured
+
+
+def names(captured: list[dict]) -> list[str]:
+    return [event["event"] for event in drain(captured)]
+
+
+def test_snapshot_collapses_unknown_node_types_to_custom() -> None:
+    graph = FakeGraph([FakeNode("manual_input", 0), FakeNode("my_sneaky_node"), FakeNode("select")])
+    snapshot = glue.run_snapshot(graph)
+    assert snapshot["node_types"] == ["custom", "manual_input", "select"]
+    assert snapshot["node_count"] == 3
+
+
+def test_snapshot_sample_data_flags() -> None:
+    sample_only = FakeGraph([FakeNode("manual_input", 0), FakeNode("select")])
+    assert glue.run_snapshot(sample_only)["used_sample_data"] is True
+
+    with_read = FakeGraph([FakeNode("manual_input", 0), FakeNode("read", 0), FakeNode("select")])
+    assert glue.run_snapshot(with_read)["used_sample_data"] is False
+
+
+def test_snapshot_detects_catalog_usage() -> None:
+    assert glue.run_snapshot(FakeGraph([FakeNode("catalog_reader", 0)]))["uses_catalog"] is True
+    assert glue.run_snapshot(FakeGraph([FakeNode("manual_input", 0)]))["uses_catalog"] is False
+
+
+def test_snapshot_never_raises_on_a_broken_graph() -> None:
+    class Exploding:
+        @property
+        def nodes(self):
+            raise RuntimeError("boom")
+
+    assert glue.run_snapshot(Exploding()) is None
+
+
+class TestEventBus:
+    """flowfile_core.events: the neutral seam product code publishes on."""
+
+    def setup_method(self) -> None:
+        events._reset_for_tests()
+
+    def teardown_method(self) -> None:
+        events._reset_for_tests()
+        glue._subscribed = False
+        glue._subscribe()
+
+    def test_publishing_without_subscribers_is_a_no_op(self) -> None:
+        events.publish("flow_run_started", graph=object())
+
+    def test_handlers_receive_the_payload_in_registration_order(self) -> None:
+        seen: list[str] = []
+        events.subscribe("thing", lambda value: seen.append(f"first:{value}"))
+        events.subscribe("thing", lambda value: seen.append(f"second:{value}"))
+        events.publish("thing", value="x")
+        assert seen == ["first:x", "second:x"]
+
+    def test_a_raising_handler_is_swallowed_and_logged_at_debug(self, caplog) -> None:
+        def _boom() -> None:
+            raise RuntimeError("subscriber exploded")
+
+        reached: list[bool] = []
+        events.subscribe("thing", _boom)
+        events.subscribe("thing", lambda: reached.append(True))
+
+        with caplog.at_level(logging.DEBUG, logger=events.logger.name):
+            events.publish("thing")
+
+        assert reached == [True], "one bad subscriber must not stop the others"
+        assert [r.levelno for r in caplog.records if r.name == events.logger.name] == [logging.DEBUG]
+
+    def test_a_handler_with_the_wrong_signature_cannot_reach_the_publisher(self) -> None:
+        events.subscribe("thing", lambda: None)
+        events.publish("thing", unexpected=1)
+
+    def test_reset_for_tests_clears_every_subscription(self) -> None:
+        seen: list[int] = []
+        events.subscribe("thing", lambda: seen.append(1))
+        events._reset_for_tests()
+        events.publish("thing")
+        assert seen == []
+
+
+class TestRunEvents:
+    """The domain events product code publishes, seen through the observer."""
+
+    def test_started_emits_started_and_catalog_used(self, sent, subscribed) -> None:
+        graph = FakeGraph([FakeNode("catalog_reader", 0)])
+        events.publish("flow_run_started", graph=graph)
+
+        assert glue._snapshots[graph]["uses_catalog"] is True
+        assert names(sent) == ["flow_run_started", "catalog_used"]
+
+    @pytest.mark.parametrize("attrs", [{"_subflow_depth": 1}, {"_system_run": True}])
+    def test_subflow_and_system_runs_are_silent(self, sent, subscribed, attrs) -> None:
+        graph = FakeGraph([FakeNode("read", 0), FakeNode("select"), FakeNode("output")])
+        for key, value in attrs.items():
+            setattr(graph, key, value)
+
+        events.publish("flow_run_started", graph=graph)
+        events.publish("flow_run_finished", graph=graph, run_info=FakeRunInfo(success=True))
+        events.publish("flow_run_crashed", graph=graph, error=ValueError("nope"))
+
+        assert names(sent) == []
+        assert len(glue._snapshots) == 0
+
+    def test_finished_success_is_bucketed_from_the_start_snapshot(self, sent, subscribed) -> None:
+        import datetime
+
+        nodes = [FakeNode("read", 0), FakeNode("select"), FakeNode("output"), FakeNode("select", node_id=4)]
+        graph = FakeGraph(nodes)
+        start = datetime.datetime(2026, 1, 1, 12, 0, 0)
+        run_info = FakeRunInfo(success=True, start_time=start, end_time=start + datetime.timedelta(seconds=3.5))
+
+        events.publish("flow_run_started", graph=graph)
+        events.publish("flow_run_finished", graph=graph, run_info=run_info)
+
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_succeeded", "activation"]
+        succeeded = emitted[1]
+        assert succeeded["props"] == {
+            "node_count_bucket": "4-7",
+            "node_types": ["output", "read", "select"],
+            "duration_bucket": "1-10s",
+            "used_sample_data": False,
+        }
+        assert set(succeeded) == {"event", "event_id", "install_id", "app_version", "platform", "mode", "ts", "props"}
+        assert graph not in glue._snapshots, "the snapshot is dropped when the run ends"
+
+    def test_finished_reports_the_error_class_of_a_node_that_failed_this_run(self, sent, subscribed) -> None:
+        ok = FakeNode("manual_input", 0, node_id=1)
+        failing = FakeNode("select", node_id=2, _last_exception_class="ComputeError")
+        graph = FakeGraph([ok, failing])
+        run_info = FakeRunInfo(
+            success=False,
+            node_step_result=[FakeNodeResult(1, True), FakeNodeResult(2, False)],
+        )
+
+        events.publish("flow_run_started", graph=graph)
+        events.publish("flow_run_finished", graph=graph, run_info=run_info)
+
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+        assert emitted[1]["props"] == {"error_class": "ComputeError"}
+
+    def test_only_this_runs_failures_are_consulted(self, sent, subscribed) -> None:
+        """A class left on a node that did not fail this run must not be reported."""
+        stale = FakeNode("read", 0, node_id=1, _last_exception_class="ComputeError")
+        failing = FakeNode("select", node_id=2, _last_exception_class="ValueError")
+        graph = FakeGraph([stale, failing])
+        run_info = FakeRunInfo(
+            success=False,
+            node_step_result=[FakeNodeResult(1, True), FakeNodeResult(2, False)],
+        )
+
+        events.publish("flow_run_finished", graph=graph, run_info=run_info)
+        assert drain(sent)[0]["props"] == {"error_class": "ValueError"}
+
+    def test_a_deliberately_skipped_node_is_not_a_failure(self, sent, subscribed) -> None:
+        skipped = FakeNode("select", node_id=2, _last_exception_class="ComputeError")
+        graph = FakeGraph([FakeNode("read", 0, node_id=1), skipped])
+        run_info = FakeRunInfo(
+            success=False,
+            node_step_result=[FakeNodeResult(1, True), FakeNodeResult(2, False, skipped=True)],
+        )
+
+        events.publish("flow_run_finished", graph=graph, run_info=run_info)
+        assert drain(sent)[0]["props"] == {"error_class": "OtherError"}
+
+    def test_failed_run_without_a_recorded_class_falls_back(self, sent, subscribed) -> None:
+        graph = FakeGraph([FakeNode("read", 0, node_id=1)])
+        run_info = FakeRunInfo(success=False, node_step_result=[FakeNodeResult(1, False)])
+
+        events.publish("flow_run_finished", graph=graph, run_info=run_info)
+        assert drain(sent)[0]["props"] == {"error_class": "OtherError"}
+
+    def test_canceled_runs_emit_no_completion_event(self, sent, subscribed) -> None:
+        graph = FakeGraph([FakeNode("read", 0), FakeNode("select"), FakeNode("output")], is_canceled=True)
+        events.publish("flow_run_started", graph=graph)
+        events.publish("flow_run_finished", graph=graph, run_info=FakeRunInfo(success=True))
+        assert names(sent) == ["flow_run_started"]
+
+    def test_crashed_emits_failed_with_the_classified_exception(self, sent, subscribed) -> None:
+        graph = FakeGraph([FakeNode("read", 0)])
+        events.publish("flow_run_started", graph=graph)
+        events.publish("flow_run_crashed", graph=graph, error=ValueError("boom"))
+
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+        assert emitted[1]["props"] == {"error_class": "ValueError"}
+        assert graph not in glue._snapshots
+
+    def test_crash_of_an_unknown_exception_class_is_collapsed(self, sent, subscribed) -> None:
+        class UserDefinedWeirdError(Exception):
+            pass
+
+        events.publish("flow_run_crashed", graph=FakeGraph([]), error=UserDefinedWeirdError("x"))
+        assert drain(sent)[0]["props"] == {"error_class": "OtherError"}
+
+    def test_kernel_exec_emits_kernel_used_once_per_process(self, sent, subscribed) -> None:
+        events.publish("kernel_exec")
+        events.publish("kernel_exec")
+        assert names(sent) == ["kernel_used"]
+
+    def test_app_started(self, sent, subscribed) -> None:
+        events.publish("app_started")
+        assert names(sent) == ["app_started"]
+
+    def test_a_broken_graph_never_reaches_the_publisher(self, sent, subscribed) -> None:
+        class Exploding:
+            @property
+            def flow_settings(self):
+                raise RuntimeError("boom")
+
+            @property
+            def nodes(self):
+                raise RuntimeError("boom")
+
+        events.publish("flow_run_started", graph=Exploding())
+        events.publish("flow_run_finished", graph=Exploding(), run_info=FakeRunInfo(success=True))
+
+
+def test_succeeded_payload_is_bucketed(sent) -> None:
+    snapshot = {
+        "node_count": 5,
+        "node_types": ["read", "select", "write_output"],
+        "used_sample_data": False,
+        "uses_catalog": False,
+    }
+    glue.emit_run_events(snapshot, outcome="succeeded", duration_seconds=3.5)
+    events_sent = drain(sent)
+    succeeded = next(e for e in events_sent if e["event"] == "flow_run_succeeded")
+    assert succeeded["props"] == {
+        "node_count_bucket": "4-7",
+        "node_types": ["read", "select", "write_output"],
+        "duration_bucket": "1-10s",
+        "used_sample_data": False,
+    }
+    assert set(succeeded) == {"event", "event_id", "install_id", "app_version", "platform", "mode", "ts", "props"}
+
+
+@pytest.mark.parametrize("node_count", [2, 4])
+@pytest.mark.parametrize("used_sample_data", [True, False])
+@pytest.mark.parametrize("outcome", ["succeeded", "failed"])
+def test_activation_only_on_real_multi_node_success(sent, node_count, used_sample_data, outcome) -> None:
+    snapshot = {
+        "node_count": node_count,
+        "node_types": ["read"],
+        "used_sample_data": used_sample_data,
+        "uses_catalog": False,
+    }
+    glue.emit_run_events(snapshot, outcome=outcome, duration_seconds=1.0, error_class="ValueError")
+    emitted = names(sent)
+    expected = outcome == "succeeded" and node_count >= 3 and not used_sample_data
+    assert ("activation" in emitted) is expected
+
+
+def test_activation_is_emitted_once_per_process(sent) -> None:
+    snapshot = {"node_count": 9, "node_types": ["read"], "used_sample_data": False, "uses_catalog": False}
+    glue.emit_run_events(snapshot, outcome="succeeded", duration_seconds=1.0)
+    glue.emit_run_events(snapshot, outcome="succeeded", duration_seconds=1.0)
+    assert names(sent).count("activation") == 1
+
+
+def test_canceled_outcome_emits_nothing(sent) -> None:
+    snapshot = {"node_count": 9, "node_types": ["read"], "used_sample_data": False, "uses_catalog": False}
+    glue.emit_run_events(snapshot, outcome="canceled", duration_seconds=1.0)
+    assert names(sent) == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("ValueError", "ValueError"),
+        ("KernelDependencyError", "KernelDependencyError"),
+        ("UserDefinedWeirdError", "OtherError"),
+        ("SELECT * FROM t", "OtherError"),
+        (None, "OtherError"),
+    ],
+)
+def test_classify_error(raw, expected) -> None:
+    assert glue.classify_error(raw) == expected
+
+
+def test_no_user_content_ever_reaches_the_wire(sent, subscribed) -> None:
+    """The poison test: nothing a user typed may appear in any emitted payload."""
+    nodes = [
+        FakeNode(
+            "read",
+            0,
+            node_id=1,
+            name="/Users/x/secret.csv",
+            description="password=hunter2",
+            setting_input={"file_path": "/Users/x/secret.csv", "query": "SELECT * FROM t"},
+        ),
+        FakeNode(
+            "customer_email",
+            1,
+            node_id=2,
+            name="Quarterly Revenue (confidential)",
+            description="SELECT * FROM t",
+        ),
+        FakeNode("polars_code", 1, node_id=3, name="password=hunter2"),
+    ]
+    nodes[0]._last_exception_class = "SELECT * FROM t"
+    graph = FakeGraph(nodes)
+    run_info = FakeRunInfo(success=False, node_step_result=[FakeNodeResult(1, False)])
+
+    events.publish("flow_run_started", graph=graph)
+    events.publish("flow_run_finished", graph=graph, run_info=run_info)
+    glue.emit("export_code_used", {"target": "polars"})
+    glue.emit("flow_created", {"flow_name": "Quarterly Revenue (confidential)"})
+
+    blob = json.dumps(drain(sent))
+    for poison in POISON:
+        assert poison not in blob, f"leaked {poison!r}"
+    assert "flow_name" not in blob
+
+
+def test_unknown_events_and_props_are_dropped(sent) -> None:
+    glue.emit("definitely_not_an_event")
+    glue.emit("flow_run_failed", {"error_class": "ValueError", "stack_trace": "/Users/x/secret.csv"})
+    emitted = drain(sent)
+    assert [e["event"] for e in emitted] == ["flow_run_failed"]
+    assert emitted[0]["props"] == {"error_class": "ValueError"}
+
+
+class TestRouteMiddleware:
+    """HTTP events come from one declarative table, not from handler bodies."""
+
+    @staticmethod
+    def _app() -> FastAPI:
+        app = FastAPI()
+
+        @app.post("/editor/create_flow/")
+        def _create_flow(fail: bool = False):
+            if fail:
+                raise HTTPException(422, "nope")
+            return 1
+
+        @app.get("/editor/code_to_polars")
+        def _code_to_polars(fail: bool = False):
+            if fail:
+                raise HTTPException(422, "nope")
+            return "df = pl.LazyFrame()"
+
+        @app.post("/editor/code_to_polars/exported", status_code=204, response_class=Response)
+        def _polars_exported(fail: bool = False):
+            if fail:
+                raise HTTPException(422, "nope")
+            return Response(status_code=204)
+
+        @app.get("/editor/code_to_project/zip")
+        def _zip():
+            raise RuntimeError("kaboom")
+
+        @app.get("/editor/unmapped_route")
+        def _unmapped():
+            return "nothing to see"
+
+        app.add_middleware(glue.TelemetryMiddleware)
+        return app
+
+    @pytest.fixture
+    def http(self) -> Iterator[TestClient]:
+        with TestClient(self._app(), raise_server_exceptions=False) as testclient:
+            yield testclient
+
+    def test_a_mapped_route_emits_its_event_with_its_props(self, sent, http) -> None:
+        assert http.post("/editor/code_to_polars/exported").status_code == 204
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["export_code_used"]
+        assert emitted[0]["props"] == {"target": "polars"}
+
+    def test_rendering_the_code_panel_is_not_an_export(self, sent, http) -> None:
+        """The Code tab GETs its code on every tab switch; only the button exports."""
+        assert http.get("/editor/code_to_polars").status_code == 200
+        assert names(sent) == []
+
+    def test_a_mapped_route_without_props(self, sent, http) -> None:
+        assert http.post("/editor/create_flow/").status_code == 200
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_created"]
+        assert emitted[0]["props"] == {}
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("post", "/editor/code_to_polars/exported?fail=true"),
+            ("post", "/editor/create_flow/?fail=true"),
+        ],
+    )
+    def test_a_client_error_emits_nothing(self, sent, http, method, path) -> None:
+        assert getattr(http, method)(path).status_code == 422
+        assert names(sent) == []
+
+    def test_a_server_error_emits_nothing(self, sent, http) -> None:
+        assert http.get("/editor/code_to_project/zip").status_code == 500
+        assert names(sent) == []
+
+    def test_an_unmapped_route_emits_nothing(self, sent, http) -> None:
+        assert http.get("/editor/unmapped_route").status_code == 200
+        assert names(sent) == []
+
+    def test_an_unmapped_method_on_a_mapped_path_emits_nothing(self, sent, http) -> None:
+        assert http.get("/editor/code_to_polars/exported").status_code == 405
+        assert names(sent) == []
+
+
+class TestInstall:
+    def test_install_is_idempotent(self, monkeypatch) -> None:
+        monkeypatch.setattr(glue, "_middleware_installed", False)
+        monkeypatch.setattr(glue, "_subscribed", False)
+        events._reset_for_tests()
+
+        app = FastAPI()
+        glue.install(app)
+        glue.install(app)
+
+        try:
+            assert [m.cls for m in app.user_middleware] == [glue.TelemetryMiddleware]
+            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1]
+        finally:
+            events._reset_for_tests()
+            glue._subscribed = False
+            glue._subscribe()
+
+    def test_install_headless_subscribes_without_an_app(self, monkeypatch) -> None:
+        monkeypatch.setattr(glue, "_subscribed", False)
+        monkeypatch.setattr(glue, "_launch_published", False)
+        events._reset_for_tests()
+        try:
+            glue.install_headless()
+            glue.install_headless()
+            assert set(events._handlers) == {
+                "flow_run_started",
+                "flow_run_finished",
+                "flow_run_crashed",
+                "kernel_exec",
+                "app_started",
+            }
+            assert all(len(handlers) == 1 for handlers in events._handlers.values())
+        finally:
+            events._reset_for_tests()
+            glue._subscribed = False
+            glue._subscribe()
+
+    def test_install_headless_publishes_one_launch_when_consent_is_granted(self, sent) -> None:
+        """A headless run has no lifespan, so this is the only launch a CLI-only install reports."""
+        events._reset_for_tests()
+        glue._subscribed = False
+        glue._launch_published = False
+        try:
+            glue.install_headless()
+            glue.install_headless()
+            assert names(sent) == ["app_started"]
+        finally:
+            events._reset_for_tests()
+            glue._subscribed = False
+            glue._launch_published = False
+            glue._subscribe()
+
+    def test_install_headless_publishes_even_when_install_already_subscribed(self, sent) -> None:
+        """``--run-flow`` imports ``main``, so ``install(app)`` subscribed long before this call."""
+        from flowfile_core import main  # noqa: F401  — importing it is what runs install(app)
+
+        assert glue._subscribed is True, "importing main.py must leave the observer subscribed"
+        glue._launch_published = False
+        try:
+            glue.install_headless()
+            glue.install_headless()
+            assert names(sent) == ["app_started"]
+        finally:
+            glue._launch_published = False
+
+    def test_install_headless_without_consent_sends_nothing(self, sent) -> None:
+        client.set_consent(False)
+        events._reset_for_tests()
+        glue._subscribed = False
+        glue._launch_published = False
+        try:
+            glue.install_headless()
+            assert names(sent) == []
+        finally:
+            events._reset_for_tests()
+            glue._subscribed = False
+            glue._launch_published = False
+            glue._subscribe()
+
+
+def test_the_lifespan_publishes_app_started(sent, subscribed) -> None:
+    """The publish site itself: opening the app's lifespan is what a core start does."""
+    from flowfile_core import main
+
+    with TestClient(main.app):
+        pass
+    assert "app_started" in names(sent)
+
+
+def test_every_mapped_route_exists_on_the_app() -> None:
+    """Route drift would silently stop an HTTP event; this is the tripwire."""
+    from flowfile_core.main import app
+
+    real = {(method, route.path) for route in app.routes for method in getattr(route, "methods", None) or ()}
+    missing = sorted(key for key in glue.ROUTE_EVENTS if key not in real)
+    assert missing == [], f"telemetry route table names routes that do not exist: {missing}"
+
+
+def test_every_mapped_route_event_is_in_the_client_schema() -> None:
+    """The mirror of the route tripwire: a row the client would drop emits nothing."""
+    for key, (event, props) in glue.ROUTE_EVENTS.items():
+        assert event in client.EVENTS, f"{key} maps to unknown event {event!r}"
+        assert set(props or {}) <= client.EVENTS[event], f"{key} names props outside the schema of {event!r}"
+
+
+def test_every_event_the_observer_emits_is_in_the_client_schema() -> None:
+    """Same check for the subscriber side, read off the literal emit calls."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(glue))
+    emitted = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) in {"emit", "emit_once"}
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    assert "flow_run_started" in emitted, "the scan found no emit() literals, so it proves nothing"
+    unknown = sorted(emitted - set(client.EVENTS))
+    assert unknown == [], f"the observer emits events the client would drop: {unknown}"
+
+
+@pytest.mark.parametrize("path", ["/editor/code_to_polars", "/editor/code_to_flowframe", "/editor/code_to_project"])
+def test_code_render_routes_are_not_mapped_as_exports(path) -> None:
+    """Those GETs render the Code panel; mapping them counted looking at code as exporting it."""
+    assert ("GET", path) not in glue.ROUTE_EVENTS
+
+
+def test_the_export_confirmation_routes_are_jwt_gated_no_ops() -> None:
+    """They exist only so the middleware has a deliberate-export signal to read."""
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import get_current_active_user, get_current_user
+    from flowfile_core.auth.models import User as PydanticUser
+
+    paths = ("/editor/code_to_polars/exported", "/editor/code_to_flowframe/exported")
+    saved = dict(main.app.dependency_overrides)
+    try:
+        main.app.dependency_overrides.clear()
+        anonymous = TestClient(main.app)
+        for path in paths:
+            assert anonymous.post(path).status_code == 401
+
+        user = PydanticUser(username="u", id=1, disabled=False, is_admin=True, must_change_password=False)
+        main.app.dependency_overrides[get_current_active_user] = lambda: user
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        authenticated = TestClient(main.app)
+        for path in paths:
+            response = authenticated.post(path)
+            assert (response.status_code, response.content) == (204, b"")
+    finally:
+        main.app.dependency_overrides.clear()
+        main.app.dependency_overrides.update(saved)
+
+
+def test_the_deliberate_export_confirmations_are_the_mapped_ones() -> None:
+    assert glue.ROUTE_EVENTS[("POST", "/editor/code_to_polars/exported")] == (
+        "export_code_used",
+        {"target": "polars"},
+    )
+    assert glue.ROUTE_EVENTS[("POST", "/editor/code_to_flowframe/exported")] == (
+        "export_code_used",
+        {"target": "flowframe"},
+    )
+
+
+def test_documented_export_targets_are_exactly_the_ones_routes_emit() -> None:
+    """The telemetry page promises every value that can leave the machine.
+
+    ``shared.telemetry.EXPORT_TARGETS`` is a frozen validator allowlist and may
+    legitimately be wider than what any route emits, so the page is checked
+    against the route table rather than against the schema enum.
+    """
+    docs = Path(__file__).resolve().parents[2] / "docs" / "users" / "telemetry.md"
+    rows = [line for line in docs.read_text(encoding="utf-8").splitlines() if line.startswith("| `target` |")]
+    assert len(rows) == 1, "expected exactly one documented `target` row"
+    cell = rows[0].strip().strip("|").split("|")[2]
+    documented = {token.strip().strip("`") for token in cell.split("·")}
+    emitted = {props["target"] for _, props in glue.ROUTE_EVENTS.values() if props and "target" in props}
+    assert documented == emitted
+
+
+class TestErrorClassRecovery:
+    """A worker-offloaded failure must keep whatever class signal is recoverable."""
+
+    @staticmethod
+    def _wrapped(original: Exception) -> Exception:
+        try:
+            raise original
+        except Exception as inner:
+            try:
+                raise Exception("the worker reported a failure") from inner
+            except Exception as wrapper:
+                return wrapper
+
+    def test_the_cause_chain_is_preferred(self) -> None:
+        from flowfile_core.flowfile.flow_node.models import recover_error_class
+
+        wrapper = self._wrapped(ValueError("bad literal"))
+        assert recover_error_class(wrapper, "some worker message") == "ValueError"
+
+    @pytest.mark.parametrize(
+        ("description", "expected"),
+        [
+            ("ComputeError: could not cast", "ComputeError"),
+            ('unable to find column "x"; valid columns: ["a"]', None),
+            ("", None),
+            (None, None),
+        ],
+    )
+    def test_a_class_prefix_is_the_fallback(self, description, expected) -> None:
+        from flowfile_core.flowfile.flow_node.models import recover_error_class
+
+        assert recover_error_class(None, description) == expected
+
+    def test_the_wrapper_keeps_the_message_and_the_class(self) -> None:
+        from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
+
+        error = RemoteExecutionError("worker failed on the read", "ComputeError")
+        assert str(error) == "worker failed on the read"
+        assert error.original_class == "ComputeError"
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (ValueError("plain"), "ValueError"),
+            (Exception("bare worker wrapper"), "Exception"),
+        ],
+    )
+    def test_the_recorder_falls_back_to_the_real_class(self, error, expected) -> None:
+        assert _record_node_error(error) == expected
+
+    def test_the_recorder_prefers_a_wrapped_original_class(self) -> None:
+        from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
+
+        assert _record_node_error(RemoteExecutionError("worker failed", "ComputeError")) == "ComputeError"
+
+
+class _Bag:
+    def __init__(self, **kwargs) -> None:
+        self.__dict__.update(kwargs)
+
+
+class _FakeState:
+    def __init__(self) -> None:
+        self.error = None
+        self.has_run_with_current_setup = False
+        self.has_completed_last_run = False
+        self.is_canceled = False
+
+    def mark_failed(self, message: str) -> None:
+        self.error = message
+
+
+class _QuietLogger:
+    def error(self, *args, **kwargs) -> None: ...
+
+    def warning(self, *args, **kwargs) -> None: ...
+
+
+def _record_node_error(error: Exception) -> str:
+    """Run the executor's error recorder over a duck-typed node, return the stamped class."""
+    from flowfile_core.flowfile.flow_node.executor import NodeExecutor
+
+    node = _Bag(node_stats=_Bag(), results=_Bag(errors=None), node_id=1, parent_uuid="uuid")
+    executor = NodeExecutor.__new__(NodeExecutor)
+    executor.node = node
+    executor.state_provider = None
+    executor._handle_error(_FakeState(), error, "remote", False, False, _QuietLogger())
+    return node._last_exception_class
+
+
+def test_flow_as_api_runs_are_marked_as_system_runs(monkeypatch) -> None:
+    """A published flow answers machine traffic; one graph per request must stay silent."""
+    from flowfile_core.flowfile import api_runner
+
+    seen: dict = {}
+
+    class _ApiNode:
+        node_type = "api_response"
+        node_id = 1
+        hash = "h"
+        setting_input = object()
+
+        def get_resulting_data(self):
+            return None
+
+    class _Flow:
+        flow_id = 55
+
+        def __init__(self) -> None:
+            self.nodes = [_ApiNode()]
+            self.flow_settings = _Bag(parameters=[], execution_location="local", execution_mode="Development")
+
+        def run_graph(self):
+            seen["skipped_by_telemetry"] = glue._skip(self)
+            return _Bag(success=True, node_step_result=[])
+
+    monkeypatch.setattr(api_runner, "open_flow", lambda *args, **kwargs: _Flow())
+    with pytest.raises(api_runner.ApiExecutionError):
+        api_runner.run_flow_as_api("/tmp/published.yaml", owner_id=1, param_specs=[], query={})
+
+    assert seen["skipped_by_telemetry"] is True
+
+
+def test_a_panic_publishes_a_crash_and_still_propagates(sent, subscribed, monkeypatch) -> None:
+    """A pyo3 panic is a BaseException: the crash guard has to see it, and re-raise it."""
+    from polars.exceptions import PanicException
+
+    from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+
+    assert not issubclass(PanicException, Exception), "the whole point of this test"
+
+    graph = create_test_graph(flow_id=9901)
+    add_test_manual_input(graph, [{"a": 1}], node_id=1)
+
+    def _panic(*args, **kwargs):
+        raise PanicException("called `Option::unwrap()` on a `None` value")
+
+    monkeypatch.setattr(graph, "_execute_stages", _panic)
+
+    with pytest.raises(PanicException):
+        graph.run_graph()
+
+    emitted = drain(sent)
+    assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+    assert emitted[1]["props"] == {"error_class": "PanicException"}
+
+
+def test_a_failure_before_the_node_ran_reports_no_stale_class(sent, subscribed, monkeypatch) -> None:
+    """Failing at parameter resolution must not report the class of an earlier run."""
+    from flowfile_core.flowfile import flow_graph as flow_graph_module
+    from flowfile_core.flowfile.param_types import FlowParameter
+    from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+
+    graph = create_test_graph(flow_id=9902)
+    add_test_manual_input(graph, [{"a": 1}], node_id=1)
+    graph.flow_settings.parameters = [FlowParameter(name="threshold", default_value="1", type="integer")]
+    graph.get_node(1)._last_exception_class = "FileNotFoundError"
+
+    def _unresolved(*args, **kwargs):
+        raise ValueError("Unresolved parameter references in node settings")
+
+    monkeypatch.setattr(flow_graph_module, "apply_parameters_in_place", _unresolved)
+    run_info = graph.run_graph()
+
+    assert run_info.success is False
+    emitted = drain(sent)
+    assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+    assert emitted[1]["props"] == {"error_class": "OtherError"}
+
+
+class FakeSpawnRepo:
+    """Just enough repository for FlowRunService.spawn_flow_run — no DB."""
+
+    def __init__(self) -> None:
+        self.runs: list = []
+
+    def create_run(self, run):
+        run.id = 4242
+        self.runs.append(run)
+        return run
+
+    def update_run(self, run):
+        return run
+
+
+class FakeRegistration:
+    id = 7
+    flow_uuid = "uuid-7"
+    name = "Daily FX Sync"
+    flow_path = "/tmp/demo_fx_sync.yaml"
+
+
+class FakeTriggerService:
+    """Stands in for CatalogService in the demo seeder's populate call."""
+
+    def __init__(self, boom: bool = False) -> None:
+        self.calls: list[tuple] = []
+        self.boom = boom
+
+    def trigger_schedule_now(self, schedule_id: int, user_id: int, **kwargs):
+        self.calls.append((schedule_id, user_id, kwargs))
+        if self.boom:
+            raise RuntimeError("no scheduler here")
+        return None
+
+
+def _spawn_recorder(monkeypatch) -> list[tuple]:
+    from flowfile_core.catalog.services import runs as runs_service
+
+    calls: list[tuple] = []
+
+    def _fake(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 999
+
+    monkeypatch.setattr(runs_service, "spawn_flow_subprocess", _fake)
+    return calls
+
+
+def test_demo_seed_populate_suppresses_telemetry_in_the_spawned_child() -> None:
+    """The FX populate spawns a fresh process, which no in-process marker can reach."""
+    from flowfile_core.catalog import demo_seed
+
+    service = FakeTriggerService()
+    assert demo_seed._trigger_immediate_populate(service, 11, 1) == "triggered"
+    assert service.calls == [(11, 1, {"suppress_telemetry": True})]
+
+
+def test_demo_seed_populate_never_fails_the_seed() -> None:
+    from flowfile_core.catalog import demo_seed
+
+    service = FakeTriggerService(boom=True)
+    assert demo_seed._trigger_immediate_populate(service, 11, 1) == "skipped"
+
+
+def test_spawn_flow_run_forwards_the_suppression_flag(monkeypatch) -> None:
+    from flowfile_core.catalog.services.runs import FlowRunService
+
+    calls = _spawn_recorder(monkeypatch)
+    FlowRunService(FakeSpawnRepo()).spawn_flow_run(
+        FakeRegistration(), user_id=1, run_type="on_demand", schedule_id=3, suppress_telemetry=True
+    )
+    assert calls[-1][1] == {"suppress_telemetry": True}
+
+
+def test_spawn_flow_run_does_not_suppress_by_default(monkeypatch) -> None:
+    """The scheduler and every other caller must keep spawning a plain child."""
+    from flowfile_core.catalog.services.runs import FlowRunService
+
+    calls = _spawn_recorder(monkeypatch)
+    FlowRunService(FakeSpawnRepo()).spawn_flow_run(FakeRegistration(), user_id=1, run_type="scheduled")
+    assert calls[-1][1] == {"suppress_telemetry": False}
+
+
+def test_spawn_flow_subprocess_kills_telemetry_without_touching_the_parent(monkeypatch, tmp_path) -> None:
+    import os
+
+    from shared import subprocess_utils
+
+    captured: dict = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def _fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess_utils.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(subprocess_utils, "run_log_path", lambda run_id: tmp_path / f"run_{run_id}.log")
+    monkeypatch.setenv("FLOWFILE_SPAWN_MARKER", "inherited")
+    before = os.environ.get(client.ENV_KILL_SWITCH)
+
+    assert subprocess_utils.spawn_flow_subprocess("/tmp/flow.yaml", 1, suppress_telemetry=True) == 4242
+    child_env = captured["env"]
+    assert child_env[client.ENV_KILL_SWITCH] == "0"
+    assert child_env["FLOWFILE_SPAWN_MARKER"] == "inherited", "the child still inherits the parent environment"
+    assert os.environ.get(client.ENV_KILL_SWITCH) == before, "the parent environment must not be mutated"
+
+    assert subprocess_utils.spawn_flow_subprocess("/tmp/flow.yaml", 2) == 4242
+    assert captured["env"] is None, "without suppression the child inherits unchanged"
+
+
+def test_spawn_flow_subprocess_still_merges_extra_env(monkeypatch, tmp_path) -> None:
+    from shared import subprocess_utils
+
+    captured: dict = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def _fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess_utils.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(subprocess_utils, "run_log_path", lambda run_id: tmp_path / f"run_{run_id}.log")
+
+    subprocess_utils.spawn_flow_subprocess("/tmp/flow.yaml", 1, {"FLOWFILE_EXTRA": "1"}, suppress_telemetry=True)
+    assert captured["env"]["FLOWFILE_EXTRA"] == "1"
+    assert captured["env"][client.ENV_KILL_SWITCH] == "0"
+
+
+@pytest.fixture
+def remote_worker_active() -> None:
+    """Skip unless worker offload is genuinely active for this session.
+
+    Same guard as the ``execution_location`` fixture's ``remote`` param: a live
+    worker is necessary but not sufficient, because ``FLOWFILE_OFFLOAD_TO_WORKER=0``
+    silently downgrades "remote" to "local" and the failure would never leave core.
+    """
+    from flowfile_core.schemas.schemas import (
+        is_valid_execution_location_in_current_global_settings,
+    )
+    from tests.conftest import is_worker_running
+
+    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
+        pytest.skip("Remote execution not active")
+
+
+class TestWorkerOffloadedFailuresKeepTheirClass:
+    """A failure that only happens inside the worker must still reach the wire as itself.
+
+    These run against the real ``flowfile_worker`` (session-autouse fixture in
+    ``tests/conftest.py``). The strict cast of ``"abc"`` to Int64 resolves fine as a
+    schema and fails only when the plan is collected — which happens in a worker
+    child — so the class can travel to ``flow_run_failed`` only through the
+    description core parses back out.
+
+    That description is the precondition: the worker must be built from a branch
+    that prefixes failures with the exception class. The fixture reuses whatever
+    already answers on the worker port, so a running desktop app's packaged
+    worker is what these bind to — and an older one reports ``OtherError`` here.
+    Start your own (``poetry run flowfile_worker --port 63679``) and point the
+    suite at it with ``FLOWFILE_WORKER_PORT=63679``.
+    """
+
+    @staticmethod
+    def _graph_with_a_collect_time_failure(flow_id: int, execution_mode: str):
+        from flowfile_core.flowfile.flow_graph import add_connection
+        from flowfile_core.schemas import input_schema, transform_schema
+        from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+
+        graph = create_test_graph(flow_id=flow_id, execution_location="remote")
+        graph.flow_settings.execution_mode = execution_mode
+        add_test_manual_input(graph, [{"a": "abc"}], node_id=1)
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="polars_code"))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_polars_code(
+            input_schema.NodePolarsCode(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_ids=[1],
+                polars_code_input=transform_schema.PolarsCodeInput(
+                    polars_code='output_df = input_df.with_columns(pl.col("a").cast(pl.Int64))'
+                ),
+            )
+        )
+        return graph
+
+    def test_the_sampler_path_reports_the_real_class(self, sent, subscribed, remote_worker_active) -> None:
+        """Development mode: a narrow transform fails in the ExternalSampler."""
+        graph = self._graph_with_a_collect_time_failure(9903, "Development")
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+        assert emitted[1]["props"] == {"error_class": "InvalidOperationError"}
+
+    def test_the_output_writer_path_reports_the_real_class(
+        self, sent, subscribed, remote_worker_active, tmp_path
+    ) -> None:
+        """Performance mode: no sampler runs, so the write is what fails in the worker."""
+        from flowfile_core.flowfile.flow_graph import add_connection
+        from flowfile_core.schemas import input_schema
+
+        graph = self._graph_with_a_collect_time_failure(9904, "Performance")
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=3, node_type="output"))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+        graph.add_output(
+            input_schema.NodeOutput(
+                flow_id=graph.flow_id,
+                node_id=3,
+                output_settings=input_schema.OutputSettings(
+                    name="cast_failure.parquet",
+                    directory=str(tmp_path),
+                    file_type="parquet",
+                    write_mode="overwrite",
+                    table_settings=input_schema.OutputParquetTable(),
+                ),
+            )
+        )
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["flow_run_started", "flow_run_failed"]
+        assert emitted[1]["props"] == {"error_class": "InvalidOperationError"}

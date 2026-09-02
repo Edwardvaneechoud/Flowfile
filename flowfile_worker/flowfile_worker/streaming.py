@@ -37,6 +37,7 @@ from flowfile_worker.spawner import (
     process_manager,
     unpack_result,
 )
+from flowfile_worker.task_errors import describe_exception
 
 streaming_router = APIRouter()
 
@@ -431,7 +432,7 @@ async def ws_submit(websocket: WebSocket):
     except Exception as e:
         logger.error(f"[WS] Error for task {task_id}: {e}", exc_info=True)
         try:
-            await websocket.send_json({"type": "error", "error_message": str(e)})
+            await websocket.send_json({"type": "error", "error_message": describe_exception(e)})
         except Exception:
             pass
     finally:

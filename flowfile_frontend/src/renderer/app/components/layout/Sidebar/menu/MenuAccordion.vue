@@ -157,6 +157,29 @@ const activeIndex = computed(() => {
   return name;
 });
 
+const COLLAPSED_GROUPS_KEY = "flowfile-sidebar-collapsed-groups";
+
+function readCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+// Must precede the immediate activeIndex watcher below, which reads it during setup.
+const collapsedGroups = ref<Set<string>>(readCollapsedGroups());
+
+function setCollapsedGroups(next: Set<string>) {
+  collapsedGroups.value = next;
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...next]));
+  } catch {
+    // private mode / blocked storage: state just won't persist
+  }
+}
+
 // Navigating to a child inside a collapsed group re-opens that group so the
 // active item is never invisibly selected. Immediate, so a deep link into a
 // collapsed group is uncovered on first mount too.
@@ -200,28 +223,6 @@ function childSections(routeItem: INavigationRoute): ChildSection[] {
     else sections.push({ key, labelKey: child.group?.labelKey ?? null, children: [child] });
   }
   return sections;
-}
-
-const COLLAPSED_GROUPS_KEY = "flowfile-sidebar-collapsed-groups";
-
-function readCollapsedGroups(): Set<string> {
-  try {
-    const raw = localStorage.getItem(COLLAPSED_GROUPS_KEY);
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-const collapsedGroups = ref<Set<string>>(readCollapsedGroups());
-
-function setCollapsedGroups(next: Set<string>) {
-  collapsedGroups.value = next;
-  try {
-    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...next]));
-  } catch {
-    // private mode / blocked storage: state just won't persist
-  }
 }
 
 function isGroupCollapsed(parent: string, key: string | null): boolean {

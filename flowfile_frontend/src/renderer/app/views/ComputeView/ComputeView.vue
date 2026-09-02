@@ -1,21 +1,26 @@
 <template>
   <div class="compute-view">
     <div v-if="visibleTabs.length > 1" class="compute-tabs">
-      <button
-        v-for="tab in visibleTabs"
-        :key="tab.key"
-        class="compute-tab"
-        :class="{ active: activeTab === tab.key }"
-        @click="handleTabClick(tab.key)"
-      >
-        <i :class="tab.icon"></i>
-        <span>{{ tab.label }}</span>
-      </button>
+      <template v-for="tab in visibleTabs" :key="tab.key">
+        <div v-if="tab.groupStart" class="tab-group-divider" aria-hidden="true"></div>
+        <span v-if="tab.groupLabel" class="tab-group-label" aria-hidden="true">
+          {{ tab.groupLabel }}
+        </span>
+        <button
+          class="compute-tab"
+          :class="{ active: activeTab === tab.key }"
+          @click="handleTabClick(tab.key)"
+        >
+          <i :class="tab.icon"></i>
+          <span>{{ tab.label }}</span>
+        </button>
+      </template>
     </div>
 
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <PerformancePanel v-else-if="activeTab === 'performance'" />
+      <PrivacyPanel v-else-if="activeTab === 'privacy'" />
     </div>
   </div>
 </template>
@@ -25,7 +30,8 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import KernelManagerView from "../KernelManagerView/KernelManagerView.vue";
 import PerformancePanel from "./PerformancePanel.vue";
-import { computeTabs, COMPUTE_TAB_KEYS } from "./computeTabs";
+import PrivacyPanel from "./PrivacyPanel.vue";
+import { computeTabs, COMPUTE_TAB_GROUP_LABELS, COMPUTE_TAB_KEYS } from "./computeTabs";
 import type { ComputeTabKey } from "./computeTabs";
 import { useAuthStore } from "../../stores/auth-store";
 
@@ -33,9 +39,18 @@ const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 
-const visibleTabs = computed(() =>
-  computeTabs.filter((t) => !t.requiresAdmin || authStore.isAdmin),
-);
+// Captions derive from the visible list: hiding an admin tab must not strand one.
+const visibleTabs = computed(() => {
+  const shown = computeTabs.filter((t) => !t.requiresAdmin || authStore.isAdmin);
+  return shown.map((tab, i) => ({
+    key: tab.key,
+    label: tab.label,
+    icon: tab.icon,
+    groupStart: i > 0 && tab.group !== shown[i - 1].group,
+    groupLabel:
+      i === 0 || tab.group !== shown[i - 1].group ? COMPUTE_TAB_GROUP_LABELS[tab.group] : null,
+  }));
+});
 
 function getInitialTab(): ComputeTabKey {
   // No localStorage stickiness: kernels is the right default every time, and
@@ -90,6 +105,28 @@ watch(
   padding: var(--spacing-2) var(--spacing-4);
   background: var(--color-background-secondary);
   border-bottom: 1px solid var(--color-border-primary);
+}
+
+.tab-group-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: var(--spacing-1) var(--spacing-1);
+  background: var(--color-border-primary);
+}
+
+.tab-group-label {
+  flex-shrink: 0;
+  align-self: center;
+  margin: 0 2px 0 var(--spacing-2);
+  font-size: 9px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  opacity: 0.7;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
 }
 
 .compute-tab {

@@ -165,6 +165,21 @@ def _import_demo_flow(yaml_name: str, name: str, namespace_id: int, user_id: int
     return reg_id, flow
 
 
+def _trigger_immediate_populate(service, schedule_id: int, user_id: int) -> str:
+    """Best-effort first FX run; never fails the seed.
+
+    The run happens in a spawned subprocess, where no in-process marker can
+    reach it, so the child is told directly. Seeded runs are ours, not the
+    user's.
+    """
+    try:
+        service.trigger_schedule_now(schedule_id, user_id, suppress_telemetry=True)
+        return "triggered"
+    except Exception:
+        logger.info("Immediate FX populate skipped", exc_info=True)
+        return "skipped"
+
+
 def seed_demo_catalog(user_id: int = 1) -> dict:
     """Create the demo catalog (static tables + imported flows). Idempotent."""
     summary: dict = {
@@ -208,6 +223,7 @@ def seed_demo_catalog(user_id: int = 1) -> dict:
     sales_reg, sales_flow = _import_demo_flow("demo_sales_by_region.yaml", SALES_FLOW_NAME, analytics_id, user_id)
     summary["sales_flow_registration_id"] = sales_reg
     try:
+        sales_flow._system_run = True  # system-initiated run; observers ignore it
         sales_flow.run_graph()
     except Exception:
         logger.info("Sales-by-region populate skipped", exc_info=True)
@@ -233,12 +249,7 @@ def seed_demo_catalog(user_id: int = 1) -> dict:
             schedule_id = sched.id
         summary["schedule_id"] = schedule_id
 
-        # Best-effort immediate populate; never fail the seed.
-        try:
-            service.trigger_schedule_now(schedule_id, user_id)
-            summary["fx_populate"] = "triggered"
-        except Exception:
-            logger.info("Immediate FX populate skipped", exc_info=True)
+        summary["fx_populate"] = _trigger_immediate_populate(service, schedule_id, user_id)
 
     logger.info("Demo catalog seeded: %s", summary)
     return summary

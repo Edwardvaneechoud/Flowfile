@@ -91,6 +91,13 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     resolve_source_registration_id(flow)
 
     try:
+        from flowfile_core import telemetry
+
+        telemetry.install_headless()
+    except Exception:
+        pass
+
+    try:
         result = flow.run_graph()
     except Exception as e:
         print(f"Error running flow: {e}", file=sys.stderr)
@@ -117,6 +124,7 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     )
 
     print("-" * 40)
+    exit_code = 0
     if result.success:
         duration = ""
         if result.start_time and result.end_time:
@@ -129,9 +137,17 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
             if not node_result.success and node_result.error:
                 node_name = node_result.node_name or f"Node {node_result.node_id}"
                 print(f"  - {node_name}: {node_result.error}", file=sys.stderr)
-        return 1
+        exit_code = 1
 
-    return 0
+    # This process exits right after; a short budget, and whatever misses it is spooled for a later run.
+    try:
+        from flowfile_core import telemetry
+
+        telemetry.flush(0.3)
+    except Exception:
+        pass
+
+    return exit_code
 
 
 def _complete_run_if_needed(
