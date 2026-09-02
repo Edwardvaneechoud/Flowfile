@@ -14,12 +14,14 @@ from unittest.mock import AsyncMock
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from flowfile_worker import funcs, main, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.spawner import drain_result_queue, handle_task, process_manager
 from flowfile_worker.streaming import _monitor_progress
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
-client = TestClient(main.app)
+client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 
 # Helpers
@@ -36,7 +38,7 @@ def _ws_submit(metadata: dict, payload_bytes: bytes, timeout: float = 30.0):
     json_messages = []
     binary_frames = []
 
-    with client.websocket_connect("/ws/submit") as ws:
+    with client.websocket_connect("/ws/submit", headers=INTERNAL_AUTH_HEADERS) as ws:
         ws.send_json(metadata)
         ws.send_bytes(payload_bytes)
 
@@ -65,6 +67,20 @@ def _ws_submit(metadata: dict, payload_bytes: bytes, timeout: float = 30.0):
                     break
 
     return json_messages, binary_frames
+
+
+# Tests: Auth boundary
+
+class TestWsAuth:
+    """/ws/submit closes with 1008 before accept when the internal token is absent or wrong."""
+
+    @pytest.mark.parametrize("headers", [{}, {"X-Flowfile-Internal": "wrong-token"}])
+    def test_ws_submit_rejects_bad_token(self, headers):
+        unauthenticated = TestClient(main.app)
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with unauthenticated.websocket_connect("/ws/submit", headers=headers):
+                pass
+        assert exc_info.value.code == 1008
 
 
 # Tests: Store operation (polars result via binary frame)

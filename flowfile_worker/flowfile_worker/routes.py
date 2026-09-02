@@ -6,7 +6,7 @@ import uuid
 from queue import Empty
 
 from deltalake.exceptions import DeltaError
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from flowfile_worker import (
     CACHE_DIR,
@@ -18,6 +18,7 @@ from flowfile_worker import (
     status_dict,
     status_dict_lock,
 )
+from flowfile_worker.auth import verify_internal_token
 from flowfile_worker.configs import logger
 from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
@@ -41,7 +42,7 @@ from shared.delta_utils import validate_catalog_uri
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
 # Re-use the single validation helper from funcs (backed by shared.delta_utils).
 _validate_catalog_path = funcs._validate_catalog_path

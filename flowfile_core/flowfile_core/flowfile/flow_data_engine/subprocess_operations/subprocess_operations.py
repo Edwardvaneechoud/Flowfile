@@ -12,6 +12,7 @@ import polars as pl
 import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
+from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
@@ -37,6 +38,19 @@ from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSetting
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
 from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
+
+
+class _WorkerAuth(requests.auth.AuthBase):
+    """Signs every worker call with the shared internal token, resolved per
+    request so nothing mints at import time."""
+
+    def __call__(self, r):
+        r.headers["X-Flowfile-Internal"] = get_internal_token()
+        return r
+
+
+_worker_session = requests.Session()
+_worker_session.auth = _WorkerAuth()
 
 # (connect, read) timeout for the short worker control calls so a dead/wedged
 # worker surfaces promptly instead of hanging a request thread indefinitely.
@@ -64,7 +78,9 @@ def trigger_df_operation(
     }
     if kwargs:
         headers["X-Kwargs"] = json.dumps(kwargs)
-    v = requests.post(url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT)
+    v = _worker_session.post(
+        url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT
+    )
     if not v.ok:
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -82,7 +98,9 @@ def trigger_sample_operation(
         "X-Flow-Id": str(flow_id),
         "X-Node-Id": str(node_id),
     }
-    v = requests.post(url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT)
+    v = _worker_session.post(
+        url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT
+    )
     if not v.ok:
         raise Exception(f"trigger_sample_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -107,14 +125,14 @@ def trigger_fuzzy_match_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = requests.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
 def trigger_custom_node_operation(request: CustomNodeExecuteInput) -> Status:
-    v = requests.post(
+    v = _worker_session.post(
         f"{WORKER_URL}/execute_custom_node",
         data=request.model_dump_json(),
         headers={"Content-Type": "application/json"},
@@ -151,7 +169,7 @@ def trigger_train_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = requests.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json())
     if not v.ok:
         raise Exception(f"trigger_train_model_operation: Could not start training, {v.text}")
     return Status(**v.json())
@@ -174,7 +192,7 @@ def trigger_apply_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = requests.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json())
     if not v.ok:
         raise Exception(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
     return Status(**v.json())
@@ -186,7 +204,7 @@ def trigger_create_operation(
     received_table: ReceivedTable,
     file_type: str = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro"],
 ):
-    f = requests.post(
+    f = _worker_session.post(
         url=f"{WORKER_URL}/create_table/{file_type}",
         data=received_table.model_dump_json(),
         params={"flowfile_flow_id": flow_id, "flowfile_node_id": node_id},
@@ -197,7 +215,7 @@ def trigger_create_operation(
 
 
 def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
-    f = requests.post(
+    f = _worker_session.post(
         url=f"{WORKER_URL}/store_database_read_result", data=database_external_read_settings.model_dump_json()
     )
     if not f.ok:
@@ -207,7 +225,7 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
 
 def trigger_kafka_read(kafka_read_settings) -> Status:
     """Send a Kafka read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
+    f = _worker_session.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
     if not f.ok:
         raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
     return Status(**f.json())
@@ -220,7 +238,7 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
     KafkaReadResult that was saved as a sidecar file, or ``None`` if no
     offsets were recorded (e.g. empty topic).
     """
-    f = requests.get(f"{WORKER_URL}/kafka_offsets/{task_id}")
+    f = _worker_session.get(f"{WORKER_URL}/kafka_offsets/{task_id}")
     if not f.ok:
         logger.warning("Failed to fetch Kafka offsets for task %s: %s", task_id, f.text)
         return None
@@ -230,7 +248,9 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
 
 def trigger_google_analytics_read(ga_read_settings) -> Status:
     """Send a Google Analytics 4 read request to the worker service."""
-    f = requests.post(url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json())
+    f = _worker_session.post(
+        url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json()
+    )
     if not f.ok:
         raise Exception(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
     return Status(**f.json())
@@ -238,7 +258,7 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
 
 def trigger_rest_api_read(settings) -> Status:
     """Send a REST API read request to the worker service."""
-    f = requests.post(
+    f = _worker_session.post(
         url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json(), timeout=_WORKER_TIMEOUT
     )
     if not f.ok:
@@ -247,7 +267,7 @@ def trigger_rest_api_read(settings) -> Status:
 
 
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
-    f = requests.post(
+    f = _worker_session.post(
         url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
     )
     if not f.ok:
@@ -256,7 +276,9 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
 
 
 def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
-    f = requests.post(url=f"{WORKER_URL}/write_data_to_cloud", data=database_external_write_settings.model_dump_json())
+    f = _worker_session.post(
+        url=f"{WORKER_URL}/write_data_to_cloud", data=database_external_write_settings.model_dump_json()
+    )
     if not f.ok:
         raise Exception(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
     return Status(**f.json())
@@ -276,7 +298,7 @@ def trigger_write_output(
     from base64 import encodebytes
 
     serializable_df = lf.serialize()
-    r = requests.post(
+    r = _worker_session.post(
         f"{WORKER_URL}/write_results/",
         json={
             "operation": encodebytes(serializable_df).decode(),
@@ -306,7 +328,7 @@ def trigger_catalog_materialize(
     }
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/materialize", json=payload)
     return response
 
 
@@ -332,7 +354,7 @@ def trigger_resolve_virtual_table(
         "source_versions_hash": source_versions_hash,
         "target": target,
     }
-    response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
+    response = _worker_session.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
     if not response.ok:
         raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")
     return response.json()
@@ -358,7 +380,7 @@ def trigger_sql_query(
         payload["virtual_refs"] = virtual_refs
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
     return response.json()
@@ -381,7 +403,7 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
         max_rows,
     )
     body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",
@@ -411,7 +433,7 @@ def trigger_visualize_fields(worker_source: dict) -> dict:
         worker_source.get("kind"),
     )
     body = {"source": worker_source}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_fields", json=body, timeout=30)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/visualize_fields", json=body, timeout=30)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d body=%s",
@@ -442,7 +464,9 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
         limit,
     )
     body = {"source": worker_source, "column": column, "limit": limit}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS)
+    response = _worker_session.post(
+        f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS
+    )
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d body=%s",
@@ -475,7 +499,7 @@ def trigger_read_table_metadata(table_name: str, storage: dict | None = None) ->
     payload = {"table_path": table_name}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker table metadata read failed: {response.text}")
     return response.json()
@@ -494,7 +518,7 @@ def trigger_delta_history(
     payload = {"table_path": table_name, "limit": limit}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta history read failed: {response.text}")
     return DeltaTableHistory.model_validate(response.json())
@@ -514,7 +538,7 @@ def trigger_delta_version_preview(
     payload = {"table_path": table_name, "version": version, "n_rows": n_rows}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
     if response.status_code == 404:
         from flowfile_core.catalog.exceptions import TableVersionUnavailableError
 
@@ -537,7 +561,7 @@ def trigger_delta_preview(
     payload = {"table_path": table_name, "n_rows": n_rows}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta preview failed: {response.text}")
     return CatalogTablePreview.model_validate(response.json())
@@ -556,7 +580,7 @@ def trigger_optimize_catalog_table(
     payload = {"table_path": table_name, "z_order_columns": z_order_columns}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/optimize", json=payload, timeout=600)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/optimize", json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker optimize failed: {response.text}")
     return response.json()
@@ -576,7 +600,7 @@ def trigger_vacuum_catalog_table(
     payload = {"table_path": table_name, "retention_hours": retention_hours, "dry_run": dry_run}
     if storage is not None:
         payload["storage"] = storage
-    response = requests.post(f"{WORKER_URL}/catalog/vacuum", json=payload, timeout=600)
+    response = _worker_session.post(f"{WORKER_URL}/catalog/vacuum", json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker vacuum failed: {response.text}")
     return response.json()
@@ -620,7 +644,7 @@ def trigger_apply_table_edits(
     if storage is not None:
         payload["storage"] = storage
     try:
-        response = requests.post(f"{WORKER_URL}/catalog/apply_edits", json=payload, timeout=600)
+        response = _worker_session.post(f"{WORKER_URL}/catalog/apply_edits", json=payload, timeout=600)
     except requests.RequestException as exc:
         from flowfile_core.catalog.exceptions import WorkerUnavailableError
 
@@ -643,7 +667,7 @@ def trigger_add_key_column(
     if storage is not None:
         payload["storage"] = storage
     try:
-        response = requests.post(f"{WORKER_URL}/catalog/add_key_column", json=payload, timeout=600)
+        response = _worker_session.post(f"{WORKER_URL}/catalog/add_key_column", json=payload, timeout=600)
     except requests.RequestException as exc:
         from flowfile_core.catalog.exceptions import WorkerUnavailableError
 
@@ -655,7 +679,7 @@ def trigger_add_key_column(
 
 
 def get_results(file_ref: str) -> Status | None:
-    f = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
+    f = _worker_session.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
     if f.status_code == 200:
         return Status(**f.json())
     else:
@@ -667,7 +691,7 @@ def results_exists(file_ref: str):
         return False
 
     try:
-        f = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
+        f = _worker_session.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
         if f.status_code == 200:
             if f.json()["status"] == "Completed":
                 return True
@@ -694,7 +718,7 @@ def clear_task_from_worker(file_ref: str) -> bool:
         return False
 
     try:
-        f = requests.delete(f"{WORKER_URL}/clear_task/{file_ref}", timeout=_WORKER_TIMEOUT)
+        f = _worker_session.delete(f"{WORKER_URL}/clear_task/{file_ref}", timeout=_WORKER_TIMEOUT)
         if f.status_code == 200:
             return True
         return False
@@ -719,7 +743,7 @@ def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
 
 
 def get_status(file_ref: str) -> Status:
-    status_response = requests.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
+    status_response = _worker_session.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
     if status_response.status_code == 200:
         return Status(**status_response.json())
     else:
@@ -740,7 +764,7 @@ def cancel_task(file_ref: str) -> bool:
         Exception: If there's an error communicating with the worker service
     """
     try:
-        response = requests.post(f"{WORKER_URL}/cancel_task/{file_ref}", timeout=_WORKER_TIMEOUT)
+        response = _worker_session.post(f"{WORKER_URL}/cancel_task/{file_ref}", timeout=_WORKER_TIMEOUT)
         if response.ok:
             return True
         return False
@@ -825,7 +849,7 @@ class BaseFetcher:
         try:
             while not self._stop_event.is_set():
                 try:
-                    r = requests.get(f"{WORKER_URL}/status/{self.file_ref}", timeout=10)
+                    r = _worker_session.get(f"{WORKER_URL}/status/{self.file_ref}", timeout=10)
 
                     if r.status_code == 200:
                         status = Status(**r.json())

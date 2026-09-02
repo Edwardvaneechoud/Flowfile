@@ -376,7 +376,7 @@ environment in local/desktop runs.
 | `FLOWFILE_ADMIN_USER` / `FLOWFILE_ADMIN_PASSWORD` | Initial admin account. |
 | `JWT_SECRET_KEY` | JWT signing secret. Required in docker mode (startup fails if unset). |
 | `FLOWFILE_MASTER_KEY` | Fernet key encrypting user secrets. Required in docker; in electron the UI setup prompts. May also be a `master_key.txt` Docker secret (env var wins). |
-| `FLOWFILE_INTERNAL_TOKEN` | Shared secret for kernel → core service auth. Required in docker. |
+| `FLOWFILE_INTERNAL_TOKEN` | Shared secret for kernel → core **and** core → worker service auth (worker sends/expects it as `X-Flowfile-Internal`). Required in docker; in electron core mints and persists it to the shared secure store, which the worker also reads. |
 | `WORKER_HOST` / `CORE_HOST` | Service discovery between core and worker (default `0.0.0.0`, `127.0.0.1` on Windows; `flowfile-worker`/`flowfile-core` in compose). |
 | `CORE_PORT` | The port core bound. Read by the worker for service discovery, and by core itself as the fallback for `SERVER_PORT` when no `--port` is passed — that is what lets a `--run-flow` subprocess build kernel callback URLs for the right process. An explicit `--port` still wins. Set by the Tauri shell (which port-scans), unset in compose. |
 | `FLOWFILE_STORAGE_DIR` | Internal storage path. Default `~/.flowfile` (local) / `/app/internal_storage` (docker). |

@@ -33,6 +33,7 @@ from flowfile_worker.funcs import (
 )
 from shared.delta_utils import format_delta_timestamp
 from shared.storage_config import storage
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
 
 # Fixtures
@@ -79,7 +80,7 @@ def versioned_delta(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def worker_client(tmp_path) -> TestClient:
-    return TestClient(main.app)
+    return TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 
 # _get_delta_size_bytes

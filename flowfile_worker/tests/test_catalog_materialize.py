@@ -6,13 +6,14 @@ from fastapi.testclient import TestClient
 from flowfile_worker import main
 from shared.storage_config import storage
 from tests.utils import find_parent_directory
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
 
 def test_catalog_materialize_xlsx(tmp_path, monkeypatch):
     storage._base_dir = tmp_path
     storage._user_data_dir = tmp_path
     storage._ensure_directories()
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     source_path = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/data/fake_data.xlsx"
 
     response = client.post(

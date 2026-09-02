@@ -22,6 +22,7 @@ from flowfile_worker.viz_sessions import (
     viz_session_registry,
 )
 from shared.storage_config import storage
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
 
 def _setup_storage(tmp_path, monkeypatch=None):
@@ -432,7 +433,7 @@ def test_child_crash_propagates_as_5xx(tmp_path):
     _setup_storage(tmp_path)
     _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "source": {
             "kind": "physical",
@@ -455,7 +456,7 @@ def test_value_error_propagates_as_response_error(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     # Bad workflow op → child loads ok, raises during execute → ValueError → 200 + error.
     payload = {
         "source": {
@@ -494,7 +495,7 @@ def test_visualize_stats_shape(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "source": {
             "kind": "physical",
@@ -582,7 +583,7 @@ def test_polars_gw_not_in_parent_sys_modules(tmp_path):
     table_dir = _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
     sys.modules.pop("polars_gw", None)
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     r = client.post(
         "/catalog/visualize_query",
         json={
@@ -609,7 +610,7 @@ def test_visualize_query_endpoint_physical_delta(tmp_path):
     table_dir = _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "source": {
             "kind": "physical",
@@ -639,7 +640,7 @@ def test_visualize_fields_endpoint_returns_imutfields(tmp_path):
     table_dir = _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     body = {
         "source": {
             "kind": "physical",
@@ -665,7 +666,7 @@ def test_visualize_query_endpoint_ipc_path(tmp_path):
     ipc_name = "fvt-1-deadbeefdeadbeef.arrow"
     pl.DataFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).write_ipc(str(target_dir / ipc_name))
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "source": {
             "kind": "ipc_path",
@@ -694,7 +695,7 @@ def test_visualize_query_sql_with_virtual_refs(tmp_path):
     ipc_name = "fvt-2-cafebabecafebabe.arrow"
     pl.DataFrame({"category": ["a", "b"], "boost": [10, 20]}).write_ipc(str(target_dir / ipc_name))
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     payload = {
         "source": {
             "kind": "sql",
@@ -722,7 +723,7 @@ def test_visualize_evict_endpoint(tmp_path):
     _setup_storage(tmp_path)
     _write_delta_table(tmp_path)
     viz_session_registry.evict_all()
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
     client.post(
         "/catalog/visualize_query",
@@ -757,7 +758,7 @@ def test_visualize_query_degenerate_column_bins_without_error(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_constant_delta_table(tmp_path)
     viz_session_registry.evict_all()
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
     degenerate_payloads = {
         # equal-width bin (the reported crash): step == 0 on a constant column.
@@ -813,7 +814,7 @@ def test_visualize_query_endpoint_plan(tmp_path):
     pl.DataFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).write_parquet(str(src))
     plan_bytes = pl.scan_parquet(str(src)).serialize()
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     r = client.post(
         "/catalog/visualize_query",
         json={
@@ -851,7 +852,7 @@ def test_visualize_plan_session_is_reused(tmp_path):
         "payload": _AGG_PAYLOAD,
     }
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     first = client.post("/catalog/visualize_query", json=body)
     second = client.post("/catalog/visualize_query", json=body)
     assert first.status_code == 200 and second.status_code == 200, second.text
@@ -864,7 +865,7 @@ def test_visualize_plan_requires_plan_bytes(tmp_path):
     _setup_storage(tmp_path)
     viz_session_registry.evict_all()
 
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
     r = client.post(
         "/catalog/visualize_query",
         json={

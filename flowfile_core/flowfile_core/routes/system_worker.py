@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from flowfile_core.auth.jwt import get_current_admin_user
 from flowfile_core.auth.models import User
 from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import _worker_session
 
 router = APIRouter()
 
@@ -67,7 +68,7 @@ class WorkerPoolState(BaseModel):
 
 def _forward(method: str, json_body: dict | None = None) -> WorkerPoolState:
     try:
-        response = requests.request(method, f"{WORKER_URL}/pool", json=json_body, timeout=_TIMEOUT)
+        response = _worker_session.request(method, f"{WORKER_URL}/pool", json=json_body, timeout=_TIMEOUT)
         response.raise_for_status()
     except requests.RequestException as exc:
         raise HTTPException(

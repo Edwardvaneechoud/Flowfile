@@ -27,6 +27,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, pool, status_dict, status_dict_lock
+from flowfile_worker.auth import websocket_authorized
 from flowfile_worker.configs import logger
 from flowfile_worker.pool import PoolMember
 from flowfile_worker.spawner import (
@@ -347,6 +348,9 @@ async def ws_submit(websocket: WebSocket):
         - JSON: {"type": "result_data", "data": ...} (only if has_result=True and result_type="other")
         - JSON: {"type": "error", "error_message": "..."}
     """
+    if not websocket_authorized(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     p = None
     task_id = None

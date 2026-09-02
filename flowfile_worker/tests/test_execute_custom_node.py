@@ -16,8 +16,9 @@ from fastapi.testclient import TestClient
 from flowfile_worker import main, models, mp_context
 from flowfile_worker.custom_node_runner import _json_default, execute_custom_node_task
 from flowfile_worker.secrets import encrypt_secret
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
-client = TestClient(main.app)
+client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 pytestmark = pytest.mark.worker
 

@@ -14,8 +14,9 @@ from flowfile_worker.external_sources.s3_source.models import (
     WriteSettings,
 )
 from flowfile_worker.secrets import encrypt_secret
+from tests.conftest import INTERNAL_AUTH_HEADERS
 
-client = TestClient(main.app)
+client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 
 try:
@@ -29,6 +30,16 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
     from utils import find_parent_directory, is_docker_available
+
+
+@pytest.mark.worker
+def test_internal_token_required():
+    """Every router endpoint is gated on X-Flowfile-Internal; /docs deliberately is not."""
+    unauthenticated = TestClient(main.app)
+    assert unauthenticated.get("/status/does-not-exist").status_code == 401
+    assert unauthenticated.get("/status/does-not-exist", headers={"X-Flowfile-Internal": "wrong"}).status_code == 401
+    assert client.get("/status/does-not-exist").status_code != 401
+    assert unauthenticated.get("/docs").status_code == 200
 
 
 @pytest.fixture

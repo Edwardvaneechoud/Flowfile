@@ -65,12 +65,12 @@ services:
     build:
       context: .
       dockerfile: flowfile_worker/Dockerfile
-    ports:
-      - "63579:63579"
     shm_size: '2gb'
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
+      # Internal token for Core → Worker authentication (must match flowfile-core)
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:-flowfile-dev-internal-token-change-in-production}
       # Master key for encrypting secrets - must match flowfile-core
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage

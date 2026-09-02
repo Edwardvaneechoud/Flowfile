@@ -6,6 +6,7 @@ happy path and timeout stub the worker seam so no live worker is required.
 
 import io
 import json
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -251,9 +252,7 @@ def _stub_worker(monkeypatch, status_payloads):
         calls["cancel"] += 1
         return _Resp({"ok": True})
 
-    monkeypatch.setattr(dr.requests, "get", _get)
-    monkeypatch.setattr(dr.requests, "delete", _delete)
-    monkeypatch.setattr(dr.requests, "post", _post)
+    monkeypatch.setattr(dr, "_worker_session", SimpleNamespace(get=_get, delete=_delete, post=_post))
     return calls
 
 
