@@ -32,16 +32,22 @@
           <i class="fa-solid fa-comments"></i>
           <span>Discussions</span>
         </a>
+        <button v-if="isDesktop" class="about-link" :disabled="checking" @click="checkForUpdates">
+          <i class="fa-solid fa-rotate"></i>
+          <span>Check for updates</span>
+        </button>
       </div>
+      <p v-if="isDesktop && updateStatus" class="about-update-status">{{ updateStatus }}</p>
       <p class="about-license">Released under the MIT License.</p>
     </div>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import { desktop } from "../../../lib/desktop";
+import { computed, ref, watch } from "vue";
+import { desktop, isDesktop } from "../../../lib/desktop";
 import { DOCS_BASE_URL } from "../../lib/docsLinks";
+import { useUpdateStore } from "../../stores/update-store";
 
 const props = defineProps<{ visible: boolean; version?: string }>();
 
@@ -55,6 +61,7 @@ watch(
   () => props.visible,
   (v) => {
     isVisible.value = v;
+    if (v) checkOutcome.value = "none";
   },
 );
 
@@ -65,6 +72,28 @@ watch(isVisible, (v) => {
 function openDocs() {
   isVisible.value = false;
   void desktop.openExternal(DOCS_BASE_URL);
+}
+
+const updateStore = useUpdateStore();
+const checkOutcome = ref<"none" | "current" | "failed">("none");
+const checking = computed(() => updateStore.checking);
+
+const updateStatus = computed(() => {
+  if (checking.value) return "Checking…";
+  if (checkOutcome.value === "current") return "You're up to date";
+  if (checkOutcome.value === "failed") return "Couldn't check for updates";
+  return "";
+});
+
+async function checkForUpdates() {
+  checkOutcome.value = "none";
+  const info = await updateStore.checkNow();
+  if (info) {
+    // The prompt lives in AppLayout; About would otherwise stack under it.
+    isVisible.value = false;
+    return;
+  }
+  checkOutcome.value = updateStore.checkError ? "failed" : "current";
 }
 </script>
 
@@ -134,6 +163,17 @@ function openDocs() {
   background-color: var(--color-background-tertiary);
   border-color: var(--color-accent);
   color: var(--color-accent);
+}
+
+.about-link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.about-update-status {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 .about-link:focus-visible {

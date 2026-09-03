@@ -1,11 +1,12 @@
-// Axios wrappers for the /system/worker_pool admin endpoints (warm worker
-// pool state + runtime resize). Mirrors the api/*.api.ts pattern: TS-side
-// camelCase, snake_case mappers at the boundary. Paths match the FastAPI
-// decorators exactly (no trailing slash) to avoid the 307 redirect trap.
+// Axios wrappers for the /system/* admin endpoints (warm worker pool state +
+// runtime resize, catalog DB snapshots). Mirrors the api/*.api.ts pattern:
+// TS-side camelCase, snake_case mappers at the boundary. Paths match the
+// FastAPI decorators exactly (no trailing slash) to avoid the 307 redirect trap.
 
 import axios from "../services/axios.config";
 
 const WORKER_POOL_URL = "/system/worker_pool";
+const DB_BACKUPS_URL = "/system/db_backups";
 
 export interface WorkerPoolMember {
   pid: number;
@@ -87,4 +88,68 @@ export async function getWorkerPool(): Promise<WorkerPoolState> {
 export async function setWorkerPool(size: number): Promise<WorkerPoolState> {
   const response = await axios.post<PyWorkerPoolState>(WORKER_POOL_URL, { size });
   return fromPy(response.data);
+}
+
+export interface DbBackup {
+  fileName: string;
+  path: string;
+  sizeBytes: number;
+  createdAt: string;
+  kind: "migration" | "pre_update" | "manual";
+  fromRevision: string | null;
+  toRevision: string | null;
+  appVersion: string | null;
+}
+
+export interface DbBackupsStatus {
+  directory: string;
+  keep: number;
+  enabled: boolean;
+  backups: DbBackup[];
+}
+
+interface PyDbBackup {
+  file_name: string;
+  path: string;
+  size_bytes: number;
+  created_at: string;
+  kind: "migration" | "pre_update" | "manual";
+  from_revision: string | null;
+  to_revision: string | null;
+  app_version: string | null;
+}
+
+interface PyDbBackupsStatus {
+  directory: string;
+  keep: number;
+  enabled: boolean;
+  backups: PyDbBackup[];
+}
+
+const fromPyBackup = (raw: PyDbBackup): DbBackup => ({
+  fileName: raw.file_name,
+  path: raw.path,
+  sizeBytes: raw.size_bytes,
+  createdAt: raw.created_at,
+  kind: raw.kind,
+  fromRevision: raw.from_revision,
+  toRevision: raw.to_revision,
+  appVersion: raw.app_version,
+});
+
+const fromPyBackups = (raw: PyDbBackupsStatus): DbBackupsStatus => ({
+  directory: raw.directory,
+  keep: raw.keep,
+  enabled: raw.enabled,
+  backups: raw.backups.map(fromPyBackup),
+});
+
+export async function listDbBackups(): Promise<DbBackupsStatus> {
+  const response = await axios.get<PyDbBackupsStatus>(DB_BACKUPS_URL);
+  return fromPyBackups(response.data);
+}
+
+export async function createDbBackup(reason: "manual" | "pre_update"): Promise<DbBackup> {
+  const response = await axios.post<PyDbBackup>(DB_BACKUPS_URL, { reason });
+  return fromPyBackup(response.data);
 }

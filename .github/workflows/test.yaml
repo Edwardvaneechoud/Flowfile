@@ -56,6 +56,7 @@ jobs:
               - 'flowfile_frame/**'
             backend_flowfile:
               - 'flowfile/**'
+              - 'tools/**'
             kernel:
               - 'kernel_runtime/**'
               - 'flowfile_core/flowfile_core/kernel/**'
@@ -101,6 +102,7 @@ jobs:
               - 'flowfile/**'
               - 'shared/**'
               - 'test_utils/**'
+              - 'tools/**'
               - 'pyproject.toml'
             test_workflow:
               - '.github/workflows/test.yaml'
@@ -237,7 +239,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile/tests --disable-warnings
+        run: poetry run pytest flowfile/tests tools/tests --disable-warnings
 
   # Coverage job - runs core+worker WITH coverage on a dedicated runner so it
   # stays off the functional matrix's critical path. COVERAGE_CORE=sysmon selects

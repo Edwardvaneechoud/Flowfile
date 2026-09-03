@@ -39,13 +39,12 @@ must serve a file with this schema (Tauri 2 format):
 
 ```json
 {
-  "version": "0.11.0",
-  "notes": "Release notes",
-  "pub_date": "2026-01-15T10:00:00Z",
+  "version": "0.16.0",
+  "pub_date": "2026-01-15T10:00:00+00:00",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "<contents of Flowfile_0.11.0_aarch64.app.tar.gz.sig>",
-      "url": "https://github.com/.../Flowfile_0.11.0_aarch64.app.tar.gz"
+      "signature": "<contents of Flowfile_aarch64.app.tar.gz.sig>",
+      "url": "https://github.com/.../Flowfile_aarch64.app.tar.gz"
     },
     "darwin-x86_64":  { "signature": "...", "url": "..." },
     "linux-x86_64":   { "signature": "...", "url": "..." },
@@ -54,7 +53,16 @@ must serve a file with this schema (Tauri 2 format):
 }
 ```
 
-The release workflow assembles this file from `.sig` artifacts.
+`tools/make_latest_json.py` builds it in the release workflow: it locates each
+bundle and its `.sig` under the downloaded `artifacts/` tree and fails the
+release when either is missing, ambiguous or empty. The platform → asset map is:
+
+| Platform key | Release asset |
+|---|---|
+| `darwin-aarch64` | `Flowfile_aarch64.app.tar.gz` |
+| `darwin-x86_64` | `Flowfile_x64.app.tar.gz` |
+| `windows-x86_64` | `Flowfile_<version>_x64-setup.exe` |
+| `linux-x86_64` | `Flowfile_<version>_amd64.deb` |
 
 ## macOS code signing + notarization
 

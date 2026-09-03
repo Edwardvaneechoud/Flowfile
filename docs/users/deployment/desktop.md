@@ -26,9 +26,27 @@ Installers are built for macOS (Apple Silicon and Intel), Windows, and Linux.
 
 ### Linux
 
-1. Download the `.AppImage` (or `.deb`) build
-2. For the AppImage, mark it executable (`chmod +x Flowfile*.AppImage`) and run it
-3. For the `.deb`, install with your package manager (`sudo dpkg -i flowfile_*.deb`)
+1. Download the `.deb` package
+2. Install it with your package manager (`sudo dpkg -i Flowfile_*.deb`)
+3. Launch Flowfile from your application menu
+
+## Updating
+
+The app checks for a newer release each time it starts. When one exists, a dialog names the new version and the version you are running, links to its release notes, and offers three choices:
+
+- **Install now** — downloads and installs the update, then restarts Flowfile.
+- **Remind me later** — closing the dialog with Esc, the X, or a click outside does the same. You are asked again next launch.
+- **Skip this version** — that version is not offered again at launch (a manual check from About still shows it), and a later release still prompts.
+
+An install runs inside the dialog: the update downloads, Flowfile snapshots its [catalog database](backups.md), the background services stop, and the installer runs. If the snapshot fails you can choose to continue without one. If the install itself fails, the dialog offers **Restart Flowfile** — the background services are already stopped by then, so restart before working on anything else.
+
+The last step differs per platform:
+
+- **macOS** — Flowfile replaces itself and restarts.
+- **Windows** — Windows asks for permission to run the installer, and SmartScreen may ask you to confirm an installer it has not seen before. The installer restarts Flowfile when it finishes.
+- **Linux** — your system may ask for your password to install the `.deb` package.
+
+To check for an update without restarting, open **About** from the home screen and choose **Check for updates**.
 
 ## What you get
 

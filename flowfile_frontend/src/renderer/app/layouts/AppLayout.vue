@@ -25,6 +25,9 @@
 
     <!-- One-time anonymous telemetry opt-in (shows itself only when undecided) -->
     <TelemetryConsentModal />
+
+    <!-- Desktop-only new-release prompt (shows itself only when the feed offers one) -->
+    <UpdateAvailableModal />
   </div>
 </template>
 
@@ -35,20 +38,25 @@ import ChangePasswordModal from "../components/common/ChangePasswordModal/Change
 import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
 import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
 import TelemetryConsentModal from "../components/settings/TelemetryConsentModal.vue";
+import UpdateAvailableModal from "../components/settings/UpdateAvailableModal.vue";
 import { useAuthStore } from "../stores/auth-store";
 import { useProjectStore } from "../stores/project-store";
 import { useTelemetryStore } from "../stores/telemetry-store";
+import { useUpdateStore } from "../stores/update-store";
 import authService from "../services/auth.service";
 
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const telemetryStore = useTelemetryStore();
+const updateStore = useUpdateStore();
 
 onMounted(() => {
   // Pick up the active project (if any) so the header sync pill is correct on boot.
   projectStore.refreshActive();
   // The consent modal only appears once this resolves.
   void telemetryStore.loadStatus();
+  // Desktop-only, once per launch: the update modal shows itself if a release is offered.
+  void updateStore.checkOnStartup();
 });
 
 const isCollapse = ref(true);

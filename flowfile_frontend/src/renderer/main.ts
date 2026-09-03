@@ -18,7 +18,6 @@ import authService from "./app/services/auth.service";
 import setupService from "./app/services/setup.service";
 import "./app/services/axios.config";
 import { useThemeStore } from "./app/stores/theme-store";
-import { checkForUpdatesOnStartup } from "./app/composables/useDesktopUpdater";
 import { shouldBlockStrayDrop } from "./app/utils/fileDropStrategy";
 
 const app = createApp(App);
@@ -63,9 +62,6 @@ setupService
       console.log("Redirecting to login page");
       router.push({ name: "login" });
     }
-
-    // Desktop-only: check for app updates on startup (no-op in web/dev).
-    checkForUpdatesOnStartup();
   })
   .catch((error) => {
     console.error("Auth initialization failed:", error);

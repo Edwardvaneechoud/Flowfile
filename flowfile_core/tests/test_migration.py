@@ -538,6 +538,11 @@ class TestSnapshotDatabase:
                     "col_types": {"id": "INTEGER PRIMARY KEY"},
                     "rows": [(1, "alpha"), (2, "beta")],
                 },
+                "db_info": {
+                    "columns": ["id", "app_version", "updated_at"],
+                    "col_types": {"id": "INTEGER PRIMARY KEY", "app_version": "TEXT NOT NULL"},
+                    "rows": [(1, "0.16.0", "2026-01-01T00:00:00")],
+                },
             },
         )
 
@@ -703,6 +708,108 @@ class TestSnapshotDatabase:
         (tmp_path / "db_backups").write_text("not a directory")
 
         assert snapshot_database(db_path, "003", "028") is None
+
+    def test_create_snapshot_tags_filename(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import create_snapshot
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        manual = create_snapshot(db_path, "manual")
+        pre_update = create_snapshot(db_path, "pre_update")
+
+        assert manual is not None and ".manual." in manual.name
+        assert pre_update is not None and ".pre-update." in pre_update.name
+
+    def test_create_snapshot_takes_part_in_pruning(self, tmp_path, monkeypatch):
+        self._freeze_time(monkeypatch)
+        monkeypatch.setenv("FLOWFILE_DB_BACKUP_KEEP", "1")
+        from flowfile_core.database.backup import create_snapshot, snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        snapshot_database(db_path, "001", "028")
+        newest = create_snapshot(db_path, "manual")
+
+        assert list((tmp_path / "db_backups").iterdir()) == [newest]
+
+    def test_list_snapshots_parses_entries(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import create_snapshot, list_snapshots, snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+        migration = snapshot_database(db_path, "003", "028")
+        manual = create_snapshot(db_path, "manual")
+        pre_update = create_snapshot(db_path, "pre_update")
+
+        by_name = {entry["file_name"]: entry for entry in list_snapshots(db_path)}
+
+        assert set(by_name) == {migration.name, manual.name, pre_update.name}
+        assert by_name[migration.name]["kind"] == "migration"
+        assert by_name[migration.name]["from_revision"] == "003"
+        assert by_name[migration.name]["to_revision"] == "028"
+        assert by_name[manual.name]["kind"] == "manual"
+        assert by_name[manual.name]["from_revision"] is None
+        assert by_name[pre_update.name]["kind"] == "pre_update"
+        assert by_name[manual.name]["app_version"] == "0.16.0"
+        assert by_name[manual.name]["size_bytes"] > 0
+        assert by_name[manual.name]["path"] == str(manual)
+        stamp = manual.name.split(".")[2]
+        assert by_name[manual.name]["created_at"].startswith(
+            f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}"
+        )
+
+    def test_list_snapshots_orders_same_second_by_counter(self, tmp_path, monkeypatch):
+        self._freeze_time(monkeypatch)
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import create_snapshot, list_snapshots
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+        first = create_snapshot(db_path, "manual")
+        second = create_snapshot(db_path, "manual")
+        monkeypatch.undo()  # the frozen clock has no strptime; listing needs the real datetime
+
+        assert second.name.endswith("-1.db")
+        assert [entry["file_name"] for entry in list_snapshots(db_path)] == [second.name, first.name]
+
+    def test_list_snapshots_empty_without_directory(self, tmp_path):
+        from flowfile_core.database.backup import list_snapshots
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+
+        assert list_snapshots(db_path) == []
+
+    def test_list_snapshots_skips_foreign_files(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import list_snapshots, snapshot_database
+
+        db_path = tmp_path / "catalog.db"
+        self._make_db(db_path)
+        snapshot = snapshot_database(db_path, "003", "028")
+        (tmp_path / "db_backups" / "notes.txt").write_text("hello")
+        (tmp_path / "db_backups" / "other.001-to-028.20260101T000000Z.db").write_text("other db")
+
+        listed = list_snapshots(db_path)
+
+        assert [entry["file_name"] for entry in listed] == [snapshot.name]
+
+    def test_list_snapshots_with_glob_metachars_in_db_name(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_DB_BACKUP_KEEP", raising=False)
+        from flowfile_core.database.backup import create_snapshot, list_snapshots
+
+        db_path = tmp_path / "my[db].db"
+        self._make_db(db_path)
+        snapshot = create_snapshot(db_path, "manual")
+
+        listed = list_snapshots(db_path)
+
+        assert [entry["file_name"] for entry in listed] == [snapshot.name]
+        assert listed[0]["kind"] == "manual"
 
 
 # Pre-migration snapshot hook

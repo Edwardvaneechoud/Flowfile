@@ -46,6 +46,7 @@ pub fn run() {
             commands::get_service_ports,
             commands::get_app_version,
             commands::quit_app,
+            commands::prepare_for_update,
             commands::app_refresh,
             commands::open_oauth,
             commands::read_drag_paths,
