@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -40,11 +41,12 @@ from flowfile_core.lsp.models import (
 logger = logging.getLogger(__name__)
 
 
-def _get_manager():
+async def _get_manager():
     from flowfile_core.kernel import get_kernel_manager
 
     try:
-        return get_kernel_manager()
+        # First call constructs the manager (Docker probe + container reclaim): keep it off the loop.
+        return await asyncio.to_thread(get_kernel_manager)
     except Exception as exc:
         logger.error("Kernel manager unavailable: %s", exc)
         raise HTTPException(
@@ -58,13 +60,15 @@ router = APIRouter(prefix="/kernels", dependencies=[Depends(get_current_active_u
 
 @router.get("/", response_model=list[KernelInfo])
 async def list_kernels(current_user=Depends(get_current_active_user)):
-    return await _get_manager().list_kernels(user_id=current_user.id)
+    manager = await _get_manager()
+    return await manager.list_kernels(user_id=current_user.id)
 
 
 @router.post("/", response_model=KernelInfo)
 async def create_kernel(config: KernelConfig, current_user=Depends(get_current_active_user)):
+    manager = await _get_manager()
     try:
-        return await _get_manager().create_kernel(config, user_id=current_user.id)
+        return await manager.create_kernel(config, user_id=current_user.id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -87,26 +91,11 @@ async def list_flavours():
     ]
 
 
-@router.get("/docker-status", response_model=DockerStatus)
-async def docker_status():
-    """Check if Docker is reachable and which kernel images are pulled."""
+def _image_statuses(client, manager) -> DockerStatus:
+    """Per-flavour image inventory; Docker I/O, so callers run it off the loop."""
     import docker as _docker
 
-    try:
-        client = _docker.from_env()
-        client.ping()
-    except Exception as exc:
-        return DockerStatus(available=False, image_available=False, error=str(exc))
-
     from flowfile_core.kernel.manager import _flavour_images, newest_installed_version, parse_image_version
-
-    # Manager may be unavailable (Docker not initialised yet); degrade
-    # gracefully — resolved_image / pull_state stay None, fallback discovery
-    # turns into "registry default only" until the manager comes up.
-    try:
-        manager = _get_manager()
-    except HTTPException:
-        manager = None
 
     flavour_images = _flavour_images()
     images: list[KernelImageStatus] = []
@@ -157,6 +146,30 @@ async def docker_status():
         image_available=base_available,
         images=images,
     )
+
+
+@router.get("/docker-status", response_model=DockerStatus)
+async def docker_status():
+    """Check if Docker is reachable and which kernel images are pulled."""
+    import docker as _docker
+
+    from flowfile_core.kernel.manager import _DOCKER_PROBE_TIMEOUT_SECONDS
+
+    try:
+        client = await asyncio.to_thread(_docker.from_env, timeout=_DOCKER_PROBE_TIMEOUT_SECONDS)
+        await asyncio.to_thread(client.ping)
+    except Exception as exc:
+        return DockerStatus(available=False, image_available=False, error=str(exc))
+
+    # Manager may be unavailable (Docker not initialised yet); degrade
+    # gracefully — resolved_image / pull_state stay None, fallback discovery
+    # turns into "registry default only" until the manager comes up.
+    try:
+        manager = await _get_manager()
+    except HTTPException:
+        manager = None
+
+    return await asyncio.to_thread(_image_statuses, client, manager)
 
 
 async def _matchable_kernels(user_id: int):
@@ -248,7 +261,7 @@ async def pull_kernel_image(flavour: ImageFlavour):
     progress via the ``pull_state`` field — ``"pulling"`` while in flight,
     ``"error:<msg>"`` on failure, cleared once the image is available.
     """
-    manager = _get_manager()
+    manager = await _get_manager()
     try:
         state = manager.start_image_pull(flavour)
     except ValueError as exc:
@@ -258,7 +271,7 @@ async def pull_kernel_image(flavour: ImageFlavour):
 
 @router.get("/{kernel_id}", response_model=KernelInfo)
 async def get_kernel(kernel_id: str, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -277,7 +290,7 @@ async def update_kernel(
 
     The kernel must be stopped (rebuild of the derived image happens here).
     """
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -293,7 +306,7 @@ async def update_kernel(
 
 @router.delete("/{kernel_id}")
 async def delete_kernel(kernel_id: str, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -310,7 +323,7 @@ async def delete_kernel(kernel_id: str, current_user=Depends(get_current_active_
 
 @router.post("/{kernel_id}/start", response_model=KernelInfo)
 async def start_kernel(kernel_id: str, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -326,7 +339,7 @@ async def start_kernel(kernel_id: str, current_user=Depends(get_current_active_u
 
 @router.post("/{kernel_id}/stop")
 async def stop_kernel(kernel_id: str, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -343,7 +356,7 @@ async def stop_kernel(kernel_id: str, current_user=Depends(get_current_active_us
 
 @router.post("/{kernel_id}/execute", response_model=ExecuteResult)
 async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -363,7 +376,7 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
 
     Same as /execute but sets interactive=True to enable auto-display of the last expression.
     """
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -380,7 +393,7 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
 
 @router.get("/{kernel_id}/artifacts")
 async def get_artifacts(kernel_id: str, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -397,7 +410,7 @@ async def get_artifacts(kernel_id: str, current_user=Depends(get_current_active_
 
 @router.post("/{kernel_id}/clear")
 async def clear_artifacts(kernel_id: str, current_user=Depends(get_current_active_user)):
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -417,7 +430,7 @@ async def clear_node_artifacts(
     current_user=Depends(get_current_active_user),
 ):
     """Clear only artifacts published by specific node IDs."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -436,7 +449,7 @@ async def clear_namespace(
     current_user=Depends(get_current_active_user),
 ):
     """Clear the execution namespace for a flow (variables, imports, etc.)."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -456,7 +469,7 @@ async def get_node_artifacts(
     current_user=Depends(get_current_active_user),
 ):
     """Get artifacts published by a specific node."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -477,7 +490,7 @@ async def _lsp_forward(kernel_id: str, op: str, request: LspRequest, current_use
     if not is_lsp_enabled():
         return {}
     try:
-        manager = _get_manager()
+        manager = await _get_manager()
     except HTTPException:
         return {}  # Docker unavailable -> no kernels -> degrade
     kernel = await manager.get_kernel(kernel_id)
@@ -514,7 +527,7 @@ async def get_display_outputs(
     current_user=Depends(get_current_active_user),
 ):
     """Retrieve display outputs from the last execution of a node."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -536,7 +549,7 @@ async def get_artifact_preview(
     current_user=Depends(get_current_active_user),
 ):
     """Proxy a session-only artifact preview blob from the kernel; core retains nothing."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -556,7 +569,7 @@ async def get_artifact_preview(
 @router.post("/{kernel_id}/recover", response_model=RecoveryStatus)
 async def recover_artifacts(kernel_id: str, current_user=Depends(get_current_active_user)):
     """Trigger manual artifact recovery from persisted storage."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -571,7 +584,7 @@ async def recover_artifacts(kernel_id: str, current_user=Depends(get_current_act
 @router.get("/{kernel_id}/recovery-status", response_model=RecoveryStatus)
 async def get_recovery_status(kernel_id: str, current_user=Depends(get_current_active_user)):
     """Get the current artifact recovery status."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -590,7 +603,7 @@ async def cleanup_artifacts(
     current_user=Depends(get_current_active_user),
 ):
     """Clean up old persisted artifacts."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -605,7 +618,7 @@ async def cleanup_artifacts(
 @router.get("/{kernel_id}/persistence", response_model=ArtifactPersistenceInfo)
 async def get_persistence_info(kernel_id: str, current_user=Depends(get_current_active_user)):
     """Get persistence configuration and stats for a kernel."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
@@ -620,7 +633,7 @@ async def get_persistence_info(kernel_id: str, current_user=Depends(get_current_
 @router.get("/{kernel_id}/memory", response_model=KernelMemoryInfo)
 async def get_memory_stats(kernel_id: str, current_user=Depends(get_current_active_user)):
     """Get current memory usage for a running kernel container."""
-    manager = _get_manager()
+    manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
         raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")

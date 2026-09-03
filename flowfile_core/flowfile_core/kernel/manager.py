@@ -315,6 +315,19 @@ _HEALTH_POLL_INTERVAL = 2
 _START_FLIGHT_GRACE = 600
 _CONVERGE_ATTEMPTS = 5
 _CONVERGE_DELAY_S = 0.5
+_DOCKER_PROBE_TIMEOUT_SECONDS = 5.0
+
+
+def _probe_docker() -> None:
+    """Fail fast when the Docker daemon is hung or absent.
+
+    ``docker.from_env()`` negotiates the API version with the SDK's 60 s default
+    read timeout, so a hung daemon would cost a full minute per construction
+    attempt. The probe performs that same version GET through a short-timeout
+    client and lets the SDK's ``DockerException`` propagate; the real client is
+    built afterwards with the default timeout, which pulls/builds/commits rely on.
+    """
+    docker.from_env(timeout=_DOCKER_PROBE_TIMEOUT_SECONDS).close()
 
 
 def _is_docker_mode() -> bool:
@@ -349,6 +362,7 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
 
 class KernelManager:
     def __init__(self, shared_volume_path: str | None = None):
+        _probe_docker()
         self._docker = docker.from_env()
         # Stable id for this Core install; stamped onto every derived image
         # so orphan GC only touches images this Core built.

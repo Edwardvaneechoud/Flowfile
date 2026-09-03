@@ -56,7 +56,10 @@ class _StubManager:
 
 
 def _install_manager(monkeypatch, manager: _StubManager) -> None:
-    monkeypatch.setattr(kernel_routes, "_get_manager", lambda: manager)
+    async def _get_manager():
+        return manager
+
+    monkeypatch.setattr(kernel_routes, "_get_manager", _get_manager)
 
 
 def test_unknown_kernel_returns_404(client: TestClient, owner_id: int, monkeypatch):
