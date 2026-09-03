@@ -44,6 +44,7 @@
   --color-accent-subtle: #ecfeff;
   /* Accent text/icons: flips light in dark mode, like the status "-dark" tokens. */
   --color-accent-dark: #0e7490;
+  --color-accent-dark-hover: #155e75;
 
   /* Legacy alias (maps to accent for consistency) */
   --light-blue: #0891b2;
@@ -279,6 +280,7 @@
   /* Accent color adjustments for dark mode */
   --color-accent-subtle: rgba(8, 145, 178, 0.15);
   --color-accent-dark: #22d3ee;
+  --color-accent-dark-hover: #67e8f9;
 
   --color-text-primary: #f1f5f9;
   --color-text-secondary: #cbd5e1;

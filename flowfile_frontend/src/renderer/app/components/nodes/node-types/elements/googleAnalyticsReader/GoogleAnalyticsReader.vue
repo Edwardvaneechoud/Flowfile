@@ -962,7 +962,7 @@ select.form-control {
 }
 
 .link-button:hover {
-  color: var(--color-accent-hover);
+  color: var(--color-accent-dark-hover);
 }
 
 .required {

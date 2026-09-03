@@ -134,6 +134,6 @@ onMounted(() => {
 }
 
 .hint-link:hover {
-  color: var(--color-accent-hover);
+  color: var(--color-accent-dark-hover);
 }
 </style>
