@@ -109,7 +109,7 @@ export const catalogTabs: CatalogTabDef[] = [
     label: "APIs",
     icon: "fa-solid fa-plug",
     sidebarKey: "menu.catalogApis",
-    group: "extend",
+    group: "operate",
   },
   {
     key: "customNodes",
@@ -126,3 +126,28 @@ export const catalogTabs: CatalogTabDef[] = [
     group: "extend",
   },
 ];
+
+// Rail sections: the Catalog rail item carries browse/analyze/operate; the extend tabs
+// live under Settings → Extensions and render without the catalog tree or its controls.
+// CatalogView's tab bar shows one section at a time.
+export type CatalogSection = "catalog" | "extend";
+
+export const CATALOG_SECTION_GROUPS: Record<CatalogSection, readonly CatalogTabGroup[]> = {
+  catalog: ["browse", "analyze", "operate"],
+  extend: ["extend"],
+};
+
+export function catalogSectionOf(group: CatalogTabGroup): CatalogSection {
+  return (Object.keys(CATALOG_SECTION_GROUPS) as CatalogSection[]).find((s) =>
+    CATALOG_SECTION_GROUPS[s].includes(group),
+  ) as CatalogSection;
+}
+
+export function catalogSectionOfTab(key: string | undefined): CatalogSection | null {
+  const tab = catalogTabs.find((t) => t.key === key);
+  return tab ? catalogSectionOf(tab.group) : null;
+}
+
+export function catalogTabsInSection(section: CatalogSection): CatalogTabDef[] {
+  return catalogTabs.filter((t) => CATALOG_SECTION_GROUPS[section].includes(t.group));
+}

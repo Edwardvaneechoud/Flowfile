@@ -7,10 +7,15 @@
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
     <div class="sidebar-footer">
-      <div class="footer-btn-wrapper" data-tooltip="More & help">
+      <div v-if="currentPageHelp" class="footer-btn-wrapper" data-tooltip="Page info">
+        <button class="info-button" @click="showHelp = true">
+          <i class="fa-solid fa-circle-info"></i>
+        </button>
+      </div>
+      <div class="footer-btn-wrapper" data-tooltip="Help &amp; more">
         <el-popover
           placement="right-end"
-          :width="200"
+          :width="220"
           trigger="click"
           popper-class="sidebar-more-popover"
           :show-arrow="true"
@@ -21,6 +26,10 @@
             </button>
           </template>
           <div class="sidebar-more-menu">
+            <button class="sidebar-more-item" @click="handleStartTutorial">
+              <span class="material-icons">school</span>
+              <span>Interactive tutorial</span>
+            </button>
             <button class="sidebar-more-item" @click="handleOpenTemplates">
               <i class="fa-solid fa-layer-group"></i>
               <span>Templates</span>
@@ -29,29 +38,21 @@
               <i class="fa-solid fa-book"></i>
               <span>Documentation</span>
             </button>
-            <button class="sidebar-more-item" @click="handleStartTutorial">
-              <span class="material-icons">school</span>
-              <span>Interactive tutorial</span>
-            </button>
             <button class="sidebar-more-item" @click="handleOpenPrivacy">
               <i class="fa-solid fa-shield-halved"></i>
               <span>Privacy &amp; data collection</span>
             </button>
+            <div class="sidebar-more-divider" aria-hidden="true"></div>
+            <button class="sidebar-more-item" @click="toggleTheme">
+              <i :class="isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon'"></i>
+              <span>{{ isDark ? "Light mode" : "Dark mode" }}</span>
+            </button>
+            <button v-if="showLogout" class="sidebar-more-item is-danger" @click="handleLogout">
+              <i class="fa-solid fa-right-from-bracket"></i>
+              <span>Sign out</span>
+            </button>
           </div>
         </el-popover>
-      </div>
-      <div class="footer-btn-wrapper" data-tooltip="Toggle theme">
-        <ThemeToggle />
-      </div>
-      <div v-if="currentPageHelp" class="footer-btn-wrapper" data-tooltip="Page info">
-        <button class="info-button" @click="showHelp = true">
-          <i class="fa-solid fa-circle-info"></i>
-        </button>
-      </div>
-      <div v-if="showLogout" class="footer-btn-wrapper" data-tooltip="Sign out">
-        <button class="logout-button" @click="handleLogout">
-          <i class="fa-solid fa-right-from-bracket"></i>
-        </button>
       </div>
     </div>
     <PageHelpModal
@@ -66,10 +67,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import NavigationRoutes from "./NavigationRoutes";
+import NavigationRoutes, { type INavigationRoute } from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
-import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
 import { PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
@@ -77,12 +77,14 @@ import { desktop } from "../../../../lib/desktop";
 import { DOCS_BASE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useMultiUser } from "../../../composables/useMultiUser";
+import { useTheme } from "../../../composables/useTheme";
 import { useProjectStore } from "../../../stores/project-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
 import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
+import { catalogSectionOfTab } from "../../../views/CatalogView/catalogTabs";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
 import { computeHelp } from "../../../views/ComputeView/computeHelp";
@@ -104,6 +106,7 @@ const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
 const { isMultiUser } = useMultiUser();
+const { isDark, toggleTheme } = useTheme();
 
 // Page help
 const showHelp = ref(false);
@@ -137,29 +140,32 @@ const items = computed(() => {
   const isAdmin = authStore.isAdmin;
   const isDesktopShell = authService.isInDesktopMode();
   const projectDot = projectStore.isActive ? projectStore.status : undefined;
-  return NavigationRoutes.routes
-    .filter((route) => {
-      if (route.hideInElectron && isDesktopShell) return false;
-      if (route.dockerOnly && isDesktopShell) return false;
-      // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
-      if (route.name === "project" && isMultiUser.value && !isAdmin) return false;
-      return !route.requiresAdmin || isAdmin;
-    })
-    .map((route) => {
-      if (route.name === "project") return { ...route, statusDot: projectDot };
-      // The catalog icon resumes the last sub-page instead of always opening the tree.
-      if (route.name === "catalog" && lastCatalogQuery.value) {
-        return { ...route, query: lastCatalogQuery.value };
-      }
-      return route;
-    })
-    .map((route) => {
-      if (!route.children) return route;
-      const children = route.children.filter((c) => !c.requiresAdmin || isAdmin);
-      // A one-child sub-menu is noise — flatten to a plain item (the page
-      // defaults to the surviving tab anyway).
-      return children.length > 1 ? { ...route, children } : { ...route, children: undefined };
-    });
+
+  const visible = (entry: INavigationRoute) => {
+    if ((entry.hideInElectron || entry.dockerOnly) && isDesktopShell) return false;
+    // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
+    if (entry.name === "project" && isMultiUser.value && !isAdmin) return false;
+    return !entry.requiresAdmin || isAdmin;
+  };
+  const decorate = (entry: INavigationRoute): INavigationRoute =>
+    entry.name === "project" ? { ...entry, statusDot: projectDot } : entry;
+
+  return NavigationRoutes.routes.filter(visible).map((route) => {
+    if (!route.children) return decorate(route);
+    const children = route.children.filter(visible).map(decorate);
+    const parent: INavigationRoute = { ...route };
+    // A child's status dot (project sync state) also shows on the collapsed rail icon.
+    const statusDot = children.find((c) => c.statusDot)?.statusDot;
+    if (statusDot) parent.statusDot = statusDot;
+    // The catalog icon resumes the last sub-page, unless that page lives under Settings.
+    const last = lastCatalogQuery.value;
+    if (route.name === "catalog" && last && catalogSectionOfTab(last.tab) === "catalog") {
+      parent.query = last;
+    }
+    // A one-child sub-menu is noise — flatten to a plain item (the page
+    // defaults to the surviving tab anyway).
+    return children.length > 1 ? { ...parent, children } : { ...parent, children: undefined };
+  });
 });
 
 const showLogout = computed(() => !authService.isInDesktopMode());
@@ -259,37 +265,6 @@ const handleLogout = () => {
   font-size: 20px;
 }
 
-.logout-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background-color: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-base) var(--transition-timing);
-}
-
-.logout-button:hover {
-  background-color: var(--color-danger-light);
-  color: var(--color-danger);
-  border-color: var(--color-danger);
-}
-
-.logout-button:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
-  border-color: var(--color-danger);
-}
-
-.logout-button i {
-  font-size: var(--font-size-lg);
-}
-
 .info-button {
   display: flex;
   align-items: center;
@@ -358,5 +333,20 @@ const handleLogout = () => {
 .sidebar-more-item:hover i,
 .sidebar-more-item:hover .material-icons {
   color: var(--color-accent);
+}
+
+.sidebar-more-item.is-danger:hover {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.sidebar-more-item.is-danger:hover i {
+  color: var(--color-danger);
+}
+
+.sidebar-more-divider {
+  height: 1px;
+  margin: var(--spacing-1) var(--spacing-2);
+  background-color: var(--color-border-primary);
 }
 </style>
