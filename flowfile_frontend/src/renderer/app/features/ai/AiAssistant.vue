@@ -1670,7 +1670,7 @@ const showStandaloneThinking = computed<boolean>(() => {
 
 .ai-assistant__notice-link:hover,
 .ai-assistant__notice-link:focus-visible {
-  color: var(--color-primary-hover, #1d4ed8);
+  color: var(--color-accent-hover);
   outline: none;
 }
 
@@ -2123,7 +2123,7 @@ const showStandaloneThinking = computed<boolean>(() => {
 }
 
 .ai-assistant__surface-chip--legacy {
-  background-color: var(--color-warning-soft, rgba(204, 119, 0, 0.08));
+  background-color: var(--color-warning-light);
   border-color: var(--color-warning, #cc7700);
   color: var(--color-warning, #cc7700);
 }
@@ -2193,7 +2193,7 @@ const showStandaloneThinking = computed<boolean>(() => {
   gap: 6px;
   padding: 10px 12px;
   margin: 0 0 8px 0;
-  background-color: var(--color-warning-soft, #fff3cd);
+  background-color: var(--color-warning-light);
   border: 1px solid var(--color-warning, #d4a72c);
   border-radius: 4px;
   font-size: 12px;
@@ -2202,7 +2202,7 @@ const showStandaloneThinking = computed<boolean>(() => {
 .ai-assistant__drift-title {
   margin: 0;
   font-weight: 600;
-  color: var(--color-warning-text, #5c4400);
+  color: var(--color-warning-dark);
 }
 
 .ai-assistant__drift-list {
@@ -2229,11 +2229,11 @@ const showStandaloneThinking = computed<boolean>(() => {
   flex-direction: column;
   padding: 8px 12px;
   margin: 0 0 8px 0;
-  background-color: var(--color-info-soft, #eef2ff);
+  background-color: var(--color-info-light);
   border: 1px solid var(--color-info, #6366f1);
   border-radius: 4px;
   font-size: 12px;
-  color: var(--color-info-text, #312e81);
+  color: var(--color-info);
 }
 
 .ai-assistant__promo-text {

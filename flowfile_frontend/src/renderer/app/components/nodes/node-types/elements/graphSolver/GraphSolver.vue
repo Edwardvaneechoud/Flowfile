@@ -238,7 +238,7 @@ onUnmounted(() => {
 .context-menu {
   position: fixed;
   z-index: 1000;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   background-color: var(--color-background-primary);
   padding: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
@@ -257,6 +257,6 @@ onUnmounted(() => {
 }
 
 .context-menu li:hover {
-  background-color: #f0f0f0;
+  background-color: var(--color-background-hover);
 }
 </style>

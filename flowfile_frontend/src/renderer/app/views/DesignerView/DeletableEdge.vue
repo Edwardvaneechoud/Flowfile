@@ -80,10 +80,10 @@ function onButtonLeave() {
   width: 20px;
   height: 20px;
   padding: 0;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--color-border-primary);
   border-radius: 50%;
-  background: #fff;
-  color: #606266;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;

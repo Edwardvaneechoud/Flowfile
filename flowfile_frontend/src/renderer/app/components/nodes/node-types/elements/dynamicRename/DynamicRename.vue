@@ -328,13 +328,13 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 }
 
 .hint {
-  color: #909399;
+  color: var(--color-text-tertiary);
   font-size: 0.75rem;
   margin-top: 4px;
 }
 
 .hint code {
-  background: #f4f4f5;
+  background: var(--color-background-tertiary);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -344,28 +344,28 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 }
 
 .formula-editor {
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .column-type {
   font-size: 0.75rem;
-  color: #909399;
+  color: var(--color-text-tertiary);
   margin-left: 8px;
 }
 
 .preview-error {
-  color: #f56c6c;
+  color: var(--color-danger);
   font-size: 0.8rem;
   padding: 4px 8px;
-  background: #fef0f0;
+  background: var(--color-danger-light);
   border-radius: 3px;
 }
 
 .preview-loading,
 .preview-empty {
-  color: #909399;
+  color: var(--color-text-tertiary);
   font-size: 0.8rem;
   font-style: italic;
 }
@@ -376,7 +376,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   gap: 2px;
   max-height: 220px;
   overflow-y: auto;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--color-border-light);
   border-radius: 3px;
   padding: 4px 0;
 }
@@ -392,22 +392,22 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 }
 
 .preview-header {
-  color: #909399;
+  color: var(--color-text-tertiary);
   font-weight: 600;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--color-border-light);
   padding-bottom: 4px;
   margin-bottom: 2px;
 }
 
 .preview-old {
-  color: #606266;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .preview-new {
-  color: #303133;
+  color: var(--color-text-primary);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -415,7 +415,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 }
 
 .preview-arrow {
-  color: #c0c4cc;
+  color: var(--color-text-muted);
   text-align: center;
 }
 </style>

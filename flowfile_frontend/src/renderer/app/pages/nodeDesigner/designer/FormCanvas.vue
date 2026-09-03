@@ -533,8 +533,8 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
 }
 
 .chrome-btn-danger:hover {
-  border-color: var(--color-text-danger, #dc2626);
-  color: var(--color-text-danger, #dc2626);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .section-footer {
@@ -558,7 +558,7 @@ function onPreviewUpdate(value: Record<string, Record<string, unknown>>) {
 }
 
 .remove-group-btn:hover {
-  color: var(--color-text-danger, #dc2626);
+  color: var(--color-danger);
 }
 
 .add-group-row {

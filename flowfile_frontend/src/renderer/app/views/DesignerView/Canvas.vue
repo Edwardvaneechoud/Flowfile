@@ -1436,6 +1436,20 @@ body,
   transform-origin: bottom right;
 }
 
+[data-theme="dark"] .vue-flow__minimap {
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
+}
+
+[data-theme="dark"] .vue-flow__minimap-mask {
+  fill: rgba(15, 23, 42, 0.6);
+}
+
+[data-theme="dark"] .vue-flow__minimap-node {
+  fill: var(--color-border-secondary);
+  stroke: none;
+}
+
 /* Custom cursors for Windows: system grab/crosshair cursors can be white
    and invisible on light backgrounds. These SVG cursors guarantee contrast. */
 .custom-node-flow .vue-flow__pane.draggable,

@@ -260,7 +260,7 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
 
 .ai-cmdk__panel {
   width: min(640px, 92vw);
-  background: #ffffff;
+  background: var(--color-background-primary);
   border-radius: 12px;
   box-shadow: 0 24px 64px rgba(15, 20, 30, 0.28);
   padding: 14px 14px 10px 14px;
@@ -275,24 +275,24 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
   align-items: center;
   gap: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .ai-cmdk__model-label {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   font-weight: 600;
 }
 
 .ai-cmdk__model-select {
   font-size: 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   padding: 2px 6px;
-  background: #ffffff;
-  color: #1f2937;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
   cursor: pointer;
   max-width: 320px;
   text-overflow: ellipsis;
@@ -310,7 +310,7 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
 .ai-cmdk__close {
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1;
   padding: 4px 8px;
@@ -319,8 +319,8 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
 }
 
 .ai-cmdk__close:hover:not(:disabled) {
-  background: #f3f4f6;
-  color: #1f2937;
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
 }
 
 .ai-cmdk__close:disabled {
@@ -346,32 +346,32 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
   font-size: 16px;
   background: transparent;
   padding: 6px 4px;
-  color: #1f2937;
+  color: var(--color-text-primary);
 }
 
 .ai-cmdk__input::placeholder {
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 .ai-cmdk__input:disabled {
-  color: #9ca3af;
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
 .ai-cmdk__submit,
 .ai-cmdk__cancel {
-  border: 1px solid #d1d5db;
-  background: #f9fafb;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
   border-radius: 6px;
   padding: 4px 12px;
   font-size: 13px;
   cursor: pointer;
-  color: #1f2937;
+  color: var(--color-text-primary);
 }
 
 .ai-cmdk__submit:hover:not(:disabled),
 .ai-cmdk__cancel:hover {
-  background: #f3f4f6;
+  background: var(--color-background-hover);
 }
 
 .ai-cmdk__submit:disabled {
@@ -381,12 +381,12 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
 
 .ai-cmdk__hint {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
 }
 
 .ai-cmdk__hint kbd {
-  background: #f3f4f6;
-  border: 1px solid #d1d5db;
+  background: var(--color-background-hover);
+  border: 1px solid var(--color-border-primary);
   border-radius: 3px;
   padding: 0 4px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
@@ -395,14 +395,14 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
 
 .ai-cmdk__error {
   font-size: 12px;
-  color: #b91c1c;
+  color: var(--color-danger-dark);
 }
 
 .ai-cmdk__refused {
   font-size: 12px;
-  color: #92400e;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  color: var(--color-warning-dark);
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning);
   border-radius: 6px;
   padding: 6px 8px;
 }

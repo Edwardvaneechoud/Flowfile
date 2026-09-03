@@ -514,7 +514,7 @@ defineExpose({
 }
 
 .flow-tabs::-webkit-scrollbar-thumb {
-  background-color: var(--color-gray-300);
+  background-color: var(--color-border-secondary);
   border-radius: var(--border-radius-full);
 }
 

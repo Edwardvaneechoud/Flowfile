@@ -562,11 +562,11 @@ const loadFieldsFromSchema = async () => {
   gap: var(--spacing-2, 8px);
   margin: var(--spacing-2, 8px) var(--spacing-2, 8px) 0;
   padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
-  border: 1px solid var(--color-border-warning, #fcd34d);
+  border: 1px solid var(--color-warning);
   border-radius: 6px;
-  background: var(--color-bg-warning, #fffbeb);
+  background: var(--color-warning-light);
   font-size: var(--font-size-xs, 12px);
-  color: var(--color-text-warning, #b45309);
+  color: var(--color-warning-dark);
 }
 
 .prediction-warning-banner__icon {

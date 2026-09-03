@@ -494,7 +494,7 @@ const formattedSnapshot = computed(() => {
   padding: 3px 8px;
   border: 1px solid var(--color-border-light, #e5e7eb);
   border-radius: 4px;
-  background: #fff;
+  background: var(--color-background-primary);
   cursor: pointer;
   color: var(--color-text-primary, #111827);
   transition:

@@ -70,7 +70,7 @@ const dialogTitle = computed(() => props.payload?.title || props.name || "Previe
   height: 72vh;
   border: none;
   border-radius: 3px;
-  background: white;
+  background: var(--color-background-primary);
 }
 
 .artifact-preview-text {

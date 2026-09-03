@@ -426,7 +426,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   padding: 6px 10px;
   font-size: 12px;
   color: var(--color-text-secondary);
-  background: var(--color-background-mute, #f4f4f5);
+  background: var(--color-background-muted);
   border-left: 3px solid var(--color-primary, #0891b2);
   border-radius: 4px;
 }
