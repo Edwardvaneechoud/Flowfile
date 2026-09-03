@@ -24,7 +24,7 @@ const { errors } = toRefs(props);
 }
 
 .error-box {
-  border: 1px solid var(--color-danger-light);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-danger-light));
   background-color: var(--color-danger-light);
   padding: 2px;
   margin: 4px 0;
