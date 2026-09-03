@@ -828,7 +828,7 @@ defineExpose({
 }
 
 .ga-reader-tip-link:hover {
-  color: var(--color-warning-dark);
+  color: var(--color-warning-darker);
 }
 
 .section-subtitle {
@@ -962,7 +962,7 @@ select.form-control {
 }
 
 .link-button:hover {
-  color: var(--color-accent-dark);
+  color: var(--color-accent-hover);
 }
 
 .required {
