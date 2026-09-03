@@ -27,7 +27,7 @@ Groups are the principals you share with. A group has members, and each member h
 
 Only a **global admin** creates a group; the creator is automatically added as its owner. From then on the group's owners and managers run membership themselves — a group owner does not need to be a global admin to add or remove members. Every group keeps at least one owner.
 
-Create and manage groups from the **User Groups** area of the app.
+Create and manage groups from **Settings → Workspace → User Groups**.
 
 ![The User Groups admin view: groups with member counts and a create-group action.](../../assets/images/guides/settings/user-groups.gif)
 

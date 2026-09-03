@@ -57,6 +57,7 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
 <details markdown="1">
 <summary>See it: the empty flow</summary>
 
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: re-capture start_page.png on the new navigation — same Create Flow dialog, new 4-item rail and new footer. -->
 ![The empty flow after creation](assets/images/quickstart/start_page.png)
 
 </details>

@@ -15,7 +15,7 @@ It does not contain your data or your work:
 
 - **Before a schema migration.** When a version of Flowfile starts against a database that is behind its schema (or stamped at a revision it does not recognize), it snapshots first, then migrates.
 - **Before a desktop update.** The [update dialog](desktop.md#updating) takes one after downloading and before installing.
-- **On demand.** The **Back up now** button in the Backups tab, described below.
+- **On demand.** The **Back up now** button on the Backups page, described below.
 
 Snapshotting is best effort: a failure is logged and never blocks startup. The desktop update dialog tells you, and lets you continue without a snapshot.
 
@@ -32,11 +32,11 @@ Each file name carries the reason and a UTC timestamp — for example `flowfile_
 
 Flowfile keeps the newest ten and prunes the rest. `FLOWFILE_DB_BACKUP_KEEP` changes that count; setting it to `0` disables snapshots entirely, including the ones taken before a migration.
 
-## The Backups tab
+## The Backups page
 
-**Compute → Backups** lists the snapshots for the running deployment — when each was taken, the app version that wrote it, why, and how large it is. **Back up now** adds one. On the desktop app, each row can be revealed in your file manager.
+**Settings → Preferences → Backups** lists the snapshots for the running deployment — when each was taken, the app version that wrote it, why, and how large it is. **Back up now** adds one. On the desktop app, each row can be revealed in your file manager.
 
-The tab is admin-only and lists snapshots only: there is no restore, delete or download button. Restoring is a deliberate act with the app stopped, described next.
+The page is admin-only and lists snapshots only: there is no restore, delete or download button. Restoring is a deliberate act with the app stopped, described next.
 
 ## Restoring one
 
