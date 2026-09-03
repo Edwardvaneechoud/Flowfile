@@ -747,7 +747,7 @@ class TestStartupSequence:
     def test_init_calls_orphan_gc(self, monkeypatch):
         """Document the contract: any new startup helper must be wired in."""
         # We use a real __init__ but stub out everything it touches.
-        monkeypatch.setattr(kernel_manager.docker, "from_env", lambda: MagicMock())
+        monkeypatch.setattr(kernel_manager.docker, "from_env", lambda **_: MagicMock())
         monkeypatch.setattr(KernelManager, "_detect_docker_network", lambda self: None)
         monkeypatch.setattr(
             KernelManager,
@@ -1167,7 +1167,7 @@ class TestStartupGcSafety:
         docker_client.containers.list.return_value = [container]
         docker_client.images.list.return_value = [image]
 
-        monkeypatch.setattr(kernel_manager.docker, "from_env", lambda: docker_client)
+        monkeypatch.setattr(kernel_manager.docker, "from_env", lambda **_: docker_client)
         monkeypatch.setattr(KernelManager, "_detect_docker_network", lambda self: None)
         monkeypatch.setattr(
             KernelManager, "_discover_volume_for_path", lambda self, path: (None, None, None)
