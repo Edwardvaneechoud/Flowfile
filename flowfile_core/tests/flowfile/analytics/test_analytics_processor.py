@@ -1,7 +1,10 @@
+import datetime
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 import polars as pl
+import polars_gw
 import pytest
 
 from flowfile_core.flowfile.analytics.analytics_processor import (
@@ -751,3 +754,57 @@ def test_unchanged_data_leaves_the_users_own_choices_alone():
     assert _find_field(encodings, 'rows', 'year')['analyticType'] == 'dimension'
     assert 'aggName' not in _find_field(encodings, 'rows', 'year')
     assert _find_field(encodings, 'measures', 'score')['semanticType'] == 'ordinal', 'manual override must survive'
+
+
+_PARITY_FRAME = pl.DataFrame(
+    {
+        'text': ['a'],
+        'tiny_int': [1],
+        'unsigned_int': [1],
+        'big_int': [1],
+        'float': [1.0],
+        'decimal': [1.0],
+        'date': [datetime.date(2024, 1, 1)],
+        'datetime': [datetime.datetime(2024, 1, 1)],
+        'duration': [1],
+        'time': [1],
+        'boolean': [True],
+        'categorical': ['x'],
+        'list': [[1, 2]],
+    },
+    schema_overrides={
+        'tiny_int': pl.Int8,
+        'unsigned_int': pl.UInt32,
+        'float': pl.Float32,
+        'decimal': pl.Decimal(10, 2),
+        'duration': pl.Duration('us'),
+        'time': pl.Time,
+        'categorical': pl.Categorical,
+        'list': pl.List(pl.Int64),
+    },
+)
+
+
+def test_semantic_types_agree_with_polars_gw():
+    """The backend classifier must agree with polars_gw, which owns the browser's field schema.
+
+    Reconciliation compares a saved spec entry (built from polars_gw's fields) against a
+    backend-derived field, so any disagreement retypes columns on every drawer open.
+    """
+    core_fields = convert_ff_columns_to_gw_fields(FlowDataEngine(_PARITY_FRAME).schema)
+    gw_fields = polars_gw.get_fields(_PARITY_FRAME, classify_integers='measure')
+
+    assert [(f.fid, f.semanticType) for f in core_fields] == [(f['fid'], f['semanticType']) for f in gw_fields]
+
+    spec_fields = deepcopy(gw_fields)
+    spec_list = {
+        'encodings': {
+            'dimensions': [f for f in spec_fields if f['analyticType'] != 'measure'],
+            'measures': [f for f in spec_fields if f['analyticType'] == 'measure'],
+        }
+    }
+    untouched = deepcopy(spec_list)
+
+    validate_spec_list_with_data_model_types(spec_list, DataModel(data=[], fields=core_fields))
+
+    assert spec_list == untouched, 'a spec built from polars_gw fields must survive reconciliation unchanged'

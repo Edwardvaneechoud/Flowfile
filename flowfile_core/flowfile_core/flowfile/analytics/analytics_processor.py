@@ -97,11 +97,6 @@ def add_field_to_spec_list(spec_list: dict, mut_field: MutField) -> None:
         spec_list["encodings"]["dimensions"].append(view_field.model_dump_dict())
 
 
-def is_data_column_field(spec_field: dict) -> bool:
-    """A spec entry backed by a real column, not a Graphic Walker pseudo or computed field."""
-    return not spec_field.get("computed") and spec_field.get("fid") not in GW_PSEUDO_FIDS
-
-
 def sync_spec_field_with_mut_field(spec_field: dict, mut_field: MutField) -> None:
     """Retype a spec entry only when the column's dtype class changed.
 
@@ -110,14 +105,12 @@ def sync_spec_field_with_mut_field(spec_field: dict, mut_field: MutField) -> Non
     entry without touching its semantic type). ``ordinal`` is likewise always a manual
     override — the backend only ever derives nominal, quantitative or temporal.
     """
-    spec_semantic_type = spec_field.get("semanticType")
-    if spec_semantic_type == mut_field.semanticType or spec_semantic_type == "ordinal":
+    if spec_field.get("semanticType") in (mut_field.semanticType, "ordinal"):
         return
     spec_field["semanticType"] = mut_field.semanticType
     spec_field["analyticType"] = mut_field.analyticType
     if mut_field.analyticType == "measure":
-        if not spec_field.get("aggName"):
-            spec_field["aggName"] = "sum"
+        spec_field["aggName"] = spec_field.get("aggName") or "sum"
     else:
         spec_field.pop("aggName", None)
 
@@ -129,10 +122,10 @@ def reconcile_spec_list_with_data_model(spec_list: dict, data_model: DataModel) 
     for channel, spec_fields in encodings.items():
         kept = []
         for spec_field in spec_fields:
-            if not is_data_column_field(spec_field):
+            if spec_field.get("computed") or spec_field["fid"] in GW_PSEUDO_FIDS:
                 kept.append(spec_field)
                 continue
-            mut_field = fields_by_fid.get(spec_field.get("fid"))
+            mut_field = fields_by_fid.get(spec_field["fid"])
             if mut_field is None:
                 continue
             sync_spec_field_with_mut_field(spec_field, mut_field)
