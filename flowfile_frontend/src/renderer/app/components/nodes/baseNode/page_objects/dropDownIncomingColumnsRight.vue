@@ -67,7 +67,7 @@ defineExpose({ selectedValue });
   padding: 6px 10px; /* Reduced padding */
   font-size: 14px; /* Smaller font size */
   line-height: 1.4; /* Adjust line height for better text alignment */
-  border: 1px solid #e0e0e0; /* Lighter border color */
+  border: 1px solid var(--color-border-primary); /* Lighter border color */
   border-radius: 4px; /* Slightly rounded corners for a softer look */
   box-shadow: none; /* Remove shadow for a flatter style */
   outline: none; /* Remove the default focus outline */
@@ -77,14 +77,14 @@ defineExpose({ selectedValue });
 }
 
 .select-box:focus {
-  border-color: #a0a0a0; /* Darker border on focus for better visibility */
+  border-color: var(--color-border-secondary); /* Darker border on focus for better visibility */
   box-shadow: 0 0 0 2px rgba(130, 130, 130, 0.2); /* Subtle glow effect when focused */
 }
 
 .options-list {
   position: absolute; /* Positioned absolutely to overlay content below */
   width: 100%; /* Match width with the select box */
-  border: 1px solid #eee; /* Lighter border for the list */
+  border: 1px solid var(--color-border-light); /* Lighter border for the list */
   border-top: none; /* Remove top border to merge with select box */
   border-radius: 0 0 4px 4px; /* Rounded corners at the bottom only */
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.03); /* Even lighter shadow */
@@ -101,17 +101,17 @@ defineExpose({ selectedValue });
   padding: 8px 12px; /* Slightly larger horizontal padding */
   cursor: pointer;
   font-size: 15px; /* Reduced font size but not too small */
-  color: #555; /* Even softer color */
+  color: var(--color-text-secondary); /* Even softer color */
   line-height: 1.5; /* Improved readability */
   transition: background-color 0.2s; /* Smooth transition for hover effect */
 }
 
 .options-list li:not(:last-child) {
-  border-bottom: 1px solid #f7f7f7; /* Lighter separators */
+  border-bottom: 1px solid var(--color-border-light); /* Lighter separators */
 }
 
 .options-list li:hover {
-  background-color: #f7f7f7; /* Light hover background */
+  background-color: var(--color-background-hover); /* Light hover background */
 }
 </style>
 ../../../stores/column-store

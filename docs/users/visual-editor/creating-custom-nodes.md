@@ -49,7 +49,7 @@ Here is a complete node that adds a greeting column. Note the `process` signatur
 
 ### 2. Use your node
 
-1. **Save the file.** Flowfile hot-reloads the custom-nodes directory on save — no restart. If the node was added while Flowfile was already open, click **Rescan** in the Node Designer's browser (or the Catalog's Custom Nodes tab) to pick it up.
+1. **Save the file.** Flowfile hot-reloads the custom-nodes directory on save — no restart. If the node was added while Flowfile was already open, click **Rescan** in the Node Designer's browser (or on the **Custom Nodes** page under **Settings → Extensions**) to pick it up.
 2. **Open the visual editor.**
 3. **Find your node** in the palette. It lands in the group named after its `node_category` (see [Palette placement](#palette-placement)).
 4. **Drag it** onto the canvas and connect an input.
@@ -707,9 +707,9 @@ class TextCleanerNode(nd.CustomNodeBase):
 
 ## Mounting other directories
 
-The default directory is `~/.flowfile/user_defined_nodes/`, but you can register additional folders (for example a version-controlled repo of shared nodes). Register a directory in the Catalog's **Custom Nodes** tab or via `POST /custom-node-mounts`; the registrations persist in a `mounts.json` next to the default directory.
+The default directory is `~/.flowfile/user_defined_nodes/`, but you can register additional folders (for example a version-controlled repo of shared nodes). Register a directory on the **Custom Nodes** page (**Settings → Extensions → Custom Nodes**) or via `POST /custom-node-mounts`; the registrations persist in a `mounts.json` next to the default directory.
 
-Mounted directories are **read-only sources** — the designer edits and saves them, but a fresh save from the designer always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and the Custom Nodes tab like any other.
+Mounted directories are **read-only sources** — the designer edits and saves them, but a fresh save from the designer always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and the Custom Nodes page like any other.
 
 ## The visual round-trip
 
@@ -719,7 +719,7 @@ A node file written in the SDK's "designer subset" reopens in the visual editor:
 
 ### Node doesn't appear
 1. Check the file is in `~/.flowfile/user_defined_nodes/` (or a registered mount).
-2. Click **Rescan** in the Node Designer browser or the Catalog Custom Nodes tab.
+2. Click **Rescan** in the Node Designer browser or on the Custom Nodes page (**Settings → Extensions → Custom Nodes**).
 3. Check the browser: a file with a syntax or load error stays listed with its error attached.
 4. Ensure the class inherits from `nd.CustomNodeBase`.
 

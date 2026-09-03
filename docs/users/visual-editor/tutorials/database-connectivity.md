@@ -33,7 +33,7 @@ You need a PostgreSQL server with a table to read. Any server works; the walkthr
 
 Save the credentials once so every flow can reference them by name — the flow file never stores the secret.
 
-1. Open the **Connections** page from the left sidebar and select the **Database** tab.
+1. Open **Settings → Connections → All connections** in the left sidebar, then select the **Database** tab.
 2. Click **Add Connection**.
 3. Fill in the fields:
     - **Connection Name**: `analytics-postgres` (the name the flow and Python example below expect)
@@ -117,7 +117,7 @@ Click **Run** to execute the whole flow. Flowfile reads `movies`, applies the tr
 
 ## The flow file
 
-The finished flow is committed and runs in CI against the local Postgres sample, so it can't drift from a working pipeline. Download it and open it in Flowfile with **Create → Open**, or inspect it below — it references the connection by name only, so it carries no credentials.
+The finished flow is committed and runs in CI against the local Postgres sample, so it can't drift from a working pipeline. Download it and open it in Flowfile from the **Home** page's **Open flow** tile, or inspect it below — it references the connection by name only, so it carries no credentials.
 
 <details markdown="1">
 <summary>See the flow YAML</summary>

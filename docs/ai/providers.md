@@ -31,12 +31,12 @@ The "Tools" column means the provider can return structured tool-call arguments 
 
 In the app:
 
-1. Open **Settings → AI Providers**.
+1. Open **Settings → Connections → All connections** (the gear icon in the left sidebar), then the **AI Providers** tab.
 2. Pick a provider from the list. The panel shows class-level metadata (default model, supports tools, supports streaming) plus your current credential status: **Configured** (key saved), **Env fallback** (no key saved but a recognised env var is set on the server), or **Unconfigured**.
 3. Paste the API key into the *API key* field and click **Save**. For Ollama or self-hosted endpoints, set *API base* to the server URL.
 4. Click **Test**. Flowfile issues a 1-token ping and records the result on the credential (`last_tested_at`, `last_test_status`).
 
-![AI Providers list with status chips](../assets/images/ai/byok_provider_list.png)
+![AI Providers tab on the Connections page, with a status chip on each provider](../assets/images/ai/byok_provider_list.png)
 
 ![Configure form for a single provider — masked API key field, optional default model, curated models list, and API base URL](../assets/images/ai/byok_provider_detail.png)
 
@@ -92,13 +92,13 @@ Cap per-provider request volume via env vars on the host: `FLOWFILE_AI_<PROVIDER
 
 Flowfile can run a small model on the machine itself. It downloads a llama.cpp `llama-server` build plus a quantized model into the Flowfile data directory and drives it over its OpenAI-compatible API; it needs no key or account and works offline once installed. The provider id is `local`; it is deliberately kept out of the BYOK provider set above, so it never appears in the credential list and has no `/ai/providers/*` routes. The server boots lazily on the first AI call.
 
-Set it up in **Settings → AI Providers → On-device AI**:
+Set it up on the **AI Providers** tab, under **On-device AI**:
 
 1. With nothing installed, the card offers a single **Set up On-device AI** button (labelled with the download size) that fetches the recommended model. Nothing downloads until you click it.
 2. Once installed, the card shows the active model with **Start** / **Stop**.
 3. **Advanced — choose or manage models** opens the full catalog: install another size, switch the active one with **Use**, or delete one.
 
-![On-device AI card in Settings → AI Providers before setup — the one-click Set up On-device AI button and the collapsed Advanced section](../assets/images/ai/on_device_ai_setup.png)
+![On-device AI card on the AI Providers tab before setup — the one-click Set up On-device AI button and the collapsed Advanced section](../assets/images/ai/on_device_ai_setup.png)
 
 The catalog is three q4_k_m GGUF builds, pulled from Hugging Face on demand:
 
@@ -130,7 +130,7 @@ Ollama is the other offline path — a server you install and manage yourself. Q
     ollama pull llama3.1:70b
     ```
 
-3. In Flowfile, **Settings → AI Providers → Ollama**:
+3. In Flowfile, open the **AI Providers** tab and select **Ollama**:
     - Leave *API key* empty.
     - Set *API base* to `http://localhost:11434` (the default; only override if your Ollama server is elsewhere).
     - Optionally set *Default model* to the tag you pulled.
@@ -152,7 +152,7 @@ The picked provider can't do tool calls — the [on-device model](#on-device-mod
 Provider name typo. The supported names are exactly: `anthropic`, `openai`, `google`, `groq`, `openrouter`, `ollama` (lowercase, no dashes).
 
 **On-device (local) model exits on startup in Docker / "no CPU backend found".**
-The bundled `llama-server` loads CPU compute backends (`libggml-cpu-*.so`) that need the OpenMP runtime, `libgomp1`. The official `flowfile-core` image bundles it; a custom or older image may not — add it (Debian/Ubuntu: `apt-get install -y libgomp1`) and restart. The startup error now names the cause: `no CPU backend found` / `exit code 127` → missing `libgomp1`; `killed by SIGKILL` → out of memory (give the container more RAM, or pick the 1.5B model / a smaller context in **Settings → AI**); `killed by SIGILL` → the image's architecture doesn't match the host CPU.
+The bundled `llama-server` loads CPU compute backends (`libggml-cpu-*.so`) that need the OpenMP runtime, `libgomp1`. The official `flowfile-core` image bundles it; a custom or older image may not — add it (Debian/Ubuntu: `apt-get install -y libgomp1`) and restart. The startup error now names the cause: `no CPU backend found` / `exit code 127` → missing `libgomp1`; `killed by SIGKILL` → out of memory (give the container more RAM, or pick the 1.5B model / a smaller context on the **AI Providers** tab); `killed by SIGILL` → the image's architecture doesn't match the host CPU.
 
 **Credential `Test` returns `ok=false` with an authentication error.**
 Key is wrong, expired, or missing required scopes. The error message from the upstream provider is surfaced in the `error` field of the test result.

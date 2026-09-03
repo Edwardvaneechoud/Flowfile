@@ -62,7 +62,7 @@ In Docker mode the master key must be supplied explicitly — it is **not** auto
 
 ## Creating Secrets
 
-1. Open the **Connections** page from the left sidebar and select the **Secrets** tab
+1. Open **Settings → Connections → All connections** (the gear icon in the left sidebar), then select the **Secrets** tab
 2. Click **Add Secret**
 3. Enter name (e.g., `prod_database_password`)
 4. Enter value

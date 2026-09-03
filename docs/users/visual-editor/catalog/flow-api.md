@@ -81,7 +81,7 @@ Keys are minted from the flow's panel (**Create key**) or from the APIs tab. The
 
 Every key belongs to a **consumer** — a client identity that holds keys and is granted endpoints. Keys created from a flow's own panel get an implicit single-endpoint consumer, so for one flow you never think about this. When one client needs several flows, create a named consumer in the APIs tab's **Consumers** view, grant it the endpoints, and mint one key there: that key calls every granted endpoint, and disabling the consumer cuts off all of them at once.
 
-![The Consumers view of the APIs tab: a new-consumer form and a dashboard-service consumer with one granted flow, one key, and an enabled toggle.](../../../assets/images/guides/catalog/flow-api-consumers.png)
+![The Consumers view of the APIs tab: a new-consumer form and a dashboard-service consumer with one key and an enabled toggle, ready to be granted published flows.](../../../assets/images/guides/catalog/flow-api-consumers.png)
 
 Failed authentication always returns `401`, whether the key is wrong, expired, disabled, or simply not granted this endpoint — an unauthorized caller can't probe which slugs exist. The one exception: a validly granted key calling a *disabled* endpoint gets `403`, since the caller has already proven access.
 

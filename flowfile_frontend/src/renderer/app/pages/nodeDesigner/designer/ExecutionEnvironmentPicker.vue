@@ -209,7 +209,7 @@ onMounted(fetchKernels);
   gap: 0.375rem;
   margin-top: 0.5rem;
   font-size: 0.75rem;
-  color: var(--color-text-danger, #dc2626);
+  color: var(--color-danger);
 }
 
 .env-card-status.ok {

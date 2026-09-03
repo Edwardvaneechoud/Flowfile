@@ -16,10 +16,10 @@ Four gates, checked in this order. Each short-circuits before the next does any 
 3. **A collector endpoint must resolve.** Flowfile ships with one built in — the project's own collector at `events.flowfile.app` ([details below](#where-it-goes)) — so there is nothing to configure. `FLOWFILE_TELEMETRY_ENDPOINT` redirects events to a collector you run instead; an empty value falls back to the built-in one. Blanking it is not a way to switch telemetry off — that is `FLOWFILE_TELEMETRY=0`, or simply never consenting.
 4. **Your consent, stored locally.** Nothing is sent until you say yes in the app. The answer lives in a local file you can read and edit ([see below](#where-consent-lives)) — never in a remote service.
 
-Declining the one-time dialog is silent and permanent — you are never asked again. Change your answer any time under **Compute → Privacy**.
+Declining the one-time dialog is silent and permanent — you are never asked again. Change your answer any time under **Settings → Preferences → Privacy**.
 
 !!! info "Multi-user Docker deployments"
-    Consent there is a single deployment-wide setting an administrator grants or revokes on behalf of everyone using that server. Other users never see the dialog and view the state read-only under **Compute → Privacy**.
+    Consent there is a single deployment-wide setting an administrator grants or revokes on behalf of everyone using that server. Other users never see the dialog and view the state read-only under **Settings → Preferences → Privacy**.
 
 ## What is sent
 
@@ -112,7 +112,7 @@ The stored event is exactly the fields above plus a server-side receive timestam
 Internal storage is `~/.flowfile` locally, `$FLOWFILE_STORAGE_DIR` when set, and `/app/internal_storage` in Docker. The whole consent file:
 
 ```yaml
-# Anonymous usage telemetry — managed from the Flowfile UI (Compute -> Privacy).
+# Anonymous usage telemetry — managed from the Flowfile UI (Settings -> Preferences -> Privacy).
 # FLOWFILE_TELEMETRY=0 disables telemetry regardless of this file.
 # Docs: https://edwardvaneechoud.github.io/Flowfile/users/telemetry.html
 consent: true
@@ -143,7 +143,7 @@ Both are read per call. `TESTING=True` also hard-disables, so CI and test runs n
 
 ## Related
 
-- [Settings](visual-editor/settings.md) — app settings; consent itself is managed under Compute → Privacy.
+- [Settings](visual-editor/settings.md) — app settings; consent itself is managed under **Settings → Preferences → Privacy**.
 - [Docker reference](deployment/docker.md) — operator configuration for multi-user deployments.
 - [Users, Groups & Sharing](deployment/sharing.md) — how your actual data is protected in multi-user mode.
 - For the system the events describe — core, worker, kernels — see [Architecture](../for-developers/architecture.md).

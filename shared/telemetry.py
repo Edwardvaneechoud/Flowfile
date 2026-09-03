@@ -84,7 +84,7 @@ EVENTS: dict[str, frozenset[str]] = {
 }
 
 SETTINGS_HEADER = (
-    "# Anonymous usage telemetry — managed from the Flowfile UI (Compute -> Privacy).\n"
+    "# Anonymous usage telemetry — managed from the Flowfile UI (Settings -> Preferences -> Privacy).\n"
     "# FLOWFILE_TELEMETRY=0 disables telemetry regardless of this file.\n"
     "# Docs: https://edwardvaneechoud.github.io/Flowfile/users/telemetry.html\n"
 )

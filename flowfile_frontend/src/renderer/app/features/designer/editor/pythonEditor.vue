@@ -143,7 +143,7 @@ defineExpose({ insertTextAtCursor, setCode });
 .validation-error {
   margin-top: 8px;
   padding: 8px;
-  color: var(--color-error, #ff5555);
+  color: var(--color-danger);
   background-color: rgba(255, 85, 85, 0.1);
   border-radius: 4px;
 }

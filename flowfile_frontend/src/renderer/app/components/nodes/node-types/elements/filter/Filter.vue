@@ -334,7 +334,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   display: block;
   font-size: 12px;
   font-weight: 500;
-  color: #606266;
+  color: var(--color-text-secondary);
   margin-bottom: 4px;
 }
 
@@ -343,7 +343,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   padding: 8px 12px;
   font-size: 14px;
   line-height: 1.4;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   box-shadow: none;
   outline: none;
@@ -352,19 +352,19 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
     box-shadow 0.2s;
 
   &:focus {
-    border-color: #409eff;
+    border-color: var(--color-accent);
     box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
   }
 
   &::placeholder {
-    color: #c0c4cc;
+    color: var(--color-text-muted);
   }
 }
 
 .help-text {
   margin-top: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--color-text-tertiary);
   font-style: italic;
 }
 
@@ -381,6 +381,6 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .split-mode-hint {
   margin-top: 4px;
   font-size: 11px;
-  color: #64748b;
+  color: var(--color-text-tertiary);
 }
 </style>

@@ -194,7 +194,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .info-banner {
   margin-top: var(--spacing-3);
   padding: var(--spacing-2) var(--spacing-3);
-  background-color: var(--color-info-background, #f0f7ff);
+  background-color: var(--color-info-light);
   border-left: 3px solid var(--color-info, #1890ff);
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);

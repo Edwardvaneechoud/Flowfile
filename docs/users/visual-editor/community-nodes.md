@@ -1,6 +1,6 @@
 # Community Nodes
 
-Custom nodes are single `.py` files — which means they travel. The **Community Nodes** registry lets you install nodes other people have published, and publish your own, without hosting anything yourself. Browsing and installing happen in the Catalog; publishing starts from the Node Designer.
+Custom nodes are single `.py` files — which means they travel. The **Community Nodes** registry lets you install nodes other people have published, and publish your own, without hosting anything yourself. Browsing and installing happen on the **Community Nodes** page under **Settings → Extensions**; publishing starts from the **Node Designer**, in the same place.
 
 Every install goes through the same trust model, stated plainly: community nodes are **scanned, human-reviewed, and installed only after you consent** — but they are **not sandboxed**. An installed node runs in Flowfile's worker with the same access your own code has.
 
@@ -11,19 +11,19 @@ Every install goes through the same trust model, stated plainly: community nodes
 
 ## Install a community node
 
-Open the **Catalog** and select the **Community Nodes** tab.
+Open **Settings → Extensions → Community Nodes** in the left sidebar.
 
 <details markdown="1" open>
-<summary>See it: the Community Nodes tab</summary>
+<summary>See it: the Community Nodes page</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Catalog Community Nodes tab — a grid of node cards, each with an icon, category chip, intro, and author · version, with the search box and category filter above -->
-![The Community Nodes tab: a searchable grid of node cards](../../assets/images/guides/node-designer/community-tab-grid.svg)
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Community Nodes page under Settings → Extensions — a grid of node cards, each with an icon, category chip, intro, and author · version, with the search box and category filter above -->
+![The Community Nodes page: a searchable grid of node cards](../../assets/images/guides/node-designer/community-tab-grid.svg)
 
 </details>
 
 ### Browse
 
-The tab shows a card for every published node. Each card carries the node's icon, its browse category, a one-line intro, and the author and version. Use the **search** box and the **category** filter to narrow the list, and **sort** to reorder it. When the registry has ratings, a 👍 count from GitHub also shows on the card; when it doesn't, the ratings simply don't appear — nothing else changes.
+The page shows a card for every published node. Each card carries the node's icon, its browse category, a one-line intro, and the author and version. Use the **search** box and the **category** filter to narrow the list, and **sort** to reorder it. When the registry has ratings, a 👍 count from GitHub also shows on the card; when it doesn't, the ratings simply don't appear — nothing else changes.
 
 Click a card to open the **detail view**: the node's README, a strip of screenshots you can click through in a lightbox, its capabilities, and the source link.
 
@@ -72,7 +72,7 @@ Once you've installed nodes, their cards reflect their state:
 - **Modified locally** — you edited the installed file, so it no longer matches the pinned version. Flowfile leaves your edits alone.
 - **Incompatible** — the node needs a newer Flowfile than you're running. The backend refuses the install too, so this isn't just a greyed-out button.
 
-If the registry **blocks** a node (or withdraws the version you installed) after you installed it, a warning banner appears at the top of the Community Nodes tab with an uninstall shortcut. Delisting never reaches into your machine — the node stays installed and keeps running until you remove it yourself.
+If the registry **blocks** a node (or withdraws the version you installed) after you installed it, a warning banner appears at the top of the Community Nodes page with an uninstall shortcut. Delisting never reaches into your machine — the node stays installed and keeps running until you remove it yourself.
 
 ### Uninstall
 
@@ -149,7 +149,7 @@ The modal links you straight to the PR and shows what's coming:
 - **First time contributing?** GitHub holds the checks until a maintainer approves the run — that's expected, not stuck.
 - **A maintainer reviews** your node and merges.
 - Once merged, the registry index rebuilds within minutes. Apps pick it up on their next
-  index refresh — immediately when someone hits **Refresh** in the browse tab, and within
+  index refresh — immediately when someone hits **Refresh** on the Community Nodes page, and within
   about an hour otherwise.
 
 ### Revising an open pull request

@@ -475,8 +475,8 @@ defineExpose({
   display: flex;
   gap: 0.5rem;
   padding: 0.5rem 0.625rem;
-  background-color: #e6f7ff;
-  border-left: 3px solid #1890ff;
+  background-color: var(--color-accent-subtle);
+  border-left: 3px solid var(--color-accent);
   border-radius: 4px;
   margin: 0.5rem 0;
   font-size: 0.8125rem;
@@ -484,7 +484,7 @@ defineExpose({
 }
 
 .info-box i {
-  color: #1890ff;
+  color: var(--color-accent-dark);
   font-size: 0.875rem;
   flex-shrink: 0;
   padding-top: 3px;
@@ -492,12 +492,12 @@ defineExpose({
 
 .info-box p {
   margin: 0;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 .info-box .info-caveat {
   margin-top: 0.25rem;
   font-size: 0.75rem;
-  color: #718096;
+  color: var(--color-text-tertiary);
 }
 </style>

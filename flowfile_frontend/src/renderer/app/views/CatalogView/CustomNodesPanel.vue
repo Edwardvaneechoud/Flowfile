@@ -429,7 +429,7 @@ onMounted(loadNodes);
 }
 .chip-missing {
   margin-left: 8px;
-  background-color: var(--color-danger-bg, #fde8e8);
+  background-color: var(--color-danger-light);
   color: var(--color-danger, #e53e3e);
 }
 .dialog-hint,

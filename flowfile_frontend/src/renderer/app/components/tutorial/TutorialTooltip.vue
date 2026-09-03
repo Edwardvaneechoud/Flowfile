@@ -471,12 +471,12 @@ function flashCopyFeedback(button: HTMLElement, icon: string, label: string) {
 
 .tooltip-notice--warn {
   background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
+  color: var(--color-warning-dark);
 }
 
 .tooltip-notice--done {
   background: rgba(34, 197, 94, 0.12);
-  color: #15803d;
+  color: var(--color-success-dark);
 }
 
 .notice-icon {

@@ -18,7 +18,7 @@ The example is an **Emoji Generator** that maps a numeric column to mood-based e
 
 ## Open the Node Designer
 
-Open **Node Designer** from the sidebar and click **New**. You'll build the node in three tabs — **Form** (the settings your node's users see), **Code** (the transform), and **Test** (run it against sample data) — with a **Node Settings** panel on the left for its name, category, and icon.
+Open **Settings → Extensions → Node Designer** in the sidebar and click **New**. You'll build the node in three tabs — **Form** (the settings your node's users see), **Code** (the transform), and **Test** (run it against sample data) — with a **Node Settings** panel on the left for its name, category, and icon.
 
 ## 1. Name it
 

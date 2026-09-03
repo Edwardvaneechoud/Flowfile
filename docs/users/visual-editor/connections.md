@@ -3,8 +3,8 @@
 Save and reuse database, cloud storage, and Kafka credentials across your flows.
 
 All connection types and secrets are managed from a single **Connections** page, accessible
-via the **Connections** icon in the left sidebar. Use the tabs to switch between
-**Database**, **Cloud Storage**, **Kafka**, and **Secrets**.
+via **Settings → Connections → All connections** in the left sidebar. Use the tabs to switch between
+**Overview**, **Database**, **Cloud Storage**, **Kafka**, **Google Analytics**, **Secrets**, and **AI Providers**.
 
 Connections store your credentials securely (passwords are encrypted via [Secrets](catalog/secrets.md))
 so you can reference them by name in Database Reader, Database Writer, Cloud Storage Reader,
@@ -42,7 +42,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 
 ### Creating a Database Connection
 
-1. Open the **Connections** page from the left sidebar and select the **Database** tab
+1. Open **Settings → Connections → All connections** from the left sidebar and select the **Database** tab
 2. Click **Create New Connection**
 3. Fill in the connection fields:
 
@@ -98,7 +98,7 @@ In a **Database Reader** or **Database Writer** node:
 
 ### Creating a Cloud Storage Connection
 
-1. Open the **Connections** page and select the **Cloud Storage** tab
+1. Open **Settings → Connections → All connections** and select the **Cloud Storage** tab
 2. Click **Add Connection**
 3. Configure the connection:
 
@@ -135,7 +135,7 @@ For a step-by-step tutorial, see [Manage Cloud Storage](tutorials/cloud-connecti
 
 ### Creating a Kafka Connection
 
-1. Open the **Connections** page and select the **Kafka** tab
+1. Open **Settings → Connections → All connections** and select the **Kafka** tab
 2. Click **Add Connection**
 3. Configure the connection:
 

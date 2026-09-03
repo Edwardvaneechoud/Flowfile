@@ -543,7 +543,7 @@ const handleSubmit = async () => {
 
 .prebaked-pkg__name {
   padding: 1px 6px;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--color-success-light);
   color: var(--color-success-hover);
 }
 
@@ -591,7 +591,7 @@ const handleSubmit = async () => {
 .creating-overlay {
   position: absolute;
   inset: 0;
-  background-color: rgba(255, 255, 255, 0.92);
+  background-color: color-mix(in srgb, var(--color-background-primary) 92%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;

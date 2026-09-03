@@ -16,7 +16,7 @@ The node's `.py` file is the single source of truth. The designer writes it, and
 !!! tip "Prefer to follow along?"
     The [**Build your first custom node**](custom-node-tutorial.md) tutorial walks the whole thing click-by-click in a few minutes. For a node that needs a third-party library, see [K-Means on a Kernel](kmeans-kernel-node.md). This page is the reference behind them.
 
-1. Open **Node Designer** from the sidebar menu.
+1. Open **Node Designer** from **Settings** (the gear icon in the left sidebar) under **Extensions**.
 2. In the left **Node Settings** panel, set the node's name and category.
 3. On the **Form** tab, add a group and drop controls into it with **Add a control**.
 4. On the **Code** tab, write your `process` logic (body only — the signature is fixed).
@@ -24,7 +24,7 @@ The node's `.py` file is the single source of truth. The designer writes it, and
 6. Click **Save**. The node loads immediately — no restart.
 
 !!! tip "No restart needed"
-    Flowfile hot-reloads the custom-nodes directory. A saved node is available in the palette right away. If a file was added outside the designer while Flowfile was open, click **Rescan** (in the Node Designer's **Browse** dialog or the Catalog's **Custom Nodes** tab) to pick it up.
+    Flowfile hot-reloads the custom-nodes directory. A saved node is available in the palette right away. If a file was added outside the designer while Flowfile was open, click **Rescan** (in the Node Designer's **Browse** dialog, or on the **Custom Nodes** page under **Settings → Extensions**) to pick it up.
 
 ---
 
@@ -187,7 +187,7 @@ Every node declares where its `process` runs. The Execution group offers two car
 !!! warning "Dependencies are a requirement, not an install step"
     Flowfile does not pip-install a node's dependencies at run time. The kernel you run the node on must already provide them — through its image flavour (the standard **ML** image ships scikit-learn, XGBoost, LightGBM, and statsmodels) or through packages added to the kernel itself in the [Kernel Manager](kernels.md#creating-a-kernel). Flowfile checks the requirement for you: the node's kernel picker marks matching kernels, can add the missing packages to an existing kernel, or pre-fills a new kernel from the list — and running a scikit-learn node on a Base kernel fails fast with a clear "missing packages" error rather than a `ModuleNotFoundError`.
 
-The picker shows live Docker status. When Docker is unavailable, the Isolated-kernel card explains why and offers **Open Kernel Manager** and **Retry** — never a silent, dead dropdown. Create and start kernels in the [Kernel Manager](kernels.md) first.
+The picker shows live Docker status. When Docker is unavailable, the Isolated-kernel card explains why and offers **Open Python Kernels** and **Retry** — never a silent, dead dropdown. Create and start kernels under **Settings → Execution → Python Kernels** (see [Kernel Execution](kernels.md)) first.
 
 Local execution needs nothing beyond Flowfile itself; the isolated-kernel environment needs Docker. The designer itself is the same either way — only where `process` runs changes.
 
@@ -217,7 +217,7 @@ For the full `flowfile_ctx` API (artifacts, display, logging, catalog access) av
 
 ### Kernel selector in a flow
 
-When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it. The picker marks which kernels satisfy the node's required packages, and node lists (the palette and Catalog → Custom Nodes) carry a readiness badge so you can see before placing a node whether a suitable kernel already exists. The same applies in the designer's Test tab, which has its own Kernel selector.
+When you drop a kernel-enabled node onto the canvas, its settings drawer shows a **Kernel** picker to choose which kernel instance runs it. The picker marks which kernels satisfy the node's required packages, and node lists (the palette and the **Custom Nodes** page under **Settings → Extensions**) carry a readiness badge so you can see before placing a node whether a suitable kernel already exists. The same applies in the designer's Test tab, which has its own Kernel selector.
 
 ---
 
@@ -257,15 +257,15 @@ A file that uses constructs outside the visual subset — builder objects, dynam
 
 ## Mounting other directories
 
-The default custom-nodes directory is `~/.flowfile/user_defined_nodes/`, but you can register additional folders — for example a version-controlled repo of shared nodes. Register a directory in the Catalog's **Custom Nodes** tab (or via `POST /custom-node-mounts`); registrations persist in a `mounts.json` next to the default directory.
+The default custom-nodes directory is `~/.flowfile/user_defined_nodes/`, but you can register additional folders — for example a version-controlled repo of shared nodes. Register a directory under **Settings → Extensions → Custom Nodes** (or via `POST /custom-node-mounts`); registrations persist in a `mounts.json` next to the default directory.
 
-Mounted directories are **read-only sources**: the designer edits and saves them, but a fresh save always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and the Custom Nodes tab like any other.
+Mounted directories are **read-only sources**: the designer edits and saves them, but a fresh save always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and on the Custom Nodes page like any other.
 
 ---
 
-## The Catalog Custom Nodes tab
+## The Custom Nodes page
 
-The Catalog has a **Custom Nodes** tab that lists every custom node across the default directory and all mounts, with its source, category, and load state. From there you can **Rescan**, manage mount folders, and open a node straight into the designer (a deep link with `?openFile=<file.py>`).
+Open **Settings → Extensions → Custom Nodes** to see every custom node across the default directory and all mounts, with its source, category, and load state. From there you can **Rescan**, manage mount folders, and open a node straight into the designer (a deep link with `?openFile=<file.py>`).
 
 ---
 

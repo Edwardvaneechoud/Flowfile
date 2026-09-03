@@ -845,7 +845,7 @@ function relativeTime(timestamp: number): string {
 
 .recent-remove:hover {
   color: var(--color-danger);
-  background-color: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+  background-color: var(--color-danger-light);
 }
 
 .recent-remove:focus-visible {

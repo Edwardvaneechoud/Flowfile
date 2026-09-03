@@ -264,7 +264,7 @@ function setCell(rowIndex: number, colName: string, value: string) {
 
 .col-del-btn:hover,
 .row-del-btn:hover {
-  color: var(--color-text-danger, #dc2626);
+  color: var(--color-danger);
 }
 
 .dtype-select {

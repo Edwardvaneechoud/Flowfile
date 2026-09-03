@@ -237,8 +237,8 @@ async function onToggleCollapse(): Promise<void> {
   display: flex;
   gap: 4px;
   padding: 5px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 10;
@@ -255,6 +255,6 @@ async function onToggleCollapse(): Promise<void> {
   width: 9px;
   height: 9px;
   background: var(--group-accent, #64748b);
-  border: 1.5px solid #fff;
+  border: 1.5px solid var(--color-background-primary);
 }
 </style>

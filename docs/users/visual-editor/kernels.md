@@ -27,7 +27,7 @@ Kernels provide a sandboxed execution environment for Python Script nodes. Each 
 
 ## Kernel Manager
 
-The Kernel Manager is the central dashboard for creating, starting, stopping, and monitoring kernels. Open it from the **sidebar menu**.
+The Kernel Manager is the central dashboard for creating, starting, stopping, and monitoring kernels. Open it from **Settings → Execution → Python Kernels** (the gear icon in the left sidebar).
 ![Kernel Manager overview](../../assets/images/guides/kernels/kernel-manager-overview.png)
 
 *The Kernel Manager showing configured kernels with status, resource usage, and actions*
