@@ -1,15 +1,23 @@
+import datetime
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 import polars as pl
+import polars_gw
 import pytest
 
-from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.analytics.analytics_processor import (
+    AnalyticsProcessor,
+    validate_spec_list_with_data_model_types,
+)
+from flowfile_core.flowfile.analytics.graphic_walker import convert_ff_columns_to_gw_fields
 from flowfile_core.flowfile.analytics.node_viz import has_result_to_visualize
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, delete_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import DataModel
 
 
 def find_parent_directory(target_dir_name, start_path=None):
@@ -635,3 +643,168 @@ def test_default_fetch_still_stores_for_the_preview_grid():
     attempts = _fetch_recording_stores(graph)
 
     assert attempts, 'the default fetch must still store the result for the preview grid'
+
+
+def _spec_field(fid: str, semantic_type: str = 'nominal', analytic_type: str = 'dimension') -> dict:
+    return {
+        'fid': fid,
+        'name': fid,
+        'basename': fid,
+        'semanticType': semantic_type,
+        'analyticType': analytic_type,
+        'offset': None,
+    }
+
+
+def _all_encoded_fids(encodings: dict) -> set[str]:
+    fids = set()
+    for channel in encodings.values():
+        for field in channel:
+            fids.add(field['fid'])
+    return fids
+
+
+def _find_field(encodings: dict, channel: str, fid: str) -> dict | None:
+    return next((f for f in encodings[channel] if f['fid'] == fid), None)
+
+
+def test_saved_spec_follows_a_changed_upstream_schema():
+    """A saved chart spec must track the data: retyped, dropped and added columns.
+
+    The explorer shows `currentVis.encodings`, not the fresh field list, so a
+    spec that keeps stale entries is exactly what the user ends up looking at.
+    """
+    graph = create_graph()
+    graph.flow_settings.execution_location = "local"
+    gw_node_settings = get_starting_gw_node_settings()
+    encodings = gw_node_settings.graphic_walker_input.specList[0]['encodings']
+    encodings['dimensions'].insert(1, _spec_field('Old'))
+    encodings['color'].append(_spec_field('Old'))
+
+    add_manual_input(
+        graph,
+        data=input_schema.RawData.from_pylist(
+            [{'Column 1': 'edward', 'Old': 'x'}, {'Column 1': 'eduward', 'Old': 'y'}]
+        ),
+    )
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_explore_data(gw_node_settings)
+    node = graph.get_node(2)
+
+    graph.run_graph()
+    AnalyticsProcessor.process_graphic_walker_input(node)
+
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist(
+                [{'Column 1': 1, 'New': 'a'}, {'Column 1': 2, 'New': 'b'}]
+            ),
+        )
+    )
+    graph.run_graph()
+    node_explore_data = AnalyticsProcessor.process_graphic_walker_input(node)
+    encodings = node_explore_data.graphic_walker_input.specList[0]['encodings']
+
+    retyped = _find_field(encodings, 'measures', 'Column 1')
+    assert retyped is not None, 'Column 1 became an integer, so it must live in measures'
+    assert retyped['semanticType'] == 'quantitative'
+    assert retyped['analyticType'] == 'measure'
+    assert _find_field(encodings, 'dimensions', 'Column 1') is None, 'the stale dimension entry must be gone'
+
+    row_field = _find_field(encodings, 'rows', 'Column 1')
+    assert row_field is not None, 'the placed field must survive the retype'
+    assert row_field['semanticType'] == 'quantitative'
+    assert row_field['analyticType'] == 'measure'
+
+    assert 'Old' not in _all_encoded_fids(encodings), 'a dropped column must vanish from every encoding list'
+    assert _find_field(encodings, 'dimensions', 'New') is not None, 'a new string column must show up as a dimension'
+
+    pseudo_fields = {'gw_count_fid', 'gw_mea_key_fid', 'gw_mea_val_fid'}
+    assert pseudo_fields <= _all_encoded_fids(encodings), 'GW pseudo-fields must survive reconciliation'
+
+
+def test_unchanged_data_leaves_the_users_own_choices_alone():
+    """Reconciliation runs on every drawer open, so it must not undo GW field-menu edits.
+
+    Moving a numeric field to Dimensions ('to_dim') rewrites only analyticType, and
+    setting a semantic type rewrites only semanticType — neither is a schema change.
+    """
+    spec_list = {
+        'encodings': {
+            'dimensions': [_spec_field('year', 'quantitative', 'dimension'), _spec_field('gw_mea_key_fid')],
+            'measures': [_spec_field('score', 'ordinal', 'measure')],
+            'rows': [_spec_field('year', 'quantitative', 'dimension')],
+        }
+    }
+    data_model = DataModel(
+        data=[],
+        fields=convert_ff_columns_to_gw_fields(
+            FlowDataEngine(pl.DataFrame({'year': [2024], 'score': [1]})).schema
+        ),
+    )
+
+    validate_spec_list_with_data_model_types(spec_list, data_model)
+
+    encodings = spec_list['encodings']
+    assert _find_field(encodings, 'dimensions', 'year') is not None, "the user's shelf choice must survive"
+    assert _find_field(encodings, 'measures', 'year') is None
+    assert _find_field(encodings, 'rows', 'year')['analyticType'] == 'dimension'
+    assert 'aggName' not in _find_field(encodings, 'rows', 'year')
+    assert _find_field(encodings, 'measures', 'score')['semanticType'] == 'ordinal', 'manual override must survive'
+
+
+_PARITY_FRAME = pl.DataFrame(
+    {
+        'text': ['a'],
+        'tiny_int': [1],
+        'unsigned_int': [1],
+        'big_int': [1],
+        'float': [1.0],
+        'decimal': [1.0],
+        'date': [datetime.date(2024, 1, 1)],
+        'datetime': [datetime.datetime(2024, 1, 1)],
+        'duration': [1],
+        'time': [1],
+        'boolean': [True],
+        'categorical': ['x'],
+        'list': [[1, 2]],
+    },
+    schema_overrides={
+        'tiny_int': pl.Int8,
+        'unsigned_int': pl.UInt32,
+        'float': pl.Float32,
+        'decimal': pl.Decimal(10, 2),
+        'duration': pl.Duration('us'),
+        'time': pl.Time,
+        'categorical': pl.Categorical,
+        'list': pl.List(pl.Int64),
+    },
+)
+
+
+def test_semantic_types_agree_with_polars_gw():
+    """The backend classifier must agree with polars_gw, which owns the browser's field schema.
+
+    Reconciliation compares a saved spec entry (built from polars_gw's fields) against a
+    backend-derived field, so any disagreement retypes columns on every drawer open.
+    """
+    core_fields = convert_ff_columns_to_gw_fields(FlowDataEngine(_PARITY_FRAME).schema)
+    gw_fields = polars_gw.get_fields(_PARITY_FRAME, classify_integers='measure')
+
+    assert [(f.fid, f.semanticType) for f in core_fields] == [(f['fid'], f['semanticType']) for f in gw_fields]
+
+    spec_fields = deepcopy(gw_fields)
+    spec_list = {
+        'encodings': {
+            'dimensions': [f for f in spec_fields if f['analyticType'] != 'measure'],
+            'measures': [f for f in spec_fields if f['analyticType'] == 'measure'],
+        }
+    }
+    untouched = deepcopy(spec_list)
+
+    validate_spec_list_with_data_model_types(spec_list, DataModel(data=[], fields=core_fields))
+
+    assert spec_list == untouched, 'a spec built from polars_gw fields must survive reconciliation unchanged'

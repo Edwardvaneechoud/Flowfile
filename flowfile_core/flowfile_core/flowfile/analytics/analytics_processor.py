@@ -9,6 +9,8 @@ from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import (
 )
 from flowfile_core.schemas.input_schema import NodeExploreData
 
+GW_PSEUDO_FIDS = frozenset({"gw_count_fid", "gw_mea_key_fid", "gw_mea_val_fid"})
+
 
 class AnalyticsProcessor:
     @staticmethod
@@ -95,9 +97,52 @@ def add_field_to_spec_list(spec_list: dict, mut_field: MutField) -> None:
         spec_list["encodings"]["dimensions"].append(view_field.model_dump_dict())
 
 
+def sync_spec_field_with_mut_field(spec_field: dict, mut_field: MutField) -> None:
+    """Retype a spec entry only when the column's dtype class changed.
+
+    Only ``semanticType`` is compared, because the analytic type and the shelf a field
+    sits on are the user's choice (Graphic Walker's "to dimension" / "to measure" move an
+    entry without touching its semantic type). ``ordinal`` is likewise always a manual
+    override — the backend only ever derives nominal, quantitative or temporal.
+    """
+    if spec_field.get("semanticType") in (mut_field.semanticType, "ordinal"):
+        return
+    spec_field["semanticType"] = mut_field.semanticType
+    spec_field["analyticType"] = mut_field.analyticType
+    if mut_field.analyticType == "measure":
+        spec_field["aggName"] = spec_field.get("aggName") or "sum"
+    else:
+        spec_field.pop("aggName", None)
+
+
+def reconcile_spec_list_with_data_model(spec_list: dict, data_model: DataModel) -> None:
+    """Make the saved encodings follow the data: retype what changed, drop what is gone."""
+    fields_by_fid = {field.fid: field for field in data_model.fields}
+    encodings = spec_list["encodings"]
+    for channel, spec_fields in encodings.items():
+        kept = []
+        for spec_field in spec_fields:
+            if spec_field.get("computed") or spec_field["fid"] in GW_PSEUDO_FIDS:
+                kept.append(spec_field)
+                continue
+            mut_field = fields_by_fid.get(spec_field["fid"])
+            if mut_field is None:
+                continue
+            sync_spec_field_with_mut_field(spec_field, mut_field)
+            kept.append(spec_field)
+        encodings[channel] = kept
+    shelved = encodings["dimensions"] + encodings["measures"]
+    encodings["dimensions"] = [f for f in shelved if f.get("analyticType") != "measure"]
+    encodings["measures"] = [f for f in shelved if f.get("analyticType") == "measure"]
+
+
 def validate_spec_list_with_data_model_types(spec_list: dict, data_model: DataModel) -> None:
     """
     Validate the spec_list with the data model types.
+
+    Existing entries are reconciled with the current fields (a retyped column updates
+    everywhere it appears and lands on the matching shelf, a dropped column is removed
+    from every encoding list) and new columns are appended.
 
     Args:
         spec_list (Dict): The spec list to validate.
@@ -106,8 +151,7 @@ def validate_spec_list_with_data_model_types(spec_list: dict, data_model: DataMo
     Returns:
         bool: True if the spec list is valid, False otherwise.
     """
-
-    # validate dimensions:
+    reconcile_spec_list_with_data_model(spec_list, data_model)
     existing_encoding_fields = get_existing_encoding_fields(spec_list)
     for field in data_model.fields:
         if field.fid not in existing_encoding_fields:
