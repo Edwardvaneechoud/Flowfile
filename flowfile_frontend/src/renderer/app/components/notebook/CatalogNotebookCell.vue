@@ -76,6 +76,7 @@
         :indent-with-tab="false"
         :tab-size="4"
         :extensions="extensions"
+        @ready="onReady"
         @update:model-value="(v: string) => emit('update:code', v)"
       />
     </div>
@@ -86,8 +87,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount } from "vue";
 import { Codemirror } from "vue-codemirror";
+import { EditorView } from "@codemirror/view";
+import { registerCellView, unregisterCellView } from "./editorViews";
 import CellOutput from "../nodes/node-types/elements/pythonScript/CellOutput.vue";
 import { buildNotebookEditorExtensions } from "../nodes/node-types/elements/pythonScript/notebookEditor";
 import type { CellType, NotebookCellModel } from "./types";
@@ -112,6 +115,7 @@ const emit = defineEmits<{
   (e: "update:editing", editing: boolean): void;
   (e: "move", direction: -1 | 1): void;
   (e: "remove"): void;
+  (e: "cursor", offset: number): void;
 }>();
 
 const allowedTypes = computed<CellType[]>(() => props.allowedTypes ?? ["python", "markdown"]);
@@ -123,13 +127,27 @@ const TYPE_LABELS: Record<CellType, string> = {
 
 // Flow-graph completions stay empty — a catalog notebook has no graph — but Jedi code
 // intelligence works against the notebook's kernel session namespace.
-const extensions = buildNotebookEditorExtensions({
-  onRun: () => emit("run"),
-  getPriorCellCodes: () => props.priorCellCodes ?? [],
-  getKernelId: () => props.kernelId ?? null,
-  getFlowId: () => props.flowId ?? 0,
-  getNodeId: () => props.nodeId ?? 0,
-});
+const extensions = [
+  ...buildNotebookEditorExtensions({
+    onRun: () => emit("run"),
+    getPriorCellCodes: () => props.priorCellCodes ?? [],
+    getKernelId: () => props.kernelId ?? null,
+    getFlowId: () => props.flowId ?? 0,
+    getNodeId: () => props.nodeId ?? 0,
+  }),
+  // Report caret moves so the store knows where "insert at cursor" should land.
+  EditorView.updateListener.of((update) => {
+    if (update.selectionSet || (update.focusChanged && update.view.hasFocus)) {
+      emit("cursor", update.state.selection.main.head);
+    }
+  }),
+];
+
+function onReady(payload: { view: EditorView }) {
+  registerCellView(props.cell.id, payload.view);
+}
+
+onBeforeUnmount(() => unregisterCellView(props.cell.id));
 </script>
 
 <style scoped>

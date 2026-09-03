@@ -4,6 +4,7 @@ import { KernelApi } from "../api/kernel.api";
 import { NotebookApi } from "../api/notebook.api";
 import type { NotebookCellWire, NotebookSummary } from "../api/notebook.api";
 import type { CellType, NotebookCellModel } from "../components/notebook/types";
+import { getCellView } from "../components/notebook/editorViews";
 import { sanitiseMarkdown } from "../features/ai/markdown";
 import {
   loadPersistedNotebooks,
@@ -73,6 +74,27 @@ function toWire(cells: NotebookCellModel[]): NotebookCellWire[] {
   }));
 }
 
+/** Python that reads a catalog table; the typed ref chain only fits the
+ * catalog.schema.table shape, anything else falls back to the string form. */
+export function readTableSnippet(qualifiedName: string): string {
+  const parts = qualifiedName.split(".");
+  if (parts.length === 3) {
+    const [catalog, schema, table] = parts.map((p) => JSON.stringify(p));
+    return `df = flowfile_ctx.get_catalog(${catalog}).get_schema(${schema}).get_table_ref(${table}).read()`;
+  }
+  return `df = flowfile_ctx.read_catalog_table(${JSON.stringify(qualifiedName)})`;
+}
+
+/** Splice `snippet` into `code` at `pos`, padded with newlines so it sits on its
+ * own line. Returns the text actually inserted and the caret offset after it. */
+export function snippetInsertion(code: string, pos: number, snippet: string) {
+  const at = Math.max(0, Math.min(pos, code.length));
+  const before = at > 0 && code[at - 1] !== "\n" ? "\n" : "";
+  const after = at < code.length && code[at] !== "\n" ? "\n" : "";
+  const insert = `${before}${snippet}${after}`;
+  return { at, insert, cursor: at + before.length + snippet.length };
+}
+
 function ensureCells(cells: NotebookCellModel[]): NotebookCellModel[] {
   return cells.length ? cells : [newCell("python")];
 }
@@ -89,6 +111,7 @@ export interface OpenNotebook {
   dirty: boolean;
   saving: boolean;
   executionCount: number;
+  focusedCellId: string | null; // transient: last cell the caret was in
 }
 
 function hydrateTab(p: PersistedNotebook): OpenNotebook {
@@ -104,6 +127,7 @@ function hydrateTab(p: PersistedNotebook): OpenNotebook {
     dirty: p.dirty,
     saving: false,
     executionCount: 0,
+    focusedCellId: null,
   };
 }
 
@@ -197,6 +221,7 @@ export const useNotebookStore = defineStore("notebook", {
         dirty: false,
         saving: false,
         executionCount: 0,
+        focusedCellId: null,
       };
       this.openNotebooks.push(tab);
       this.activeTabId = tab.tabId;
@@ -228,6 +253,7 @@ export const useNotebookStore = defineStore("notebook", {
           dirty: false,
           saving: false,
           executionCount: 0,
+          focusedCellId: null,
         };
         this.openNotebooks.push(tab);
         this.activeTabId = tab.tabId;
@@ -394,12 +420,42 @@ export const useNotebookStore = defineStore("notebook", {
       this._schedulePersist();
     },
 
-    insertReadCell(tableName: string) {
+    setCellCursor(cellId: string, offset: number) {
+      const nb = this.active;
+      const cell = nb?.cells.find((c) => c.id === cellId);
+      if (!nb || !cell) return;
+      cell.cursor = offset;
+      nb.focusedCellId = cellId;
+    },
+
+    /** Insert a read of `qualifiedName` (catalog.schema.table) at the caret of the
+     * last-focused Python cell. Without one, a trailing blank Python cell is filled
+     * in, else a new cell is appended. */
+    insertReadCell(qualifiedName: string) {
       const nb = this.active;
       if (!nb) return;
-      const cell = newCell("python");
-      cell.code = `df = flowfile_ctx.read_catalog_table(${JSON.stringify(tableName)})\ndf`;
-      nb.cells.push(cell);
+      const snippet = readTableSnippet(qualifiedName);
+      const focused = nb.cells.find((c) => c.id === nb.focusedCellId);
+      if (focused?.cellType === "python") {
+        const { at, insert, cursor } = snippetInsertion(focused.code, focused.cursor ?? 0, snippet);
+        const view = getCellView(focused.id);
+        if (view) {
+          view.dispatch({ changes: { from: at, insert }, selection: { anchor: cursor } });
+          view.focus();
+        } else {
+          focused.code = focused.code.slice(0, at) + insert + focused.code.slice(at);
+        }
+        focused.cursor = cursor;
+        nb.dirty = true;
+        this._schedulePersist();
+        return focused;
+      }
+      const last = nb.cells[nb.cells.length - 1];
+      const cell = last?.cellType === "python" && !last.code.trim() ? last : newCell("python");
+      cell.code = snippet;
+      cell.cursor = snippet.length;
+      if (cell !== last) nb.cells.push(cell);
+      nb.focusedCellId = cell.id;
       nb.dirty = true;
       this._schedulePersist();
       return cell;

@@ -827,6 +827,8 @@ const tableMenu = ref<{ table: CatalogTable; x: number; y: number } | null>(null
 const tableMenuOptions: ContextMenuOption[] = [
   { label: "View table", action: "view" },
   { label: "Use in flow", action: "read" },
+  { label: "Insert into notebook", action: "notebook" },
+  { label: "Query in SQL", action: "sql" },
   { label: "Create visual", action: "visuals" },
   { label: "Copy reference", action: "copy" },
 ];
@@ -1016,12 +1018,26 @@ function onTableMenuSelect(action: string) {
   if (!table) return;
   if (action === "view") selectTable(table.id);
   else if (action === "read") createReadInFlow(table);
+  else if (action === "notebook") openReadInNotebook(table);
+  else if (action === "sql") handleQueryTable(tableReference(table));
   else if (action === "visuals") openCreateViz(table);
   else if (action === "copy") copyTableReference(table);
 }
 
+function tableReference(table: CatalogTable): string {
+  return table.qualified_name ?? table.full_table_name ?? table.name;
+}
+
+function openReadInNotebook(table: CatalogTable) {
+  // The panel hydrates on mount, but the cell must exist before we navigate.
+  notebookStore.ensureHydrated();
+  notebookStore.insertReadCell(tableReference(table));
+  catalogStore.clearTableSelection();
+  router.push({ name: "catalog", query: { tab: "notebook" } });
+}
+
 async function copyTableReference(table: CatalogTable) {
-  const ref = buildTableRef(table.qualified_name ?? table.full_table_name ?? table.name);
+  const ref = buildTableRef(tableReference(table));
   const ok = await copyToClipboard(ref);
   if (ok) ElMessage.success(`Copied ${ref}`);
   else ElMessage.error("Failed to copy reference");

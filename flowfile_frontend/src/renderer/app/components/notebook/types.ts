@@ -15,4 +15,5 @@ export interface NotebookCellModel {
   renderedHtml?: string | null; // markdown render
   execState?: CellExecState;
   editing?: boolean; // markdown edit/preview toggle
+  cursor?: number; // last caret offset in code, for insert-at-cursor
 }
