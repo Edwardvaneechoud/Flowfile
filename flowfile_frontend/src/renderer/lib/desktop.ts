@@ -4,6 +4,8 @@
 // case none of these calls have a desktop runtime backing them and they fall
 // through to safe defaults / no-ops.
 
+import type { Update } from "@tauri-apps/plugin-updater";
+
 import type { ServicesStatus } from "../typings/desktop";
 
 type TauriInternals = unknown;
@@ -50,6 +52,24 @@ export const isDesktop: boolean = typeof window !== "undefined" && !!window.__TA
 export const isMacDesktop: boolean =
   isDesktop && typeof navigator !== "undefined" && navigator.platform.toUpperCase().includes("MAC");
 
+function resolveDesktopPlatform(): "mac" | "windows" | "linux" | null {
+  if (!isDesktop || typeof navigator === "undefined") return null;
+  const id = `${navigator.platform} ${navigator.userAgent}`.toUpperCase();
+  if (id.includes("MAC")) return "mac";
+  if (id.includes("WIN")) return "windows";
+  return "linux";
+}
+
+/** Which desktop OS the shell runs on; null in web mode. Drives per-platform update copy. */
+export const desktopPlatform: "mac" | "windows" | "linux" | null = resolveDesktopPlatform();
+
+/** A release the updater feed offers that is newer than the running build. */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  date?: string;
+}
+
 interface WebView2Bridge {
   postMessageWithAdditionalObjects?: (message: string, objects: readonly unknown[]) => void;
 }
@@ -69,6 +89,7 @@ export const canLinkDroppedFiles: boolean =
   isMacDesktop || (isDesktop && typeof webview2()?.postMessageWithAdditionalObjects === "function");
 
 let dropTokenSeq = 0;
+let pendingUpdate: Update | null = null;
 
 function runtime(): TauriRuntime | null {
   if (typeof window === "undefined") return null;
@@ -235,6 +256,79 @@ export const desktop = {
 
       timer = setTimeout(() => settle([]), timeoutMs);
     });
+  },
+
+  /**
+   * Ask the updater feed for a newer release. Each `check()` mints a Rust-side
+   * resource, so the previous one is closed before it is replaced. Returns null
+   * in web mode and when the running build is current.
+   */
+  async checkForUpdate(): Promise<UpdateInfo | null> {
+    if (!isDesktop) return null;
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const update = await check();
+    await pendingUpdate?.close().catch(() => undefined);
+    pendingUpdate = update;
+    if (!update) return null;
+    return { version: update.version, currentVersion: update.currentVersion, date: update.date };
+  },
+
+  /**
+   * Download the update checked for above. `total` is null when the feed serves
+   * the bundle without a content length, in which case callers show an
+   * indeterminate progress bar. No-op when nothing is pending (web mode).
+   */
+  async downloadUpdate(
+    onProgress: (downloaded: number, total: number | null) => void,
+  ): Promise<void> {
+    if (!pendingUpdate) return;
+    let downloaded = 0;
+    let total: number | null = null;
+    await pendingUpdate.download((event) => {
+      if (event.event === "Started") {
+        downloaded = 0;
+        total = event.data.contentLength ?? null;
+      } else if (event.event === "Progress") {
+        downloaded += event.data.chunkLength;
+        onProgress(downloaded, total);
+      } else {
+        onProgress(total ?? downloaded, total);
+      }
+    });
+  },
+
+  /**
+   * Install the downloaded update and come back up. Never use the plugin's
+   * `downloadAndInstall()`: installing replaces the running app bundle the
+   * PyInstaller sidecars execute from, so the shell's shutdown ladder has to run
+   * first (`prepare_for_update`, up to ~10s). On Windows `install()` hands off to
+   * the NSIS installer and exits the process, so it never resolves there and the
+   * relaunch below is unreachable — Windows restarts via the installer instead.
+   * The update resource is deliberately left open: the process is on its way out.
+   */
+  async installUpdate(): Promise<void> {
+    if (!pendingUpdate) return;
+    await invoke<void>("prepare_for_update");
+    await pendingUpdate.install();
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  },
+
+  /** Relaunch the app — the recovery exit after a failed install, sidecars already down. */
+  async restartApp(): Promise<void> {
+    if (!isDesktop) return;
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  },
+
+  /**
+   * Show a file in the OS file manager. Routes through the `opener` plugin like
+   * openExternal (granted by `opener:default`). No-op in web mode, where the
+   * renderer has no access to the host filesystem.
+   */
+  async revealInFolder(path: string): Promise<void> {
+    if (!isDesktop) return;
+    await invoke<void>("plugin:opener|reveal_item_in_dir", { paths: [path] });
   },
 
   onServicesStatus(handler: (status: ServicesStatus) => void): Promise<() => void> {

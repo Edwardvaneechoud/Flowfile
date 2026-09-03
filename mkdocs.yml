@@ -198,6 +198,7 @@ nav:
     - Users, Groups & Sharing: users/deployment/sharing.md
     - Headless Runs & CLI: users/deployment/cli.md
     - Telemetry & Privacy: users/telemetry.md
+    - Database Backups: users/deployment/backups.md
 
   - For Developers:
     - Introduction: for-developers/index.md

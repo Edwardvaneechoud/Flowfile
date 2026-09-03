@@ -21,6 +21,7 @@
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <PerformancePanel v-else-if="activeTab === 'performance'" />
       <PrivacyPanel v-else-if="activeTab === 'privacy'" />
+      <BackupsPanel v-else-if="activeTab === 'backups'" />
     </div>
   </div>
 </template>
@@ -31,6 +32,7 @@ import { useRoute, useRouter } from "vue-router";
 import KernelManagerView from "../KernelManagerView/KernelManagerView.vue";
 import PerformancePanel from "./PerformancePanel.vue";
 import PrivacyPanel from "./PrivacyPanel.vue";
+import BackupsPanel from "./BackupsPanel.vue";
 import { computeTabs, COMPUTE_TAB_GROUP_LABELS, COMPUTE_TAB_KEYS } from "./computeTabs";
 import type { ComputeTabKey } from "./computeTabs";
 import { useAuthStore } from "../../stores/auth-store";

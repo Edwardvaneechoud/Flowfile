@@ -24,6 +24,15 @@ pub async fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Stop the sidecars before an updater install: on macOS the install replaces the
+/// running .app bundle the sidecars execute from, on Windows it hands off to NSIS
+/// and exits. `shutdown_all` latches `is_shutting_down` and takes the PIDs, so the
+/// supervisor won't respawn and the relaunch that follows is a no-op here.
+#[tauri::command]
+pub async fn prepare_for_update(app: AppHandle) {
+    crate::sidecar::shutdown::shutdown_all(&app).await;
+}
+
 #[tauri::command]
 pub async fn app_refresh(app: AppHandle) -> Result<(), String> {
     let Some(main) = app.get_webview_window("main") else {

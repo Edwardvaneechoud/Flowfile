@@ -110,6 +110,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | `FLOWFILE_USER_DATA_DIR` | `shared/storage_config.py:59` | docker `/data/user`; local `$HOME` | User-data root: flows, uploads, outputs, catalog_tables, notebooks. **Setting this locally does nothing** — local path is always `Path.home()`, env only honored in docker mode. Compose overrides to `/app/user_data`. |
 | `FLOWFILE_SHARED_DIR` | `shared/storage_config.py:157,171,243` | `<base>/temp/kernel_shared` | Core↔worker↔kernel exchange dir + `global_artifacts`/`artifact_staging` subpaths. Must stay Docker-visible — don't relocate under `base_directory` for Docker deployments. |
 | `FLOWFILE_DB_PATH` | `shared/storage_config.py:410,427` | none | Explicit SQLite path override; wins over `TESTING`; also disables legacy-DB migration lookup. |
+| `FLOWFILE_DB_BACKUP_KEEP` | `flowfile_core/database/backup.py::keep_count` (per call) | `10` | Snapshots kept in `db_backups/`; `<= 0` disables every snapshot (pre-migration, pre-update, manual — one shared budget; `POST /system/db_backups` answers 409 `BACKUPS_DISABLED`); unparseable → warn + `10`. |
 | `TESTING` | `shared/storage_config.py` (`get_database_url`, `logs_directory`) | none; `flowfile_core/tests/conftest.py:23` sets `'True'` | `== "True"` ⇒ DB becomes `<base>/temp/test_flowfile_catalog.db` — **one shared file per machine**; concurrent pytest sessions clobber each other's teardown. Isolate with `FLOWFILE_DB_PATH` per session. Also redirects `logs_directory` to `<base>/temp/test_logs` so suites never write into or expire the developer's real logs. |
 | `FLOWFILE_SKIP_STARTUP_MIGRATION` | `flowfile_core/flowfile_core/database/init_db.py:26` | unset | Any value ⇒ skip the Alembic startup migration on import. Needed for diagnostics — importing `flowfile_core` otherwise migrates the live catalog DB. |
 | `FLOWFILE_DB_READ_HEDGE_DELAY` | `shared/db_reader.py:25` | `8` (seconds, float) | Delay before a hedged SQLAlchemy read races `connectorx`. |
@@ -208,9 +209,8 @@ These are **container-internal contract vars** — an operator normally never se
 
 | Var | Read at | Effect |
 |---|---|---|
-| `VITE_FLOWFILE_UPDATER_ENABLED` | `src/renderer/app/composables/useDesktopUpdater.ts:18` (+ `import.meta.env.DEV` guard `:17`) | **Build-time** opt-in for the Tauri auto-updater; unset ⇒ updater dormant. |
 | `NODE_ENV` | `src/renderer/config/environment.ts:12-18`; `.eslintrc.js:29-30` | Derives `ENV.isDevelopment/enableDevTools/...`; compose frontend sets `NODE_ENV=production` (compose:11). |
-| `import.meta.env.MODE` / `BASE_URL` / `DEV` | `DocumentationView.vue:15`; `router/index.ts:149`; `useDesktopUpdater.ts:17` | Dev-mode doc links, hash-router base. |
+| `import.meta.env.MODE` / `BASE_URL` / `DEV` | `DocumentationView.vue:15`; `router/index.ts:149`; `stores/update-store.ts:71` (skips the launch update check in dev) | Dev-mode doc links, hash-router base. |
 | `CI` | `playwright.config.ts:9-10` | Retries/`forbidOnly` in E2E. |
 | `TEST_URL` / `API_URL` | `tests/web-flow.spec.ts:23-24`; `tests/canvas-overlays.spec.ts:20-21` | Playwright targets; `Makefile:203` sets `TEST_URL=http://localhost:4173` for `make test_e2e`. |
 | `BUILD_MODE` | `flowfile_wasm/vite.config.ts:5` (`'lib'`) | WASM lib-vs-app build; set by `package.json` `build:lib`. |

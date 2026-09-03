@@ -196,6 +196,10 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      # Checkout first: its default clean would wipe a downloaded artifacts/ dir.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -204,6 +208,9 @@ jobs:
       - name: Inspect artifacts
         run: |
           ls -R artifacts || true
+
+      - name: Build updater manifest (latest.json)
+        run: python3 tools/make_latest_json.py --version "${GITHUB_REF_NAME#v}" --artifacts-dir artifacts --out latest.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -216,15 +223,7 @@ jobs:
           files: |
             artifacts/bundle-*/**/Flowfile_*
             artifacts/signature-*/**/*.sig
+            latest.json
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      # Operators must run `tools/make_latest_json.py` (or equivalent) to
-      # assemble `latest.json` from the .sig files and attach it to the
-      # release. We do not automate that here yet — Tauri's updater only
-      # activates once both files are present and signed.
-      - name: Reminder — manual latest.json upload required
-        run: |
-          echo "::notice::Attach latest.json to the release after this workflow"
-          echo "completes. See flowfile_frontend/src-tauri/SIGNING.md for the schema."
