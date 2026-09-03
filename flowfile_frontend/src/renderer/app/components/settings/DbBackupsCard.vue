@@ -37,6 +37,8 @@
       with <code>FLOWFILE_DB_BACKUP_KEEP</code>.
     </p>
 
+    <p v-if="loading && !status" class="backup-loading">Loading snapshots…</p>
+
     <table v-if="backups.length" class="backup-table">
       <thead>
         <tr>
@@ -270,6 +272,12 @@ onMounted(() => {
   color: var(--color-text-primary);
   padding: var(--spacing-1-5) var(--spacing-2);
   border-bottom: 1px solid var(--color-border-light);
+}
+
+.backup-loading {
+  margin: var(--spacing-4) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 
 .backup-empty {
