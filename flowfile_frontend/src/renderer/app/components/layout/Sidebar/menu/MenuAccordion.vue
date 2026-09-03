@@ -256,15 +256,19 @@ function setCollapsedGroups(next: Set<string>) {
   }
 }
 
-// Navigating to a child inside a collapsed group re-opens that group so the
-// active item is never invisibly selected. Immediate, so a deep link into a
+// Navigating to an entry inside a collapsed group re-opens that group so the
+// active item is never invisibly selected — including a leaf of a nested
+// sub-menu whose container carries the group. Immediate, so a deep link into a
 // collapsed group is uncovered on first mount too.
 watch(
   activeIndex,
   (idx) => {
     for (const item of props.items) {
       for (const child of item.children ?? []) {
-        if (itemKey(child) === idx && child.group) {
+        if (!child.group) continue;
+        const holdsActive =
+          itemKey(child) === idx || descendants([child]).some((d) => itemKey(d) === idx);
+        if (holdsActive) {
           const id = `${itemKey(item)}:${child.group.key}`;
           if (collapsedGroups.value.has(id)) {
             const next = new Set(collapsedGroups.value);
