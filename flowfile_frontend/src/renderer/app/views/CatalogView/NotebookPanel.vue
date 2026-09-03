@@ -1,74 +1,65 @@
 <template>
   <div class="notebook-panel">
-    <!-- Command band: notebook selector + save menu + kernel + run controls,
-         plus the open-notebook tabs, grouped as one pinned header. -->
+    <!-- One header row: the open-notebook tabs are the notebook selector (double-click
+         a tab to rename), "+" opens New / saved notebooks, controls sit on the right. -->
     <div class="nb-header">
       <div class="nb-toolbar">
-        <!-- Merged notebook name + open list: rename inline, caret opens saved notebooks -->
-        <el-input
-          :model-value="store.active?.name ?? ''"
-          size="small"
-          class="nb-name-input"
-          placeholder="Untitled notebook"
-          @update:model-value="(v: string) => store.setName(v)"
+        <el-tabs
+          v-if="store.openNotebooks.length"
+          :model-value="store.activeTabId ?? undefined"
+          type="card"
+          closable
+          class="nb-tabs"
+          @tab-change="onTabChange"
+          @tab-remove="onTabRemove"
         >
-          <template #suffix>
-            <el-dropdown trigger="click" placement="bottom-start" :hide-on-click="true">
-              <span class="nb-open-caret" title="Open notebook">
-                <i class="fa-solid fa-angle-down"></i>
+          <el-tab-pane v-for="nb in store.openNotebooks" :key="nb.tabId" :name="nb.tabId">
+            <template #label>
+              <span class="nb-tab-label" @dblclick.stop="startRename(nb.tabId)">
+                <i class="fa-solid fa-book nb-tab-icon"></i>
+                <input
+                  v-if="renamingTabId === nb.tabId"
+                  ref="renameInputRef"
+                  v-model="renameDraft"
+                  class="nb-tab-rename"
+                  aria-label="Notebook name"
+                  @keydown.enter.prevent="commitRename"
+                  @keydown.esc.prevent="cancelRename"
+                  @blur="commitRename"
+                  @click.stop
+                  @mousedown.stop
+                />
+                <span v-else class="nb-tab-name">{{ nb.name || "Untitled" }}</span>
+                <span v-if="nb.dirty && renamingTabId !== nb.tabId" class="nb-dirty">*</span>
               </span>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item
-                    v-for="nb in store.notebooks"
-                    :key="nb.id"
-                    @click="store.openNotebook(nb.id)"
-                  >
-                    {{ nb.name }}
-                  </el-dropdown-item>
-                  <el-dropdown-item v-if="!store.notebooks.length" disabled>
-                    No saved notebooks
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </template>
-        </el-input>
-
-        <!-- Save split-button (canvas-style): Save + File menu (New / Save As / Delete) -->
-        <div class="nb-split" data-tutorial="save-btn">
-          <button
-            class="nb-split-btn nb-split-btn--main"
-            :disabled="store.active?.saving"
-            @click="onSave"
-          >
-            <i
-              class="nb-split-icon"
-              :class="
-                store.active?.saving ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-floppy-disk'
-              "
-            ></i>
-            <span>Save</span>
-          </button>
-          <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
-            <button class="nb-split-btn nb-split-btn--caret" aria-label="More save options">
-              <i class="fa-solid fa-angle-down nb-split-icon"></i>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="store.newTab()">
-                  <i class="fa-solid fa-file-circle-plus nb-menu-icon"></i> New
-                </el-dropdown-item>
-                <el-dropdown-item @click="onSaveAs">
-                  <i class="fa-solid fa-copy nb-menu-icon"></i> Save As…
-                </el-dropdown-item>
-                <el-dropdown-item divided :disabled="!isPersisted" @click="onDelete">
-                  <i class="fa-solid fa-trash nb-menu-icon"></i> Delete
-                </el-dropdown-item>
-              </el-dropdown-menu>
             </template>
-          </el-dropdown>
-        </div>
+          </el-tab-pane>
+        </el-tabs>
+
+        <!-- "+" — New, or open a saved notebook -->
+        <el-dropdown trigger="click" placement="bottom-start" :hide-on-click="true">
+          <button class="nb-tab-add" title="New or open notebook" aria-label="New or open notebook">
+            <i class="fa-solid fa-plus"></i>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="store.newTab()">
+                <i class="fa-solid fa-file-circle-plus nb-menu-icon"></i> New notebook
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-for="(nb, i) in store.notebooks"
+                :key="nb.id"
+                :divided="i === 0"
+                @click="store.openNotebook(nb.id)"
+              >
+                <i class="fa-solid fa-book nb-menu-icon"></i> {{ nb.name }}
+              </el-dropdown-item>
+              <el-dropdown-item v-if="!store.notebooks.length" divided disabled>
+                No saved notebooks
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
 
         <div class="nb-toolbar-spacer"></div>
 
@@ -152,6 +143,41 @@
           </template>
         </el-dropdown>
 
+        <!-- Save split-button (canvas-style): Save + File menu (Save As / Rename / Delete) -->
+        <div class="nb-split" data-tutorial="save-btn">
+          <button
+            class="nb-split-btn nb-split-btn--main"
+            :disabled="store.active?.saving"
+            @click="onSave"
+          >
+            <i
+              class="nb-split-icon"
+              :class="
+                store.active?.saving ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-floppy-disk'
+              "
+            ></i>
+            <span>Save</span>
+          </button>
+          <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+            <button class="nb-split-btn nb-split-btn--caret" aria-label="More save options">
+              <i class="fa-solid fa-angle-down nb-split-icon"></i>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="onSaveAs">
+                  <i class="fa-solid fa-copy nb-menu-icon"></i> Save As…
+                </el-dropdown-item>
+                <el-dropdown-item :disabled="!store.activeTabId" @click="startRename()">
+                  <i class="fa-solid fa-pen nb-menu-icon"></i> Rename
+                </el-dropdown-item>
+                <el-dropdown-item divided :disabled="!isPersisted" @click="onDelete">
+                  <i class="fa-solid fa-trash nb-menu-icon"></i> Delete
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+
         <el-button
           size="small"
           class="nb-run-all"
@@ -162,29 +188,6 @@
           <i v-if="!running" class="fa-solid fa-forward" style="margin-right: 4px"></i> Run All
         </el-button>
       </div>
-
-      <!-- Open-notebook tab strip -->
-      <el-tabs
-        v-if="store.openNotebooks.length"
-        :model-value="store.activeTabId ?? undefined"
-        type="card"
-        closable
-        addable
-        class="nb-tabs"
-        @tab-change="onTabChange"
-        @tab-remove="onTabRemove"
-        @tab-add="store.newTab()"
-      >
-        <el-tab-pane v-for="nb in store.openNotebooks" :key="nb.tabId" :name="nb.tabId">
-          <template #label>
-            <span class="nb-tab-label">
-              <i class="fa-solid fa-book nb-tab-icon"></i>
-              <span class="nb-tab-name">{{ nb.name || "Untitled" }}</span>
-              <span v-if="nb.dirty" class="nb-dirty">*</span>
-            </span>
-          </template>
-        </el-tab-pane>
-      </el-tabs>
     </div>
 
     <!-- Kernel status banner: the one place that says why Python cells won't run
@@ -298,7 +301,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
@@ -440,6 +443,31 @@ async function startKernel() {
 const isPersisted = computed(() => store.active?.persistedId != null);
 
 const showHelp = ref(false);
+
+// Inline rename on the active tab (double-click, or Save menu → Rename).
+const renamingTabId = ref<string | null>(null);
+const renameDraft = ref("");
+const renameInputRef = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
+function startRename(tabId: string | null = store.activeTabId) {
+  if (!tabId) return;
+  if (tabId !== store.activeTabId) store.setActiveTab(tabId);
+  renamingTabId.value = tabId;
+  renameDraft.value = store.active?.name ?? "";
+  void nextTick(() => {
+    const el = Array.isArray(renameInputRef.value) ? renameInputRef.value[0] : renameInputRef.value;
+    el?.focus();
+    el?.select();
+  });
+}
+function commitRename() {
+  if (renamingTabId.value == null) return;
+  const name = renameDraft.value.trim();
+  if (name && name !== store.active?.name) store.setName(name);
+  renamingTabId.value = null;
+}
+function cancelRename() {
+  renamingTabId.value = null;
+}
 // Primer shows only while the notebook has no code yet; it hides as soon as you type.
 const showPrimer = computed(
   () => !!store.active && store.active.cells.every((c) => !c.code.trim()),
@@ -585,24 +613,41 @@ async function onDelete() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  flex-wrap: wrap;
+  padding: 6px 12px 0;
 }
 .nb-toolbar-spacer {
   flex: 1;
 }
-.nb-name-input {
-  width: 220px;
-}
-.nb-open-caret {
+/* "+" beside the tabs: New / Open saved notebook. */
+.nb-tab-add {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-bottom: 4px;
+  padding: 0;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  color: var(--color-text-muted, #909399);
-  transition: color var(--transition-fast, 0.15s ease);
+  transition: all var(--transition-fast);
 }
-.nb-open-caret:hover {
-  color: var(--color-primary, #409eff);
+.nb-tab-add:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.nb-tab-rename {
+  width: 140px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius-sm, 4px);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font: inherit;
+  outline: none;
 }
 .nb-menu-icon {
   width: 16px;
@@ -612,6 +657,12 @@ async function onDelete() {
 .nb-overflow-btn {
   padding-left: 9px;
   padding-right: 9px;
+}
+.nb-toolbar > .el-select,
+.nb-toolbar > .el-button,
+.nb-toolbar > .nb-split,
+.nb-toolbar > .el-dropdown {
+  margin-bottom: 6px;
 }
 /* Run All mirrors the designer header's Run button (accent purple). */
 .nb-run-all:not(:disabled) {
@@ -762,7 +813,10 @@ async function onDelete() {
    transparent inactive with a right divider, active tab raised onto the canvas
    surface with an accent top border — a little rounder and shorter. */
 .nb-tabs {
-  padding: 0 var(--spacing-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  align-self: flex-end;
 }
 .nb-tabs :deep(.el-tabs__header) {
   margin: 0;
@@ -809,19 +863,6 @@ async function onDelete() {
 .nb-tab-icon {
   font-size: var(--font-size-xs);
   color: var(--color-primary);
-}
-/* "+" new-notebook button: adapt to the band and theme. */
-.nb-tabs :deep(.el-tabs__new-tab) {
-  height: 26px;
-  margin-left: var(--spacing-2);
-  border-radius: var(--border-radius-md);
-  color: var(--color-text-secondary);
-  border-color: var(--color-border-light);
-  transition: all var(--transition-fast);
-}
-.nb-tabs :deep(.el-tabs__new-tab):hover {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
 }
 .nb-banner {
   display: flex;

@@ -1,23 +1,38 @@
 <template>
   <div class="catalog-view">
-    <!-- Tab Bar -->
-    <div class="catalog-tabs">
-      <template v-for="tab in tabs" :key="tab.key">
-        <div v-if="tab.groupStart" class="tab-group-divider" aria-hidden="true"></div>
-        <span v-if="tab.groupLabel" class="tab-group-label" aria-hidden="true">
-          {{ tab.groupLabel }}
-        </span>
-        <button
-          class="catalog-tab"
-          :class="{ active: catalogStore.activeTab === tab.key }"
-          @click="handleTabClick(tab.key)"
-        >
-          <i :class="tab.icon"></i>
-          <span>{{ tab.label }}</span>
-          <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
-        </button>
+    <!-- Tab Bar. Compact mode (persisted) folds every label but the active tab's;
+         the section captions stay, and hovering a section unfolds its labels. -->
+    <div class="catalog-tabs" :class="{ 'is-compact': tabsCompact }">
+      <template v-for="(group, gi) in tabGroups" :key="group.key">
+        <div v-if="gi > 0" class="tab-group-divider" aria-hidden="true"></div>
+        <div class="tab-group">
+          <span v-if="group.label" class="tab-group-label" aria-hidden="true">
+            {{ group.label }}
+          </span>
+          <button
+            v-for="tab in group.tabs"
+            :key="tab.key"
+            class="catalog-tab"
+            :class="{ active: catalogStore.activeTab === tab.key }"
+            :title="tabsCompact && catalogStore.activeTab !== tab.key ? tab.label : undefined"
+            @click="handleTabClick(tab.key)"
+          >
+            <i :class="tab.icon"></i>
+            <span class="tab-label">{{ tab.label }}</span>
+            <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
+          </button>
+        </div>
       </template>
       <div class="tab-spacer"></div>
+      <el-tooltip
+        :content="tabsCompact ? 'Show tab labels' : 'Compact tabs'"
+        placement="bottom"
+        :show-after="400"
+      >
+        <button class="catalog-tab info-btn" @click="setTabsCompact(!tabsCompact)">
+          <i :class="tabsCompact ? 'fa-solid fa-angles-right' : 'fa-solid fa-angles-left'"></i>
+        </button>
+      </el-tooltip>
       <template v-if="!isExtensionsSection">
         <el-tooltip content="Refresh" placement="bottom" :show-after="400">
           <button class="catalog-tab info-btn" :disabled="refreshing" @click="refreshAll">
@@ -662,6 +677,18 @@ const tabs = computed(() => {
   }));
 });
 
+// Tabs chunked per group so a section can be captioned and hover-expanded as one unit.
+const tabGroups = computed(() => {
+  const groups: { key: string; label: string | null; tabs: typeof tabs.value }[] = [];
+  for (const tab of tabs.value) {
+    if (tab.groupStart || groups.length === 0) {
+      groups.push({ key: tab.key, label: tab.groupLabel, tabs: [] });
+    }
+    groups[groups.length - 1].tabs.push(tab);
+  }
+  return groups;
+});
+
 // Custom / community nodes are extension pages: no catalog tree, refresh or info controls.
 const isExtensionsSection = computed(
   () => catalogSectionOfTab(catalogStore.activeTab) === "extend",
@@ -716,6 +743,22 @@ function setTreeCollapsed(value: boolean) {
   treeCollapsed.value = value;
   try {
     localStorage.setItem(TREE_COLLAPSED_KEY, String(value));
+  } catch {
+    // storage unavailable — the toggle still works for this session
+  }
+}
+// Tab-bar compact mode: same per-browser convenience as the tree collapse.
+const TABS_COMPACT_KEY = "flowfile-catalog-tabs-compact";
+const tabsCompact = ref(false);
+try {
+  tabsCompact.value = localStorage.getItem(TABS_COMPACT_KEY) === "true";
+} catch {
+  // storage unavailable — start expanded
+}
+function setTabsCompact(value: boolean) {
+  tabsCompact.value = value;
+  try {
+    localStorage.setItem(TABS_COMPACT_KEY, String(value));
   } catch {
     // storage unavailable — the toggle still works for this session
   }
@@ -2596,6 +2639,51 @@ onUnmounted(() => {
 
 .tab-spacer {
   flex: 1;
+}
+
+.tab-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Compact: labels fold away (the active tab keeps its own) while the section
+   captions and dividers stay; hovering a section unfolds that section's labels. */
+.catalog-tabs.is-compact .catalog-tab {
+  padding-left: var(--spacing-3);
+  padding-right: var(--spacing-3);
+}
+.catalog-tabs.is-compact .tab-label {
+  display: inline-block;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Fold back after a short hold so a mouse slip off the section doesn't snap it shut. */
+  transition:
+    max-width var(--transition-fast) 400ms,
+    opacity var(--transition-fast) 400ms,
+    margin-left var(--transition-fast) 400ms;
+}
+.catalog-tabs.is-compact .catalog-tab.active .tab-label,
+.catalog-tabs.is-compact .tab-group:hover .tab-label {
+  max-width: 140px;
+  opacity: 1;
+  transition-delay: 0s;
+}
+/* Fold the icon→label gap along with the label so a folded tab has no orphan gap. */
+.catalog-tabs.is-compact .catalog-tab {
+  gap: 0;
+}
+.catalog-tabs.is-compact .catalog-tab.active .tab-label,
+.catalog-tabs.is-compact .tab-group:hover .tab-label {
+  margin-left: var(--spacing-2);
+}
+.catalog-tabs.is-compact .catalog-tab .tab-badge {
+  margin-left: var(--spacing-1-5);
+}
+.catalog-tabs.is-compact .tab-group-label {
+  display: inline;
 }
 
 .info-btn {
