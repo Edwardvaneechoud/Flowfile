@@ -57,6 +57,9 @@
                 <kbd>{{ MODIFIER_LABEL }}</kbd>
                 <kbd>O</kbd>
               </span>
+              <button class="tile-link" @click="emit('import-alteryx')">
+                Import from Alteryx…
+              </button>
             </div>
           </article>
 
@@ -65,15 +68,6 @@
               <span class="tile-icon"><span class="material-icons">layers</span></span>
               <span class="tile-title">Browse templates</span>
               <span class="tile-sub">Start from a working example</span>
-            </button>
-            <div class="tile-footer"></div>
-          </article>
-
-          <article class="welcome-tile">
-            <button class="tile-main" @click="emit('import-alteryx')">
-              <span class="tile-icon"><span class="material-icons">upload_file</span></span>
-              <span class="tile-title">Import Alteryx <span class="beta-badge">Beta</span></span>
-              <span class="tile-sub">Convert a .yxmd workflow into a flow</span>
             </button>
             <div class="tile-footer"></div>
           </article>
@@ -118,8 +112,29 @@
       </section>
 
       <section aria-label="Recent flows">
-        <h2 class="welcome-section-title">Recent flows</h2>
-        <ul v-if="recentFlows.length" class="recent-list">
+        <h2 class="welcome-section-title">
+          <button
+            class="section-toggle"
+            type="button"
+            :aria-expanded="!collapsed.recent"
+            aria-controls="home-recent-flows"
+            @click="toggleSection('recent')"
+          >
+            <span class="material-icons section-chevron">
+              {{ collapsed.recent ? "chevron_right" : "expand_more" }}
+            </span>
+            Recent flows
+            <span v-if="collapsed.recent && recentFlows.length" class="section-count">
+              {{ recentFlows.length }}
+            </span>
+          </button>
+        </h2>
+        <ul
+          v-if="recentFlows.length"
+          v-show="!collapsed.recent"
+          id="home-recent-flows"
+          class="recent-list"
+        >
           <li v-for="flow in recentFlows" :key="flow.path">
             <el-tooltip placement="top" :show-after="400" :hide-after="0">
               <template #content>
@@ -183,12 +198,27 @@
             </el-tooltip>
           </li>
         </ul>
-        <p v-else class="recent-empty">Flows you create or open will show up here.</p>
+        <p v-else v-show="!collapsed.recent" class="recent-empty">
+          Flows you create or open will show up here.
+        </p>
       </section>
 
       <section aria-label="Explore">
-        <h2 class="welcome-section-title">Explore</h2>
-        <div class="explore-grid">
+        <h2 class="welcome-section-title">
+          <button
+            class="section-toggle"
+            type="button"
+            :aria-expanded="!collapsed.explore"
+            aria-controls="home-explore"
+            @click="toggleSection('explore')"
+          >
+            <span class="material-icons section-chevron">
+              {{ collapsed.explore ? "chevron_right" : "expand_more" }}
+            </span>
+            Explore
+          </button>
+        </h2>
+        <div v-show="!collapsed.explore" id="home-explore" class="explore-grid">
           <button class="explore-tile" @click="goCatalog">
             <span class="explore-icon"><i class="fa-solid fa-folder-tree"></i></span>
             <span class="explore-text">
@@ -266,7 +296,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, reactive, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 import { desktop, isDesktop } from "../../../lib/desktop";
@@ -308,8 +338,34 @@ const dismissTutorialBanner = () => {
   localStorage.setItem(BANNER_DISMISSED_KEY, "true");
 };
 
+type CollapsibleSection = "recent" | "explore";
+const COLLAPSED_KEY = "flowfile-home-collapsed-sections";
+// Collapsed by default: the start tiles are the point of this page; the lists unfold on demand.
+const collapsed = reactive<Record<CollapsibleSection, boolean>>({ recent: true, explore: true });
+
+function loadCollapsed() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}");
+    for (const key of Object.keys(collapsed) as CollapsibleSection[]) {
+      if (typeof saved[key] === "boolean") collapsed[key] = saved[key];
+    }
+  } catch {
+    // Unreadable or corrupt storage — keep the defaults.
+  }
+}
+
+const toggleSection = (key: CollapsibleSection) => {
+  collapsed[key] = !collapsed[key];
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed));
+  } catch {
+    // Storage unavailable (private mode) — the toggle still works for this session.
+  }
+};
+
 onMounted(async () => {
   bannerDismissed.value = localStorage.getItem(BANNER_DISMISSED_KEY) === "true";
+  loadCollapsed();
   try {
     version.value = (isDesktop ? await desktop.getAppVersion() : "") || __APP_VERSION__;
   } catch {
@@ -484,21 +540,63 @@ function relativeTime(timestamp: number): string {
   margin-bottom: var(--spacing-1);
 }
 
+/* Collapsible section header — inherits the label typography from the h2. */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-left: calc(-1 * var(--spacing-1));
+  padding: var(--spacing-0-5) var(--spacing-1);
+  background: transparent;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  transition: color var(--transition-fast);
+}
+
+.section-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.section-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.section-chevron {
+  font-size: 16px;
+  color: var(--color-text-muted);
+}
+
+.section-count {
+  padding: 0 var(--spacing-1-5, 6px);
+  border-radius: var(--border-radius-full);
+  background-color: var(--color-background-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0;
+  color: var(--color-text-tertiary);
+}
+
 .welcome-section-sub {
   margin: 0 0 var(--spacing-4);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
-/* Primary action tiles. Explicit column counts (not auto-fit) so no row is
-   ever left with a lone orphan tile — four tiles read as a 2×2 block. */
+/* Primary action tiles: one row of three. Explicit column counts (not auto-fit)
+   so no row is ever left with a lone orphan tile. */
 .welcome-primary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--spacing-4);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .welcome-primary {
     grid-template-columns: 1fr;
   }

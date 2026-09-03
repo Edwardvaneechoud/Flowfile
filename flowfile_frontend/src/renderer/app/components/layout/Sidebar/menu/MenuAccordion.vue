@@ -31,13 +31,17 @@
       </el-menu-item>
 
       <!-- Items with children -->
-      <el-sub-menu v-else :index="routeItem.name" popper-class="sidebar-submenu-popper">
+      <el-sub-menu v-else :index="itemKey(routeItem)" popper-class="sidebar-submenu-popper">
         <template #title>
-          <i
-            v-if="routeItem.meta?.icon"
-            :class="routeItem.meta.icon"
-            @click="handleParentClick(routeItem)"
-          ></i>
+          <!-- A div, not a span: Element hides every span in a collapsed sub-menu title. -->
+          <div class="nav-icon" @click="handleParentClick(routeItem)">
+            <i v-if="routeItem.meta?.icon" :class="routeItem.meta.icon"></i>
+            <i
+              v-if="routeItem.statusDot"
+              class="nav-status-dot"
+              :class="`is-${routeItem.statusDot}`"
+            ></i>
+          </div>
           <span @click="handleParentClick(routeItem)">{{ t(routeItem.displayName) }}</span>
           <i
             v-if="isCollapse"
@@ -48,51 +52,123 @@
 
         <template
           v-for="section in childSections(routeItem)"
-          :key="section.key ?? `${routeItem.name}-ungrouped`"
+          :key="section.key ?? `${itemKey(routeItem)}-ungrouped`"
         >
           <el-menu-item-group v-if="!section.labelKey" :title="t(routeItem.displayName)">
-            <el-menu-item
-              v-for="child in section.children"
-              :key="child.index ?? child.name"
-              :index="child.index ?? child.name"
-              :route="child.query ? { name: child.name, query: child.query } : { name: child.name }"
-              :disabled="child.disabled"
-            >
-              <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
-              <template #title>
-                <span>{{ t(child.displayName) }}</span>
-              </template>
-            </el-menu-item>
+            <template v-for="child in section.children" :key="itemKey(child)">
+              <el-sub-menu
+                v-if="child.children"
+                :index="itemKey(child)"
+                popper-class="sidebar-submenu-popper"
+              >
+                <template #title>
+                  <span class="nav-icon" @click="handleParentClick(child)">
+                    <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+                  </span>
+                  <span @click="handleParentClick(child)">{{ t(child.displayName) }}</span>
+                </template>
+                <el-menu-item
+                  v-for="leaf in child.children"
+                  :key="itemKey(leaf)"
+                  :index="itemKey(leaf)"
+                  :route="leaf.query ? { name: leaf.name, query: leaf.query } : { name: leaf.name }"
+                  :disabled="leaf.disabled"
+                >
+                  <span class="nav-icon">
+                    <i v-if="leaf.meta?.icon" :class="leaf.meta.icon"></i>
+                  </span>
+                  <template #title>
+                    <span>{{ t(leaf.displayName) }}</span>
+                  </template>
+                </el-menu-item>
+              </el-sub-menu>
+              <el-menu-item
+                v-else
+                :index="itemKey(child)"
+                :route="
+                  child.query ? { name: child.name, query: child.query } : { name: child.name }
+                "
+                :disabled="child.disabled"
+              >
+                <span class="nav-icon">
+                  <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+                  <span
+                    v-if="child.statusDot"
+                    class="nav-status-dot"
+                    :class="`is-${child.statusDot}`"
+                  ></span>
+                </span>
+                <template #title>
+                  <span>{{ t(child.displayName) }}</span>
+                </template>
+              </el-menu-item>
+            </template>
           </el-menu-item-group>
           <div v-else class="menu-group">
             <button
               type="button"
               class="menu-group-header"
-              :aria-expanded="!isGroupCollapsed(routeItem.name, section.key)"
-              @click="toggleGroup(routeItem.name, section.key)"
+              :aria-expanded="!isGroupCollapsed(itemKey(routeItem), section.key)"
+              @click="toggleGroup(itemKey(routeItem), section.key)"
             >
               <span>{{ t(section.labelKey) }}</span>
               <i
                 class="fa-solid fa-chevron-down menu-group-chevron"
-                :class="{ 'is-collapsed': isGroupCollapsed(routeItem.name, section.key) }"
+                :class="{ 'is-collapsed': isGroupCollapsed(itemKey(routeItem), section.key) }"
               ></i>
             </button>
             <el-collapse-transition>
-              <div v-show="!isGroupCollapsed(routeItem.name, section.key)">
-                <el-menu-item
-                  v-for="child in section.children"
-                  :key="child.index ?? child.name"
-                  :index="child.index ?? child.name"
-                  :route="
-                    child.query ? { name: child.name, query: child.query } : { name: child.name }
-                  "
-                  :disabled="child.disabled"
-                >
-                  <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
-                  <template #title>
-                    <span>{{ t(child.displayName) }}</span>
-                  </template>
-                </el-menu-item>
+              <div v-show="!isGroupCollapsed(itemKey(routeItem), section.key)">
+                <template v-for="child in section.children" :key="itemKey(child)">
+                  <el-sub-menu
+                    v-if="child.children"
+                    :index="itemKey(child)"
+                    popper-class="sidebar-submenu-popper"
+                  >
+                    <template #title>
+                      <span class="nav-icon" @click="handleParentClick(child)">
+                        <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+                      </span>
+                      <span @click="handleParentClick(child)">{{ t(child.displayName) }}</span>
+                    </template>
+                    <el-menu-item
+                      v-for="leaf in child.children"
+                      :key="itemKey(leaf)"
+                      :index="itemKey(leaf)"
+                      :route="
+                        leaf.query ? { name: leaf.name, query: leaf.query } : { name: leaf.name }
+                      "
+                      :disabled="leaf.disabled"
+                    >
+                      <span class="nav-icon">
+                        <i v-if="leaf.meta?.icon" :class="leaf.meta.icon"></i>
+                      </span>
+                      <template #title>
+                        <span>{{ t(leaf.displayName) }}</span>
+                      </template>
+                    </el-menu-item>
+                  </el-sub-menu>
+                  <el-menu-item
+                    v-else
+                    :index="itemKey(child)"
+                    :route="
+                      child.query ? { name: child.name, query: child.query } : { name: child.name }
+                    "
+                    :disabled="child.disabled"
+                  >
+                    <span class="nav-icon">
+                      <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+                      <span
+                        v-if="child.statusDot"
+                        class="nav-status-dot"
+                        :class="`is-${child.statusDot}`"
+                      ></span>
+                    </span>
+                    <template #title>
+                      <span>{{ t(child.displayName) }}</span>
+                    </template>
+                  </el-menu-item>
+                </template>
               </div>
             </el-collapse-transition>
           </div>
@@ -115,8 +191,8 @@ const router = useRouter();
 function handleParentClick(routeItem: INavigationRoute) {
   // A sub-menu parent with its own destination (marked via `query`) navigates to
   // it on click, in addition to toggling the fly-out — Element's sub-menu title
-  // does not navigate on its own in router mode. For Connections this opens the
-  // overview landing page.
+  // does not navigate on its own in router mode. For Settings this opens the
+  // connections overview, for the nested All connections entry likewise.
   if (!routeItem.query) return;
   router.push({ name: routeItem.name, query: routeItem.query }).catch(() => {
     // ignore redundant navigation (already on this route)
@@ -134,27 +210,27 @@ const props = withDefaults(
   },
 );
 
+// el-menu index of an entry; parents that share a route name carry their own `index`.
+const itemKey = (item: INavigationRoute) => item.index ?? item.name;
+
+// Every entry below the rail, nested levels included (one extra level is supported).
+const descendants = (items: INavigationRoute[]): INavigationRoute[] =>
+  items.flatMap((item) => (item.children ? [...item.children, ...descendants(item.children)] : []));
+
 const activeIndex = computed(() => {
   const name = route.name as string;
-  // Connections/Catalog sub-items share one route name but differ by ?tab=, so
-  // match the composite child index. Fall back to the parent's default child for
-  // unknown/absent tabs (e.g. catalog ?tab=dashboards) so the parent still highlights.
-  const fallbackTab: Record<string, string> = {
-    connections: "overview",
-    catalog: "catalog",
-    compute: "kernels",
-  };
-  if (name in fallbackTab) {
-    const parent = props.items.find((item) => item.name === name);
-    // A flattened parent (admin-only children filtered away) has no composite
-    // child index, so it highlights on its plain name instead.
-    if (parent?.children) {
-      const candidate = `${name}:${(route.query.tab as string) || fallbackTab[name]}`;
-      const known = parent.children.some((child) => (child.index ?? child.name) === candidate);
-      return known ? candidate : `${name}:${fallbackTab[name]}`;
-    }
+  const tab = route.query.tab as string | undefined;
+  const children = descendants(props.items);
+  // Sub-items share a route name but differ by ?tab=, so try the composite index
+  // first, then the bare name (a child without a tab, or a flattened parent).
+  const candidates = tab ? [`${name}:${tab}`, name] : [name];
+  for (const candidate of candidates) {
+    if (children.some((child) => itemKey(child) === candidate)) return candidate;
   }
-  return name;
+  // Unknown tab (e.g. legacy catalog ?tab=dashboards): highlight the first entry on
+  // this route so its parent still lights up.
+  const first = children.find((child) => child.name === name);
+  return first ? itemKey(first) : name;
 });
 
 const COLLAPSED_GROUPS_KEY = "flowfile-sidebar-collapsed-groups";
@@ -188,8 +264,8 @@ watch(
   (idx) => {
     for (const item of props.items) {
       for (const child of item.children ?? []) {
-        if ((child.index ?? child.name) === idx && child.group) {
-          const id = `${item.name}:${child.group.key}`;
+        if (itemKey(child) === idx && child.group) {
+          const id = `${itemKey(item)}:${child.group.key}`;
           if (collapsedGroups.value.has(id)) {
             const next = new Set(collapsedGroups.value);
             next.delete(id);
@@ -288,6 +364,13 @@ function isItemExpanded(item: INavigationRoute): boolean {
 
 .nav-icon [class^="fa-"] {
   margin-right: 0;
+}
+
+/* The dot is an <i> inside the sub-menu title (spans are hidden there); undo the icon sizing. */
+.nav-icon i.nav-status-dot {
+  width: 8px;
+  margin: 0;
+  font-size: 0;
 }
 
 .el-menu--collapse .nav-icon {
@@ -391,9 +474,58 @@ function isItemExpanded(item: INavigationRoute): boolean {
 
 /* Smaller, lighter icons with real breathing room between icon and label —
    the teleported popper doesn't inherit MenuAccordion's scoped icon rule. */
+.sidebar-submenu-popper .el-menu-item .nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
 .sidebar-submenu-popper .el-menu-item [class^="fa-"] {
   width: 18px;
+  font-size: 14px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.sidebar-submenu-popper .nav-status-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--color-background-primary);
+}
+
+.sidebar-submenu-popper .nav-status-dot.is-clean {
+  background: var(--color-success, #16a34a);
+}
+
+.sidebar-submenu-popper .nav-status-dot.is-unsaved {
+  background: var(--color-warning, #d97706);
+}
+
+.sidebar-submenu-popper .nav-status-dot.is-external {
+  background: var(--color-danger, #ef4444);
+}
+
+.sidebar-submenu-popper .el-sub-menu__title {
+  height: 38px;
+  line-height: 38px;
+  padding: 0 var(--spacing-4);
+  border-radius: var(--border-radius-md);
+}
+
+.sidebar-submenu-popper .el-sub-menu__title .nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   margin-right: 12px;
+}
+
+.sidebar-submenu-popper .el-sub-menu__title [class^="fa-"] {
+  width: 18px;
   font-size: 14px;
   text-align: center;
   vertical-align: middle;

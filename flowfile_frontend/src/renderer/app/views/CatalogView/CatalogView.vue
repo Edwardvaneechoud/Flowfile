@@ -18,24 +18,50 @@
         </button>
       </template>
       <div class="tab-spacer"></div>
-      <el-tooltip content="Refresh" placement="bottom" :show-after="400">
-        <button class="catalog-tab info-btn" :disabled="refreshing" @click="refreshAll">
-          <i class="fa-solid fa-arrows-rotate" :class="{ 'fa-spin': refreshing }"></i>
-        </button>
-      </el-tooltip>
-      <el-tooltip content="About the Catalog" placement="bottom" :show-after="400">
-        <button class="catalog-tab info-btn" @click="showInfoModal = true">
-          <i class="fa-solid fa-circle-info"></i>
-        </button>
-      </el-tooltip>
+      <template v-if="!isExtensionsSection">
+        <el-tooltip content="Refresh" placement="bottom" :show-after="400">
+          <button class="catalog-tab info-btn" :disabled="refreshing" @click="refreshAll">
+            <i class="fa-solid fa-arrows-rotate" :class="{ 'fa-spin': refreshing }"></i>
+          </button>
+        </el-tooltip>
+        <el-tooltip content="About the Catalog" placement="bottom" :show-after="400">
+          <button class="catalog-tab info-btn" @click="showInfoModal = true">
+            <i class="fa-solid fa-circle-info"></i>
+          </button>
+        </el-tooltip>
+      </template>
     </div>
 
     <!-- Main Content -->
     <div class="catalog-content">
-      <!-- Sidebar: Always shows catalog tree -->
-      <div class="catalog-sidebar">
+      <!-- Sidebar: catalog tree, collapsible to a thin rail; absent on the extension pages -->
+      <div
+        v-if="!isExtensionsSection"
+        class="catalog-sidebar"
+        :class="{ 'is-collapsed': treeCollapsed }"
+      >
+        <button
+          v-if="treeCollapsed"
+          type="button"
+          class="tree-rail"
+          title="Show catalogs"
+          aria-label="Show catalogs"
+          @click="setTreeCollapsed(false)"
+        >
+          <i class="fa-solid fa-angles-right"></i>
+          <span class="tree-rail-label">Catalogs</span>
+        </button>
         <div class="sidebar-header">
           <h3>Catalogs</h3>
+          <button
+            type="button"
+            class="tree-collapse-btn"
+            title="Hide catalogs"
+            aria-label="Hide catalogs"
+            @click="setTreeCollapsed(true)"
+          >
+            <i class="fa-solid fa-angles-left"></i>
+          </button>
           <el-dropdown trigger="click" placement="bottom-end" class="sidebar-new-dropdown">
             <button class="btn btn-primary btn-sm sidebar-new-btn">
               <i class="fa-solid fa-plus"></i>
@@ -576,7 +602,7 @@ import { countMatches, normalizeQuery } from "./catalogTreeFilter";
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
-import { CATALOG_TAB_GROUP_LABELS, catalogTabs } from "./catalogTabs";
+import { CATALOG_TAB_GROUP_LABELS, catalogSectionOfTab, catalogTabsInSection } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -612,14 +638,19 @@ const openNamespaceShare = (node: NamespaceTree) => {
   showNamespaceShareDialog.value = true;
 };
 
-const tabs = computed(() =>
-  catalogTabs.map((tab, i) => ({
+// Only the rail section the active tab belongs to (Data / Operate / Extensions) is
+// shown; group captions are noise when the section is a single group.
+const tabs = computed(() => {
+  const section = catalogSectionOfTab(catalogStore.activeTab) ?? "catalog";
+  const shown = catalogTabsInSection(section);
+  const captioned = new Set(shown.map((t) => t.group)).size > 1;
+  return shown.map((tab, i) => ({
     key: tab.key as CatalogTab,
     label: tab.label,
     icon: tab.icon,
-    groupStart: i > 0 && tab.group !== catalogTabs[i - 1].group,
+    groupStart: i > 0 && tab.group !== shown[i - 1].group,
     groupLabel:
-      i === 0 || tab.group !== catalogTabs[i - 1].group
+      captioned && (i === 0 || tab.group !== shown[i - 1].group)
         ? CATALOG_TAB_GROUP_LABELS[tab.group]
         : null,
     badge:
@@ -628,7 +659,12 @@ const tabs = computed(() =>
         : tab.key === "schedules"
           ? (catalogStore.stats?.total_schedules ?? null)
           : null,
-  })),
+  }));
+});
+
+// Custom / community nodes are extension pages: no catalog tree, refresh or info controls.
+const isExtensionsSection = computed(
+  () => catalogSectionOfTab(catalogStore.activeTab) === "extend",
 );
 
 // "community" is a catalogTabs entry not (yet) in the CatalogTab union; guard via
@@ -667,6 +703,23 @@ const filteredFavorites = computed(() => {
 
 // Modal state
 const showInfoModal = ref(false);
+
+// Tree panel collapse is a per-browser convenience, so it lives in localStorage.
+const TREE_COLLAPSED_KEY = "flowfile-catalog-tree-collapsed";
+const treeCollapsed = ref(false);
+try {
+  treeCollapsed.value = localStorage.getItem(TREE_COLLAPSED_KEY) === "true";
+} catch {
+  // storage unavailable — start expanded
+}
+function setTreeCollapsed(value: boolean) {
+  treeCollapsed.value = value;
+  try {
+    localStorage.setItem(TREE_COLLAPSED_KEY, String(value));
+  } catch {
+    // storage unavailable — the toggle still works for this session
+  }
+}
 const showCreateNamespace = ref(false);
 const createSchemaParentId = ref<number | null>(null);
 const showRegisterFlow = ref(false);
@@ -2579,9 +2632,70 @@ onUnmounted(() => {
 
 .sidebar-header h3 {
   margin: 0;
+  margin-right: auto;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.tree-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--spacing-2);
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-collapse-btn:hover {
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+/* Collapsed: a 40px rail with one expand affordance; everything else is hidden. */
+.catalog-sidebar.is-collapsed {
+  width: 40px;
+  min-width: 40px;
+  overflow: hidden;
+}
+
+.catalog-sidebar.is-collapsed > :not(.tree-rail) {
+  display: none;
+}
+
+.tree-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-3);
+  width: 100%;
+  height: 100%;
+  padding: var(--spacing-3) 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-rail:hover {
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+.tree-rail-label {
+  writing-mode: vertical-rl;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .sidebar-new-btn .caret {

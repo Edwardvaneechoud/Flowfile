@@ -288,9 +288,8 @@ test.describe('Node Designer E2E', () => {
   test('catalog Custom Nodes tab lists the node and deep-links into the designer', async ({
     page,
   }) => {
-    await navigateWithAuth(page, authToken, `${BASE_URL}/#/main/catalog`);
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/main/catalog?tab=customNodes`);
 
-    await page.getByText('Custom Nodes', { exact: true }).first().click();
     const row = page.getByText(NODE_NAME, { exact: true }).first();
     await expect(row).toBeVisible({ timeout: 15000 });
 

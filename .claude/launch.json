@@ -4,32 +4,68 @@
     {
       "name": "core",
       "runtimeExecutable": "poetry",
-      "runtimeArgs": ["run", "flowfile_core"],
+      "runtimeArgs": [
+        "run",
+        "flowfile_core"
+      ],
       "port": 63578
     },
     {
       "name": "worker",
       "runtimeExecutable": "poetry",
-      "runtimeArgs": ["run", "flowfile_worker"],
+      "runtimeArgs": [
+        "run",
+        "flowfile_worker"
+      ],
       "port": 63579
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:web", "--prefix", "flowfile_frontend"],
+      "runtimeArgs": [
+        "run",
+        "dev:web",
+        "--prefix",
+        "flowfile_frontend"
+      ],
       "port": 8080
     },
     {
       "name": "wasm",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "flowfile_wasm"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "flowfile_wasm"
+      ],
       "port": 5174
     },
     {
       "name": "docs-site",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "site"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "site"
+      ],
       "port": 8765
+    },
+    {
+      "name": "web-8081",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:web",
+        "--prefix",
+        "flowfile_frontend",
+        "--",
+        "--port",
+        "8081"
+      ],
+      "port": 8081
     }
   ]
 }
