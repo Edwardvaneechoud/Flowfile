@@ -91,16 +91,19 @@ A default catalog (`General`) and schema (`default`) are created automatically o
 
 The Catalog view is split into tabs:
 
-| Tab | Description |
-|-----|-------------|
-| **Catalog** | Browse the namespace tree with flows, tables, and artifacts |
-| **Favorites** | Your starred flows and tables for quick access |
-| **Run History** | Chronological list of all flow executions |
-| **Schedules** | Manage automated flow schedules — see [Schedules](schedules.md) |
-| **SQL** | Query catalog tables — see [SQL Editor](sql-editor.md) |
-| **Notebook** | Notebooks stored next to the data — see [Notebooks](notebooks.md) |
-| **Visuals** | Charts and dashboards built on catalog tables — see [Visualizations](visualizations.md) |
-| **APIs** | Publish flows as HTTP endpoints and manage their keys — see [Serve Flows as APIs](flow-api.md) |
+| Group | Tab | Description |
+|-------|-----|-------------|
+| Browse | **Catalog** | Browse the namespace tree with flows, tables, and artifacts |
+| Browse | **Favorites** | Your starred flows and tables for quick access |
+| Analyze | **SQL** | Query catalog tables — see [SQL Editor](sql-editor.md) |
+| Analyze | **Notebook** | Notebooks stored next to the data — see [Notebooks](notebooks.md) |
+| Analyze | **Visuals** | Charts and dashboards built on catalog tables — see [Visualizations](visualizations.md) |
+| Operate | **Run History** | Chronological list of all flow executions |
+| Operate | **Schedules** | Manage automated flow schedules — see [Schedules](schedules.md) |
+| Operate | **Alerts** | Send flow-run notifications to Slack, Teams, Discord, or a webhook — see [Alerts & Notifications](alerts.md) |
+| Operate | **APIs** | Publish flows as HTTP endpoints and manage their keys — see [Serve Flows as APIs](flow-api.md) |
+
+**Custom Nodes** and **Community Nodes** are no longer catalog tabs — open them from **Settings → Extensions** in the sidebar. See [Settings](../settings.md).
 
 ---
 

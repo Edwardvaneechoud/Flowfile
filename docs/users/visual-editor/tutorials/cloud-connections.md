@@ -11,7 +11,7 @@ A cloud storage connection stores your AWS credentials and configuration under a
 
 ## Create an S3 connection
 
-**1. Open the dialog.** On the **Connections** page (left sidebar), select the **Cloud Storage** tab and click **"+ Add Connection"**.
+**1. Open the dialog.** In the left sidebar, open **Settings → Connections → All connections**, select the **Cloud Storage** tab and click **"+ Add Connection"**.
 
 ![create_new_cloud_storage](../../../assets/images/guides/create_cloud_connection/add_cloud_connection.png)
 

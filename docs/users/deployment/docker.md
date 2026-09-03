@@ -147,7 +147,7 @@ When `FLOWFILE_ENABLE_PROJECTS` is on, Flowfile can mirror your flows, connectio
 
 ### Anonymous usage telemetry
 
-Flowfile's opt-in usage telemetry is hard-off in the bundled compose: it ships `FLOWFILE_TELEMETRY=0`, which disables everything before any consent prompt, file read, or send. To allow it, set `FLOWFILE_TELEMETRY=1` in your `.env` and have an administrator turn it on in the UI — no endpoint configuration is needed, because events go to the Flowfile project's collector at `events.flowfile.app` by default. To keep them in-house instead, set `FLOWFILE_TELEMETRY_ENDPOINT` to your own collector URL; note that the bundled compose passes that variable through as an empty value, which falls back to the built-in default, so leaving it blank is not a way to switch telemetry off. Consent here is not a per-user choice: it is one deployment-wide setting an administrator grants on behalf of every user of that server, so other users never see the consent dialog and view the state read-only under **Compute → Privacy**. [Telemetry & Privacy](../telemetry.md) documents every event and field that can be sent.
+Flowfile's opt-in usage telemetry is hard-off in the bundled compose: it ships `FLOWFILE_TELEMETRY=0`, which disables everything before any consent prompt, file read, or send. To allow it, set `FLOWFILE_TELEMETRY=1` in your `.env` and have an administrator turn it on in the UI — no endpoint configuration is needed, because events go to the Flowfile project's collector at `events.flowfile.app` by default. To keep them in-house instead, set `FLOWFILE_TELEMETRY_ENDPOINT` to your own collector URL; note that the bundled compose passes that variable through as an empty value, which falls back to the built-in default, so leaving it blank is not a way to switch telemetry off. Consent here is not a per-user choice: it is one deployment-wide setting an administrator grants on behalf of every user of that server, so other users never see the consent dialog and view the state read-only under **Settings → Preferences → Privacy**. [Telemetry & Privacy](../telemetry.md) documents every event and field that can be sent.
 
 ## .env Example
 
@@ -281,7 +281,7 @@ Maximum **500 MB** per file.
 
 ### Usage
 
-1. Click the **File Manager** icon in the left sidebar
+1. Open **Settings** (the gear icon in the left sidebar) and choose **Workspace → File Manager**
 2. Click **Upload** to add a file
 3. Uploaded files appear in the file list and can be used in **Read Data** input nodes
 4. Click the delete icon to remove a file
