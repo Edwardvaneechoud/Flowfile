@@ -141,11 +141,13 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
   const fb = (s: CompletionSource) => fallbackWhenNoLsp(s, isLspActive);
   const na = notInAsBinding; // identifier sources skip the `as <name>` binding position
 
+  // Catalog-ref chain entries ride inside the identifier source: Jedi resolves the same
+  // chains from the kernel client's return annotations, and a separate override source
+  // would render the overlap as duplicate rows.
+  const curated = [catalogRefChainCompletions, createRefVariableCompletions(getPrior)];
+
   return [
-    na(createIdentifierCompletionSource(getLspCtx, getPrior)),
-    // Custom completions Jedi can't derive from introspection — always on.
-    na(catalogRefChainCompletions),
-    na(createRefVariableCompletions(getPrior)),
+    na(createIdentifierCompletionSource(getLspCtx, getPrior, curated)),
     // String-literal content sources Jedi can't provide — always on.
     createNamedInputCompletions(getInputNames),
     createUpstreamColumnCompletions(getUpstreamColumns),
