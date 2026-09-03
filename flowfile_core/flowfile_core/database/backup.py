@@ -132,7 +132,9 @@ def snapshot_database(db_path: Path, from_revision: str | None, to_revision: str
 
 def create_snapshot(db_path: Path, reason: Literal["manual", "pre_update"]) -> Path | None:
     """Snapshot *db_path* on demand. Same retention and best-effort contract as a migration snapshot."""
-    return _write_snapshot(db_path, reason.replace("_", "-"))
+    # literal tags, not a transform of the request value: the file name never derives from user input
+    tag = "pre-update" if reason == "pre_update" else "manual"
+    return _write_snapshot(db_path, tag)
 
 
 def _name_pattern(stem: str, suffix: str) -> re.Pattern[str]:
