@@ -24,8 +24,8 @@ const { errors } = toRefs(props);
 }
 
 .error-box {
-  border: 1px solid #f2dede;
-  background-color: #f9f2f4;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-danger-light));
+  background-color: var(--color-danger-light);
   padding: 2px;
   margin: 4px 0;
   border-radius: 4px;
@@ -33,6 +33,6 @@ const { errors } = toRefs(props);
 
 .error-icon {
   margin-right: 10px;
-  color: #a94442;
+  color: var(--color-danger-dark);
 }
 </style>

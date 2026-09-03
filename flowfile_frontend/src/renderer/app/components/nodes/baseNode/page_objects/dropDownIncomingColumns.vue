@@ -84,7 +84,7 @@ defineExpose({ selectedValue });
   padding: 10px 12px;
   font-size: 14px;
   line-height: 1.4;
-  border: 1px solid #ddd;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   outline: none;
   transition:
@@ -93,7 +93,7 @@ defineExpose({ selectedValue });
 }
 
 .select-box:focus {
-  border-color: #3498db;
+  border-color: var(--color-accent);
   box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
 }
 
@@ -102,7 +102,7 @@ defineExpose({ selectedValue });
   top: 100%;
   left: 0;
   width: 100%;
-  border: 1px solid #ddd;
+  border: 1px solid var(--color-border-primary);
   border-top: none;
   border-radius: 0 0 4px 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -124,11 +124,11 @@ defineExpose({ selectedValue });
 }
 
 .options-list li:not(:last-child) {
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .options-list li:hover {
-  background-color: #f0f0f0;
+  background-color: var(--color-background-hover);
 }
 </style>
 ../../../stores/column-store

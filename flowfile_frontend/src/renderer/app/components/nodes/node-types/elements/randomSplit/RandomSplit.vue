@@ -202,11 +202,11 @@ defineExpose({
   align-items: center;
   width: 22px;
   height: 22px;
-  background: #f1f5f9;
+  background: var(--color-background-tertiary);
   border-radius: 4px;
   font-weight: 600;
   font-size: 12px;
-  color: #475569;
+  color: var(--color-text-secondary);
 }
 .split-name {
   flex: 1;
@@ -215,20 +215,20 @@ defineExpose({
   width: 80px;
 }
 .split-pct-suffix {
-  color: #64748b;
+  color: var(--color-text-tertiary);
   font-size: 12px;
 }
 .split-total {
   margin-top: 8px;
   font-size: 12px;
-  color: #475569;
+  color: var(--color-text-secondary);
 }
 .split-total--bad {
-  color: #dc2626;
+  color: var(--color-danger-dark);
 }
 .seed-hint {
   margin-top: 4px;
   font-size: 11px;
-  color: #64748b;
+  color: var(--color-text-tertiary);
 }
 </style>

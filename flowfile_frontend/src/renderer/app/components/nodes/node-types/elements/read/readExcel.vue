@@ -168,7 +168,7 @@ label {
 
 input {
   padding: 6px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-size: 14px;
   width: 99%;
@@ -185,7 +185,7 @@ input {
   width: 96%;
   padding: 6px;
   font-size: 14px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
 }
 
@@ -202,7 +202,7 @@ input {
 .section-divider {
   margin: 16px 0;
   border: none;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--color-border-primary);
 }
 
 .table-sizes {
@@ -211,7 +211,7 @@ input {
 }
 
 .warning-sign {
-  color: #e74c3c;
+  color: var(--color-danger);
   font-size: 16px;
   margin-left: 8px;
 }

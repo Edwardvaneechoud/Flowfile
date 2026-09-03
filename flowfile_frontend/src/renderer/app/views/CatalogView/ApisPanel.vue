@@ -281,7 +281,7 @@ onMounted(load);
   border-radius: 10px;
 }
 .status-pill.on {
-  background-color: var(--color-success-bg, #e6f4ea);
+  background-color: var(--color-success-light);
   color: var(--color-success, #1e7e34);
 }
 .status-pill.off {

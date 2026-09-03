@@ -629,7 +629,7 @@ const thinkingHtml = computed<string>(() => {
 }
 
 .ai-agent-event__markdown :deep(a) {
-  color: var(--color-link, #0366d6);
+  color: var(--color-accent-dark);
   text-decoration: underline;
 }
 

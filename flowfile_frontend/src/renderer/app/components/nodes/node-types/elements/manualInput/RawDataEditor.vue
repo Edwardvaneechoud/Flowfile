@@ -785,7 +785,7 @@ watch(rawData, (newVal) => {
 
 .delete-column-btn:hover {
   color: var(--color-danger);
-  background: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+  background: var(--color-danger-light);
 }
 
 .delete-column-btn i {
@@ -906,7 +906,7 @@ watch(rawData, (newVal) => {
 
 .delete-row-btn:hover {
   color: var(--color-danger);
-  background: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+  background: var(--color-danger-light);
 }
 
 .delete-row-btn i {

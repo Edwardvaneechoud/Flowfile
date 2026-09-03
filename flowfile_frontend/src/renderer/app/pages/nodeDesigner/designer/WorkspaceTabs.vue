@@ -447,7 +447,7 @@ function handleInsertVariable(code: string) {
 }
 
 .issue-list li.error {
-  color: var(--color-text-danger, #dc2626);
+  color: var(--color-danger);
 }
 
 .issue-list li.warning {

@@ -686,7 +686,7 @@ defineExpose({
 .udn-drift-banner {
   margin: 0 0 var(--spacing-4, 16px);
   padding: var(--spacing-3, 12px) var(--spacing-4, 16px);
-  background-color: var(--color-warning-soft, #fff8e1);
+  background-color: var(--color-warning-light);
   border-left: 3px solid var(--color-warning, #f59e0b);
   border-radius: var(--border-radius-md, 6px);
   font-size: var(--font-size-sm, 13px);
@@ -711,7 +711,7 @@ defineExpose({
 }
 
 .udn-state-card--broken {
-  background-color: var(--color-danger-soft, #fef2f2);
+  background-color: var(--color-danger-light);
   border-color: var(--color-danger, #dc2626);
 }
 
@@ -779,7 +779,7 @@ defineExpose({
 .kernel-error {
   padding: var(--spacing-2, 8px) var(--spacing-4, 16px) 0;
   font-size: var(--font-size-xs, 12px);
-  color: var(--color-text-danger, #dc2626);
+  color: var(--color-danger);
 }
 
 .kernel-select-el {
@@ -834,12 +834,12 @@ defineExpose({
 }
 
 .match-badge--full {
-  color: #3f9c35;
+  color: var(--color-success-dark);
   background: rgba(103, 194, 58, 0.12);
 }
 
 .match-badge--partial {
-  color: #b7791f;
+  color: var(--color-warning-dark);
   background: rgba(230, 162, 60, 0.12);
 }
 
@@ -858,7 +858,7 @@ defineExpose({
 }
 
 .kernel-match-hint--warn {
-  color: #b7791f;
+  color: var(--color-warning-dark);
 }
 
 .kernel-match-hint--muted {

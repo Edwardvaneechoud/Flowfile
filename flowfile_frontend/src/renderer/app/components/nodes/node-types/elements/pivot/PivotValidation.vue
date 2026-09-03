@@ -43,7 +43,7 @@ const showValidationMessages = computed(() => {
 }
 
 .error-message {
-  color: #991b1b;
+  color: var(--color-danger-dark);
   margin: 5px 0;
   font-size: 12px;
 }

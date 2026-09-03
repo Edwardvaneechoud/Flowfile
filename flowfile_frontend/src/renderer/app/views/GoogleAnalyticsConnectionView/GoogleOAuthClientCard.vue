@@ -241,13 +241,13 @@ onMounted(loadConfig);
 }
 
 .badge-success {
-  background: #d1fae5;
-  color: #065f46;
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
 }
 
 .badge-warning {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
 }
 
 .label-hint {

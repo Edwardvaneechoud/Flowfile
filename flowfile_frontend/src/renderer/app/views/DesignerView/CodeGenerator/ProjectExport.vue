@@ -276,7 +276,7 @@ onMounted(fetchManifest);
 .project-error {
   padding: 10px 14px;
   border-radius: var(--border-radius-md);
-  background: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+  background: var(--color-danger-light);
   color: var(--color-danger, #ef4444);
   font-size: var(--font-size-sm, 13px);
   white-space: pre-wrap;
