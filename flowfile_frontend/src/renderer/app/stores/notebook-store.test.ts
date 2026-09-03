@@ -276,12 +276,52 @@ describe("run routing", () => {
 });
 
 describe("insertReadCell", () => {
-  it("inserts a Python read cell", () => {
+  it("reuses a trailing blank Python cell with a typed ref chain", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
+    const before = store.active!.cells.length;
+    const cell = store.insertReadCell("Demo.market.fx_rates")!;
+    expect(store.active!.cells.length).toBe(before);
+    expect(cell.cellType).toBe("python");
+    expect(cell.code).toBe(
+      'df = flowfile_ctx.get_catalog("Demo").get_schema("market").get_table_ref("fx_rates").read()',
+    );
+  });
+
+  it("inserts at the caret of the focused cell on its own line", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const cell = store.active!.cells[0];
+    store.setCellCode(cell.id, "x = 1\ny = 2");
+    store.setCellCursor(cell.id, 5);
+    const target = store.insertReadCell("orders")!;
+    expect(target.id).toBe(cell.id);
+    expect(cell.code).toBe('x = 1\ndf = flowfile_ctx.read_catalog_table("orders")\ny = 2');
+    expect(cell.cursor).toBe(5 + 1 + 'df = flowfile_ctx.read_catalog_table("orders")'.length);
+    expect(store.active!.cells.length).toBe(1);
+  });
+
+  it("ignores a focused markdown cell and appends instead", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const md = store.addCell("markdown")!;
+    store.setCellCursor(md.id, 0);
+    const before = store.active!.cells.length;
     const cell = store.insertReadCell("orders")!;
     expect(cell.cellType).toBe("python");
-    expect(cell.code).toBe('df = flowfile_ctx.read_catalog_table("orders")\ndf');
+    expect(store.active!.cells.length).toBe(before + 1);
+    expect(store.active!.focusedCellId).toBe(cell.id);
+  });
+
+  it("appends a new cell when the last one has code", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const last = store.active!.cells[store.active!.cells.length - 1];
+    store.setCellCode(last.id, "x = 1");
+    const before = store.active!.cells.length;
+    const cell = store.insertReadCell("orders")!;
+    expect(store.active!.cells.length).toBe(before + 1);
+    expect(cell.code).toBe('df = flowfile_ctx.read_catalog_table("orders")');
   });
 });
 

@@ -248,6 +248,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           @update:editing="(e: boolean) => store.setCellEditing(cell.id, e)"
           @move="(dir: -1 | 1) => store.moveCell(cell.id, dir)"
           @remove="store.removeCell(cell.id)"
+          @cursor="(pos: number) => store.setCellCursor(cell.id, pos)"
         />
 
         <!-- Hover-to-insert: a faint "+" appears between cells; click to add a
