@@ -72,21 +72,48 @@
 
         <div class="nb-toolbar-spacer"></div>
 
-        <!-- Kernel selector (Python cells); state is polled live -->
+        <!-- Kernel selector (Python cells); state is polled live. The selected label
+             carries a state dot, and a stale/stopped selection turns the field amber. -->
         <el-select
           :model-value="store.active?.kernelId ?? null"
           placeholder="Select kernel"
           size="small"
-          style="width: 200px"
+          class="nb-kernel-select"
+          :class="{ 'nb-kernel-select--attention': needsAttention }"
           clearable
           @change="(v: string | null) => store.setKernel(v)"
         >
+          <template #label>
+            <span class="nb-kernel-label">
+              <i
+                v-if="kernelStatus.kind === 'missing'"
+                class="fa-solid fa-triangle-exclamation nb-kernel-label__warn"
+              ></i>
+              <span
+                v-else-if="'kernel' in kernelStatus"
+                class="nb-kernel-dot"
+                :class="`nb-kernel-dot--${kernelStatus.kernel.state}`"
+              ></span>
+              <span class="nb-kernel-label__name">{{ selectedKernelLabel }}</span>
+            </span>
+          </template>
           <el-option
             v-for="k in kernels"
             :key="k.id"
             :label="`${k.name} (${k.state})`"
             :value="k.id"
-          />
+          >
+            <span class="nb-kernel-option">
+              <span class="nb-kernel-dot" :class="`nb-kernel-dot--${k.state}`"></span>
+              <span>{{ k.name }}</span>
+              <span class="nb-kernel-option__state">{{ k.state }}</span>
+            </span>
+          </el-option>
+          <template #footer>
+            <router-link :to="kernelsRoute" class="nb-kernel-footer-link">
+              <i class="fa-solid fa-microchip"></i> Manage kernels
+            </router-link>
+          </template>
         </el-select>
 
         <el-button
@@ -111,13 +138,23 @@
               <el-dropdown-item :disabled="!store.active?.kernelId" @click="store.restartKernel()">
                 <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Restart kernel
               </el-dropdown-item>
+              <el-dropdown-item
+                v-if="kernelStatus.kind === 'stopped'"
+                :disabled="startingKernel"
+                @click="startKernel"
+              >
+                <i class="fa-solid fa-play nb-menu-icon"></i> Start kernel
+              </el-dropdown-item>
+              <el-dropdown-item divided @click="router.push(kernelsRoute)">
+                <i class="fa-solid fa-microchip nb-menu-icon"></i> Manage kernels…
+              </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
 
         <el-button
           size="small"
-          type="success"
+          class="nb-run-all"
           :loading="running"
           :disabled="running"
           @click="runAll"
@@ -150,18 +187,29 @@
       </el-tabs>
     </div>
 
-    <!-- No-kernel / Docker banner -->
-    <div v-if="store.hasPythonCells && !store.active?.kernelId" class="nb-banner">
-      <i class="fa-solid fa-circle-info"></i>
-      <span v-if="dockerAvailable">
-        This notebook has Python cells — select or
-        <router-link :to="{ name: 'compute', query: { tab: 'kernels' } }"
-          >start a kernel</router-link
+    <!-- Kernel status banner: the one place that says why Python cells won't run
+         (no kernel, Docker off, kernel gone, stopped, starting, errored) and what to do. -->
+    <div v-if="banner" class="nb-banner" :class="`nb-banner--${banner.tone}`">
+      <i :class="banner.icon"></i>
+      <span class="nb-banner__text">{{ banner.text }}</span>
+      <span class="nb-banner__actions">
+        <el-button
+          v-if="kernelStatus.kind === 'stopped' && !startingKernel"
+          size="small"
+          class="nb-banner__btn"
+          @click="startKernel"
         >
-        to run them. Markdown cells run without a kernel.
-      </span>
-      <span v-else>
-        Docker is not available — Python cells are disabled. Markdown cells still work.
+          <i class="fa-solid fa-play" style="margin-right: 4px"></i> Start kernel
+        </el-button>
+        <el-button
+          v-if="kernelStatus.kind === 'missing'"
+          size="small"
+          class="nb-banner__btn"
+          @click="store.setKernel(null)"
+        >
+          Clear selection
+        </el-button>
+        <router-link :to="kernelsRoute" class="nb-banner__link">Manage kernels</router-link>
       </span>
     </div>
 
@@ -251,6 +299,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -259,6 +308,10 @@ import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
+import {
+  kernelStatusNeedsAttention,
+  resolveNotebookKernelStatus,
+} from "../../components/notebook/notebookKernelStatus";
 import type { CellType } from "../../components/notebook/types";
 import type { KernelInfo } from "../../types/kernel.types";
 
@@ -266,6 +319,8 @@ const KERNEL_POLL_MS = 5000;
 
 const store = useNotebookStore();
 const catalogStore = useCatalogStore();
+const router = useRouter();
+const kernelsRoute = { name: "compute", query: { tab: "kernels" } } as const;
 
 const saveAsVisible = ref(false);
 const saveAsName = ref("");
@@ -283,9 +338,104 @@ const defaultNamespaceId = computed<number | null>(() => {
 });
 
 const kernels = ref<KernelInfo[]>([]);
+const kernelsLoaded = ref(false);
 const dockerAvailable = ref(true);
 const running = ref(false);
+const startingKernel = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+const kernelStatus = computed(() =>
+  resolveNotebookKernelStatus({
+    kernelId: store.active?.kernelId ?? null,
+    kernels: kernels.value,
+    kernelsLoaded: kernelsLoaded.value,
+    dockerAvailable: dockerAvailable.value,
+  }),
+);
+const needsAttention = computed(() => kernelStatusNeedsAttention(kernelStatus.value));
+const selectedKernelLabel = computed(() => {
+  const s = kernelStatus.value;
+  if (s.kind === "missing") return "Kernel not found";
+  if ("kernel" in s) return s.kernel.name;
+  return store.active?.kernelId ?? "";
+});
+
+interface KernelBanner {
+  tone: "info" | "warning" | "danger";
+  icon: string;
+  text: string;
+}
+
+// Only the "no kernel" nudge waits for Python cells; a bad selection is always worth saying.
+const banner = computed<KernelBanner | null>(() => {
+  const s = kernelStatus.value;
+  const name = "kernel" in s ? `"${s.kernel.name}"` : "";
+  switch (s.kind) {
+    case "docker-off":
+      return store.hasPythonCells
+        ? {
+            tone: "info",
+            icon: "fa-solid fa-circle-info",
+            text: "Docker is not available — Python cells are disabled. Markdown cells still work.",
+          }
+        : null;
+    case "none":
+      return store.hasPythonCells
+        ? {
+            tone: "info",
+            icon: "fa-solid fa-circle-info",
+            text: "This notebook has Python cells — select a kernel to run them. Markdown cells run without one.",
+          }
+        : null;
+    case "missing":
+      return {
+        tone: "warning",
+        icon: "fa-solid fa-triangle-exclamation",
+        text: "The kernel this notebook was using no longer exists. Pick another kernel or create one.",
+      };
+    case "stopped":
+      if (!startingKernel.value) {
+        return {
+          tone: "warning",
+          icon: "fa-solid fa-circle-pause",
+          text: `Kernel ${name} is stopped — Python cells and autocomplete won't work until it starts.`,
+        };
+      }
+      return {
+        tone: "info",
+        icon: "fa-solid fa-spinner fa-spin",
+        text: `Starting kernel ${name}…`,
+      };
+    case "starting":
+      return {
+        tone: "info",
+        icon: "fa-solid fa-spinner fa-spin",
+        text: `Kernel ${name} is starting — you can run cells in a moment.`,
+      };
+    case "error":
+      return {
+        tone: "danger",
+        icon: "fa-solid fa-circle-exclamation",
+        text: `Kernel ${name} is in an error state. Check it on the Python Kernels page.`,
+      };
+    default:
+      return null;
+  }
+});
+
+async function startKernel() {
+  const s = kernelStatus.value;
+  if (s.kind !== "stopped") return;
+  startingKernel.value = true;
+  try {
+    await KernelApi.start(s.kernel.id);
+    await loadKernels();
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Failed to start kernel");
+  } finally {
+    startingKernel.value = false;
+  }
+}
 
 const isPersisted = computed(() => store.active?.persistedId != null);
 
@@ -302,8 +452,9 @@ function priorCodes(idx: number): string[] {
 async function loadKernels() {
   try {
     kernels.value = await KernelApi.getAll();
+    kernelsLoaded.value = true;
   } catch {
-    kernels.value = [];
+    // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
   }
 }
 
@@ -462,6 +613,77 @@ async function onDelete() {
   padding-left: 9px;
   padding-right: 9px;
 }
+/* Run All mirrors the designer header's Run button (accent purple). */
+.nb-run-all:not(:disabled) {
+  background-color: var(--color-accent-purple);
+  border-color: var(--color-accent-purple);
+  color: #fff;
+}
+.nb-run-all:not(:disabled):hover {
+  background-color: var(--color-accent-purple-hover);
+  border-color: var(--color-accent-purple-hover);
+  color: #fff;
+}
+
+/* Kernel picker: state dot in the field and in each option; amber when the
+   selection is stale, stopped or errored so the header itself flags it. */
+.nb-kernel-select {
+  width: 220px;
+}
+.nb-kernel-select--attention :deep(.el-select__wrapper) {
+  box-shadow: 0 0 0 1px var(--color-warning) inset;
+}
+.nb-kernel-label,
+.nb-kernel-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1-5, 6px);
+  min-width: 0;
+}
+.nb-kernel-label__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nb-kernel-label__warn {
+  color: var(--color-warning);
+  font-size: 11px;
+}
+.nb-kernel-option__state {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted, #909399);
+}
+.nb-kernel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--color-gray-400, #909399);
+}
+.nb-kernel-dot--idle {
+  background-color: var(--color-success);
+}
+.nb-kernel-dot--executing {
+  background-color: var(--color-warning);
+}
+.nb-kernel-dot--starting,
+.nb-kernel-dot--creating {
+  background-color: var(--color-info);
+}
+.nb-kernel-dot--error {
+  background-color: var(--color-danger);
+}
+.nb-kernel-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1-5, 6px);
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.nb-kernel-footer-link:hover {
+  text-decoration: underline;
+}
 
 /* Canvas-style Save split-button (mirrors HeaderButtons .action-btn-split):
    neutral, unified, with a divider between the Save half and the caret. Sized
@@ -605,7 +827,7 @@ async function onDelete() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: var(--color-info-light);
   color: var(--color-text-secondary);
   border-bottom: 1px solid var(--color-border-light);
@@ -613,6 +835,40 @@ async function onDelete() {
 }
 .nb-banner > i {
   color: var(--color-info);
+}
+.nb-banner--warning {
+  background: var(--color-warning-light);
+}
+.nb-banner--warning > i {
+  color: var(--color-warning);
+}
+.nb-banner--danger {
+  background: var(--color-danger-light, rgba(239, 68, 68, 0.12));
+}
+.nb-banner--danger > i {
+  color: var(--color-danger);
+}
+.nb-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+.nb-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.nb-banner__btn {
+  height: 24px;
+}
+.nb-banner__link {
+  font-size: 12px;
+  color: var(--color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.nb-banner__link:hover {
+  text-decoration: underline;
 }
 .nb-cells {
   flex: 1;

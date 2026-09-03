@@ -64,6 +64,45 @@ describe("buildNotebookCompletionSources", () => {
     expect(catalogs[0].detail).toBe("instance catalog"); // the Jedi row won
   });
 
+  it("yields exactly one `read` row when Jedi resolves a catalog-ref chain the curated source also knows", async () => {
+    mockComplete.mockResolvedValue({
+      items: [
+        { label: "read", type: "function", detail: "def read", documentation: "" },
+        { label: "write", type: "function", detail: "def write", documentation: "" },
+      ],
+    });
+    const opts = optsFor({ getKernelId: () => "k1", getFlowId: () => 1 });
+    const code = 'flowfile_ctx.default_schema().get_table_ref("fx_rates").read';
+    const options = await allOptions(opts, code, code.length);
+    const reads = options.filter((o) => o.label === "read");
+    expect(reads).toHaveLength(1);
+    expect(reads[0].detail).toBe("TableRef.read(delta_version?) -> LazyFrame"); // curated row won
+    expect(reads[0].apply).toBe("read()");
+    expect(options.filter((o) => o.label === "write")).toHaveLength(1);
+  });
+
+  it("yields exactly one row per method on a variable bound to a table ref across cells", async () => {
+    mockComplete.mockResolvedValue({
+      items: [{ label: "exists", type: "function", detail: "def exists", documentation: "" }],
+    });
+    const opts = optsFor({
+      getKernelId: () => "k1",
+      getFlowId: () => 1,
+      getPriorCellCodes: () => ['tref = flowfile_ctx.default_schema().get_table_ref("t")'],
+    });
+    const options = await allOptions(opts, "tref.ex", 7);
+    expect(options.filter((o) => o.label === "exists")).toHaveLength(1);
+  });
+
+  it("still serves the curated catalog-ref entries with no kernel selected", async () => {
+    const opts = optsFor({ getKernelId: () => null });
+    const code = 'flowfile_ctx.get_catalog("c").get_schema("s").';
+    const labels = (await allOptions(opts, code, code.length)).map((o) => o.label);
+    expect(labels).toContain("get_table_ref");
+    expect(labels.filter((l) => l === "get_table_ref")).toHaveLength(1);
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+
   it("suppresses lang-python statics while Jedi is active (no builtin 'print' row)", async () => {
     mockComplete.mockResolvedValue({
       items: [{ label: "proc_data", type: "function", detail: "", documentation: "" }],

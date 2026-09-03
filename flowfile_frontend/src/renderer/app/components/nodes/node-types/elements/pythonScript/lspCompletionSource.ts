@@ -1,8 +1,9 @@
-// Merged identifier completion source: Jedi-backed LSP items (async, abortable, gated
-// on a cached capabilities probe + a live kernel) plus prior-cell scope symbols, deduped
-// by label with the Jedi entry winning (it carries detail + docs). Degrades cleanly:
-// no kernel / LSP off / backend empty -> scope-only; nothing to offer -> null so the
-// other sources serve.
+// Merged identifier completion source: curated static entries (catalog-ref chains, which
+// carry typed signatures + apply snippets), Jedi-backed LSP items (async, abortable, gated
+// on a cached capabilities probe + a live kernel) and prior-cell scope symbols, deduped by
+// label in that precedence. CodeMirror never dedupes across override sources, so every
+// identifier source that can overlap Jedi must merge here. Degrades cleanly: no kernel /
+// LSP off / backend empty -> curated + scope only; nothing to offer -> null.
 import type {
   CompletionContext,
   CompletionResult,
@@ -69,6 +70,7 @@ export function fallbackWhenNoLsp(
 export function createIdentifierCompletionSource(
   getCtx: () => LspContext,
   getPriorCellCodes: () => string[] = () => [],
+  curatedSources: CompletionSource[] = [],
 ) {
   const scopeSource = createScopeCompletions(getPriorCellCodes);
   // Per-editor: a new keystroke in this cell aborts only this cell's previous fetch.
@@ -84,8 +86,15 @@ export function createIdentifierCompletionSource(
     const inAttribute = context.state.sliceDoc(Math.max(0, from - 1), from) === ".";
     const scopeResult = inAttribute ? null : await scopeSource(context);
 
-    // Label -> completion, LSP items first so a symbol Jedi knows keeps its detail + docs.
+    // Label -> completion. Curated entries seed the map (hand-written signature + apply
+    // snippet beat Jedi's bare `def name`), Jedi fills the rest, scope symbols last.
     const merged = new Map<string, Completion>();
+    for (const source of curatedSources) {
+      const result = await source(context);
+      if (context.aborted) return null;
+      if (!result || result.from !== from) continue;
+      for (const opt of result.options) if (!merged.has(opt.label)) merged.set(opt.label, opt);
+    }
     const ctx = getCtx();
     if (ctx.kernelId) {
       const caps = await LspApi.capabilities();
