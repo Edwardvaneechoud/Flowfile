@@ -110,7 +110,7 @@ export const dashboardHelp: PageHelpContent = {
       title: "Datasources & filters",
       icon: "fa-solid fa-filter",
       description:
-        "Each visualization tile resolves to one of two source types: a catalog table (filterable from the dashboard) or a SQL query (not filterable). The dashboard walks viz → catalog table on mount and surfaces the unique tables as datasources. Filters are bound to one datasource; when active, every tile that reads from the same table receives a filter step prepended to its query.",
+        "Each visualization tile resolves to one of two source types: a catalog table (filterable from the dashboard) or a SQL query (not filterable). The dashboard walks viz → catalog table on mount and surfaces the unique tables as datasources. Filters are bound to one datasource for their value list; scoped to that datasource they apply to every tile reading from the same table, scoped to all datasources they apply to every targeted tile with a same-named column of a compatible type — SQL-query tiles included.",
       features: [
         {
           icon: "fa-solid fa-calendar-days",
@@ -131,10 +131,16 @@ export const dashboardHelp: PageHelpContent = {
             "Multi-select with type-ahead. Up to 100 distinct values are loaded; if more exist, a +more hint lets you type custom values.",
         },
         {
+          icon: "fa-solid fa-layer-group",
+          title: "Scope",
+          description:
+            "This datasource: only tiles reading from the bound table. All datasources: any tile with a same-named column of a compatible type; other tiles are left alone. The dialog lists every tile with a check, or the reason it is skipped, and the field picker shows how many tiles each column reaches.",
+        },
+        {
           icon: "fa-solid fa-bullseye",
           title: "Apply to",
           description:
-            "Target every tile backed by the datasource, or pick specific tiles. Empty selection means all.",
+            "Target every eligible tile, or pick specific tiles; tiles the filter cannot reach are greyed out. Empty selection means all.",
         },
       ],
       tips: [

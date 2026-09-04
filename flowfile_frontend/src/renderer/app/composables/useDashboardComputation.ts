@@ -1,30 +1,52 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import { useGraphicWalkerCompute } from "./useGraphicWalkerCompute";
-import type { DashboardFilter, DashboardTile } from "../types";
+import type { DashboardFilter, DashboardFilterKind, DashboardTile } from "../types";
+
+type SemanticType = "quantitative" | "nominal" | "ordinal" | "temporal";
+
+const isSemantic = (s: unknown): s is SemanticType =>
+  s === "quantitative" || s === "nominal" || s === "ordinal" || s === "temporal";
 
 interface VisFilter {
   fid: string;
   rule: Record<string, unknown>;
 }
 
-const buildFilterStep = (
+export const buildFilterStep = (
   filters: DashboardFilter[],
+  tileFields: TileField[] | null,
 ): { type: "filter"; filters: VisFilter[] } | null => {
   const visFilters: VisFilter[] = [];
   for (const f of filters) {
-    const rule = filterToRule(f);
+    const rule = filterToRule(
+      f,
+      tileFields?.find((x) => x.fid === f.field_name),
+    );
     if (rule) visFilters.push({ fid: f.field_name, rule });
   }
   if (!visFilters.length) return null;
   return { type: "filter", filters: visFilters };
 };
 
-const filterToRule = (f: DashboardFilter): Record<string, unknown> | null => {
+const toNumber = (v: unknown): number =>
+  typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+
+/** Categorical selections are stored as strings (the option list is rendered
+ * text) and the worker's ``is_in`` does no casting, so a quantitative column
+ * needs numbers. Entries that do not parse are dropped rather than sent. */
+const categoricalValues = (selected: unknown[], field?: TileField): unknown[] =>
+  field?.semanticType === "quantitative"
+    ? selected.map(toNumber).filter(Number.isFinite)
+    : selected;
+
+const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unknown> | null => {
   if (f.kind === "categorical") {
     const selected = (f.state.selected as unknown[]) ?? [];
     if (!Array.isArray(selected) || !selected.length) return null;
-    return { type: "one of", value: selected };
+    const value = categoricalValues(selected, field);
+    if (!value.length) return null;
+    return { type: "one of", value };
   }
   if (f.kind === "numeric_range") {
     const min = f.state.min as number | null | undefined;
@@ -46,22 +68,93 @@ const filterToRule = (f: DashboardFilter): Record<string, unknown> | null => {
 
 export type TileDatasourceResolver = (tileId: string) => number | null;
 
+/** One column of a tile's data; ``semanticType`` absent or unknown means unclassified. */
+export interface TileField {
+  fid: string;
+  semanticType?: string;
+}
+
+/** A filter reaches beyond its own table when scoped "all" or legacy-untied. */
+export const isCrossSourceFilter = (f: DashboardFilter): boolean =>
+  f.scope === "all" || f.datasource_id == null;
+
+const COMPATIBLE_SEMANTIC_TYPES: Record<DashboardFilterKind, SemanticType[]> = {
+  categorical: ["nominal", "ordinal", "quantitative"],
+  numeric_range: ["quantitative"],
+  date_range: ["temporal"],
+};
+
+/** The worker applies filter rules without casting, so a same-named column of
+ * another type errors (string values in a date ``is_in``, epoch-ms bounds on a
+ * string). Categorical reaches quantitative columns because its values are
+ * coerced to numbers on the way out. Unclassified columns pass. */
+const kindFitsField = (kind: DashboardFilterKind, field: TileField): boolean =>
+  !isSemantic(field.semanticType) || COMPATIBLE_SEMANTIC_TYPES[kind].includes(field.semanticType);
+
+export const filterFitsField = (f: DashboardFilter, field: TileField): boolean =>
+  kindFitsField(f.kind, field);
+
+const SEMANTIC_LABEL: Record<SemanticType, string> = {
+  quantitative: "number",
+  nominal: "text",
+  ordinal: "text",
+  temporal: "date",
+};
+
+const KIND_LABEL: Record<DashboardFilterKind, string> = {
+  categorical: "categorical",
+  numeric_range: "range",
+  date_range: "date range",
+};
+
+export type FieldFit =
+  | { status: "unknown" | "fits" | "missing" }
+  | { status: "type"; reason: string };
+
+/** Explain, for the filter dialog, whether a cross-source filter of ``kind``
+ * on ``fieldName`` reaches a tile whose data has ``tileFields``. */
+export const describeFieldFit = (
+  kind: DashboardFilterKind,
+  fieldName: string,
+  tileFields: TileField[] | null,
+): FieldFit => {
+  if (!tileFields) return { status: "unknown" };
+  const field = tileFields.find((x) => x.fid === fieldName);
+  if (!field) return { status: "missing" };
+  if (kindFitsField(kind, field)) return { status: "fits" };
+  const needs = Array.from(new Set(COMPATIBLE_SEMANTIC_TYPES[kind].map((s) => SEMANTIC_LABEL[s])));
+  const here = SEMANTIC_LABEL[field.semanticType as SemanticType];
+  return {
+    status: "type",
+    reason: `${fieldName} is a ${here} column here; a ${KIND_LABEL[kind]} filter needs ${needs.join(" or ")}`,
+  };
+};
+
 /** Decide which dashboard filters apply to a given tile.
  *
  * Two gates:
- *   1. Datasource gate — when the filter has a ``datasource_id``, the
- *      tile's underlying CatalogTable must match. Legacy filters with a
- *      null ``datasource_id`` skip this gate (they pre-date the binding).
+ *   1. Source gate — a datasource-scoped filter needs the tile's underlying
+ *      CatalogTable to match. A cross-source filter (scope "all", or the
+ *      legacy untied null ``datasource_id``) instead needs the tile's data to
+ *      have a column named ``field_name`` whose type fits the filter kind;
+ *      ``tileFields`` null means the tile's columns are unknown and the gate
+ *      is skipped.
  *   2. Target gate — ``target='all'`` matches every tile that passed
- *      the datasource gate; ``target='tiles'`` matches only the listed ids.
+ *      the source gate; ``target='tiles'`` matches only the listed ids.
  */
 export const filtersTargetingTile = (
   filters: DashboardFilter[],
   tileId: string,
   tileDatasource?: TileDatasourceResolver,
+  tileFields?: TileField[] | null,
 ): DashboardFilter[] =>
   filters.filter((f) => {
-    if (f.datasource_id != null) {
+    if (isCrossSourceFilter(f)) {
+      if (tileFields) {
+        const field = tileFields.find((x) => x.fid === f.field_name);
+        if (!field || !filterFitsField(f, field)) return false;
+      }
+    } else {
       const tds = tileDatasource ? tileDatasource(tileId) : null;
       if (tds !== f.datasource_id) return false;
     }
@@ -72,6 +165,8 @@ export interface UseDashboardComputationOptions {
   tile: Ref<DashboardTile> | ComputedRef<DashboardTile>;
   filters: Ref<DashboardFilter[]> | ComputedRef<DashboardFilter[]>;
   tileDatasource?: TileDatasourceResolver;
+  /** Columns of the tile's data; null while unknown (still loading). */
+  tileFields?: () => TileField[] | null;
   onMissing?: () => void;
 }
 
@@ -80,13 +175,18 @@ export interface UseDashboardComputationOptions {
  * target this tile) before being forwarded to the saved-viz compute API. */
 export function useDashboardComputation(opts: UseDashboardComputationOptions) {
   const effectiveFilters = computed(() =>
-    filtersTargetingTile(opts.filters.value, opts.tile.value.id, opts.tileDatasource),
+    filtersTargetingTile(
+      opts.filters.value,
+      opts.tile.value.id,
+      opts.tileDatasource,
+      opts.tileFields?.() ?? null,
+    ),
   );
 
   const fetcher = async (payload: any): Promise<{ rows: any[]; error: string | null }> => {
     const vizId = opts.tile.value.viz_id;
     if (vizId == null) return { rows: [], error: null };
-    const filterStep = buildFilterStep(effectiveFilters.value);
+    const filterStep = buildFilterStep(effectiveFilters.value, opts.tileFields?.() ?? null);
     const finalPayload =
       filterStep && payload?.workflow
         ? { ...payload, workflow: [filterStep, ...payload.workflow] }

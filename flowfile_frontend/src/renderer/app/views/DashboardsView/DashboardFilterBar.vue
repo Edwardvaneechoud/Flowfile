@@ -160,13 +160,53 @@
             >
               <span class="field-opt">
                 <span class="field-opt-name">{{ col.name }}</span>
-                <span class="field-opt-dtype">{{ col.dtype }}</span>
+                <span class="field-opt-meta">
+                  <span v-if="coverageByField[col.name]" class="field-opt-cover">
+                    {{ coverageByField[col.name] }}
+                  </span>
+                  <span class="field-opt-dtype">{{ col.dtype }}</span>
+                </span>
               </span>
             </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="Label">
           <el-input v-model="draft.label" placeholder="(optional)" />
+        </el-form-item>
+        <el-form-item label="Scope">
+          <el-radio-group v-model="draft.scope" :disabled="draft.datasource_id == null">
+            <el-radio-button value="datasource">This datasource</el-radio-button>
+            <el-radio-button value="all">All datasources</el-radio-button>
+          </el-radio-group>
+          <div class="scope-hint">
+            {{
+              draft.scope === "all"
+                ? "Applies to every targeted tile with a same-named column of a compatible type, whatever table or query it reads from."
+                : "Applies only to tiles reading from this table."
+            }}
+          </div>
+        </el-form-item>
+        <el-form-item v-if="reach.length" label="Reaches">
+          <div class="reach">
+            <div class="reach-summary">
+              {{
+                fieldsLoading ? "Checking tile columns…" : `${reachCount} of ${reach.length} tiles`
+              }}
+            </div>
+            <ul class="reach-list">
+              <li v-for="r in reach" :key="r.id" :class="`is-${r.fit.status}`">
+                <el-icon>
+                  <Check v-if="r.fit.status === 'fits'" />
+                  <Loading v-else-if="r.fit.status === 'unknown'" />
+                  <Close v-else />
+                </el-icon>
+                <span class="reach-label">{{ r.label }}</span>
+                <span v-if="r.fit.status !== 'fits'" class="reach-reason">{{
+                  reachReason(r)
+                }}</span>
+              </li>
+            </ul>
+          </div>
         </el-form-item>
         <el-form-item v-if="modeOptionsVisible" label="Mode">
           <el-radio-group v-model="draft.kind">
@@ -190,11 +230,19 @@
             :disabled="!eligibleTiles.length"
             :placeholder="
               eligibleTiles.length
-                ? 'All tiles for this datasource'
+                ? draft.scope === 'all'
+                  ? 'All tiles'
+                  : 'All tiles for this datasource'
                 : 'No tiles use this datasource'
             "
           >
-            <el-option v-for="t in eligibleTiles" :key="t.id" :value="t.id" :label="t.label" />
+            <el-option
+              v-for="t in eligibleTiles"
+              :key="t.id"
+              :value="t.id"
+              :label="t.label"
+              :disabled="t.disabled"
+            />
           </el-select>
         </el-form-item>
       </el-form>
@@ -210,14 +258,20 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { Close, EditPen, Filter, Plus } from "@element-plus/icons-vue";
+import { Check, Close, EditPen, Filter, Loading, Plus } from "@element-plus/icons-vue";
 import type {
   ColumnSchema,
   ColumnStatsResponse,
   DashboardFilter,
   DashboardFilterKind,
+  DashboardFilterScope,
 } from "../../types";
 import type { DashboardDatasource } from "../../composables/useDashboardDatasources";
+import {
+  describeFieldFit,
+  type FieldFit,
+  type TileField,
+} from "../../composables/useDashboardComputation";
 import { dtypeToDefaultFilterKind, isNumericDtype, isTemporalDtype } from "../../utils/dtype";
 
 const props = defineProps<{
@@ -226,7 +280,13 @@ const props = defineProps<{
   readonlyView?: boolean;
   datasourcesInUse: DashboardDatasource[];
   tilesByDatasource: Record<number, string[]>;
+  /** Every viz tile, the candidate set for scope "all". */
+  vizTileIds?: string[];
   tileLabel?: (tileId: string) => string;
+  /** Columns of a viz tile's data, null while unknown; drives the reach preview. */
+  tileFields?: (tileId: string) => TileField[] | null;
+  /** Fetch the columns of every viz tile; awaited when the dialog opens. */
+  loadTileFields?: () => Promise<void>;
   getColumnStats?: (
     tableId: number,
     column: string,
@@ -246,6 +306,7 @@ interface Draft {
   field_name: string;
   label: string;
   kind: DashboardFilterKind;
+  scope: DashboardFilterScope;
   target_tile_ids: string[];
 }
 
@@ -260,6 +321,7 @@ function blankDraft(): Draft {
     field_name: "",
     label: "",
     kind: "categorical",
+    scope: "datasource",
     target_tile_ids: [],
   };
 }
@@ -342,11 +404,84 @@ const modeOptions = computed<DashboardFilterKind[]>(() => {
 
 const modeOptionsVisible = computed(() => modeOptions.value.length > 1);
 
-const eligibleTiles = computed<{ id: string; label: string }[]>(() => {
+const candidateTileIds = (datasourceId: number, scope: DashboardFilterScope): string[] =>
+  scope === "all" ? (props.vizTileIds ?? []) : (props.tilesByDatasource[datasourceId] ?? []);
+
+const fieldsLoading = ref(false);
+
+const ensureTileFields = async () => {
+  if (!props.loadTileFields) return;
+  fieldsLoading.value = true;
+  try {
+    await props.loadTileFields();
+  } finally {
+    fieldsLoading.value = false;
+  }
+};
+
+const fitFor = (tileId: string, kind: DashboardFilterKind, fieldName: string): FieldFit =>
+  draft.scope === "all"
+    ? describeFieldFit(kind, fieldName, props.tileFields?.(tileId) ?? null)
+    : { status: "fits" };
+
+const eligibleTiles = computed<{ id: string; label: string; disabled: boolean }[]>(() => {
   if (draft.datasource_id == null) return [];
-  const ids = props.tilesByDatasource[draft.datasource_id] ?? [];
-  return ids.map((id) => ({ id, label: props.tileLabel?.(id) ?? id }));
+  return candidateTileIds(draft.datasource_id, draft.scope).map((id) => {
+    const status = draft.field_name ? fitFor(id, draft.kind, draft.field_name).status : "fits";
+    return {
+      id,
+      label: props.tileLabel?.(id) ?? id,
+      disabled: status === "missing" || status === "type",
+    };
+  });
 });
+
+/** Per-tile verdict for the draft, listed under Scope so the reach is visible before saving. */
+const reach = computed<{ id: string; label: string; fit: FieldFit }[]>(() => {
+  if (draft.datasource_id == null || !draft.field_name) return [];
+  return candidateTileIds(draft.datasource_id, draft.scope).map((id) => ({
+    id,
+    label: props.tileLabel?.(id) ?? id,
+    fit: fitFor(id, draft.kind, draft.field_name),
+  }));
+});
+
+const reachCount = computed(() => reach.value.filter((r) => r.fit.status === "fits").length);
+
+const reachReason = (r: { fit: FieldFit }): string => {
+  if (r.fit.status === "missing") return `no ${draft.field_name} column`;
+  if (r.fit.status === "type") return r.fit.reason;
+  if (r.fit.status === "unknown") return "columns not loaded";
+  return "";
+};
+
+/** "n/m tiles" per column under scope "all", judged by the kind its dtype defaults to. */
+const coverageByField = computed<Record<string, string>>(() => {
+  const out: Record<string, string> = {};
+  if (draft.scope !== "all" || draft.datasource_id == null) return out;
+  const ids = candidateTileIds(draft.datasource_id, "all");
+  for (const col of fieldOptions.value) {
+    if (fieldsLoading.value) {
+      out[col.name] = "…";
+      continue;
+    }
+    const kind = dtypeToDefaultFilterKind(col.dtype);
+    const n = ids.filter(
+      (id) => describeFieldFit(kind, col.name, props.tileFields?.(id) ?? null).status === "fits",
+    ).length;
+    out[col.name] = `${n}/${ids.length} tiles`;
+  }
+  return out;
+});
+
+// Explicit targets from the other scope may no longer be candidates.
+watch(
+  () => draft.scope,
+  () => {
+    const ids = new Set(eligibleTiles.value.map((t) => t.id));
+    draft.target_tile_ids = draft.target_tile_ids.filter((id) => ids.has(id));
+  },
+);
 
 const canSave = computed(() => draft.datasource_id != null && draft.field_name.trim().length > 0);
 
@@ -383,6 +518,7 @@ const initialStateFor = (kind: DashboardFilterKind): Record<string, unknown> => 
 const openAdd = () => {
   dialogMode.value = "add";
   Object.assign(draft, blankDraft());
+  void ensureTileFields();
   dialogOpen.value = true;
 };
 
@@ -394,8 +530,10 @@ const openEdit = (f: DashboardFilter) => {
     field_name: f.field_name,
     label: f.label ?? "",
     kind: f.kind,
+    scope: f.scope ?? "datasource",
     target_tile_ids: [...f.target_tile_ids],
   });
+  void ensureTileFields();
   dialogOpen.value = true;
 };
 
@@ -405,7 +543,7 @@ const resetDraft = () => {
 
 const confirmDialog = () => {
   if (!canSave.value || draft.datasource_id == null) return;
-  const all = props.tilesByDatasource[draft.datasource_id] ?? [];
+  const all = candidateTileIds(draft.datasource_id, draft.scope);
   const explicit = draft.target_tile_ids.filter((id) => all.includes(id));
   const useAll = explicit.length === 0 || explicit.length === all.length;
 
@@ -419,6 +557,7 @@ const confirmDialog = () => {
       target: useAll ? "all" : "tiles",
       target_tile_ids: useAll ? [] : explicit,
       datasource_id: draft.datasource_id,
+      scope: draft.scope,
     };
     emit("update:filters", [...props.filters, next]);
   } else {
@@ -436,6 +575,7 @@ const confirmDialog = () => {
           field_name: draft.field_name.trim(),
           label: draft.label.trim() || null,
           kind: draft.kind,
+          scope: draft.scope,
           // Reset state when the shape changes (kind/field/datasource)
           state: kindChanged || fieldChanged || dsChanged ? initialStateFor(draft.kind) : x.state,
           target: useAll ? "all" : "tiles",
@@ -564,6 +704,13 @@ const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
   font-size: 10px;
   letter-spacing: 0.04em;
 }
+.scope-hint {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+}
 .filter-chip-colon {
   color: var(--el-text-color-secondary);
   margin-right: 2px;
@@ -618,5 +765,45 @@ const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
   color: var(--el-text-color-secondary);
   font-family: var(--el-font-family-monospace, monospace);
   font-size: 11px;
+}
+.field-opt-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.field-opt-cover {
+  color: var(--el-color-primary);
+  font-size: 11px;
+}
+.reach {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.reach-summary {
+  color: var(--el-text-color-secondary);
+}
+.reach-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+}
+.reach-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.reach-list li.is-fits .el-icon {
+  color: var(--el-color-success);
+}
+.reach-list li.is-missing .el-icon,
+.reach-list li.is-type .el-icon {
+  color: var(--el-color-danger);
+}
+.reach-list li.is-unknown .el-icon {
+  color: var(--el-text-color-secondary);
+}
+.reach-reason {
+  color: var(--el-text-color-secondary);
 }
 </style>

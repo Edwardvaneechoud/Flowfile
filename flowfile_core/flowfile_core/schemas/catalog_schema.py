@@ -792,6 +792,12 @@ class DashboardFilter(BaseModel):
     ``schema_columns``. Filters without ``datasource_id`` are legacy /
     "untied" — they apply on field-name match alone.
 
+    ``scope`` widens a bound filter beyond its own table: ``"datasource"``
+    (default) applies only to tiles reading from ``datasource_id``, while
+    ``"all"`` applies to every targeted tile whose data has a column named
+    ``field_name`` of a compatible type — the datasource then only supplies
+    the value list.
+
     ``state`` carries widget-specific values (selected categorical values,
     a date range, a numeric range). The frontend injects these as a
     ``filter`` workflow step at the front of every targeted tile's GW
@@ -806,6 +812,7 @@ class DashboardFilter(BaseModel):
     target: Literal["all", "tiles"] = "all"
     target_tile_ids: list[str] = Field(default_factory=list)
     datasource_id: int | None = None
+    scope: Literal["datasource", "all"] = "datasource"
 
 
 class DashboardLayout(BaseModel):

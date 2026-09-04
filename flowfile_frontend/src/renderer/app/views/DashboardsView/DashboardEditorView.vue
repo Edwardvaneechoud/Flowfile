@@ -86,7 +86,10 @@
             mode="edit"
             :datasources-in-use="datasourcesInUse"
             :tiles-by-datasource="tilesByDatasource"
+            :viz-tile-ids="vizTileIds"
             :tile-label="tileLabel"
+            :tile-fields="tileFields"
+            :load-tile-fields="loadTileFields"
             :get-column-stats="getColumnStats"
             :stats-refresh-nonce="statsRefreshNonce"
             @update:filters="onFiltersChange"
@@ -300,8 +303,17 @@ const startAutosaveSession = (dashboard: Dashboard) => {
 };
 
 const layoutRef = computed<DashboardLayout>(() => store.current?.layout ?? EMPTY_DASHBOARD_LAYOUT);
-const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats, refresh } =
-  useDashboardDatasources(layoutRef);
+const {
+  datasourcesInUse,
+  tilesByDatasource,
+  vizTileIds,
+  tileDatasource,
+  tileLabel,
+  tileFields,
+  loadTileFields,
+  getColumnStats,
+  refresh,
+} = useDashboardDatasources(layoutRef);
 
 const addedVizIds = computed(() => {
   if (!store.current) return new Set<number>();
