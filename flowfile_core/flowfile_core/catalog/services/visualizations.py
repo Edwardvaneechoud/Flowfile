@@ -386,7 +386,7 @@ class VisualizationService:
             name=payload.name,
             description=payload.description,
             layout_json=payload.layout.model_dump_json(),
-            layout_version=payload.layout.grid.version,
+            layout_version=1,
             namespace_id=payload.namespace_id,
             created_by=user_id,
         )

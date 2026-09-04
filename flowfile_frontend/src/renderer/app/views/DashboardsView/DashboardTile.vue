@@ -1,14 +1,18 @@
 <template>
   <div
+    ref="rootEl"
     class="tile"
     :class="{
       'tile-text': isText,
       'tile-text-view': isText && mode === 'view',
+      'tile-separator': isSeparator,
+      'tile-separator-vertical': isSeparator && isVertical,
+      'tile-separator-edit': isSeparator && mode === 'edit',
     }"
     :style="tileStyle"
     @contextmenu="onTileContextMenu"
   >
-    <div v-if="!isText" class="tile-header" :class="{ 'tile-handle': mode === 'edit' }">
+    <div v-if="isViz" class="tile-header" :class="{ 'tile-handle': mode === 'edit' }">
       <span class="tile-title">{{ headerTitle }}</span>
       <div class="tile-header-actions">
         <span v-if="lastError" class="tile-error" :title="lastError"
@@ -33,13 +37,22 @@
       </div>
     </div>
 
-    <div v-if="isText && mode === 'edit' && !textEditing" class="tile-text-actions" @mousedown.stop>
+    <div v-if="!isViz && mode === 'edit' && !textEditing" class="tile-text-actions" @mousedown.stop>
       <el-dropdown trigger="click" @click.stop>
         <el-icon class="tile-menu"><MoreFilled /></el-icon>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item @click="toggleTextEdit">
+            <el-dropdown-item v-if="isText" @click="toggleTextEdit">
               <el-icon><EditPen /></el-icon> Edit text
+            </el-dropdown-item>
+            <el-dropdown-item v-if="isSeparator" @click="openStyleMenu">
+              <el-icon><Brush /></el-icon> Style
+            </el-dropdown-item>
+            <el-dropdown-item
+              v-if="isSeparator"
+              @click="setOrientation(isVertical ? 'horizontal' : 'vertical')"
+            >
+              <el-icon><Switch /></el-icon> Make {{ isVertical ? "horizontal" : "vertical" }}
             </el-dropdown-item>
             <el-dropdown-item divided @click="emit('remove')">
               <el-icon><Delete /></el-icon> Remove from dashboard
@@ -49,8 +62,9 @@
       </el-dropdown>
     </div>
 
-    <div class="tile-body" :class="{ 'tile-handle': isText && mode === 'edit' && !textEditing }">
-      <template v-if="isText">
+    <div class="tile-body" :class="{ 'tile-handle': !isViz && mode === 'edit' && !textEditing }">
+      <div v-if="isSeparator" class="tile-separator-line" :style="separatorLineStyle" />
+      <template v-else-if="isText">
         <textarea
           v-if="mode === 'edit' && textEditing"
           ref="textareaEl"
@@ -122,56 +136,116 @@
         class="tile-color-menu"
         :style="{ left: `${colorMenu.x}px`, top: `${colorMenu.y}px` }"
       >
-        <div class="tile-color-menu-title">Background</div>
-        <div class="tile-color-swatches">
-          <button
-            v-for="preset in bgPresets"
-            :key="preset.value ?? 'bg-none'"
-            type="button"
-            class="tile-color-swatch"
-            :class="{
-              'is-none': preset.value === null,
-              'is-active': (tile.bg_color ?? null) === preset.value,
-            }"
-            :style="preset.value ? { background: preset.value } : undefined"
-            :title="preset.label"
-            @click="setBg(preset.value)"
-          >
-            <el-icon v-if="preset.value === null"><Close /></el-icon>
-          </button>
-          <label class="tile-color-swatch tile-color-custom" title="Custom color">
-            <input
-              type="color"
-              :value="tile.bg_color || '#ffffff'"
-              @change="setBg(($event.target as HTMLInputElement).value)"
-            />
-          </label>
-        </div>
-        <div class="tile-color-menu-title">Text</div>
-        <div class="tile-color-swatches">
-          <button
-            v-for="preset in textPresets"
-            :key="preset.value ?? 'text-none'"
-            type="button"
-            class="tile-color-swatch"
-            :class="{
-              'is-none': preset.value === null,
-              'is-active': (tile.text_color ?? null) === preset.value,
-            }"
-            :style="preset.value ? { background: preset.value } : undefined"
-            :title="preset.label"
-            @click="setTextColor(preset.value)"
-          >
-            <el-icon v-if="preset.value === null"><Close /></el-icon>
-          </button>
-          <label class="tile-color-swatch tile-color-custom" title="Custom color">
-            <input
-              type="color"
-              :value="tile.text_color || '#000000'"
-              @change="setTextColor(($event.target as HTMLInputElement).value)"
-            />
-          </label>
-        </div>
+        <template v-if="isSeparator">
+          <div class="tile-color-menu-title">Line</div>
+          <div class="tile-color-swatches">
+            <button
+              v-for="preset in textPresets"
+              :key="preset.value ?? 'line-none'"
+              type="button"
+              class="tile-color-swatch"
+              :class="{
+                'is-none': preset.value === null,
+                'is-active': (tile.line_color ?? null) === preset.value,
+              }"
+              :style="preset.value ? { background: preset.value } : undefined"
+              :title="preset.label"
+              @click="setLineColor(preset.value)"
+            >
+              <el-icon v-if="preset.value === null"><Close /></el-icon>
+            </button>
+            <label class="tile-color-swatch tile-color-custom" title="Custom color">
+              <input
+                type="color"
+                :value="tile.line_color || '#000000'"
+                @change="setLineColor(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+          </div>
+          <div class="tile-color-menu-title">Thickness</div>
+          <div class="tile-color-swatches">
+            <button
+              v-for="t in thicknessOptions"
+              :key="t"
+              type="button"
+              class="tile-color-swatch tile-thickness"
+              :class="{ 'is-active': separatorThickness === t }"
+              :title="`${t}px`"
+              @click="setThickness(t)"
+            >
+              {{ t }}
+            </button>
+          </div>
+          <div class="tile-color-menu-title">Orientation</div>
+          <div class="tile-color-swatches">
+            <el-button
+              size="small"
+              :type="isVertical ? undefined : 'primary'"
+              @click="setOrientation('horizontal')"
+            >
+              Horizontal
+            </el-button>
+            <el-button
+              size="small"
+              :type="isVertical ? 'primary' : undefined"
+              @click="setOrientation('vertical')"
+            >
+              Vertical
+            </el-button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="tile-color-menu-title">Background</div>
+          <div class="tile-color-swatches">
+            <button
+              v-for="preset in bgPresets"
+              :key="preset.value ?? 'bg-none'"
+              type="button"
+              class="tile-color-swatch"
+              :class="{
+                'is-none': preset.value === null,
+                'is-active': (tile.bg_color ?? null) === preset.value,
+              }"
+              :style="preset.value ? { background: preset.value } : undefined"
+              :title="preset.label"
+              @click="setBg(preset.value)"
+            >
+              <el-icon v-if="preset.value === null"><Close /></el-icon>
+            </button>
+            <label class="tile-color-swatch tile-color-custom" title="Custom color">
+              <input
+                type="color"
+                :value="tile.bg_color || '#ffffff'"
+                @change="setBg(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+          </div>
+          <div class="tile-color-menu-title">Text</div>
+          <div class="tile-color-swatches">
+            <button
+              v-for="preset in textPresets"
+              :key="preset.value ?? 'text-none'"
+              type="button"
+              class="tile-color-swatch"
+              :class="{
+                'is-none': preset.value === null,
+                'is-active': (tile.text_color ?? null) === preset.value,
+              }"
+              :style="preset.value ? { background: preset.value } : undefined"
+              :title="preset.label"
+              @click="setTextColor(preset.value)"
+            >
+              <el-icon v-if="preset.value === null"><Close /></el-icon>
+            </button>
+            <label class="tile-color-swatch tile-color-custom" title="Custom color">
+              <input
+                type="color"
+                :value="tile.text_color || '#000000'"
+                @change="setTextColor(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+          </div>
+        </template>
       </div>
     </Teleport>
   </div>
@@ -186,12 +260,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } fro
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
+  Brush,
   Close,
   Delete,
   Edit,
   EditPen,
   MoreFilled,
   Rank,
+  Switch,
   Warning,
   WarningFilled,
 } from "@element-plus/icons-vue";
@@ -200,7 +276,12 @@ import {
   useDashboardComputation,
   filtersTargetingTile,
 } from "../../composables/useDashboardComputation";
-import type { CatalogVisualization, DashboardFilter, DashboardTile } from "../../types";
+import type {
+  CatalogVisualization,
+  DashboardFilter,
+  DashboardTile,
+  SeparatorOrientation,
+} from "../../types";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
 
 const props = defineProps<{
@@ -212,6 +293,8 @@ const props = defineProps<{
   vizRefreshNonce?: number;
   /** Resolver for the tile's underlying CatalogTable id (used to gate datasource-bound filters). */
   tileDatasource?: (tileId: string) => number | null;
+  /** Column count of the hosting grid; a horizontal separator spans all of them. */
+  gridCols?: number;
 }>();
 
 const emit = defineEmits<{
@@ -221,6 +304,57 @@ const emit = defineEmits<{
 }>();
 
 const isText = computed(() => props.tile.type === "text");
+const isSeparator = computed(() => props.tile.type === "separator");
+const isViz = computed(() => !isText.value && !isSeparator.value);
+const rootEl = ref<HTMLElement | null>(null);
+
+// ---- separator branch ----
+const isVertical = computed(() => props.tile.orientation === "vertical");
+const thicknessOptions = [1, 2, 3, 4, 6, 8];
+const separatorThickness = computed(() => props.tile.thickness ?? 1);
+const separatorLineStyle = computed(() => {
+  const size = `${separatorThickness.value}px`;
+  const background = props.tile.line_color || undefined;
+  return isVertical.value
+    ? { width: size, height: "100%", background }
+    : { height: size, width: "100%", background };
+});
+
+const setLineColor = (value: string | null) => {
+  const next = value ?? null;
+  if (next !== (props.tile.line_color ?? null)) {
+    emit("update:tile", { ...props.tile, line_color: next });
+  }
+};
+
+const setThickness = (value: number) => {
+  if (value !== separatorThickness.value) emit("update:tile", { ...props.tile, thickness: value });
+};
+
+// Flipping orientation also swaps the footprint: a full-width row becomes a one-column bar.
+const setOrientation = (orientation: SeparatorOrientation) => {
+  if (orientation === (props.tile.orientation ?? "horizontal")) return;
+  const vertical = orientation === "vertical";
+  const cols = props.gridCols ?? 48;
+  const w = vertical ? 2 : cols;
+  emit("update:tile", {
+    ...props.tile,
+    orientation,
+    x: Math.max(0, Math.min(props.tile.x, cols - w)),
+    w,
+    h: vertical ? Math.max(props.tile.h, 4) : 1,
+  });
+};
+
+const openStyleMenu = () => {
+  const rect = rootEl.value?.getBoundingClientRect();
+  if (!rect) return;
+  colorMenu.value = {
+    visible: true,
+    x: Math.max(8, Math.min(rect.right - 240, window.innerWidth - 240)),
+    y: Math.min(rect.bottom + 4, window.innerHeight - 200),
+  };
+};
 
 // ---- viz branch (unchanged behaviour) ----
 const viz = ref<CatalogVisualization | null>(null);
@@ -396,7 +530,7 @@ const closeColorMenu = () => {
 };
 
 const onTileContextMenu = (e: MouseEvent) => {
-  if (!isText.value || props.mode !== "edit" || textEditing.value) return;
+  if (isViz.value || props.mode !== "edit" || textEditing.value) return;
   e.preventDefault();
   colorMenu.value = {
     visible: true,
@@ -409,7 +543,6 @@ const setBg = (value: string | null) => {
   const next = value ?? null;
   if (next !== (props.tile.bg_color ?? null))
     emit("update:tile", { ...props.tile, bg_color: next });
-  closeColorMenu();
 };
 
 const setTextColor = (value: string | null) => {
@@ -417,7 +550,6 @@ const setTextColor = (value: string | null) => {
   if (next !== (props.tile.text_color ?? null)) {
     emit("update:tile", { ...props.tile, text_color: next });
   }
-  closeColorMenu();
 };
 
 const onDocPointerDown = (e: MouseEvent) => {
@@ -484,6 +616,36 @@ onBeforeUnmount(() => {
 .tile-text-view {
   border: none;
   background: transparent;
+}
+.tile-separator {
+  border: none;
+  background: transparent;
+}
+.tile-separator .tile-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+}
+.tile-separator-vertical .tile-body {
+  padding: 8px 0;
+}
+.tile-separator-line {
+  width: 100%;
+  height: 1px;
+  background: var(--el-border-color);
+}
+.tile-thickness {
+  font-size: 11px;
+  font-weight: 600;
+}
+.tile-separator-edit {
+  border-radius: 4px;
+  outline: 1px dashed transparent;
+  transition: outline-color 0.12s ease;
+}
+.tile-separator-edit:hover {
+  outline-color: var(--el-color-primary-light-5);
 }
 .tile-header {
   display: flex;

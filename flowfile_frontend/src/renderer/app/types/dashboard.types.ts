@@ -2,7 +2,8 @@
 
 import type { AccessInfo } from "./sharing.types";
 
-export type DashboardTileType = "viz" | "text";
+export type DashboardTileType = "viz" | "text" | "separator";
+export type SeparatorOrientation = "horizontal" | "vertical";
 
 export interface DashboardTile {
   /** Client-generated UUID, stable across saves so component state survives. */
@@ -17,6 +18,10 @@ export interface DashboardTile {
   /** CSS colors for text tiles. */
   bg_color?: string | null;
   text_color?: string | null;
+  /** Separator styling (type === "separator"); absent means a 1px default-colour horizontal line. */
+  orientation?: SeparatorOrientation | null;
+  thickness?: number | null;
+  line_color?: string | null;
   x: number;
   y: number;
   w: number;
@@ -84,8 +89,17 @@ export interface DashboardUpdatePayload {
   expected_layout_version?: number;
 }
 
+/** Current grid resolution. v1 layouts used 12 columns; see gridVersion.ts for the upgrade. */
+export const DASHBOARD_GRID_COLS = 48;
+export const DASHBOARD_GRID_VERSION = 2;
+export const DASHBOARD_GRID_ROW_HEIGHT = 40;
+
 export const EMPTY_DASHBOARD_LAYOUT: DashboardLayout = {
   tiles: [],
-  grid: { cols: 12, row_height: 40, version: 1 },
+  grid: {
+    cols: DASHBOARD_GRID_COLS,
+    row_height: DASHBOARD_GRID_ROW_HEIGHT,
+    version: DASHBOARD_GRID_VERSION,
+  },
   filters: [],
 };

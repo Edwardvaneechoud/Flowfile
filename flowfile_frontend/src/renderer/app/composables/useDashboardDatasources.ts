@@ -154,6 +154,7 @@ export function useDashboardDatasources(
     const tile = layout.value.tiles.find((t) => t.id === tileId);
     if (!tile) return tileId;
     if (tile.type === "text") return "Text tile";
+    if (tile.type === "separator") return "Separator";
     if (tile.viz_id == null) return `Tile ${tileId.slice(0, 6)}`;
     return vizNameById.value[tile.viz_id] ?? `Viz #${tile.viz_id}`;
   };

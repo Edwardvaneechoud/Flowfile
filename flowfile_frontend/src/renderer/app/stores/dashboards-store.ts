@@ -8,6 +8,7 @@ import type {
   DashboardUpdatePayload,
 } from "../types";
 import { EMPTY_DASHBOARD_LAYOUT } from "../types";
+import { upgradeLayoutGrid } from "../views/DashboardsView/gridVersion";
 
 interface DashboardsState {
   library: Dashboard[];
@@ -46,7 +47,8 @@ export const useDashboardsStore = defineStore("dashboards", {
       this.loadingCurrent = true;
       this.error = null;
       try {
-        this.current = await CatalogApi.getDashboard(id);
+        const loaded = await CatalogApi.getDashboard(id);
+        this.current = { ...loaded, layout: upgradeLayoutGrid(loaded.layout) };
       } catch (err) {
         this.error = err instanceof Error ? err.message : "Failed to load dashboard";
         throw err;
