@@ -32,6 +32,7 @@
         mode="view"
         :datasources-in-use="datasourcesInUse"
         :tiles-by-datasource="tilesByDatasource"
+        :viz-tile-ids="vizTileIds"
         :tile-label="tileLabel"
         :get-column-stats="getColumnStats"
         :stats-refresh-nonce="statsRefreshNonce"
@@ -78,8 +79,15 @@ const liveLayout = computed<DashboardLayout>(() => {
   }
   return { ...store.current.layout, filters: liveFilters.value };
 });
-const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats, refresh } =
-  useDashboardDatasources(liveLayout);
+const {
+  datasourcesInUse,
+  tilesByDatasource,
+  vizTileIds,
+  tileDatasource,
+  tileLabel,
+  getColumnStats,
+  refresh,
+} = useDashboardDatasources(liveLayout);
 
 const catalogStore = useCatalogStore();
 const vizRefreshNonces = ref<Record<number, number>>({});

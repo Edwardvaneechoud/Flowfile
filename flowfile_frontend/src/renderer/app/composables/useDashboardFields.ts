@@ -21,7 +21,7 @@ interface RawField {
   analyticType?: string;
 }
 
-const isSemantic = (s: unknown): s is SemanticType =>
+export const isSemantic = (s: unknown): s is SemanticType =>
   s === "quantitative" || s === "nominal" || s === "ordinal" || s === "temporal";
 
 /** Aggregate the IMutField list across every viz referenced on the

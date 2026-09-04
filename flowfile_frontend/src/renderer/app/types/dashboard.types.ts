@@ -46,7 +46,15 @@ export interface DashboardFilter {
    * populated from that table's schema_columns. Null = legacy / untied.
    */
   datasource_id: number | null;
+  /**
+   * "datasource" (default, also when absent on legacy layouts) applies only
+   * to tiles reading from `datasource_id`; "all" applies to every targeted
+   * tile whose data has a column named `field_name` of a compatible type.
+   */
+  scope?: DashboardFilterScope;
 }
+
+export type DashboardFilterScope = "datasource" | "all";
 
 export interface DashboardLayout {
   tiles: DashboardTile[];

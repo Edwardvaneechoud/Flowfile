@@ -119,6 +119,11 @@ export function useDashboardDatasources(
     return acc;
   });
 
+  /** Every tile that renders a visualization, whatever its source. */
+  const vizTileIds = computed<string[]>(() =>
+    layout.value.tiles.filter((t) => t.viz_id != null).map((t) => t.id),
+  );
+
   const tileDatasource = (tileId: string): number | null => {
     const tile = layout.value.tiles.find((t) => t.id === tileId);
     if (!tile || tile.viz_id == null) return null;
@@ -161,6 +166,7 @@ export function useDashboardDatasources(
   return {
     datasourcesInUse,
     tilesByDatasource,
+    vizTileIds,
     tileDatasource,
     tileLabel,
     getSchema,

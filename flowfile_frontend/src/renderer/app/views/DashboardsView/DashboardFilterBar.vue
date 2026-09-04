@@ -14,6 +14,13 @@
         >
           untied
         </span>
+        <span
+          v-else-if="f.scope === 'all'"
+          class="filter-chip-scope"
+          title="Applies to every targeted tile with a same-named column of a compatible type"
+        >
+          all sources
+        </span>
         <span class="filter-chip-colon">:</span>
 
         <template v-if="f.kind === 'categorical'">
@@ -168,6 +175,19 @@
         <el-form-item label="Label">
           <el-input v-model="draft.label" placeholder="(optional)" />
         </el-form-item>
+        <el-form-item label="Scope">
+          <el-radio-group v-model="draft.scope" :disabled="draft.datasource_id == null">
+            <el-radio-button value="datasource">This datasource</el-radio-button>
+            <el-radio-button value="all">All datasources</el-radio-button>
+          </el-radio-group>
+          <div class="scope-hint">
+            {{
+              draft.scope === "all"
+                ? "Applies to every targeted tile with a same-named column of a compatible type, whatever table or query it reads from."
+                : "Applies only to tiles reading from this table."
+            }}
+          </div>
+        </el-form-item>
         <el-form-item v-if="modeOptionsVisible" label="Mode">
           <el-radio-group v-model="draft.kind">
             <el-radio-button v-if="modeOptions.includes('numeric_range')" value="numeric_range">
@@ -190,7 +210,9 @@
             :disabled="!eligibleTiles.length"
             :placeholder="
               eligibleTiles.length
-                ? 'All tiles for this datasource'
+                ? draft.scope === 'all'
+                  ? 'All tiles'
+                  : 'All tiles for this datasource'
                 : 'No tiles use this datasource'
             "
           >
@@ -216,6 +238,7 @@ import type {
   ColumnStatsResponse,
   DashboardFilter,
   DashboardFilterKind,
+  DashboardFilterScope,
 } from "../../types";
 import type { DashboardDatasource } from "../../composables/useDashboardDatasources";
 import { dtypeToDefaultFilterKind, isNumericDtype, isTemporalDtype } from "../../utils/dtype";
@@ -226,6 +249,8 @@ const props = defineProps<{
   readonlyView?: boolean;
   datasourcesInUse: DashboardDatasource[];
   tilesByDatasource: Record<number, string[]>;
+  /** Every viz tile, the candidate set for scope "all". */
+  vizTileIds?: string[];
   tileLabel?: (tileId: string) => string;
   getColumnStats?: (
     tableId: number,
@@ -246,6 +271,7 @@ interface Draft {
   field_name: string;
   label: string;
   kind: DashboardFilterKind;
+  scope: DashboardFilterScope;
   target_tile_ids: string[];
 }
 
@@ -260,6 +286,7 @@ function blankDraft(): Draft {
     field_name: "",
     label: "",
     kind: "categorical",
+    scope: "datasource",
     target_tile_ids: [],
   };
 }
@@ -318,7 +345,8 @@ const datasourceName = (id: number | null): string => {
 const chipTooltip = (f: DashboardFilter): string => {
   const head = f.label ?? f.field_name;
   if (f.datasource_id == null) return `${head} — untied (no datasource bound)`;
-  return `${head} · ${datasourceName(f.datasource_id)}`;
+  const base = `${head} · ${datasourceName(f.datasource_id)}`;
+  return f.scope === "all" ? `${base} · applies to all datasources` : base;
 };
 
 const fieldOptions = computed<ColumnSchema[]>(() => {
@@ -342,11 +370,25 @@ const modeOptions = computed<DashboardFilterKind[]>(() => {
 
 const modeOptionsVisible = computed(() => modeOptions.value.length > 1);
 
+const candidateTileIds = (datasourceId: number, scope: DashboardFilterScope): string[] =>
+  scope === "all" ? (props.vizTileIds ?? []) : (props.tilesByDatasource[datasourceId] ?? []);
+
 const eligibleTiles = computed<{ id: string; label: string }[]>(() => {
   if (draft.datasource_id == null) return [];
-  const ids = props.tilesByDatasource[draft.datasource_id] ?? [];
-  return ids.map((id) => ({ id, label: props.tileLabel?.(id) ?? id }));
+  return candidateTileIds(draft.datasource_id, draft.scope).map((id) => ({
+    id,
+    label: props.tileLabel?.(id) ?? id,
+  }));
 });
+
+// Explicit targets from the other scope may no longer be candidates.
+watch(
+  () => draft.scope,
+  () => {
+    const ids = new Set(eligibleTiles.value.map((t) => t.id));
+    draft.target_tile_ids = draft.target_tile_ids.filter((id) => ids.has(id));
+  },
+);
 
 const canSave = computed(() => draft.datasource_id != null && draft.field_name.trim().length > 0);
 
@@ -394,6 +436,7 @@ const openEdit = (f: DashboardFilter) => {
     field_name: f.field_name,
     label: f.label ?? "",
     kind: f.kind,
+    scope: f.scope ?? "datasource",
     target_tile_ids: [...f.target_tile_ids],
   });
   dialogOpen.value = true;
@@ -405,7 +448,7 @@ const resetDraft = () => {
 
 const confirmDialog = () => {
   if (!canSave.value || draft.datasource_id == null) return;
-  const all = props.tilesByDatasource[draft.datasource_id] ?? [];
+  const all = candidateTileIds(draft.datasource_id, draft.scope);
   const explicit = draft.target_tile_ids.filter((id) => all.includes(id));
   const useAll = explicit.length === 0 || explicit.length === all.length;
 
@@ -419,6 +462,7 @@ const confirmDialog = () => {
       target: useAll ? "all" : "tiles",
       target_tile_ids: useAll ? [] : explicit,
       datasource_id: draft.datasource_id,
+      scope: draft.scope,
     };
     emit("update:filters", [...props.filters, next]);
   } else {
@@ -436,6 +480,7 @@ const confirmDialog = () => {
           field_name: draft.field_name.trim(),
           label: draft.label.trim() || null,
           kind: draft.kind,
+          scope: draft.scope,
           // Reset state when the shape changes (kind/field/datasource)
           state: kindChanged || fieldChanged || dsChanged ? initialStateFor(draft.kind) : x.state,
           target: useAll ? "all" : "tiles",
@@ -563,6 +608,20 @@ const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.04em;
+}
+.filter-chip-scope {
+  color: var(--el-color-primary);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+.scope-hint {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
 }
 .filter-chip-colon {
   color: var(--el-text-color-secondary);

@@ -199,6 +199,7 @@ import { CatalogApi } from "../../api/catalog.api";
 import {
   useDashboardComputation,
   filtersTargetingTile,
+  type TileField,
 } from "../../composables/useDashboardComputation";
 import type { CatalogVisualization, DashboardFilter, DashboardTile } from "../../types";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
@@ -244,10 +245,18 @@ const onVizDblclick = (e: MouseEvent) => {
 const tileRef = toRef(props, "tile");
 const filtersRef = toRef(props, "filters");
 
+// Cross-source filters only apply where a type-compatible column exists; unknown until loaded.
+const tileFields = computed<TileField[] | null>(() =>
+  loading.value
+    ? null
+    : fields.value.map((f) => ({ fid: String(f.fid), semanticType: f.semanticType })),
+);
+
 const { computation, lastError } = useDashboardComputation({
   tile: tileRef,
   filters: filtersRef,
   tileDatasource: (id) => props.tileDatasource?.(id) ?? null,
+  tileFields: () => tileFields.value,
   onMissing: () => {
     vizMissing.value = true;
   },
@@ -270,6 +279,7 @@ const filterKey = computed(() => {
     props.filters,
     props.tile.id,
     (id) => props.tileDatasource?.(id) ?? null,
+    tileFields.value,
   );
   return JSON.stringify(targeted.map((f) => [f.id, f.state]));
 });

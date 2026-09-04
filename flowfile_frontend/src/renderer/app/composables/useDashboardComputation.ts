@@ -1,7 +1,8 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import { useGraphicWalkerCompute } from "./useGraphicWalkerCompute";
-import type { DashboardFilter, DashboardTile } from "../types";
+import { isSemantic, type SemanticType } from "./useDashboardFields";
+import type { DashboardFilter, DashboardFilterKind, DashboardTile } from "../types";
 
 interface VisFilter {
   fid: string;
@@ -46,22 +47,53 @@ const filterToRule = (f: DashboardFilter): Record<string, unknown> | null => {
 
 export type TileDatasourceResolver = (tileId: string) => number | null;
 
+/** One column of a tile's data; ``semanticType`` absent or unknown means unclassified. */
+export interface TileField {
+  fid: string;
+  semanticType?: string;
+}
+
+/** A filter reaches beyond its own table when scoped "all" or legacy-untied. */
+export const isCrossSourceFilter = (f: DashboardFilter): boolean =>
+  f.scope === "all" || f.datasource_id == null;
+
+const COMPATIBLE_SEMANTIC_TYPES: Record<DashboardFilterKind, SemanticType[]> = {
+  categorical: ["nominal", "ordinal"],
+  numeric_range: ["quantitative"],
+  date_range: ["temporal"],
+};
+
+/** The worker applies filter rules without casting, so a same-named column of
+ * another type errors (string values in an integer ``is_in``, epoch-ms bounds
+ * on a string). Unclassified columns pass. */
+export const filterFitsField = (f: DashboardFilter, field: TileField): boolean =>
+  !isSemantic(field.semanticType) || COMPATIBLE_SEMANTIC_TYPES[f.kind].includes(field.semanticType);
+
 /** Decide which dashboard filters apply to a given tile.
  *
  * Two gates:
- *   1. Datasource gate — when the filter has a ``datasource_id``, the
- *      tile's underlying CatalogTable must match. Legacy filters with a
- *      null ``datasource_id`` skip this gate (they pre-date the binding).
+ *   1. Source gate — a datasource-scoped filter needs the tile's underlying
+ *      CatalogTable to match. A cross-source filter (scope "all", or the
+ *      legacy untied null ``datasource_id``) instead needs the tile's data to
+ *      have a column named ``field_name`` whose type fits the filter kind;
+ *      ``tileFields`` null means the tile's columns are unknown and the gate
+ *      is skipped.
  *   2. Target gate — ``target='all'`` matches every tile that passed
- *      the datasource gate; ``target='tiles'`` matches only the listed ids.
+ *      the source gate; ``target='tiles'`` matches only the listed ids.
  */
 export const filtersTargetingTile = (
   filters: DashboardFilter[],
   tileId: string,
   tileDatasource?: TileDatasourceResolver,
+  tileFields?: TileField[] | null,
 ): DashboardFilter[] =>
   filters.filter((f) => {
-    if (f.datasource_id != null) {
+    if (isCrossSourceFilter(f)) {
+      if (tileFields) {
+        const field = tileFields.find((x) => x.fid === f.field_name);
+        if (!field || !filterFitsField(f, field)) return false;
+      }
+    } else {
       const tds = tileDatasource ? tileDatasource(tileId) : null;
       if (tds !== f.datasource_id) return false;
     }
@@ -72,6 +104,8 @@ export interface UseDashboardComputationOptions {
   tile: Ref<DashboardTile> | ComputedRef<DashboardTile>;
   filters: Ref<DashboardFilter[]> | ComputedRef<DashboardFilter[]>;
   tileDatasource?: TileDatasourceResolver;
+  /** Columns of the tile's data; null while unknown (still loading). */
+  tileFields?: () => TileField[] | null;
   onMissing?: () => void;
 }
 
@@ -80,7 +114,12 @@ export interface UseDashboardComputationOptions {
  * target this tile) before being forwarded to the saved-viz compute API. */
 export function useDashboardComputation(opts: UseDashboardComputationOptions) {
   const effectiveFilters = computed(() =>
-    filtersTargetingTile(opts.filters.value, opts.tile.value.id, opts.tileDatasource),
+    filtersTargetingTile(
+      opts.filters.value,
+      opts.tile.value.id,
+      opts.tileDatasource,
+      opts.tileFields?.() ?? null,
+    ),
   );
 
   const fetcher = async (payload: any): Promise<{ rows: any[]; error: string | null }> => {

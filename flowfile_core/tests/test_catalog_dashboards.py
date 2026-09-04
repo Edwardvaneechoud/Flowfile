@@ -360,6 +360,40 @@ class TestDashboardFilterDatasource:
         get_resp = client.get(f"/catalog/dashboards/{body['id']}")
         assert get_resp.json()["layout"]["filters"][0]["datasource_id"] == table_id
 
+    def test_filter_scope_defaults_to_datasource_and_round_trips_all(self, client):
+        table_id = _make_table()
+        layout = _layout_with_two_tiles()
+        base = {
+            "field_name": "region",
+            "kind": "categorical",
+            "state": {"selected": []},
+            "target": "all",
+            "target_tile_ids": [],
+            "datasource_id": table_id,
+        }
+        layout["filters"] = [{"id": "f1", **base}, {"id": "f2", "scope": "all", **base}]
+        resp = client.post("/catalog/dashboards", json={"name": "Scoped", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        filters = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["filters"]
+        assert filters[0]["scope"] == "datasource"
+        assert filters[1]["scope"] == "all"
+
+    def test_filter_unknown_scope_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [
+            {
+                "id": "f1",
+                "field_name": "region",
+                "kind": "categorical",
+                "state": {},
+                "target": "all",
+                "target_tile_ids": [],
+                "scope": "everywhere",
+            }
+        ]
+        resp = client.post("/catalog/dashboards", json={"name": "Bad scope", "layout": layout})
+        assert resp.status_code == 422
+
     def test_create_with_unknown_datasource_returns_422(self, client):
         layout = _empty_layout()
         layout["filters"] = [
