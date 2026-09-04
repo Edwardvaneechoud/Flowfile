@@ -3,7 +3,7 @@
 Transform nodes modify and shape your data. These nodes handle everything from basic operations like filtering and sorting to more complex transformations like custom formulas and text manipulation.
 
 !!! info "Some transform nodes are not in Flowfile Lite"
-    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Add Record ID**, **Formula**, **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, **Rename Columns**, and **Polars Code**. **Text to Rows**, **Window Functions**, **SQL Query**, and **Python Script** are not available in Lite.
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Add Record ID**, **Formula**, **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, **Rename Columns**, and **Polars Code**. **Data Cleansing**, **Text to Rows**, **Window Functions**, **SQL Query**, and **Python Script** are not available in Lite.
 
 ## Node Details
 
@@ -201,6 +201,38 @@ The **Rename Columns** node renames many columns at once by applying a single ru
 | First row | Promote the first data row to column headers and drop it from the data |
 
 Only the columns you select are renamed; in first-row mode the first row is dropped regardless of the selection, and null or empty header values raise an error.
+
+---
+
+### ![Data Cleansing](../../../assets/images/nodes/data_cleansing.svg){ width="50" height="50" } Data Cleansing
+
+The **Data Cleansing** node fixes the usual problems in a raw export in one pass: rows and columns that hold nothing, nulls where a blank or a zero is wanted, stray whitespace, unwanted characters, and inconsistent casing. A freshly dropped node is already valid — it fills nulls and trims whitespace on every column — so the drawer is where you narrow it down or turn on the stricter rules.
+
+![Data Cleansing settings: the Remove null data, Columns to cleanse, Replace nulls, Remove unwanted characters, and Modify case sections](../../../assets/images/guides/nodes/data-cleansing-settings.png)
+
+#### **What each rule touches**
+
+The two **Remove null data** rules look at the whole frame and ignore the column selection. Every other rule applies only to the columns you select, and only when the column's type matches: the null-to-blank, character, and case rules change **text** columns, the null-to-zero rule changes **numeric** columns, and any other type passes through untouched even when selected. Output column names, order, and types are unchanged — only *Remove columns that are null in every row* can remove a column.
+
+| Section | Option | Effect |
+|---------|--------|--------|
+| Remove null data | Remove rows that are null in every field | Drops a row only when *every* column is null. An empty string is not null, so a row holding `""` stays. |
+| Remove null data | Remove columns that are null in every row | Drops a column only when it is null in *every* row. Decided from the data when the node runs, so the output schema can be narrower than the edit-time preview. |
+| Columns to cleanse | All columns / Selected columns | Which columns the rules below apply to. Selected columns that no longer exist in the input are ignored. |
+| Replace nulls | With blank text, in text columns | Nulls become `""`. On by default. |
+| Replace nulls | With 0, in numeric columns | Nulls become `0`. On by default. |
+| Remove unwanted characters | Leading and trailing whitespace | Trims both ends. On by default. |
+| Remove unwanted characters | Tabs, line breaks and repeated spaces | Collapses every run of whitespace into a single space. |
+| Remove unwanted characters | All whitespace | Removes whitespace entirely. Supersedes the two options above it. |
+| Remove unwanted characters | Letters / Numbers / Punctuation | Removes letters (including accented ones), digits, or ASCII punctuation. |
+| Modify case | Leave unchanged / UPPERCASE / lowercase / Title Case | Casing applied last. Title Case follows Polars and capitalizes the letter after any non-letter, so `3rd street` becomes `3Rd Street`. |
+
+Within a text column the rules run in a fixed order: fill nulls, remove letters, numbers, and punctuation, clean up whitespace, then apply the casing rule. Removing characters first means the gaps they leave behind are collapsed by the whitespace step.
+
+!!! tip "Cleanse before you join or group"
+    Keys that differ only by trailing spaces or casing do not match. A Data Cleansing node on each input with *Leading and trailing whitespace* and a casing rule turns `"Amsterdam "` and `"amsterdam"` into the same key before a [Join](combine.md#join) or [Group By](aggregate.md#group-by) sees them.
+
+The same node is available in the Python API as [`data_cleansing()`](../../python-api/reference/flowframe-operations.md#cleaning-messy-text), and it exports to native Polars string expressions in every [code export mode](../tutorials/code-generator.md).
 
 ---
 

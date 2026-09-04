@@ -93,6 +93,16 @@ df = df.unique(subset=["product_id"])
 !!! warning "No `drop_duplicates`"
     FlowFrame does not expose `drop_duplicates`. Use `unique()` (optionally with `subset=[...]` and `keep="first"`).
 
+## Cleaning messy text
+
+`data_cleansing()` is the Python form of the [Data Cleansing node](../../visual-editor/nodes/transform.md#data-cleansing): one call that fills nulls, trims and normalizes whitespace, strips unwanted characters, and fixes casing. Pass a list of column names to limit it; with no list it cleanses every column. Text rules only touch String columns and the null-to-zero rule only Numeric ones, so a mixed frame is safe to pass whole.
+
+```python
+--8<-- "docs/examples/data_cleansing.py:example"
+```
+
+`remove_null_rows` and `remove_null_columns` look at the whole frame regardless of the column list. `remove_null_columns` is the one data-dependent keyword: which columns go is decided from a null count taken when the method is called, not at `collect()`.
+
 ## String operations
 
 ```python

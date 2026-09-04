@@ -186,6 +186,8 @@ Exactly one side runs, and the Union outputs whichever branch ran. A column prod
 
 #### Skipped is not failed
 
+![A run where the gate closed: Manual input and Gate show green success dots, and the Count records node behind the gate shows the hollow grey skipped ring](../../../assets/images/guides/nodes/gate-skipped-branch.png)
+
 A deliberately skipped node shows a hollow grey ring on the canvas ("Skipped (gated off) — condition not met") and appears as **Skipped** in the run report with no runtime. It is a successful outcome: the flow's overall status stays green and the completed-node count still reaches its total.
 
 Skips caused by a *failure* or by invalid settings are unchanged — they still block everything downstream, including a Union that has other healthy inputs.
