@@ -16,8 +16,7 @@ Open **Settings → Extensions → Community Nodes** in the left sidebar.
 <details markdown="1" open>
 <summary>See it: the Community Nodes page</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Community Nodes page under Settings → Extensions — a grid of node cards, each with an icon, category chip, intro, and author · version, with the search box and category filter above -->
-![The Community Nodes page: a searchable grid of node cards](../../assets/images/guides/node-designer/community-tab-grid.svg)
+![The Community Nodes page: a searchable grid of node cards](../../assets/images/guides/node-designer/community-tab-grid.png)
 
 </details>
 
@@ -56,8 +55,7 @@ You must tick the acknowledgement checkbox before **Install** enables.
 <details markdown="1">
 <summary>See it: the install consent dialog</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the install consent dialog — node identity at the top, capability chips, the environment note, the risk statement, the sha256 line with the GitHub link, and the acknowledgement checkbox gating the Install button -->
-![The consent dialog: capabilities, risk statement, sha256, acknowledgement checkbox](../../assets/images/guides/node-designer/community-consent-dialog.svg)
+![The consent dialog: capabilities, risk statement, sha256, acknowledgement checkbox](../../assets/images/guides/node-designer/community-consent-dialog.png)
 
 </details>
 
@@ -118,8 +116,7 @@ Upload one or more **PNG** screenshots — the browse preview uses them. Communi
 <details markdown="1">
 <summary>See it: the Publish modal</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the designer Publish modal — the readiness checklist (with the Test setup row), the license select, the screenshot uploader with a PNG thumbnail, and the Publish on GitHub card -->
-![The Publish modal: readiness checklist, license, screenshot uploader, Publish on GitHub](../../assets/images/guides/node-designer/community-publish-checklist.svg)
+![The Publish modal: readiness checklist, license, screenshot uploader, Publish on GitHub](../../assets/images/guides/node-designer/community-publish-checklist.png)
 
 </details>
 
