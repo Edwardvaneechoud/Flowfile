@@ -49,8 +49,9 @@
       <p v-if="status.envKillSwitch" class="pool-hint--warning">
         <i class="fa-solid fa-triangle-exclamation"></i>
         <span>
-          <code>FLOWFILE_TELEMETRY</code> is set in the environment and disables telemetry
-          regardless of this setting. Unset it to manage telemetry here.
+          Telemetry is hard-disabled by the <code>FLOWFILE_TELEMETRY</code> environment variable
+          (the bundled <code>docker-compose.yml</code> sets it to <code>0</code> by default). Set
+          <code>FLOWFILE_TELEMETRY=1</code> in your <code>.env</code> and restart to manage it here.
         </span>
       </p>
       <p v-else-if="!status.endpointConfigured" class="pool-hint--warning">
