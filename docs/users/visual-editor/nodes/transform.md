@@ -208,7 +208,7 @@ Only the columns you select are renamed; in first-row mode the first row is drop
 
 The **Data Cleansing** node fixes the usual problems in a raw export in one pass: rows and columns that hold nothing, nulls where a blank or a zero is wanted, stray whitespace, unwanted characters, and inconsistent casing. A freshly dropped node is already valid — it fills nulls and trims whitespace on every column — so the drawer is where you narrow it down or turn on the stricter rules.
 
-![Data Cleansing settings: the Remove null data, Columns to cleanse, Replace nulls, Remove unwanted characters, and Modify case sections](../../../assets/images/guides/nodes/data-cleansing-settings.png)
+![Data Cleansing settings: the Remove null data, Columns to cleanse, Replace nulls, Remove unwanted characters, and Modify case sections](../../../assets/images/guides/nodes/data-cleansing-settings.png){ width="560" }
 
 #### **What each rule touches**
 
