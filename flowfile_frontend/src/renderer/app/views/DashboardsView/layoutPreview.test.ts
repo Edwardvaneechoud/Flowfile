@@ -67,6 +67,16 @@ describe("buildLayoutPreview", () => {
     expect(rect).toMatchObject({ left: 50, width: 50 });
   });
 
+  it("still draws tiles when the stored grid width is degenerate", () => {
+    const broken = layout([tile({ x: 0, y: 0, w: 24, h: 8 })], {
+      cols: 0,
+      row_height: 40,
+      version: 2,
+    });
+    const [rect] = buildLayoutPreview(broken);
+    expect(rect).toMatchObject({ left: 0, width: 50 });
+  });
+
   it("carries separator orientation with a horizontal default", () => {
     const rects = buildLayoutPreview(
       layout([

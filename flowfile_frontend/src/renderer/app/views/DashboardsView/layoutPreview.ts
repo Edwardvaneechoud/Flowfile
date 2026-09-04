@@ -1,4 +1,9 @@
-import type { DashboardLayout, DashboardTileType, SeparatorOrientation } from "../../types";
+import {
+  DASHBOARD_GRID_COLS,
+  type DashboardLayout,
+  type DashboardTileType,
+  type SeparatorOrientation,
+} from "../../types";
 import { upgradeLayoutGrid } from "./gridVersion";
 
 export interface PreviewRect {
@@ -22,8 +27,9 @@ const MIN_PREVIEW_ROWS = 8;
  */
 export function buildLayoutPreview(layout: DashboardLayout): PreviewRect[] {
   const current = upgradeLayoutGrid(layout);
-  const cols = current.grid?.cols ?? 12;
-  if (!current.tiles.length || cols <= 0) return [];
+  if (!current.tiles.length) return [];
+  const stored = current.grid?.cols;
+  const cols = stored && stored > 0 ? stored : DASHBOARD_GRID_COLS;
   const rows = Math.max(MIN_PREVIEW_ROWS, ...current.tiles.map((t) => t.y + t.h));
   return current.tiles.map((t) => ({
     id: t.id,
