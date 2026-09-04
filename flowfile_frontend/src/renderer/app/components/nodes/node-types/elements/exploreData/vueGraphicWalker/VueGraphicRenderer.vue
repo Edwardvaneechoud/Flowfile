@@ -26,6 +26,11 @@ let resizeObserver: ResizeObserver | null = null;
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 let measuredSize = { w: 0, h: 0 };
 let shadowReadyObserver: MutationObserver | null = null;
+let chartSiblingObserver: ResizeObserver | null = null;
+// Height GW renders above the chart (error panel + filter widgets); subtracted from the fixed size.
+let chartTopOffset = 0;
+
+const CHART_CONTAINER_CLASS = "flowfile-gw-chart";
 
 // Inject a <style> into GW's shadow root to hide its resize frame + drag handles (no prop disables them).
 const SHADOW_STYLE_MARKER = "data-flowfile-gw-overrides";
@@ -65,6 +70,7 @@ const getReactProps = (): Record<string, any> => {
     themeKey: props.themeKey,
     computation: props.computation,
     containerStyle: { width: "100%", height: "100%" },
+    containerClassName: CHART_CONTAINER_CLASS,
     overrideSize: { mode: "fixed", width: measuredSize.w, height: measuredSize.h },
   };
   Object.keys(reactProps).forEach((key) => {
@@ -82,9 +88,42 @@ const renderReact = () => {
 const measure = (el: HTMLElement) => {
   const rect = el.getBoundingClientRect();
   const w = Math.max(1, Math.floor(rect.width));
-  const h = Math.max(1, Math.floor(rect.height));
+  const h = Math.max(1, Math.floor(rect.height - chartTopOffset));
   if (Math.abs(w - measuredSize.w) < 2 && Math.abs(h - measuredSize.h) < 2) return false;
   measuredSize = { w, h };
+  return true;
+};
+
+const scheduleRender = () => {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null;
+    renderReact();
+  }, 80);
+};
+
+const updateChartTopOffset = (chartEl: HTMLElement): boolean => {
+  if (!wrapper.value) return false;
+  const top = chartEl.getBoundingClientRect().top - wrapper.value.getBoundingClientRect().top;
+  const next = Math.max(0, Math.round(top));
+  if (Math.abs(next - chartTopOffset) < 2) return false;
+  chartTopOffset = next;
+  return true;
+};
+
+// Watch what GW renders above the chart; filter widgets mount async and change height.
+const bindChartContainer = (shadow: ShadowRoot): boolean => {
+  const chartEl = shadow.querySelector<HTMLElement>(`.${CHART_CONTAINER_CLASS}`);
+  if (!chartEl) return false;
+  chartSiblingObserver?.disconnect();
+  chartSiblingObserver = new ResizeObserver(() => {
+    if (!wrapper.value || !updateChartTopOffset(chartEl)) return;
+    if (measure(wrapper.value)) scheduleRender();
+  });
+  for (const sibling of Array.from(chartEl.parentElement?.children ?? [])) {
+    if (sibling !== chartEl) chartSiblingObserver.observe(sibling);
+  }
+  if (updateChartTopOffset(chartEl) && wrapper.value && measure(wrapper.value)) scheduleRender();
   return true;
 };
 
@@ -111,15 +150,15 @@ onMounted(async () => {
     isLoading.value = false;
 
     const root = container.value;
-    const tryInject = (): boolean => {
+    const tryBindShadow = (): boolean => {
       const shadow = findShadowRoot(root);
       if (!shadow) return false;
       injectShadowOverride(shadow);
-      return true;
+      return bindChartContainer(shadow);
     };
-    if (!tryInject()) {
+    if (!tryBindShadow()) {
       shadowReadyObserver = new MutationObserver(() => {
-        if (tryInject()) {
+        if (tryBindShadow()) {
           shadowReadyObserver?.disconnect();
           shadowReadyObserver = null;
         }
@@ -129,12 +168,7 @@ onMounted(async () => {
 
     resizeObserver = new ResizeObserver(() => {
       if (!wrapper.value) return;
-      if (!measure(wrapper.value)) return;
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        resizeTimer = null;
-        renderReact();
-      }, 80);
+      if (measure(wrapper.value)) scheduleRender();
     });
     resizeObserver.observe(wrapper.value);
   } catch (e) {
@@ -159,6 +193,8 @@ onUnmounted(() => {
   resizeObserver = null;
   shadowReadyObserver?.disconnect();
   shadowReadyObserver = null;
+  chartSiblingObserver?.disconnect();
+  chartSiblingObserver = null;
   if (reactRootInstance) {
     reactRootInstance.unmount();
     reactRootInstance = null;

@@ -652,11 +652,12 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
             dashboard.description = entry.get("description")
             dashboard.namespace_id = ns_id
             dashboard.layout_json = layout.model_dump_json()
-            # layout_version is a server-owned write counter (CAS token): keep it monotonic on upsert.
+            # layout_version is a server-owned write counter (CAS token), unrelated to the
+            # layout's grid.version: keep it monotonic on upsert, start fresh rows at 1.
             if existing is not None:
                 dashboard.layout_version = (existing.layout_version or 1) + 1
             else:
-                dashboard.layout_version = layout.grid.version
+                dashboard.layout_version = 1
             dashboard.created_by = owner_id
             if existing is None:
                 db.add(dashboard)

@@ -69,6 +69,7 @@
           :added-viz-ids="addedVizIds"
           @add="onAddTile"
           @add-text="onAddTextTile"
+          @add-separator="onAddSeparatorTile"
           @create="sourcePickerOpen = true"
         />
       </aside>
@@ -101,6 +102,7 @@
             @edit-viz="onEditViz"
             @add-viz-at="onAddVizAt"
             @add-text-at="onAddTextAt"
+            @add-separator-at="onAddSeparatorAt"
           />
         </template>
       </main>
@@ -154,7 +156,6 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { ArrowLeft, Refresh } from "@element-plus/icons-vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useDashboardsStore } from "../../stores/dashboards-store";
-import { useCatalogStore } from "../../stores/catalog-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
@@ -172,6 +173,7 @@ import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
+import { upgradeLayoutGrid } from "./gridVersion";
 import {
   EMPTY_DASHBOARD_LAYOUT,
   type CatalogVisualization,
@@ -180,6 +182,7 @@ import {
   type DashboardLayout,
   type DashboardTile,
   type DashboardUpdatePayload,
+  type SeparatorOrientation,
   type VizSourceDescriptor,
 } from "../../types";
 
@@ -263,7 +266,7 @@ const setupDraft = () => {
 const onRestoreDraft = () => {
   if (!pendingDraft) return;
   nameDraft.value = pendingDraft.name;
-  store.setLayout(pendingDraft.layout);
+  store.setLayout(upgradeLayoutGrid(pendingDraft.layout));
   draftDirty.value = true;
   restoreAvailable.value = false;
 };
@@ -320,6 +323,8 @@ const generateTileId = () =>
     ? crypto.randomUUID()
     : `tile-${Math.random().toString(36).slice(2, 10)}`;
 
+const gridCols = () => store.current?.layout.grid.cols ?? EMPTY_DASHBOARD_LAYOUT.grid.cols;
+
 const findFreeRow = (layout: DashboardLayout): number => {
   if (!layout.tiles.length) return 0;
   return Math.max(...layout.tiles.map((t) => t.y + t.h));
@@ -344,12 +349,10 @@ const vizViewerRef = ref<InstanceType<typeof VisualizationViewer> | null>(null);
 const vizPendingRefresh = ref(false);
 
 // Refresh-all shares the nonce map with the single-viz bump in onCloseVizDialog.
-const catalogStore = useCatalogStore();
 const { refreshing, statsRefreshNonce, refreshAll } = useDashboardRefresh({
   layout: layoutRef,
   vizRefreshNonces,
   refreshDatasources: refresh,
-  invalidateFields: catalogStore.invalidateVisualizationFields,
 });
 
 const onRefresh = async () => {
@@ -410,7 +413,7 @@ const buildVizTile = (vizId: number, x: number, y: number): DashboardTile => ({
   chart_index: 0,
   x,
   y,
-  w: 6,
+  w: gridCols() / 2,
   h: 6,
 });
 
@@ -477,7 +480,7 @@ const buildTextTile = (x: number, y: number): DashboardTile => ({
   text_md: "## New section\n\nDescribe what's below.",
   x,
   y,
-  w: 12,
+  w: gridCols(),
   h: 3,
 });
 
@@ -492,6 +495,49 @@ const onAddTextAt = ({ x, y }: { x: number; y: number }) => {
   const layout = store.current.layout;
   const row = y < 0 ? findFreeRow(layout) : y;
   onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(x, row)] });
+};
+
+const buildSeparatorTile = (
+  x: number,
+  y: number,
+  orientation: SeparatorOrientation,
+): DashboardTile => ({
+  id: generateTileId(),
+  type: "separator",
+  viz_id: null,
+  chart_index: 0,
+  orientation,
+  x,
+  y,
+  w: orientation === "vertical" ? 2 : gridCols(),
+  h: orientation === "vertical" ? 6 : 1,
+});
+
+const onAddSeparatorTile = (orientation: SeparatorOrientation) => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  onLayoutChange({
+    ...layout,
+    tiles: [...layout.tiles, buildSeparatorTile(0, findFreeRow(layout), orientation)],
+  });
+};
+
+const onAddSeparatorAt = ({
+  x,
+  y,
+  orientation,
+}: {
+  x: number;
+  y: number;
+  orientation: SeparatorOrientation;
+}) => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  const row = y < 0 ? findFreeRow(layout) : y;
+  onLayoutChange({
+    ...layout,
+    tiles: [...layout.tiles, buildSeparatorTile(x, row, orientation)],
+  });
 };
 
 const initialise = async () => {

@@ -54,29 +54,20 @@ describe("useDashboardRefresh", () => {
     const layout = ref(layoutOf(opts?.tiles ?? [tile(1), tile(2)]));
     const vizRefreshNonces = ref<Record<number, number>>({});
     const refreshDatasources = vi.fn(opts?.refreshDatasources ?? (() => Promise.resolve()));
-    const invalidateFields = vi.fn();
     const api = useDashboardRefresh({
       layout,
       vizRefreshNonces,
       refreshDatasources,
-      invalidateFields,
     });
-    return { layout, vizRefreshNonces, refreshDatasources, invalidateFields, ...api };
+    return { layout, vizRefreshNonces, refreshDatasources, ...api };
   };
 
-  it("invalidates fields before force-refreshing datasources", async () => {
-    const calls: string[] = [];
-    const { refreshAll, refreshDatasources, invalidateFields } = setup({
-      refreshDatasources: () => {
-        calls.push("refreshDatasources");
-        return Promise.resolve();
-      },
-    });
-    invalidateFields.mockImplementation(() => calls.push("invalidateFields"));
+  it("force-refreshes datasources", async () => {
+    const { refreshAll, refreshDatasources } = setup();
 
     await refreshAll();
 
-    expect(calls).toEqual(["invalidateFields", "refreshDatasources"]);
+    expect(refreshDatasources).toHaveBeenCalledTimes(1);
     expect(refreshDatasources).toHaveBeenCalledWith(true);
   });
 

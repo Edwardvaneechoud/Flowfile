@@ -1,31 +1,52 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import { useGraphicWalkerCompute } from "./useGraphicWalkerCompute";
-import { isSemantic, type SemanticType } from "./useDashboardFields";
 import type { DashboardFilter, DashboardFilterKind, DashboardTile } from "../types";
+
+type SemanticType = "quantitative" | "nominal" | "ordinal" | "temporal";
+
+const isSemantic = (s: unknown): s is SemanticType =>
+  s === "quantitative" || s === "nominal" || s === "ordinal" || s === "temporal";
 
 interface VisFilter {
   fid: string;
   rule: Record<string, unknown>;
 }
 
-const buildFilterStep = (
+export const buildFilterStep = (
   filters: DashboardFilter[],
+  tileFields: TileField[] | null,
 ): { type: "filter"; filters: VisFilter[] } | null => {
   const visFilters: VisFilter[] = [];
   for (const f of filters) {
-    const rule = filterToRule(f);
+    const rule = filterToRule(
+      f,
+      tileFields?.find((x) => x.fid === f.field_name),
+    );
     if (rule) visFilters.push({ fid: f.field_name, rule });
   }
   if (!visFilters.length) return null;
   return { type: "filter", filters: visFilters };
 };
 
-const filterToRule = (f: DashboardFilter): Record<string, unknown> | null => {
+const toNumber = (v: unknown): number =>
+  typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+
+/** Categorical selections are stored as strings (the option list is rendered
+ * text) and the worker's ``is_in`` does no casting, so a quantitative column
+ * needs numbers. Entries that do not parse are dropped rather than sent. */
+const categoricalValues = (selected: unknown[], field?: TileField): unknown[] =>
+  field?.semanticType === "quantitative"
+    ? selected.map(toNumber).filter(Number.isFinite)
+    : selected;
+
+const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unknown> | null => {
   if (f.kind === "categorical") {
     const selected = (f.state.selected as unknown[]) ?? [];
     if (!Array.isArray(selected) || !selected.length) return null;
-    return { type: "one of", value: selected };
+    const value = categoricalValues(selected, field);
+    if (!value.length) return null;
+    return { type: "one of", value };
   }
   if (f.kind === "numeric_range") {
     const min = f.state.min as number | null | undefined;
@@ -58,14 +79,15 @@ export const isCrossSourceFilter = (f: DashboardFilter): boolean =>
   f.scope === "all" || f.datasource_id == null;
 
 const COMPATIBLE_SEMANTIC_TYPES: Record<DashboardFilterKind, SemanticType[]> = {
-  categorical: ["nominal", "ordinal"],
+  categorical: ["nominal", "ordinal", "quantitative"],
   numeric_range: ["quantitative"],
   date_range: ["temporal"],
 };
 
 /** The worker applies filter rules without casting, so a same-named column of
- * another type errors (string values in an integer ``is_in``, epoch-ms bounds
- * on a string). Unclassified columns pass. */
+ * another type errors (string values in a date ``is_in``, epoch-ms bounds on a
+ * string). Categorical reaches quantitative columns because its values are
+ * coerced to numbers on the way out. Unclassified columns pass. */
 export const filterFitsField = (f: DashboardFilter, field: TileField): boolean =>
   !isSemantic(field.semanticType) || COMPATIBLE_SEMANTIC_TYPES[f.kind].includes(field.semanticType);
 
@@ -125,7 +147,7 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
   const fetcher = async (payload: any): Promise<{ rows: any[]; error: string | null }> => {
     const vizId = opts.tile.value.viz_id;
     if (vizId == null) return { rows: [], error: null };
-    const filterStep = buildFilterStep(effectiveFilters.value);
+    const filterStep = buildFilterStep(effectiveFilters.value, opts.tileFields?.() ?? null);
     const finalPayload =
       filterStep && payload?.workflow
         ? { ...payload, workflow: [filterStep, ...payload.workflow] }

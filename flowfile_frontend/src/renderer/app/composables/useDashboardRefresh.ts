@@ -22,11 +22,9 @@ export interface DashboardRefreshOptions {
   layout: Ref<DashboardLayout> | ComputedRef<DashboardLayout>;
   vizRefreshNonces: Ref<Record<number, number>>;
   refreshDatasources: (force?: boolean) => Promise<void>;
-  invalidateFields: () => void;
 }
 
-/** Manual dashboard refresh: clear stale frontend caches, force-refetch the
- * datasource metadata, then bump the tile + filter-stats nonces so every
+/** Manual dashboard refresh: force-refetch the datasource metadata, then bump the tile + filter-stats nonces so every
  * mounted tile and filter re-queries. Nonces bump even when the datasource
  * refetch rejects (tiles surface their own errors); the rejection still
  * propagates so the view can toast. */
@@ -37,7 +35,6 @@ export function useDashboardRefresh(opts: DashboardRefreshOptions) {
   const refreshAll = async (): Promise<void> => {
     refreshing.value = true;
     try {
-      opts.invalidateFields();
       await opts.refreshDatasources(true);
     } finally {
       statsRefreshNonce.value += 1;

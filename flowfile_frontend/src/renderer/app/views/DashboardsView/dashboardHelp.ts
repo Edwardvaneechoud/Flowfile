@@ -26,7 +26,7 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-shapes",
           title: "Tiles",
           description:
-            "Two types: visualization tiles render a saved chart from the catalog, and text tiles hold sanitized Markdown for headings and notes.",
+            "Three types: visualization tiles render a saved chart from the catalog, text tiles hold sanitized Markdown for headings and notes, and separators draw a horizontal rule between sections.",
         },
         {
           icon: "fa-solid fa-filter",
@@ -64,7 +64,7 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-ruler-combined",
           title: "Default sizes",
           description:
-            "New visualization tiles spawn as 6×6; new text tiles spawn full width (12×3). Reshape them right after dropping.",
+            "The canvas is a 48-column grid with 40px rows. New visualization tiles spawn at half width and 6 rows; text tiles full width and 3 rows; separators a one-row full-width line, or a narrow 6-row bar when vertical. Reshape them right after dropping.",
         },
       ],
     },
@@ -72,7 +72,7 @@ export const dashboardHelp: PageHelpContent = {
       title: "Tile types",
       icon: "fa-solid fa-shapes",
       description:
-        "Each tile is either a visualization (a saved chart from the catalog) or a text block (Markdown). The three-dot menu in edit mode lets you edit the underlying chart, edit text, or remove the tile from the dashboard. Removing a tile here does not delete the visualization from the catalog.",
+        "Each tile is a visualization (a saved chart from the catalog), a text block (Markdown), or a separator line. The three-dot menu in edit mode lets you edit the underlying chart, edit text, or remove the tile from the dashboard. Removing a tile here does not delete the visualization from the catalog.",
       features: [
         {
           icon: "fa-solid fa-chart-column",
@@ -85,6 +85,12 @@ export const dashboardHelp: PageHelpContent = {
           title: "Text tile",
           description:
             "Markdown with headings, lists, code, links, tables, images, blockquotes, horizontal rules. Sanitized through DOMPurify.",
+        },
+        {
+          icon: "fa-solid fa-minus",
+          title: "Separator",
+          description:
+            "A rule for splitting the page into sections, horizontal (full width) or vertical (one column). Right-click it in edit mode, or use its menu, to set the line colour, thickness and orientation; it renders as a plain line in view mode.",
         },
         {
           icon: "fa-solid fa-mouse-pointer",
@@ -162,7 +168,7 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-plus",
           title: "Insert sidebar",
           description:
-            "Add a Markdown text block with one click, or pick any saved visualization. Tiles already on the canvas dim but can still be added a second time.",
+            "Add a Markdown text block or a separator line with one click, or pick any saved visualization. Tiles already on the canvas dim but can still be added a second time.",
         },
         {
           icon: "fa-solid fa-sliders",

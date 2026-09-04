@@ -92,7 +92,7 @@ def _make_table(name: str = "Sales") -> int:
 
 
 def _empty_layout() -> dict:
-    return {"tiles": [], "grid": {"cols": 12, "row_height": 40, "version": 1}, "filters": []}
+    return {"tiles": [], "grid": {"cols": 48, "row_height": 40, "version": 2}, "filters": []}
 
 
 def _layout_with_two_tiles() -> dict:
@@ -153,6 +153,47 @@ class TestDashboardCRUD:
         get_resp = client.get(f"/catalog/dashboards/{body['id']}")
         assert get_resp.status_code == 200
         assert get_resp.json()["layout"]["tiles"][1]["viz_id"] == 2
+
+    def test_create_with_separator_tile(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append({"id": "sep-1", "type": "separator", "x": 0, "y": 6, "w": 12, "h": 1})
+        layout["tiles"].append(
+            {
+                "id": "sep-2",
+                "type": "separator",
+                "orientation": "vertical",
+                "thickness": 3,
+                "line_color": "#dc2626",
+                "x": 6,
+                "y": 0,
+                "w": 1,
+                "h": 6,
+            }
+        )
+        resp = client.post("/catalog/dashboards", json={"name": "With separator", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        tiles = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["tiles"]
+        assert tiles[2]["type"] == "separator"
+        assert tiles[2]["viz_id"] is None
+        assert tiles[2]["orientation"] == "horizontal"
+        assert tiles[2]["thickness"] is None
+        assert tiles[3]["orientation"] == "vertical"
+        assert tiles[3]["thickness"] == 3
+        assert tiles[3]["line_color"] == "#dc2626"
+
+    def test_separator_thickness_out_of_range_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(
+            {"id": "sep", "type": "separator", "thickness": 0, "x": 0, "y": 6, "w": 12, "h": 1}
+        )
+        resp = client.post("/catalog/dashboards", json={"name": "Thin", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_create_with_unknown_tile_type_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append({"id": "bad", "type": "image", "x": 0, "y": 6, "w": 12, "h": 1})
+        resp = client.post("/catalog/dashboards", json={"name": "Bad tile", "layout": layout})
+        assert resp.status_code == 422
 
     def test_create_with_namespace(self, client):
         ns_id = _make_namespace()

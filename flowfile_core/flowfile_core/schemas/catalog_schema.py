@@ -750,16 +750,21 @@ class DashboardTile(BaseModel):
     can preserve component state on layout updates. ``type`` discriminates
     tile kinds: ``"viz"`` renders a saved visualization (uses ``viz_id`` /
     ``chart_index``); ``"text"`` renders user-authored Markdown from
-    ``text_md``. Type-irrelevant fields are simply ignored.
+    ``text_md``; ``"separator"`` draws a rule to break the page into
+    sections (``orientation``, ``thickness`` in px and ``line_color`` style
+    it). Type-irrelevant fields are simply ignored.
     """
 
     id: str
-    type: Literal["viz", "text"] = "viz"
+    type: Literal["viz", "text", "separator"] = "viz"
     viz_id: int | None = None
     chart_index: int = 0
     text_md: str | None = None
     bg_color: str | None = None
     text_color: str | None = None
+    orientation: Literal["horizontal", "vertical"] = "horizontal"
+    thickness: int | None = Field(default=None, ge=1, le=24)
+    line_color: str | None = None
     x: int
     y: int
     w: int
@@ -767,9 +772,15 @@ class DashboardTile(BaseModel):
 
 
 class DashboardGrid(BaseModel):
-    cols: int = 12
+    """Grid resolution a layout was placed on.
+
+    Version 1 layouts used 12 columns; the frontend scales them onto the
+    current 48-column grid on load and saves them back as version 2.
+    """
+
+    cols: int = 48
     row_height: int = 40
-    version: int = 1
+    version: int = 2
 
 
 class DashboardFilter(BaseModel):

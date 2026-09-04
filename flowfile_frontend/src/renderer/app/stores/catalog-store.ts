@@ -85,7 +85,6 @@ interface CatalogState {
   loading: boolean;
   error: string | null;
   visualizationsByTable: Record<number, CatalogVisualization[]>;
-  visualizationFieldsBySource: Record<string, Record<string, any>[]>;
   loadingVisualizations: boolean;
   visualizationLibrary: CatalogVisualization[];
   loadingVisualizationLibrary: boolean;
@@ -182,7 +181,6 @@ export const useCatalogStore = defineStore("catalog", {
     loading: false,
     error: null,
     visualizationsByTable: {},
-    visualizationFieldsBySource: {},
     loadingVisualizations: false,
     visualizationLibrary: [],
     loadingVisualizationLibrary: false,
@@ -993,22 +991,12 @@ export const useCatalogStore = defineStore("catalog", {
       this.visualizationLibrary = this.visualizationLibrary.filter((v) => v.id !== vizId);
     },
 
+    /** Always refetch: the worker caches fields per Delta version, so a
+     * frontend cache keyed by source descriptor would go stale as soon as a
+     * column is added to the table. */
     async loadVisualizationFields(source: VizSourceDescriptor) {
-      const key = JSON.stringify(source);
-      if (this.visualizationFieldsBySource[key]) return this.visualizationFieldsBySource[key];
       const result = await CatalogApi.getVisualizationFields(source);
-      if (!result.error) {
-        this.visualizationFieldsBySource = {
-          ...this.visualizationFieldsBySource,
-          [key]: result.fields,
-        };
-      }
       return result.fields;
-    },
-
-    /** Clear-all: SQL-source descriptor keys make per-table invalidation impossible. */
-    invalidateVisualizationFields() {
-      this.visualizationFieldsBySource = {};
     },
 
     async loadVisualizationLibrary() {

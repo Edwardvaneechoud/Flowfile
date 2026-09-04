@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../api/catalog.api", () => ({ CatalogApi: {} }));
 vi.mock("./useGraphicWalkerCompute", () => ({ useGraphicWalkerCompute: vi.fn() }));
 
-import { filtersTargetingTile, type TileField } from "./useDashboardComputation";
+import { buildFilterStep, filtersTargetingTile, type TileField } from "./useDashboardComputation";
 import type { DashboardFilter } from "../types";
 
 const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
@@ -70,7 +70,10 @@ describe("filtersTargetingTile", () => {
     ]);
     expect(
       filtersTargetingTile([categorical], "t", ds, fieldsOf({ region: "quantitative" })),
-    ).toEqual([]);
+    ).toEqual([categorical]);
+    expect(filtersTargetingTile([categorical], "t", ds, fieldsOf({ region: "temporal" }))).toEqual(
+      [],
+    );
     expect(filtersTargetingTile([numeric], "t", ds, fieldsOf({ region: "quantitative" }))).toEqual([
       numeric,
     ]);
@@ -109,5 +112,28 @@ describe("filtersTargetingTile", () => {
 
     expect(filtersTargetingTile([f], "a", ds, fields)).toEqual([f]);
     expect(filtersTargetingTile([f], "b", ds, fields)).toEqual([]);
+  });
+});
+
+describe("buildFilterStep", () => {
+  const stepValue = (f: DashboardFilter, fields: TileField[] | null) =>
+    buildFilterStep([f], fields)?.filters[0]?.rule.value;
+
+  it("coerces categorical selections to numbers for quantitative columns", () => {
+    const f = filterOf({ state: { selected: ["2020", "2021"] } });
+    expect(stepValue(f, fieldsOf({ region: "quantitative" }))).toEqual([2020, 2021]);
+  });
+
+  it("keeps categorical selections as strings for other columns", () => {
+    const f = filterOf({ state: { selected: ["EU", "US"] } });
+    expect(stepValue(f, fieldsOf({ region: "nominal" }))).toEqual(["EU", "US"]);
+    expect(stepValue(f, null)).toEqual(["EU", "US"]);
+  });
+
+  it("drops entries that do not parse as numbers and omits an emptied filter", () => {
+    const mixed = filterOf({ state: { selected: ["2020", "abc", " "] } });
+    expect(stepValue(mixed, fieldsOf({ region: "quantitative" }))).toEqual([2020]);
+    const none = filterOf({ state: { selected: ["abc"] } });
+    expect(buildFilterStep([none], fieldsOf({ region: "quantitative" }))).toBeNull();
   });
 });
