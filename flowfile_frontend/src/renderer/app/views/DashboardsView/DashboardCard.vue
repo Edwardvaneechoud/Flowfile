@@ -62,7 +62,9 @@
           ></i>
         </div>
       </div>
-      <p v-else class="dash-card-desc dash-card-desc-empty">No tiles yet.</p>
+      <p v-else-if="!dashboard.description" class="dash-card-desc dash-card-desc-empty">
+        No tiles yet.
+      </p>
       <p v-if="dashboard.description" class="dash-card-desc">{{ dashboard.description }}</p>
     </div>
 
