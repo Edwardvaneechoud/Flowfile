@@ -103,21 +103,30 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CatalogView/CatalogView.vue"),
       },
       {
-        name: "dashboard-new",
-        path: "dashboards/new",
-        component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
-      },
-      {
-        name: "dashboard-edit",
-        path: "dashboards/:id/edit",
-        component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
-        props: true,
-      },
-      {
-        name: "dashboard-view",
-        path: "dashboards/:id",
-        component: () => import("../views/DashboardsView/DashboardViewerView.vue"),
-        props: true,
+        // Dashboards are catalog pages: CatalogView keeps its tab bar (pinned to
+        // meta.catalogTab) and mounts the viewer/editor in its nested <router-view>.
+        path: "dashboards",
+        component: () => import("../views/CatalogView/CatalogView.vue"),
+        meta: { catalogTab: "visuals" },
+        children: [
+          {
+            name: "dashboard-new",
+            path: "new",
+            component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
+          },
+          {
+            name: "dashboard-edit",
+            path: ":id/edit",
+            component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
+            props: true,
+          },
+          {
+            name: "dashboard-view",
+            path: ":id",
+            component: () => import("../views/DashboardsView/DashboardViewerView.vue"),
+            props: true,
+          },
+        ],
       },
       {
         name: "nodeDesigner",

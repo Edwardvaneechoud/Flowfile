@@ -2,9 +2,9 @@
   <div class="dashboard-editor">
     <div class="editor-toolbar">
       <div class="editor-toolbar-left">
-        <el-button text @click="onBack">
-          <el-icon><ArrowLeft /></el-icon> Back
-        </el-button>
+        <button class="back-btn" @click="onBack">
+          <i class="fa-solid fa-arrow-left"></i> Back
+        </button>
         <el-input
           v-if="store.current"
           v-model="nameDraft"
@@ -152,7 +152,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { ArrowLeft, Refresh } from "@element-plus/icons-vue";
+import { Refresh } from "@element-plus/icons-vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { useAuthStore } from "../../stores/auth-store";
@@ -780,20 +780,23 @@ const onConflictOverwrite = async () => {
 </script>
 
 <style scoped>
+/* Padding stacks on .catalog-detail's so the header lines up with the library page. */
 .dashboard-editor {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  padding: var(--spacing-3) var(--spacing-6) 0;
 }
 .editor-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
+  padding: 0 0 var(--spacing-4);
   gap: 12px;
+}
+.editor-toolbar .back-btn {
+  margin-bottom: 0;
 }
 .editor-toolbar-left {
   display: flex;
@@ -806,7 +809,7 @@ const onConflictOverwrite = async () => {
   max-width: 320px;
 }
 .draft-banner {
-  margin: 8px 16px 0;
+  margin: 0 0 var(--spacing-3);
   width: auto;
 }
 .draft-banner-actions {

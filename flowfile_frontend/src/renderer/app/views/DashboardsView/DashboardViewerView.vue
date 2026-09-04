@@ -2,9 +2,7 @@
   <div class="dashboard-viewer">
     <div class="viewer-toolbar">
       <div class="viewer-toolbar-left">
-        <el-button text @click="onBack">
-          <el-icon><ArrowLeft /></el-icon> Back
-        </el-button>
+        <button class="back-btn" @click="onBack">All dashboards</button>
         <h2 v-if="store.current">{{ store.current.name }}</h2>
         <span v-if="store.current?.namespace_name" class="viewer-ns">{{
           store.current.namespace_name
@@ -53,7 +51,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { ArrowLeft, Edit, Refresh } from "@element-plus/icons-vue";
+import { Edit, Refresh } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
@@ -136,19 +134,22 @@ const onEditVizFromTile = (vizId: number | null) => {
 </script>
 
 <style scoped>
+/* Padding stacks on .catalog-detail's so the header lines up with the library page. */
 .dashboard-viewer {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  padding: var(--spacing-3) var(--spacing-6) 0;
 }
 .viewer-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
+  padding: 0 0 var(--spacing-4);
+}
+.viewer-toolbar .back-btn {
+  margin-bottom: 0;
 }
 .viewer-toolbar-left {
   display: flex;
