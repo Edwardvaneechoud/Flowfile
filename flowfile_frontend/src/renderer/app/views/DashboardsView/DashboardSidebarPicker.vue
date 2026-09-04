@@ -14,6 +14,30 @@
         <el-icon><EditPen /></el-icon>
         <span>Text block</span>
       </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas"
+        @click="emit('add-separator', 'horizontal')"
+        @dragstart="onSeparatorDragStart($event, 'horizontal')"
+      >
+        <el-icon><Minus /></el-icon>
+        <span>Separator</span>
+      </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas"
+        @click="emit('add-separator', 'vertical')"
+        @dragstart="onSeparatorDragStart($event, 'vertical')"
+      >
+        <el-icon class="icon-rotated"><Minus /></el-icon>
+        <span>Vertical separator</span>
+      </el-button>
     </div>
     <div class="picker-divider" />
     <div class="picker-header">
@@ -94,21 +118,22 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { EditPen, Plus, Search } from "@element-plus/icons-vue";
+import { EditPen, Minus, Plus, Search } from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
-import type { CatalogVisualization } from "../../types";
+import type { CatalogVisualization, SeparatorOrientation } from "../../types";
 
 defineProps<{ addedVizIds: Set<number> }>();
 
 const emit = defineEmits<{
   (e: "add", viz: CatalogVisualization): void;
   (e: "add-text"): void;
+  (e: "add-separator", orientation: SeparatorOrientation): void;
   (e: "create"): void;
 }>();
 
 const catalogStore = useCatalogStore();
-const { onVizDragStart, onTextDragStart } = useDashboardDragAndDrop();
+const { onVizDragStart, onTextDragStart, onSeparatorDragStart } = useDashboardDragAndDrop();
 const search = ref("");
 const tableFilter = ref<number | null>(null);
 
@@ -185,6 +210,13 @@ onMounted(() => {
 .picker-tool-btn {
   justify-content: flex-start;
   width: 100%;
+}
+/* Element Plus spaces sibling buttons horizontally; ours stack. */
+.picker-tools .picker-tool-btn + .picker-tool-btn {
+  margin-left: 0;
+}
+.icon-rotated {
+  transform: rotate(90deg);
 }
 .picker-divider {
   height: 1px;

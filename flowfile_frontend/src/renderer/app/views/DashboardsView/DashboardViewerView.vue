@@ -55,13 +55,12 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { ArrowLeft, Edit, Refresh } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
-import { useCatalogStore } from "../../stores/catalog-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
 import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
-import type { DashboardFilter, DashboardLayout } from "../../types";
+import { EMPTY_DASHBOARD_LAYOUT, type DashboardFilter, type DashboardLayout } from "../../types";
 
 const props = defineProps<{ id: string | number }>();
 const router = useRouter();
@@ -74,20 +73,18 @@ const dashboardId = computed(() => Number(props.id));
 const liveFilters = ref<DashboardFilter[]>([]);
 const liveLayout = computed<DashboardLayout>(() => {
   if (!store.current) {
-    return { tiles: [], grid: { cols: 12, row_height: 40, version: 1 }, filters: [] };
+    return { ...EMPTY_DASHBOARD_LAYOUT, tiles: [], filters: [] };
   }
   return { ...store.current.layout, filters: liveFilters.value };
 });
 const { datasourcesInUse, tilesByDatasource, tileDatasource, tileLabel, getColumnStats, refresh } =
   useDashboardDatasources(liveLayout);
 
-const catalogStore = useCatalogStore();
 const vizRefreshNonces = ref<Record<number, number>>({});
 const { refreshing, statsRefreshNonce, refreshAll } = useDashboardRefresh({
   layout: liveLayout,
   vizRefreshNonces,
   refreshDatasources: refresh,
-  invalidateFields: catalogStore.invalidateVisualizationFields,
 });
 
 const onRefresh = async () => {

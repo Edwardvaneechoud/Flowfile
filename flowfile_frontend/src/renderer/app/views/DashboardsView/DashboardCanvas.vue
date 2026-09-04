@@ -32,8 +32,8 @@
         :y="item.y"
         :w="item.w"
         :h="item.h"
-        :min-w="2"
-        :min-h="tileById[item.i]?.type === 'text' ? 1 : 2"
+        :min-w="tileById[item.i]?.type === 'separator' ? 1 : Math.max(2, layout.grid.cols / 6)"
+        :min-h="tileById[item.i]?.type === 'viz' ? 2 : 1"
         drag-allow-from=".tile-handle"
       >
         <DashboardTile
@@ -43,6 +43,7 @@
           :filters="layout.filters"
           :viz-refresh-nonce="vizRefreshNonceFor(tileById[item.i].viz_id ?? -1)"
           :tile-datasource="tileDatasource"
+          :grid-cols="layout.grid.cols"
           @remove="onRemoveTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
           @update:tile="onUpdateTile"
@@ -58,11 +59,16 @@ import { GridItem, GridLayout } from "grid-layout-plus";
 import DashboardTile from "./DashboardTile.vue";
 import {
   useDashboardDragAndDrop,
+  SEPARATOR_MIME,
   TEXT_MIME,
   VIZ_MIME,
 } from "../../composables/useDashboardDragAndDrop";
 import { computeDropCell } from "./gridDrop";
-import type { DashboardLayout, DashboardTile as DashboardTileType } from "../../types";
+import type {
+  DashboardLayout,
+  DashboardTile as DashboardTileType,
+  SeparatorOrientation,
+} from "../../types";
 
 const props = defineProps<{
   layout: DashboardLayout;
@@ -80,17 +86,24 @@ const emit = defineEmits<{
   (e: "edit-viz", vizId: number | null): void;
   (e: "add-viz-at", payload: { vizId: number; x: number; y: number }): void;
   (e: "add-text-at", payload: { x: number; y: number }): void;
+  (
+    e: "add-separator-at",
+    payload: { x: number; y: number; orientation: SeparatorOrientation },
+  ): void;
 }>();
 
-const { isDraggingViz, isDraggingText } = useDashboardDragAndDrop();
+const { isDraggingViz, isDraggingText, isDraggingSeparator } = useDashboardDragAndDrop();
 const canvasRef = ref<HTMLElement | null>(null);
 const gridRef = ref<ComponentPublicInstance | null>(null);
 const dragOver = ref(false);
 
 const dragHasOurPayload = (e: DragEvent): boolean => {
-  if (isDraggingViz.value || isDraggingText.value) return true;
+  if (isDraggingViz.value || isDraggingText.value || isDraggingSeparator.value) return true;
   const types = e.dataTransfer?.types;
-  return !!types && (types.includes(VIZ_MIME) || types.includes(TEXT_MIME));
+  return (
+    !!types &&
+    (types.includes(VIZ_MIME) || types.includes(TEXT_MIME) || types.includes(SEPARATOR_MIME))
+  );
 };
 
 const onCanvasDragOver = (e: DragEvent) => {
@@ -121,15 +134,20 @@ const onCanvasDrop = (e: DragEvent) => {
   const dt = e.dataTransfer;
   if (!dt) return;
   const isText = dt.types.includes(TEXT_MIME);
+  const isSeparator = dt.types.includes(SEPARATOR_MIME);
+  const orientation: SeparatorOrientation =
+    dt.getData(SEPARATOR_MIME) === "vertical" ? "vertical" : "horizontal";
   const rawViz = dt.getData(VIZ_MIME);
   const vizId = rawViz ? Number(rawViz) : NaN;
   const isViz = Number.isFinite(vizId);
-  if (!isText && !isViz) return;
+  if (!isText && !isSeparator && !isViz) return;
   e.preventDefault();
 
-  // Text tiles span the full width (w:12), viz tiles half (w:6); the width
-  // drives the x-clamp so a tile never overflows the grid.
-  const w = isText ? 12 : 6;
+  // Text and horizontal separators span the full width, viz tiles half,
+  // vertical separators two columns; the width drives the x-clamp so a
+  // tile never overflows the grid.
+  const cols = props.layout.grid.cols;
+  const w = isViz ? cols / 2 : isSeparator && orientation === "vertical" ? 2 : cols;
   const layoutEl =
     (gridRef.value?.$el as HTMLElement | undefined) ??
     canvasRef.value?.querySelector<HTMLElement>(".vgl-layout") ??
@@ -149,6 +167,7 @@ const onCanvasDrop = (e: DragEvent) => {
     });
   }
   if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
+  else if (isSeparator) emit("add-separator-at", { x: cell.x, y: cell.y, orientation });
   else emit("add-viz-at", { vizId, x: cell.x, y: cell.y });
 };
 

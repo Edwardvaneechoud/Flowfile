@@ -72,7 +72,7 @@ def _make_dashboard(name: str, layout: DashboardLayout) -> tuple[int, str]:
             name=name,
             created_by=OWNER,
             layout_json=layout.model_dump_json(),
-            layout_version=layout.grid.version,
+            layout_version=1,
         )
         db.add(dashboard)
         db.commit()

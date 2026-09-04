@@ -40,12 +40,24 @@ from flowfile_core.utils.arrow_reader import read
 from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
 
+class WorkerAuthUnavailable(requests.RequestException):
+    """No internal token can be resolved, so the worker is unreachable for this process.
+
+    Raised as a ``RequestException`` so every caller that already degrades on an
+    unreachable worker (cache probes, catalog helpers, local-execution runs in a
+    mode that mints no token) treats it the same way instead of crashing.
+    """
+
+
 class _WorkerAuth(requests.auth.AuthBase):
     """Signs every worker call with the shared internal token, resolved per
     request so nothing mints at import time."""
 
     def __call__(self, r):
-        r.headers["X-Flowfile-Internal"] = get_internal_token()
+        try:
+            r.headers["X-Flowfile-Internal"] = get_internal_token()
+        except ValueError as exc:
+            raise WorkerAuthUnavailable(str(exc), request=r) from exc
         return r
 
 
