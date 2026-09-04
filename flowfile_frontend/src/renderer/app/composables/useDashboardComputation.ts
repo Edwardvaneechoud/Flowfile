@@ -33,8 +33,9 @@ const toNumber = (v: unknown): number =>
   typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
 
 /** Categorical selections are stored as strings (the option list is rendered
- * text) and the worker's ``is_in`` does no casting, so a quantitative column
- * needs numbers. Entries that do not parse are dropped rather than sent. */
+ * text) and the worker's ``is_in`` does no casting: strings against a numeric
+ * column raise, so a quantitative field gets numbers instead. Entries that do
+ * not parse are dropped rather than sent. */
 const categoricalValues = (selected: unknown[], field?: TileField): unknown[] =>
   field?.semanticType === "quantitative"
     ? selected.map(toNumber).filter(Number.isFinite)

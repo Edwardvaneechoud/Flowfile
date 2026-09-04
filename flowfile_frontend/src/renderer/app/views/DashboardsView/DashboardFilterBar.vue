@@ -474,7 +474,7 @@ const coverageByField = computed<Record<string, string>>(() => {
   return out;
 });
 
-// Explicit targets from the other scope may no longer be candidates.
+// Prunes targets the new scope can't reach; pre-flush so it sees openEdit's full assignment.
 watch(
   () => draft.scope,
   () => {
