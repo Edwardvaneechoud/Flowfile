@@ -60,7 +60,7 @@ def main(argv: list[str]) -> int:
         path = ROOT / rel
         _write(path, _replace_first_json_version(path.read_text(encoding="utf-8"), new_version))
 
-    print("Done. Refresh Cargo.lock (cargo update -p flowfile) and commit.")
+    print("Done. Cargo.lock is refreshed by `make bump-version` (or run: cargo update -p flowfile).")
     return 0
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "flowfile"
-version = "0.17.0"
+version = "0.17.1"
 description = "Flowfile — visual ETL platform"
 authors = ["Edwardvaneechoud"]
 license = "MIT"

@@ -360,6 +360,9 @@ check_share_data: check_wasm_node_manifest
 bump-version:
 	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-version VERSION=X.Y.Z"; exit 1; fi
 	$(POETRY_RUN) python tools/bump_version.py $(VERSION)
+	@if command -v cargo >/dev/null 2>&1; then \
+		cd flowfile_frontend/src-tauri && cargo update -p flowfile; \
+	else echo "cargo not found: refresh flowfile_frontend/src-tauri/Cargo.lock before committing"; fi
 
 # Drift check for CI: fail if the version is out of sync across manifests.
 check-version:
