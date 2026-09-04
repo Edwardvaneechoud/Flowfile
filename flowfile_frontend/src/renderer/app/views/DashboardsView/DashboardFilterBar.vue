@@ -665,8 +665,9 @@ const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
   background: var(--el-fill-color-light);
   flex-wrap: wrap;
 }

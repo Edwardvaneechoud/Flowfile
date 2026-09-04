@@ -217,9 +217,14 @@ const itemKey = (item: INavigationRoute) => item.index ?? item.name;
 const descendants = (items: INavigationRoute[]): INavigationRoute[] =>
   items.flatMap((item) => (item.children ? [...item.children, ...descendants(item.children)] : []));
 
+// A page nested under the catalog (dashboards) counts as the catalog route on the tab
+// its route meta pins.
+const nestedCatalogTab = computed(() => route.meta.catalogTab as string | undefined);
+const currentName = computed(() => (nestedCatalogTab.value ? "catalog" : (route.name as string)));
+
 const activeIndex = computed(() => {
-  const name = route.name as string;
-  const tab = route.query.tab as string | undefined;
+  const name = currentName.value;
+  const tab = nestedCatalogTab.value ?? (route.query.tab as string | undefined);
   const children = descendants(props.items);
   // Sub-items share a route name but differ by ?tab=, so try the composite index
   // first, then the bare name (a child without a tab, or a flattened parent).
@@ -319,7 +324,7 @@ function toggleGroup(parent: string, key: string | null) {
 }
 
 function isRouteActive(item: INavigationRoute) {
-  return item.name === route.name;
+  return item.name === currentName.value;
 }
 
 function isItemExpanded(item: INavigationRoute): boolean {

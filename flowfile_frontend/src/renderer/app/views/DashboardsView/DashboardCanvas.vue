@@ -2,7 +2,11 @@
   <div
     ref="canvasRef"
     class="canvas"
-    :class="{ 'canvas-edit': mode === 'edit', 'canvas-drop-active': dragOver }"
+    :class="{
+      'canvas-edit': mode === 'edit',
+      'canvas-view': mode === 'view',
+      'canvas-drop-active': dragOver,
+    }"
     @dragover="onCanvasDragOver"
     @dragleave="onCanvasDragLeave"
     @drop="onCanvasDrop"
@@ -254,8 +258,13 @@ const onUpdateTile = (next: DashboardTileType) => {
   width: 100%;
   height: 100%;
   overflow: auto;
-  padding: 8px 8px 48px;
+  padding: var(--spacing-2) 0 48px;
   background: var(--el-fill-color-blank);
+}
+/* The grid insets tiles by its own 8px margin; pull that back so the first
+ * column lines up with the page header. */
+.canvas-view {
+  margin: 0 calc(-1 * var(--spacing-2));
 }
 /* grid-layout-plus's drag/drop placeholder leaks past the end of a
  * gesture (z-index 2 > items at z-index 0), so it tinted the dropped

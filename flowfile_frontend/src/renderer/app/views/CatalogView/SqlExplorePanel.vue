@@ -86,6 +86,7 @@
 import { computed, reactive, ref, onBeforeUnmount, watch } from "vue";
 import { ElMessage } from "element-plus";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
+import { captureThumbnail } from "../../composables/useChartThumbnail";
 import type {
   IMutField,
   IRow,
@@ -260,6 +261,7 @@ async function onConfirmSave() {
   }
   saving.value = true;
   try {
+    const thumbnail_data_url = await captureThumbnail(vueGraphicWalkerRef);
     await CatalogApi.createVisualization({
       name,
       description: saveForm.description.trim() || null,
@@ -268,6 +270,7 @@ async function onConfirmSave() {
       source_type: "sql",
       sql_query: props.sourceQuery,
       namespace_id: saveForm.namespaceId ?? null,
+      ...(thumbnail_data_url ? { thumbnail_data_url } : {}),
     });
     const where = saveForm.namespaceId
       ? (schemaNamespaces.value.find((n) => n.id === saveForm.namespaceId)?.label ?? "the catalog")

@@ -168,9 +168,11 @@
 
       <!-- Detail Panel -->
       <div class="catalog-detail">
+        <!-- Nested page (dashboards); first so a lingering selection can't shadow it -->
+        <router-view v-if="nestedPageTab" />
         <!-- Run detail view -->
         <RunDetailPanel
-          v-if="catalogStore.selectedRunDetail"
+          v-else-if="catalogStore.selectedRunDetail"
           :run="catalogStore.selectedRunDetail"
           @close="handleCloseDetail"
           @open-snapshot="openRunSnapshot($event)"
@@ -698,6 +700,10 @@ const isExtensionsSection = computed(
 // a string compare so the panel renders without widening the shared type here.
 const isCommunityTab = computed(() => (catalogStore.activeTab as string) === "community");
 
+// Pages nested under the catalog (dashboards) pin the tab they belong to via route meta
+// and render in the nested <router-view> in place of the detail panels.
+const nestedPageTab = computed(() => route.meta.catalogTab as CatalogTab | undefined);
+
 // Search and filter state
 const searchQuery = ref("");
 const showUnavailable = ref(false);
@@ -733,14 +739,24 @@ const showInfoModal = ref(false);
 
 // Tree panel collapse is a per-browser convenience, so it lives in localStorage.
 const TREE_COLLAPSED_KEY = "flowfile-catalog-tree-collapsed";
-const treeCollapsed = ref(false);
+const savedTreeCollapsed = ref(false);
 try {
-  treeCollapsed.value = localStorage.getItem(TREE_COLLAPSED_KEY) === "true";
+  savedTreeCollapsed.value = localStorage.getItem(TREE_COLLAPSED_KEY) === "true";
 } catch {
   // storage unavailable — start expanded
 }
+// Nested pages (dashboards) want the width: their tree starts collapsed, and the
+// toggle there is session-local so it never leaks into the saved preference.
+const pageTreeCollapsed = ref(true);
+const treeCollapsed = computed(() =>
+  nestedPageTab.value ? pageTreeCollapsed.value : savedTreeCollapsed.value,
+);
 function setTreeCollapsed(value: boolean) {
-  treeCollapsed.value = value;
+  if (nestedPageTab.value) {
+    pageTreeCollapsed.value = value;
+    return;
+  }
+  savedTreeCollapsed.value = value;
   try {
     localStorage.setItem(TREE_COLLAPSED_KEY, String(value));
   } catch {
@@ -1704,6 +1720,11 @@ async function handleCancelFlowRun(flowId: number) {
 // --- Route → Store sync ---
 
 function applyRouteToStore() {
+  // A nested page owns its own state; only its tab is pinned.
+  if (nestedPageTab.value) {
+    catalogStore.activeTab = nestedPageTab.value;
+    return;
+  }
   const q = route.query;
   const tab = (q.tab as CatalogTab) || "runs";
   const flowId = q.flowId ? Number(q.flowId) : null;
