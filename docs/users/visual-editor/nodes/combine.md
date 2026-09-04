@@ -135,8 +135,7 @@ Where [Filter](transform.md#filter-data) decides which *rows* continue, Gate dec
 
 The default. Pick a flow parameter (defined in **Flow settings**), an operator, and — for the comparing operators — a value. The value you type is coerced using the parameter's declared type, so an `integer` parameter compares as a number, not as text.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Gate settings drawer in parameter mode — the Condition source toggle (Flow parameter / Formula) and the Parameter / Operator / Value row -->
-
+![Gate settings in parameter mode: the Condition source toggle and the Parameter, Operator, and Value row](../../../assets/images/guides/nodes/gate-parameter-settings.png)
 
 | Operator | Gate opens when |
 |---|---|
