@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 360" role="img" aria-label="Placeholder: the install consent dialog showing the node identity, capability chips, the run-with-your-access risk statement, the sha256 pin, and the required acknowledgement checkbox">
-  <rect x="5" y="5" width="810" height="350" rx="14" fill="none" stroke="#8a8f98" stroke-width="2" stroke-dasharray="10 8"/>
-  <text x="410" y="168" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="600" fill="#8a8f98">Screenshot placeholder</text>
-  <text x="410" y="206" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#8a8f98">Install consent dialog: capability chips, risk statement, sha256, acknowledge checkbox</text>
-</svg>

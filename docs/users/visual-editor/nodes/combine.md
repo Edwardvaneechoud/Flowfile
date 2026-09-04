@@ -135,8 +135,7 @@ Where [Filter](transform.md#filter-data) decides which *rows* continue, Gate dec
 
 The default. Pick a flow parameter (defined in **Flow settings**), an operator, and — for the comparing operators — a value. The value you type is coerced using the parameter's declared type, so an `integer` parameter compares as a number, not as text.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Gate settings drawer in parameter mode — the Condition source toggle (Flow parameter / Formula) and the Parameter / Operator / Value row -->
-
+![Gate settings in parameter mode: the Condition source toggle and the Parameter, Operator, and Value row](../../../assets/images/guides/nodes/gate-parameter-settings.png){ width="560" }
 
 | Operator | Gate opens when |
 |---|---|
@@ -186,6 +185,8 @@ Exactly one side runs, and the Union outputs whichever branch ran. A column prod
 ---
 
 #### Skipped is not failed
+
+![A run where the gate closed: Manual input and Gate show green success dots, and the Count records node behind the gate shows the hollow grey skipped ring](../../../assets/images/guides/nodes/gate-skipped-branch.png){ width="640" }
 
 A deliberately skipped node shows a hollow grey ring on the canvas ("Skipped (gated off) — condition not met") and appears as **Skipped** in the run report with no runtime. It is a successful outcome: the flow's overall status stays green and the completed-node count still reaches its total.
 

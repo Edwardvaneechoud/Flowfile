@@ -2,12 +2,12 @@
 
 Nodes are the building blocks of a Flowfile pipeline. Each node performs one operation — read a file, filter rows, join two datasets, train a model, write a result — and you connect them on the canvas to move data from source to output. This page is the entry point to the full reference: pick the category that matches the operation you need.
 
-Nodes are grouped into six categories. The counts below are current as of 2026-08 (from `flowfile_core/flowfile_core/configs/node_store/nodes.py`) and may change as nodes are added.
+Nodes are grouped into six categories. The counts below are current as of 2026-09 (from `flowfile_core/flowfile_core/configs/node_store/nodes.py`) and may change as nodes are added.
 
 | Category | Nodes | What it does |
 |----------|-------|--------------|
 | [Input](input.md) | 10 | Load data from files, databases, cloud storage, APIs, Kafka, or the catalog. |
-| [Transform](transform.md) | 12 | Reshape one dataset — filter, sort, add columns, run formulas, SQL, or Python. |
+| [Transform](transform.md) | 13 | Reshape one dataset — filter, sort, cleanse, add columns, run formulas, SQL, or Python. |
 | [Combine](combine.md) | 8 | Merge two or more datasets by joining, unioning, fuzzy-matching, or graph-solving — or gate a branch on a condition. |
 | [Aggregate](aggregate.md) | 5 | Summarize and restructure — group, pivot, unpivot, count. |
 | [Output](output.md) | 7 | Write results to files, databases, cloud storage, or the catalog — or explore them visually. |

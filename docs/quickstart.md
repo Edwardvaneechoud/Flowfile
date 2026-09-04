@@ -34,7 +34,7 @@ A Polars-style API that builds the identical flow — and opens it on the canvas
 
 You'll build this pipeline: **read → drop duplicates → filter → group by**.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the finished sales_pipeline flow on the canvas, with the Group by node selected and its 5-row result visible in the data preview -->
+![The finished sales pipeline on the canvas, with the Group by node selected and its five-row result in the data preview](assets/images/quickstart/sales_pipeline_overview.png)
 
 !!! tip "Skip the typing"
     The finished flow ships with Flowfile: **Create → From template → "Sales pipeline: clean, filter, aggregate"**. The sample data is provisioned automatically. You can also [download the flow](assets/flows/sales_pipeline.yaml) as a `.yaml` file. The steps below build the same thing by hand.
@@ -57,7 +57,6 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
 <details markdown="1">
 <summary>See it: the empty flow</summary>
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: re-capture start_page.png on the new navigation — same Create Flow dialog, new 4-item rail and new footer. -->
 ![The empty flow after creation](assets/images/quickstart/start_page.png)
 
 </details>

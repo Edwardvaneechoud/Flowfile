@@ -15,6 +15,7 @@ An Excel workflow usually lives in one sheet: raw data on the left, helper colum
 | VLOOKUP / XLOOKUP | A [Join node](visual-editor/nodes/combine.md#join) |
 | A pivot table | [Group By or Pivot nodes](visual-editor/nodes/aggregate.md) |
 | Data → Remove Duplicates | A [Drop Duplicates node](visual-editor/nodes/transform.md#drop-duplicates) |
+| `TRIM`, `CLEAN`, `PROPER` helper columns | A [Data Cleansing node](visual-editor/nodes/transform.md#data-cleansing) — nulls, whitespace, and casing in one step |
 | Filter and sort buttons | [Filter and Sort nodes](visual-editor/nodes/transform.md#filter-data) |
 | Redoing the steps by hand next month | Re-running the flow — or [scheduling it](visual-editor/catalog/schedules.md) |
 | Save As → .xlsx | A [Write Data node](visual-editor/nodes/output.md) — Excel, CSV, or Parquet |
