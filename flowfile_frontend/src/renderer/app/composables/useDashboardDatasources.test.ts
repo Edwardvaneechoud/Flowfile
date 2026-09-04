@@ -2,17 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 import type { DashboardLayout } from "../types";
 
-const { getVisualizationMock, getTableMock, getTableColumnStatsMock } = vi.hoisted(() => ({
-  getVisualizationMock: vi.fn(),
-  getTableMock: vi.fn(),
-  getTableColumnStatsMock: vi.fn(),
-}));
+const { getVisualizationMock, getTableMock, getTableColumnStatsMock, getFieldsMock } = vi.hoisted(
+  () => ({
+    getVisualizationMock: vi.fn(),
+    getTableMock: vi.fn(),
+    getTableColumnStatsMock: vi.fn(),
+    getFieldsMock: vi.fn(),
+  }),
+);
 
 vi.mock("../api/catalog.api", () => ({
   CatalogApi: {
     getVisualization: getVisualizationMock,
     getTable: getTableMock,
     getTableColumnStats: getTableColumnStatsMock,
+    getSavedVisualizationFields: getFieldsMock,
   },
 }));
 
@@ -45,6 +49,29 @@ describe("useDashboardDatasources", () => {
     getVisualizationMock.mockReset().mockResolvedValue(vizResponse);
     getTableMock.mockReset().mockResolvedValue(tableResponse);
     getTableColumnStatsMock.mockReset().mockResolvedValue(statsResponse);
+    getFieldsMock.mockReset().mockResolvedValue({
+      fields: [{ fid: "region", semanticType: "nominal" }],
+      cache_hit: false,
+      error: null,
+    });
+  });
+
+  it("loads tile columns on demand, caches them, and drops them on a force refresh", async () => {
+    const { tileFields, loadTileFields, refresh } = useDashboardDatasources(ref(layoutOf()));
+    await flush();
+
+    expect(getFieldsMock).not.toHaveBeenCalled();
+    expect(tileFields(TILE_ID)).toBeNull();
+
+    await loadTileFields();
+    expect(tileFields(TILE_ID)).toEqual([{ fid: "region", semanticType: "nominal" }]);
+    expect(tileFields("tile-text")).toBeNull();
+
+    await loadTileFields();
+    expect(getFieldsMock).toHaveBeenCalledTimes(1);
+
+    await refresh(true);
+    expect(tileFields(TILE_ID)).toBeNull();
   });
 
   it("serves repeat refreshes from the cache", async () => {
@@ -89,9 +116,7 @@ describe("useDashboardDatasources", () => {
     expect(tileDatasource(TILE_ID)).toBe(5);
 
     let resolveViz!: (value: typeof vizResponse) => void;
-    getVisualizationMock.mockImplementation(
-      () => new Promise((resolve) => (resolveViz = resolve)),
-    );
+    getVisualizationMock.mockImplementation(() => new Promise((resolve) => (resolveViz = resolve)));
 
     const pending = refresh(true);
     expect(tileDatasource(TILE_ID)).toBe(5);

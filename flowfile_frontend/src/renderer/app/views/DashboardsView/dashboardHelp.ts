@@ -134,13 +134,13 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-layer-group",
           title: "Scope",
           description:
-            "This datasource: only tiles reading from the bound table. All datasources: any tile with a same-named column of a compatible type; other tiles are left alone.",
+            "This datasource: only tiles reading from the bound table. All datasources: any tile with a same-named column of a compatible type; other tiles are left alone. The dialog lists every tile with a check, or the reason it is skipped, and the field picker shows how many tiles each column reaches.",
         },
         {
           icon: "fa-solid fa-bullseye",
           title: "Apply to",
           description:
-            "Target every eligible tile, or pick specific tiles. Empty selection means all.",
+            "Target every eligible tile, or pick specific tiles; tiles the filter cannot reach are greyed out. Empty selection means all.",
         },
       ],
       tips: [

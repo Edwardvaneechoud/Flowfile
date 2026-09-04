@@ -34,6 +34,8 @@
         :tiles-by-datasource="tilesByDatasource"
         :viz-tile-ids="vizTileIds"
         :tile-label="tileLabel"
+        :tile-fields="tileFields"
+        :load-tile-fields="loadTileFields"
         :get-column-stats="getColumnStats"
         :stats-refresh-nonce="statsRefreshNonce"
         @update:filters="onFiltersChange"
@@ -84,6 +86,8 @@ const {
   vizTileIds,
   tileDatasource,
   tileLabel,
+  tileFields,
+  loadTileFields,
   getColumnStats,
   refresh,
 } = useDashboardDatasources(liveLayout);

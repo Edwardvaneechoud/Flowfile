@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../api/catalog.api", () => ({ CatalogApi: {} }));
 vi.mock("./useGraphicWalkerCompute", () => ({ useGraphicWalkerCompute: vi.fn() }));
 
-import { buildFilterStep, filtersTargetingTile, type TileField } from "./useDashboardComputation";
+import {
+  buildFilterStep,
+  describeFieldFit,
+  filtersTargetingTile,
+  type TileField,
+} from "./useDashboardComputation";
 import type { DashboardFilter } from "../types";
 
 const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
@@ -135,5 +140,42 @@ describe("buildFilterStep", () => {
     expect(stepValue(mixed, fieldsOf({ region: "quantitative" }))).toEqual([2020]);
     const none = filterOf({ state: { selected: ["abc"] } });
     expect(buildFilterStep([none], fieldsOf({ region: "quantitative" }))).toBeNull();
+  });
+});
+
+describe("describeFieldFit", () => {
+  it("reports unknown, missing, fitting and unclassified columns", () => {
+    expect(describeFieldFit("categorical", "region", null)).toEqual({ status: "unknown" });
+    expect(describeFieldFit("categorical", "region", fieldsOf({ amount: "quantitative" }))).toEqual(
+      {
+        status: "missing",
+      },
+    );
+    expect(describeFieldFit("categorical", "region", fieldsOf({ region: "nominal" }))).toEqual({
+      status: "fits",
+    });
+    expect(describeFieldFit("categorical", "region", fieldsOf({ region: "quantitative" }))).toEqual(
+      {
+        status: "fits",
+      },
+    );
+    expect(describeFieldFit("date_range", "region", fieldsOf({ region: "?" }))).toEqual({
+      status: "fits",
+    });
+  });
+
+  it("explains a type mismatch in plain words", () => {
+    expect(describeFieldFit("date_range", "region", fieldsOf({ region: "nominal" }))).toEqual({
+      status: "type",
+      reason: "region is a text column here; a date range filter needs date",
+    });
+    expect(describeFieldFit("numeric_range", "amount", fieldsOf({ amount: "temporal" }))).toEqual({
+      status: "type",
+      reason: "amount is a date column here; a range filter needs number",
+    });
+    expect(describeFieldFit("categorical", "when", fieldsOf({ when: "temporal" }))).toEqual({
+      status: "type",
+      reason: "when is a date column here; a categorical filter needs text or number",
+    });
   });
 });

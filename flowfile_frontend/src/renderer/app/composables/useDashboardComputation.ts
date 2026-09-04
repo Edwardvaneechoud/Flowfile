@@ -88,8 +88,47 @@ const COMPATIBLE_SEMANTIC_TYPES: Record<DashboardFilterKind, SemanticType[]> = {
  * another type errors (string values in a date ``is_in``, epoch-ms bounds on a
  * string). Categorical reaches quantitative columns because its values are
  * coerced to numbers on the way out. Unclassified columns pass. */
+const kindFitsField = (kind: DashboardFilterKind, field: TileField): boolean =>
+  !isSemantic(field.semanticType) || COMPATIBLE_SEMANTIC_TYPES[kind].includes(field.semanticType);
+
 export const filterFitsField = (f: DashboardFilter, field: TileField): boolean =>
-  !isSemantic(field.semanticType) || COMPATIBLE_SEMANTIC_TYPES[f.kind].includes(field.semanticType);
+  kindFitsField(f.kind, field);
+
+const SEMANTIC_LABEL: Record<SemanticType, string> = {
+  quantitative: "number",
+  nominal: "text",
+  ordinal: "text",
+  temporal: "date",
+};
+
+const KIND_LABEL: Record<DashboardFilterKind, string> = {
+  categorical: "categorical",
+  numeric_range: "range",
+  date_range: "date range",
+};
+
+export type FieldFit =
+  | { status: "unknown" | "fits" | "missing" }
+  | { status: "type"; reason: string };
+
+/** Explain, for the filter dialog, whether a cross-source filter of ``kind``
+ * on ``fieldName`` reaches a tile whose data has ``tileFields``. */
+export const describeFieldFit = (
+  kind: DashboardFilterKind,
+  fieldName: string,
+  tileFields: TileField[] | null,
+): FieldFit => {
+  if (!tileFields) return { status: "unknown" };
+  const field = tileFields.find((x) => x.fid === fieldName);
+  if (!field) return { status: "missing" };
+  if (kindFitsField(kind, field)) return { status: "fits" };
+  const needs = Array.from(new Set(COMPATIBLE_SEMANTIC_TYPES[kind].map((s) => SEMANTIC_LABEL[s])));
+  const here = SEMANTIC_LABEL[field.semanticType as SemanticType];
+  return {
+    status: "type",
+    reason: `${fieldName} is a ${here} column here; a ${KIND_LABEL[kind]} filter needs ${needs.join(" or ")}`,
+  };
+};
 
 /** Decide which dashboard filters apply to a given tile.
  *
