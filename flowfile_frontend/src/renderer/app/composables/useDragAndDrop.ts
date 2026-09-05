@@ -22,6 +22,7 @@ import type {
   OperationResponse,
 } from "../types";
 import { FlowApi, NodeApi } from "../api";
+import { buildCommentNode } from "./useCanvasComments";
 import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
 import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
@@ -544,8 +545,11 @@ export default function useDragAndDrop() {
       if (anyCollapsedFrom(group.id)) childNodes[index].hidden = true;
     });
 
+    const commentNodes: Node[] = (flowData.comments ?? []).map((comment) =>
+      buildCommentNode(comment),
+    );
     // Groups first so a parent exists before its children reference it.
-    addNodes([...groupNodes, ...childNodes]);
+    addNodes([...groupNodes, ...childNodes, ...commentNodes]);
     id = getMaxDataId(flowData.node_inputs);
 
     // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default

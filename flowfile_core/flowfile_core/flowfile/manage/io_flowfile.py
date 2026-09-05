@@ -246,6 +246,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         node_starts=node_starts,
         node_connections=connections,
         groups=[schemas.GroupInformation(**group.model_dump()) for group in flowfile_data.groups],
+        comments=[schemas.CommentInformation(**comment.model_dump()) for comment in flowfile_data.comments],
     )
 
 
@@ -404,6 +405,7 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     # Restore visual groups. Member group_ids were re-applied above via
     # add_<type>(setting_input); legacy pickles may lack the field entirely.
     new_flow.restore_groups(getattr(flow_storage_obj, "groups", None) or [])
+    new_flow.restore_comments(getattr(flow_storage_obj, "comments", None) or [])
 
     new_flow.mark_as_saved()
     return new_flow
