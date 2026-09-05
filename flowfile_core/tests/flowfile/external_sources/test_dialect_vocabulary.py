@@ -51,6 +51,13 @@ class TestSqlSourceDialectInference:
         assert source.dialect.name == "mssql"
         assert source.get_sample_query() == "SELECT TOP 1 * FROM t"
 
+    def test_denodo_scheme_keeps_limit_based_sampling(self):
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
+
+        source = SqlSource(connection_string="denodo://u@h:9996/d", table_name="t")
+        assert source.dialect.name == "denodo"
+        assert source.get_sample_query() == "SELECT * FROM t LIMIT 1"
+
     def test_explicit_database_type_wins_over_scheme(self):
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
 

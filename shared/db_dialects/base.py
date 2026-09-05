@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Database types speaking the postgres wire protocol, where libpq-style
 # sslmode/connect_timeout query params are valid (pymysql rejects unknown params).
-POSTGRES_FAMILY = {"postgresql", "postgres", "redshift"}
+POSTGRES_FAMILY = {"postgresql", "postgres", "redshift", "denodo"}
 
 
 class DbDialect:
