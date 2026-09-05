@@ -34,7 +34,7 @@
 
 `flowfile-editor` is the browser-native core of [Flowfile](https://github.com/edwardvaneechoud/Flowfile), a visual ETL tool that compiles to Polars. This package takes the same canvas and runs it on [Pyodide](https://pyodide.org/): [Polars](https://pola.rs/) executes in WebAssembly, so every filter, join and group-by runs client-side. Drop it into a Vue app as `<FlowfileEditor />`, feed it data, and read results back as Arrow.
 
-- Want to see it first? [demo.flowfile.org](https://demo.flowfile.org) is this package, deployed as is.
+- Want to see it first? [demo.flowfile.org](https://demo.flowfile.org) is this package wrapped in a small browser-only workspace.
 - Embedding it? `npm install flowfile-editor`, then the [Quick Start](#quick-start) below.
 - Need databases, cloud storage, a catalog, a scheduler, or an AI assistant? That is the full platform: `pip install Flowfile`. Flows built here open there.
 
@@ -58,9 +58,23 @@
 
 **Arrow-native I/O.** Push frames in as Arrow IPC or Parquet bytes and pull results back the same way. Pairs cleanly with duckdb-wasm and arrow-js.
 
+**Explore and chart.** The Explore Data node embeds [Graphic Walker](https://github.com/Kanaries/graphic-walker), so a result can be dragged into a chart without leaving the canvas. Read File accepts CSV, Excel and Parquet from disk or from a URL, and Output downloads any of the three.
+
 **Code, not just clicks.** The Code panel shows the flow as a standalone Polars script. With `teachingMode` on, users can also opt into a plain-Python walkthrough and a per-node "How would I write this myself?" explainer.
 
-**Part of Flowfile.** Flows download as `.flowfile` files that open in the desktop app and the Docker deployment, and the full platform can mint share links that open here. Nodes that only exist in the full platform show up in the palette as greyed-out teasers linking to the docs.
+**Part of Flowfile.** Flows download as YAML or JSON flow files that open in the desktop app and the Docker deployment. Share links work in both directions: the editor encodes a flow into a URL fragment (nothing is uploaded), and the full platform can mint links that open here. Nodes that only exist in the full platform show up in the palette as greyed-out teasers linking to the docs.
+
+## The app at demo.flowfile.org
+
+The npm package is the canvas. The app deployed at [demo.flowfile.org](https://demo.flowfile.org) wraps it in a small workspace, all of it stored in the browser (IndexedDB and localStorage) with no account:
+
+- **A flow library and tabs.** Save flows, reopen them from the home screen, and keep several open in tabs.
+- **Templates.** Five starter flows with sample data, for a first look without bringing your own files.
+- **A catalog.** Uploaded tables, flow outputs and external datasets in one place, with favorites and a run history for every execution.
+- **Visuals and dashboards.** Save Graphic Walker charts against catalog tables and arrange them into dashboard grids.
+- **Light, dark and system themes**, and the same learning mode as the library.
+
+Everything below this line is about embedding the package.
 
 ---
 
@@ -121,10 +135,10 @@ app.use(FlowfileEditorPlugin)
 | `initialFlow` | `FlowfileData` | — | Pre-load a saved flow |
 | `inputData` | `InputDataMap` | — | Provide named datasets for External Data nodes |
 | `theme` | `ThemeConfig` | — | `{ mode: 'light' \| 'dark' \| 'system' }` |
-| `toolbar` | `ToolbarConfig` | — | Show/hide toolbar buttons |
+| `toolbar` | `ToolbarConfig` | — | Show/hide toolbar buttons: `showRun`, `showSaveLoad`, `showClear`, `showCodeGen`, `showDemo` |
 | `nodeCategories` | `NodeCategoryConfig[]` | — | Control which node types are available |
 | `teachingMode` | `boolean` | `true` | Offer the learning surfaces: the Python walkthrough tab in the Code panel and the "How would I write this myself?" panel in node settings. They stay hidden until the user opts in via the graduation-cap button in the Code panel header, so `true` only makes the opt-in available. Set `false` to remove the capability entirely |
-| `pyodide` | `PyodideConfig` | — | `{ autoInit: boolean }` |
+| `pyodide` | `PyodideConfig` | — | `{ autoInit?: boolean, pyodideUrl?: string }`; `pyodideUrl` points at a self-hosted Pyodide instead of the jsDelivr default |
 
 ## Events
 
