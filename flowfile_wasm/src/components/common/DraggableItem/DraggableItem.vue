@@ -635,6 +635,7 @@ button.dragitem-tab:hover {
   overflow: auto;
   padding: 10px;
   box-sizing: border-box;
+  cursor: auto;
 }
 .content.flush {
   display: flex;
