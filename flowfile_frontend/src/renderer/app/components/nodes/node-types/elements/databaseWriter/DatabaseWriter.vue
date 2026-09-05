@@ -250,6 +250,7 @@ const resetFields = () => {
 
 const handleSchemaChange = () => {
   availableTables.value = [];
+  handleFetchTables(true);
 };
 
 // Commit typed text on blur so custom values aren't discarded by el-select

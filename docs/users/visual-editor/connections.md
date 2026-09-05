@@ -41,9 +41,9 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
     Denodo connections use Denodo's PostgreSQL-compatible interface (port **9996** by default)
     through the standard psycopg2 driver, so no Denodo-specific driver is needed. Point the
     connection at the Virtual DataPort host, use the virtual database as **Database**, and enable
-    **SSL** when the server requires it. Reading views and running queries is supported; writing
-    to Denodo and browsing schemas/tables from the reader node have not been verified against a
-    live Denodo server. Arrow Flight SQL (port 9994) for faster large extracts is planned.
+    **SSL** when the server requires it. Reading views, running queries and browsing from the
+    reader node are supported — virtual databases are listed as schemas and views as tables.
+    Writing to Denodo has not been verified against a live Denodo server. Arrow Flight SQL (port 9994) for faster large extracts is planned.
 
 !!! note "DuckDB `INTERVAL` columns"
     `INTERVAL` columns are read as text — calendar intervals (months) have no fixed length,

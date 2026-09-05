@@ -9,8 +9,8 @@ applied as ``schema_overrides`` on read and via a ``LIMIT 0`` probe in
 (or an unconstrained numeric) make the schema hooks return ``None`` so the
 caller falls back to a sample read.
 
-Writes and schema/table browsing keep the base SQLAlchemy paths and are
-untested against a live Denodo server.
+Browsing uses GET_DATABASES()/GET_VIEWS() (there is no pg_catalog to inspect);
+writes keep the base SQLAlchemy path and are untested against a live Denodo server.
 
 TODO(denodo-adbc): Phase 2 — Arrow Flight SQL via ADBC (port 9994) for large
 extracts; the psycopg2 path stays as the fallback.
@@ -162,3 +162,27 @@ class DenodoDialect(DbDialect):
         # Unquoted on purpose: mirrors the exact FROM clause SqlSource executes.
         qualified = f"{schema_name}.{table_name}" if schema_name else table_name
         return self.query_schema(uri, f"SELECT * FROM {qualified}")
+
+    def _fetch_all(self, uri: str, query: str, params: tuple | None = None) -> list[tuple]:
+        conn = self._connect(uri)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    def list_schemas(self, uri: str) -> list[str] | None:
+        return [row[0] for row in self._fetch_all(uri, "SELECT db_name FROM GET_DATABASES()")]
+
+    def list_tables(self, uri: str, schema_name: str | None) -> list[str] | None:
+        if schema_name:
+            # database_name repeats the input filter so a stored-proc binding change can't widen the result.
+            rows = self._fetch_all(
+                uri,
+                "SELECT name FROM GET_VIEWS() WHERE input_database_name = %s AND database_name = %s",
+                (schema_name, schema_name),
+            )
+            return [row[0] for row in rows]
+        rows = self._fetch_all(uri, "SELECT database_name, name FROM GET_VIEWS()")
+        return [f"{database}.{name}" for database, name in rows]

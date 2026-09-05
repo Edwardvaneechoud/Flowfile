@@ -9,6 +9,7 @@ flowfile_core/tests/flowfile/external_sources/test_denodo_source.py.
 from collections import namedtuple
 
 import polars as pl
+import pytest
 
 from shared.db_dialects import POSTGRES_FAMILY, get_dialect
 from shared.db_dialects.denodo import _polars_dtype
@@ -84,3 +85,76 @@ def test_polars_dtype_numeric_needs_a_sane_typmod():
 def test_polars_dtype_unknown_oid_disables_prediction():
     assert _polars_dtype(_col(114)) is None, "json → Python dict; must fall back, not guess"
     assert _polars_dtype(_col(3802)) is None
+
+
+class _FakeCursor:
+    def __init__(self, executed, rows):
+        self._executed, self._rows = executed, rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, query, params=None):
+        self._executed.append((" ".join(query.split()), params))
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeConn:
+    def __init__(self, executed, rows):
+        self._executed, self._rows = executed, rows
+        self.closed = False
+
+    def cursor(self):
+        return _FakeCursor(self._executed, self._rows)
+
+    def close(self):
+        self.closed = True
+
+
+def _stub_connect(monkeypatch, rows):
+    executed = []
+    conn = _FakeConn(executed, rows)
+    monkeypatch.setattr(type(dialect), "_connect", lambda self, uri: conn)
+    return executed, conn
+
+
+BROWSE_URI = "denodo://u:p@h:9996/admin"
+
+
+def test_list_schemas_reads_vdp_databases(monkeypatch):
+    executed, conn = _stub_connect(monkeypatch, [("admin",), ("sales",)])
+    assert dialect.list_schemas(BROWSE_URI) == ["admin", "sales"]
+    assert executed == [("SELECT db_name FROM GET_DATABASES()", None)]
+    assert conn.closed, "the browsing connection must not leak"
+
+
+def test_list_tables_for_one_schema_returns_bare_view_names(monkeypatch):
+    executed, _ = _stub_connect(monkeypatch, [("customers",), ("orders",)])
+    assert dialect.list_tables(BROWSE_URI, "sales") == ["customers", "orders"]
+    query, params = executed[0]
+    assert query == "SELECT name FROM GET_VIEWS() WHERE input_database_name = %s AND database_name = %s"
+    assert params == ("sales", "sales")
+
+
+def test_list_tables_without_schema_qualifies_by_database(monkeypatch):
+    executed, _ = _stub_connect(monkeypatch, [("sales", "orders"), ("hr", "staff")])
+    assert dialect.list_tables(BROWSE_URI, None) == ["sales.orders", "hr.staff"]
+    assert executed == [("SELECT database_name, name FROM GET_VIEWS()", None)]
+
+
+def test_browsing_raises_instead_of_falling_back_to_sqlalchemy(monkeypatch):
+    # Returning None would route the caller to SQLAlchemy inspection, whose pg_catalog.version()
+    # connect probe Denodo cannot parse.
+    def boom(self, uri):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(type(dialect), "_connect", boom)
+    with pytest.raises(RuntimeError):
+        dialect.list_schemas(BROWSE_URI)
+    with pytest.raises(RuntimeError):
+        dialect.list_tables(BROWSE_URI, None)
