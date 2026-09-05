@@ -1,6 +1,6 @@
 """Denodo dialect: psycopg2 reads over Denodo's PostgreSQL-compatible port (9996).
 
-First version for Donodo connector. Reads and fast schema use psycopg2's DB-API
+First version of the Denodo connector (issue #692). Reads and fast schema use psycopg2's DB-API
 directly: connectorx needs the binary ``COPY`` protocol Denodo lacks, and
 SQLAlchemy's postgres dialect runs ``pg_catalog``/``SHOW`` probes Denodo only
 partly emulates. Type OIDs from ``cursor.description`` map to Polars dtypes,
