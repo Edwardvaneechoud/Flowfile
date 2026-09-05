@@ -1,35 +1,68 @@
-# flowfile-editor
+<h1 align="center">
+  <img src="https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/.github/images/logo.png" alt="Flowfile logo" width="100">
+  <br>
+  flowfile-editor
+</h1>
 
-> A visual ETL editor you can drop into any web app — Polars pipelines that run
-> **entirely in the browser**. No backend, no server round-trips, data never leaves
-> the page.
-
-<p>
-  <a href="https://demo.flowfile.org"><b>▶ Live demo</b></a> ·
-  <a href="https://www.npmjs.com/package/flowfile-editor">npm</a> ·
-  <a href="https://github.com/Edwardvaneechoud/Flowfile">Full platform</a>
+<p align="center">
+  <b>The Flowfile canvas, running entirely in the browser.</b>
+  <br>
+  <sub>A visual Polars pipeline editor as a single Vue component.<br>No backend, no server round-trips. Data never leaves the page.</sub>
 </p>
 
-Build CSV / Excel / Parquet transformation pipelines on a drag-and-drop canvas —
-joins, filters, group-bys, pivots, formulas, and a raw Polars code node.
-[Polars](https://pola.rs/) runs in WebAssembly via [Pyodide](https://pyodide.org/),
-so every operation executes client-side. Ship it as a single `<FlowfileEditor />`
-Vue component, drive it from your own UI, and read results back as Arrow.
+<p align="center">
+  <a href="https://www.npmjs.com/package/flowfile-editor"><img src="https://img.shields.io/npm/v/flowfile-editor?style=flat-square&logo=npm&logoColor=white" alt="npm version"></a>
+  <a href="https://github.com/edwardvaneechoud/Flowfile/actions/workflows/flowfile-wasm-build.yml"><img src="https://img.shields.io/github/actions/workflow/status/edwardvaneechoud/Flowfile/flowfile-wasm-build.yml?branch=main&style=flat-square&logo=github&label=build" alt="Build status"></a>
+  <a href="https://github.com/edwardvaneechoud/Flowfile/blob/main/LICENSE"><img src="https://img.shields.io/github/license/edwardvaneechoud/Flowfile?style=flat-square" alt="License"></a>
+  <a href="https://github.com/edwardvaneechoud/Flowfile/stargazers"><img src="https://img.shields.io/github/stars/edwardvaneechoud/Flowfile?style=flat-square&logo=github" alt="GitHub stars"></a>
+</p>
 
-**Why flowfile-editor**
+<p align="center">
+  <a href="https://demo.flowfile.org"><b>▶&nbsp;&nbsp;Try it in your browser&nbsp;&nbsp;→</b></a>
+  <br>
+  <sub>No install. No signup. Polars in the browser via Pyodide.</sub>
+</p>
 
-- **🦀 Real Polars, in the browser** — a full lazy DAG with 20+ node types
-  (joins, formula, dynamic rename, pivots, union, record id, a raw Polars node), not a toy.
-- **🔌 One component to embed** — `<FlowfileEditor />` with a ref API
-  (`executeFlow`, `setInputData`, `getNodeResult`) and events (`ready`, `output`, …).
-- **🔒 Zero backend** — nothing to host, nothing to secure; the user's data stays
-  on their machine.
-- **🏹 Arrow-native I/O** — push/pull frames as Arrow IPC bytes; pairs cleanly with
-  duckdb-wasm or arrow-js.
+<p align="center">
+  <a href="https://github.com/edwardvaneechoud/Flowfile">Flowfile</a> ·
+  <a href="https://edwardvaneechoud.github.io/Flowfile/">Docs</a> ·
+  <a href="https://www.npmjs.com/package/flowfile-editor">npm</a> ·
+  <a href="https://github.com/edwardvaneechoud/Flowfile/discussions">Discussions</a>
+</p>
 
-> Want the full platform — databases, cloud storage, Kafka, a Delta catalog, a
-> scheduler, and an AI assistant? That's [Flowfile](https://github.com/Edwardvaneechoud/Flowfile)
-> (`pip install flowfile`). This package is its browser-native core, embeddable on its own.
+---
+
+`flowfile-editor` is the browser-native core of [Flowfile](https://github.com/edwardvaneechoud/Flowfile), a visual ETL tool that compiles to Polars. This package takes the same canvas and runs it on [Pyodide](https://pyodide.org/): [Polars](https://pola.rs/) executes in WebAssembly, so every filter, join and group-by runs client-side. Drop it into a Vue app as `<FlowfileEditor />`, feed it data, and read results back as Arrow.
+
+- Want to see it first? [demo.flowfile.org](https://demo.flowfile.org) is this package, deployed as is.
+- Embedding it? `npm install flowfile-editor`, then the [Quick Start](#quick-start) below.
+- Need databases, cloud storage, a catalog, a scheduler, or an AI assistant? That is the full platform: `pip install Flowfile`. Flows built here open there.
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/.github/images/flowfile_wasm_editor.png" alt="The flowfile-editor canvas: two file readers joined, a formula node converting order_date, with the formula settings panel open" width="800"/>
+  <br>
+  <sub>Two readers, a join and a formula, with the formula editor open. Everything on screen ran in the browser tab.</sub>
+</div>
+
+&nbsp;
+
+---
+
+## What you get
+
+**Real Polars, not a toy.** A lazy DAG with 23 node types: file readers for CSV, Excel and Parquet, filters, selects, formulas, sorts, joins, cross joins, unions, group-bys, pivots, unpivots, dynamic renames, record ids, sampling, and a raw Polars code node for anything the palette does not cover. The formula editor is the same one Flowfile ships, with field and function autocompletion.
+
+**One component to embed.** `<FlowfileEditor />` with a template-ref API (`executeFlow`, `setInputData`, `getNodeResult`, and friends) and events for `ready`, `output`, `execution-complete` and `error`. Hide toolbar buttons and node categories to fit your product.
+
+**Zero backend.** Nothing to host and nothing to secure. The Pyodide runtime loads from a CDN, and the user's data stays on their machine.
+
+**Arrow-native I/O.** Push frames in as Arrow IPC or Parquet bytes and pull results back the same way. Pairs cleanly with duckdb-wasm and arrow-js.
+
+**Code, not just clicks.** The Code panel shows the flow as a standalone Polars script. With `teachingMode` on, users can also opt into a plain-Python walkthrough and a per-node "How would I write this myself?" explainer.
+
+**Part of Flowfile.** Flows download as `.flowfile` files that open in the desktop app and the Docker deployment, and the full platform can mint share links that open here. Nodes that only exist in the full platform show up in the palette as greyed-out teasers linking to the docs.
+
+---
 
 ## Install
 
@@ -37,7 +70,7 @@ Vue component, drive it from your own UI, and read results back as Arrow.
 npm install flowfile-editor
 ```
 
-**Peer dependencies:** Vue 3.3+ is required. Pinia 2.0+ is optional (the editor creates its own instance if not provided).
+**Peer dependencies:** Vue 3.3+ is required. Pinia 2.0+ is optional; the editor creates its own instance when none is provided.
 
 ## Quick Start
 
@@ -60,7 +93,9 @@ const editorRef = ref()
 </template>
 ```
 
-## Plugin Registration (Optional)
+Pyodide needs `SharedArrayBuffer`, so the page hosting the editor must be cross-origin isolated. See [CORS headers](#cors-headers) below before deploying.
+
+### Plugin registration
 
 If you prefer global registration:
 
@@ -71,8 +106,10 @@ import 'flowfile-editor/style.css'
 
 const app = createApp(App)
 app.use(FlowfileEditorPlugin)
-// Now <FlowfileEditor /> is available in all templates
+// <FlowfileEditor /> is now available in every template
 ```
+
+---
 
 ## Props
 
@@ -86,7 +123,7 @@ app.use(FlowfileEditorPlugin)
 | `theme` | `ThemeConfig` | — | `{ mode: 'light' \| 'dark' \| 'system' }` |
 | `toolbar` | `ToolbarConfig` | — | Show/hide toolbar buttons |
 | `nodeCategories` | `NodeCategoryConfig[]` | — | Control which node types are available |
-| `teachingMode` | `boolean` | `true` | Offer the learning surfaces: the **Python walkthrough** tab in the Code panel, and the "How would I write this myself?" panel in node settings. They stay hidden until the user opts in via the graduation-cap button in the Code panel header, so the editor is a plain code view either way — `true` merely makes the opt-in available. Set `false` to remove the capability entirely |
+| `teachingMode` | `boolean` | `true` | Offer the learning surfaces: the Python walkthrough tab in the Code panel and the "How would I write this myself?" panel in node settings. They stay hidden until the user opts in via the graduation-cap button in the Code panel header, so `true` only makes the opt-in available. Set `false` to remove the capability entirely |
 | `pyodide` | `PyodideConfig` | — | `{ autoInit: boolean }` |
 
 ## Events
@@ -124,8 +161,6 @@ async function run() {
 </template>
 ```
 
-### API Methods
-
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `isReady` | `boolean` | Whether Pyodide is initialized |
@@ -136,13 +171,15 @@ async function run() {
 | `importFlow(data)` | `boolean` | Load a flow from JSON |
 | `setInputData(name, content, format?)` | `void` | Push a named dataset (CSV string, or `Uint8Array` of Arrow IPC / Parquet bytes) |
 | `getNodeResult(nodeId)` | `NodeResult \| undefined` | Get a node's result |
-| `getNodeResultArrow(nodeId)` | `Promise<Uint8Array \| null>` | A node's full result frame as Arrow IPC stream bytes — feed straight to arrow-js / duckdb-wasm, no CSV stringification |
+| `getNodeResultArrow(nodeId)` | `Promise<Uint8Array \| null>` | A node's full result frame as Arrow IPC stream bytes, ready for arrow-js or duckdb-wasm |
 | `clearFlow()` | `void` | Clear all nodes and edges |
 | `initializePyodide()` | `Promise<void>` | Manually init Pyodide (when `autoInit: false`) |
 
-## Providing Input Data
+---
 
-Pass data to External Data nodes via the `inputData` prop or API:
+## Providing input data
+
+Pass data to External Data nodes via the `inputData` prop or the API:
 
 ```vue
 <template>
@@ -170,7 +207,7 @@ const datasets = {
 </script>
 ```
 
-## Capturing Output
+## Capturing output
 
 Listen for External Output node results:
 
@@ -189,7 +226,9 @@ function handleOutput(data) {
 </script>
 ```
 
-## CORS Headers
+---
+
+## CORS headers
 
 Pyodide requires `SharedArrayBuffer`, which needs these HTTP headers on your page:
 
@@ -216,22 +255,22 @@ export default defineConfig({
 
 If your page sets a CSP, the editor needs network access to:
 
-- `cdn.jsdelivr.net` — Pyodide runtime (always) and parquet-wasm (only when a
-  flow reads/writes Parquet)
-- `pypi.org` + `files.pythonhosted.org` — only when a flow uses Excel files
-  (openpyxl/xlsxwriter are micropip-installed on first use; CSV-only flows
-  never touch PyPI)
+- `cdn.jsdelivr.net` for the Pyodide runtime (always) and parquet-wasm (only when a flow reads or writes Parquet)
+- `pypi.org` and `files.pythonhosted.org` only when a flow uses Excel files (openpyxl and xlsxwriter are installed with micropip on first use; CSV-only flows never touch PyPI)
 
-## Available Node Types
+---
 
-**Input:** Read File (CSV/Excel/Parquet), Manual Input, External Data, Read from Catalog
-**Transform:** Filter, Select, Formula, Sort, Polars Code, Unique, Rename (dynamic), Record ID, Take Sample
-**Combine:** Join, Cross Join, Union
-**Aggregate / reshape:** Group By, Pivot, Unpivot
-**Output:** Explore Data, Output (download), Write to Catalog, External Output (emits to host)
+## Node types
 
-> The default palette ships 20+ node types. Hosts can show/hide categories and
-> node types via the `nodeCategories` prop.
+| Category | Nodes |
+|---|---|
+| **Input** | Read File (CSV / Excel / Parquet), Manual Input, External Data, Read from Catalog |
+| **Transform** | Filter, Select, Formula, Sort, Polars Code, Unique, Rename (dynamic), Record ID, Take Sample |
+| **Combine** | Join, Cross Join, Union |
+| **Aggregate / reshape** | Group By, Pivot, Unpivot |
+| **Output** | Explore Data, Output (download), Write to Catalog, External Output (emits to host) |
+
+Hosts can show or hide categories and individual node types via the `nodeCategories` prop. The full-platform nodes (databases, cloud storage, Kafka, fuzzy matching, machine learning, Python kernels and more) appear as unavailable entries that link to the Flowfile docs, so users know what is one `pip install` away.
 
 ## TypeScript
 
@@ -248,16 +287,29 @@ import type {
 } from 'flowfile-editor'
 ```
 
+---
+
 ## Development
+
+This package lives in the `flowfile_wasm/` directory of the [Flowfile monorepo](https://github.com/edwardvaneechoud/Flowfile).
 
 ```bash
 cd flowfile_wasm
 npm install
 npm run dev        # Dev server at http://localhost:5174
 npm run build:lib  # Build the library to dist/
-npm run test:run   # Run tests
+npm run test:run   # Run the test suite
 ```
+
+## The full platform
+
+Flowfile is the same canvas with a Python backend behind it: 46 node types, connectors for five databases, S3 / ADLS / GCS, Kafka, Google Analytics and REST APIs, a Delta-backed data catalog with a SQL editor, a scheduler, sandboxed Python kernels, an AI assistant, and Python code export. It runs as a desktop app, a `pip install`, or a Docker stack for a team.
+
+- [Flowfile on GitHub](https://github.com/edwardvaneechoud/Flowfile)
+- [Documentation](https://edwardvaneechoud.github.io/Flowfile/)
+- [Releases](https://github.com/edwardvaneechoud/Flowfile/releases)
+- [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions)
 
 ## License
 
-See the [Flowfile repository](https://github.com/Edwardvaneechoud/Flowfile) for license details.
+MIT. See the [Flowfile repository](https://github.com/edwardvaneechoud/Flowfile/blob/main/LICENSE) for the full text.
