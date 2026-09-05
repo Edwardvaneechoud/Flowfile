@@ -29,6 +29,12 @@ import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "../../components/nodes/NodeWrapper.vue";
 import GroupNode from "../../components/nodes/GroupNode.vue";
+import CommentNode from "../../components/nodes/CommentNode.vue";
+import {
+  commentBackendId,
+  isCommentNodeId,
+  useCanvasComments,
+} from "../../composables/useCanvasComments";
 import {
   useNodeGroups,
   isGroupNodeId,
@@ -116,6 +122,7 @@ const drawerStore = useDrawerStore();
 const aiStore = useAiStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawGroupNode = markRaw(GroupNode);
+const rawCommentNode = markRaw(CommentNode);
 const rawDeletableEdge = markRaw(DeletableEdge);
 const rawGroupProxyEdge = markRaw(GroupProxyEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
@@ -141,6 +148,7 @@ const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
   group: rawGroupNode as NodeComponent,
+  comment: rawCommentNode as NodeComponent,
 };
 const edgeTypes = {
   default: rawDeletableEdge as EdgeComponent,
@@ -266,6 +274,7 @@ const {
 } = useDragAndDrop();
 const fileDrop = useFileDropImport();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
+const { addCommentAt } = useCanvasComments();
 // Default drawer sizing. The bottom dock takes ~25% of the canvas height; the
 // right-side drawers span from the canvas top down to the dock, so the two
 // tile the right column without overlap. These are reactive DEFAULTS — they
@@ -395,7 +404,7 @@ const handleMainDblClick = (event: MouseEvent) => {
     // Leave the description editor (node header) alone — it owns dblclick there.
     if (target.closest(".custom-node-header")) return;
     const dataId = nodeEl.getAttribute("data-id");
-    if (dataId && !isGroupNodeId(dataId)) {
+    if (dataId && !isGroupNodeId(dataId) && !isCommentNodeId(dataId)) {
       const id = parseInt(dataId);
       openNodeSettings(id);
       openNodeData(id);
@@ -686,6 +695,7 @@ const openNodeData = (nodeId: number) => {
 const nodeClick = (mouseEvent: any) => {
   // Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
   const rawId = String(mouseEvent.node.id);
+  if (isCommentNodeId(rawId)) return; // comments have no settings or data
   openNodeSettings(parseInt(rawId));
   const dockOpen = drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer;
   if (!isGroupNodeId(rawId) && dockOpen) {
@@ -713,6 +723,14 @@ const handleNodeChange = async (nodeChangesEvent: any) => {
       // Group boxes are not real nodes — their removal is handled by the ungroup
       // action (which calls deleteGroup). Skip them so we don't deleteNode(NaN).
       if (isGroupNodeId(nodeChange.id)) continue;
+      if (isCommentNodeId(nodeChange.id)) {
+        const response = await FlowApi.deleteComment(
+          flowStore.flowId,
+          commentBackendId(nodeChange.id),
+        );
+        flowStore.updateHistoryState(response.history);
+        continue;
+      }
       const nodeChangeId = Number(nodeChange.id);
       lastResponse = await deleteNode(flowStore.flowId, nodeChangeId);
       useTutorialStore().notify({ type: "node-removed", nodeId: nodeChangeId });
@@ -954,6 +972,8 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     await aiStore.askLineageQuestion(flowStore.flowId, question, focusNodeId);
   } else if (actionId === "group-selection") {
     await groupSelectedNodes();
+  } else if (actionId === "add-comment") {
+    await addCommentAt(screenToFlowCoordinate(position));
   } else if (actionId === "remove-from-group") {
     await removeSelectedFromGroup();
   } else if (actionId === "open-node-settings") {
@@ -1114,7 +1134,7 @@ const handleCopyEvent = (event: ClipboardEvent) => {
   if (hasTextSelection()) return; // selected canvas text (node descriptions) — native copy wins
   if (flowStore.flowId <= 0) return; // parity with paste: never arm the buffer without a live flow
   const sentinel = copyNodesToBuffer(
-    instance.getSelectedNodes.value,
+    instance.getSelectedNodes.value.filter((node) => !isCommentNodeId(node.id)),
     instance.getEdges.value,
     flowStore.flowId,
   );

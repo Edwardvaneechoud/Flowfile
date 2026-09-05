@@ -14,6 +14,7 @@ from flowfile_core.flowfile.converters.alteryx.mappers import (
     DEFAULT_OUTPUT_ANCHOR,
     RIGHT,
     EmitContext,
+    comment_text,
     get_mapper,
     tool_label,
 )
@@ -28,6 +29,8 @@ X_OFFSET = 60
 Y_OFFSET = 100
 SYNTHETIC_X_STEP = 300
 SYNTHETIC_Y_STEP = 200
+COMMENT_MIN_WIDTH = 120
+COMMENT_MIN_HEIGHT = 40
 
 __all__ = ["convert_yxmd"]
 
@@ -59,14 +62,16 @@ def _synthetic_positions(workflow: AlteryxWorkflow) -> dict[int, tuple[int, int]
 
 
 def _compute_positions(workflow: AlteryxWorkflow) -> dict[int, tuple[int, int]]:
-    positioned = [tool for tool in workflow.tools if tool.x is not None and tool.y is not None]
+    """Canvas positions for tools and text boxes, sharing one origin so comments stay beside their tools."""
+    everything = [*workflow.tools, *workflow.text_boxes]
+    positioned = [tool for tool in everything if tool.x is not None and tool.y is not None]
     if not positioned:
         return _synthetic_positions(workflow)
     min_x = min(tool.x for tool in positioned)
     min_y = min(tool.y for tool in positioned)
     positions: dict[int, tuple[int, int]] = {}
     unpositioned = []
-    for tool in workflow.tools:
+    for tool in everything:
         if tool.x is None or tool.y is None:
             unpositioned.append(tool)
             continue
@@ -131,10 +136,55 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
             nodes[source_id].output_handles.append(handle)
 
 
+def _emit_comments(
+    workflow: AlteryxWorkflow, ctx: EmitContext
+) -> tuple[list[schemas.FlowfileComment], list[ToolReportRow]]:
+    """Turn Alteryx text boxes into canvas comments; colour, font and shape are dropped.
+
+    Alteryx also uses empty text boxes as decorative background bands, which carry no
+    information without their fill colour, so those are skipped rather than imported blank.
+    """
+    comments: list[schemas.FlowfileComment] = []
+    rows: list[ToolReportRow] = []
+    for index, box in enumerate(workflow.text_boxes, start=1):
+        text = comment_text(box)
+        if not text:
+            rows.append(
+                ToolReportRow(
+                    alteryx_tool_id=box.tool_id,
+                    alteryx_tool=tool_label(box),
+                    status="skipped",
+                    messages=["An empty Alteryx comment (a decorative box) was not imported."],
+                )
+            )
+            continue
+        x, y = ctx.positions.get(box.tool_id, (X_OFFSET, Y_OFFSET))
+        comments.append(
+            schemas.FlowfileComment(
+                id=index,
+                text=text,
+                x_position=x,
+                y_position=y,
+                width=max(round((box.width or 0) * POS_SCALE), COMMENT_MIN_WIDTH),
+                height=max(round((box.height or 0) * POS_SCALE), COMMENT_MIN_HEIGHT),
+            )
+        )
+        rows.append(
+            ToolReportRow(
+                alteryx_tool_id=box.tool_id,
+                alteryx_tool=tool_label(box),
+                flowfile_node_type="comment",
+                status="converted",
+                messages=["Imported as a canvas comment; colour, font and shape are not kept."],
+            )
+        )
+    return comments, rows
+
+
 def _build_report(workflow: AlteryxWorkflow, name: str, rows: list[ToolReportRow]) -> ConversionReport:
     report = ConversionReport(
         workflow_name=name,
-        total_tools=len(workflow.tools) + len(workflow.skipped_tools),
+        total_tools=len(workflow.tools) + len(workflow.text_boxes),
         rows=rows,
     )
     for row in rows:
@@ -158,15 +208,8 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
         row = get_mapper(tool)(tool, ctx)
         rows.append(row)
         rows_by_tool[tool.tool_id] = row
-    for tool in workflow.skipped_tools:
-        rows.append(
-            ToolReportRow(
-                alteryx_tool_id=tool.tool_id,
-                alteryx_tool=tool_label(tool),
-                status="skipped",
-                messages=["Alteryx canvas comments are not imported."],
-            )
-        )
+    comments, comment_rows = _emit_comments(workflow, ctx)
+    rows.extend(comment_rows)
 
     _wire(ctx, workflow, rows_by_tool)
 
@@ -181,6 +224,7 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
             auto_save=False,
         ),
         nodes=ctx.nodes,
+        comments=comments,
     )
     # Fail here rather than at open time if a mapper ever emits an unserializable payload.
     schemas.FlowfileData.model_validate(flow_data.model_dump(mode="json"))

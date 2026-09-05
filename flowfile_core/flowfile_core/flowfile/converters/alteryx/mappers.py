@@ -222,6 +222,12 @@ def tool_label(tool: AlteryxTool) -> str:
     return tool.tool_name or tool.plugin or "Unknown"
 
 
+def comment_text(text_box: AlteryxTool) -> str:
+    """The text of an Alteryx Comment tool, with line structure kept and edges trimmed."""
+    raw = _text(text_box.configuration, "Text")
+    return "\n".join(line.strip() for line in raw.splitlines()).strip()
+
+
 def _row(
     tool: AlteryxTool,
     status: ToolStatus,
@@ -1859,6 +1865,33 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "data_cleansing", [])
 
 
+def map_count_records(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Maps the Count Records macro (CountRecords.yxmc) onto the native record_count node.
+
+    Both return exactly one row, also for an empty input. Flowfile names its column
+    ``number_of_records`` where Alteryx names it ``Count`` (an Int64), so a select
+    renames and casts it to keep downstream references working.
+    """
+    settings = input_schema.NodeRecordCount(flow_id=ctx.flow_id, node_id=ctx.new_node_id())
+    count_id = ctx.add_node(tool, "record_count", settings, description=_description(tool))
+    rename = input_schema.NodeSelect(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        keep_missing=True,
+        select_input=[
+            transform_schema.SelectInput(
+                old_name="number_of_records", new_name="Count", data_type="Int64", data_type_change=True
+            )
+        ],
+    )
+    rename_id = ctx.add_node(tool, "select", rename, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
+    _link(ctx, count_id, rename_id)
+    ctx.register_all_inputs(tool.tool_id, count_id)
+    ctx.register_all_outputs(tool.tool_id, rename_id)
+    ctx.tool_columns[tool.tool_id] = ["Count"]
+    return _row(tool, "converted", [count_id, rename_id], "record_count", [])
+
+
 TOOL_MAPPERS: dict[str, ToolMapper] = {
     "TextInput": map_text_input,
     "AlteryxSelect": map_select,
@@ -1888,6 +1921,7 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
 
 MACRO_MAPPERS: dict[str, ToolMapper] = {
     "cleanse.yxmc": map_data_cleansing,
+    "countrecords.yxmc": map_count_records,
 }
 
 

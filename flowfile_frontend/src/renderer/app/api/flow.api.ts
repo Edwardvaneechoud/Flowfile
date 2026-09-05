@@ -17,6 +17,9 @@ import type {
   UpdateGroupRequest,
   UpdateLayoutRequest,
   GroupOperationResponse,
+  CreateCommentRequest,
+  UpdateCommentRequest,
+  CommentOperationResponse,
 } from "../types";
 
 export class FlowApi {
@@ -373,7 +376,55 @@ export class FlowApi {
     return response.data;
   }
 
-  /** Persist dragged node positions and/or group bounds (one drag-end -> one call). */
+  // Canvas Comment Operations (free text notes; organizational only)
+
+  /** Create a canvas comment. Returns the server-assigned comment. */
+  static async createComment(
+    flowId: number,
+    request: CreateCommentRequest,
+  ): Promise<CommentOperationResponse> {
+    const response = await axios.post<CommentOperationResponse>(
+      "/editor/create_comment/",
+      request,
+      {
+        params: { flow_id: flowId },
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  /** Edit, move or resize a canvas comment. */
+  static async updateComment(
+    flowId: number,
+    commentId: number,
+    request: UpdateCommentRequest,
+  ): Promise<CommentOperationResponse> {
+    const response = await axios.post<CommentOperationResponse>(
+      "/editor/update_comment/",
+      request,
+      {
+        params: { flow_id: flowId, comment_id: commentId },
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  /** Delete a canvas comment. */
+  static async deleteComment(flowId: number, commentId: number): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
+      "/editor/delete_comment/",
+      {},
+      {
+        params: { flow_id: flowId, comment_id: commentId },
+        headers: { accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  /** Persist dragged node positions, group bounds and/or comment bounds (one drag-end -> one call). */
   static async updateLayout(
     flowId: number,
     request: UpdateLayoutRequest,
