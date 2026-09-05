@@ -80,6 +80,7 @@ describe("getDbDialects", () => {
       "sqlite",
       "duckdb",
       "mssql",
+      "denodo",
     ]);
   });
 });

@@ -18,7 +18,7 @@ Each source is a drag-and-drop node on the canvas — with a matching `ff.*` cal
 
 | Your data is in… | On the canvas | In Python |
 |---|---|---|
-| PostgreSQL / MySQL / SQLite / DuckDB / SQL Server | Database Reader | `ff.read_database` |
+| PostgreSQL / MySQL / SQLite / DuckDB / SQL Server / Denodo | Database Reader | `ff.read_database` |
 | S3 / ADLS / GCS (CSV, Parquet, JSON, Delta, Iceberg) | Cloud Storage Reader | `ff.scan_parquet_from_cloud_storage`, … |
 | A Kafka / Redpanda topic | Kafka Source | `ff.read_kafka` |
 | A REST endpoint | REST API Reader | `ff.read_api` |

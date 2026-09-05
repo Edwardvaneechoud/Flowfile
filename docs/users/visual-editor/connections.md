@@ -26,6 +26,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | **SQLite** | `sqlite` |
 | **DuckDB** | `duckdb` |
 | **SQL Server** | `mssql` |
+| **Denodo** | `denodo` |
 
 !!! note "File-based connections (SQLite, DuckDB)"
     SQLite and DuckDB connect to a local database **file path** (e.g. `/path/to/database.db`
@@ -35,6 +36,14 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
     A DuckDB file allows many concurrent readers but only one writer at a time. When a flow
     writes to a DuckDB file, close other tools (e.g. the DuckDB CLI or an IDE) that have the
     same file open.
+
+!!! note "Denodo (PostgreSQL-compatible port)"
+    Denodo connections use Denodo's PostgreSQL-compatible interface (port **9996** by default)
+    through the standard psycopg2 driver, so no Denodo-specific driver is needed. Point the
+    connection at the Virtual DataPort host, use the virtual database as **Database**, and enable
+    **SSL** when the server requires it. Reading views, running queries and browsing from the
+    reader node are supported — virtual databases are listed as schemas and views as tables.
+    Writing to Denodo has not been verified against a live Denodo server. Arrow Flight SQL (port 9994) for faster large extracts is planned.
 
 !!! note "DuckDB `INTERVAL` columns"
     `INTERVAL` columns are read as text — calendar intervals (months) have no fixed length,
@@ -49,7 +58,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, or SQL Server | `postgresql` |
+| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, or Denodo | `postgresql` |
 | **Host** | Database server hostname | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |
