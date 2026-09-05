@@ -941,16 +941,61 @@ def remove_nodes_from_group(flow_id: int, request: schemas.GroupMembershipReques
 
 @router.post("/editor/update_layout/", tags=["editor"], response_model=OperationResponse)
 def update_layout(flow_id: int, request: schemas.UpdateLayoutRequest) -> OperationResponse:
-    """Persist dragged node positions and/or group bounds (one drag-end -> one call).
+    """Persist dragged node positions, group bounds and/or comment bounds (one drag-end -> one call).
 
     Also closes the long-standing gap where dragged node positions were never persisted.
     """
     flow = _get_running_flow(flow_id)
-    if request.node_positions or request.group_bounds:
+    if request.node_positions or request.group_bounds or request.comment_bounds:
         if request.record_history:
             flow.capture_history_snapshot(HistoryActionType.MOVE_NODES, "Update layout")
         flow.set_node_positions(request.node_positions)
         flow.set_group_bounds(request.group_bounds)
+        flow.set_comment_bounds(request.comment_bounds)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
+# Canvas comment endpoints (free text notes; organizational only)
+
+
+class CommentOperationResponse(OperationResponse):
+    """OperationResponse that also returns the affected comment (for server-assigned ids)."""
+
+    comment: schemas.FlowfileComment | None = None
+
+
+def _comment_to_schema(comment: schemas.CommentInformation) -> schemas.FlowfileComment:
+    return schemas.FlowfileComment(**comment.model_dump())
+
+
+@router.post("/editor/create_comment/", tags=["editor"], response_model=CommentOperationResponse)
+def create_comment(flow_id: int, request: schemas.CreateCommentRequest) -> CommentOperationResponse:
+    """Create a canvas comment. Returns the new server-assigned comment."""
+    flow = _get_running_flow(flow_id)
+    comment = flow.create_comment(
+        request.text, request.x_position, request.y_position, width=request.width, height=request.height
+    )
+    return CommentOperationResponse(success=True, history=flow.get_history_state(), comment=_comment_to_schema(comment))
+
+
+@router.post("/editor/update_comment/", tags=["editor"], response_model=CommentOperationResponse)
+def update_comment(flow_id: int, comment_id: int, request: schemas.UpdateCommentRequest) -> CommentOperationResponse:
+    """Edit, move or resize a canvas comment."""
+    flow = _get_running_flow(flow_id)
+    values = (request.x_position, request.y_position, request.width, request.height)
+    bounds = schemas.CommentBounds(*values) if all(value is not None for value in values) else None
+    try:
+        comment = flow.update_comment(comment_id, text=request.text, bounds=bounds)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return CommentOperationResponse(success=True, history=flow.get_history_state(), comment=_comment_to_schema(comment))
+
+
+@router.post("/editor/delete_comment/", tags=["editor"], response_model=OperationResponse)
+def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
+    """Delete a canvas comment."""
+    flow = _get_running_flow(flow_id)
+    flow.delete_comment(comment_id)
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
