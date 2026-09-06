@@ -5,17 +5,20 @@
 // participate in `hideAllPanels()` without coupling to this module. The
 // chat payload + streaming state live here.
 //
-// Persistence is per-flow + browser-local. Each flow's chat trail lives
-// under `flowfile.ai.chat.v1.{flow_id}` in `localStorage` so switching
-// flows shows the right conversation, and chat survives Electron app
-// restart. The `flowStore.flowId` watcher below performs an atomic
-// save-then-load swap on flow switch so round-tripping A → B → A
-// preserves A's history.
+// Persistence is browser-local in two buckets. Each flow's chat trail
+// lives under `flowfile.ai.chat.v1.{flow_id}` in `localStorage` so
+// switching flows shows the right conversation, and chat survives
+// Electron app restart; the `flowStore.flowId` watcher below performs an
+// atomic save-then-load swap on flow switch so round-tripping A → B → A
+// preserves A's history. The AI *preferences* (provider/model, simple
+// tier, agent behaviour) are device-wide under `flowfile.ai.settings.v1`
+// and never change on flow switch — they are what Settings → AI edits.
 
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
 
 import {
+  AiDisabledError,
   AiStreamHttpError,
   fetchAiProviders,
   routeMessage,
@@ -29,21 +32,23 @@ import {
   type RouteHistoryEntry,
 } from "../api/ai.api";
 import { parseMentions } from "../features/ai/mentionVocabulary";
-import type { AiProvider } from "../views/AiProvidersView/aiProviderTypes";
+import type { AiProvider } from "../views/AiSettingsView/aiProviderTypes";
 import {
   LOCAL_PROVIDER_ID,
   fetchLocalModelStatus,
   generateFlow,
   selectLocalModel,
-  streamLocalModelInstall,
   type LocalModelStatus,
-} from "../views/AiProvidersView/localModelApi";
+} from "../views/AiSettingsView/localModelApi";
 import { acceptDiff } from "../services/aiDiffClient";
 import { useAiAgentStore } from "./ai-agent-store";
 import {
   highestPersistedMessageId,
+  loadPersistedAiSettings,
   loadPersistedAiState,
+  persistAiSettings,
   persistAiState,
+  type PersistedAgentSurface,
 } from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
 import { useFlowStore } from "./flow-store";
@@ -158,6 +163,11 @@ export const useAiStore = defineStore("ai", () => {
   const providers = ref<AiProvider[]>([]);
   const providersLoading = ref(false);
   const providersError = ref<string | null>(null);
+  // True once ``loadProviders`` hits the router's 503 "AI features are
+  // disabled" contract. The single flag every AI surface reads for its
+  // disabled empty-state; cleared by the next successful load (an admin
+  // flipped the flag back on from Settings → AI).
+  const aiDisabled = ref(false);
 
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
@@ -182,31 +192,26 @@ export const useAiStore = defineStore("ai", () => {
 
   const isLocalSelected = computed(() => selectedProvider.value === LOCAL_PROVIDER_ID);
 
-  // First-run onboarding state for the inline chat CTA. ``canSetupLocal`` is
-  // true when the platform supports a local model but the user hasn't fetched
-  // one yet — that's when we offer the one-click "Set up local AI" button so a
-  // brand-new user with no provider can get going without visiting settings.
+  // True when the platform supports a local model but none is installed yet —
+  // the chat empty state uses it to point a key-less user at Settings → AI →
+  // On-device AI as the no-account way to get going.
   const canSetupLocal = computed(
     () => localModelStatus.value?.available === true && !localModelStatus.value?.anyModelInstalled,
   );
-  const localSetupInProgress = ref(false);
-  const localSetupPhase = ref<string | null>(null);
-  const localSetupPct = ref<number | null>(null);
 
   // User-selectable agent surface. Defaults to ``agent_live`` so the
   // REPL-style canvas-mutating surface is what new sessions get; users
   // can switch to ``agent_staged`` (multi-stage planner) or
-  // ``agent_complex`` (single-shot full catalog) via the settings
-  // popover. Persisted alongside the other AI selections via
-  // ``ai-store-persistence``.
-  const selectedAgentSurface = ref<"agent_complex" | "agent_staged" | "agent_live">("agent_live");
+  // ``agent_complex`` (single-shot full catalog) under Settings → AI →
+  // Assistant. Device-wide, persisted with the other AI settings.
+  const selectedAgentSurface = ref<PersistedAgentSurface>("agent_live");
 
   // Opt-in verify-completion gate. When true, after classify picks
   // ``op_kind="other"`` the agent runs one extra LLM round at
   // ``stage="verify_completion"`` to walk the plan as a checklist
   // before the loop terminates. Default off (extra round per run); the
-  // user opts in via the agent settings panel checkbox. Persisted
-  // per-flow alongside ``selectedAgentSurface``.
+  // user opts in under Settings → AI → Assistant. Device-wide alongside
+  // ``selectedAgentSurface``.
   const verifyPlanCompletion = ref<boolean>(false);
 
   // ----- messages -----
@@ -272,21 +277,6 @@ export const useAiStore = defineStore("ai", () => {
       _messageCounter = persistedMax;
     }
   }
-  if (_hydrated.selectedProvider !== null) {
-    selectedProvider.value = _hydrated.selectedProvider;
-  }
-  if (_hydrated.selectedModel !== null) {
-    selectedModel.value = _hydrated.selectedModel;
-  }
-  if (_hydrated.simpleModel !== null && _hydrated.simpleModel !== undefined) {
-    simpleModel.value = _hydrated.simpleModel;
-  }
-  if (_hydrated.simpleProvider !== null && _hydrated.simpleProvider !== undefined) {
-    simpleProvider.value = _hydrated.simpleProvider;
-  }
-  if (_hydrated.splitModels !== null && _hydrated.splitModels !== undefined) {
-    splitModels.value = _hydrated.splitModels;
-  }
   // Seed ``mode`` from sessionStorage (per-tab, fresh on tab close);
   // fall back to the legacy ``autoPromote`` from the localStorage blob
   // when no sessionStorage value is present (migration shim).
@@ -294,11 +284,54 @@ export const useAiStore = defineStore("ai", () => {
   if (_hydrated.agentModeAccepted !== null && _hydrated.agentModeAccepted !== undefined) {
     agentModeAccepted.value = _hydrated.agentModeAccepted;
   }
-  if (_hydrated.selectedAgentSurface !== null && _hydrated.selectedAgentSurface !== undefined) {
-    selectedAgentSurface.value = _hydrated.selectedAgentSurface;
+
+  // ----- Hydrate the device-wide AI settings -----
+  // The settings bucket wins. When it has never been written (first run
+  // after the settings moved out of the per-flow blob) seed it from the
+  // legacy fields of the flow bucket loaded above, then persist so the
+  // migration happens exactly once.
+  const _settings = loadPersistedAiSettings();
+  const _seedSettings = _settings ?? {
+    selectedProvider: _hydrated.selectedProvider ?? null,
+    selectedModel: _hydrated.selectedModel ?? null,
+    splitModels: _hydrated.splitModels ?? null,
+    simpleProvider: _hydrated.simpleProvider ?? null,
+    simpleModel: _hydrated.simpleModel ?? null,
+    selectedAgentSurface: _hydrated.selectedAgentSurface ?? null,
+    verifyPlanCompletion: _hydrated.verifyPlanCompletion ?? null,
+  };
+  if (_seedSettings.selectedProvider !== null) {
+    selectedProvider.value = _seedSettings.selectedProvider;
   }
-  if (_hydrated.verifyPlanCompletion !== null && _hydrated.verifyPlanCompletion !== undefined) {
-    verifyPlanCompletion.value = _hydrated.verifyPlanCompletion;
+  if (_seedSettings.selectedModel !== null) {
+    selectedModel.value = _seedSettings.selectedModel;
+  }
+  if (_seedSettings.splitModels !== null) {
+    splitModels.value = _seedSettings.splitModels;
+  }
+  if (_seedSettings.simpleProvider !== null) {
+    simpleProvider.value = _seedSettings.simpleProvider;
+  }
+  if (_seedSettings.simpleModel !== null) {
+    simpleModel.value = _seedSettings.simpleModel;
+  }
+  if (_seedSettings.selectedAgentSurface !== null) {
+    selectedAgentSurface.value = _seedSettings.selectedAgentSurface;
+  }
+  if (_seedSettings.verifyPlanCompletion !== null) {
+    verifyPlanCompletion.value = _seedSettings.verifyPlanCompletion;
+  }
+  const _snapshotSettings = () => ({
+    selectedProvider: selectedProvider.value,
+    selectedModel: selectedModel.value,
+    splitModels: splitModels.value,
+    simpleProvider: simpleProvider.value,
+    simpleModel: simpleModel.value,
+    selectedAgentSurface: selectedAgentSurface.value,
+    verifyPlanCompletion: verifyPlanCompletion.value,
+  });
+  if (_settings === null && Object.values(_seedSettings).some((v) => v !== null)) {
+    persistAiSettings(_snapshotSettings());
   }
 
   // Throttled save. localStorage writes are sync + main-thread; coalescing
@@ -327,14 +360,7 @@ export const useAiStore = defineStore("ai", () => {
         persistAiState(
           {
             messages: messages.value,
-            selectedProvider: selectedProvider.value,
-            selectedModel: selectedModel.value,
-            splitModels: splitModels.value,
-            simpleProvider: simpleProvider.value,
-            simpleModel: simpleModel.value,
             agentModeAccepted: agentModeAccepted.value,
-            selectedAgentSurface: selectedAgentSurface.value,
-            verifyPlanCompletion: verifyPlanCompletion.value,
           },
           undefined,
           _scopedFlowId(flowStore.flowId),
@@ -342,6 +368,17 @@ export const useAiStore = defineStore("ai", () => {
       },
       isStreaming ? PERSIST_THROTTLE_MS : 0,
     );
+  };
+
+  // Device-wide settings get their own writer: never throttled (a user
+  // click, not a token stream) and never keyed by flow.
+  let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const queuePersistSettings = (): void => {
+    if (settingsSaveTimer !== null) clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = setTimeout(() => {
+      settingsSaveTimer = null;
+      persistAiSettings(_snapshotSettings());
+    }, 0);
   };
 
   // `mode` lives in sessionStorage, not the localStorage chat blob,
@@ -357,15 +394,21 @@ export const useAiStore = defineStore("ai", () => {
   // "streaming" state and route the user-message push through the slow
   // throttle path.
   watch(messages, queuePersist, { deep: true, flush: "sync" });
-  watch(selectedProvider, queuePersist, { flush: "sync" });
-  watch(selectedModel, queuePersist, { flush: "sync" });
-  watch(splitModels, queuePersist, { flush: "sync" });
-  watch(simpleProvider, queuePersist, { flush: "sync" });
-  watch(simpleModel, queuePersist, { flush: "sync" });
-  watch(selectedAgentSurface, queuePersist, { flush: "sync" });
-  watch(verifyPlanCompletion, queuePersist, { flush: "sync" });
   watch(streamingState, queuePersist, { flush: "sync" });
   watch(agentModeAccepted, queuePersist, { flush: "sync" });
+  watch(
+    [
+      selectedProvider,
+      selectedModel,
+      splitModels,
+      simpleProvider,
+      simpleModel,
+      selectedAgentSurface,
+      verifyPlanCompletion,
+    ],
+    queuePersistSettings,
+    { flush: "sync" },
+  );
 
   // Flow switch handler. Persist the *outgoing* flow's chat under its
   // own key BEFORE clearing `messages.value`, then load the *incoming*
@@ -394,14 +437,7 @@ export const useAiStore = defineStore("ai", () => {
       persistAiState(
         {
           messages: messages.value,
-          selectedProvider: selectedProvider.value,
-          selectedModel: selectedModel.value,
-          splitModels: splitModels.value,
-          simpleProvider: simpleProvider.value,
-          simpleModel: simpleModel.value,
           agentModeAccepted: agentModeAccepted.value,
-          selectedAgentSurface: selectedAgentSurface.value,
-          verifyPlanCompletion: verifyPlanCompletion.value,
         },
         undefined,
         outgoing,
@@ -409,37 +445,12 @@ export const useAiStore = defineStore("ai", () => {
 
       const loaded = loadPersistedAiState(undefined, incoming);
       messages.value = loaded.messages;
-      // Loaded provider/model take precedence ONLY when present; absent
-      // values keep the user's current pick so a fresh-flow switch
-      // doesn't reset the picker mid-session.
-      if (loaded.selectedProvider !== null) {
-        selectedProvider.value = loaded.selectedProvider;
-      }
-      if (loaded.selectedModel !== null) {
-        selectedModel.value = loaded.selectedModel;
-      }
-      if (loaded.simpleModel !== null && loaded.simpleModel !== undefined) {
-        simpleModel.value = loaded.simpleModel;
-      }
-      if (loaded.simpleProvider !== null && loaded.simpleProvider !== undefined) {
-        simpleProvider.value = loaded.simpleProvider;
-      }
-      if (loaded.splitModels !== null && loaded.splitModels !== undefined) {
-        splitModels.value = loaded.splitModels;
-      }
-      // ``mode`` is session-global (sessionStorage), NOT per-flow, so
-      // a flow switch doesn't touch it. Only ``agentModeAccepted``
-      // resets per-flow ("Continue as agent" is a
+      // Provider/model, the simple tier and the agent toggles are
+      // device-wide settings — a flow switch never touches them. ``mode``
+      // is session-global (sessionStorage), also untouched. Only
+      // ``agentModeAccepted`` resets per-flow ("Continue as agent" is a
       // conversation-scoped commitment, not a session-scoped one).
       agentModeAccepted.value = loaded.agentModeAccepted ?? false;
-      // selectedAgentSurface is a per-flow session preference. Fall
-      // back to the store's default when the flow has no persisted
-      // value.
-      selectedAgentSurface.value = loaded.selectedAgentSurface ?? "agent_live";
-      // verifyPlanCompletion is per-flow alongside the surface picker.
-      // Falls back to off (default) when the incoming flow has no
-      // persisted value.
-      verifyPlanCompletion.value = loaded.verifyPlanCompletion ?? false;
       promotionBanner.value = null;
       streamError.value = null;
 
@@ -565,6 +576,7 @@ export const useAiStore = defineStore("ai", () => {
         fetchLocalModelStatus().catch(() => null),
       ]);
       providers.value = list;
+      aiDisabled.value = false;
       // Inject/refresh the synthetic ``local`` entry through the single writer
       // so the Models card and On-device card stay one source of truth.
       applyLocalModelStatus(localStatus);
@@ -578,11 +590,28 @@ export const useAiStore = defineStore("ai", () => {
         }
       }
     } catch (err) {
+      aiDisabled.value = err instanceof AiDisabledError;
       providersError.value = err instanceof Error ? err.message : String(err);
       providers.value = [];
     } finally {
       providersLoading.value = false;
     }
+  };
+
+  // Models a provider offers: its curated list (e.g. several models behind
+  // one OpenRouter key) plus its default, deduped. The one rule every model
+  // picker (Settings → AI, the chat drawer, ⌘K) renders from, resolved
+  // against ``providers`` so the synthetic ``local`` entry and its installed
+  // models are included.
+  const modelsForProvider = (name: string | null): string[] => {
+    if (!name) return [];
+    const meta = providers.value.find((p) => p.provider === name);
+    if (!meta) return [];
+    const set = new Set<string>();
+    meta.credential?.models?.forEach((m) => set.add(m));
+    const def = meta.credential?.defaultModel ?? meta.defaultModel;
+    if (def) set.add(def);
+    return Array.from(set);
   };
 
   const setSelectedProvider = (name: string): void => {
@@ -667,15 +696,13 @@ export const useAiStore = defineStore("ai", () => {
     return meta.surfaces?.[surface] ?? meta.credential?.defaultModel ?? meta.defaultModel ?? null;
   };
 
-  const setSelectedAgentSurface = (
-    surface: "agent_complex" | "agent_staged" | "agent_live",
-  ): void => {
+  const setSelectedAgentSurface = (surface: PersistedAgentSurface): void => {
     selectedAgentSurface.value = surface;
   };
 
   // Opt-in verify-completion mode setter. Mirror of the surface setter
-  // so the AiAssistant.vue checkbox flips the flag through the same
-  // store-action pattern as the other agent settings.
+  // so the Settings → AI → Assistant checkbox flips the flag through the
+  // same store-action pattern as the other agent settings.
   const setVerifyPlanCompletion = (value: boolean): void => {
     verifyPlanCompletion.value = value;
   };
@@ -1534,54 +1561,12 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
-  // One-click onboarding from the chat drawer: download the recommended local
-  // model (the backend default), then refresh providers and select "local" so
-  // the user can chat immediately — no settings visit, no model picking.
-  // Progress is mirrored into ``localSetup*`` so the CTA can show a bar.
-  const setupLocalModel = async (): Promise<void> => {
-    if (localSetupInProgress.value) return;
-    localSetupInProgress.value = true;
-    localSetupPhase.value = null;
-    localSetupPct.value = null;
-    let failed: string | null = null;
-    try {
-      await streamLocalModelInstall({
-        onProgress: (ev) => {
-          localSetupPhase.value = ev.phase;
-          if (typeof ev.received === "number" && typeof ev.total === "number" && ev.total > 0) {
-            localSetupPct.value = Math.min(100, Math.round((ev.received / ev.total) * 100));
-          } else {
-            localSetupPct.value = null;
-          }
-        },
-        onError: (msg) => {
-          failed = msg;
-        },
-      });
-    } catch (err) {
-      failed = err instanceof Error ? err.message : String(err);
-    } finally {
-      localSetupInProgress.value = false;
-      // Re-pull providers so the synthetic "local" entry is injected.
-      await loadProviders();
-    }
-    if (failed) {
-      streamError.value = `Local AI setup failed: ${failed}`;
-      streamingState.value = "error";
-      return;
-    }
-    // Auto-select local so the next Send just works.
-    if (localModelStatus.value?.anyModelInstalled) {
-      setSelectedProvider(LOCAL_PROVIDER_ID);
-      setSelectedModel(localModelStatus.value.selectedModelId);
-    }
-  };
-
   return {
     // state
     providers,
     providersLoading,
     providersError,
+    aiDisabled,
     selectedProvider,
     selectedModel,
     splitModels,
@@ -1594,22 +1579,19 @@ export const useAiStore = defineStore("ai", () => {
     agentModeAccepted,
     promotionBanner,
     localModelStatus,
-    localSetupInProgress,
-    localSetupPhase,
-    localSetupPct,
     // computed
     isAiOpen,
     isStreaming,
     configuredProviders,
     hasConfiguredProvider,
     modelForSurface,
+    modelsForProvider,
     resolveSurface,
     isLocalSelected,
     canSetupLocal,
     // actions
     generateFlowFromComposer,
     addBuiltFlow,
-    setupLocalModel,
     openAiDrawer,
     closeAiDrawer,
     toggleAiDrawer,

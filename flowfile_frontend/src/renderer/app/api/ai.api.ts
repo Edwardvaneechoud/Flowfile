@@ -1,8 +1,8 @@
 // Frontend API surface for the AI subsystem.
 
 import axios from "../services/axios.config";
-import { fetchAiProviders } from "../views/AiProvidersView/api";
-import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiProvidersView/api";
+import { fetchAiProviders } from "../views/AiSettingsView/api";
+import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiSettingsView/api";
 import {
   routeMessage,
   streamChat,

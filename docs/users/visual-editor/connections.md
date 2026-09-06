@@ -4,7 +4,8 @@ Save and reuse database, cloud storage, and Kafka credentials across your flows.
 
 All connection types and secrets are managed from a single **Connections** page, accessible
 via **Settings → Connections → All connections** in the left sidebar. Use the tabs to switch between
-**Overview**, **Database**, **Cloud Storage**, **Kafka**, **Google Analytics**, **Secrets**, and **AI Providers**.
+**Overview**, **Database**, **Cloud Storage**, **Kafka**, **Google Analytics**, and **Secrets**. LLM provider
+keys live under **Settings → AI** — see [Provider Setup](../../ai/providers.md).
 
 Connections store your credentials securely (passwords are encrypted via [Secrets](catalog/secrets.md))
 so you can reference them by name in Database Reader, Database Writer, Cloud Storage Reader,

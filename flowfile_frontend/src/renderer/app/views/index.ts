@@ -21,5 +21,5 @@ export { default as GoogleAnalyticsConnectionView } from "./GoogleAnalyticsConne
 // Database
 export { default as DatabaseView } from "./DatabaseView/DatabaseView.vue";
 
-// AI Providers
-export { default as AiSettingsTab } from "./AiProvidersView/AiSettingsTab.vue";
+// AI settings
+export { default as AiSettingsView } from "./AiSettingsView/AiSettingsView.vue";

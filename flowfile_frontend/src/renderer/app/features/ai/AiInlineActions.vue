@@ -100,8 +100,7 @@ const isBusy = computed(() => aiStore.isStreaming);
 const hasProvider = computed(() => aiStore.hasConfiguredProvider);
 
 const disabledReason = computed<string | null>(() => {
-  if (!hasProvider.value)
-    return "Configure a provider in Settings → AI Providers to enable AI actions.";
+  if (!hasProvider.value) return "Configure a provider in Settings → AI to enable AI actions.";
   if (isBusy.value) return "Another AI request is in progress — wait or cancel it first.";
   return null;
 });

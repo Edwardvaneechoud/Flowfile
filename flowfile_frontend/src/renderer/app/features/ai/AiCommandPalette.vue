@@ -17,18 +17,16 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useAiCommandPaletteStore } from "../../stores/ai-command-palette-store";
 import { useAiStore } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
-import { AiDisabledError } from "../../views/AiProvidersView/api";
 
 const palette = useAiCommandPaletteStore();
 const aiStore = useAiStore();
 const flowStore = useFlowStore();
 
 const inputEl = ref<HTMLInputElement | null>(null);
-const providersLoadFailedDisabled = ref(false);
 
 const placeholder = computed(() => {
-  if (palette.aiDisabled) return "AI features are disabled.";
-  if (!aiStore.hasConfiguredProvider) return "Configure a provider in Settings → AI Providers.";
+  if (_disabled.value) return "AI features are disabled.";
+  if (!aiStore.hasConfiguredProvider) return "Configure a provider in Settings → AI.";
   return "Type an action — e.g. 'filter to last 30 days'";
 });
 
@@ -40,28 +38,13 @@ const canSubmit = computed(
     palette.prompt.trim().length > 0,
 );
 
-// Model picker. Mirrors the chat drawer's pattern (AiAssistant.vue):
-// prefer the curated `credential.models` list, fall back to the
-// singleton `defaultModel`, and only render the <select> when there
-// are 2+ options. Existing behaviour is preserved verbatim for users
-// with a single default model: the picker just doesn't render. The
-// picker writes to the same `aiStore.selectedModel` that the palette
-// already forwards on each request, so changing it routes the next
-// call to the picked model and survives across surfaces.
-const selectedProviderMeta = computed(() => {
-  const name = aiStore.selectedProvider;
-  if (!name) return null;
-  return aiStore.providers.find((p) => p.provider === name) ?? null;
-});
-
-const availableModels = computed<string[]>(() => {
-  const meta = selectedProviderMeta.value;
-  if (!meta) return [];
-  const curated = meta.credential?.models;
-  if (curated && curated.length > 0) return curated;
-  const singleton = meta.credential?.defaultModel ?? meta.defaultModel ?? null;
-  return singleton ? [singleton] : [];
-});
+// Model picker. Same list the Settings → AI page and the chat drawer offer
+// (``aiStore.modelsForProvider``); only rendered when there is a real choice.
+// It writes the same device-wide ``aiStore.selectedModel`` the palette
+// forwards on each request, so a pick here applies everywhere.
+const availableModels = computed<string[]>(() =>
+  aiStore.modelsForProvider(aiStore.selectedProvider),
+);
 
 const showModelPicker = computed(() => availableModels.value.length > 1);
 
@@ -87,13 +70,9 @@ onMounted(async () => {
   // Pre-load the provider list once so the first cmd+k press
   // doesn't race the BYOK fetch. The chat drawer already does this
   // on its own mount, but the palette may be the first AI surface
-  // a user opens.
+  // a user opens. A 503 lands in ``aiStore.aiDisabled``.
   if (aiStore.providers.length === 0) {
-    try {
-      await aiStore.loadProviders();
-    } catch (err) {
-      if (err instanceof AiDisabledError) providersLoadFailedDisabled.value = true;
-    }
+    await aiStore.loadProviders();
   }
 });
 
@@ -149,7 +128,7 @@ const handleClose = (): void => {
   if (!palette.loading) palette.close();
 };
 
-const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabled.value);
+const _disabled = computed(() => palette.aiDisabled || aiStore.aiDisabled);
 </script>
 
 <template>
@@ -227,7 +206,7 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
           {{ palette.error }}
         </div>
         <div v-else-if="!aiStore.hasConfiguredProvider && !_disabled" class="ai-cmdk__hint">
-          No AI provider configured. Open Settings → AI Providers to add a key.
+          No AI provider configured. Open Settings → AI to add a key.
         </div>
         <div v-else class="ai-cmdk__hint">
           Press <kbd>Enter</kbd> to run · <kbd>Esc</kbd> to close

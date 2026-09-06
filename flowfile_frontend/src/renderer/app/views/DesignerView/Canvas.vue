@@ -48,7 +48,9 @@ import {
   suppressedEdgeRemovals,
   markHoveredEdge,
   detectEdgeUnderPointer,
+  markAutoConnectNode,
 } from "../../composables/useDragAndDrop";
+import type { AutoConnectMatch } from "../../utils/autoConnect";
 import { useStaleModifierGuard } from "../../composables/useStaleModifierGuard";
 import NodeList from "./NodeList.vue";
 import { useAiStore } from "../../stores/ai-store";
@@ -203,44 +205,57 @@ function onEdgeMouseLeave({ edge }: { edge: { id: string } }) {
 }
 
 /**
- * Dragging an existing canvas node onto an edge should splice it in the
- * same way a palette-dropped node does. We reuse the edge hit-test helper
- * from the composable and, on drop, call insertNodeOnEdge — the node is
- * already on both the UI and backend, so only the edges need reshuffling.
+ * Dragging an existing, still-unconnected canvas node onto an edge splices it
+ * in the same way a palette-dropped node does, and releasing it next to a
+ * node auto-connects the two. We reuse the edge hit-test and neighbour
+ * detection from the composable; the node is already on both the UI and
+ * backend, so only edges change. Connected nodes never do either — the new
+ * edges could clash with existing ones or close a cycle.
  */
 let nodeDragInsertCandidate: string | null = null;
+let nodeDragConnectCandidate: AutoConnectMatch | null = null;
 
-function onNodeDrag({ event, node }: { event: MouseEvent | TouchEvent; node: Node }) {
+function onNodeDrag({
+  event,
+  node,
+  nodes: dragged,
+}: {
+  event: MouseEvent | TouchEvent;
+  node: Node;
+  nodes: Node[];
+}) {
+  nodeDragInsertCandidate = null;
+  nodeDragConnectCandidate = null;
   const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
-  // `multi` nodes render one input handle that accepts many sources, so they
-  // qualify as 1-input for splice purposes even though template.input is high.
-  // Dynamic-input nodes never splice: their input-0 is the parameter handle.
-  const effectiveInputCount = template?.multi ? 1 : (template?.input ?? 0);
-  if (!template || template.dynamic_inputs || effectiveInputCount !== 1 || template.output < 1) {
-    markHoveredEdge(null);
-    nodeDragInsertCandidate = null;
-    return;
-  }
-  // Splicing via node-drag only applies to unconnected nodes — otherwise the
-  // new edges could clash with existing ones or close a cycle.
   const nodeAlreadyConnected = instance.getEdges.value.some(
     (e) => e.source === node.id || e.target === node.id,
   );
-  if (nodeAlreadyConnected) {
+  // Dynamic-input nodes never splice or auto-connect: input-0 is the parameter handle.
+  if (!template || template.dynamic_inputs || nodeAlreadyConnected || dragged.length > 1) {
     markHoveredEdge(null);
-    nodeDragInsertCandidate = null;
+    markAutoConnectNode(null);
     return;
   }
+  // `multi` nodes render one input handle that accepts many sources, so they
+  // qualify as 1-input for splice purposes even though template.input is high.
+  const effectiveInputCount = template.multi ? 1 : template.input;
+  const canSplice = effectiveInputCount === 1 && template.output >= 1;
   const evt = event as MouseEvent;
-  const edgeId = detectEdgeUnderPointer(evt.clientX, evt.clientY);
+  const edgeId = canSplice ? detectEdgeUnderPointer(evt.clientX, evt.clientY) : null;
   markHoveredEdge(edgeId);
   nodeDragInsertCandidate = edgeId;
+  nodeDragConnectCandidate = edgeId ? null : detectAutoConnectForNode(node.id);
+  markAutoConnectNode(nodeDragConnectCandidate?.nodeId ?? null);
 }
 
 async function onNodeDragStop({ node }: { node: Node }) {
   const edgeId = nodeDragInsertCandidate;
+  const match = nodeDragConnectCandidate;
   nodeDragInsertCandidate = null;
+  nodeDragConnectCandidate = null;
   markHoveredEdge(null);
+  markAutoConnectNode(null);
+  resetAutoConnectCandidates();
   if (edgeId) {
     const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
     if (!template) return;
@@ -255,6 +270,12 @@ async function onNodeDragStop({ node }: { node: Node }) {
   const graphNode = instance.findNode(node.id);
   if (graphNode) {
     await persistDrag(graphNode);
+  }
+  if (match) {
+    const response = await autoConnectNode(flowStore.flowId, Number(node.id), match);
+    if (response?.history) {
+      flowStore.updateHistoryState(response.history);
+    }
   }
 }
 const nodes = ref<Node[]>([]);
@@ -271,6 +292,9 @@ const {
   createMultiCopyNodes,
   createManualInputFromClipboard,
   insertNodeOnEdge,
+  detectAutoConnectForNode,
+  autoConnectNode,
+  resetAutoConnectCandidates,
 } = useDragAndDrop();
 const fileDrop = useFileDropImport();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
@@ -1371,6 +1395,7 @@ defineExpose({
         @connect="onConnect"
         @connect-start="onConnectStart"
         @connect-end="onConnectEnd"
+        @node-drag-start="resetAutoConnectCandidates"
         @node-drag="onNodeDrag"
         @node-drag-stop="onNodeDragStop"
         @pane-click="handleCanvasClick"
@@ -1529,6 +1554,13 @@ body,
 .custom-node-flow .vue-flow__edge.edge-drop-target .vue-flow__edge-path {
   stroke-width: 4;
   stroke-dasharray: 6 4;
+}
+
+/* Palette drag within snapping range of this node: the drop auto-connects. */
+.custom-node-flow .vue-flow__node.auto-connect-target {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: 4px;
+  border-radius: 8px;
 }
 
 .animated-bg-gradient {

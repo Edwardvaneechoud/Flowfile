@@ -1,5 +1,5 @@
 // Axios + SSE wrappers for the on-demand local-model endpoints
-// (/ai/local-model/*). Mirrors AiProvidersView/api.ts: camelCase TS,
+// (/ai/local-model/*). Mirrors AiSettingsView/api.ts: camelCase TS,
 // snake_case mappers at the boundary. Install streams progress as SSE over
 // POST, so it uses fetch + the shared bearer token (native EventSource is
 // GET-only) — the same pattern as services/aiStreamClient.ts.

@@ -1,0 +1,178 @@
+/* Classes shared by the AI settings panels (Providers, Assistant, On-device AI).
+   Scoped under the view root so nothing leaks into the rest of the app. Dialog
+   content keeps its styles in the panel that owns the dialog. */
+
+.ai-settings-view .description-text {
+  color: var(--color-text-secondary);
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-sm);
+}
+
+.ai-settings-view .connections-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.ai-settings-view .connection-item {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-3) var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  gap: var(--spacing-4);
+}
+
+/* The selected local model — accent its left edge so the active pick reads
+   at a glance among the catalog rows. */
+.ai-settings-view .connection-item--active {
+  border-left: 3px solid var(--color-accent);
+}
+
+/* A row that can expand a details block underneath (the on-device model). */
+.ai-settings-view .connection-item--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ai-settings-view .connection-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-settings-view .connection-name {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.ai-settings-view .connection-name i {
+  color: var(--color-accent);
+}
+
+.ai-settings-view .connection-details {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-1);
+}
+
+.ai-settings-view .muted {
+  color: var(--color-text-tertiary);
+}
+
+.ai-settings-view .separator {
+  margin: 0 var(--spacing-2);
+}
+
+.ai-settings-view .connection-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.ai-settings-view .badge {
+  background-color: var(--color-background-muted);
+  color: var(--color-text-secondary);
+  border-radius: var(--border-radius-full);
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.ai-settings-view .badge--configured {
+  background-color: var(--color-success-subtle, rgba(34, 197, 94, 0.15));
+  color: var(--color-success, #16a34a);
+}
+
+.ai-settings-view .badge--env_fallback {
+  background-color: var(--color-warning-subtle, rgba(234, 179, 8, 0.15));
+  color: var(--color-warning, #ca8a04);
+}
+
+.ai-settings-view .badge--unconfigured {
+  background-color: var(--color-background-muted);
+  color: var(--color-text-tertiary);
+}
+
+.ai-settings-view .badge--test.badge--ok {
+  background-color: var(--color-success-subtle, rgba(34, 197, 94, 0.15));
+  color: var(--color-success, #16a34a);
+}
+
+.ai-settings-view .badge--test.badge--error {
+  background-color: var(--color-danger-subtle, rgba(239, 68, 68, 0.15));
+  color: var(--color-danger, #dc2626);
+}
+
+.ai-settings-view .info-box {
+  display: flex;
+  gap: var(--spacing-4);
+  padding: var(--spacing-4);
+  background-color: var(--color-background-muted);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--border-radius-md);
+}
+
+.ai-settings-view .info-box i {
+  color: var(--color-accent);
+  font-size: var(--font-size-2xl);
+  margin-top: var(--spacing-1);
+}
+
+.ai-settings-view .info-body {
+  flex: 1;
+}
+
+.ai-settings-view .info-body p {
+  margin: 0;
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.ai-settings-view .info-body p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-settings-view .info-box strong {
+  color: var(--color-text-primary);
+}
+
+.ai-settings-view .info-actions {
+  margin: var(--spacing-3) 0;
+}
+
+.ai-settings-view .hint-text {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  margin-top: var(--spacing-1);
+}
+
+/* Quiet in-copy link that jumps to a sibling tab. */
+.ai-settings-view .inline-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ai-settings-view .inline-link:hover {
+  color: var(--color-accent);
+}
+
+/* Select dropdowns teleport to <body>, so the popup is themed by popper-class. */
+.model-select-dropdown .el-select-dropdown__item.is-selected {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.model-select-dropdown .el-select-dropdown__item.is-hovering {
+  background-color: var(--color-accent-subtle);
+}

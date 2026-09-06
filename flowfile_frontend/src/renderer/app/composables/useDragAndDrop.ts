@@ -30,6 +30,13 @@ import { useTutorialStore } from "../stores/tutorial-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
 import { buildOutputHandles, deriveHandles } from "../utils/nodeHandles";
+import {
+  findAutoConnectMatch,
+  preferUnusedOutputs,
+  type AutoConnectDrop,
+  type AutoConnectMatch,
+  type AutoConnectNode,
+} from "../utils/autoConnect";
 import { desktop } from "../../lib/desktop";
 
 const EDGE_DROP_CLASS = "edge-drop-target";
@@ -54,6 +61,26 @@ function markHoveredEdge(nextId: string | null) {
       ?.classList.add(EDGE_DROP_CLASS);
   }
   hoveredEdgeId = nextId;
+}
+
+// Palette drag in snapping range of an existing node: the drop will auto-connect.
+const AUTO_CONNECT_CLASS = "auto-connect-target";
+let autoConnectNodeId: string | null = null;
+let draggedTemplate: NodeTemplate | null = null;
+
+function markAutoConnectNode(nextId: string | null) {
+  if (autoConnectNodeId === nextId) return;
+  if (autoConnectNodeId) {
+    document
+      .querySelector(`.vue-flow__node[data-id="${CSS.escape(autoConnectNodeId)}"]`)
+      ?.classList.remove(AUTO_CONNECT_CLASS);
+  }
+  if (nextId) {
+    document
+      .querySelector(`.vue-flow__node[data-id="${CSS.escape(nextId)}"]`)
+      ?.classList.add(AUTO_CONNECT_CLASS);
+  }
+  autoConnectNodeId = nextId;
 }
 
 function detectEdgeUnderPointer(clientX: number, clientY: number): string | null {
@@ -299,6 +326,9 @@ export default function useDragAndDrop() {
     removeEdges,
     findEdge,
     fromObject,
+    getNodes,
+    getEdges,
+    viewport,
   } = useVueFlow();
 
   const { addGroupProxyEdges } = useNodeGroups();
@@ -339,6 +369,8 @@ export default function useDragAndDrop() {
     }
 
     draggedType.value = nodeTemplate.item;
+    draggedTemplate = nodeTemplate;
+    resetAutoConnectCandidates();
     isDragging.value = true;
 
     document.addEventListener("drop", onDragEnd);
@@ -354,20 +386,173 @@ export default function useDragAndDrop() {
         event.dataTransfer.dropEffect = "move";
       }
       markHoveredEdge(detectEdgeUnderPointer(event.clientX, event.clientY));
+      // Edge splice takes priority over snapping to a neighbour.
+      let candidate: string | null = null;
+      if (!hoveredEdgeId && draggedTemplate) {
+        const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+        candidate = detectAutoConnect(draggedTemplate, position.x, position.y)?.nodeId ?? null;
+      }
+      markAutoConnectNode(candidate);
     }
   }
 
   function onDragLeave() {
     isDragOver.value = false;
     markHoveredEdge(null);
+    markAutoConnectNode(null);
   }
 
   function onDragEnd() {
     isDragging.value = false;
     isDragOver.value = false;
     draggedType.value = null;
+    draggedTemplate = null;
     markHoveredEdge(null);
+    markAutoConnectNode(null);
+    resetAutoConnectCandidates();
     document.removeEventListener("drop", onDragEnd);
+  }
+
+  // A node's rectangle in flow coordinates, read from the DOM like the edge
+  // hit-test: this composable's VueFlow handle never sees measured dimensions.
+  function measureNode(id: string): Pick<AutoConnectNode, "x" | "y" | "width" | "height"> | null {
+    const el = document.querySelector(`.vue-flow__node[data-id="${CSS.escape(id)}"]`);
+    const rect = el?.getBoundingClientRect();
+    if (!rect?.width) return null;
+    const zoom = viewport.value.zoom || 1;
+    const { x, y } = screenToFlowCoordinate({ x: rect.left, y: rect.top });
+    return { x, y, width: rect.width / zoom, height: rect.height / zoom };
+  }
+
+  // Existing nodes don't move during a drag, so they are measured once per
+  // drag: reset at drag start/end, filled lazily on the first tick.
+  let autoConnectCache: AutoConnectNode[] | null = null;
+
+  function resetAutoConnectCandidates() {
+    autoConnectCache = null;
+  }
+
+  function autoConnectCandidates(): AutoConnectNode[] {
+    if (!autoConnectCache) autoConnectCache = collectAutoConnectCandidates();
+    return autoConnectCache;
+  }
+
+  // Existing canvas nodes as auto-connect candidates: rendered, visible data
+  // nodes with the side input handles that are still free.
+  function collectAutoConnectCandidates(): AutoConnectNode[] {
+    const edges = getEdges.value;
+    return getNodes.value.flatMap((node) => {
+      if (node.type !== "custom-node" || node.hidden) return [];
+      const rect = measureNode(node.id);
+      if (!rect) return [];
+      const data = node.data as {
+        inputs?: NodeHandle[];
+        outputs?: NodeHandle[];
+        nodeTemplate?: NodeTemplate;
+      };
+      // A multi node's single handle accepts any number of sources.
+      const multi = Boolean(data.nodeTemplate?.multi && !data.nodeTemplate?.dynamic_inputs);
+      const occupied = new Set(
+        edges.filter((e) => e.target === node.id).map((e) => e.targetHandle ?? "input-0"),
+      );
+      const used = new Set(
+        edges
+          .filter((e) => e.source === node.id)
+          .map((e) => e.sourceHandle ?? DEFAULT_OUTPUT_HANDLE),
+      );
+      return [
+        {
+          id: node.id,
+          ...rect,
+          freeInputs: (data.inputs ?? [])
+            .filter((h) => h.position === Position.Left && (multi || !occupied.has(h.id)))
+            .map((h) => h.id),
+          outputs: preferUnusedOutputs(
+            (data.outputs ?? []).map((h) => h.id),
+            used,
+          ),
+        },
+      ];
+    });
+  }
+
+  // Dynamic-input nodes never auto-connect: their input-0 is the parameter handle.
+  function autoConnectDrop(template: NodeTemplate, x: number, y: number): AutoConnectDrop | null {
+    if (template.dynamic_inputs) return null;
+    const { inputs, outputs } = deriveHandles(template);
+    return {
+      x,
+      y,
+      inputHandle: inputs.find((h) => h.position === Position.Left)?.id ?? null,
+      outputHandle: outputs[0]?.id ?? null,
+    };
+  }
+
+  function detectAutoConnect(
+    template: NodeTemplate,
+    x: number,
+    y: number,
+  ): AutoConnectMatch | null {
+    const drop = autoConnectDrop(template, x, y);
+    return drop ? findAutoConnectMatch(drop, autoConnectCandidates()) : null;
+  }
+
+  // Same rule for an existing node being dragged, using its real size and
+  // handles; the node itself is never its own candidate.
+  function detectAutoConnectForNode(nodeId: string): AutoConnectMatch | null {
+    const node = getNodes.value.find((n) => n.id === nodeId);
+    const data = node?.data as
+      | { inputs?: NodeHandle[]; outputs?: NodeHandle[]; nodeTemplate?: NodeTemplate }
+      | undefined;
+    const rect = measureNode(nodeId);
+    if (!node || !rect || !data?.nodeTemplate || data.nodeTemplate.dynamic_inputs) return null;
+    const drop: AutoConnectDrop = {
+      ...rect,
+      inputHandle: (data.inputs ?? []).find((h) => h.position === Position.Left)?.id ?? null,
+      outputHandle: data.outputs?.[0]?.id ?? null,
+    };
+    return findAutoConnectMatch(
+      drop,
+      autoConnectCandidates().filter((c) => c.id !== nodeId),
+    );
+  }
+
+  /**
+   * Wire a dropped or dragged node to the neighbour picked by findAutoConnectMatch.
+   * Backend first, then the UI edge; on failure the node simply stays unconnected.
+   */
+  async function autoConnectNode(
+    flowId: number,
+    newNodeId: number,
+    match: AutoConnectMatch,
+  ): Promise<OperationResponse | undefined> {
+    const existingId = parseInt(match.nodeId, 10);
+    const upstream = match.direction === "upstream";
+    const sourceId = upstream ? existingId : newNodeId;
+    const sourceHandle = upstream ? match.existingHandle : match.newHandle;
+    const targetId = upstream ? newNodeId : existingId;
+    const targetHandle = upstream ? match.newHandle : match.existingHandle;
+    try {
+      const response = await FlowApi.connectNode(
+        flowId,
+        buildConnection(sourceId, sourceHandle, targetId, targetHandle),
+      );
+      addEdges([
+        {
+          id: `e${sourceId}-${targetId}-${sourceHandle}-${targetHandle}`,
+          source: String(sourceId),
+          target: String(targetId),
+          sourceHandle,
+          targetHandle,
+        },
+      ]);
+      useTutorialStore().notify({ type: "edge-connected", sourceId, targetId });
+      return response;
+    } catch (error) {
+      console.error("Auto-connect failed:", error);
+      ElMessage.warning("Node added, but it could not be connected automatically");
+      return undefined;
+    }
   }
 
   async function createCopyNode(node: NodeCopyInput): Promise<OperationResponse | undefined> {
@@ -619,6 +804,12 @@ export default function useDragAndDrop() {
     // the hover cue — we'll consume the snapshot below.
     const droppedOnEdgeId = hoveredEdgeId;
     markHoveredEdge(null);
+    // Resolve the neighbour now, before the new node joins the candidate pool.
+    const autoConnectMatch = droppedOnEdgeId
+      ? null
+      : detectAutoConnect(nodeData, position.x, position.y);
+    markAutoConnectNode(null);
+    resetAutoConnectCandidates();
 
     try {
       const component = await getComponent(nodeData);
@@ -672,6 +863,10 @@ export default function useDragAndDrop() {
       ) {
         const insertResponse = await insertNodeOnEdge(flowId, nodeId, nodeData, droppedOnEdgeId);
         if (insertResponse) return insertResponse;
+      }
+      if (autoConnectMatch) {
+        const connectResponse = await autoConnectNode(flowId, nodeId, autoConnectMatch);
+        if (connectResponse) return connectResponse;
       }
       return response;
     } catch (error) {
@@ -1015,7 +1210,10 @@ export default function useDragAndDrop() {
     importFlow,
     createEmptyFlow,
     insertNodeOnEdge,
+    detectAutoConnectForNode,
+    autoConnectNode,
+    resetAutoConnectCandidates,
   };
 }
 
-export { markHoveredEdge, detectEdgeUnderPointer };
+export { markHoveredEdge, detectEdgeUnderPointer, markAutoConnectNode };

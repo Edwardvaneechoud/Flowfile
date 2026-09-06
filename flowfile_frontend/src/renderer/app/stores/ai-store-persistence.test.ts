@@ -1,4 +1,4 @@
-// Unit tests for the chat-history persistence helpers.
+// Unit tests for the chat-history + AI-settings persistence helpers.
 //
 // The helpers are intentionally pure (no Vue, no Pinia, no real DOM)
 // so a hand-rolled `Storage` mock is enough — no jsdom / happy-dom
@@ -9,12 +9,16 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_PERSISTED_MESSAGES,
   PERSISTENCE_KEY,
+  SETTINGS_PERSISTENCE_KEY,
   chatPersistenceKey,
   clearPersistedAiState,
   highestPersistedMessageId,
+  loadPersistedAiSettings,
   loadPersistedAiState,
+  persistAiSettings,
   persistAiState,
 } from "./ai-store-persistence";
+import type { PersistedAiSettings } from "./ai-store-persistence";
 import type { ChatMessage } from "./ai-store";
 
 // No-flow callers (the helper's default) write through the
@@ -55,55 +59,71 @@ const sampleMessages = (): ChatMessage[] => [
   },
 ];
 
+const sampleSettings = (): PersistedAiSettings => ({
+  selectedProvider: "anthropic",
+  selectedModel: "claude-opus-4-7",
+  splitModels: true,
+  simpleProvider: "local",
+  simpleModel: "qwen2.5-coder-3b",
+  selectedAgentSurface: "agent_staged",
+  verifyPlanCompletion: true,
+});
+
 describe("loadPersistedAiState", () => {
   it("returns empty state when storage is empty", () => {
     const storage = makeStorage();
     const state = loadPersistedAiState(storage);
     expect(state.messages).toEqual([]);
-    expect(state.selectedProvider).toBeNull();
-    expect(state.selectedModel).toBeNull();
+    expect(state.agentModeAccepted).toBeNull();
   });
 
-  it("round-trips persisted messages, provider, model", () => {
+  it("round-trips persisted messages and the conversation-scoped accept flag", () => {
     const storage = makeStorage();
-    persistAiState(
-      {
-        messages: sampleMessages(),
-        selectedProvider: "anthropic",
-        selectedModel: "claude-opus-4-7",
-        splitModels: true,
-        simpleProvider: "local",
-        simpleModel: "qwen2.5-coder-3b",
-      },
-      storage,
-    );
+    persistAiState({ messages: sampleMessages(), agentModeAccepted: true }, storage);
 
     const state = loadPersistedAiState(storage);
     expect(state.messages).toHaveLength(2);
     expect(state.messages[0]).toMatchObject({ id: 1, role: "user", content: "Hello" });
     expect(state.messages[1]).toMatchObject({ id: 2, role: "assistant", content: "Hi there!" });
-    expect(state.selectedProvider).toBe("anthropic");
-    expect(state.selectedModel).toBe("claude-opus-4-7");
-    expect(state.splitModels).toBe(true);
-    expect(state.simpleProvider).toBe("local");
-    expect(state.simpleModel).toBe("qwen2.5-coder-3b");
+    expect(state.agentModeAccepted).toBe(true);
   });
 
-  it("defaults the split-model fields to null for legacy entries without them", () => {
+  it("still reads the legacy settings fields older builds wrote into the flow blob", () => {
     const storage = makeStorage();
-    // Legacy entry: the keys are absent entirely (persistAiState would write explicit nulls).
     storage.setItem(
       UNSCOPED_KEY,
       JSON.stringify({
         messages: sampleMessages(),
         selectedProvider: "anthropic",
         selectedModel: "x",
+        splitModels: true,
+        simpleProvider: "local",
+        simpleModel: "qwen",
+        selectedAgentSurface: "agent_complex",
+        verifyPlanCompletion: true,
       }),
     );
     const state = loadPersistedAiState(storage);
+    expect(state.selectedProvider).toBe("anthropic");
+    expect(state.selectedModel).toBe("x");
+    expect(state.splitModels).toBe(true);
+    expect(state.simpleProvider).toBe("local");
+    expect(state.simpleModel).toBe("qwen");
+    expect(state.selectedAgentSurface).toBe("agent_complex");
+    expect(state.verifyPlanCompletion).toBe(true);
+  });
+
+  it("defaults the legacy settings fields to null when absent", () => {
+    const storage = makeStorage();
+    storage.setItem(UNSCOPED_KEY, JSON.stringify({ messages: sampleMessages() }));
+    const state = loadPersistedAiState(storage);
+    expect(state.selectedProvider).toBeNull();
+    expect(state.selectedModel).toBeNull();
     expect(state.splitModels).toBeNull();
     expect(state.simpleProvider).toBeNull();
     expect(state.simpleModel).toBeNull();
+    expect(state.selectedAgentSurface).toBeNull();
+    expect(state.verifyPlanCompletion).toBeNull();
   });
 
   it("treats corrupt JSON as empty (no crash) and clears the bad entry", () => {
@@ -112,8 +132,6 @@ describe("loadPersistedAiState", () => {
 
     const state = loadPersistedAiState(storage);
     expect(state.messages).toEqual([]);
-    expect(state.selectedProvider).toBeNull();
-    expect(state.selectedModel).toBeNull();
     // Bad entry was removed so subsequent reads aren't repeatedly corrupt.
     expect(storage.getItem(UNSCOPED_KEY)).toBeNull();
   });
@@ -124,8 +142,6 @@ describe("loadPersistedAiState", () => {
 
     const state = loadPersistedAiState(storage);
     expect(state.messages).toEqual([]);
-    expect(state.selectedProvider).toBeNull();
-    expect(state.selectedModel).toBeNull();
   });
 
   it("filters out malformed messages (missing id / role / content)", () => {
@@ -140,15 +156,11 @@ describe("loadPersistedAiState", () => {
           { id: 4, role: "assistant", content: 42 },
           { id: 5, role: "assistant", content: "fine" },
         ],
-        selectedProvider: "openai",
-        selectedModel: null,
       }),
     );
 
     const state = loadPersistedAiState(storage);
     expect(state.messages.map((m) => m.id)).toEqual([1, 5]);
-    expect(state.selectedProvider).toBe("openai");
-    expect(state.selectedModel).toBeNull();
   });
 
   it("strips `pending: true` so a hydrated placeholder doesn't render as a stuck spinner", () => {
@@ -165,8 +177,6 @@ describe("loadPersistedAiState", () => {
             pending: true,
           },
         ],
-        selectedProvider: null,
-        selectedModel: null,
       },
       storage,
     );
@@ -180,24 +190,38 @@ describe("loadPersistedAiState", () => {
   it("returns empty when storage is null (e.g., SSR / no window)", () => {
     const state = loadPersistedAiState(null);
     expect(state.messages).toEqual([]);
-    expect(state.selectedProvider).toBeNull();
-    expect(state.selectedModel).toBeNull();
   });
 });
 
 describe("persistAiState", () => {
   it("writes JSON under the versioned key (unscoped path)", () => {
     const storage = makeStorage();
-    persistAiState(
-      { messages: sampleMessages(), selectedProvider: "groq", selectedModel: null },
-      storage,
-    );
+    persistAiState({ messages: sampleMessages(), agentModeAccepted: false }, storage);
 
     expect(storage.getItem(UNSCOPED_KEY)).not.toBeNull();
     const raw = storage.getItem(UNSCOPED_KEY)!;
     const parsed = JSON.parse(raw);
     expect(parsed.messages).toHaveLength(2);
-    expect(parsed.selectedProvider).toBe("groq");
+    expect(parsed.agentModeAccepted).toBe(false);
+  });
+
+  it("never writes the settings fields into the flow blob (they live in the settings bucket)", () => {
+    const storage = makeStorage();
+    // A legacy entry still carrying the old fields on disk …
+    storage.setItem(
+      UNSCOPED_KEY,
+      JSON.stringify({
+        messages: [],
+        selectedProvider: "groq",
+        selectedAgentSurface: "agent_live",
+      }),
+    );
+    // … drops them on the next save.
+    persistAiState({ messages: sampleMessages() }, storage);
+    const parsed = JSON.parse(storage.getItem(UNSCOPED_KEY)!);
+    expect(parsed).not.toHaveProperty("selectedProvider");
+    expect(parsed).not.toHaveProperty("selectedAgentSurface");
+    expect(Object.keys(parsed).sort()).toEqual(["agentModeAccepted", "messages"]);
   });
 
   it("caps at MAX_PERSISTED_MESSAGES (keeps the most recent)", () => {
@@ -211,7 +235,7 @@ describe("persistAiState", () => {
         content: `m${i}`,
       });
     }
-    persistAiState({ messages: many, selectedProvider: null, selectedModel: null }, storage);
+    persistAiState({ messages: many }, storage);
 
     const state = loadPersistedAiState(storage);
     expect(state.messages).toHaveLength(MAX_PERSISTED_MESSAGES);
@@ -221,38 +245,25 @@ describe("persistAiState", () => {
     expect(state.messages[0].id).toBe(51);
   });
 
-  it("swallows quota errors so a full sessionStorage doesn't crash the app", () => {
+  it("swallows quota errors so a full localStorage doesn't crash the app", () => {
     const storage = makeStorage();
     // Make setItem always throw (mimicking QuotaExceededError).
     storage.setItem = () => {
       throw new Error("QuotaExceededError");
     };
 
-    expect(() =>
-      persistAiState(
-        { messages: sampleMessages(), selectedProvider: null, selectedModel: null },
-        storage,
-      ),
-    ).not.toThrow();
+    expect(() => persistAiState({ messages: sampleMessages() }, storage)).not.toThrow();
   });
 
   it("is a no-op when storage is null", () => {
-    expect(() =>
-      persistAiState(
-        { messages: sampleMessages(), selectedProvider: null, selectedModel: null },
-        null,
-      ),
-    ).not.toThrow();
+    expect(() => persistAiState({ messages: sampleMessages() }, null)).not.toThrow();
   });
 });
 
 describe("clearPersistedAiState", () => {
   it("removes the persisted entry", () => {
     const storage = makeStorage();
-    persistAiState(
-      { messages: sampleMessages(), selectedProvider: "anthropic", selectedModel: null },
-      storage,
-    );
+    persistAiState({ messages: sampleMessages() }, storage);
     expect(storage.getItem(UNSCOPED_KEY)).not.toBeNull();
 
     clearPersistedAiState(storage);
@@ -261,6 +272,16 @@ describe("clearPersistedAiState", () => {
 
   it("is a no-op when storage is null", () => {
     expect(() => clearPersistedAiState(null)).not.toThrow();
+  });
+
+  it("clears only the targeted flow's key", () => {
+    const storage = makeStorage();
+    persistAiState({ messages: sampleMessages() }, storage, 7);
+    persistAiState({ messages: sampleMessages() }, storage, 9);
+
+    clearPersistedAiState(storage, 7);
+    expect(storage.getItem(chatPersistenceKey(7))).toBeNull();
+    expect(storage.getItem(chatPersistenceKey(9))).not.toBeNull();
   });
 });
 
@@ -281,9 +302,8 @@ describe("highestPersistedMessageId", () => {
 });
 
 describe("acceptance criteria — full round-trip", () => {
-  // Mock sessionStorage, push messages, re-instantiate the store,
-  // assert messages restored. Negative case: corrupt JSON in
-  // sessionStorage → store hydrates as empty (no crash).
+  // Push messages, re-load, assert messages restored. Negative case:
+  // corrupt JSON in storage → hydrates as empty (no crash).
   it("push messages then re-load → messages restored", () => {
     const storage = makeStorage();
 
@@ -296,16 +316,11 @@ describe("acceptance criteria — full round-trip", () => {
       { id: 1, createdAt: 1_700_000_000_001, role: "user", content: "What's up?" },
       { id: 2, createdAt: 1_700_000_000_002, role: "assistant", content: "Not much." },
     ];
-    persistAiState(
-      { messages: pushed, selectedProvider: "openai", selectedModel: "gpt-4o" },
-      storage,
-    );
+    persistAiState({ messages: pushed }, storage);
 
     // Tab 1, after refresh: re-load.
     snapshot = loadPersistedAiState(storage);
     expect(snapshot.messages.map((m) => m.content)).toEqual(["What's up?", "Not much."]);
-    expect(snapshot.selectedProvider).toBe("openai");
-    expect(snapshot.selectedModel).toBe("gpt-4o");
   });
 
   it("corrupt JSON → empty hydrate, no crash", () => {
@@ -313,8 +328,6 @@ describe("acceptance criteria — full round-trip", () => {
     storage.setItem(UNSCOPED_KEY, "<<<not json>>>");
     const snapshot = loadPersistedAiState(storage);
     expect(snapshot.messages).toEqual([]);
-    expect(snapshot.selectedProvider).toBeNull();
-    expect(snapshot.selectedModel).toBeNull();
   });
 });
 
@@ -335,6 +348,11 @@ describe("chatPersistenceKey", () => {
     expect(chatPersistenceKey(7)).not.toBe(chatPersistenceKey(9));
     expect(chatPersistenceKey(7)).not.toBe(chatPersistenceKey(null));
   });
+
+  it("never collides with the device-wide settings bucket", () => {
+    expect(chatPersistenceKey(null)).not.toBe(SETTINGS_PERSISTENCE_KEY);
+    expect(SETTINGS_PERSISTENCE_KEY.startsWith(PERSISTENCE_KEY)).toBe(false);
+  });
 });
 
 describe("per-flow round-trip", () => {
@@ -348,16 +366,8 @@ describe("per-flow round-trip", () => {
       { id: 3, createdAt: 3, role: "assistant", content: "reply on flow 9" },
     ];
 
-    persistAiState(
-      { messages: flow7Messages, selectedProvider: "anthropic", selectedModel: null },
-      storage,
-      7,
-    );
-    persistAiState(
-      { messages: flow9Messages, selectedProvider: "anthropic", selectedModel: null },
-      storage,
-      9,
-    );
+    persistAiState({ messages: flow7Messages }, storage, 7);
+    persistAiState({ messages: flow9Messages }, storage, 9);
 
     expect(storage.getItem(chatPersistenceKey(7))).not.toBeNull();
     expect(storage.getItem(chatPersistenceKey(9))).not.toBeNull();
@@ -373,11 +383,7 @@ describe("per-flow round-trip", () => {
 
     // Land on flow 7 first, push a message, persist.
     persistAiState(
-      {
-        messages: [{ id: 1, createdAt: 10, role: "user", content: "hello on 7" }],
-        selectedProvider: "anthropic",
-        selectedModel: "claude",
-      },
+      { messages: [{ id: 1, createdAt: 10, role: "user", content: "hello on 7" }] },
       storage,
       7,
     );
@@ -389,11 +395,7 @@ describe("per-flow round-trip", () => {
 
     // User chats on flow 9, persist there.
     persistAiState(
-      {
-        messages: [{ id: 1, createdAt: 11, role: "user", content: "hello on 9" }],
-        selectedProvider: "anthropic",
-        selectedModel: "claude",
-      },
+      { messages: [{ id: 1, createdAt: 11, role: "user", content: "hello on 9" }] },
       storage,
       9,
     );
@@ -413,38 +415,25 @@ describe("per-flow round-trip", () => {
     // we want to prove the *target* flow is the empty one, not just that
     // the whole store is.
     persistAiState(
-      {
-        messages: [{ id: 1, createdAt: 10, role: "user", content: "noise" }],
-        selectedProvider: null,
-        selectedModel: null,
-      },
+      { messages: [{ id: 1, createdAt: 10, role: "user", content: "noise" }] },
       storage,
       7,
     );
 
     const fresh = loadPersistedAiState(storage, 9001);
     expect(fresh.messages).toEqual([]);
-    expect(fresh.selectedProvider).toBeNull();
-    expect(fresh.selectedModel).toBeNull();
+    expect(fresh.agentModeAccepted).toBeNull();
   });
 
   it("keeps the unscoped bucket isolated from real-flow buckets", () => {
     const storage = makeStorage();
     persistAiState(
-      {
-        messages: [{ id: 1, createdAt: 1, role: "user", content: "no-flow chat" }],
-        selectedProvider: null,
-        selectedModel: null,
-      },
+      { messages: [{ id: 1, createdAt: 1, role: "user", content: "no-flow chat" }] },
       storage,
       null,
     );
     persistAiState(
-      {
-        messages: [{ id: 2, createdAt: 2, role: "user", content: "flow chat" }],
-        selectedProvider: null,
-        selectedModel: null,
-      },
+      { messages: [{ id: 2, createdAt: 2, role: "user", content: "flow chat" }] },
       storage,
       42,
     );
@@ -463,24 +452,14 @@ describe("quota + corruption", () => {
       throw new Error("QuotaExceededError");
     };
 
-    expect(() =>
-      persistAiState(
-        { messages: sampleMessages(), selectedProvider: null, selectedModel: null },
-        storage,
-        7,
-      ),
-    ).not.toThrow();
+    expect(() => persistAiState({ messages: sampleMessages() }, storage, 7)).not.toThrow();
   });
 
   it("clears only the corrupt flow's key on bad JSON, leaving siblings alone", () => {
     const storage = makeStorage();
     // Healthy flow 9 entry.
     persistAiState(
-      {
-        messages: [{ id: 1, createdAt: 1, role: "user", content: "intact" }],
-        selectedProvider: "anthropic",
-        selectedModel: null,
-      },
+      { messages: [{ id: 1, createdAt: 1, role: "user", content: "intact" }] },
       storage,
       9,
     );
@@ -498,63 +477,89 @@ describe("quota + corruption", () => {
   });
 });
 
-describe("selectedAgentSurface round-trip", () => {
-  // Regression: `_AGENT_SURFACE_VALUES` was missing `"agent_live"` so
-  // a user who picked "Live (REPL)" in settings had their choice
-  // written to localStorage fine, but the load validator rejected the
-  // unknown literal and silently fell back to default
-  // `"agent_staged"`. The user's selection survived neither refresh
-  // nor restart.
+// Device-wide settings bucket: provider/model, the simple tier and the agent
+// toggles. One key regardless of which flow is open — this is what
+// Settings → AI edits.
+
+describe("AI settings bucket", () => {
+  it("returns null when nothing has been written (fresh install)", () => {
+    expect(loadPersistedAiSettings(makeStorage())).toBeNull();
+  });
+
+  it("returns null when storage is unavailable", () => {
+    expect(loadPersistedAiSettings(null)).toBeNull();
+  });
+
+  it("round-trips every field under its own key", () => {
+    const storage = makeStorage();
+    persistAiSettings(sampleSettings(), storage);
+
+    expect(storage.getItem(SETTINGS_PERSISTENCE_KEY)).not.toBeNull();
+    expect(loadPersistedAiSettings(storage)).toEqual(sampleSettings());
+  });
+
+  it("round-trips nulls so an unset field stays unset", () => {
+    const storage = makeStorage();
+    persistAiSettings(
+      {
+        selectedProvider: "openai",
+        selectedModel: null,
+        splitModels: null,
+        simpleProvider: null,
+        simpleModel: null,
+        selectedAgentSurface: null,
+        verifyPlanCompletion: null,
+      },
+      storage,
+    );
+    const loaded = loadPersistedAiSettings(storage);
+    expect(loaded?.selectedProvider).toBe("openai");
+    expect(loaded?.selectedModel).toBeNull();
+    expect(loaded?.selectedAgentSurface).toBeNull();
+  });
+
   it.each(["agent_complex", "agent_staged", "agent_live"] as const)(
-    "round-trips %s",
+    "round-trips agent surface %s",
     (surface) => {
       const storage = makeStorage();
-      persistAiState(
-        {
-          messages: [],
-          selectedProvider: null,
-          selectedModel: null,
-          selectedAgentSurface: surface,
-        },
-        storage,
-      );
-      const loaded = loadPersistedAiState(storage);
-      expect(loaded.selectedAgentSurface).toBe(surface);
+      persistAiSettings({ ...sampleSettings(), selectedAgentSurface: surface }, storage);
+      expect(loadPersistedAiSettings(storage)?.selectedAgentSurface).toBe(surface);
     },
   );
 
   it("rejects an unknown surface value as null (defensive — bad data on disk)", () => {
     const storage = makeStorage();
     storage.setItem(
-      UNSCOPED_KEY,
-      JSON.stringify({
-        messages: [],
-        selectedProvider: null,
-        selectedModel: null,
-        selectedAgentSurface: "agent_unknown_variant",
-      }),
+      SETTINGS_PERSISTENCE_KEY,
+      JSON.stringify({ selectedProvider: "x", selectedAgentSurface: "agent_unknown_variant" }),
     );
-    const loaded = loadPersistedAiState(storage);
-    expect(loaded.selectedAgentSurface).toBeNull();
+    const loaded = loadPersistedAiSettings(storage);
+    expect(loaded?.selectedProvider).toBe("x");
+    expect(loaded?.selectedAgentSurface).toBeNull();
   });
-});
 
-describe("clearPersistedAiState", () => {
-  it("clears only the targeted flow's key", () => {
+  it("treats corrupt JSON as never-written and scrubs the entry", () => {
     const storage = makeStorage();
-    persistAiState(
-      { messages: sampleMessages(), selectedProvider: null, selectedModel: null },
-      storage,
-      7,
-    );
-    persistAiState(
-      { messages: sampleMessages(), selectedProvider: null, selectedModel: null },
-      storage,
-      9,
-    );
+    storage.setItem(SETTINGS_PERSISTENCE_KEY, "{nope");
+    expect(loadPersistedAiSettings(storage)).toBeNull();
+    expect(storage.getItem(SETTINGS_PERSISTENCE_KEY)).toBeNull();
+  });
 
-    clearPersistedAiState(storage, 7);
-    expect(storage.getItem(chatPersistenceKey(7))).toBeNull();
-    expect(storage.getItem(chatPersistenceKey(9))).not.toBeNull();
+  it("does not touch the per-flow chat buckets", () => {
+    const storage = makeStorage();
+    persistAiState({ messages: sampleMessages() }, storage, 7);
+    persistAiSettings(sampleSettings(), storage);
+    expect(loadPersistedAiState(storage, 7).messages).toHaveLength(2);
+    expect(JSON.parse(storage.getItem(chatPersistenceKey(7))!)).not.toHaveProperty(
+      "selectedProvider",
+    );
+  });
+
+  it("swallows quota errors", () => {
+    const storage = makeStorage();
+    storage.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+    expect(() => persistAiSettings(sampleSettings(), storage)).not.toThrow();
   });
 });
