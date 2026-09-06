@@ -24,7 +24,6 @@
       <KafkaConnectionView v-else-if="activeTab === 'kafka'" />
       <GoogleAnalyticsConnectionView v-else-if="activeTab === 'google_analytics'" />
       <SecretsView v-else-if="activeTab === 'secrets'" />
-      <AiSettingsTab v-else-if="activeTab === 'ai'" />
     </div>
   </div>
 </template>
@@ -37,7 +36,6 @@ import CloudConnectionView from "../CloudConnectionView/CloudConnectionView.vue"
 import KafkaConnectionView from "../KafkaConnectionView/KafkaConnectionView.vue";
 import GoogleAnalyticsConnectionView from "../GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionView.vue";
 import SecretsView from "../SecretsView/SecretsView.vue";
-import AiSettingsTab from "../AiProvidersView/AiSettingsTab.vue";
 import ConnectionsOverview from "./ConnectionsOverview.vue";
 import { connectionTypes } from "./connectionTypes";
 import type { ConnectionTypeKey } from "./connectionTypes";
@@ -45,13 +43,12 @@ import { fetchDatabaseConnectionsInterfaces } from "../DatabaseView/api";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import { fetchKafkaConnections } from "../KafkaConnectionView/api";
 import { fetchGoogleAnalyticsConnections } from "../GoogleAnalyticsConnectionView/api";
-import { fetchAiProviders } from "../AiProvidersView/api";
 import { fetchSecretsApi } from "../../api/secrets.api";
 
 const route = useRoute();
 const router = useRouter();
 
-// The six real connection sections (also the persisted ?tab= values), plus the
+// The five real connection sections (also the persisted ?tab= values), plus the
 // synthetic "overview" landing which is never remembered.
 const sectionKeys = connectionTypes.map((t) => t.key);
 type ActiveTab = ConnectionTypeKey | "overview";
@@ -127,7 +124,6 @@ async function loadCounts() {
     ["kafka", fetchKafkaConnections().then((r) => r.length)],
     ["google_analytics", fetchGoogleAnalyticsConnections().then((r) => r.length)],
     ["secrets", fetchSecretsApi().then((r) => r.length)],
-    ["ai", fetchAiProviders().then((r) => r.filter((p) => p.status === "configured").length)],
   ];
   const settled = await Promise.allSettled(tasks.map(([, p]) => p));
   const next: Partial<Record<ConnectionTypeKey, number>> = {};

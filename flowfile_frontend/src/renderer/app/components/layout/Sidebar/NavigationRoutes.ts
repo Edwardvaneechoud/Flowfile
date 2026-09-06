@@ -3,6 +3,10 @@ import {
   catalogTabsInSection,
   type CatalogTabDef,
 } from "../../../views/CatalogView/catalogTabs";
+import {
+  AI_SETTINGS_GROUP_KEY,
+  aiSettingsTabs,
+} from "../../../views/AiSettingsView/aiSettingsTabs";
 import { COMPUTE_TAB_GROUP_KEYS, computeTabs } from "../../../views/ComputeView/computeTabs";
 import { connectionTypes } from "../../../views/ConnectionsView/connectionTypes";
 
@@ -112,6 +116,16 @@ export default {
             ),
           ],
         },
+        ...aiSettingsTabs.map(
+          (t): INavigationRoute => ({
+            name: "ai",
+            index: `ai:${t.key}`,
+            query: { tab: t.key },
+            displayName: t.sidebarKey,
+            meta: { icon: t.icon },
+            group: { key: "ai", labelKey: AI_SETTINGS_GROUP_KEY },
+          }),
+        ),
         ...computeTabs.map(
           (t): INavigationRoute => ({
             name: "compute",

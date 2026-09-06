@@ -30,7 +30,7 @@ Pin attention by selecting one or more nodes before sending, or by adding `@flow
 
 Describe an end-to-end pipeline in one sentence and the Agent builds it — reading the file, joining the lookup, aggregating, all in order. Switch the drawer toggle to *Agent*, type something like *"Read sales.csv, filter to Q4, join with customers on customer_id, aggregate revenue by month"*, and the agent walks the plan one tool call at a time.
 
-The **Agent variant** picker in settings selects execution mode:
+The **Agent variant** picker under **Settings → AI → Assistant** selects execution mode (greyed out while On-device AI is the provider, with a note explaining that the agent needs a tool-capable provider):
 
 - **Live (REPL)** *(default)* — each step applies immediately, the affected subgraph runs (Performance) or samples (Development), and the runtime observation feeds back to the model. Failed steps auto-undo and retry. No diff to accept — the canvas is the running record. Higher latency per step because each one does real work.
 - **Staged** — small/local-model-friendly. A tightly-scoped state machine makes one decision per LLM round and bundles proposals into a `GraphDiff` for **Accept** (atomic, one undo point) or **Reject** with an optional note that becomes context for the next attempt.
@@ -103,7 +103,7 @@ The **Live (REPL)** variant and Inline ✨ actions skip this layer. Drift detect
 
 ## What flow data is shared with the LLM
 
-Each surface sends a context-aware slice of the live `FlowGraph` plus drawer-controlled defaults.
+Each surface sends a context-aware slice of the live `FlowGraph` plus the provider and model defaults from **Settings → AI**.
 
 ### Default — sent on every call
 
@@ -118,13 +118,21 @@ Each surface sends a context-aware slice of the live `FlowGraph` plus drawer-con
 - **Your provider API key**. Fernet-encrypted in the Flowfile DB; decrypted only inside the request to the provider, never echoed into the prompt.
 - **Other users' flows or sessions**. Each session is scoped to one user + one `flow_id`.
 
-### What you control in the drawer
+### What you control
+
+In the drawer, per conversation:
 
 - **Focus / pinning** — select nodes on the canvas before sending to scope the prompt to that subgraph (BFS upstream); add `@flow` in the message to pin the whole graph (default when nothing else is selected).
 - **Send mode** — *Chat*, *Agent*, or *Auto* (see [Auto routing](#auto-routing-chat-agent)).
+- **Provider and model** — the gear button is a quick switcher for the same default set under Settings → AI; changing it here changes it for every AI feature.
+
+Under **Settings → AI → Assistant**, for every AI feature on this device:
+
+- **Default provider and model**, plus an optional cheaper model for simple tasks (schedule text, settings autocomplete).
 - **Agent variant** — *Live (REPL)*, *Staged*, or *Single-shot full* (see [Agent](#agent-multi-step-builder)).
 - **Verify plan completion** — extra LLM round at the end of an agent run for self-check.
-- **Provider and model** — per-flow preference, persisted across sessions.
+
+These preferences are saved in the browser or desktop app, not per flow, so they follow you across flows on the same device. API keys are saved on the server for your account (see [Provider Setup](providers.md)).
 
 ---
 

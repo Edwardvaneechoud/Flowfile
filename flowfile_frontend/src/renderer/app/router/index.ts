@@ -54,6 +54,10 @@ const routes: Array<RouteRecordRaw> = [
         name: "connections",
         path: "connections",
         component: () => import("../views/ConnectionsView/ConnectionsView.vue"),
+        // AI providers used to be a Connections tab; old bookmarks and docs
+        // links land on the AI settings page instead.
+        beforeEnter: (to) =>
+          to.query.tab === "ai" ? { name: "ai", query: { tab: "providers" } } : true,
       },
       {
         name: "project",
@@ -77,8 +81,15 @@ const routes: Array<RouteRecordRaw> = [
         redirect: { name: "connections", query: { tab: "secrets" } },
       },
       {
+        name: "ai",
+        path: "ai",
+        component: () => import("../views/AiSettingsView/AiSettingsView.vue"),
+      },
+      {
+        // Legacy alias: AI providers used to be a Connections tab.
+        name: "aiProviders",
         path: "aiProviders",
-        redirect: { name: "connections", query: { tab: "ai" } },
+        redirect: { name: "ai", query: { tab: "providers" } },
       },
       {
         name: "compute",

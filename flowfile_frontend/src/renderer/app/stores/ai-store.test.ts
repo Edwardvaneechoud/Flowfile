@@ -43,6 +43,10 @@ const mockSymbols = vi.hoisted(() => {
     })),
     persistAiState: vi.fn(),
     clearPersistedAiState: vi.fn(),
+    // Device-wide settings bucket. `null` = never written (fresh install),
+    // which makes the store fall back to the legacy per-flow fields above.
+    loadPersistedAiSettings: vi.fn((): Record<string, unknown> | null => null),
+    persistAiSettings: vi.fn(),
   };
 });
 
@@ -119,6 +123,8 @@ vi.mock("./ai-store-persistence", () => ({
   loadPersistedAiState: mockSymbols.loadPersistedAiState,
   persistAiState: mockSymbols.persistAiState,
   clearPersistedAiState: mockSymbols.clearPersistedAiState,
+  loadPersistedAiSettings: mockSymbols.loadPersistedAiSettings,
+  persistAiSettings: mockSymbols.persistAiSettings,
 }));
 
 // localModelApi imports config/constants, which reads ``window`` at module
@@ -126,7 +132,7 @@ vi.mock("./ai-store-persistence", () => ({
 // the jsdom-free unit env. Default ``fetchLocalModelStatus`` → null so no
 // synthetic "local" provider is injected, preserving the BYOK-only
 // expectations in the loadProviders specs below.
-vi.mock("../views/AiProvidersView/localModelApi", () => ({
+vi.mock("../views/AiSettingsView/localModelApi", () => ({
   LOCAL_PROVIDER_ID: "local",
   fetchLocalModelStatus: vi.fn(async () => null),
   generateFlow: vi.fn(),
@@ -158,6 +164,9 @@ beforeEach(() => {
     selectedModel: null,
     autoPromote: null,
   }));
+  mockSymbols.loadPersistedAiSettings.mockReset();
+  mockSymbols.loadPersistedAiSettings.mockImplementation(() => null);
+  mockSymbols.persistAiSettings.mockReset();
 });
 
 afterEach(() => {
@@ -703,5 +712,143 @@ describe("useAiStore - split model tiers (resolveSurface)", () => {
     // Simple tier is independent — not reset by a complex-provider change.
     expect(store.simpleProvider).toBe("local");
     expect(store.resolveSurface("cron").provider).toBe("local");
+  });
+
+  it("modelsForProvider unions the curated list with the default, deduped", () => {
+    const store = useAiStore();
+    store.providers = [
+      {
+        provider: "openrouter",
+        supportsTools: true,
+        supportsStreaming: true,
+        defaultModel: "qwen/qwen3-coder",
+        surfaces: {},
+        status: "configured",
+        credential: {
+          provider: "openrouter",
+          hasKey: true,
+          apiBase: null,
+          defaultModel: "anthropic/claude-sonnet-4.6",
+          models: ["moonshotai/kimi-k2:free", "anthropic/claude-sonnet-4.6"],
+          lastTestedAt: null,
+          lastTestStatus: null,
+          lastTestError: null,
+          createdAt: null,
+          updatedAt: null,
+        },
+      },
+    ];
+    expect(store.modelsForProvider("openrouter")).toEqual([
+      "moonshotai/kimi-k2:free",
+      "anthropic/claude-sonnet-4.6",
+    ]);
+    expect(store.modelsForProvider("missing")).toEqual([]);
+    expect(store.modelsForProvider(null)).toEqual([]);
+  });
+});
+
+describe("useAiStore - device-wide settings hydration", () => {
+  // Provider/model, the simple tier and the agent toggles are preferences,
+  // not conversation state: they hydrate from the settings bucket, fall
+  // back to the legacy per-flow fields exactly once (migration), and are
+  // written to the settings bucket — never the flow blob.
+  it("prefers the settings bucket over legacy per-flow fields", () => {
+    mockSymbols.loadPersistedAiState.mockImplementation(() => ({
+      messages: [],
+      selectedProvider: "anthropic",
+      selectedModel: "legacy-model",
+      autoPromote: null,
+      selectedAgentSurface: "agent_complex",
+      verifyPlanCompletion: false,
+    }));
+    mockSymbols.loadPersistedAiSettings.mockImplementation(() => ({
+      selectedProvider: "openai",
+      selectedModel: "gpt-5",
+      splitModels: true,
+      simpleProvider: "groq",
+      simpleModel: null,
+      selectedAgentSurface: "agent_staged",
+      verifyPlanCompletion: true,
+    }));
+    const store = useAiStore();
+    expect(store.selectedProvider).toBe("openai");
+    expect(store.selectedModel).toBe("gpt-5");
+    expect(store.splitModels).toBe(true);
+    expect(store.simpleProvider).toBe("groq");
+    expect(store.selectedAgentSurface).toBe("agent_staged");
+    expect(store.verifyPlanCompletion).toBe(true);
+    // Bucket already exists → no migration write.
+    expect(mockSymbols.persistAiSettings).not.toHaveBeenCalled();
+  });
+
+  it("migrates legacy per-flow settings into the bucket once when it is missing", () => {
+    mockSymbols.loadPersistedAiState.mockImplementation(() => ({
+      messages: [],
+      selectedProvider: "groq",
+      selectedModel: "llama",
+      autoPromote: null,
+      selectedAgentSurface: "agent_complex",
+      verifyPlanCompletion: true,
+    }));
+    const store = useAiStore();
+    expect(store.selectedProvider).toBe("groq");
+    expect(store.selectedModel).toBe("llama");
+    expect(store.selectedAgentSurface).toBe("agent_complex");
+    expect(store.verifyPlanCompletion).toBe(true);
+    expect(mockSymbols.persistAiSettings).toHaveBeenCalledTimes(1);
+    expect(mockSymbols.persistAiSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedProvider: "groq",
+        selectedModel: "llama",
+        selectedAgentSurface: "agent_complex",
+        verifyPlanCompletion: true,
+      }),
+    );
+  });
+
+  it("uses the defaults without a migration write on a fresh install", () => {
+    const store = useAiStore();
+    expect(store.selectedProvider).toBeNull();
+    expect(store.selectedAgentSurface).toBe("agent_live");
+    expect(store.verifyPlanCompletion).toBe(false);
+    expect(mockSymbols.persistAiSettings).not.toHaveBeenCalled();
+  });
+
+  it("writes agent settings to the settings bucket, not the flow blob", async () => {
+    const store = useAiStore();
+    store.setSelectedAgentSurface("agent_staged");
+    store.setVerifyPlanCompletion(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(mockSymbols.persistAiSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedAgentSurface: "agent_staged", verifyPlanCompletion: true }),
+    );
+    // Throttled flow-blob writes from earlier specs may still land during the
+    // wait; what matters is that no flow-blob write ever carries a setting.
+    for (const [state] of mockSymbols.persistAiState.mock.calls as [Record<string, unknown>][]) {
+      expect(Object.keys(state).sort()).toEqual(["agentModeAccepted", "messages"]);
+    }
+  });
+});
+
+describe("useAiStore - aiDisabled", () => {
+  it("flags aiDisabled when the providers endpoint answers the disabled contract", async () => {
+    mockSymbols.fetchAiProviders.mockRejectedValue(new mockSymbols.AiDisabledError());
+    const store = useAiStore();
+    await store.loadProviders();
+    expect(store.aiDisabled).toBe(true);
+    expect(store.providers).toEqual([]);
+
+    // An admin flips the flag back on → the next successful load clears it.
+    mockSymbols.fetchAiProviders.mockResolvedValue([]);
+    await store.loadProviders();
+    expect(store.aiDisabled).toBe(false);
+  });
+
+  it("leaves aiDisabled false on an ordinary network failure", async () => {
+    mockSymbols.fetchAiProviders.mockRejectedValue(new Error("boom"));
+    const store = useAiStore();
+    await store.loadProviders();
+    expect(store.aiDisabled).toBe(false);
+    expect(store.providersError).toBe("boom");
   });
 });
