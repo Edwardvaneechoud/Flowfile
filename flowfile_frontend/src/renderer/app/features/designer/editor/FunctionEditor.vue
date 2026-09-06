@@ -37,6 +37,7 @@ import axios from "axios";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import type { FlowParameter } from "@/types/flow.types";
 import { findParamSpans, paramInsertText, shortType, PARAM_INSERT_VARIANT } from "./paramTokens";
+import { isInsideStringOrComment } from "./formulaText";
 
 interface Props {
   editorString: string;
@@ -100,6 +101,10 @@ onMounted(() => {
 });
 
 const polarsCompletions: CompletionSource = (context: CompletionContext) => {
+  // No function/column suggestions inside a string literal or a // comment.
+  // Parameter completions stay live there: "${p}" is a valid quoted reference.
+  const line = context.state.doc.lineAt(context.pos);
+  if (isInsideStringOrComment(line.text, context.pos - line.from)) return null;
   let functionWord = context.matchBefore(/\w+/);
   let columnWord = context.matchBefore(/\[\w*/);
 

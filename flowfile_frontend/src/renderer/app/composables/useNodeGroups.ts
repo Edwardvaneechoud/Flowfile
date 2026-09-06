@@ -10,7 +10,14 @@ import { nextTick } from "vue";
 
 import { FlowApi } from "../api";
 import { useFlowStore } from "../stores/flow-store";
-import type { GroupBoundsUpdate, GroupInput, GroupNodeData, NodePositionUpdate } from "../types";
+import type {
+  CommentBoundsUpdate,
+  GroupBoundsUpdate,
+  GroupInput,
+  GroupNodeData,
+  NodePositionUpdate,
+} from "../types";
+import { COMMENT_NODE_TYPE, commentBoundsOf } from "./useCanvasComments";
 
 export const GROUP_NODE_PREFIX = "group-";
 export const CUSTOM_NODE_TYPE = "custom-node";
@@ -423,15 +430,18 @@ export function useNodeGroups() {
     }
   };
 
-  /** Persist absolute positions for a set of nodes and/or bounds for a set of groups. */
+  /** Persist absolute positions for a set of nodes and/or bounds for a set of groups or comments. */
   const persistLayout = async (nodes: GraphNode[], groups: GraphNode[] = []): Promise<void> => {
     if (flowStore.flowId === null) return;
-    // Group nodes carry bounds; only custom nodes produce a numeric node position.
+    // Group and comment nodes carry bounds; only custom nodes produce a numeric node position.
     const groupNodes: GraphNode[] = [...groups];
     const nodePositions: NodePositionUpdate[] = [];
+    const commentBounds: CommentBoundsUpdate[] = [];
     for (const node of nodes) {
       if (node.type === GROUP_NODE_TYPE) {
         groupNodes.push(node);
+      } else if (node.type === COMMENT_NODE_TYPE) {
+        commentBounds.push(commentBoundsOf(node));
       } else {
         const abs = absolutePosition(node);
         nodePositions.push({ node_id: Number(node.id), pos_x: abs.x, pos_y: abs.y });
@@ -444,10 +454,12 @@ export function useNodeGroups() {
       width: group.dimensions.width,
       height: group.dimensions.height,
     }));
-    if (nodePositions.length === 0 && groupBounds.length === 0) return;
+    if (nodePositions.length === 0 && groupBounds.length === 0 && commentBounds.length === 0)
+      return;
     const response = await FlowApi.updateLayout(flowStore.flowId, {
       node_positions: nodePositions,
       group_bounds: groupBounds,
+      comment_bounds: commentBounds,
     });
     flowStore.updateHistoryState(response.history);
   };

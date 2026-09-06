@@ -26,6 +26,9 @@ class AlteryxTool:
     tool_name: str
     x: int | None = None
     y: int | None = None
+    # Only text boxes carry a size; tools are drawn at a fixed footprint.
+    width: int | None = None
+    height: int | None = None
     configuration: ET.Element | None = None
     annotation: str = ""
     default_annotation: str = ""
@@ -45,12 +48,12 @@ class AlteryxConnection:
 
 @dataclass
 class AlteryxWorkflow:
-    """Parsed workflow: convertible tools, wires, and deliberately ignored tools."""
+    """Parsed workflow: convertible tools, wires, and the canvas text boxes (Comment tools)."""
 
     name: str | None
     tools: list[AlteryxTool]
     connections: list[AlteryxConnection]
-    skipped_tools: list[AlteryxTool] = field(default_factory=list)
+    text_boxes: list[AlteryxTool] = field(default_factory=list)
 
 
 def _parse_int(value: str | None) -> int | None:
@@ -96,6 +99,8 @@ def _build_tool(node: ET.Element, gui_settings: ET.Element | None, plugin: str) 
         tool_name=tool_name,
         x=_parse_int(position.get("x")) if position is not None else None,
         y=_parse_int(position.get("y")) if position is not None else None,
+        width=_parse_int(position.get("width")) if position is not None else None,
+        height=_parse_int(position.get("height")) if position is not None else None,
         configuration=node.find("Properties/Configuration"),
         annotation=_read_annotation(node, "AnnotationText"),
         default_annotation=_read_annotation(node, "DefaultAnnotationText"),
@@ -103,20 +108,20 @@ def _build_tool(node: ET.Element, gui_settings: ET.Element | None, plugin: str) 
     )
 
 
-def _collect_tools(parent: ET.Element, tools: list[AlteryxTool], skipped: list[AlteryxTool]) -> None:
+def _collect_tools(parent: ET.Element, tools: list[AlteryxTool], text_boxes: list[AlteryxTool]) -> None:
     for node in parent.findall("Node"):
         gui_settings = node.find("GuiSettings")
         plugin = gui_settings.get("Plugin", "") if gui_settings is not None else ""
         child_nodes = node.find("ChildNodes")
         if child_nodes is not None or plugin.endswith(CONTAINER_SUFFIX):
             if child_nodes is not None:
-                _collect_tools(child_nodes, tools, skipped)
+                _collect_tools(child_nodes, tools, text_boxes)
             continue
         tool = _build_tool(node, gui_settings, plugin)
         if tool is None:
             continue
         if plugin.endswith(TEXT_BOX_SUFFIX):
-            skipped.append(tool)
+            text_boxes.append(tool)
         else:
             tools.append(tool)
 
@@ -163,10 +168,10 @@ def parse_yxmd(data: bytes) -> AlteryxWorkflow:
         raise YxmdParseError(f"Root element is <{root.tag}>, expected <AlteryxDocument>; this is not a .yxmd workflow.")
 
     tools: list[AlteryxTool] = []
-    skipped: list[AlteryxTool] = []
+    text_boxes: list[AlteryxTool] = []
     nodes_element = root.find("Nodes")
     if nodes_element is not None:
-        _collect_tools(nodes_element, tools, skipped)
+        _collect_tools(nodes_element, tools, text_boxes)
     if not tools:
         raise YxmdParseError("The workflow contains no Alteryx tools to convert.")
 
@@ -174,5 +179,5 @@ def parse_yxmd(data: bytes) -> AlteryxWorkflow:
         name=_workflow_name(root),
         tools=tools,
         connections=_parse_connections(root),
-        skipped_tools=skipped,
+        text_boxes=text_boxes,
     )

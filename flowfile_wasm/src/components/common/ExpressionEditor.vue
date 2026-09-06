@@ -107,6 +107,7 @@ import type { ColumnSchema } from '../../types'
 import PopOver from './PopOver.vue'
 import { EXPR_TRANSFORMER_PACKAGE } from '../../composables/useFormulaTranslation'
 import { dataTypeGroup, dataTypeBadgeClass, type DataTypeGroup } from '../../utils/dtypeGroup'
+import { isInsideStringOrComment } from '../../utils/formulaText'
 
 const props = defineProps<{
   nodeId: number
@@ -302,6 +303,8 @@ const highlightPlugin = ViewPlugin.fromClass(
 
 // Autocomplete: functions and [columns]
 const completions: CompletionSource = (context: CompletionContext) => {
+  const line = context.state.doc.lineAt(context.pos)
+  if (isInsideStringOrComment(line.text, context.pos - line.from)) return null
   const functionWord = context.matchBefore(/\w+/)
   const columnWord = context.matchBefore(/\[\w*/)
   if (
@@ -365,7 +368,10 @@ const completions: CompletionSource = (context: CompletionContext) => {
 const extensions: Extension[] = [
   EditorView.theme({
     '&': { fontSize: '12px', backgroundColor: 'var(--color-background-primary)' },
-    '.cm-content': { fontSize: '12px', caretColor: 'var(--color-text-primary)' },
+    '.cm-content': { fontSize: '12px' },
+    // basicSetup's drawSelection hides the native caret and paints .cm-cursor
+    // instead, whose base colour is black — invisible on the dark theme.
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-text-primary)' },
     '.cm-gutters': {
       fontSize: '12px',
       backgroundColor: 'var(--color-background-secondary)',

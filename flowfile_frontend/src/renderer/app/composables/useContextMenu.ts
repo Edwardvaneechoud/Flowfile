@@ -57,7 +57,9 @@ export function useContextMenu(options: {
   const isEditableTarget = (event: Event): boolean => {
     const el = event.target as HTMLElement | null;
     return Boolean(
-      el?.closest?.('input, textarea, .cm-editor, [contenteditable]:not([contenteditable="false"])'),
+      el?.closest?.(
+        'input, textarea, .cm-editor, [contenteditable]:not([contenteditable="false"])',
+      ),
     );
   };
 
@@ -81,7 +83,7 @@ export function useContextMenu(options: {
     // native menu so right-click paste still works there.
     if (isEditableTarget(event)) return;
     event.preventDefault();
-    if (node.type === "group") return;
+    if (node.type === "group" || node.type === "comment") return;
     options.onNodeTargeted?.(node);
     const mouseEvent = event as MouseEvent;
     const nodeId = Number(node.id);

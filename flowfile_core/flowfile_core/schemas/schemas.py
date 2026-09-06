@@ -386,6 +386,29 @@ class FlowfileGroup(_GroupFields):
     """Serialized representation of a visual node group (YAML/JSON)."""
 
 
+class _CommentFields(BaseModel):
+    """Shared fields for the runtime and serialization comment models (one definition, zero drift).
+
+    Comments are free-floating text notes on the canvas (the Alteryx "Comment" tool). They
+    are not nodes: they have no inputs, outputs, settings or effect on execution.
+    """
+
+    id: int
+    text: str = ""
+    x_position: float = 0.0
+    y_position: float = 0.0
+    width: float = 240.0
+    height: float = 120.0
+
+
+class CommentInformation(_CommentFields):
+    """Runtime representation of a canvas comment (stored in FlowGraph._comments)."""
+
+
+class FlowfileComment(_CommentFields):
+    """Serialized representation of a canvas comment (YAML/JSON)."""
+
+
 class FlowfileData(BaseModel):
     """Root model for flowfile serialization (YAML/JSON)."""
 
@@ -395,6 +418,7 @@ class FlowfileData(BaseModel):
     flowfile_settings: FlowfileSettings
     nodes: list[FlowfileNode]
     groups: list[FlowfileGroup] = Field(default_factory=list)
+    comments: list[FlowfileComment] = Field(default_factory=list)
 
 
 class NodeTag(str, Enum):
@@ -740,6 +764,7 @@ class FlowInformation(BaseModel):
     node_starts: list[int]
     node_connections: list[tuple[int, int]] = []
     groups: list[GroupInformation] = Field(default_factory=list)
+    comments: list[CommentInformation] = Field(default_factory=list)
 
     @field_validator("flow_name", mode="before")
     def ensure_string(cls, v):
@@ -821,6 +846,7 @@ class VueFlowInput(BaseModel):
     node_edges: list[NodeEdge]
     node_inputs: list[NodeInput]
     groups: list[FlowfileGroup] = Field(default_factory=list)
+    comments: list[FlowfileComment] = Field(default_factory=list)
 
 
 # ============================================================================
@@ -878,11 +904,51 @@ class GroupBoundsUpdate(BaseModel):
     height: float
 
 
+class CommentBounds(NamedTuple):
+    """Axis-aligned bounds of a canvas comment, in absolute canvas coordinates."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class CreateCommentRequest(BaseModel):
+    """Body for POST /editor/create_comment/. Size falls back to the model defaults."""
+
+    text: str = ""
+    x_position: float = 0.0
+    y_position: float = 0.0
+    width: float | None = None
+    height: float | None = None
+
+
+class UpdateCommentRequest(BaseModel):
+    """Body for POST /editor/update_comment/. All fields optional -> partial update."""
+
+    text: str | None = None
+    x_position: float | None = None
+    y_position: float | None = None
+    width: float | None = None
+    height: float | None = None
+
+
+class CommentBoundsUpdate(BaseModel):
+    """A single comment's new absolute bounds."""
+
+    comment_id: int
+    x_position: float
+    y_position: float
+    width: float
+    height: float
+
+
 class UpdateLayoutRequest(BaseModel):
-    """Batch persistence of dragged node positions and/or group bounds (one drag-end -> one call)."""
+    """Batch persistence of dragged node positions, group bounds and/or comment bounds (one drag-end -> one call)."""
 
     node_positions: list[NodePositionUpdate] = Field(default_factory=list)
     group_bounds: list[GroupBoundsUpdate] = Field(default_factory=list)
+    comment_bounds: list[CommentBoundsUpdate] = Field(default_factory=list)
     # False -> apply without a new undo entry (folds into a preceding op's snapshot).
     record_history: bool = True
 

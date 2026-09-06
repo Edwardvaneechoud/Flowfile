@@ -1699,6 +1699,9 @@ class FlowGraph:
         self._groups: dict[int, schemas.GroupInformation] = {}
         self._group_id_seq: int = 0  # monotonic group-id allocator; never reuses a freed id
         self._active_group_id: int | None = None
+        # Canvas comments: free text notes, organizational only, never read by the executor.
+        self._comments: dict[int, schemas.CommentInformation] = {}
+        self._comment_id_seq: int = 0
         # Serializes claiming flow_settings.is_running: the bare check-then-set in the
         # run entry points raced when callers arrive from non-asyncio threads.
         self._run_claim_lock = threading.Lock()
@@ -1881,6 +1884,7 @@ class FlowGraph:
         self._node_ids.clear()
         self._flow_starts.clear()
         self._groups.clear()
+        self._comments.clear()
         self._results = None
         # Rebuilt nodes restart at _cache_epoch 0 while keeping parent_uuid, so
         # their hashes revert to pre-invalidation values; a remembered liveness
@@ -1967,6 +1971,7 @@ class FlowGraph:
         # Member group_ids were re-applied above via add_<type>(setting_input);
         # repopulate the box registry (name/color/bounds) from the snapshot.
         self.restore_groups(flow_info.groups)
+        self.restore_comments(flow_info.comments)
 
         logger.info(f"Restored flow from snapshot with {len(self._node_db)} nodes")
 
@@ -2205,6 +2210,87 @@ class FlowGraph:
                 self._recompute_group_bounds(group.id)
 
     # ==================== End Group Management Methods ====================
+
+    # ==================== Comment Management Methods ====================
+    # Comments are free-floating canvas notes. They are not nodes and never affect
+    # execution; they only ride along in FlowfileData and the VueFlow payload.
+
+    def _next_comment_id(self) -> int:
+        self._comment_id_seq = max([self._comment_id_seq, *self._comments]) + 1
+        return self._comment_id_seq
+
+    def create_comment(
+        self,
+        text: str,
+        x_position: float,
+        y_position: float,
+        *,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> schemas.CommentInformation:
+        """Create a canvas comment at the given absolute position."""
+
+        def _do() -> schemas.CommentInformation:
+            comment = schemas.CommentInformation(
+                id=self._next_comment_id(), text=text, x_position=x_position, y_position=y_position
+            )
+            if width is not None:
+                comment.width = width
+            if height is not None:
+                comment.height = height
+            self._comments[comment.id] = comment
+            return comment
+
+        return self._execute_with_history(_do, HistoryActionType.CREATE_COMMENT, "Add comment")
+
+    def update_comment(
+        self,
+        comment_id: int,
+        *,
+        text: str | None = None,
+        bounds: schemas.CommentBounds | None = None,
+    ) -> schemas.CommentInformation:
+        """Edit the text and/or move or resize a canvas comment."""
+        comment = self._comments.get(comment_id)
+        if comment is None:
+            raise ValueError(f"Comment {comment_id} does not exist")
+
+        def _do() -> schemas.CommentInformation:
+            if text is not None:
+                comment.text = text
+            if bounds is not None:
+                comment.x_position, comment.y_position, comment.width, comment.height = bounds
+            return comment
+
+        return self._execute_with_history(_do, HistoryActionType.UPDATE_COMMENT, "Update comment")
+
+    def delete_comment(self, comment_id: int) -> None:
+        """Remove a canvas comment."""
+        if comment_id not in self._comments:
+            return
+        self._execute_with_history(
+            lambda: self._comments.pop(comment_id, None), HistoryActionType.DELETE_COMMENT, "Delete comment"
+        )
+
+    def set_comment_bounds(self, updates: list[schemas.CommentBoundsUpdate]) -> None:
+        """Persist comment bounds (used together with set_node_positions on drag/resize)."""
+        for update in updates:
+            comment = self._comments.get(update.comment_id)
+            if comment is not None:
+                comment.x_position = update.x_position
+                comment.y_position = update.y_position
+                comment.width = update.width
+                comment.height = update.height
+
+    def restore_comments(self, comments: list[schemas.CommentInformation]) -> None:
+        """Replace the runtime comment registry (used by open_flow and restore_from_snapshot)."""
+        self._comments = {comment.id: comment for comment in comments}
+        self._comment_id_seq = max(self._comments, default=0)
+
+    def _serialized_comments(self) -> list[schemas.FlowfileComment]:
+        return [schemas.FlowfileComment(**comment.model_dump()) for comment in self._comments.values()]
+
+    # ==================== End Comment Management Methods ====================
 
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.
@@ -6867,6 +6953,7 @@ class FlowGraph:
             flowfile_settings=settings,
             nodes=nodes,
             groups=groups,
+            comments=self._serialized_comments(),
         )
 
     def get_node_storage(self) -> schemas.FlowInformation:
@@ -7147,7 +7234,9 @@ class FlowGraph:
             for group_id in self._groups
             if self._member_node_ids(group_id) or self._child_group_ids(group_id)
         ]
-        return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes, groups=groups)
+        return schemas.VueFlowInput(
+            node_edges=edges, node_inputs=nodes, groups=groups, comments=self._serialized_comments()
+        )
 
     def reset(self):
         """Forces a deep reset on all nodes in the graph."""

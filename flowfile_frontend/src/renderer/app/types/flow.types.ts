@@ -193,6 +193,7 @@ export interface VueFlowInput {
   node_edges: EdgeInput[];
   node_inputs: NodeInput[];
   groups: GroupInput[];
+  comments?: CommentInput[];
 }
 
 // Node Group Types (visual containers; organizational only)
@@ -262,10 +263,20 @@ export interface GroupBoundsUpdate {
   height: number;
 }
 
+// mirrors schemas.CommentBoundsUpdate
+export interface CommentBoundsUpdate {
+  comment_id: number;
+  x_position: number;
+  y_position: number;
+  width: number;
+  height: number;
+}
+
 // mirrors schemas.UpdateLayoutRequest
 export interface UpdateLayoutRequest {
   node_positions: NodePositionUpdate[];
   group_bounds: GroupBoundsUpdate[];
+  comment_bounds?: CommentBoundsUpdate[];
   // false -> apply layout without a new undo entry (fold into a preceding op's snapshot)
   record_history?: boolean;
 }
@@ -273,6 +284,49 @@ export interface UpdateLayoutRequest {
 // mirrors routes.GroupOperationResponse
 export interface GroupOperationResponse extends OperationResponse {
   group: GroupInput | null;
+}
+
+// Canvas Comment Types (free text notes; organizational only)
+
+// mirrors schemas.FlowfileComment
+export interface CommentInput {
+  id: number;
+  text: string;
+  x_position: number;
+  y_position: number;
+  width: number;
+  height: number;
+}
+
+// VueFlow node `data` payload for a comment node.
+export interface CommentNodeData {
+  id: number;
+  text: string;
+  // open the editor as soon as the node mounts (freshly added comments)
+  autoEdit?: boolean;
+}
+
+// mirrors schemas.CreateCommentRequest
+export interface CreateCommentRequest {
+  text?: string;
+  x_position: number;
+  y_position: number;
+  width?: number | null;
+  height?: number | null;
+}
+
+// mirrors schemas.UpdateCommentRequest
+export interface UpdateCommentRequest {
+  text?: string | null;
+  x_position?: number | null;
+  y_position?: number | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+// mirrors routes.CommentOperationResponse
+export interface CommentOperationResponse extends OperationResponse {
+  comment: CommentInput | null;
 }
 
 // Artifact Visualization Types

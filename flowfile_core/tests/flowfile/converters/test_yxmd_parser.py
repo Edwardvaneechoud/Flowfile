@@ -124,8 +124,8 @@ def test_configuration_element_is_exposed(all_supported: AlteryxWorkflow):
     assert tools[6].configuration.find("SummarizeFields/SummarizeField").get("action") == "GroupBy"
 
 
-def test_all_supported_has_no_skipped_tools(all_supported: AlteryxWorkflow):
-    assert all_supported.skipped_tools == []
+def test_all_supported_has_no_text_boxes(all_supported: AlteryxWorkflow):
+    assert all_supported.text_boxes == []
 
 
 def test_connections_are_parsed_with_anchors(all_supported: AlteryxWorkflow):
@@ -171,7 +171,7 @@ def test_containers_are_flattened_recursively(containers: AlteryxWorkflow):
 
 
 def test_container_nodes_are_not_emitted_as_tools(containers: AlteryxWorkflow):
-    plugins = [tool.plugin for tool in containers.tools + containers.skipped_tools]
+    plugins = [tool.plugin for tool in containers.tools + containers.text_boxes]
     assert not any(plugin.endswith(".ToolContainer") for plugin in plugins)
 
 
@@ -182,11 +182,13 @@ def test_nested_tool_keeps_its_configuration_and_annotation(containers: AlteryxW
     assert (nested_filter.x, nested_filter.y) == (318, 78)
 
 
-def test_text_boxes_land_in_skipped_tools(containers: AlteryxWorkflow):
-    assert [tool.tool_id for tool in containers.skipped_tools] == [4]
-    skipped = containers.skipped_tools[0]
-    assert skipped.tool_name == "TextBox"
-    assert skipped.plugin == "AlteryxGuiToolkit.TextBox.TextBox"
+def test_text_boxes_are_kept_apart_from_tools_with_their_size(containers: AlteryxWorkflow):
+    assert [tool.tool_id for tool in containers.text_boxes] == [4]
+    text_box = containers.text_boxes[0]
+    assert text_box.tool_name == "TextBox"
+    assert text_box.plugin == "AlteryxGuiToolkit.TextBox.TextBox"
+    assert (text_box.x, text_box.y, text_box.width, text_box.height) == (450, 78, 120, 60)
+    assert all(tool.width is None for tool in containers.tools)
 
 
 def test_macro_node_has_macro_path_and_empty_tool_name():

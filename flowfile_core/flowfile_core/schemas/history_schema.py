@@ -33,6 +33,9 @@ class HistoryActionType(str, Enum):
     UPDATE_GROUP = "update_group"
     DELETE_GROUP = "delete_group"
     UPDATE_GROUP_MEMBERSHIP = "update_group_membership"
+    CREATE_COMMENT = "create_comment"
+    UPDATE_COMMENT = "update_comment"
+    DELETE_COMMENT = "delete_comment"
     BATCH = "batch"
 
 
@@ -114,6 +117,11 @@ class CompressedSnapshot:
             )
             for g in sorted(groups, key=lambda x: x.get("id", 0))
         )
+        comments = snapshot_dict.get("comments", []) or []
+        comment_signatures = tuple(
+            (c.get("id"), c.get("text"), c.get("x_position"), c.get("y_position"), c.get("width"), c.get("height"))
+            for c in sorted(comments, key=lambda x: x.get("id", 0))
+        )
 
         settings = snapshot_dict.get("flowfile_settings", {})
         # Convert to a stable string so lists/dicts inside settings (e.g. parameters) are hashable
@@ -127,6 +135,7 @@ class CompressedSnapshot:
                 settings_tuple,
                 tuple(node_signatures),
                 group_signatures,
+                comment_signatures,
             )
         )
 

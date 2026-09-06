@@ -89,6 +89,37 @@ NO_POSITIONS = b"""<?xml version="1.0"?>
 """
 
 
+TEXT_BOXES = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxGuiToolkit.TextBox.TextBox">
+        <Position x="54" y="54" width="804" height="72" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Text />
+        <FillColor r="13" g="35" b="69" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxGuiToolkit.TextBox.TextBox" />
+      <Properties><Configuration>
+        <Text><![CDATA[ First line
+  second line  ]]></Text>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
 def select_of_type(alteryx_type: str) -> bytes:
     """A one-tool workflow whose Select retypes a single field."""
     return f"""<?xml version="1.0"?>
@@ -562,7 +593,7 @@ def test_placeholders_preserve_the_graph_shape(unsupported: ConversionResult):
             {"total": 13, "converted": 11, "partial": 2, "commented": 0, "placeholder": 0, "skipped": 0},
         ),
         ("formulas.yxmd", {"total": 2, "converted": 1, "partial": 0, "commented": 1, "placeholder": 0, "skipped": 0}),
-        ("containers.yxmd", {"total": 5, "converted": 4, "partial": 0, "commented": 0, "placeholder": 0, "skipped": 1}),
+        ("containers.yxmd", {"total": 5, "converted": 5, "partial": 0, "commented": 0, "placeholder": 0, "skipped": 0}),
         (
             "unsupported.yxmd",
             {"total": 4, "converted": 2, "partial": 0, "commented": 0, "placeholder": 2, "skipped": 0},
@@ -577,10 +608,37 @@ def test_report_counts(fixture: str, expected: dict):
         assert getattr(report, status) == expected[status], status
 
 
-def test_text_box_is_reported_as_skipped(containers: ConversionResult):
-    row = next(row for row in containers.report.rows if row.status == "skipped")
-    assert row.alteryx_tool_id == 4
+def test_text_box_becomes_a_canvas_comment(containers: ConversionResult):
+    row = next(row for row in containers.report.rows if row.alteryx_tool_id == 4)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "comment"
     assert row.flowfile_node_ids == []
+
+    comments = containers.flow_data.comments
+    assert [comment.text for comment in comments] == ["Remember to raise the threshold before the quarterly run."]
+    comment = comments[0]
+    # Same origin and scale as the tools (the fixture's top-left tool sits at 54/54).
+    assert (comment.x_position, comment.y_position) == (round((450 - 54) * 3.0) + 60, round((78 - 54) * 3.0) + 100)
+    assert (comment.width, comment.height) == (120 * 3.0, 60 * 3.0)
+
+
+def test_comments_survive_the_yaml_round_trip(containers: ConversionResult, tmp_path: Path):
+    flow = open_flow(write_flow(containers, tmp_path / "flow.yaml"))
+    assert [comment.text for comment in flow._comments.values()] == [
+        "Remember to raise the threshold before the quarterly run."
+    ]
+
+
+def test_empty_text_box_is_skipped_not_imported_blank():
+    result = convert_yxmd(TEXT_BOXES, source_name="inline.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert rows[2].status == "skipped"
+    assert rows[3].status == "converted"
+    assert [comment.text for comment in result.flow_data.comments] == ["First line\nsecond line"]
+    assert result.report.total_tools == 3
+    assert (result.report.converted, result.report.skipped) == (2, 1)
+    # A text box without a size gets a readable minimum instead of a zero box.
+    assert (result.flow_data.comments[0].width, result.flow_data.comments[0].height) == (120, 40)
 
 
 def test_commented_formula_rows_name_the_field_and_reason(formulas: ConversionResult):
@@ -1167,6 +1225,25 @@ def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
     assert node["type"] == "cross_join"
     assert node["input_ids"] == [1]
     assert node["right_input_id"] == 7
+
+
+def test_count_records_maps_the_macro_onto_record_count(tmp_path: Path):
+    result = convert_yxmd(macro_after_text_input("CountRecords.yxmc", ""), source_name="inline.yxmd")
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "record_count"
+    nodes = dumped_nodes(result)
+    count_id, rename_id = row.flowfile_node_ids
+    assert nodes[count_id]["type"] == "record_count"
+    assert nodes[rename_id]["type"] == "select"
+    assert nodes[count_id]["outputs"] == [rename_id]
+
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, run_info
+    frame = flow.get_node(rename_id).get_resulting_data().data_frame.collect()
+    assert frame.to_dict(as_series=False) == {"Count": [1]}
+    assert frame.schema["Count"] == pl.Int64
 
 
 def test_data_cleansing_maps_the_cleanse_macro(extra_tools: ConversionResult):

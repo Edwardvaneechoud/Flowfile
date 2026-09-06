@@ -4,7 +4,7 @@
 |---|---|
 | `all_supported.yxmd` | every tool with a dedicated mapper, wired end to end |
 | `formulas.yxmd` | translatable and untranslatable Formula expressions |
-| `containers.yxmd` | tool containers, nested tools, text boxes |
+| `containers.yxmd` | tool containers, nested tools, text boxes (imported as canvas comments) |
 | `unsupported.yxmd` | tools with no mapper, plus a macro node |
 | `dynamic_rename.yxmd` | Dynamic Rename formula / first-row / prefix+suffix / unsupported modes |
 | `regex_and_multifield.yxmd` | RegEx parse and match, Multi-Field Formula |
