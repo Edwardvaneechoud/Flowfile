@@ -86,6 +86,7 @@ import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
 import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
 import { catalogSectionOfTab } from "../../../views/CatalogView/catalogTabs";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
+import { aiSettingsHelp } from "../../../views/AiSettingsView/aiSettingsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
 import { computeHelp } from "../../../views/ComputeView/computeHelp";
 import { dashboardHelp } from "../../../views/DashboardsView/dashboardHelp";
@@ -115,6 +116,7 @@ const helpByRoute: Record<string, PageHelpContent> = {
   designer: designerHelp,
   catalog: catalogHelp,
   connections: connectionsHelp,
+  ai: aiSettingsHelp,
   project: projectHelp,
   templates: templatesHelp,
   compute: computeHelp,

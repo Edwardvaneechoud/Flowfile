@@ -10,7 +10,6 @@ export const CONNECTION_TYPE_KEYS = [
   "kafka",
   "google_analytics",
   "secrets",
-  "ai",
 ] as const;
 
 export type ConnectionTypeKey = (typeof CONNECTION_TYPE_KEYS)[number];
@@ -64,13 +63,5 @@ export const connectionTypes: ConnectionType[] = [
     description: "Store API keys and passwords securely with encrypted storage",
     sidebarKey: "menu.connectionsSecrets",
     countUnit: "secret",
-  },
-  {
-    key: "ai",
-    label: "AI Providers",
-    icon: "fa-solid fa-wand-magic-sparkles",
-    description: "Add API keys for Anthropic, OpenAI, Google, and other LLM providers",
-    sidebarKey: "menu.connectionsAi",
-    countUnit: "provider",
   },
 ];

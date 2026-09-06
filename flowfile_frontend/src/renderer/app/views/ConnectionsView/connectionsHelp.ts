@@ -9,7 +9,7 @@ export const connectionsHelp: PageHelpContent = {
       title: "Overview",
       icon: "fa-solid fa-info-circle",
       description:
-        "Manage all your external connections in one place. Configure databases, cloud storage, streaming, analytics, and AI providers, and securely store credentials. Select a card to jump straight to it.",
+        "Manage all your external connections in one place. Configure databases, cloud storage, streaming and analytics, and securely store credentials. Select a card to jump straight to it. LLM provider keys live under Settings → AI.",
       // Derived from the shared connection-types config so icons/labels stay in
       // sync with the tab bar, overview cards, and sidebar sub-menu.
       features: connectionTypes.map((type) => ({

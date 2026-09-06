@@ -8,7 +8,8 @@ The **Settings** gear icon in the left sidebar opens the Settings menu, grouped 
 
 | Group | Items | Notes |
 |-------|-------|-------|
-| **Connections** | **All connections**: Overview, Database, Cloud Storage, Kafka, Google Analytics, Secrets, AI Providers | Opens the [Connections](connections.md) page on **Overview**; the other names are its in-page tabs. [Secrets](catalog/secrets.md) covers encrypted credential storage. |
+| **Connections** | **All connections**: Overview, Database, Cloud Storage, Kafka, Google Analytics, Secrets | Opens the [Connections](connections.md) page on **Overview**; the other names are its in-page tabs. [Secrets](catalog/secrets.md) covers encrypted credential storage. |
+| **AI** | Providers; Assistant | Providers holds the API keys per LLM provider and the optional on-device model; Assistant holds the default model and agent behaviour — see [Provider Setup](../../ai/providers.md) and [AI Assistant](../../ai/index.md). |
 | **Execution** | Python Kernels; Performance | Python Kernels manages the containers described in [Kernel Execution](kernels.md). **Performance** is admin-only in Docker. |
 | **Preferences** | Privacy; Backups | Privacy holds the telemetry consent described in [Telemetry & Privacy](../telemetry.md). **Backups** is admin-only in Docker — see [Database backups](../deployment/backups.md). |
 | **Extensions** | Node Designer, Custom Nodes, Community Nodes | [Node Designer](node-designer.md) authors and publishes nodes; [Community Nodes](community-nodes.md) browses and installs shared ones. |

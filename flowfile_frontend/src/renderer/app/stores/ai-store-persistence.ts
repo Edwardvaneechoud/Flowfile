@@ -1,19 +1,22 @@
-// Browser-side chat persistence for the AI drawer.
+// Browser-side persistence for the AI drawer.
 //
 // Pure helpers — no Vue/Pinia deps — so they're easy to unit-test
-// without jsdom. Two surface details worth knowing:
+// without jsdom. Two buckets, both in `localStorage` so state survives
+// Electron app restart / browser close:
 //
-//   1. Storage default is `localStorage` so chat survives Electron
-//      app restart / browser close. Quota is still ~5 MB, plenty for
-//      chat history bounded by `MAX_PERSISTED_MESSAGES`.
-//   2. Persistence keys are flow-scoped: `flowfile.ai.chat.v1.{flow_id}`
-//      for a real flow id, `flowfile.ai.chat.v1.unscoped` for entry
-//      paths that open the chat without a flow context. The store's
-//      flow_id watcher uses these helpers to swap the persisted bucket
-//      when the user switches flows so the trail stays bound to the
-//      conversation it belongs to. Bare `PERSISTENCE_KEY` is exported
-//      as the versioned prefix so a future schema bump can orphan a
-//      whole generation of entries by writing under a new prefix.
+//   1. Per-flow chat trail: `flowfile.ai.chat.v1.{flow_id}` for a real
+//      flow id, `flowfile.ai.chat.v1.unscoped` for entry paths that open
+//      the chat without a flow context. The store's flow_id watcher swaps
+//      buckets on flow switch so the trail stays bound to its conversation.
+//      Bare `PERSISTENCE_KEY` is exported as the versioned prefix so a
+//      future schema bump can orphan a whole generation of entries.
+//   2. Device-wide AI settings: `flowfile.ai.settings.v1` — provider/model
+//      choice, the simple-tier split and the agent behaviour toggles. These
+//      are preferences, not conversation state, so they live in one bucket
+//      regardless of which flow is open. Older builds stored them inside
+//      the per-flow blob; `loadPersistedAiState` still reads those legacy
+//      fields so the store can migrate them once, but `persistAiState` no
+//      longer writes them.
 //
 // `StorageLike` is the injection seam so the vitest suite stays
 // node-only and the same call sites can target an in-memory mock for
@@ -22,6 +25,7 @@
 import type { ChatMessage } from "./ai-store";
 
 export const PERSISTENCE_KEY = "flowfile.ai.chat.v1";
+export const SETTINGS_PERSISTENCE_KEY = "flowfile.ai.settings.v1";
 export const MAX_PERSISTED_MESSAGES = 200;
 
 /** Flow-scoped storage key. `null` flow_id (no flow open) maps to the
@@ -33,53 +37,50 @@ export const chatPersistenceKey = (flowId: number | null): string =>
 
 export type PersistedAgentSurface = "agent_complex" | "agent_staged" | "agent_live";
 
-export interface PersistedAiState {
-  messages: ChatMessage[];
+/** Device-wide AI preferences. Every field is nullable: `null` means
+ * "not set, use the store default". */
+export interface PersistedAiSettings {
   selectedProvider: string | null;
   selectedModel: string | null;
-  /** When true, simple-tier surfaces (cron, join-key suggestions) run on
-   * ``simpleProvider`` / ``simpleModel`` instead of the main selection.
-   * When false, one model drives everything. Optional for backward-compat. */
-  splitModels?: boolean | null;
-  /** Simple-tier provider. `null` → fall back to the main provider.
-   * Optional for backward-compat with older persisted entries. */
-  simpleProvider?: string | null;
-  /** Simple-tier model (cron, join-key suggestions). `null` → use the
-   * provider's per-surface preset. Optional for backward-compat with
-   * older persisted entries. */
-  simpleModel?: string | null;
-  /** **DEPRECATED** — replaced by the `mode` enum in the runtime
-   * store. Persisted value is read on hydration ONLY for the one-shot
-   * migration shim in `ai-store.ts` (legacy `false` → seed
-   * sessionStorage `flowfile.ai.mode = "chat"`; legacy `true` / null /
-   * missing → seed `"auto"`). Not written by `persistAiState` anymore;
-   * after the next save cycle the field disappears from localStorage. */
-  autoPromote?: boolean | null;
-  /** Session-scoped "Continue as agent" acceptance flag, set when the
-   * user clicks the promotion banner's primary button to lock
-   * subsequent sends into agent mode without re-classification.
-   * Optional / nullable for backward-compat with older entries. */
+  /** When true, simple-tier surfaces (cron, settings autocomplete) run on
+   * ``simpleProvider`` / ``simpleModel`` instead of the main selection. */
+  splitModels: boolean | null;
+  /** Simple-tier provider. `null` → fall back to the main provider. */
+  simpleProvider: string | null;
+  /** Simple-tier model. `null` → use the provider's per-surface preset. */
+  simpleModel: string | null;
+  /** User-selected agent surface. `null` → the store default (``agent_live``). */
+  selectedAgentSurface: PersistedAgentSurface | null;
+  /** Opt-in verify-completion gate. `null` → off. */
+  verifyPlanCompletion: boolean | null;
+}
+
+export interface PersistedAiState {
+  messages: ChatMessage[];
+  /** Conversation-scoped "Continue as agent" acceptance flag, set when the
+   * user clicks the promotion banner's primary button to lock subsequent
+   * sends into agent mode without re-classification. */
   agentModeAccepted?: boolean | null;
-  /** User-selected agent surface ("agent" / "agent_complex" /
-   * "agent_staged" / "agent_live"). Optional / nullable so older
-   * entries fall through to the store's default (``"agent_live"``). */
+  /** **DEPRECATED** — replaced by the `mode` enum in the runtime store.
+   * Read on hydration ONLY for the one-shot migration shim in
+   * `ai-store.ts`; never written. */
+  autoPromote?: boolean | null;
+  /** **LEGACY** — the settings below used to live in the per-flow blob.
+   * They are read (so the store can seed the device-wide settings bucket
+   * once) but no longer written; after the next save cycle they disappear
+   * from the per-flow entry. */
+  selectedProvider?: string | null;
+  selectedModel?: string | null;
+  splitModels?: boolean | null;
+  simpleProvider?: string | null;
+  simpleModel?: string | null;
   selectedAgentSurface?: PersistedAgentSurface | null;
-  /** Opt-in verify-completion gate. Persisted so the preference
-   * survives reloads and flow switches. Optional / nullable for
-   * backward-compat with older entries. */
   verifyPlanCompletion?: boolean | null;
 }
 
 const EMPTY_STATE: PersistedAiState = {
   messages: [],
-  selectedProvider: null,
-  selectedModel: null,
-  splitModels: null,
-  simpleProvider: null,
-  simpleModel: null,
   agentModeAccepted: null,
-  selectedAgentSurface: null,
-  verifyPlanCompletion: null,
 };
 
 const _AGENT_SURFACE_VALUES: ReadonlyArray<PersistedAgentSurface> = [
@@ -134,6 +135,48 @@ const sanitizeMessage = (raw: unknown): ChatMessage | null => {
   };
 };
 
+/** Pick the settings fields out of a parsed payload, validating each one.
+ * Shared by the settings bucket and the legacy per-flow fields. */
+const readSettingsFields = (payload: Record<string, unknown>): PersistedAiSettings => ({
+  selectedProvider: typeof payload.selectedProvider === "string" ? payload.selectedProvider : null,
+  selectedModel: typeof payload.selectedModel === "string" ? payload.selectedModel : null,
+  splitModels: typeof payload.splitModels === "boolean" ? payload.splitModels : null,
+  simpleProvider: typeof payload.simpleProvider === "string" ? payload.simpleProvider : null,
+  simpleModel: typeof payload.simpleModel === "string" ? payload.simpleModel : null,
+  selectedAgentSurface: isAgentSurface(payload.selectedAgentSurface)
+    ? payload.selectedAgentSurface
+    : null,
+  verifyPlanCompletion:
+    typeof payload.verifyPlanCompletion === "boolean" ? payload.verifyPlanCompletion : null,
+});
+
+/** Parse one JSON entry into a plain object, scrubbing a corrupt entry so
+ * later reads aren't repeatedly corrupt. `null` when absent or unusable. */
+const readJsonObject = (store: StorageLike, key: string): Record<string, unknown> | null => {
+  let raw: string | null;
+  try {
+    raw = store.getItem(key);
+  } catch {
+    return null;
+  }
+  if (raw === null) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    try {
+      store.removeItem(key);
+    } catch {
+      // Storage rejected the removal (private mode quirks) — best
+      // effort, swallow.
+    }
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  return parsed as Record<string, unknown>;
+};
+
 export const loadPersistedAiState = (
   storage?: StorageLike | null,
   flowId: number | null = null,
@@ -141,57 +184,18 @@ export const loadPersistedAiState = (
   const store = resolveStorage(storage);
   if (!store) return { ...EMPTY_STATE, messages: [] };
 
-  const key = chatPersistenceKey(flowId);
-  let raw: string | null;
-  try {
-    raw = store.getItem(key);
-  } catch {
-    return { ...EMPTY_STATE, messages: [] };
-  }
-  if (raw === null) return { ...EMPTY_STATE, messages: [] };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // Corrupt JSON — drop just *this* flow's entry so the user starts fresh
-    // next time without crashing. Other flows' keys are untouched (the
-    // removal is scoped to the per-flow key, never the v1 prefix).
-    try {
-      store.removeItem(key);
-    } catch {
-      // Storage rejected the removal (private mode quirks) — best
-      // effort, swallow.
-    }
-    return { ...EMPTY_STATE, messages: [] };
-  }
-
-  if (typeof parsed !== "object" || parsed === null) {
-    return { ...EMPTY_STATE, messages: [] };
-  }
-  const payload = parsed as Record<string, unknown>;
+  const payload = readJsonObject(store, chatPersistenceKey(flowId));
+  if (payload === null) return { ...EMPTY_STATE, messages: [] };
 
   const rawMessages = Array.isArray(payload.messages) ? payload.messages : [];
   const messages = rawMessages.map(sanitizeMessage).filter((m): m is ChatMessage => m !== null);
 
   return {
     messages,
-    selectedProvider:
-      typeof payload.selectedProvider === "string" ? payload.selectedProvider : null,
-    selectedModel: typeof payload.selectedModel === "string" ? payload.selectedModel : null,
-    splitModels: typeof payload.splitModels === "boolean" ? payload.splitModels : null,
-    simpleProvider: typeof payload.simpleProvider === "string" ? payload.simpleProvider : null,
-    simpleModel: typeof payload.simpleModel === "string" ? payload.simpleModel : null,
-    autoPromote: typeof payload.autoPromote === "boolean" ? payload.autoPromote : null,
     agentModeAccepted:
       typeof payload.agentModeAccepted === "boolean" ? payload.agentModeAccepted : null,
-    selectedAgentSurface: isAgentSurface(payload.selectedAgentSurface)
-      ? payload.selectedAgentSurface
-      : null,
-    verifyPlanCompletion:
-      typeof payload.verifyPlanCompletion === "boolean"
-        ? payload.verifyPlanCompletion
-        : null,
+    autoPromote: typeof payload.autoPromote === "boolean" ? payload.autoPromote : null,
+    ...readSettingsFields(payload),
   };
 };
 
@@ -205,18 +209,11 @@ export const persistAiState = (
 
   // Cap before serialization so the JSON payload itself is bounded. Keeps
   // the most recent N messages — chat history is most useful at the tail.
-  // Note: `autoPromote` is DEPRECATED — not written here anymore. Legacy
-  // entries that still carry it on disk drop the field on the next save.
+  // Only conversation state is written; the legacy settings fields and the
+  // deprecated `autoPromote` drop off the entry on the next save.
   const trimmed: PersistedAiState = {
     messages: state.messages.slice(-MAX_PERSISTED_MESSAGES),
-    selectedProvider: state.selectedProvider,
-    selectedModel: state.selectedModel,
-    splitModels: state.splitModels ?? null,
-    simpleProvider: state.simpleProvider ?? null,
-    simpleModel: state.simpleModel ?? null,
     agentModeAccepted: state.agentModeAccepted ?? null,
-    selectedAgentSurface: state.selectedAgentSurface ?? null,
-    verifyPlanCompletion: state.verifyPlanCompletion ?? null,
   };
 
   let payload: string;
@@ -244,6 +241,38 @@ export const clearPersistedAiState = (
     store.removeItem(chatPersistenceKey(flowId));
   } catch {
     // ignore
+  }
+};
+
+/** Device-wide settings bucket. Returns `null` when nothing has ever been
+ * written (so the caller can tell "fresh install" apart from "all fields
+ * unset" and run the legacy migration). */
+export const loadPersistedAiSettings = (
+  storage?: StorageLike | null,
+): PersistedAiSettings | null => {
+  const store = resolveStorage(storage);
+  if (!store) return null;
+  const payload = readJsonObject(store, SETTINGS_PERSISTENCE_KEY);
+  if (payload === null) return null;
+  return readSettingsFields(payload);
+};
+
+export const persistAiSettings = (
+  settings: PersistedAiSettings,
+  storage?: StorageLike | null,
+): void => {
+  const store = resolveStorage(storage);
+  if (!store) return;
+  let payload: string;
+  try {
+    payload = JSON.stringify(settings);
+  } catch {
+    return;
+  }
+  try {
+    store.setItem(SETTINGS_PERSISTENCE_KEY, payload);
+  } catch {
+    // Quota / disabled storage — the settings still apply in-memory.
   }
 };
 

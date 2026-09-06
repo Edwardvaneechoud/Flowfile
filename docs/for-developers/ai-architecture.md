@@ -105,7 +105,7 @@ flowfile_frontend/src/renderer/app/
 │   ├── AiGhostNode.vue
 │   ├── AiMentionAutocomplete.vue / mentionVocabulary.ts
 │   └── markdown.ts (+ test)
-└── views/AiProvidersView/AiSettingsTab.vue    # BYOK panel
+└── views/AiSettingsView/                      # Settings → AI page: ProvidersPanel (BYOK + OnDeviceProviderRow), AssistantPanel
 ```
 
 ---
@@ -347,7 +347,7 @@ PlannerEventName = Literal[
 
 ### Three surfaces
 
-The `surface` field on the start request picks the loop shape. Note: the **backend default** on `POST /ai/agent/start` is `"agent_staged"`, but the **frontend drawer default** (per-flow preference, persisted) is `"agent_live"` — that's the one most user sessions land on unless explicitly switched. A request with `surface="agent_complex"` against a `supports_tools=False` model returns `422` at validation.
+The `surface` field on the start request picks the loop shape. Note: the **backend default** on `POST /ai/agent/start` is `"agent_staged"`, but the **frontend default** (a device-wide preference under Settings → AI → Assistant, persisted in localStorage) is `"agent_live"` — that's the one most user sessions land on unless explicitly switched. A request with `surface="agent_complex"` against a `supports_tools=False` model returns `422` at validation.
 
 **`agent_staged`.** The big idea: smaller models can't reliably function-call against a wide tool catalog. Solution: expose **one tool per LLM round** so each round is a tightly-scoped enum / shape decision. Mode is `"stage"` — proposals accumulate and are bundled into a `GraphDiff` for accept/reject. State machine:
 
@@ -367,7 +367,7 @@ plan ──▶ classify ─[op_kind=add]──▶ pick_type ──▶ pick_upstr
 
 **`agent_complex`.** Single-shot, full tool catalog in one call. Best for big models (Sonnet, Opus, GPT-4.1, Gemini Pro). The state machine field is unused; the planner runs each round as a free-form tool-using turn. Same `mode="stage"` and accept/reject GraphDiff flow as `agent_staged`. Higher rate-limit pressure, fewer round-trips.
 
-**`agent_live`.** Same state machine as `agent_staged`, but `mode="apply"` — each tool call **mutates the live graph immediately**, the affected subgraph is run (Performance) or a sample is evaluated (Development), and the runtime observation is fed back as the next tool reply. On runtime failure the just-added node is auto-deleted and the LLM retries up to `max_retries_per_step`. **There is no bundled `staged_results` GraphDiff and no accept/reject step** — `applied_results` on the session is the record of truth, and the canvas itself is the running record. This is the variant the frontend drawer defaults to.
+**`agent_live`.** Same state machine as `agent_staged`, but `mode="apply"` — each tool call **mutates the live graph immediately**, the affected subgraph is run (Performance) or a sample is evaluated (Development), and the runtime observation is fed back as the next tool reply. On runtime failure the just-added node is auto-deleted and the LLM retries up to `max_retries_per_step`. **There is no bundled `staged_results` GraphDiff and no accept/reject step** — `applied_results` on the session is the record of truth, and the canvas itself is the running record. This is the variant the frontend defaults to.
 
 ### Session lifecycle
 
@@ -548,7 +548,7 @@ Components in `features/ai/`:
 - `AiGhostNode.vue` — edge-stub suggestions.
 - `AiMentionAutocomplete.vue` (+ `mentionVocabulary.ts`) — `@flow` / `@node:id` completion.
 
-The BYOK panel lives in `views/AiProvidersView/AiSettingsTab.vue` and talks to the BYOK routes through `api/ai.api.ts`.
+The BYOK panel lives in `views/AiSettingsView/ProvidersPanel.vue` (the Providers tab of Settings → AI) and talks to the BYOK routes through `views/AiSettingsView/api.ts`; the same directory holds the Assistant tab (default model, simple-task tier, agent variant, verification — device-wide, persisted by `stores/ai-store-persistence.ts` under `flowfile.ai.settings.v1`) and the on-device model as a row inside Providers (`OnDeviceProviderRow.vue` over `localModelApi.ts`).
 
 ---
 
