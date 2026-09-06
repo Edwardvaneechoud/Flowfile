@@ -138,6 +138,8 @@
         @edge-mouse-leave="onEdgeMouseLeave"
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
+        @node-drag="onNodeDrag"
+        @node-drag-stop="onNodeDragStop"
       >
         <template #node-flow-node="nodeProps">
           <FlowNode
@@ -413,7 +415,7 @@
 <script setup lang="ts">
 import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
-import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
+import type { Node, GraphNode, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
@@ -432,6 +434,8 @@ import {
   placeholderReason
 } from '../utils/placeholder'
 import { iconUrls } from '../utils/iconUrls'
+import { findAutoConnectMatch, preferUnusedOutputs } from '../utils/autoConnect'
+import type { AutoConnectMatch, AutoConnectNode } from '../utils/autoConnect'
 
 import { AgGridVue } from '@ag-grid-community/vue3'
 import { ClientSideRowModelModule } from '@ag-grid-community/client-side-row-model'
@@ -546,8 +550,9 @@ const tablePreviewHeight = computed(() =>
 const settingsPanelHeight = computed(() =>
   Math.max(220, availableHeight.value - toolbarHeight.value - tablePreviewHeight.value),
 )
-const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut, findNode, setViewport, viewport } =
-  useVueFlow()
+const {
+  screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut, findNode, setViewport, viewport, getNodes
+} = useVueFlow()
 
 useStaleModifierGuard()
 
@@ -777,6 +782,118 @@ const selectedNodeResult = computed(() => {
 
 let draggedNodeDef: NodeDefinition | null = null
 
+// Palette drag in snapping range of an existing node: the drop will auto-connect.
+const AUTO_CONNECT_CLASS = 'auto-connect-target'
+let autoConnectNodeId: string | null = null
+
+function markAutoConnectNode(nextId: string | null) {
+  if (autoConnectNodeId === nextId) return
+  if (autoConnectNodeId) {
+    document
+      .querySelector(`.vue-flow__node[data-id="${CSS.escape(autoConnectNodeId)}"]`)
+      ?.classList.remove(AUTO_CONNECT_CLASS)
+  }
+  if (nextId) {
+    document
+      .querySelector(`.vue-flow__node[data-id="${CSS.escape(nextId)}"]`)
+      ?.classList.add(AUTO_CONNECT_CLASS)
+  }
+  autoConnectNodeId = nextId
+}
+
+// A node's rectangle in flow coordinates, read from the DOM (VueFlow's
+// dimension bookkeeping isn't reliable from outside the component).
+function measureNode(id: string): Pick<AutoConnectNode, 'x' | 'y' | 'width' | 'height'> | null {
+  const el = document.querySelector(`.vue-flow__node[data-id="${CSS.escape(id)}"]`)
+  const rect = el?.getBoundingClientRect()
+  if (!rect?.width) return null
+  const zoom = viewport.value.zoom || 1
+  const { x, y } = screenToFlowCoordinate({ x: rect.left, y: rect.top })
+  return { x, y, width: rect.width / zoom, height: rect.height / zoom }
+}
+
+// Existing canvas nodes as auto-connect candidates: rendered, runnable nodes
+// with the input handles that are still free. Union takes any number of
+// sources on input-0, so its handle never fills up.
+function autoConnectCandidates(): AutoConnectNode[] {
+  const edges = flowEdges.value
+  return getNodes.value.flatMap(node => {
+    if (node.data?.placeholder) return []
+    const rect = measureNode(node.id)
+    if (!rect) return []
+    const inputCount = Number(node.data?.inputs ?? 0)
+    const outputCount = Number(node.data?.outputs ?? 0)
+    const multi = node.data?.type === 'union'
+    const occupied = new Set(edges.filter(e => e.target === node.id).map(e => e.targetHandle))
+    const used = new Set(edges.filter(e => e.source === node.id).map(e => e.sourceHandle))
+    const freeInputs = Array.from({ length: inputCount }, (_, i) => `input-${i}`).filter(
+      h => multi || !occupied.has(h)
+    )
+    const outputs = Array.from({ length: outputCount }, (_, i) => `output-${i}`)
+    return [{ id: node.id, ...rect, freeInputs, outputs: preferUnusedOutputs(outputs, used) }]
+  })
+}
+
+function detectAutoConnect(def: NodeDefinition, x: number, y: number): AutoConnectMatch | null {
+  return findAutoConnectMatch(
+    {
+      x,
+      y,
+      inputHandle: def.inputs > 0 ? 'input-0' : null,
+      outputHandle: def.outputs > 0 ? 'output-0' : null
+    },
+    autoConnectCandidates()
+  )
+}
+
+function addAutoConnectEdge(nodeId: string, match: AutoConnectMatch) {
+  const upstream = match.direction === 'upstream'
+  const source = upstream ? match.nodeId : nodeId
+  const target = upstream ? nodeId : match.nodeId
+  const sourceHandle = upstream ? match.existingHandle : match.newHandle
+  const targetHandle = upstream ? match.newHandle : match.existingHandle
+  flowStore.addEdge({
+    id: `e${source}-${target}-${sourceHandle}-${targetHandle}`,
+    source,
+    target,
+    sourceHandle,
+    targetHandle
+  })
+}
+
+// Dragging an existing, still-unconnected node next to another node connects
+// the two on release, the same way a palette drop does.
+let nodeDragConnectCandidate: AutoConnectMatch | null = null
+
+function onNodeDrag({ node, nodes }: { node: GraphNode; nodes: GraphNode[] }) {
+  nodeDragConnectCandidate = null
+  const connected = flowEdges.value.some(e => e.source === node.id || e.target === node.id)
+  const rect = nodes.length === 1 && !connected && !node.data?.placeholder ? measureNode(node.id) : null
+  if (rect) {
+    nodeDragConnectCandidate = findAutoConnectMatch(
+      {
+        ...rect,
+        inputHandle: Number(node.data?.inputs ?? 0) > 0 ? 'input-0' : null,
+        outputHandle: Number(node.data?.outputs ?? 0) > 0 ? 'output-0' : null
+      },
+      autoConnectCandidates().filter(c => c.id !== node.id)
+    )
+  }
+  markAutoConnectNode(nodeDragConnectCandidate?.nodeId ?? null)
+}
+
+function onNodeDragStop({ node }: { node: GraphNode }) {
+  const match = nodeDragConnectCandidate
+  nodeDragConnectCandidate = null
+  markAutoConnectNode(null)
+  if (match) addAutoConnectEdge(node.id, match)
+}
+
+function clearPaletteDrag() {
+  markAutoConnectNode(null)
+  draggedNodeDef = null
+}
+
 function onDragStart(event: DragEvent, node: NodeDefinition) {
   // Locked (full-app-only) nodes can't be added to the in-browser canvas.
   if (node.available === false) {
@@ -788,12 +905,18 @@ function onDragStart(event: DragEvent, node: NodeDefinition) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('application/json', JSON.stringify(node))
   }
+  // dragend fires whether or not the drop landed on the canvas.
+  document.addEventListener('dragend', clearPaletteDrag, { once: true })
 }
 
 function onDragOver(event: DragEvent) {
   event.preventDefault()
   if (event.dataTransfer) {
     event.dataTransfer.dropEffect = 'move'
+  }
+  if (draggedNodeDef) {
+    const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+    markAutoConnectNode(detectAutoConnect(draggedNodeDef, position.x, position.y)?.nodeId ?? null)
   }
 }
 
@@ -807,12 +930,15 @@ function onDrop(event: DragEvent) {
     y: event.clientY
   })
 
+  // Resolve the neighbour now, before the new node joins the candidate pool.
+  const match = detectAutoConnect(draggedNodeDef, position.x, position.y)
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
+  if (match) addAutoConnectEdge(String(nodeId), match)
   flowStore.selectNode(nodeId)
   showSettings.value = true
 
   pendingNodeAdjustment.value = nodeId
-  draggedNodeDef = null
+  clearPaletteDrag()
 }
 
 function onConnect(connection: Connection) {
@@ -1544,6 +1670,13 @@ onUnmounted(() => {
 .custom-node-flow :deep(.vue-flow__minimap) {
   transform: scale(75%);
   transform-origin: bottom right;
+}
+
+/* Palette drag within snapping range of this node: the drop auto-connects. */
+.custom-node-flow :deep(.vue-flow__node.auto-connect-target) {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: 4px;
+  border-radius: 8px;
 }
 
 /* Node list styles */
