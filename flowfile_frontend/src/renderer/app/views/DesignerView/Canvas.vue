@@ -255,6 +255,7 @@ async function onNodeDragStop({ node }: { node: Node }) {
   nodeDragConnectCandidate = null;
   markHoveredEdge(null);
   markAutoConnectNode(null);
+  resetAutoConnectCandidates();
   if (edgeId) {
     const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
     if (!template) return;
@@ -293,6 +294,7 @@ const {
   insertNodeOnEdge,
   detectAutoConnectForNode,
   autoConnectNode,
+  resetAutoConnectCandidates,
 } = useDragAndDrop();
 const fileDrop = useFileDropImport();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
@@ -1393,6 +1395,7 @@ defineExpose({
         @connect="onConnect"
         @connect-start="onConnectStart"
         @connect-end="onConnectEnd"
+        @node-drag-start="resetAutoConnectCandidates"
         @node-drag="onNodeDrag"
         @node-drag-stop="onNodeDragStop"
         @pane-click="handleCanvasClick"

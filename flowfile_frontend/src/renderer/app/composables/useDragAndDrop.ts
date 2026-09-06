@@ -370,6 +370,7 @@ export default function useDragAndDrop() {
 
     draggedType.value = nodeTemplate.item;
     draggedTemplate = nodeTemplate;
+    resetAutoConnectCandidates();
     isDragging.value = true;
 
     document.addEventListener("drop", onDragEnd);
@@ -408,6 +409,7 @@ export default function useDragAndDrop() {
     draggedTemplate = null;
     markHoveredEdge(null);
     markAutoConnectNode(null);
+    resetAutoConnectCandidates();
     document.removeEventListener("drop", onDragEnd);
   }
 
@@ -422,9 +424,22 @@ export default function useDragAndDrop() {
     return { x, y, width: rect.width / zoom, height: rect.height / zoom };
   }
 
+  // Existing nodes don't move during a drag, so they are measured once per
+  // drag: reset at drag start/end, filled lazily on the first tick.
+  let autoConnectCache: AutoConnectNode[] | null = null;
+
+  function resetAutoConnectCandidates() {
+    autoConnectCache = null;
+  }
+
+  function autoConnectCandidates(): AutoConnectNode[] {
+    if (!autoConnectCache) autoConnectCache = collectAutoConnectCandidates();
+    return autoConnectCache;
+  }
+
   // Existing canvas nodes as auto-connect candidates: rendered, visible data
   // nodes with the side input handles that are still free.
-  function autoConnectCandidates(): AutoConnectNode[] {
+  function collectAutoConnectCandidates(): AutoConnectNode[] {
     const edges = getEdges.value;
     return getNodes.value.flatMap((node) => {
       if (node.type !== "custom-node" || node.hidden) return [];
@@ -794,6 +809,7 @@ export default function useDragAndDrop() {
       ? null
       : detectAutoConnect(nodeData, position.x, position.y);
     markAutoConnectNode(null);
+    resetAutoConnectCandidates();
 
     try {
       const component = await getComponent(nodeData);
@@ -1196,6 +1212,7 @@ export default function useDragAndDrop() {
     insertNodeOnEdge,
     detectAutoConnectForNode,
     autoConnectNode,
+    resetAutoConnectCandidates,
   };
 }
 

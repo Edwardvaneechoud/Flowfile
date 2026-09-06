@@ -138,6 +138,7 @@
         @edge-mouse-leave="onEdgeMouseLeave"
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
+        @node-drag-start="resetAutoConnectCandidates"
         @node-drag="onNodeDrag"
         @node-drag-stop="onNodeDragStop"
       >
@@ -815,7 +816,7 @@ function measureNode(id: string): Pick<AutoConnectNode, 'x' | 'y' | 'width' | 'h
 // Existing canvas nodes as auto-connect candidates: rendered, runnable nodes
 // with the input handles that are still free. Union takes any number of
 // sources on input-0, so its handle never fills up.
-function autoConnectCandidates(): AutoConnectNode[] {
+function collectAutoConnectCandidates(): AutoConnectNode[] {
   const edges = flowEdges.value
   return getNodes.value.flatMap(node => {
     if (node.data?.placeholder) return []
@@ -886,11 +887,26 @@ function onNodeDragStop({ node }: { node: GraphNode }) {
   const match = nodeDragConnectCandidate
   nodeDragConnectCandidate = null
   markAutoConnectNode(null)
+  resetAutoConnectCandidates()
   if (match) addAutoConnectEdge(node.id, match)
+}
+
+// Existing nodes don't move during a drag, so they are measured once per
+// drag: reset at drag start/end, filled lazily on the first tick.
+let autoConnectCache: AutoConnectNode[] | null = null
+
+function resetAutoConnectCandidates() {
+  autoConnectCache = null
+}
+
+function autoConnectCandidates(): AutoConnectNode[] {
+  if (!autoConnectCache) autoConnectCache = collectAutoConnectCandidates()
+  return autoConnectCache
 }
 
 function clearPaletteDrag() {
   markAutoConnectNode(null)
+  resetAutoConnectCandidates()
   draggedNodeDef = null
 }
 
@@ -901,6 +917,7 @@ function onDragStart(event: DragEvent, node: NodeDefinition) {
     return
   }
   draggedNodeDef = node
+  resetAutoConnectCandidates()
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('application/json', JSON.stringify(node))
@@ -932,6 +949,7 @@ function onDrop(event: DragEvent) {
 
   // Resolve the neighbour now, before the new node joins the candidate pool.
   const match = detectAutoConnect(draggedNodeDef, position.x, position.y)
+  resetAutoConnectCandidates()
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
   if (match) addAutoConnectEdge(String(nodeId), match)
   flowStore.selectNode(nodeId)
