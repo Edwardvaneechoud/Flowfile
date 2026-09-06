@@ -471,6 +471,8 @@ def main():
         # legs; imported lazily (sqlalchemy dialect adapter / is_available
         # probe), so list it explicitly like the other DB drivers.
         "pymssql",
+        # Postgres-wire driver for the denodo dialect (raw DB-API reads); lazy import.
+        "psycopg2",
         "alembic",
         # certifi ships cacert.pem; ssl uses it via certifi.where(). The
         # data_downloader builds its SSL context against this so urllib calls

@@ -212,6 +212,17 @@ def test_mssql_in_dialect_catalog():
     assert mssql_entry["available"] is True
 
 
+def test_denodo_in_dialect_catalog():
+    response = client.get("/db_dialects")
+    assert response.status_code == 200, response.text
+    denodo_entry = next(d for d in response.json() if d["name"] == "denodo")
+    assert denodo_entry["display_name"] == "Denodo"
+    assert denodo_entry["file_based"] is False
+    assert denodo_entry["default_port"] == 9996
+    assert denodo_entry["supports_ssl"] is True
+    assert denodo_entry["available"] is True
+
+
 def test_create_duckdb_connection_without_credentials():
     _cleanup_connection("duckdb_conn")
     payload = {

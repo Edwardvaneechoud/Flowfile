@@ -87,7 +87,21 @@ def read_sql_sqlalchemy(
     without the connectorx leg (e.g. connectorx's mssql backend segfaults when
     successive reads run on fresh threads — the attempt-per-read model here).
     """
-    attempt = _Attempt("sqlalchemy", lambda: _read_sqlalchemy(query, uri, schema_overrides)).start()
+    return run_cancellable_read("sqlalchemy", lambda: _read_sqlalchemy(query, uri, schema_overrides), cancel_check)
+
+
+def run_cancellable_read(
+    name: str,
+    fn: Callable[[], pl.DataFrame],
+    cancel_check: Callable[[], bool] | None = None,
+) -> pl.DataFrame:
+    """Run ``fn`` as an abandonable attempt with the shared cancel semantics.
+
+    For dialects that own their driver access entirely (no connectorx or
+    SQLAlchemy leg, e.g. a raw DB-API read): the read runs in a daemon thread
+    that is abandoned, not joined, when ``cancel_check`` fires.
+    """
+    attempt = _Attempt(name, fn).start()
     while not attempt.done.wait(_POLL_INTERVAL_SECONDS):
         if cancel_check is not None and cancel_check():
             raise DatabaseReadCancelledError("Database read cancelled")

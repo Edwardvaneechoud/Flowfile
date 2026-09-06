@@ -447,6 +447,29 @@ The tested SQL Server example reads a table and a query through a stored connect
 --8<-- "docs/examples/integrations/database_read_mssql.py:example"
 ```
 
+### Denodo
+
+Denodo connections use `database_type="denodo"` and go through Denodo's PostgreSQL-compatible
+interface (default port 9996) with the standard psycopg2 driver. Use the Virtual DataPort virtual
+database as `database`:
+
+```python
+ff.create_database_connection(
+    connection_name="denodo-vdp",
+    database_type="denodo",
+    host="denodo.example.com",
+    port=9996,
+    database="analytics",
+    username="user",
+    password="pass",
+    ssl_enabled=True,
+)
+
+df = ff.read_database("denodo-vdp", query="SELECT customer_id, revenue FROM customer_sales")
+```
+
+Reads and queries are supported; writing to Denodo has not been verified against a live server.
+
 ## Connection Management
 
 Set up cloud and database connections once, then reference them by name. See [Cloud Connection Management](cloud-connections.md).

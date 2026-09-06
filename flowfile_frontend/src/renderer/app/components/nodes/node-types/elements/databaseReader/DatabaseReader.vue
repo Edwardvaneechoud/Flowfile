@@ -301,6 +301,7 @@ const handleSchemaChange = () => {
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
   }
+  handleFetchTables(true);
 };
 
 // Commit typed text on blur so custom values aren't discarded by el-select

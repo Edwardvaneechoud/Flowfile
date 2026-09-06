@@ -25,6 +25,7 @@ from shared.db_dialects.builtin import (
     PostgresDialect,
     SQLiteDialect,
 )
+from shared.db_dialects.denodo import DenodoDialect
 from shared.db_dialects.duckdb import DuckDBDialect
 from shared.db_dialects.mssql import MSSQLDialect
 
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "POSTGRES_FAMILY",
     "DbDialect",
+    "DenodoDialect",
     "DialectInfo",
     "DuckDBDialect",
     "GenericDialect",
@@ -58,6 +60,7 @@ _BUILTIN_DIALECTS: tuple[DbDialect, ...] = (
     SQLiteDialect(),
     DuckDBDialect(),
     MSSQLDialect(),
+    DenodoDialect(),
 )
 
 _REGISTRY: dict[str, DbDialect] = {d.name: d for d in _BUILTIN_DIALECTS}

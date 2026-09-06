@@ -52,6 +52,14 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     supports_ssl: false,
     available: true,
   },
+  {
+    name: "denodo",
+    display_name: "Denodo",
+    file_based: false,
+    default_port: 9996,
+    supports_ssl: true,
+    available: true,
+  },
 ];
 
 let dialectsPromise: Promise<DbDialectInfo[]> | null = null;

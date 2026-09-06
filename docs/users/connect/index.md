@@ -11,6 +11,7 @@ Each connector below is read-only, write-only, or both. "Where configured" names
 | Connector | Reads | Writes | Where configured | Setup |
 |---|---|---|---|---|
 | PostgreSQL / MySQL / SQLite / DuckDB / SQL Server | yes | yes | Connections → Database | [Databases](../visual-editor/tutorials/database-connectivity.md) |
+| Denodo | yes | untested | Connections → Database | [Denodo](../visual-editor/connections.md#database-connections) |
 | Cloud storage (S3 / ADLS / GCS) | yes | yes | Connections → Cloud Storage | [Cloud storage](../visual-editor/tutorials/cloud-connections.md) |
 | Kafka / Redpanda | yes | no | Connections → Kafka | [Kafka](kafka.md) |
 | REST API | yes | no | REST API Reader node (inline) | [REST APIs](apis.md#rest-apis) |
@@ -23,7 +24,7 @@ Each connector below is read-only, write-only, or both. "Where configured" names
 
 ## Databases
 
-Typed connections to **PostgreSQL**, **MySQL**, **SQLite**, **DuckDB**, and **SQL Server**. Both directions are supported: the Database Reader node (`ff.read_database`) runs a query or reads a whole table, and the Database Writer node (`ff.write_database`) writes a frame back. Credentials are stored encrypted and referenced by name.
+Typed connections to **PostgreSQL**, **MySQL**, **SQLite**, **DuckDB**, **SQL Server**, and **Denodo**. Both directions are supported: the Database Reader node (`ff.read_database`) runs a query or reads a whole table, and the Database Writer node (`ff.write_database`) writes a frame back. Credentials are stored encrypted and referenced by name.
 
 See [Databases](../visual-editor/tutorials/database-connectivity.md) for the connection form and worked reader/writer examples.
 
