@@ -8,7 +8,7 @@
     <div class="node-settings-body">
       <component
         :is="nodeStore.activeDrawerComponent"
-        v-bind="nodeStore.drawerProps"
+        v-bind="componentProps"
         ref="drawerComponentInstance"
         :node-id="nodeStore.node_id"
       />
@@ -36,6 +36,16 @@ interface DrawerComponentInstance {
 }
 
 const nodeStore = useNodeStore();
+
+// Header-only keys must not reach the node component: they would fall through
+// as DOM attributes, and a native `title` tooltip then follows the pointer
+// anywhere inside the drawer.
+const HEADER_ONLY_KEYS = new Set(["title", "intro", "docsUrl"]);
+const componentProps = computed(() =>
+  Object.fromEntries(
+    Object.entries(nodeStore.drawerProps).filter(([key]) => !HEADER_ONLY_KEYS.has(key)),
+  ),
+);
 const editorStore = useEditorStore();
 const drawerComponentInstance = ref<DrawerComponentInstance | null>(null);
 

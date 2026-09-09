@@ -82,6 +82,20 @@ export const applySelectPositions = (
   return selectInputs;
 };
 
+/** old_name → upstream data type, so a picker can offer "restore the source type". */
+export const sourceTypesFromSchema = (
+  tableSchema: FileColumn[] | undefined,
+): Record<string, string> =>
+  Object.fromEntries((tableSchema ?? []).map((column) => [column.name, column.data_type]));
+
+/** Undo a data-type edit in place, keeping the same flag contract as applySelectPositions. */
+export const restoreSourceType = (selectInput: SelectInput, sourceType: string): SelectInput => {
+  selectInput.data_type = sourceType;
+  selectInput.data_type_change = false;
+  selectInput.is_altered = selectInput.old_name !== selectInput.new_name;
+  return selectInput;
+};
+
 export const createNodeSelect = (
   flowId = -1,
   nodeId = -1,

@@ -5,6 +5,7 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser, remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
+from flowfile_core.schemas.input_schema import RawData
 
 
 def create_sample_data():
@@ -939,6 +940,42 @@ class TestPolarsCodeParserSecurity:
         )
         result = func(pl.LazyFrame({"a": [1]}))
         assert result is not None
+
+
+class TestRawDataNestedTypes:
+    """RawData -> FlowDataEngine keeps List/Struct columns nested (with nulls) instead of stringifying."""
+
+    def test_nested_columns_materialise_as_list_and_struct(self):
+        raw = RawData.from_pydict(
+            {"id": [1, 2], "tags": [["a", "b"], ["c"]], "meta": [{"k": 1}, {"k": 2}]}
+        )
+        assert [c.data_type for c in raw.columns] == ["Int64", "List", "Struct"]
+        df = FlowDataEngine(raw).collect()
+        assert df.schema["tags"] == pl.List(pl.String)
+        assert df.schema["meta"] == pl.Struct({"k": pl.Int64})
+        assert df["tags"].to_list() == [["a", "b"], ["c"]]
+
+    def test_nested_columns_with_nulls_stay_nested(self):
+        raw = RawData.from_pydict({"id": [1, 2], "tags": [["a", "b"], None], "meta": [{"k": 1}, None]})
+        assert [c.data_type for c in raw.columns] == ["Int64", "List", "Struct"]
+        df = FlowDataEngine(raw).collect()
+        assert df.schema["tags"] == pl.List(pl.String)
+        assert df.schema["meta"] == pl.Struct({"k": pl.Int64})
+        assert df["tags"].to_list() == [["a", "b"], None]
+        assert df["meta"].to_list() == [{"k": 1}, None]
+
+    def test_scalar_column_with_null_stays_nullable(self):
+        raw = RawData.from_pydict({"id": [1, None], "name": ["x", None]})
+        df = FlowDataEngine(raw).collect()
+        assert df.schema["id"] == pl.Int64
+        assert df["id"].to_list() == [1, None]
+        assert df["name"].to_list() == ["x", None]
+
+    def test_from_pylist_nested_with_nulls(self):
+        raw = RawData.from_pylist([{"id": 1, "tags": ["a"]}, {"id": 2, "tags": None}])
+        df = FlowDataEngine(raw).collect()
+        assert df.schema["tags"] == pl.List(pl.String)
+        assert df["tags"].to_list() == [["a"], None]
 
 
 if __name__ == "__main__":

@@ -246,7 +246,8 @@
 
 /* ===== Edited-cell marker =====
  * A column whose data type differs from the source is worth spotting at a
- * glance — otherwise a one-cell edit is invisible in a 20-row table. */
+ * glance — otherwise a one-cell edit is invisible in a 20-row table. Hovering
+ * the marker shows the change; clicking it reverts to the source type. */
 .column-list .cell-with-marker {
   display: flex;
   align-items: center;
@@ -261,14 +262,17 @@
 
 .column-list .change-marker {
   flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: none;
   font-size: var(--font-size-2xs);
   line-height: 1;
   color: var(--color-accent);
-  cursor: default;
+  cursor: pointer;
 }
 
-.column-list td.is-changed {
-  box-shadow: inset 0 -2px 0 0 var(--color-accent);
+.column-list .change-marker:hover {
+  opacity: 0.6;
 }
 
 /* ===== Drop indicator =====
