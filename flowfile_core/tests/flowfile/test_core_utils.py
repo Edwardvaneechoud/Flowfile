@@ -71,6 +71,21 @@ class TestStandardizeColDtype:
         result = standardize_col_dtype(vals)
         assert all(isinstance(v, str) or v is None for v in result)
 
+    def test_none_does_not_count_as_a_type(self):
+        # a null next to one real type must stay a null, never the string "None"
+        assert standardize_col_dtype([1, None, 3]) == [1, None, 3]
+        assert standardize_col_dtype(["a", None]) == ["a", None]
+        assert standardize_col_dtype([None, None]) == [None, None]
+
+    def test_nested_values_with_none_preserved(self):
+        lists = [["a", "b"], None, ["c"]]
+        dicts = [{"k": 1}, None]
+        assert standardize_col_dtype(lists) == lists
+        assert standardize_col_dtype(dicts) == dicts
+
+    def test_none_still_stringified_when_genuinely_mixed(self):
+        assert standardize_col_dtype(["a", True, None]) == ["a", "True", "None"]
+
 
 class TestEnsureSimilarityDicts:
     """Test ensure_similarity_dicts function."""

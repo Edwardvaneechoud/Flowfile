@@ -191,6 +191,19 @@ def test_dict_sample_input_mixed_int_float_promotes_to_float(monkeypatch):
     assert df["value"].to_list() == [21.0, 62.1, 1.2, 20.0]
 
 
+def test_nested_example_inputs_with_null_reach_worker_typed(monkeypatch):
+    """Parsed example_inputs with List/Struct cells and a null row stay nested, not repr() strings."""
+    code = CODE_WITH_EXAMPLES.replace(
+        '[{"a": [1, 2, 3]}]',
+        '[{"id": [1, 2], "tags": [["a", "b"], None], "meta": [{"k": 1}, None]}]',
+    )
+    df = _capture_first_input_frame(monkeypatch, DryRunRequest(code=code, sample_inputs=None))
+    assert df.schema["tags"] == pl.List(pl.String)
+    assert df.schema["meta"] == pl.Struct({"k": pl.Int64})
+    assert df["tags"].to_list() == [["a", "b"], None]
+    assert df["meta"].to_list() == [{"k": 1}, None]
+
+
 def test_example_inputs_lifted_from_code(monkeypatch):
     captured = {}
 

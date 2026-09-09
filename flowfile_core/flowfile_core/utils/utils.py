@@ -37,8 +37,9 @@ def convert_to_string(v):
 
 
 def standardize_col_dtype(vals):
-    types = set(type(val) for val in vals)
-    if len(types) == 1:
+    """Stringify a genuinely mixed-type column; nulls don't count as a type, so [1, None] stays nullable Int."""
+    types = set(type(val) for val in vals if val is not None)
+    if len(types) <= 1:
         return vals
     elif int in types and float in types:
         return vals

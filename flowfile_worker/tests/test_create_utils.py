@@ -61,6 +61,11 @@ class TestStandardizeColDtype:
         result = standardize_col_dtype(vals)
         assert all(isinstance(v, str) or v is None for v in result)
 
+    def test_none_does_not_count_as_a_type(self):
+        assert standardize_col_dtype([1, None, 3]) == [1, None, 3]
+        assert standardize_col_dtype([["a"], None]) == [["a"], None]
+        assert standardize_col_dtype([{"k": 1}, None]) == [{"k": 1}, None]
+
 
 class TestCreatePlDfTypeSave:
     """Test create_pl_df_type_save function."""
