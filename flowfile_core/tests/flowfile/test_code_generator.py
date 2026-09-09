@@ -5498,6 +5498,73 @@ def test_catalog_writer_scd2_defaults_are_not_emitted():
     assert "scd2_valid_from_column" not in code_output
     assert "scd2_valid_to_column" not in code_output
     assert "scd2_is_current_column" not in code_output
+    assert "scd2_output_mode" not in code_output
+
+
+def _scd2_writer_code(framework_converter_cls, **scd2_kwargs) -> str:
+    """Render one SCD2 catalog writer through a converter and return its generated code."""
+    flow = create_basic_flow()
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="dim_bound",
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2=input_schema.Scd2Settings(**scd2_kwargs),
+        ),
+    )
+    converter = framework_converter_cls(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+    return "\n".join(converter.code_lines)
+
+
+def test_catalog_writer_scd2_output_mode_is_emitted_when_not_default():
+    """The output mode changes what leaves the node, so a non-default value must survive export."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    code_output = _scd2_writer_code(FlowGraphToFlowFrameConverter, output_mode="changed")
+
+    verify_code_contains(code_output, "ff.write_catalog_table(", 'scd2_output_mode="changed"')
+
+
+def test_catalog_writer_scd2_binds_the_call_result():
+    """An SCD2 write emits extra columns, so the generated code must keep what the call returns."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    code_output = _scd2_writer_code(FlowGraphToFlowFrameConverter)
+
+    assert "df_2 = ff.write_catalog_table(" in code_output
+    # The passthrough assignment is exactly what the bound call replaces.
+    assert "df_2 = df_1" not in code_output
+
+
+def test_catalog_writer_non_scd2_keeps_the_passthrough_assignment():
+    """Every other write mode is unchanged: a bare call, then the input passed through."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="plain_bound",
+            write_mode="overwrite",
+        ),
+    )
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    assert "\nff.write_catalog_table(" in f"\n{code_output}"
+    assert "df_2 = ff.write_catalog_table(" not in code_output
+    assert "df_2 = df_1" in code_output
 
 
 def test_catalog_writer_missing_table_name_adds_to_unsupported():

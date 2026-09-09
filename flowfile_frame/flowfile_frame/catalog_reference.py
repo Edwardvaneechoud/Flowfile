@@ -323,10 +323,15 @@ class SchemaReference:
         scd2_valid_to_column: str = "valid_to",
         scd2_is_current_column: str = "is_current",
         scd2_partition_on_current: bool = True,
+        scd2_output_mode: Literal["input", "changed", "current"] = "input",
         description: str | None = None,
-    ) -> None:
-        """Write a :class:`FlowFrame` to a table in this schema."""
-        df.write_catalog_table(
+    ) -> FlowFrame:
+        """Write a :class:`FlowFrame` to a table in this schema.
+
+        Returns the written frame; an ``scd2`` write carries the four generated columns, selected
+        by *scd2_output_mode* (see :meth:`FlowFrame.write_catalog_table`).
+        """
+        return df.write_catalog_table(
             table_name=name,
             schema=self,
             write_mode=write_mode,
@@ -339,6 +344,7 @@ class SchemaReference:
             scd2_valid_to_column=scd2_valid_to_column,
             scd2_is_current_column=scd2_is_current_column,
             scd2_partition_on_current=scd2_partition_on_current,
+            scd2_output_mode=scd2_output_mode,
             description=description,
         )
 

@@ -36,7 +36,7 @@ from flowfile_core.flowfile.flow_graph import (
     _write_catalog_delta_local,
     add_connection,
 )
-from flowfile_core.schemas import input_schema
+from flowfile_core.schemas import input_schema, transform_schema
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
 )
@@ -1269,9 +1269,10 @@ class TestWriteCatalogDeltaLocal:
         df = FlowDataEngine(pl.LazyFrame({"name": ["Alice", "Bob"], "age": [30, 25]}))
         dest_path = tmp_path / "test_table"
 
-        result = _write_catalog_delta_local(df, dest_path, delta_mode="overwrite", merge_keys=None)
+        result, scd2_version = _write_catalog_delta_local(df, dest_path, delta_mode="overwrite", merge_keys=None)
 
         assert result is not None
+        assert scd2_version is None  # only an scd2 write names a version
         assert result["row_count"] == 2
         assert result["column_count"] == 2
         assert isinstance(result["schema"], list)
@@ -1285,7 +1286,7 @@ class TestWriteCatalogDeltaLocal:
         _write_catalog_delta_local(df1, dest_path, delta_mode="overwrite", merge_keys=None)
 
         df2 = FlowDataEngine(pl.LazyFrame({"x": [3, 4]}))
-        result = _write_catalog_delta_local(df2, dest_path, delta_mode="append", merge_keys=None)
+        result, _ = _write_catalog_delta_local(df2, dest_path, delta_mode="append", merge_keys=None)
 
         assert result is not None
         assert result["row_count"] == 2  # metadata reflects the appended batch
@@ -1295,7 +1296,7 @@ class TestWriteCatalogDeltaLocal:
         df = FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]}))
         dest_path = tmp_path / "scd2_local"
 
-        result = _write_catalog_delta_local(
+        result, scd2_version = _write_catalog_delta_local(
             df,
             dest_path,
             delta_mode="scd2",
@@ -1304,6 +1305,7 @@ class TestWriteCatalogDeltaLocal:
         )
 
         assert result is not None
+        assert scd2_version == 0
         assert result["row_count"] == 2
         # 2 data columns + the 4 generated ones.
         assert result["column_count"] == 6
@@ -1322,7 +1324,7 @@ class TestWriteCatalogDeltaLocal:
             scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
         )
 
-        result = _write_catalog_delta_local(
+        result, scd2_version = _write_catalog_delta_local(
             FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["A", "b"]})),
             dest_path,
             delta_mode="scd2",
@@ -1331,6 +1333,7 @@ class TestWriteCatalogDeltaLocal:
         )
 
         assert result is not None
+        assert scd2_version == 1
         assert result["row_count"] == 3
         assert result["scd2_metrics"] == {
             "rows_inserted": 1,
@@ -1341,7 +1344,7 @@ class TestWriteCatalogDeltaLocal:
         }
 
     def test_scd2_unchanged_returns_none(self, tmp_path):
-        """The skip protocol: an unchanged batch returns None so nothing is re-registered."""
+        """The skip protocol: an unchanged batch returns no metadata, so nothing is re-registered."""
         dest_path = tmp_path / "scd2_local_skip"
         frame = pl.LazyFrame({"id": [1], "val": ["a"]})
         _write_catalog_delta_local(
@@ -1352,7 +1355,7 @@ class TestWriteCatalogDeltaLocal:
             scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
         )
 
-        result = _write_catalog_delta_local(
+        result, scd2_version = _write_catalog_delta_local(
             FlowDataEngine(frame),
             dest_path,
             delta_mode="scd2",
@@ -1361,6 +1364,8 @@ class TestWriteCatalogDeltaLocal:
         )
 
         assert result is None
+        # The skip still names the version the writer node reads its output back at.
+        assert scd2_version == 0
 
 
 class TestRegisterCatalogTable:
@@ -1629,6 +1634,28 @@ def _table_row(namespace_id: int, name: str):
         return next(t for t in repo.list_tables(namespace_id=namespace_id) if t.name == name)
 
 
+SCD2_SYSTEM_COLUMNS = ["sk", "valid_from", "valid_to", "is_current"]
+
+
+def _node_output(graph, node_id: int = 2) -> pl.DataFrame:
+    """Materialize what a node passes downstream (the test's own collect, never core's)."""
+    return graph.get_node(node_id).get_resulting_data().data_frame.collect()
+
+
+def _add_code_node(graph, node_id: int, depending_on_id: int, code: str) -> None:
+    """Insert a polars_code node — the shortest way to shape a batch the manual input can't."""
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="polars_code"))
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_ids=[depending_on_id],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=depending_on_id, to_id=node_id))
+
+
 class TestCatalogScd2Writer:
     """SCD2 catalog writes through the full graph, on both execution locations."""
 
@@ -1740,6 +1767,411 @@ class TestCatalogScd2Writer:
         table = _table_row(ns_id, "dim_pinned")
         assert json.loads(table.scd2_config)["compare_columns"] == ["city"]
         assert pl.read_delta(table.file_path).height == 2
+
+
+class TestScd2WriterOutput:
+    """What an SCD2 catalog writer passes downstream, on both execution locations."""
+
+    def test_input_mode_initial_load_carries_the_minted_keys(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "out_initial", ns_id)
+        _run_graph(graph)
+
+        out = _node_output(graph)
+        assert out.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        assert out["id"].to_list() == [1, 2]
+        assert out["is_current"].to_list() == [True, True]
+        assert out["valid_to"].null_count() == 2
+
+        table = pl.read_delta(_table_row(ns_id, "out_initial").file_path).sort("id")
+        assert out.sort("id")["sk"].to_list() == table["sk"].to_list()
+
+    def test_input_mode_mixed_batch_keeps_order_and_maps_every_row(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_mixed", ns_id)
+        _run_graph(first)
+        unchanged_sk_before = (
+            _node_output(first).filter(pl.col("id") == 2)["sk"].item()
+        )
+
+        # Fed in an order that is neither sorted nor the table's, so "input order" is falsifiable.
+        scrambled = [SCD2_V2[2], SCD2_V2[0], SCD2_V2[1]]
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, scrambled, node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_mixed", ns_id)
+        _run_graph(second)
+
+        out = _node_output(second)
+        assert out.height == len(scrambled)
+        assert out["id"].to_list() == [3, 1, 2]
+        assert out["city"].to_list() == ["Copenhagen", "Antwerp", "Berlin"]
+        assert out["sk"].null_count() == 0
+        # The unchanged key keeps the surrogate key of the version it already had.
+        assert out.filter(pl.col("id") == 2)["sk"].item() == unchanged_sk_before
+
+        table = pl.read_delta(_table_row(ns_id, "out_mixed").file_path)
+        current_sks = set(table.filter(pl.col("is_current"))["sk"].to_list())
+        assert set(out["sk"].to_list()) == current_sks
+        assert out["is_current"].to_list() == [True, True, True]
+
+    def test_input_mode_skipped_write_still_returns_the_full_map(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_skipped", ns_id)
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, SCD2_V1, node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_skipped", ns_id)
+        _run_graph(second)
+
+        out = _node_output(second)
+        assert out.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        assert out["id"].to_list() == [1, 2]
+        assert out["sk"].null_count() == 0
+        assert out.sort("id")["sk"].to_list() == (
+            pl.read_delta(_table_row(ns_id, "out_skipped").file_path).sort("id")["sk"].to_list()
+        )
+
+    def test_input_mode_empty_batch_returns_no_rows_with_the_full_schema(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_empty", ns_id)
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, SCD2_V1, node_id=1)
+        _add_code_node(second, 2, 1, "output_df = input_df.head(0)")
+        _add_scd2_writer(second, 3, 2, "out_empty", ns_id)
+        _run_graph(second)
+
+        out = _node_output(second, node_id=3)
+        assert out.height == 0
+        assert out.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        assert out.schema["sk"] == pl.String
+        assert out.schema["is_current"] == pl.Boolean
+
+    def test_changed_mode_returns_the_closed_and_inserted_versions(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_changed", ns_id, output_mode="changed")
+        _run_graph(first)
+        # An initial load touched every row it wrote.
+        assert _node_output(first).height == 2
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, SCD2_V2, node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_changed", ns_id, output_mode="changed")
+        _run_graph(second)
+
+        out = _node_output(second)
+        assert out.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        # id=1 changed (its old version closed + a new one inserted) and id=3 is new; id=2 is
+        # untouched. So: 1 closed + 2 inserted = 3 rows, and the changed key appears twice.
+        assert out.height == 3
+        assert sorted(out["id"].to_list()) == [1, 1, 3]
+        assert sorted(out.filter(pl.col("is_current"))["id"].to_list()) == [1, 3]
+        closed = out.filter(~pl.col("is_current"))
+        assert closed["id"].to_list() == [1]
+        assert closed["city"].to_list() == ["Amsterdam"]
+        assert closed["valid_to"].null_count() == 0
+
+    def test_changed_mode_skipped_write_returns_no_rows(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_changed_skip", ns_id, output_mode="changed")
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, SCD2_V1, node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_changed_skip", ns_id, output_mode="changed")
+        _run_graph(second)
+
+        out = _node_output(second)
+        assert out.height == 0
+        assert out.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+
+    def test_changed_mode_includes_full_snapshot_close_outs(self):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_changed_snap", ns_id, full_snapshot=True, output_mode="changed")
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(second, [SCD2_V1[0]], node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_changed_snap", ns_id, full_snapshot=True, output_mode="changed")
+        _run_graph(second)
+
+        out = _node_output(second)
+        # Nothing changed and nothing is new, but id=2 was end-dated for being absent.
+        assert out["id"].to_list() == [2]
+        assert out["is_current"].to_list() == [False]
+        assert out["valid_to"].null_count() == 0
+
+    def test_current_mode_includes_keys_absent_from_the_input(self, execution_location):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_current", ns_id)
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location=execution_location)
+        _add_manual_input(second, [{"id": 3, "name": "Carol", "city": "Copenhagen"}], node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_current", ns_id, output_mode="current")
+        _run_graph(second)
+
+        out = _node_output(second)
+        assert out.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        assert sorted(out["id"].to_list()) == [1, 2, 3]
+        assert out["is_current"].to_list() == [True, True, True]
+
+    def test_current_mode_skipped_write_still_returns_the_current_slice(self):
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(first, SCD2_V1, node_id=1)
+        _add_scd2_writer(first, 2, 1, "out_current_skip", ns_id, output_mode="current")
+        _run_graph(first)
+
+        second = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(second, SCD2_V1, node_id=1)
+        _add_scd2_writer(second, 2, 1, "out_current_skip", ns_id, output_mode="current")
+        _run_graph(second)
+
+        assert sorted(_node_output(second)["id"].to_list()) == [1, 2]
+
+    def test_output_is_pinned_to_the_version_this_write_settled_on(self, execution_location):
+        """A later commit cannot change what this run passed downstream — on either location.
+
+        Also the end-to-end proof that the version survives the worker round-trip: without it the
+        read falls back to "latest" and the intruder row leaks in.
+        """
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "out_pinned", ns_id, output_mode="current")
+        _run_graph(graph)
+        plan = graph.get_node(2).get_resulting_data().data_frame
+
+        path = _table_row(ns_id, "out_pinned").file_path
+        intruder = pl.read_delta(path).head(1).with_columns(pl.lit(99, dtype=pl.Int64).alias("id"))
+        intruder.write_delta(path, mode="append")
+
+        assert 99 not in plan.collect()["id"].to_list()
+        assert 99 in pl.read_delta(path)["id"].to_list()
+
+    def test_non_scd2_write_still_passes_its_input_through(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="out_plain", namespace_id=ns_id, write_mode="overwrite"
+        )
+        _run_graph(graph)
+
+        out = _node_output(graph)
+        assert out.columns == ["id", "name", "city"]
+        assert out["id"].to_list() == [1, 2]
+
+    def test_wider_stored_business_key_still_joins_in_input_mode(self):
+        """An Int32 batch against an Int64-keyed table: the table side is cast back to join."""
+        ns_id = _create_namespace()
+
+        first = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(first, SCD2_V1, node_id=1)  # manual input types `id` as Int64
+        _add_scd2_writer(first, 2, 1, "out_narrow_key", ns_id)
+        _run_graph(first)
+        assert pl.read_delta(_table_row(ns_id, "out_narrow_key").file_path).schema["id"] == pl.Int64
+
+        second = _create_graph(flow_id=2, execution_location="local")
+        _add_manual_input(second, SCD2_V2, node_id=1)
+        _add_code_node(second, 2, 1, "output_df = input_df.with_columns(pl.col('id').cast(pl.Int32))")
+        _add_scd2_writer(second, 3, 2, "out_narrow_key", ns_id)
+        _run_graph(second)
+
+        out = _node_output(second, node_id=3)
+        assert out.schema["id"] == pl.Int32
+        assert out["id"].to_list() == [1, 2, 3]
+        assert out["sk"].null_count() == 0
+        current_sks = set(
+            pl.read_delta(_table_row(ns_id, "out_narrow_key").file_path)
+            .filter(pl.col("is_current"))["sk"]
+            .to_list()
+        )
+        assert set(out["sk"].to_list()) == current_sks
+
+
+class TestScd2WriterDesignTimeSchema:
+    """The canvas must advertise the generated columns before the flow is ever run."""
+
+    def _writer_graph(self, ns_id: int, **writer_kwargs) -> object:
+        graph = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="schema_probe", namespace_id=ns_id, **writer_kwargs
+        )
+        return graph
+
+    def test_scd2_writer_advertises_the_generated_columns(self):
+        graph = self._writer_graph(
+            _create_namespace(), write_mode="scd2", merge_keys=["id"], scd2=input_schema.Scd2Settings()
+        )
+
+        names = [c.column_name for c in graph.get_node(2).schema]
+        assert names == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        dtypes = {c.column_name: c.data_type for c in graph.get_node(2).schema}
+        assert dtypes["sk"] == "String"
+        assert dtypes["is_current"] == "Boolean"
+
+    def test_renamed_generated_columns_are_advertised_under_their_new_names(self):
+        graph = self._writer_graph(
+            _create_namespace(),
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2=input_schema.Scd2Settings(surrogate_key_column="row_key", is_current_column="active"),
+        )
+
+        names = [c.column_name for c in graph.get_node(2).schema]
+        assert names == ["id", "name", "city", "row_key", "valid_from", "valid_to", "active"]
+
+    def test_non_scd2_writer_advertises_its_input_schema_unchanged(self):
+        graph = self._writer_graph(_create_namespace(), write_mode="overwrite")
+
+        assert [c.column_name for c in graph.get_node(2).schema] == ["id", "name", "city"]
+
+
+class TestScd2WriterOutputHandle:
+    """The canvas handle a writer only has in SCD2 mode.
+
+    The template declares ``output=0``; the settings raise it, so a saved flow must reopen with
+    the handle intact or the downstream edge is orphaned.
+    """
+
+    def _writer_graph(self, **writer_kwargs):
+        graph = _create_graph(flow_id=1, execution_location="local")
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name="handle_probe",
+            namespace_id=_create_namespace(),
+            **writer_kwargs,
+        )
+        return graph
+
+    def test_scd2_writer_declares_one_output_handle(self):
+        graph = self._writer_graph(write_mode="scd2", merge_keys=["id"], scd2=input_schema.Scd2Settings())
+
+        node_input = graph.get_node(2).get_node_input()
+        assert node_input.output == 0
+        assert node_input.output_names == ["main"]
+
+    def test_non_scd2_writer_stays_a_sink(self):
+        graph = self._writer_graph(write_mode="overwrite")
+
+        node_input = graph.get_node(2).get_node_input()
+        assert node_input.output == 0
+        assert node_input.output_names is None
+
+
+class TestScd2WriterDownstream:
+    """A node wired behind an SCD2 writer runs on the frame the writer passes on."""
+
+    def test_downstream_node_reads_the_generated_keys(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "downstream_scd2", ns_id)
+        _add_code_node(graph, 3, 2, 'output_df = input_df.select("id", "sk")')
+        _run_graph(graph)
+
+        out = _node_output(graph, node_id=3)
+        assert out.columns == ["id", "sk"]
+        assert out["id"].to_list() == [1, 2]
+        assert out["sk"].null_count() == 0
+
+    def test_downstream_of_a_non_scd2_writer_sees_the_untouched_input(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="downstream_plain", namespace_id=ns_id
+        )
+        _add_code_node(graph, 3, 2, "output_df = input_df")
+        _run_graph(graph)
+
+        out = _node_output(graph, node_id=3)
+        assert out.columns == ["id", "name", "city"]
+        assert out["city"].to_list() == ["Amsterdam", "Berlin"]
+
+
+class TestScd2WriterPreview:
+    """The writer's own drawer preview and column stats.
+
+    An output-group node previews its upstream input, but an SCD2 writer declares an output
+    handle of its own, so its preview must be the frame it emits.
+    """
+
+    def test_scd2_writer_previews_the_frame_it_emits(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "preview_scd2", ns_id)
+        _run_graph(graph)
+
+        example = graph.get_node(2).get_table_example(include_data=True)
+        assert example.columns == ["id", "name", "city", *SCD2_SYSTEM_COLUMNS]
+        assert example.has_example_data is True
+        assert len(example.data) == 2
+        assert all(row["sk"] is not None for row in example.data)
+
+    def test_non_scd2_writer_still_previews_its_input(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_catalog_writer(graph, node_id=2, depending_on_id=1, table_name="preview_plain", namespace_id=ns_id)
+        _run_graph(graph)
+
+        example = graph.get_node(2).get_table_example(include_data=True)
+        assert example.columns == ["id", "name", "city"]
+
+    def test_scd2_writer_column_stats_cover_a_generated_column(self, execution_location):
+        ns_id = _create_namespace()
+
+        graph = _create_graph(flow_id=1, execution_location=execution_location)
+        _add_manual_input(graph, SCD2_V1, node_id=1)
+        _add_scd2_writer(graph, 2, 1, "stats_scd2", ns_id)
+        _run_graph(graph)
+
+        stats = graph.get_node(2).get_column_stats("sk")
+        assert stats.name == "sk"
+        assert stats.number_of_empty_values == 0
+        assert stats.number_of_filled_values == 2
+        assert stats.number_of_unique_values == 2
 
 
 class TestScd2SettingsValidation:

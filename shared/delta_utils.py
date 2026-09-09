@@ -632,6 +632,10 @@ class Scd2Result:
     ``skipped`` maps onto the existing catalog no-op protocol (no commit, no metadata refresh);
     ``created`` is set only by an initial load. ``rows_closed`` conflates matched closes with
     ``full_snapshot`` close-outs — delta-rs reports a single ``num_target_rows_updated``.
+
+    ``version`` is the Delta version this write settled on: the version it committed, or — for a
+    skip — the version it classified against. It lets a caller read back exactly the table state
+    this write produced instead of racing whatever the latest version happens to be by then.
     """
 
     skipped: bool = False
@@ -641,6 +645,7 @@ class Scd2Result:
     rows_total: int = 0
     rows_current: int = 0
     metrics: dict = field(default_factory=dict)
+    version: int | None = None
 
 
 def _scd2_integer_dtypes() -> tuple:
@@ -741,8 +746,12 @@ def scd2_surrogate_keys(df: pl.DataFrame, business_keys: list[str], valid_from_i
     )
 
 
-def _scd2_parse_iso_utc(value: str) -> datetime:
-    """Parse an ISO-8601 instant into a tz-aware UTC datetime (naive input is assumed UTC)."""
+def scd2_parse_iso_utc(value: str) -> datetime:
+    """Parse an ISO-8601 instant into a tz-aware UTC datetime (naive input is assumed UTC).
+
+    Public because a caller that wants to select the rows one write touched must build its
+    ``valid_from``/``valid_to`` literal from the same instant, by the same rule, as ``_scd2_stamp``.
+    """
     ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
@@ -794,8 +803,9 @@ def scd2_into_delta(
 
     Changed rows are end-dated and re-inserted as a new version, new keys are inserted, and close
     and insert ride one ``MERGE`` so a reader never sees a torn state. A missing target is an
-    initial load. Nothing to do ⇒ ``Scd2Result(skipped=True)`` with zero commits, which makes
+    initial load. Nothing to do ⇒ a skipped ``Scd2Result`` with zero commits, which makes
     re-running an identical batch a true no-op. Validity is half-open, ``[valid_from, valid_to)``.
+    Every outcome carries the Delta ``version`` it settled on, skips included.
 
     Args:
         valid_from_iso: One processing instant for the whole write, supplied by the caller. The
@@ -917,6 +927,8 @@ def _scd2_initial_load(
     """Create the table from *df*, every row current. A 0-row batch still creates it."""
     import os
 
+    from deltalake import DeltaTable
+
     staged = _scd2_stamp(df, business_keys, ts, valid_from_iso, system_columns)
     # The is-current flag partitions new SCD2 tables by default: closed rows are quarantined into
     # files later merges never rewrite, and current-state scans prune to a single partition per
@@ -940,6 +952,7 @@ def _scd2_initial_load(
         rows_inserted=staged.height,
         rows_total=staged.height,
         rows_current=staged.height,
+        version=DeltaTable(output_path, without_files=True, storage_options=storage_options).version(),
     )
 
 
@@ -1145,7 +1158,7 @@ def _scd2_once(
 
     system_columns = [surrogate_key_column, valid_from_column, valid_to_column, is_current_column]
     compare = _scd2_guard_input(df, business_keys, system_columns, compare_columns)
-    ts = _scd2_parse_iso_utc(valid_from_iso)
+    ts = scd2_parse_iso_utc(valid_from_iso)
 
     dt = _open_delta_or_none(output_path, storage_options)
     if dt is None:
@@ -1163,7 +1176,7 @@ def _scd2_once(
     if df.height == 0:
         # An empty batch never end-dates anything, full_snapshot included: an upstream that
         # produced nothing is far more likely to be broken than to mean "everything is gone".
-        return Scd2Result(skipped=True)
+        return Scd2Result(skipped=True, version=dt.version())
 
     target_schema = _scd2_validate_target(
         dt, df, output_path, business_keys, compare, system_columns, partition_by, storage_options
@@ -1176,7 +1189,7 @@ def _scd2_once(
     n_new = int((classified[_SCD2_CLASS_COLUMN] == "new").sum())
     needs_snapshot_close = bool(full_snapshot and current_rows > classified.height - n_new)
     if n_changed == 0 and n_new == 0 and not needs_snapshot_close:
-        return Scd2Result(skipped=True)
+        return Scd2Result(skipped=True, version=dt.version())
     _scd2_guard_clock(output_path, ts, valid_from_column, valid_to_column, storage_options)
 
     to_insert = classified.filter(pl_.col(_SCD2_CLASS_COLUMN) != "unchanged").drop(_SCD2_CLASS_COLUMN)
@@ -1234,6 +1247,7 @@ def _scd2_once(
             predicate=f"target.{_quote_ident(is_current_column)} = true",
         )
     metrics = merger.execute()
+    dt.update_incremental()  # the handle still points at the pre-merge snapshot otherwise
 
     scan_kwargs = {"storage_options": storage_options} if storage_options is not None else {}
     after = pl_.scan_delta(output_path, **scan_kwargs)
@@ -1243,6 +1257,7 @@ def _scd2_once(
         rows_total=int(after.select(pl_.len()).collect().item()),
         rows_current=int(after.filter(pl_.col(is_current_column)).select(pl_.len()).collect().item()),
         metrics=metrics,
+        version=dt.version(),
     )
 
 

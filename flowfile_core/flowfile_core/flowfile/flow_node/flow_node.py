@@ -2003,8 +2003,8 @@ class FlowNode:
         aggregate over without executing or re-pulling data, and
         ``pl.exceptions.ColumnNotFoundError`` for an unknown column.
         """
-        if self.node_template.node_group == "output":
-            # An output node previews its upstream input; mirror get_table_example.
+        if self.node_template.node_group == "output" and not getattr(self.setting_input, "output_names", None):
+            # A sink previews its upstream input; one declaring an output handle previews itself.
             if not self.main_input:
                 raise ColumnStatsUnavailable("Output node has no input connected.")
             return self.main_input[0].get_column_stats(column_name, offload_to_worker=offload_to_worker)
@@ -2040,7 +2040,8 @@ class FlowNode:
         """
         self.print("Getting a table example")
         if self.is_setup and include_data and self.node_stats.has_completed_last_run:
-            if self.node_template.node_group == "output":
+            if self.node_template.node_group == "output" and not getattr(self.setting_input, "output_names", None):
+                # A sink previews its upstream input; one declaring an output handle previews itself.
                 self.print("getting the table example")
                 return self.main_input[0].get_table_example(include_data)
 
@@ -2203,7 +2204,9 @@ class FlowNode:
             # Per-instance handles: pass names verbatim (may be [] -> zero outputs,
             # or a single labeled output) so the frontend derives counts from them.
             template_fields["output_names"] = output_names
-        elif output_names and len(output_names) > 1:
+        elif output_names and (len(output_names) > 1 or template_fields["output"] == 0):
+            # A sink template gains its only handle from the settings (SCD2 catalog writer),
+            # so a single declared name has to travel too.
             template_fields["output_names"] = output_names
         # else: keep the template's own names — an unconfigured node has no
         # settings snapshot yet, and clobbering here would drop the tooltips.

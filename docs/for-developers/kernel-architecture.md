@@ -86,7 +86,7 @@ Read each value from its source rather than assuming a number — the three are 
 
 - Each Flowfile version hardcodes **one exact kernel tag per flavour** (e.g. `edwardvaneechoud/flowfile-kernel-ml:<version>`) in `manager.py`. That single tag — not a `>=x,<y` range — is the version the app is built and tested against.
 - Core reads the running kernel's runtime version from `/health` into `KernelInfo.kernel_version` **for display only** (the "Kernel runtime" line in the Kernel Manager). There is no min/max gate and nothing that rejects or warns about an "out-of-range" kernel.
-- The only **hard** coupling is **polars**: `kernel_runtime` pins a polars (and the `polars-ds` plugin) compatible with the app's `polars >=1.8.2,<1.40`. These must be bumped together, but that compatibility is guaranteed at *image-build time* via the pinned tag — not by a runtime check.
+- The only **hard** coupling is **polars**: `kernel_runtime` pins a polars (and the `polars-ds` plugin) compatible with the app's `polars >=1.17.0,<1.44`. These must be bumped together, but that compatibility is guaranteed at *image-build time* via the pinned tag — not by a runtime check.
 
 So the practical contract is "use the pinned tag." An older kernel image is **not blocked** — it simply may lack fixes or features the app expects. That gap is surfaced as a non-blocking **"Update available"** hint in the Kernel Manager (per flavour) and the kernel details modal (per kernel), rather than a hard version gate.
 

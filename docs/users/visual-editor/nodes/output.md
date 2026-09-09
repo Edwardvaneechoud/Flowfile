@@ -232,6 +232,9 @@ The **SCD2** write mode tracks row history instead of overwriting it: each write
 | **Business key columns** | The business key — the same underlying field as **Key Columns** in the shared write modes (the UI relabels it for SCD2), required for `scd2` |
 | **Compare Columns** | Columns checked for changes. Empty (the default) compares every column that is not a key column and not one of the four generated columns |
 | **Full Snapshot** | Off by default. When on, business keys present in an earlier write but absent from the current input are end-dated as no-longer-current; when off, absent keys stay current |
+| **Output** | What the node passes downstream. Every choice emits the input's columns plus the four generated columns: *All records that are inputted* (the default) returns the input rows with each one's current surrogate key, *All changed records* returns only the versions this run inserted or end-dated, and *All active records* returns the table's whole current slice |
+
+Unlike every other write mode, an SCD2 writer's own output is not its input: it carries the four generated columns, so a downstream node can use the surrogate key of the version just written. The **Output** setting picks which rows come out. The node grows an output handle on the canvas only while **SCD2** is selected — in every other write mode it stays an endpoint.
 
 A table that is already SCD2-tracked accepts only further `scd2` writes or a plain `overwrite`. An `overwrite` rebuilds the table and clears SCD2 tracking; **append**, **upsert**, **update**, and **delete** against an SCD2-tracked table fail at run time with an error, since they would corrupt the version history. Writing `scd2` onto an existing table that isn't already SCD2-tracked also fails — pick a new table name, or delete the existing table first.
 

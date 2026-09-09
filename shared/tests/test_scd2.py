@@ -52,6 +52,10 @@ def _version(path) -> int:
     return DeltaTable(str(path)).version()
 
 
+def _read_at(path, version: int) -> pl.DataFrame:
+    return pl.scan_delta(str(path), version=version).collect()
+
+
 def _base_frame() -> pl.DataFrame:
     return pl.DataFrame(
         {
@@ -399,7 +403,7 @@ class TestCommitAccounting:
 
         result = _scd2(_base_frame(), path, valid_from=VF2)
 
-        assert result == Scd2Result(skipped=True)
+        assert result == Scd2Result(skipped=True, version=before)
         assert _version(path) == before
         assert _read(path).height == 3
 
@@ -431,6 +435,46 @@ class TestCommitAccounting:
         _scd2(pl.DataFrame({"cust_id": [1], "city": ["ROT"], "tier": ["gold"]}), path, valid_from=VF2)
 
         assert not any(c.startswith("__scd2") for c in _read(path).columns)
+
+
+class TestReportedVersion:
+    """Every outcome names the Delta version it settled on, so a caller can read exactly it back."""
+
+    def test_initial_load_reports_the_created_version(self, tmp_path):
+        path = tmp_path / "dim"
+        result = _scd2(_base_frame(), path)
+
+        assert result.version == 0 == _version(path)
+
+    def test_merge_reports_the_committed_version(self, tmp_path):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+
+        result = _scd2(pl.DataFrame({"cust_id": [1], "city": ["ROT"], "tier": ["gold"]}), path, valid_from=VF2)
+
+        assert result.version == 1 == _version(path)
+        # The version must name the post-merge state, not the snapshot classification read.
+        at_version = _read_at(path, result.version).sort("cust_id")
+        assert at_version.filter(pl.col("is_current"))["city"].to_list() == ["ROT", "BER", "PAR"]
+
+    def test_unchanged_skip_reports_the_version_it_classified_against(self, tmp_path):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+        _scd2(pl.DataFrame({"cust_id": [1], "city": ["ROT"], "tier": ["gold"]}), path, valid_from=VF2)
+
+        result = _scd2(pl.DataFrame({"cust_id": [1], "city": ["ROT"], "tier": ["gold"]}), path, valid_from=VF3)
+
+        assert result.skipped is True
+        assert result.version == 1 == _version(path)
+
+    def test_empty_batch_skip_reports_the_version(self, tmp_path):
+        path = tmp_path / "dim"
+        _scd2(_base_frame(), path)
+
+        result = _scd2(_base_frame().clear(), path, valid_from=VF2, snapshot=True)
+
+        assert result.skipped is True
+        assert result.version == 0 == _version(path)
 
 
 # ---- Pre-flight guards ----------------------------------------------------- #

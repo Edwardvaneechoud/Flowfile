@@ -9,6 +9,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from deltalake import DeltaTable
 
 from flowfile_worker import mp_context
 from flowfile_worker.funcs import scd2_delta
@@ -81,6 +82,7 @@ class TestScd2Delta:
         assert result["scd2_metrics"]["rows_inserted"] == 2
         assert result["scd2_metrics"]["rows_closed"] == 0
         assert result["scd2_metrics"]["created"] is True
+        assert result["version"] == 0
         assert Path(output_path, "_delta_log").is_dir()
 
         df = pl.read_delta(output_path)
@@ -105,6 +107,8 @@ class TestScd2Delta:
         assert metrics["rows_current"] == 3
         assert result["row_count"] == 4
         assert result["column_count"] == 6
+        # Core reads the writer's output back at this version, so the merge must report its own.
+        assert result["version"] == DeltaTable(output_path).version() == 1
 
         df = pl.read_delta(output_path)
         closed = df.filter(~pl.col("is_current"))
@@ -124,7 +128,8 @@ class TestScd2Delta:
         progress, _, queue = _run(lf, output_path, run_timestamp=RUN_2)
 
         assert progress.value == 100
-        assert queue.get(timeout=5) == {"skipped": True}
+        # The skip still names a version: the writer node reads the unchanged table back at it.
+        assert queue.get(timeout=5) == {"skipped": True, "version": 0}
         assert pl.read_delta(output_path).height == version_before
 
     def test_full_snapshot_closes_absent_keys(self, tmp_path):
