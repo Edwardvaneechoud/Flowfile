@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { applySelectPositions, createSelectInput } from "./nodeSelectLogic";
+import {
+  applySelectPositions,
+  createSelectInput,
+  restoreSourceType,
+  sourceTypesFromSchema,
+} from "./nodeSelectLogic";
 import type { FileColumn, SelectInput } from "../../../../types/node.types";
 
 const column = (name: string, data_type: string): FileColumn => ({ name, data_type }) as FileColumn;
@@ -106,5 +111,45 @@ describe("applySelectPositions", () => {
     expect(result).toBe(inputs);
     expect(result[0]).toBe(second);
     expect(result[1]).toBe(first);
+  });
+});
+
+describe("sourceTypesFromSchema", () => {
+  it("maps upstream column names to their data types", () => {
+    expect(sourceTypesFromSchema([column("a", "Int64"), column("b", "String")])).toEqual({
+      a: "Int64",
+      b: "String",
+    });
+  });
+
+  it("is empty when the upstream schema is unknown", () => {
+    expect(sourceTypesFromSchema(undefined)).toEqual({});
+  });
+});
+
+describe("restoreSourceType", () => {
+  it("puts the source type back and clears the type-change flags in place", () => {
+    const selectInput = input("a", "String", 0);
+    selectInput.data_type_change = true;
+    selectInput.is_altered = true;
+
+    const result = restoreSourceType(selectInput, "Int64");
+
+    expect(result).toBe(selectInput);
+    expect(selectInput.data_type).toBe("Int64");
+    expect(selectInput.data_type_change).toBe(false);
+    expect(selectInput.is_altered).toBe(false);
+  });
+
+  it("keeps is_altered when the column is also renamed", () => {
+    const selectInput = input("a", "String", 0);
+    selectInput.new_name = "renamed";
+    selectInput.data_type_change = true;
+    selectInput.is_altered = true;
+
+    restoreSourceType(selectInput, "Int64");
+
+    expect(selectInput.data_type_change).toBe(false);
+    expect(selectInput.is_altered).toBe(true);
   });
 });

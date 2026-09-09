@@ -133,6 +133,7 @@ import ArtifactsPanel from "./ArtifactsPanel.vue";
 import debounce from "lodash/debounce";
 import { TableExample, FileColumn } from "../../components/nodes/baseNode/nodeInterfaces";
 import { NodeApi } from "../../api/node.api";
+import { cellValueFormatter, formatCellValue } from "../../utils/cellFormat";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
@@ -275,8 +276,7 @@ const defaultColDef = {
 // a newline becomes a row break). Wrap in double-quotes and double any existing
 // quotes — matches what Excel and Google Sheets emit when copying.
 const serializeCell = (v: unknown): string => {
-  if (v === null || v === undefined) return "";
-  const raw = typeof v === "object" ? JSON.stringify(v) : String(v);
+  const raw = formatCellValue(v);
   if (/[\t\n\r"]/.test(raw)) {
     return `"${raw.replace(/"/g, '""')}"`;
   }
@@ -475,6 +475,7 @@ async function downloadData(nodeId: number) {
         headerName: item.name,
         resizable: true,
         headerComponentParams: { dataType: item.data_type },
+        valueFormatter: cellValueFormatter,
       }));
 
       if (resp.has_example_data === false) {

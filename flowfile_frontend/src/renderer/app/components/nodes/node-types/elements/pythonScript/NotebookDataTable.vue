@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Read-only AG Grid table for flowfile_ctx.display(df), mirroring dataPreview.vue.
 import { computed } from "vue";
+import { cellValueFormatter } from "../../../../../utils/cellFormat";
 import { AgGridVue } from "@ag-grid-community/vue3";
 import { ModuleRegistry } from "@ag-grid-community/core";
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model";
@@ -27,11 +28,7 @@ const columnDefs = computed(() =>
   (props.columns ?? []).map((name) => ({
     field: name,
     headerName: name,
-    // Render List/Struct cells as JSON, not "[object Object]".
-    valueFormatter: (p: { value: unknown }) =>
-      p.value !== null && typeof p.value === "object"
-        ? JSON.stringify(p.value)
-        : (p.value as string),
+    valueFormatter: cellValueFormatter,
   })),
 );
 </script>

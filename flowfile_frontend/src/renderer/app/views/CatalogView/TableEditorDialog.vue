@@ -182,6 +182,7 @@ import "@ag-grid-community/styles/ag-theme-balham.css";
 import type { CatalogTable, NewColumnDtype, NewColumnSpec } from "../../types";
 import { CatalogApi } from "../../api/catalog.api";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { cellValueFormatter } from "../../utils/cellFormat";
 import TableLabelingMode from "./TableLabelingMode.vue";
 import {
   applyCellEdit,
@@ -284,6 +285,7 @@ const columnDefs = computed<ColDef[]>(() => {
     field: col.name,
     headerName: col.name,
     headerTooltip: col.dtype,
+    valueFormatter: cellValueFormatter,
     checkboxSelection: index === 0,
     headerCheckboxSelection: index === 0,
     cellClass: session.keyColumns.includes(col.name) ? "editor-key-cell" : undefined,
