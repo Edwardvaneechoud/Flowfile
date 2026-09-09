@@ -463,3 +463,13 @@ def test_scaffolding_is_ruff_stable():
     if stable is None:
         pytest.skip("ruff not available")
     assert stable, f"generated scaffolding was not ruff-stable:\n{src}"
+
+
+def test_nested_example_data_is_ruff_stable():
+    """Nested example data (List(Struct)) renders as a ruff-stable exploded literal."""
+    state = _designer_state("insubset_nested_examples.py")
+    src = generate_source(state)
+    stable = _ruff_stable(src)
+    if stable is None:
+        pytest.skip("ruff not available")
+    assert stable, f"generated nested example data was not ruff-stable:\n{src}"

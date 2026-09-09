@@ -898,7 +898,13 @@ class RawData(BaseModel):
             return str(pl.String())
         if types == {int, float}:
             return str(pl.Float64())
-        return str(pl.DataType.from_python(next(iter(types))))
+        value_type = next(iter(types))
+        # Nested values have no flat dtype name; the inner type is inferred at construction.
+        if issubclass(value_type, list | tuple):
+            return "List"
+        if issubclass(value_type, dict):
+            return "Struct"
+        return str(pl.DataType.from_python(value_type))
 
     @classmethod
     def from_pylist(cls, pylist: list[dict]):

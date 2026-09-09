@@ -79,6 +79,18 @@ T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 CLOUD_PLACEHOLDER_RECORD_COUNT = 6_666_666
 
 
+def _minimal_field_dtype(field: input_schema.MinimalFieldInfo) -> pl.DataType | None:
+    """Polars dtype for a RawData column, or None (let polars infer) when it needs an inner type.
+
+    Nested types (List/Struct/Array) can't be instantiated from a bare name, so
+    nested data is inferred rather than rejected.
+    """
+    try:
+        return FlowfileColumn.create_from_minimal_field_info(field).get_polars_type().pl_datatype
+    except TypeError:
+        return None
+
+
 def _handle_duplication_join_keys(
     left_df: T, right_df: T, join_manager: transform_schemas.JoinInputManager
 ) -> tuple[T, T, dict[str, str]]:
@@ -377,13 +389,7 @@ class FlowDataEngine:
         Args:
             raw_data: An instance of `RawData` containing the data and schema.
         """
-        flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in raw_data.columns)
-        polars_schema = pl.Schema(
-            [
-                (flowfile_column.column_name, flowfile_column.get_polars_type().pl_datatype)
-                for flowfile_column in flowfile_schema
-            ]
-        )
+        polars_schema = [(field.name, _minimal_field_dtype(field)) for field in raw_data.columns]
         try:
             df = pl.DataFrame(raw_data.data, polars_schema, strict=False)
         except TypeError as e:

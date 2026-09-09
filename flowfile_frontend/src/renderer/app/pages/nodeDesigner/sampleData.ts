@@ -5,9 +5,26 @@
 
 import type { FileColumn } from "@/types";
 
-export type SampleDtype = "str" | "int" | "float" | "bool" | "date" | "datetime";
+export type SampleDtype =
+  | "str"
+  | "int"
+  | "float"
+  | "bool"
+  | "date"
+  | "datetime"
+  | "list"
+  | "struct";
 
-export const SAMPLE_DTYPES: SampleDtype[] = ["str", "int", "float", "bool", "date", "datetime"];
+export const SAMPLE_DTYPES: SampleDtype[] = [
+  "str",
+  "int",
+  "float",
+  "bool",
+  "date",
+  "datetime",
+  "list",
+  "struct",
+];
 
 export const MAX_SAMPLE_ROWS = 100;
 export const MAX_SAMPLE_COLS = 25;
@@ -41,6 +58,15 @@ export function coerceCell(raw: string, dtype: SampleDtype): unknown {
       if (["true", "1", "yes", "y"].includes(lowered)) return true;
       if (["false", "0", "no", "n"].includes(lowered)) return false;
       return null;
+    }
+    case "list":
+    case "struct": {
+      // Nested cells are edited as JSON text; unparseable text becomes a null cell.
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
     }
     case "str":
     case "date":
@@ -84,6 +110,8 @@ function inferDtype(values: unknown[]): SampleDtype {
   if (nonNull.every((v) => typeof v === "boolean")) return "bool";
   if (nonNull.every((v) => typeof v === "number" && Number.isInteger(v))) return "int";
   if (nonNull.every((v) => typeof v === "number")) return "float";
+  if (nonNull.every((v) => Array.isArray(v))) return "list";
+  if (nonNull.every((v) => typeof v === "object")) return "struct";
   return "str";
 }
 
@@ -97,11 +125,17 @@ export function columnDataToTable(data: Record<string, unknown[]>): SampleTable 
     const row: Record<string, string> = {};
     for (const name of names) {
       const cell = data[name][r];
-      row[name] = cell === null || cell === undefined ? "" : String(cell);
+      row[name] = formatCell(cell);
     }
     rows.push(row);
   }
   return { columns, rows };
+}
+
+function formatCell(cell: unknown): string {
+  if (cell === null || cell === undefined) return "";
+  if (typeof cell === "object") return JSON.stringify(cell);
+  return String(cell);
 }
 
 /** Parse CSV/TSV text into a grid table (first row = header). Auto-sniffs delimiter. */
@@ -168,6 +202,8 @@ const SAMPLE_DTYPE_TO_POLARS: Record<SampleDtype, string> = {
   bool: "Boolean",
   date: "Date",
   datetime: "Datetime",
+  list: "List",
+  struct: "Struct",
 };
 
 // The grid's coarse dtype -> its readable data_type_group, mirroring the backend
@@ -179,6 +215,8 @@ const SAMPLE_DTYPE_TO_GROUP: Record<SampleDtype, string> = {
   bool: "Boolean",
   date: "Date",
   datetime: "Date",
+  list: "Complex",
+  struct: "Complex",
 };
 
 /** SampleColumns -> typed FileColumns for column-driven controls (ColumnSelector, …). */
