@@ -98,6 +98,43 @@ describe("columnDataToTable", () => {
     const original = { a: [1, 2, 3], b: ["x", "y", "z"] };
     expect(tableToColumnData(columnDataToTable(original))).toEqual(original);
   });
+
+  it("round trips nested list/struct example values without flattening them", () => {
+    const original = {
+      station_id: ["a", "b"],
+      vehicle_types_available: [
+        [
+          { vehicle_type_id: "1", count: 3 },
+          { vehicle_type_id: "2", count: 1 },
+        ],
+        [{ vehicle_type_id: "1", count: 0 }],
+      ],
+      meta: [
+        { region: "north", tags: ["a", "b"] },
+        { region: "south", tags: [] },
+      ],
+    };
+    const table = columnDataToTable(original);
+    expect(table.columns).toEqual([
+      { name: "station_id", dtype: "str" },
+      { name: "vehicle_types_available", dtype: "list" },
+      { name: "meta", dtype: "struct" },
+    ]);
+    expect(tableToColumnData(table)).toEqual(original);
+    expect(tableToRawData(table).columns).toEqual([
+      { name: "station_id", data_type: "String" },
+      { name: "vehicle_types_available", data_type: "List" },
+      { name: "meta", data_type: "Struct" },
+    ]);
+  });
+
+  it("coerces an unparseable nested cell to null instead of a string", () => {
+    const table: SampleTable = {
+      columns: [{ name: "items", dtype: "list" }],
+      rows: [{ items: "[1, 2]" }, { items: "not json" }],
+    };
+    expect(tableToColumnData(table)).toEqual({ items: [[1, 2], null] });
+  });
 });
 
 describe("sampleColumnsToFileColumns", () => {

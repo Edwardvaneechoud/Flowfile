@@ -25,7 +25,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="Code" name="code">
-        <div class="code-tab-layout">
+        <div class="code-tab-layout" :class="{ 'code-only': store.codeOnly }">
           <FormFieldsOverview v-if="!store.codeOnly" @insert="handleInsertVariable" />
           <div class="code-editor-column">
             <div v-if="store.codeOnly" class="code-only-banner">
@@ -314,6 +314,11 @@ function handleInsertVariable(code: string) {
   height: 100%;
   min-height: 0;
   padding-bottom: 0.75rem;
+}
+
+/* Code-only mode drops the field overview, so the editor takes the full width. */
+.code-tab-layout.code-only {
+  grid-template-columns: 1fr;
 }
 
 .code-editor-column {

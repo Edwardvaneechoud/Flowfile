@@ -438,6 +438,22 @@ def test_example_inputs_and_example_settings_round_trip():
     assert state.example_settings == {"main": {"name_column": "name", "greeting": "Hi"}}
 
 
+def test_nested_example_inputs_round_trip():
+    result = parse("insubset_nested_examples.py")
+    assert result.mode == "designer"
+    assert codes(result) == set()
+
+    (example,) = result.designer_state.example_inputs
+    assert example.data["vehicle_types_available"] == [
+        [{"vehicle_type_id": "1", "count": 3}, {"vehicle_type_id": "2", "count": 1}],
+        [{"vehicle_type_id": "1", "count": 0}, {"vehicle_type_id": "2", "count": 2}],
+    ]
+    assert example.data["meta"] == [
+        {"region": "north", "tags": ["a", "b"]},
+        {"region": "south", "tags": []},
+    ]
+
+
 def test_verbatim_escape_hatches_preserved_in_order():
     result = parse("insubset_verbatim.py")
     assert result.mode == "designer"

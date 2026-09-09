@@ -997,16 +997,14 @@ class _SourceParser:
                 return _INVALID
             data: dict[str, list[Any]] = {}
             for column, values in entry.items():
-                if isinstance(values, tuple):
-                    values = list(values)
-                if not isinstance(values, list) or not all(isinstance(v, _SCALARS) for v in values):
+                if not isinstance(values, list | tuple) or not self._is_plain_json(values):
                     self.error(
                         ParseIssueCode.INVALID_EXAMPLE_INPUT,
-                        f"example values for column '{column}' must be a list of scalars",
+                        f"example values for column '{column}' must be a list of JSON-safe values",
                         node,
                     )
                     return _INVALID
-                data[column] = values
+                data[column] = self._jsonify(list(values))
             examples.append(ExampleInput(data=data))
         return examples
 

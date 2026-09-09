@@ -12,6 +12,7 @@
         :show-data-type="true"
         :show-new-columns="true"
         :show-old-columns="true"
+        :source-types="sourceTypes"
         :show-headers="true"
         :show-title="false"
         title="Select data"
@@ -27,6 +28,7 @@ import { ref } from "vue";
 import {
   applySelectPositions,
   createNodeSelect,
+  sourceTypesFromSchema,
   updateNodeSelect,
 } from "../../../baseNode/selectComponents/nodeSelectLogic";
 import { NodeSelect } from "../../../baseNode/nodeInput";
@@ -41,6 +43,7 @@ const keepMissing = ref(false);
 const nodeStore = useNodeStore();
 const nodeSelect = ref<NodeSelect>(createNodeSelect().value);
 const dataLoaded = ref(false);
+const sourceTypes = ref<Record<string, string>>({});
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSelect,
@@ -58,6 +61,7 @@ const loadNodeData = async (nodeId: number) => {
   const result = await nodeStore.getNodeData(nodeId, false);
   if (result) {
     const main_input = result.main_input;
+    sourceTypes.value = sourceTypesFromSchema(main_input?.table_schema);
     try {
       if (result.setting_input && main_input && result.setting_input.is_setup) {
         nodeSelect.value = result.setting_input;

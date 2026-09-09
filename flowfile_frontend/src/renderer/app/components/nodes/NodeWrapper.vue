@@ -2,45 +2,59 @@
 <template>
   <div v-bind="$attrs">
     <div class="custom-node-header" data="description_display" @dblclick="onTitleClick" @click.stop>
-      <div>
-        <div v-if="!editMode" class="description-display" :style="descriptionTextStyle" @click.stop>
-          <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-            </svg>
-          </div>
-          <pre class="description-text">{{ descriptionSummary }}</pre>
-          <span v-if="isTruncated" class="truncated-indicator" title="Click to see full description"
-            >...</span
-          >
-        </div>
-        <div
-          v-else
-          :id="props.data.id.toLocaleString()"
-          class="custom-node-header"
-          :style="overlayStyle"
-          data="description_input"
-          @click.stop
+      <div
+        v-if="!editMode"
+        class="description-display"
+        :class="{ 'description-display--placeholder': !description }"
+        @click.stop
+      >
+        <pre
+          ref="descriptionTextEl"
+          class="description-text"
+        ><template v-for="(segment, index) in displaySegments" :key="index">{{ segment }}<wbr v-if="index < displaySegments.length - 1" /></template></pre>
+        <button
+          type="button"
+          class="edit-icon"
+          aria-label="Edit description"
+          title="Edit description"
+          @click.stop="toggleEditMode(true)"
         >
-          <textarea
-            :id="props.data.id.toLocaleString()"
-            v-model="description"
-            class="description-input"
-            data="description_input"
-            @blur="toggleEditMode(false)"
-            @click.stop
-          ></textarea>
-        </div>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+        </button>
+        <div v-if="isTruncated" class="description-tooltip" role="tooltip">{{ description }}</div>
+      </div>
+      <div
+        v-else
+        :id="props.data.id.toLocaleString()"
+        class="description-editor"
+        data="description_input"
+        @click.stop
+      >
+        <textarea
+          :id="props.data.id.toLocaleString()"
+          ref="descriptionInputEl"
+          v-model="description"
+          class="description-input"
+          data="description_input"
+          rows="3"
+          placeholder="Describe what this node does"
+          @blur="toggleEditMode(false)"
+          @keydown.esc.prevent="cancelEdit"
+          @click.stop
+        ></textarea>
       </div>
     </div>
     <!-- Right-click bubbles to VueFlow's node handler → the canvas ContextMenu
@@ -124,11 +138,9 @@ import type { NodeTemplate, NodeHandle } from "../../types";
 const nodeStore = useNodeStore();
 const nodeEl = ref<HTMLElement | null>(null);
 
-const mouseX = ref<number>(0);
-const mouseY = ref<number>(0);
 const editMode = ref<boolean>(false);
-
-const CHAR_LIMIT = 100;
+const descriptionTextEl = ref<HTMLElement | null>(null);
+const descriptionInputEl = ref<HTMLTextAreaElement | null>(null);
 
 interface NodeData {
   id: number;
@@ -167,25 +179,9 @@ const parameterInput = computed(() =>
   props.data.inputs.find((input) => input.kind === "parameter"),
 );
 
-const onTitleClick = (event: MouseEvent) => {
+const onTitleClick = () => {
   toggleEditMode(true);
-  mouseX.value = event.clientX;
-  mouseY.value = event.clientY;
 };
-
-const descriptionTextStyle = computed(() => {
-  const textLength = description.value.length;
-  let minWidth = "200px";
-
-  if (textLength < 20) {
-    minWidth = "100px";
-  } else if (textLength < 30) {
-    minWidth = "150px";
-  }
-  return {
-    minWidth: minWidth,
-  };
-});
 
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
@@ -212,6 +208,7 @@ const toggleEditMode = (state: boolean) => {
   if (state) {
     descriptionAtEditStart = description.value;
     window.addEventListener("click", handleClickOutside);
+    nextTick(() => descriptionInputEl.value?.focus());
   } else {
     window.removeEventListener("click", handleClickOutside);
     if (description.value !== descriptionAtEditStart) {
@@ -220,58 +217,36 @@ const toggleEditMode = (state: boolean) => {
   }
 };
 
+const cancelEdit = () => {
+  description.value = descriptionAtEditStart;
+  toggleEditMode(false);
+};
+
 const description = ref<string>("");
 
 const getNodeDescription = async () => {
   description.value = await nodeStore.getNodeDescription(props.data.id);
 };
 
-const overlayStyle = computed(() => {
-  const overlayWidth = 400;
-  const overlayHeight = 200;
-  const buffer = 100;
+const displayText = computed(() => description.value || `${props.data.id}: ${props.data.label}`);
 
-  let left = mouseX.value + buffer;
-  let top = mouseY.value + buffer;
-
-  if (left + overlayWidth > window.innerWidth) {
-    left -= overlayWidth + 2 * buffer;
-  }
-
-  if (top + overlayHeight > window.innerHeight) {
-    top -= overlayHeight + 2 * buffer;
-  }
-
-  left = Math.max(left, buffer);
-  top = Math.max(top, buffer);
-
-  return {
-    top: `${top}px`,
-    left: `${left}px`,
-  };
+// A <wbr> follows every dot so dotted identifiers (schema.table) wrap at the
+// dot instead of overflowing the bubble or breaking mid-token.
+const displaySegments = computed(() => {
+  const parts = displayText.value.split(".");
+  return parts.map((part, index) => (index < parts.length - 1 ? `${part}.` : part));
 });
 
-const isTruncated = computed(() => {
-  try {
-    return description.value.length > CHAR_LIMIT;
-  } catch (error) {
-    return false;
-  }
-});
+// The text is CSS line-clamped; measure whether the clamp actually cut
+// anything so the full-text tooltip only appears when there is more to see.
+const isTruncated = ref(false);
+const measureTruncation = async () => {
+  await nextTick();
+  const el = descriptionTextEl.value;
+  isTruncated.value = el !== null && el.scrollHeight > el.clientHeight + 1;
+};
 
-const descriptionSummary = computed(() => {
-  if (!description.value) {
-    return `${props.data.id}: ${props.data.label}`;
-  }
-
-  if (isTruncated.value) {
-    const truncatePoint = description.value.lastIndexOf(" ", CHAR_LIMIT);
-    const endPoint = truncatePoint > 0 ? truncatePoint : CHAR_LIMIT;
-    return description.value.substring(0, endPoint);
-  }
-
-  return description.value;
-});
+watch([displayText, editMode], measureTruncation);
 
 function getHandleStyle(index: number, total: number) {
   const topMargin = 30;
@@ -307,6 +282,7 @@ watch(
 onMounted(async () => {
   await nextTick();
   await getNodeDescription();
+  await measureTruncation();
 });
 
 onUnmounted(() => {
@@ -329,78 +305,131 @@ onUnmounted(() => {
   border: 2px solid #409eff;
 }
 
+/* Kept narrow so the bubble never widens the node box VueFlow measures;
+   the bubble overflows the header on purpose. */
 .custom-node-header {
-  font-weight: 100;
-  font-size: small;
   width: 20px;
-  white-space: nowrap;
   overflow: visible;
-  text-overflow: ellipsis;
   font-family: var(--font-family-base);
 }
 
 .description-display {
   position: relative;
-  white-space: normal;
-  min-width: 100px;
-  max-width: 300px;
-  width: auto;
-  padding: 2px 4px;
-  cursor: pointer;
-  background-color: var(--color-background-secondary);
-  font-family: var(--font-family-base);
   display: flex;
   align-items: flex-start;
-  gap: 4px;
-  border-radius: 4px;
+  gap: 2px;
+  width: max-content;
+  min-width: 0;
+  max-width: 240px;
+  padding: 2px 2px 2px 6px;
+  border-radius: var(--border-radius-md);
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.description-display:hover {
+  background-color: var(--color-background-tertiary);
   color: var(--color-text-primary);
 }
 
-.edit-icon {
-  opacity: 0;
-  transition: opacity 0.2s;
-  color: var(--color-accent);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  padding: 2px;
+.description-display--placeholder .description-text {
+  color: var(--color-text-tertiary);
 }
 
-.description-display:hover .edit-icon {
+.description-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.edit-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.description-display:hover .edit-icon,
+.edit-icon:focus-visible {
   opacity: 1;
 }
 
 .edit-icon:hover {
-  color: var(--color-accent-hover);
+  color: var(--color-accent);
 }
 
-.description-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  font-family: var(--font-family-base);
+.description-tooltip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 10;
+  width: max-content;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-md);
   font-size: var(--font-size-xs);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 
-.edit-overlay {
-  position: fixed;
-  z-index: 1000;
-  background: var(--color-background-primary);
-  border-radius: 4px;
-  box-shadow: var(--shadow-lg);
+.description-display:hover .description-tooltip {
+  visibility: visible;
+  opacity: 1;
 }
 
 .description-input {
-  width: 200px;
-  height: 75px;
+  display: block;
+  width: 240px;
+  min-height: 64px;
+  padding: 6px 8px;
   resize: both;
-  padding: 4px;
   border: 1px solid var(--color-accent);
-  border-radius: 4px;
-  font-size: small;
-  font-family: var(--font-family-base);
+  border-radius: var(--border-radius-md);
   background-color: var(--color-background-primary);
   color: var(--color-text-primary);
+  box-shadow: var(--shadow-sm);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  outline: none;
+}
+
+.description-input:focus {
+  box-shadow: 0 0 0 3px var(--color-focus-ring-accent);
 }
 
 .handle-input {

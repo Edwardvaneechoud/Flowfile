@@ -56,6 +56,16 @@
             />
           </div>
           <div class="column-list-actions">
+            <button
+              v-if="props.showDataType && revertableColumns.length > 0"
+              class="btn btn-sm btn-ghost"
+              type="button"
+              :title="`Revert all ${revertableColumns.length} data type changes to the source types`"
+              @mousedown.prevent
+              @click="revertAllTypes()"
+            >
+              Revert types
+            </button>
             <template v-if="props.showKeepOption">
               <button
                 class="btn btn-sm btn-ghost"
@@ -149,7 +159,7 @@
                   />
                 </td>
 
-                <td v-if="props.showDataType" :class="{ 'is-changed': isTypeChanged(column) }">
+                <td v-if="props.showDataType">
                   <div class="cell-with-marker">
                     <el-select v-model="column.data_type" size="small">
                       <el-option
@@ -159,13 +169,17 @@
                         :value="dataType"
                       />
                     </el-select>
-                    <span
+                    <button
                       v-if="isTypeChanged(column)"
+                      type="button"
                       class="change-marker"
-                      :title="`Data type changed from ${originalTypeOf(column) ?? 'the source type'}`"
-                      aria-label="Data type changed"
-                      >●</span
+                      :aria-label="markerLabel(column)"
+                      @mouseenter="showTypeCard(column, $event)"
+                      @mouseleave="scheduleHideTypeCard"
+                      @click.stop="revertColumnType(column)"
                     >
+                      ●
+                    </button>
                   </div>
                 </td>
 
@@ -194,6 +208,33 @@
       <button :disabled="!canMove('down')" @click="moveSelectedTo('down')">Move down</button>
       <button :disabled="!canMove('bottom')" @click="moveSelectedTo('bottom')">
         Move to bottom
+      </button>
+    </div>
+
+    <div
+      v-if="typeCard"
+      class="context-menu type-card"
+      :style="{ top: typeCard.y + 'px', right: typeCard.right + 'px' }"
+      @mouseenter="cancelHideTypeCard"
+      @mouseleave="scheduleHideTypeCard"
+    >
+      <div class="type-card-title">{{ typeCard.column.old_name }}</div>
+      <dl class="type-card-detail">
+        <dt>From</dt>
+        <dd>{{ originalTypeOf(typeCard.column) ?? "unknown source type" }}</dd>
+        <dt>To</dt>
+        <dd>{{ typeCard.column.data_type }}</dd>
+      </dl>
+      <div v-if="originalTypeOf(typeCard.column) === undefined" class="type-card-hint">
+        Source type unknown until this node's input has a schema
+      </div>
+      <button
+        v-else
+        type="button"
+        class="type-card-revert"
+        @click="revertColumnType(typeCard.column)"
+      >
+        Click to revert
       </button>
     </div>
   </div>
@@ -225,6 +266,7 @@ import {
   type SelectionState,
   type SortDirection,
 } from "./columnSelection";
+import { restoreSourceType } from "./nodeSelectLogic";
 
 const props = withDefaults(
   defineProps<{
@@ -237,6 +279,8 @@ const props = withDefaults(
     showHeaders?: boolean;
     showTitle?: boolean;
     originalColumnHeader?: string;
+    /** old_name → upstream data type; lets the change marker restore it. */
+    sourceTypes?: Record<string, string>;
   }>(),
   {
     selectInputs: () => [],
@@ -248,6 +292,7 @@ const props = withDefaults(
     showHeaders: true,
     showTitle: true,
     originalColumnHeader: "Original column name",
+    sourceTypes: () => ({}),
   },
 );
 
@@ -291,7 +336,8 @@ const toggleSort = () => {
  * an unsaved edit shows up immediately. A column that arrives already carrying a
  * saved type change has no recoverable source type here — `data_type_change` is
  * the persisted signal for those. (`is_altered` is not: the backend also sets it
- * for a plain rename.)
+ * for a plain rename.) A parent that knows the upstream schema passes
+ * `sourceTypes` instead, which also makes saved changes restorable.
  */
 const sourceDataTypes = new Map<string, string | undefined>();
 
@@ -303,11 +349,70 @@ const rememberSourceTypes = (inputs: readonly SelectInput[]) => {
   });
 };
 
-const originalTypeOf = (column: SelectInput) => sourceDataTypes.get(column.old_name);
+const originalTypeOf = (column: SelectInput) =>
+  props.sourceTypes[column.old_name] ?? sourceDataTypes.get(column.old_name);
 
 const isTypeChanged = (column: SelectInput) => {
-  const source = sourceDataTypes.get(column.old_name);
+  const source = originalTypeOf(column);
   return source === undefined ? Boolean(column.data_type_change) : source !== column.data_type;
+};
+
+const markerLabel = (column: SelectInput) => {
+  const source = originalTypeOf(column);
+  return source === undefined
+    ? `Data type changed from the source type to ${column.data_type}`
+    : `Data type changed from ${source} to ${column.data_type}. Click to revert.`;
+};
+
+/**
+ * Hover card under the change marker. Hiding is delayed so the pointer can
+ * travel from the marker into the card (or past it) without it vanishing.
+ */
+const typeCard = ref<{ column: SelectInput; right: number; y: number } | null>(null);
+let hideTypeCardTimer: ReturnType<typeof setTimeout> | null = null;
+
+const cancelHideTypeCard = () => {
+  if (hideTypeCardTimer) clearTimeout(hideTypeCardTimer);
+  hideTypeCardTimer = null;
+};
+
+const showTypeCard = (column: SelectInput, event: MouseEvent) => {
+  cancelHideTypeCard();
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  // Right-anchored to the marker: long type names grow leftwards, never off-screen.
+  typeCard.value = {
+    column,
+    right: Math.max(8, window.innerWidth - rect.right),
+    y: rect.bottom + 4,
+  };
+};
+
+const hideTypeCard = () => {
+  cancelHideTypeCard();
+  typeCard.value = null;
+};
+
+const scheduleHideTypeCard = () => {
+  cancelHideTypeCard();
+  hideTypeCardTimer = setTimeout(hideTypeCard, 400);
+};
+
+const revertableColumns = computed(() =>
+  localSelectInputs.value.filter(
+    (column) => isTypeChanged(column) && originalTypeOf(column) !== undefined,
+  ),
+);
+
+const revertColumnType = (column: SelectInput) => {
+  const source = originalTypeOf(column);
+  if (source !== undefined) restoreSourceType(column, source);
+  hideTypeCard();
+};
+
+const revertAllTypes = () => {
+  revertableColumns.value.forEach((column) => {
+    restoreSourceType(column, originalTypeOf(column) as string);
+  });
 };
 
 // State and Store
@@ -535,6 +640,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener("click", handleClickOutside);
+  cancelHideTypeCard();
 });
 
 // Emit and Expose
@@ -578,6 +684,58 @@ const removeMissingFields = () => {
 
 .context-menu button:hover {
   background-color: var(--color-background-hover);
+}
+
+.type-card {
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.type-card-title {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.type-card-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.type-card-detail dt {
+  color: var(--color-text-secondary);
+}
+
+.type-card-detail dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.type-card-hint {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.type-card-revert {
+  display: block;
+  padding: 4px 8px 2px;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.type-card-revert:hover {
+  text-decoration: underline;
 }
 
 /* Overrides only — shadow/radius/margin come from the shared .table-wrapper */

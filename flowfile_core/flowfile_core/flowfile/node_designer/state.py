@@ -142,7 +142,7 @@ class EnvironmentState(BaseModel):
 
 
 class ExampleInput(BaseModel):
-    data: dict[str, list[Any]]  # column -> JSON-scalar values
+    data: dict[str, list[Any]]  # column -> JSON values (scalars or nested lists/dicts)
 
 
 class ArtifactDecl(BaseModel):
