@@ -324,8 +324,11 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             )
             return
 
+        # An SCD2 write is the one mode whose output differs from its input (the generated columns
+        # ride along), so its call result is bound instead of the input being passed through.
+        is_scd2 = ws.write_mode == "scd2"
         self._add_code(f"# Write to catalog table: {ws.table_name}")
-        self._add_code("ff.write_catalog_table(")
+        self._add_code(f"{var_name} = ff.write_catalog_table(" if is_scd2 else "ff.write_catalog_table(")
         self._add_code(f"    {input_df},")
         self._add_code(f"    {self._py_str(ws.table_name)},")
         if ws.namespace_id is not None:
@@ -337,8 +340,10 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             self._add_code(f"    merge_keys={ws.merge_keys},")
         if ws.partition_by:
             self._add_code(f"    partition_by={ws.partition_by},")
-        if ws.write_mode == "scd2" and ws.scd2 is not None:
+        if is_scd2 and ws.scd2 is not None:
             s = ws.scd2
+            if s.output_mode != "input":
+                self._add_code(f"    scd2_output_mode={self._py_str(s.output_mode)},")
             if s.compare_columns:
                 self._add_code(f"    scd2_compare_columns={s.compare_columns},")
             if s.full_snapshot:
@@ -356,5 +361,6 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         if ws.description:
             self._add_code(f"    description={self._py_str(ws.description)},")
         self._add_code(")")
-        self._add_code(f"{var_name} = {input_df}")
+        if not is_scd2:
+            self._add_code(f"{var_name} = {input_df}")
         self._add_code("")

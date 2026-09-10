@@ -262,4 +262,18 @@ describe("buildOutputHandles (regression)", () => {
     expect(handles[0].label).toBeUndefined();
     expect(handles[0].title).toBeUndefined();
   });
+
+  // An SCD2 catalog writer is a sink template (output 0) that declares one output name; the
+  // handle exists only because of that name, so a saved flow reopens with the edge intact.
+  it("gives a sink template with one declared name exactly one unlabelled handle", () => {
+    const { outputs } = deriveHandles({ input: 1, output: 0, output_names: ["main"] });
+    expect(outputs.map((h) => h.id)).toEqual(["output-0"]);
+    expect(outputs[0].label).toBeUndefined();
+    expect(outputs[0].title).toBeUndefined();
+  });
+
+  it("keeps a sink template with no declared names handle-free", () => {
+    const { outputs } = deriveHandles({ input: 1, output: 0 });
+    expect(outputs).toEqual([]);
+  });
 });

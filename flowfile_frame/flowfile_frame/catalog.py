@@ -44,6 +44,7 @@ def add_write_to_catalog(
     scd2_valid_to_column: str = "valid_to",
     scd2_is_current_column: str = "is_current",
     scd2_partition_on_current: bool = True,
+    scd2_output_mode: Literal["input", "changed", "current"] = "input",
     description: str | None = None,
 ) -> int:
     """Add a catalog writer node to the flow graph.
@@ -69,6 +70,9 @@ def add_write_to_catalog(
         scd2_is_current_column: Name of the generated is-current column (``write_mode="scd2"``).
         scd2_partition_on_current: Partition new SCD2 tables by the is-current column
             (creation-time only; explicit ``partition_by`` columns nest above it).
+        scd2_output_mode: What the node passes downstream — ``"input"`` (the input rows with the
+            four generated columns joined on), ``"changed"`` (only the rows this write inserted or
+            closed), or ``"current"`` (the table's whole current slice).
         description: Optional description for the node.
 
     Returns:
@@ -92,6 +96,7 @@ def add_write_to_catalog(
                 ("scd2_valid_from_column", scd2_valid_from_column, "valid_from"),
                 ("scd2_valid_to_column", scd2_valid_to_column, "valid_to"),
                 ("scd2_is_current_column", scd2_is_current_column, "is_current"),
+                ("scd2_output_mode", scd2_output_mode, "input"),
             )
             if value != default
         ]
@@ -110,6 +115,7 @@ def add_write_to_catalog(
             valid_to_column=scd2_valid_to_column,
             is_current_column=scd2_is_current_column,
             partition_on_current=scd2_partition_on_current,
+            output_mode=scd2_output_mode,
         )
 
     settings = input_schema.NodeCatalogWriter(
@@ -314,8 +320,9 @@ def write_catalog_table(
     scd2_valid_to_column: str = "valid_to",
     scd2_is_current_column: str = "is_current",
     scd2_partition_on_current: bool = True,
+    scd2_output_mode: Literal["input", "changed", "current"] = "input",
     description: str | None = None,
-) -> None:
+) -> FlowFrame:
     """Write a LazyFrame to the Flowfile catalog as a Delta table.
 
     Args:
@@ -348,13 +355,19 @@ def write_catalog_table(
         scd2_valid_to_column: Name of the generated valid-to column (``write_mode="scd2"``).
         scd2_is_current_column: Name of the generated is-current column (``write_mode="scd2"``).
         scd2_partition_on_current: Partition new SCD2 tables by the is-current column.
+        scd2_output_mode: What the returned frame contains for an SCD2 write — ``"input"``,
+            ``"changed"`` or ``"current"``. See :meth:`FlowFrame.write_catalog_table`.
         description: Optional description for the table.
+
+    Returns:
+        FlowFrame: The written frame. For ``write_mode="scd2"`` it carries the four generated
+        columns (see ``scd2_output_mode``); every other mode passes the input through unchanged.
 
     Raises:
         ValueError: If both ``schema`` and ``namespace_id`` are provided, or
             if merge_keys are required but not provided.
     """
-    df.write_catalog_table(
+    return df.write_catalog_table(
         table_name=table_name,
         schema=schema,
         namespace_id=namespace_id,
@@ -369,5 +382,6 @@ def write_catalog_table(
         scd2_valid_to_column=scd2_valid_to_column,
         scd2_is_current_column=scd2_is_current_column,
         scd2_partition_on_current=scd2_partition_on_current,
+        scd2_output_mode=scd2_output_mode,
         description=description,
     )

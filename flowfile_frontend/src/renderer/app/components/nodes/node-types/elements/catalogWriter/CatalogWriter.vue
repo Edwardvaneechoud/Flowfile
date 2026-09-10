@@ -75,7 +75,7 @@
           <div class="tab-content">
             <div class="catalog-field">
               <label class="catalog-label">Write mode</label>
-              <el-select v-model="physicalWriteMode" size="small">
+              <el-select v-model="physicalWriteMode" size="small" @change="handleWriteModeChange">
                 <el-option label="Overwrite" value="overwrite" />
                 <el-option label="Error if exists" value="error" />
                 <el-option label="Append" value="append" />
@@ -170,6 +170,19 @@
                   End-date current rows whose business key is absent from this run's input.
                 </p>
               </div>
+              <div class="catalog-field">
+                <label class="catalog-label">Output</label>
+                <el-select
+                  v-model="nodeData.catalog_write_settings.scd2.output_mode"
+                  size="small"
+                  placeholder="All records that are inputted"
+                >
+                  <el-option label="All records that are inputted" value="input" />
+                  <el-option label="All changed records" value="changed" />
+                  <el-option label="All active records" value="current" />
+                </el-select>
+                <p class="partition-hint">{{ scd2OutputModeHint }}</p>
+              </div>
               <CollapsibleSection
                 title="Generated columns"
                 :default-open="false"
@@ -251,26 +264,33 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
-import { ElMessage } from "element-plus";
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useFlowStore } from "../../../../../stores/flow-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
+import { suppressedEdgeRemovals } from "../../../../../composables/useDragAndDrop";
 import { CatalogApi } from "../../../../../api/catalog.api";
+import { FlowApi } from "../../../../../api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
+import { buildOutputHandles } from "../../../../../utils/nodeHandles";
 import { CollapsibleSection } from "../../../../common";
 import type { CatalogTable } from "../../../../../types/catalog.types";
+import type { NodeConnection } from "../../../../../types/canvas.types";
 import {
   DEFAULT_SCD2_SETTINGS,
   type CatalogWriteMode,
   type NodeCatalogWriter,
   type NodeData,
+  type Scd2OutputMode,
   type Scd2Settings,
 } from "../../../../../types/node.types";
 
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 const nodeData = ref<NodeCatalogWriter | null>(null);
 const fullNodeData = ref<NodeData | null>(null);
 const dataLoaded = ref(false);
@@ -343,6 +363,104 @@ function ensureConfiguredOption() {
 const activeTab = ref<"physical" | "virtual">("physical");
 // Track the last-used physical write mode so we can restore it when switching back
 const physicalWriteMode = ref<CatalogWriteMode>("overwrite");
+
+// Same derivation the canvas uses on flow open (NodeCatalogWriter.output_names), so switching
+// modes live and reloading the flow agree on the handle. SCD2 is the only mode with an output.
+const updateNodeOutputHandles = (mode: CatalogWriteMode) => {
+  const vfInstance = flowStore.vueFlowInstance;
+  const nodeId = nodeData.value?.node_id;
+  if (!vfInstance || nodeId == null) return;
+  const vfNode = vfInstance.findNode(String(nodeId));
+  if (!vfNode) return;
+  vfNode.data.outputs = buildOutputHandles(mode === "scd2" ? 1 : 0);
+};
+
+// Fired only on user changes (not on load), so drawer opens never prompt.
+const handleWriteModeChange = async (mode: CatalogWriteMode) => {
+  updateNodeOutputHandles(mode);
+  if (mode !== "scd2") await removeStaleOutputEdges();
+};
+
+const removeStaleOutputEdges = async () => {
+  const vfInstance = flowStore.vueFlowInstance;
+  const nodeId = nodeData.value?.node_id;
+  if (!vfInstance || nodeId == null) return;
+  const staleEdges = vfInstance.getEdges.value.filter(
+    (edge: { source: string; sourceHandle?: string | null }) =>
+      edge.source === String(nodeId) && edge.sourceHandle === "output-0",
+  );
+  if (staleEdges.length === 0) return;
+  const plural = staleEdges.length === 1 ? "connection" : "connections";
+  try {
+    await ElMessageBox.confirm(
+      `This node still has ${staleEdges.length} outgoing ${plural} on the canvas. Only an SCD2 ` +
+        "write passes data downstream; every other write mode is an endpoint, so those " +
+        "connections carry nothing. Remove them?",
+      "Write mode has no output",
+      {
+        confirmButtonText: staleEdges.length === 1 ? "Remove edge" : "Remove edges",
+        cancelButtonText: "Keep",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+  await deleteOutputEdges(staleEdges);
+};
+
+// Same backend-first prune as Gate.vue's removeElseEdges.
+const deleteOutputEdges = async (
+  edges: {
+    id: string;
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  }[],
+) => {
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance || !nodeData.value) return;
+  const removedIds: string[] = [];
+  let failedCount = 0;
+  for (const edge of edges) {
+    const connection: NodeConnection = {
+      input_connection: {
+        node_id: Number(edge.target),
+        connection_class: (edge.targetHandle ??
+          "input-0") as NodeConnection["input_connection"]["connection_class"],
+      },
+      output_connection: {
+        node_id: Number(edge.source),
+        connection_class: (edge.sourceHandle ??
+          "output-0") as NodeConnection["output_connection"]["connection_class"],
+      },
+    };
+    try {
+      await FlowApi.deleteConnection(Number(nodeData.value.flow_id), connection);
+    } catch (error) {
+      // 422 = already gone server-side; the edge is stale either way.
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 422) {
+        console.error("Failed to delete stale catalog writer connection:", error);
+        failedCount += 1;
+        continue;
+      }
+    }
+    suppressedEdgeRemovals.add(edge.id);
+    removedIds.push(edge.id);
+  }
+  // One removal per call: Canvas.handleEdgeChange ignores batched change events.
+  for (const id of removedIds) {
+    vfInstance.removeEdges([id]);
+  }
+  if (failedCount > 0) {
+    ElMessage.error(
+      `Could not remove ${failedCount} connection${failedCount === 1 ? "" : "s"}; ` +
+        "they remain on the canvas.",
+    );
+  }
+};
 
 const lazinessCheck = ref<{ is_optimizable: boolean; blockers: string[] } | null>(null);
 const lazinessLoading = ref(false);
@@ -419,6 +537,16 @@ const scd2ColumnErrors = computed<Record<string, string | null>>(() => {
   }
   return errors;
 });
+
+const SCD2_OUTPUT_HINTS: Record<Scd2OutputMode, string> = {
+  input: "Passes on the rows you fed in, each carrying its current surrogate key and validity.",
+  changed: "Passes on only the row versions this run inserted or end-dated.",
+  current: "Passes on every active row in the table, including keys this run did not touch.",
+};
+
+const scd2OutputModeHint = computed(
+  () => SCD2_OUTPUT_HINTS[nodeData.value?.catalog_write_settings.scd2?.output_mode ?? "input"],
+);
 
 // Target-table existence lookup (resolved by name + namespace)
 const existingTable = ref<CatalogTable | null>(null);
@@ -528,7 +656,7 @@ watch(physicalWriteMode, (newMode) => {
   }
 });
 
-function handleTabChange(tab: string) {
+async function handleTabChange(tab: string) {
   if (!nodeData.value) return;
   if (tab === "virtual") {
     nodeData.value.catalog_write_settings.write_mode = "virtual";
@@ -540,6 +668,7 @@ function handleTabChange(tab: string) {
   } else {
     nodeData.value.catalog_write_settings.write_mode = physicalWriteMode.value;
   }
+  await handleWriteModeChange(nodeData.value.catalog_write_settings.write_mode);
 }
 
 async function fetchLazinessCheck() {
@@ -610,6 +739,12 @@ async function loadNodeData(nodeId: number) {
     ) {
       nodeData.value!.catalog_write_settings.scd2.partition_on_current = true;
     }
+    if (
+      nodeData.value!.catalog_write_settings.scd2 &&
+      nodeData.value!.catalog_write_settings.scd2.output_mode === undefined
+    ) {
+      nodeData.value!.catalog_write_settings.scd2.output_mode = "input";
+    }
   } else {
     nodeData.value = {
       catalog_write_settings: {
@@ -646,6 +781,8 @@ async function loadNodeData(nodeId: number) {
   reconcileNamespaceSelection();
   ensureConfiguredOption();
   dataLoaded.value = true;
+  await nextTick();
+  updateNodeOutputHandles(mode);
 }
 
 defineExpose({

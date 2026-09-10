@@ -814,7 +814,8 @@ def scd2_delta(
         )
 
         if result.skipped:
-            queue.put({"skipped": True})
+            # The version rides along even on a skip: core reads the unchanged table back at it.
+            queue.put({"skipped": True, "version": result.version})
             flowfile_logger.info(f"scd2_delta skipped (nothing changed) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -833,6 +834,7 @@ def scd2_delta(
                 "row_count": result.rows_total,
                 "column_count": len(schema),
                 "size_bytes": size_bytes,
+                "version": result.version,
                 "scd2_metrics": {
                     "rows_inserted": result.rows_inserted,
                     "rows_closed": result.rows_closed,

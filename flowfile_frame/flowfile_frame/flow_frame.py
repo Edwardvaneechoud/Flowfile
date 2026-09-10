@@ -2306,6 +2306,7 @@ class FlowFrame:
         scd2_valid_to_column: str = "valid_to",
         scd2_is_current_column: str = "is_current",
         scd2_partition_on_current: bool = True,
+        scd2_output_mode: Literal["input", "changed", "current"] = "input",
         description: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to the Flowfile catalog.
@@ -2334,10 +2335,19 @@ class FlowFrame:
             scd2_valid_to_column: Name of the generated valid-to column (``write_mode="scd2"``).
             scd2_is_current_column: Name of the generated is-current column (``write_mode="scd2"``).
             scd2_partition_on_current: Partition new SCD2 tables by the is-current column.
+            scd2_output_mode: What an ``write_mode="scd2"`` write passes downstream:
+                ``"input"`` (the default) returns the input rows, in order, with the four
+                generated columns looked up from the table — new rows carry the surrogate key
+                minted by this write, unchanged rows their existing one; ``"changed"`` returns
+                only the row versions this write inserted or closed; ``"current"`` returns the
+                table's whole current slice, including keys absent from this input.
             description: Optional description for this operation.
 
         Returns:
-            FlowFrame: A new child data frame representing the written data.
+            FlowFrame: A new child data frame representing the written data. For
+            ``write_mode="scd2"`` it carries the input's columns followed by the four generated
+            columns (surrogate key, valid-from, valid-to, is-current), with the rows selected by
+            ``scd2_output_mode``. Every other write mode passes the input through unchanged.
 
         Raises:
             ValueError: If both ``schema`` and ``namespace_id`` are provided.
@@ -2361,6 +2371,7 @@ class FlowFrame:
             scd2_valid_to_column=scd2_valid_to_column,
             scd2_is_current_column=scd2_is_current_column,
             scd2_partition_on_current=scd2_partition_on_current,
+            scd2_output_mode=scd2_output_mode,
             description=description,
         )
         return self._create_child_frame(new_node_id)

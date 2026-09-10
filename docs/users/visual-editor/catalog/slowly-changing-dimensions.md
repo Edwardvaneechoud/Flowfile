@@ -39,6 +39,27 @@ By default, every column in the input other than the business key and the four g
 
 By default (**Full Snapshot** off), a business key that is absent from one write's input but present in an earlier write is left untouched — it stays current. Turn **Full Snapshot** on when each write is a complete replacement of the dimension: business keys missing from the current input are then end-dated, the same as a changed row, so the "current" set always matches the most recent full input exactly.
 
+## What the writer passes downstream
+
+An SCD2 write is the one catalog write mode whose output differs from its input: the node emits the input's own columns followed by the four generated columns, so a downstream node can use the surrogate key of the version this run wrote — to load a fact table against the dimension it was just built from, for example, without a second read of the table. Every other write mode (including `overwrite` onto an SCD2 table) passes its input through unchanged, with no extra columns.
+
+On the canvas the writer only grows an output handle once **SCD2** is the selected write mode; in every other mode it stays an endpoint with nothing to connect.
+
+The **Output** setting on the writer (`scd2_output_mode` in Python) picks which rows come out. All three choices produce the same columns, so the schema shown on the canvas holds whichever you pick:
+
+| Output | Rows |
+|--------|------|
+| **All records that are inputted** (`"input"`, the default) | The rows you fed in, in the same order and the same number, each carrying the generated columns of its current version — the key minted by this write for a new or changed row, the existing key for an unchanged one |
+| **All changed records** (`"changed"`) | Only the row versions this write touched: every row it inserted plus every row it end-dated. A changed business key therefore appears twice — its closed old version and its new current one |
+| **All active records** (`"current"`) | The table's entire current slice, including business keys that were not in this run's input |
+
+Two cases are worth knowing:
+
+- **A skipped write** (nothing new, nothing changed) still emits: `input` returns the full key map for the rows you fed in, `current` returns the whole current slice, and `changed` returns zero rows because nothing was touched.
+- **An empty batch** returns zero rows in `input` and `changed` mode, with the full column list intact, so a downstream node never sees a different schema on a run that happened to have no data. In `current` mode it returns the table's current slice, which an empty batch never end-dates.
+
+`input` mode never invents rows: a `full_snapshot` close-out of a key that is absent from the input does not appear in it. Use `changed` mode to see close-outs.
+
 ## Reading history
 
 A [Catalog Reader](../nodes/input.md#catalog-reader) on an SCD2-tracked table shows a **History** selector (`scd2_view` in Python):

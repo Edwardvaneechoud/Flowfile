@@ -1670,12 +1670,15 @@ class Scd2Settings(BaseModel):
     The business key is ``CatalogWriteSettings.merge_keys`` — this block only carries the
     change-detection scope and the names of the four generated columns. It is persisted verbatim
     onto the catalog table record (``CatalogTable.scd2_config``) so a reader can filter history
-    without ever reading a writer node's settings.
+    without ever reading a writer node's settings — minus ``partition_on_current`` and
+    ``output_mode``, which describe this write rather than the table's shape.
     """
 
     compare_columns: list[str] = Field(default_factory=list)  # empty => every non-key, non-system column
     full_snapshot: bool = False  # True => current keys absent from the input get end-dated
     partition_on_current: bool = True  # partition new tables by the is-current column (creation-time)
+    # What the writer node emits downstream. Node-local, never persisted on the table record.
+    output_mode: Literal["input", "changed", "current"] = "input"
     surrogate_key_column: str = "sk"
     valid_from_column: str = "valid_from"
     valid_to_column: str = "valid_to"
@@ -1757,6 +1760,16 @@ class NodeCatalogWriter(NodeSingleInput):
     """Settings for a node that writes its input to the catalog."""
 
     catalog_write_settings: CatalogWriteSettings = Field(default_factory=CatalogWriteSettings)
+
+    @property
+    def output_names(self) -> list[str] | None:
+        """The single output handle an SCD2 write declares, so the canvas can build it.
+
+        SCD2 is the one write mode that hands a frame downstream (the input rows plus the four
+        generated columns); every other mode is a sink, so the template's ``output`` stays 0 and
+        the canvas sizes the handle list off ``max(output, len(output_names))``.
+        """
+        return ["main"] if self.catalog_write_settings.write_mode == "scd2" else None
 
     def get_default_description(self) -> str:
         s = self.catalog_write_settings

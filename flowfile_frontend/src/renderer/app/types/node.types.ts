@@ -900,6 +900,8 @@ export type CatalogWriteMode =
   | "scd2"
   | "virtual";
 
+export type Scd2OutputMode = "input" | "changed" | "current";
+
 export interface Scd2Settings {
   compare_columns: string[];
   full_snapshot: boolean;
@@ -908,6 +910,7 @@ export interface Scd2Settings {
   valid_to_column: string;
   is_current_column: string;
   partition_on_current: boolean;
+  output_mode: Scd2OutputMode;
 }
 
 export const DEFAULT_SCD2_SETTINGS: Scd2Settings = {
@@ -918,6 +921,7 @@ export const DEFAULT_SCD2_SETTINGS: Scd2Settings = {
   valid_to_column: "valid_to",
   is_current_column: "is_current",
   partition_on_current: true,
+  output_mode: "input",
 };
 
 export interface CatalogWriteSettings {

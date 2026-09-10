@@ -343,7 +343,10 @@ The tested example writes an SCD2-tracked dimension in two runs and reads back b
     The `upsert`, `update`, `delete`, and `scd2` modes require `merge_keys` to be specified.
 
 !!! info "scd2 keyword arguments require write_mode='scd2'"
-    `write_catalog_table` and `write_table` accept `scd2_compare_columns`, `scd2_full_snapshot`, `scd2_partition_on_current`, and the four `scd2_*_column` name overrides. Passing any of them with a `write_mode` other than `"scd2"` raises an error.
+    `write_catalog_table` and `write_table` accept `scd2_compare_columns`, `scd2_full_snapshot`, `scd2_partition_on_current`, `scd2_output_mode`, and the four `scd2_*_column` name overrides. Passing any of them with a `write_mode` other than `"scd2"` raises an error.
+
+!!! info "What an scd2 write returns"
+    An `scd2` write returns a frame carrying the input's columns followed by the four generated columns, so the surrogate key of the version just written is available downstream. `scd2_output_mode` picks the rows: `"input"` (the default) returns the input rows in order, each with its current surrogate key; `"changed"` returns only the versions this write inserted or end-dated; `"current"` returns the table's whole current slice. Every other write mode returns the input frame unchanged. See [Slowly Changing Dimensions](../../visual-editor/catalog/slowly-changing-dimensions.md#what-the-writer-passes-downstream).
 
 !!! info "Virtual Mode"
     The `virtual` write mode creates a catalog entry without materializing data to disk. When the virtual table is read, the producer flow is re-executed on demand. This requires the flow to be registered in the catalog. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.

@@ -1937,4 +1937,4 @@ test = ["matplotlib", "pytest"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "83a990e370429a56a8512832771bb4d0c1babe3ab4061b3b767a9a7e0fe5e9f7"
+content-hash = "05d4280e0280e8a86c4f5d6b32c86020d7de7e9f24b6e668b6611882a5836f5e"

@@ -175,7 +175,13 @@ from flowfile_core.secret_manager.secret_manager import (
 )
 from shared._version import get_version
 from shared.db_dialects import get_dialect_or_generic
-from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta, scd2_into_delta
+from shared.delta_utils import (
+    get_delta_partition_columns,
+    get_delta_size_bytes,
+    merge_into_delta,
+    scd2_into_delta,
+    scd2_parse_iso_utc,
+)
 from shared.delta_utils import write_delta as _write_delta
 from shared.google_analytics.models import (
     GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
@@ -787,6 +793,99 @@ def _scd2_row_filter(
     return (pl.col(valid_from) <= ts) & (pl.col(valid_to).is_null() | (pl.col(valid_to) > ts))
 
 
+_SCD2_SYSTEM_DTYPES = (pl.String, pl.Datetime("us", "UTC"), pl.Datetime("us", "UTC"), pl.Boolean)
+
+
+def _scd2_system_column_dtypes(cfg) -> dict[str, pl.DataType]:
+    """The four generated columns in canonical order, mapped to the dtypes ``_scd2_stamp`` writes.
+
+    *cfg* is either a resolved SCD2 config dict or an ``Scd2Settings``, so the run-time output and
+    the design-time schema callback derive the same names and dtypes from the same place.
+    """
+    if isinstance(cfg, dict):
+        names = [cfg[f"{k}_column"] for k in ("surrogate_key", "valid_from", "valid_to", "is_current")]
+    else:
+        names = cfg.system_columns
+    return dict(zip(names, _SCD2_SYSTEM_DTYPES, strict=True))
+
+
+def _scd2_output_projection(output_dtypes: dict[str, pl.DataType], table_schema) -> list[pl.Expr]:
+    """Project a table read onto the writer's declared output schema.
+
+    A column the table does not carry becomes a typed NULL and a wider stored dtype is narrowed
+    back to the input's, so the frame leaving the node matches the schema the canvas advertised
+    before the run whatever the table's own history looks like.
+    """
+    exprs: list[pl.Expr] = []
+    for name, dtype in output_dtypes.items():
+        if name not in table_schema:
+            exprs.append(pl.lit(None).cast(dtype).alias(name))
+        elif table_schema[name] != dtype:
+            exprs.append(pl.col(name).cast(dtype, strict=False))
+        else:
+            exprs.append(pl.col(name))
+    return exprs
+
+
+def _scd2_writer_output(
+    df: FlowDataEngine,
+    dest_path: str,
+    scd2_config: dict,
+    output_mode: str,
+    version: int | None,
+    run_timestamp: str,
+    storage_options: dict[str, str] | None,
+) -> FlowDataEngine:
+    """The frame an SCD2 catalog writer emits downstream, read back at the version it settled on.
+
+    All three modes yield the input's columns in input order followed by the four generated
+    columns, so the node's advertised schema holds whichever mode is selected. Pinning the read to
+    *version* is what makes a concurrent writer unable to change what this run passes on. The plan
+    stays lazy — core never materialises it.
+    """
+    scan_kwargs: dict = {} if storage_options is None else {"storage_options": storage_options}
+    if version is not None:
+        scan_kwargs["version"] = version
+    system_dtypes = _scd2_system_column_dtypes(scd2_config)
+    input_dtypes = dict(df.data_frame.collect_schema())
+    output_dtypes = {**input_dtypes, **system_dtypes}
+    is_current = scd2_config["is_current_column"]
+    table = pl.scan_delta(str(dest_path), **scan_kwargs)
+
+    if output_mode == "input":
+        keys = list(scd2_config["business_keys"])
+        current = (
+            table.filter(pl.col(is_current))
+            .select(keys + list(system_dtypes))
+            # A key stored wider than it arrives (Int32 into Int64) must come back to the input's
+            # own dtype, or the join has nothing to match on.
+            .with_columns(pl.col(k).cast(input_dtypes[k], strict=False) for k in keys)
+        )
+        joined = df.data_frame.join(current, on=keys, how="left", maintain_order="left")
+        return FlowDataEngine(joined.select(list(output_dtypes)))
+
+    if output_mode == "changed":
+        ts = pl.lit(scd2_parse_iso_utc(run_timestamp)).cast(pl.Datetime("us", "UTC"))
+        valid_from = scd2_config["valid_from_column"]
+        valid_to = scd2_config["valid_to_column"]
+        table = table.filter((pl.col(valid_from) == ts) | (pl.col(valid_to) == ts))
+    else:
+        table = table.filter(pl.col(is_current))
+    return FlowDataEngine(table.select(_scd2_output_projection(output_dtypes, table.collect_schema())))
+
+
+class CatalogDeltaWrite(NamedTuple):
+    """What one catalog Delta write produced.
+
+    *meta* is ``None`` when the write was skipped (the catalog no-op protocol). *scd2_version* is
+    the Delta version an SCD2 write settled on — committed, or classified against on a skip — and
+    is ``None`` for every other write mode.
+    """
+
+    meta: TableWriteMetadata | None
+    scd2_version: int | None = None
+
+
 def _write_catalog_delta_local(
     df: FlowDataEngine,
     dest_path: str | Path,
@@ -795,8 +894,8 @@ def _write_catalog_delta_local(
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
     scd2_kwargs: dict | None = None,
-) -> TableWriteMetadata | None:
-    """Write a Delta table in-process. Returns metadata dict, or ``None`` when the write was skipped.
+) -> CatalogDeltaWrite:
+    """Write a Delta table in-process. ``meta`` is ``None`` when the write was skipped.
 
     *storage_options* (passed verbatim, ``None`` ⇒ local filesystem) routes the write to object
     storage so standalone CLI/scheduler runs — which have no worker to offload to — can still write
@@ -818,23 +917,26 @@ def _write_catalog_delta_local(
             **(scd2_kwargs or {}),
         )
         if result.skipped:
-            return None
+            return CatalogDeltaWrite(None, result.version)
         # An SCD2 table's row count is its whole history, so the post-write scan is the only truth.
         after = pl.scan_delta(dest, **({} if storage_options is None else {"storage_options": storage_options}))
         after_schema = after.collect_schema()
-        return {
-            "schema": [{"name": n, "dtype": str(d)} for n, d in after_schema.items()],
-            "row_count": result.rows_total,
-            "column_count": len(after_schema),
-            "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
-            "scd2_metrics": {
-                "rows_inserted": result.rows_inserted,
-                "rows_closed": result.rows_closed,
-                "rows_total": result.rows_total,
-                "rows_current": result.rows_current,
-                "created": result.created,
+        return CatalogDeltaWrite(
+            {
+                "schema": [{"name": n, "dtype": str(d)} for n, d in after_schema.items()],
+                "row_count": result.rows_total,
+                "column_count": len(after_schema),
+                "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
+                "scd2_metrics": {
+                    "rows_inserted": result.rows_inserted,
+                    "rows_closed": result.rows_closed,
+                    "rows_total": result.rows_total,
+                    "rows_current": result.rows_current,
+                    "created": result.created,
+                },
             },
-        }
+            result.version,
+        )
     if delta_mode in ("upsert", "update", "delete"):
         wrote = merge_into_delta(
             df.data_frame.collect(),
@@ -849,13 +951,15 @@ def _write_catalog_delta_local(
             df.data_frame, dest, mode=delta_mode, partition_by=partition_by, storage_options=storage_options
         )
     if not wrote:
-        return None
-    return {
-        "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
-        "row_count": df.count(),
-        "column_count": df.number_of_fields,
-        "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
-    }
+        return CatalogDeltaWrite(None)
+    return CatalogDeltaWrite(
+        {
+            "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
+            "row_count": df.count(),
+            "column_count": df.number_of_fields,
+            "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
+        }
+    )
 
 
 def _write_catalog_delta_remote(
@@ -865,8 +969,8 @@ def _write_catalog_delta_remote(
     op_type: str,
     op_kwargs: dict,
     table_name: str,
-) -> TableWriteMetadata | None:
-    """Write a Delta table via the worker service. Returns metadata dict, or ``None`` when skipped."""
+) -> CatalogDeltaWrite:
+    """Write a Delta table via the worker service. ``meta`` is ``None`` when the write was skipped."""
     fetcher = ExternalDfFetcher(
         flow_id=flow_id,
         node_id=node.node_id,
@@ -880,8 +984,9 @@ def _write_catalog_delta_remote(
         result = fetcher.get_result()
     except Exception as e:
         raise RuntimeError(f"Worker failed to write delta table '{table_name}': {e}") from e
+    scd2_version = result.get("version") if isinstance(result, dict) else None
     if isinstance(result, dict) and result.get("skipped"):
-        return None
+        return CatalogDeltaWrite(None, scd2_version)
     meta: TableWriteMetadata = {}
     if isinstance(result, dict):
         # The whitelist stays four keys wide: everything here reaches the catalog service
@@ -889,7 +994,7 @@ def _write_catalog_delta_remote(
         meta = {k: result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
         if result.get("scd2_metrics"):
             meta["scd2_metrics"] = result["scd2_metrics"]
-    return meta
+    return CatalogDeltaWrite(meta, scd2_version)
 
 
 def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
@@ -1462,7 +1567,7 @@ def _handle_physical_table_write(
     # The write follows execution_location like every other writer node; a cloud destination only
     # decides whether storage_options are threaded through, it never forces the worker.
     if graph.flow_settings.execution_location != "local":
-        meta_kwargs = _write_catalog_delta_remote(
+        written = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
             node=graph.get_node(node_catalog_writer.node_id),
             df=df,
@@ -1471,7 +1576,7 @@ def _handle_physical_table_write(
             table_name=settings.table_name,
         )
     else:
-        meta_kwargs = _write_catalog_delta_local(
+        written = _write_catalog_delta_local(
             df,
             dest_path,
             delta_mode,
@@ -1480,9 +1585,24 @@ def _handle_physical_table_write(
             storage_options=storage_options,
             scd2_kwargs=scd2_kwargs,
         )
+    meta_kwargs = written.meta
+
+    def _node_output() -> FlowDataEngine:
+        """Only an SCD2 write changes what leaves the node; every other mode passes its input on."""
+        if delta_mode != "scd2":
+            return df
+        return _scd2_writer_output(
+            df,
+            dest_path,
+            scd2_config,
+            (settings.scd2 or input_schema.Scd2Settings()).output_mode,
+            written.scd2_version,
+            run_timestamp,
+            storage_options,
+        )
 
     if meta_kwargs is None:
-        return df
+        return _node_output()
 
     # Transport-only: the catalog service methods take explicit keyword arguments.
     scd2_metrics = meta_kwargs.pop("scd2_metrics", None)
@@ -1504,7 +1624,7 @@ def _handle_physical_table_write(
         is_cloud=dest_is_cloud,
         scd2_config=scd2_config,
     )
-    return df
+    return _node_output()
 
 
 def _resolve_database_credentials(
@@ -4914,7 +5034,23 @@ class FlowGraph:
 
         def schema_callback():
             input_node: FlowNode = self.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
-            return input_node.schema
+            schema = input_node.schema
+            settings = node_catalog_writer.catalog_write_settings
+            if settings.write_mode != "scd2":
+                return schema
+            # An SCD2 write hands the four generated columns downstream, so the canvas must show
+            # them before the run. A name already upstream is left out: the write rejects that
+            # collision anyway, and inventing a duplicate column here would only hide the reason.
+            upstream = {c.column_name for c in schema}
+            generated = _scd2_system_column_dtypes(settings.scd2 or input_schema.Scd2Settings())
+            return [
+                *schema,
+                *(
+                    FlowfileColumn.create_from_polars_dtype(name, dtype)
+                    for name, dtype in generated.items()
+                    if name not in upstream
+                ),
+            ]
 
         input_node_id = node_catalog_writer.depending_on_id if hasattr(node_catalog_writer, "depending_on_id") else None
         self.add_node_step(

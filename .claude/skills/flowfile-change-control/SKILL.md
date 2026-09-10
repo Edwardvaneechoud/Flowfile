@@ -245,7 +245,7 @@ python3 tools/check_version_sync.py                               # should print
 grep -n "bump-version\|check-version\|^stubs:\|^check_stubs:\|^formula_docs:\|^check_formula_docs:" Makefile
 
 # Deliberate pins
-grep -n "^fastapi\|^polars " pyproject.toml                       # expect fastapi ~0.115.2, polars >=1.8.2,<1.43
+grep -n "^fastapi\|^polars " pyproject.toml                       # expect fastapi ~0.115.2, polars >=1.17.0,<1.44
 sed -n '1,30p' flowfile_core/flowfile_core/auth/api_key.py        # expect hashlib.sha256(...).hexdigest()
 
 # Alembic migration count (root CLAUDE.md's number rots fast — trust this, not prose)

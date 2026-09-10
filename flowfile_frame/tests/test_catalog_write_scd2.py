@@ -143,6 +143,61 @@ class TestWriteCatalogTableScd2Kwargs:
                 scd2_full_snapshot=True,
             )
 
+    def test_output_mode_threads_into_settings_and_defaults_to_input(self):
+        df = ff.from_dict({"id": [1, 2], "name": ["a", "b"]})
+        child = df.write_catalog_table(
+            "scd2_output_mode_table",
+            namespace_id=None,
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2_output_mode="changed",
+        )
+        settings = df.flow_graph.get_node(child.node_id).setting_input.catalog_write_settings
+        assert settings.scd2.output_mode == "changed"
+
+        df2 = ff.from_dict({"id": [1, 2], "name": ["a", "b"]})
+        child2 = df2.write_catalog_table(
+            "scd2_output_mode_default_table", namespace_id=None, write_mode="scd2", merge_keys=["id"]
+        )
+        settings2 = df2.flow_graph.get_node(child2.node_id).setting_input.catalog_write_settings
+        assert settings2.scd2.output_mode == "input"
+
+    def test_output_mode_with_other_write_mode_raises(self):
+        df = ff.from_dict({"id": [1, 2]})
+        with pytest.raises(ValueError, match="scd2_output_mode"):
+            df.write_catalog_table(
+                "not_scd2_output_mode",
+                namespace_id=None,
+                write_mode="overwrite",
+                scd2_output_mode="current",
+            )
+
+    def test_scd2_write_returns_a_frame_carrying_the_generated_columns(self):
+        df = ff.from_dict({"id": [1, 2], "city": ["AMS", "BER"]})
+        child = df.write_catalog_table(
+            "scd2_returned_frame", namespace_id=None, write_mode="scd2", merge_keys=["id"]
+        )
+
+        assert child.columns == ["id", "city", "sk", "valid_from", "valid_to", "is_current"]
+        out = child.collect()
+        assert out["id"].to_list() == [1, 2]
+        assert out["sk"].null_count() == 0
+
+    def test_module_level_write_returns_the_same_frame(self):
+        df = ff.from_dict({"id": [1, 2], "city": ["AMS", "BER"]})
+        child = ff.write_catalog_table(
+            df, "scd2_module_level_frame", namespace_id=None, write_mode="scd2", merge_keys=["id"]
+        )
+
+        assert child is not None
+        assert child.columns == ["id", "city", "sk", "valid_from", "valid_to", "is_current"]
+
+    def test_non_scd2_write_returns_the_input_columns_unchanged(self):
+        df = ff.from_dict({"id": [1, 2], "city": ["AMS", "BER"]})
+        child = df.write_catalog_table("plain_returned_frame", namespace_id=None, write_mode="overwrite")
+
+        assert child.columns == ["id", "city"]
+
     def test_scd2_defaults_produce_default_scd2_settings(self):
         df = ff.from_dict({"id": [1, 2], "name": ["a", "b"]})
         child = df.write_catalog_table(
