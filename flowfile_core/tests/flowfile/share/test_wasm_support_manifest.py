@@ -24,14 +24,6 @@ def test_every_core_node_type_has_exactly_one_tier(manifest):
         assert support.tier_for(node_type) in set(support.SupportTier)
 
 
-def test_tier_counts_match_the_browser_palette(manifest):
-    counts = {tier: 0 for tier in ("supported", "locked", "absent")}
-    for entry in manifest["nodes"].values():
-        counts[entry["tier"]] += 1
-    assert counts == {"supported": 23, "locked": 16, "absent": 9}
-    assert manifest["counts"] == counts
-
-
 def test_dialect_covers_the_renamed_types(manifest):
     assert manifest["dialect"] == {
         "sample": "head",

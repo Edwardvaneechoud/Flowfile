@@ -441,6 +441,10 @@ export function inferOutputSchema(
     case 'record_id':
       return inferRecordIdSchema(inputSchema, settings as NodeRecordIdSettings)
 
+    // Count Records collapses the input to one row with a single count column.
+    case 'record_count':
+      return [{ name: 'number_of_records', data_type: 'UInt32' }]
+
     case 'dynamic_rename':
       return inferDynamicRenameSchema(inputSchema, settings as NodeDynamicRenameSettings)
 

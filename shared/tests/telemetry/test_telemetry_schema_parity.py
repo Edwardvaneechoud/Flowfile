@@ -40,6 +40,13 @@ MAXIMAL_PROPS: dict[str, dict[str, Any]] = {
     },
     "flow_run_failed": {"error_class": "ColumnNotFoundError"},
     "export_code_used": {"target": "polars"},
+    "alteryx_imported": {
+        "tool_count_bucket": "8-15",
+        "converted_tools": ["Filter", "TextInput"],
+        "partial_tools": ["Formula"],
+        "placeholder_tools": ["DateTime", "user_macro"],
+    },
+    "alteryx_import_failed": {"error_class": "YxmdParseError"},
 }
 
 

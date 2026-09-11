@@ -142,7 +142,8 @@
       "wasm_type": "read"
     },
     "record_count": {
-      "tier": "absent"
+      "tier": "supported",
+      "wasm_type": "record_count"
     },
     "record_id": {
       "tier": "supported",
@@ -244,8 +245,8 @@
     ]
   },
   "counts": {
-    "supported": 23,
+    "supported": 24,
     "locked": 16,
-    "absent": 9
+    "absent": 8
   }
 }

@@ -45,6 +45,24 @@ def test_read_csv_falls_back_when_date_parsing_would_error():
     assert [c["name"] for c in r["schema"]] == ["id", "name"]
 
 
+def test_record_count_reduces_to_a_single_number_of_records_row():
+    assert read_csv(1, "id,name\n1,alice\n2,bob\n3,carol\n")["success"] is True
+
+    r = engine.execute_record_count(2, 1, {})
+    assert r["success"] is True, r.get("error")
+    assert [c["name"] for c in r["schema"]] == ["number_of_records"]
+
+    counted = engine.get_lazyframe(2).collect()
+    assert counted.columns == ["number_of_records"]
+    assert counted["number_of_records"].to_list() == [3]
+
+
+def test_record_count_missing_upstream_input_errors():
+    r = engine.execute_record_count(2, 1, {})
+    assert r["success"] is False
+    assert "No input data" in r["error"]
+
+
 def test_read_filter_select_output_chain():
     assert read_csv(1, "id,name,age\n1,alice,30\n2,bob,25\n3,carol,40\n")["success"] is True
 

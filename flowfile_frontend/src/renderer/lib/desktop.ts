@@ -348,4 +348,12 @@ export const desktop = {
   onViewZoom(handler: (direction: "in" | "out" | "reset") => void): Promise<() => void> {
     return listen<"in" | "out" | "reset">("view:zoom", handler);
   },
+
+  /**
+   * Native Help-menu "Request a Node" emitted by the Tauri shell; the renderer
+   * opens its in-app dialog. No-op in web mode. See src-tauri/src/menu.rs.
+   */
+  onHelpRequestNode(handler: () => void): Promise<() => void> {
+    return listen<unknown>("help:request-node", handler);
+  },
 };

@@ -158,6 +158,41 @@ def test_file_path_in_error_class_is_rejected(client, data_dir):
     assert read_lines(data_dir) == []
 
 
+def test_alteryx_import_events_are_accepted_and_stored(client, data_dir):
+    imported = make_event(
+        "alteryx_imported",
+        props={
+            "tool_count_bucket": "4-7",
+            "converted_tools": ["DbFileOutput", "TextInput"],
+            "partial_tools": [],
+            "placeholder_tools": ["DateTime", "user_macro"],
+        },
+    )
+    failed = make_event("alteryx_import_failed", props={"error_class": "YxmdParseError"})
+    response = client.post("/events", json={"events": [imported, failed]})
+    assert response.status_code == 202
+    assert response.json() == {"accepted": 2, "rejected": 0}
+    assert [line["props"] for line in read_lines(data_dir)] == [imported["props"], failed["props"]]
+
+
+@pytest.mark.parametrize(
+    "bad_list",
+    [
+        ["Something.yxmc"],
+        ["C:\\Users\\x\\Something.yxmc"],
+        ["Quarterly Revenue (confidential)"],
+        "Filter",
+        ["Filter"] * 61,
+    ],
+)
+def test_alteryx_tool_lists_only_accept_identifiers(client, data_dir, bad_list):
+    props = {"tool_count_bucket": "1-3", "converted_tools": [], "partial_tools": [], "placeholder_tools": bad_list}
+    response = client.post("/events", json={"events": [make_event("alteryx_imported", props=props)]})
+    assert response.status_code == 202
+    assert response.json() == {"accepted": 0, "rejected": 1}
+    assert read_lines(data_dir) == []
+
+
 def test_unknown_event_name_is_rejected(client, data_dir):
     response = client.post("/events", json={"events": [make_event("totally_unknown")]})
     assert response.status_code == 202

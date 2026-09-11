@@ -48,6 +48,7 @@ const SINGLE_INPUT_EXECUTORS: Record<string, string> = {
   group_by: 'execute_group_by',
   sort: 'execute_sort',
   record_id: 'execute_record_id',
+  record_count: 'execute_record_count',
   unique: 'execute_unique',
   head: 'execute_head',
   explore_data: 'execute_explore_data',
@@ -2255,6 +2256,7 @@ result
         case 'group_by':
         case 'sort':
         case 'record_id':
+        case 'record_count':
         case 'unique':
         case 'head':
         case 'explore_data':
@@ -2772,6 +2774,10 @@ result
             offset: 1
           }
         } as any
+
+      // No settings to configure — mark it set up so it runs straight away.
+      case 'record_count':
+        return { ...base, is_setup: true } as NodeSettings
 
       case 'dynamic_rename':
         return {

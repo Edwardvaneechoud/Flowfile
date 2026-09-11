@@ -1,0 +1,36 @@
+name: Node request
+description: Ask for a new built-in node, or a capability an existing node is missing
+labels: ["node-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, search the open [node requests](https://github.com/edwardvaneechoud/Flowfile/issues?q=is%3Aissue+is%3Aopen+label%3Anode-request) and 👍 an existing one if it matches. For a tool that the Alteryx importer turned into a placeholder, use the **Alteryx node request** form instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should the node do?
+      description: The transformation, source or destination in your own words, plus the settings you would expect to configure.
+    validations:
+      required: true
+  - type: input
+    id: origin
+    attributes:
+      label: Where do you know it from?
+      description: The tool or library it exists in today, if any.
+      placeholder: KNIME Row Filter, a Polars function, a SQL pattern
+  - type: textarea
+    id: example
+    attributes:
+      label: Example input and output (optional)
+      description: A few rows in, a few rows out. Remove anything private.
+      render: text
+  - type: dropdown
+    id: workaround
+    attributes:
+      label: Can you do this today?
+      options:
+        - No
+        - Yes, with a Polars code node
+        - Yes, with a custom node
+        - Yes, with several nodes

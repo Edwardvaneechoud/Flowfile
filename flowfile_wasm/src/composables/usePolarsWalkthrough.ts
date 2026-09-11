@@ -62,6 +62,7 @@ export const POLARS_DOC_FOR_NODE: Record<string, PolarsDoc> = {
   head: lazy('head', 'Takes just the first N rows.'),
   sample: lazy('filter', 'Keeps a random subset of the rows.'),
   record_id: lazy('with_row_index', 'Numbers the rows with a counter column.'),
+  record_count: lazy('select', 'Counts the rows into a one-row table with a single number_of_records column.'),
   dynamic_rename: lazy('rename', 'Renames columns without touching the data.'),
   pivot: {
     label: 'DataFrame.pivot',
