@@ -6,6 +6,8 @@ use tauri_plugin_opener::OpenerExt;
 
 const DOCS_URL: &str = "https://edwardvaneechoud.github.io/Flowfile/";
 const ISSUES_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile/issues";
+const NODE_REQUEST_URL: &str =
+    "https://github.com/Edwardvaneechoud/Flowfile/issues/new?template=node_request.yml";
 const REPO_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -87,10 +89,18 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let docs = MenuItem::with_id(app, "help-docs", "Documentation", true, None::<&str>)?;
     let issues = MenuItem::with_id(app, "help-issues", "Report an Issue", true, None::<&str>)?;
+    let request_node = MenuItem::with_id(
+        app,
+        "help-request-node",
+        "Request a Node",
+        true,
+        None::<&str>,
+    )?;
     let repo = MenuItem::with_id(app, "help-repo", "View on GitHub", true, None::<&str>)?;
     let help_menu = SubmenuBuilder::new(app, "Help")
         .item(&docs)
         .item(&issues)
+        .item(&request_node)
         .separator()
         .item(&repo)
         .build()?;
@@ -118,6 +128,7 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
         }
         "help-docs" => open_external(app, DOCS_URL),
         "help-issues" => open_external(app, ISSUES_URL),
+        "help-request-node" => open_external(app, NODE_REQUEST_URL),
         "help-repo" => open_external(app, REPO_URL),
         _ => {}
     }

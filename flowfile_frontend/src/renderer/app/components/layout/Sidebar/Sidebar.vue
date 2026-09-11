@@ -38,6 +38,10 @@
               <i class="fa-solid fa-book"></i>
               <span>Documentation</span>
             </button>
+            <button class="sidebar-more-item" @click="handleRequestNode">
+              <i class="fa-solid fa-lightbulb"></i>
+              <span>Request a node</span>
+            </button>
             <button class="sidebar-more-item" @click="handleOpenPrivacy">
               <i class="fa-solid fa-shield-halved"></i>
               <span>Privacy &amp; data collection</span>
@@ -74,7 +78,7 @@ import { PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { desktop } from "../../../../lib/desktop";
-import { DOCS_BASE_URL } from "../../../lib/docsLinks";
+import { DOCS_BASE_URL, NODE_REQUEST_ISSUE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useMultiUser } from "../../../composables/useMultiUser";
 import { useTheme } from "../../../composables/useTheme";
@@ -191,6 +195,10 @@ const handleOpenPrivacy = () => {
 
 const handleOpenDocumentation = () => {
   void desktop.openExternal(DOCS_BASE_URL);
+};
+
+const handleRequestNode = () => {
+  void desktop.openExternal(NODE_REQUEST_ISSUE_URL);
 };
 
 const handleLogout = () => {

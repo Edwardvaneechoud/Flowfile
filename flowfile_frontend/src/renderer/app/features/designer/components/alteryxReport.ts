@@ -4,6 +4,7 @@ import type {
   AlteryxToolRow,
   AlteryxToolStatus,
 } from "../../../api/alteryx.api";
+import { NEW_ISSUE_URL } from "../../../lib/docsLinks";
 
 export interface StatusChip {
   label: string;
@@ -16,7 +17,7 @@ export interface NodeRequestLink {
   existing: boolean;
 }
 
-export const NEW_NODE_REQUEST_URL = "https://github.com/edwardvaneechoud/Flowfile/issues/new";
+export const NEW_NODE_REQUEST_URL = NEW_ISSUE_URL;
 export const NODE_REQUEST_TEMPLATE = "alteryx_node_request.yml";
 
 // Keys the converter assigns to tools Alteryx does not ship; there is nothing to request for those.
