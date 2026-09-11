@@ -6,8 +6,6 @@ use tauri_plugin_opener::OpenerExt;
 
 const DOCS_URL: &str = "https://edwardvaneechoud.github.io/Flowfile/";
 const ISSUES_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile/issues";
-const NODE_REQUEST_URL: &str =
-    "https://github.com/Edwardvaneechoud/Flowfile/issues/new?template=node_request.yml";
 const REPO_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -128,7 +126,7 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
         }
         "help-docs" => open_external(app, DOCS_URL),
         "help-issues" => open_external(app, ISSUES_URL),
-        "help-request-node" => open_external(app, NODE_REQUEST_URL),
+        "help-request-node" => emit_help_request_node(app),
         "help-repo" => open_external(app, REPO_URL),
         _ => {}
     }
@@ -137,6 +135,11 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
 fn emit_zoom<R: Runtime>(app: &AppHandle<R>, direction: &str) {
     use tauri::Emitter;
     let _ = app.emit("view:zoom", direction);
+}
+
+fn emit_help_request_node<R: Runtime>(app: &AppHandle<R>) {
+    use tauri::Emitter;
+    let _ = app.emit("help:request-node", ());
 }
 
 fn open_external<R: Runtime>(app: &AppHandle<R>, url: &str) {

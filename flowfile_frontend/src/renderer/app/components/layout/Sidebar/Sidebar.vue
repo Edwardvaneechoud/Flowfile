@@ -14,6 +14,7 @@
       </div>
       <div class="footer-btn-wrapper" data-tooltip="Help &amp; more">
         <el-popover
+          ref="morePopover"
           placement="right-end"
           :width="220"
           trigger="click"
@@ -65,20 +66,21 @@
       v-bind="currentPageHelp"
       @close="showHelp = false"
     />
+    <NodeRequestDialog v-model:visible="showNodeRequest" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import NavigationRoutes, { type INavigationRoute } from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
-import { PageHelpModal } from "../../common";
+import { NodeRequestDialog, PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { desktop } from "../../../../lib/desktop";
-import { DOCS_BASE_URL, NODE_REQUEST_ISSUE_URL } from "../../../lib/docsLinks";
+import { DOCS_BASE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useMultiUser } from "../../../composables/useMultiUser";
 import { useTheme } from "../../../composables/useTheme";
@@ -197,9 +199,19 @@ const handleOpenDocumentation = () => {
   void desktop.openExternal(DOCS_BASE_URL);
 };
 
+const morePopover = ref<{ hide: () => void } | null>(null);
+const showNodeRequest = ref(false);
 const handleRequestNode = () => {
-  void desktop.openExternal(NODE_REQUEST_ISSUE_URL);
+  morePopover.value?.hide();
+  showNodeRequest.value = true;
 };
+
+// The native Help menu forwards its "Request a Node" item here (see menu.rs).
+let stopHelpRequestNode: (() => void) | null = null;
+onMounted(async () => {
+  stopHelpRequestNode = await desktop.onHelpRequestNode(handleRequestNode);
+});
+onBeforeUnmount(() => stopHelpRequestNode?.());
 
 const handleLogout = () => {
   // Store logout, not authService: per-user store state must be torn down too.

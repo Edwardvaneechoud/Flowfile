@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import events, flow_file_handler, main
 from flowfile_core import telemetry as telemetry_glue
-from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError, node_requests
+from flowfile_core.flowfile import node_requests
+from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError
 from flowfile_core.routes import converters as converters_module
 
 FIXTURE_DIR = Path(__file__).parent.parent / "flowfile" / "converters" / "fixtures"
@@ -227,7 +228,10 @@ class TestNodeRequests:
         issue_url = "https://github.com/edwardvaneechoud/Flowfile/issues/42"
         self._github_answers(
             monkeypatch,
-            [{"title": "[Alteryx node] DateTime", "html_url": issue_url}, {"title": "unrelated", "html_url": "x"}],
+            [
+                {"number": 42, "title": "[Alteryx node] DateTime", "html_url": issue_url},
+                {"number": 43, "title": "unrelated", "html_url": "x"},
+            ],
         )
         response = client.get(self.ENDPOINT)
         assert response.status_code == 200, response.text
