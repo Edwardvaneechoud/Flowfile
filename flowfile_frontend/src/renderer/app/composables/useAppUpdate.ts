@@ -1,7 +1,7 @@
 // Shared "which version am I on / is there a newer one" behaviour for the
 // About dialog, the home footer and the sidebar help menu. Desktop checks go
 // through the Tauri updater (and its install prompt); browser-served installs
-// ask PyPI and are pointed at the release notes instead.
+// read the latest GitHub release and are pointed at its notes instead.
 import { computed, ref } from "vue";
 
 import { desktop, isDesktop } from "../../lib/desktop";
