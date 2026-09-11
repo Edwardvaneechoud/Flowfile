@@ -10,9 +10,10 @@ const OPEN_STATE_STORAGE_KEY = "nodeList.groupOpenState";
 const FAVORITES_STORAGE_KEY = "nodeList.favorites";
 const HIDDEN_STORAGE_KEY = "nodeList.hiddenNodes";
 
-// Synthetic groups wrapping the regular palette: favorites on top, hidden at the bottom.
-export const FAVORITES_GROUP_KEY = "favorites";
-export const HIDDEN_GROUP_KEY = "hidden";
+// Synthetic groups wrapping the regular palette: favorites on top, hidden at the
+// bottom. Namespaced so a custom node's free-form node_group slug can't collide.
+export const FAVORITES_GROUP_KEY = "__favorites__";
+export const HIDDEN_GROUP_KEY = "__hidden__";
 
 // Fixed built-in order + today's labels (identical to the old CategoryKey map).
 export const BUILTIN_GROUPS: { key: string; label: string }[] = [

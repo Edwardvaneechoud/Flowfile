@@ -148,6 +148,21 @@ describe("buildPaletteGroups", () => {
     expect(groups[1].nodes.map((n) => n.item)).toEqual(["b", "z"]);
   });
 
+  it("keeps a custom node_group named like a synthetic group distinct from it", () => {
+    const nodes = [
+      makeNode({ item: "a", name: "A", node_group: "input" }),
+      makeNode({ item: "h", name: "H", node_group: "hidden", custom_node: true }),
+      makeNode({ item: "f", name: "F", node_group: "favorites", custom_node: true }),
+    ];
+    const groups = buildPaletteGroups(nodes, {
+      favorites: new Set(["a"]),
+      hidden: new Set(["f"]),
+    });
+    const keys = groups.map((g) => g.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual([FAVORITES_GROUP_KEY, "input", "hidden", HIDDEN_GROUP_KEY]);
+  });
+
   it("omits the synthetic groups when prefs reference unknown or no nodes", () => {
     const nodes = [makeNode({ item: "a", name: "A", node_group: "input" })];
     const groups = buildPaletteGroups(nodes, {

@@ -11,7 +11,7 @@
       <div
         class="node-item"
         :class="{ 'node-item--hidden': hiddenNode }"
-        :data-tutorial-node="node.item"
+        :data-tutorial-node="tutorialTarget ? node.item : undefined"
         draggable="true"
         @dragstart="emit('dragstart', $event, node)"
         @contextmenu.prevent.stop="emit('contextmenu', $event, node)"
@@ -56,6 +56,9 @@ const props = defineProps<{
   favorite?: boolean;
   // Rendered inside the "Hidden nodes" group: dimmed but still draggable.
   hiddenNode?: boolean;
+  // A favorited node renders twice; only its in-category copy carries the
+  // data-tutorial-node hook so the tour's querySelector stays unambiguous.
+  tutorialTarget?: boolean;
 }>();
 
 // Both must be declared: el-popover is the root and does not forward $attrs to

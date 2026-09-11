@@ -27,6 +27,7 @@
           :node="node"
           :favorite="isFavorite(node.item)"
           :hidden-node="group.key === HIDDEN_GROUP_KEY"
+          :tutorial-target="group.key !== FAVORITES_GROUP_KEY"
           :suppress-tooltip="nodeMenu !== null"
           @dragstart="onDragStart"
           @contextmenu="openNodeMenu"
@@ -50,7 +51,7 @@
 import { ref, computed, watch } from "vue";
 import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
 import { useNodes } from "./useNodes";
-import { HIDDEN_GROUP_KEY, usePaletteGroups } from "./usePaletteGroups";
+import { FAVORITES_GROUP_KEY, HIDDEN_GROUP_KEY, usePaletteGroups } from "./usePaletteGroups";
 import { readinessKey, useKernelReadiness } from "../../composables/useKernelReadiness";
 import NodeListItem from "./NodeListItem.vue";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
