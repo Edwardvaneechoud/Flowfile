@@ -114,6 +114,9 @@
       "tier": "supported",
       "wasm_type": "manual_input"
     },
+    "multi_field_formula": {
+      "tier": "absent"
+    },
     "output": {
       "tier": "supported",
       "wasm_type": "output"
@@ -246,6 +249,6 @@
   "counts": {
     "supported": 23,
     "locked": 16,
-    "absent": 9
+    "absent": 10
   }
 }

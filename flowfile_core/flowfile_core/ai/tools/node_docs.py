@@ -130,7 +130,8 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "or compute across rows.** For aggregation use ``group_by``; for raw "
         "row count use ``record_count``; for window / multi-column / "
         "aggregation logic that ``[col]`` syntax can't express use "
-        "``polars_code``. Pick ``formula`` ONLY when the new column can be "
+        "``polars_code``; for the SAME expression over MANY columns use "
+        "``multi_field_formula``. Pick ``formula`` ONLY when the new column can be "
         "derived from the SAME row's existing columns (string concat, "
         "arithmetic, conditional, type cast). "
         "Adds or replaces a single column using Flowfile's expression "
@@ -143,6 +144,26 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "``[amount] * 1.21`` (arithmetic). Often paired upstream of "
         "``group_by`` (after deriving a key) or after ``join`` (combining "
         "columns from both sides)."
+    ),
+    "multi_field_formula": (
+        "**ROW-WISE ONLY**, like ``formula``, but applies ONE expression to MANY "
+        "columns in a single node. Pick it when the same calculation has to hit "
+        "several columns — 'uppercase every text column', 'divide each month "
+        "column by the total', 'round all the numeric columns'. Use ``formula`` "
+        "instead when only ONE column is produced, and ``dynamic_rename`` when "
+        "the column NAMES change but the values don't. Inside the expression "
+        "three placeholders bind to the column being processed: "
+        "``[_CurrentField_]`` (its value), ``[_CurrentFieldName_]`` (its name as "
+        "a string) and ``[_CurrentFieldType_]`` (its Polars dtype as a string). "
+        "Other columns are still referenced normally as ``[other_column]``. "
+        "Target columns are all columns, a listed subset, or one data-type group "
+        "(``Numeric``, ``String``, ``Date``, ``Boolean``, ``Binary``, "
+        "``Complex``, ``Other``). ``output_mode`` ``replace`` overwrites each "
+        "source column; ``new`` writes ``<prefix><name><suffix>`` columns and "
+        "needs at least one affix. Example: "
+        '{"multi_field_formula_input": {"formula": "[_CurrentField_] / [Total] * 100", '
+        '"selection_mode": "list", "selected_columns": ["jan", "feb"], '
+        '"output_mode": "new", "output_suffix": " pct", "output_data_type": "Float64"}}.'
     ),
     "select": (
         "Project, rename, drop, or reorder columns; can also cast types. Use when "
@@ -315,7 +336,9 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Run a Polars expression body against the upstream LazyFrame. Use for "
         "complex multi-column transforms or window functions where 'formula' "
         "(single-column) is too narrow but 'python_script' (full sandbox) is "
-        "overkill. The body must end with a returnable LazyFrame / DataFrame. "
+        "overkill — unless the transform is one expression repeated per column, "
+        "which is ``multi_field_formula``. "
+        "The body must end with a returnable LazyFrame / DataFrame. "
         "Don't use to issue arbitrary Python — use 'python_script' for that. "
         "Don't use for SQL-shaped joins/aggregations — 'sql_query' is clearer. "
         "1-row dry-run discovers the prospective output schema. "
@@ -672,7 +695,28 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "totals or per-group statistics use 'Group by' first, then a "
         "Formula on the aggregated result. Pitfall 3: For multi-column "
         "transforms or window functions use 'Polars code' instead — that "
-        "node accepts real Polars-Python."
+        "node accepts real Polars-Python; for the SAME expression over MANY "
+        "columns use 'Multi-field formula'."
+    ),
+    "multi_field_formula": (
+        "Settings panel: four sections — 'Apply to' (All columns / Specific "
+        "columns / By data type), a Flowfile expression editor for the formula, "
+        "'Output' (Overwrite selected columns vs Write to new columns, with "
+        "Prefix / Suffix fields and a Data type selector) and a Preview table "
+        "showing Column → Output. The expression uses the same SQL-style "
+        "``[column_name]`` syntax as Formula, plus three placeholders that bind "
+        "to each selected column: ``[_CurrentField_]`` for its value, "
+        "``[_CurrentFieldName_]`` for its name and ``[_CurrentFieldType_]`` for "
+        "its data type. Worked example: 'show each month as a percentage of the "
+        "total' → drag 'Multi-field formula' from Transformations, Apply to = "
+        "Specific columns and pick the month columns, expression="
+        "``[_CurrentField_] / [Total] * 100``, Output = Write to new columns, "
+        "Suffix=` % Total`, Data type=Float64. Pitfall 1: every expression sees "
+        "the ORIGINAL input values, so overwriting a column another target "
+        "references is safe. Pitfall 2: in 'Write to new columns' mode a prefix "
+        "or suffix is required, and the resulting name must not already exist. "
+        "Pitfall 3: for one output column use 'Formula'; to change column NAMES "
+        "rather than values use 'Rename columns'."
     ),
     "select": (
         "Settings panel: a row per upstream column with checkboxes for "

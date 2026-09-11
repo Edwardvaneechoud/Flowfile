@@ -106,6 +106,8 @@ def _expression_column_references(expression: str) -> list[str] | None:
 # dtype-based selection, unconfigured sub-model) — the node is then skipped entirely.
 # Deliberately absent: select and dynamic_rename skip missing columns and keep running, so a
 # warning there would fire on a flow that works. See test_warning_matches_runtime_behaviour.
+# Also absent: multi_field_formula — it skips missing selected columns and its [_Current*_]
+# placeholders are not real columns, so both analyses would warn on flows that run.
 # Also absent: run_flow — its parameter columns come from keyed handle input-0, but main_inputs is
 # a compacted projection, so a single data-only connection would be checked as if it were the
 # parameter input.

@@ -198,6 +198,79 @@ class TestNodeFormulaDescription:
         assert "..." in desc
 
 
+# NodeMultiFieldFormula
+
+class TestNodeMultiFieldFormulaDescription:
+    @staticmethod
+    def _node(**kwargs) -> input_schema.NodeMultiFieldFormula:
+        return input_schema.NodeMultiFieldFormula(
+            **BASE_KWARGS,
+            multi_field_formula_input=transform_schema.MultiFieldFormulaInput(**kwargs),
+        )
+
+    def test_default_is_empty(self):
+        node = input_schema.NodeMultiFieldFormula(**BASE_KWARGS)
+        assert node.get_default_description() == ""
+
+    def test_blank_formula_is_empty(self):
+        assert self._node(formula="").get_default_description() == ""
+
+    def test_whitespace_only_formula_is_empty(self):
+        assert self._node(formula="   ").get_default_description() == ""
+
+    def test_all_columns_scope(self):
+        node = self._node(formula="[_CurrentField_] * 2", selection_mode="all")
+        assert node.get_default_description() == "[_CurrentField_] * 2 on all columns"
+
+    def test_list_scope_counts_selected_columns(self):
+        node = self._node(
+            formula="uppercase([_CurrentField_])",
+            selection_mode="list",
+            selected_columns=["a", "b", "c"],
+        )
+        assert node.get_default_description() == "uppercase([_CurrentField_]) on 3 column(s)"
+
+    def test_data_type_scope_names_the_group(self):
+        node = self._node(
+            formula="trim([_CurrentField_])",
+            selection_mode="data_type",
+            selected_data_type="String",
+        )
+        assert node.get_default_description() == "trim([_CurrentField_]) on String columns"
+
+    def test_data_type_scope_without_a_type(self):
+        node = self._node(formula="[_CurrentField_]", selection_mode="data_type")
+        assert node.get_default_description() == "[_CurrentField_] on (none) columns"
+
+    def test_new_mode_appends_the_output_pattern(self):
+        node = self._node(
+            formula="[_CurrentField_]",
+            selection_mode="all",
+            output_mode="new",
+            output_prefix="new_",
+            output_suffix="_pct",
+        )
+        assert node.get_default_description() == "[_CurrentField_] on all columns → new_*_pct"
+
+    def test_new_mode_with_only_a_suffix(self):
+        node = self._node(
+            formula="[_CurrentField_]",
+            selection_mode="list",
+            selected_columns=["jan"],
+            output_mode="new",
+            output_suffix=" % Total",
+        )
+        assert node.get_default_description() == "[_CurrentField_] on 1 column(s) → * % Total"
+
+    def test_replace_mode_has_no_output_pattern(self):
+        node = self._node(formula="[_CurrentField_]", selection_mode="all", output_prefix="ignored_")
+        assert node.get_default_description() == "[_CurrentField_] on all columns"
+
+    def test_long_expression_truncated(self):
+        node = self._node(formula="x" * 100, selection_mode="all")
+        assert node.get_default_description() == "x" * 57 + "... on all columns"
+
+
 # NodeGroupBy
 
 class TestNodeGroupByDescription:

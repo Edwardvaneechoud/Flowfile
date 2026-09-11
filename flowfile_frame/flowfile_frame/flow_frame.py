@@ -2719,6 +2719,106 @@ class FlowFrame:
         self.flow_graph.add_dynamic_rename(rename_settings)
         return self._create_child_frame(new_node_id)
 
+    def multi_field_formula(
+        self,
+        formula: str,
+        columns: list[str] | None = None,
+        *,
+        data_type: Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"] | None = None,
+        prefix: str = "",
+        suffix: str = "",
+        output_data_type: str | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Apply one Flowfile formula to many columns at once.
+
+        One node instead of a formula node per column — useful when the same
+        calculation has to run over every numeric column, over a listed subset,
+        or over the whole frame. Inside the formula three placeholders bind to
+        the column currently being processed:
+
+        - ``[_CurrentField_]`` — that column's value.
+        - ``[_CurrentFieldName_]`` — its name, as a string literal.
+        - ``[_CurrentFieldType_]`` — its Polars dtype, as a string literal
+          (the base token, so ``Datetime(time_unit='us')`` binds as
+          ``"Datetime"``).
+
+        Every expression is evaluated against the *original* input values in a
+        single step, so a formula may reference another selected column
+        (``"[_CurrentField_] / [Total] * 100"`` reads the untouched ``Total``
+        even when ``Total`` is itself being overwritten).
+
+        Parameters
+        ----------
+        formula:
+            The Flowfile formula to apply, carrying the placeholders above.
+            Required and may not be blank.
+        columns:
+            When given, apply the formula only to these columns, in this order.
+            Names that do not exist are silently skipped. Mutually exclusive
+            with *data_type*.
+        data_type:
+            When given, apply the formula only to columns of this data-type
+            group. Mutually exclusive with *columns*.
+        prefix:
+            When *prefix* or *suffix* is set, results are written to new
+            ``f"{prefix}{name}{suffix}"`` columns appended after the existing
+            ones instead of overwriting the source columns.
+        suffix:
+            See *prefix*.
+        output_data_type:
+            Cast every result to this type (e.g. ``"Float64"``). ``None``
+            (default) keeps whatever type the formula produces.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with the formula applied. Selecting no column is a
+            no-op: the frame passes through unchanged.
+
+        Examples
+        --------
+        >>> df.multi_field_formula("[_CurrentField_] * 1.21", data_type="Numeric", suffix="_incl_vat")
+        >>> df.multi_field_formula("trim([_CurrentField_])", columns=["name", "city"])
+        """
+        if not formula.strip():
+            raise ValueError("multi_field_formula: 'formula' is required.")
+        if columns is not None and data_type is not None:
+            raise ValueError("multi_field_formula: pass at most one of 'columns' or 'data_type'.")
+
+        if columns is not None:
+            selection_mode = "list"
+        elif data_type is not None:
+            selection_mode = "data_type"
+        else:
+            selection_mode = "all"
+
+        new_node_id = generate_node_id()
+        formula_settings = input_schema.NodeMultiFieldFormula(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            multi_field_formula_input=transform_schema.MultiFieldFormulaInput(
+                formula=formula,
+                selection_mode=selection_mode,
+                selected_columns=list(columns or []),
+                selected_data_type=data_type,
+                output_mode="new" if (prefix or suffix) else "replace",
+                output_prefix=prefix,
+                output_suffix=suffix,
+                output_data_type=output_data_type or "Auto",
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_multi_field_formula(formula_settings)
+        return self._create_child_frame(new_node_id)
+
     def cache(self) -> FlowFrame:
         setting_input = self.get_node_settings().setting_input
         setting_input.cache_results = True

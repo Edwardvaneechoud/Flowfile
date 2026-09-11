@@ -1,5 +1,6 @@
 import ast
 import json
+import re
 import string
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ from flowfile_frame.flow_frame import FlowFrame
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.types import DataType
 
 try:
     import os
@@ -7398,6 +7400,151 @@ def test_rest_api_reader_redacts_sensitive_headers():
     assert "redacted" in code
     verify_code_contains(code, "Accept", "application/json", "lang", "en")
     ast.parse(code)
+
+
+# Multi-Field Formula round-trip tests
+
+
+def _add_multi_field_formula(flow: FlowGraph, **settings) -> FlowGraph:
+    flow.add_multi_field_formula(
+        input_schema.NodeMultiFieldFormula(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            multi_field_formula_input=transform_schema.MultiFieldFormulaInput(**settings),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return flow
+
+
+def test_multi_field_formula_replace_all_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(flow, formula="to_string([_CurrentField_])", selection_mode="all")
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, ".multi_field_formula('to_string([_CurrentField_])')")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_multi_field_formula_list_with_prefix_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(
+        flow,
+        formula="[_CurrentField_] * 2",
+        selection_mode="list",
+        selected_columns=["age", "salary"],
+        output_mode="new",
+        output_prefix="dbl_",
+    )
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(
+        code, ".multi_field_formula('[_CurrentField_] * 2'", "columns=['age', 'salary']", "prefix='dbl_'"
+    )
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+    assert "dbl_age" in result.columns
+
+
+def test_multi_field_formula_data_type_with_suffix_and_cast_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(
+        flow,
+        formula="[_CurrentField_] / 100",
+        selection_mode="data_type",
+        selected_data_type="Numeric",
+        output_mode="new",
+        output_suffix=" pct",
+        output_data_type="Float64",
+    )
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "data_type='Numeric'", "suffix=' pct'", "output_data_type='Float64'")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+    assert result.schema["age pct"] == pl.Float64
+
+
+def test_multi_field_formula_without_a_data_type_exports_an_empty_column_list():
+    """`data_type` mode with nothing selected picks no columns; omitting the kwarg would mean 'all'."""
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(
+        flow,
+        formula="to_string([_CurrentField_])",
+        selection_mode="data_type",
+        selected_data_type=None,
+    )
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "columns=[]")
+    # Anchored so the assertion cannot be satisfied by the `output_data_type=` kwarg.
+    assert re.search(r"(?<!output_)data_type=", code) is None
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+    assert result.schema["id"] == pl.Int64  # the no-op left the input untouched
+
+
+def test_multi_field_formula_enum_output_data_type_round_trip():
+    """A `DataType` enum has to render as its plain value; `repr()` would emit `Types.Float64`."""
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(
+        flow,
+        formula="[_CurrentField_] * 2",
+        selection_mode="list",
+        selected_columns=["age"],
+        output_data_type=DataType.Float64,
+    )
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "output_data_type='Float64'")
+    assert "Types." not in code
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_multi_field_formula_new_mode_without_an_affix_is_unsupported():
+    """The engine refuses this node; exporting it as a replace call would overwrite the sources."""
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(
+        flow,
+        formula="[_CurrentField_] * 2",
+        selection_mode="list",
+        selected_columns=["age"],
+        output_mode="new",
+    )
+
+    with pytest.raises(UnsupportedNodeError) as excinfo:
+        export_flow_to_flowframe(flow)
+    assert excinfo.value.node_type == "multi_field_formula"
+
+
+def test_multi_field_formula_is_unsupported_in_polars_export():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    _add_multi_field_formula(flow, formula="to_string([_CurrentField_])", selection_mode="all")
+
+    with pytest.raises(UnsupportedNodeError) as excinfo:
+        export_flow_to_polars(flow)
+    assert excinfo.value.node_type == "multi_field_formula"
+    assert "multi_field_formula" in str(excinfo.value)
 
 
 if __name__ == "__main__":

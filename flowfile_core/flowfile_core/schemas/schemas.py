@@ -29,6 +29,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "manual_input": input_schema.NodeManualInput,
     "filter": input_schema.NodeFilter,
     "formula": input_schema.NodeFormula,
+    "multi_field_formula": input_schema.NodeMultiFieldFormula,
     "dynamic_rename": input_schema.NodeDynamicRename,
     "data_cleansing": input_schema.NodeDataCleansing,
     "select": input_schema.NodeSelect,
