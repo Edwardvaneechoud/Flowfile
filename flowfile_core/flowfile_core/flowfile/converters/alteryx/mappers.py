@@ -238,6 +238,7 @@ def _row(
     return ToolReportRow(
         alteryx_tool_id=tool.tool_id,
         alteryx_tool=tool_label(tool),
+        alteryx_plugin=tool.plugin,
         flowfile_node_ids=node_ids,
         flowfile_node_type=node_type,
         status=status,

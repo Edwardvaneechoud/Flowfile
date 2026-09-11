@@ -67,6 +67,7 @@ EXPORT_TARGETS = ("polars", "flowframe", "project_zip", "project_save")
 
 MAX_IDENTIFIER_LENGTH = 64
 MAX_NODE_TYPES = 60
+LIST_PROPS = frozenset({"node_types", "converted_tools", "partial_tools", "placeholder_tools"})
 
 EVENTS: dict[str, frozenset[str]] = {
     "app_started": frozenset(),
@@ -81,6 +82,8 @@ EVENTS: dict[str, frozenset[str]] = {
     "schedule_created": frozenset(),
     "kernel_used": frozenset(),
     "export_code_used": frozenset({"target"}),
+    "alteryx_imported": frozenset({"tool_count_bucket", "converted_tools", "partial_tools", "placeholder_tools"}),
+    "alteryx_import_failed": frozenset({"error_class"}),
 }
 
 SETTINGS_HEADER = (
@@ -342,7 +345,7 @@ def _mode() -> str:
     return mode if mode in KNOWN_MODES else "other"
 
 
-def _clean_node_types(value: Any) -> list[str] | None:
+def _clean_identifier_list(value: Any) -> list[str] | None:
     if not isinstance(value, list):
         return None
     for name in value:
@@ -352,7 +355,7 @@ def _clean_node_types(value: Any) -> list[str] | None:
 
 
 def _is_valid_prop(key: str, value: Any) -> bool:
-    if key == "node_count_bucket":
+    if key in ("node_count_bucket", "tool_count_bucket"):
         return value in NODE_COUNT_BUCKETS
     if key == "duration_bucket":
         return value in DURATION_BUCKETS
@@ -372,8 +375,8 @@ def _sanitize_props(event: str, props: dict[str, Any]) -> dict[str, Any]:
         if key not in props:
             continue
         value = props[key]
-        if key == "node_types":
-            value = _clean_node_types(value)
+        if key in LIST_PROPS:
+            value = _clean_identifier_list(value)
             if value is None:
                 continue
         elif not _is_valid_prop(key, value):

@@ -18,7 +18,10 @@ Nothing derived from user content ever reaches an event. The run snapshot keeps
 node *counts* and built-in node *type keys* (anything not shipped with Flowfile
 collapses to ``"custom"``); node names, settings, file paths and error messages
 are never read. Error classes are mapped through a frozen allowlist so a
-user-defined exception name cannot leak either.
+user-defined exception name cannot leak either. An Alteryx import reports only
+Alteryx's own tool class names (plugins in an official namespace) and shipped
+macros; vendor plugins collapse to ``"custom_plugin"`` and user macros to
+``"user_macro"``, so a macro path or a company's tool name never travels.
 
 Import stays side-effect free: ``node_store`` is imported lazily and
 ``flow_graph`` never at all.
@@ -37,6 +40,22 @@ CATALOG_NODE_TYPES = frozenset({"catalog_reader", "catalog_writer"})
 CUSTOM_NODE_TYPE = "custom"
 OTHER_ERROR = "OtherError"
 ACTIVATION_MIN_NODES = 3
+
+CUSTOM_PLUGIN = "custom_plugin"
+USER_MACRO = "user_macro"
+MACRO_SUFFIX = ".yxmc"
+ALTERYX_PLUGIN_NAMESPACES = frozenset(
+    {"AlteryxBasePluginsGui", "AlteryxGuiToolkit", "AlteryxSpatialPluginsGui", "AlteryxConnectorGui"}
+)
+SHIPPED_ALTERYX_MACROS = frozenset(
+    {"cleanse", "countrecords", "imputation", "multifieldbinning", "selectrecords", "weightedavg"}
+)
+ALTERYX_STATUS_PROPS = {
+    "converted": "converted_tools",
+    "partial": "partial_tools",
+    "commented": "partial_tools",
+    "placeholder": "placeholder_tools",
+}
 
 ERROR_CLASS_ALLOWLIST = frozenset(
     {
@@ -90,6 +109,7 @@ ERROR_CLASS_ALLOWLIST = frozenset(
         "UnsafeSQLError",
         "UnsupportedNodeError",
         "WorkerUnavailableError",
+        "YxmdParseError",
     }
 )
 
@@ -256,6 +276,51 @@ def _on_flow_run_crashed(graph: Any, error: BaseException) -> None:
     emit_run_events(None, outcome="failed", error_class=classify_error(type(error).__name__))
 
 
+def alteryx_tool_label(plugin: str) -> str:
+    """Telemetry label for one Alteryx tool, from its raw ``Plugin`` string or macro path.
+
+    Only names Alteryx itself chose may travel: the class name of a plugin in an
+    official namespace, or a shipped macro's filename. Anything else is a vendor
+    plugin or a user's own macro and collapses to a fixed label. An official
+    namespace this list does not know yet also collapses — losing that signal is
+    the price of never guessing.
+    """
+    namespace, _, rest = plugin.partition(".")
+    if rest and namespace in ALTERYX_PLUGIN_NAMESPACES:
+        name = rest.rsplit(".", 1)[-1]
+        return name if name.isidentifier() and len(name) <= _client.MAX_IDENTIFIER_LENGTH else CUSTOM_PLUGIN
+    if plugin.lower().endswith(MACRO_SUFFIX):
+        stem = plugin.replace("\\", "/").rsplit("/", 1)[-1][: -len(MACRO_SUFFIX)].lower()
+        return f"macro_{stem}" if stem in SHIPPED_ALTERYX_MACROS else USER_MACRO
+    return CUSTOM_PLUGIN
+
+
+def alteryx_import_snapshot(report: Any) -> dict[str, Any] | None:
+    """Allowlisted description of a conversion report; ``None`` if anything goes wrong."""
+    try:
+        tools: dict[str, set[str]] = {key: set() for key in set(ALTERYX_STATUS_PROPS.values())}
+        for row in report.rows:
+            key = ALTERYX_STATUS_PROPS.get(row.status)
+            if key is not None:
+                tools[key].add(alteryx_tool_label(row.alteryx_plugin))
+        return {
+            "tool_count_bucket": _client.bucket_node_count(int(report.total_tools)),
+            **{key: sorted(names) for key, names in tools.items()},
+        }
+    except Exception:
+        return None
+
+
+def _on_alteryx_imported(report: Any) -> None:
+    props = alteryx_import_snapshot(report)
+    if props is not None:
+        emit("alteryx_imported", props)
+
+
+def _on_alteryx_import_failed(error: BaseException) -> None:
+    emit("alteryx_import_failed", {"error_class": classify_error(type(error).__name__)})
+
+
 def _on_kernel_exec() -> None:
     emit_once("kernel_used")
 
@@ -314,6 +379,8 @@ def _subscribe() -> None:
     events.subscribe("flow_run_crashed", _on_flow_run_crashed)
     events.subscribe("kernel_exec", _on_kernel_exec)
     events.subscribe("app_started", _on_app_started)
+    events.subscribe("alteryx_imported", _on_alteryx_imported)
+    events.subscribe("alteryx_import_failed", _on_alteryx_import_failed)
     _subscribed = True
 
 

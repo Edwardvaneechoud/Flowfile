@@ -153,6 +153,7 @@ def _emit_comments(
                 ToolReportRow(
                     alteryx_tool_id=box.tool_id,
                     alteryx_tool=tool_label(box),
+                    alteryx_plugin=box.plugin,
                     status="skipped",
                     messages=["An empty Alteryx comment (a decorative box) was not imported."],
                 )
@@ -173,6 +174,7 @@ def _emit_comments(
             ToolReportRow(
                 alteryx_tool_id=box.tool_id,
                 alteryx_tool=tool_label(box),
+                alteryx_plugin=box.plugin,
                 flowfile_node_type="comment",
                 status="converted",
                 messages=["Imported as a canvas comment; colour, font and shape are not kept."],

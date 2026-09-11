@@ -7,6 +7,7 @@ export type AlteryxToolStatus = "converted" | "partial" | "commented" | "placeho
 export interface AlteryxToolRow {
   alteryx_tool_id: string | number;
   alteryx_tool: string;
+  alteryx_plugin?: string;
   flowfile_node_ids: number[];
   flowfile_node_type: string | null;
   status: AlteryxToolStatus;

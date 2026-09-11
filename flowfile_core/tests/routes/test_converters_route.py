@@ -13,7 +13,9 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from flowfile_core import flow_file_handler, main
+from flowfile_core import events, flow_file_handler, main
+from flowfile_core import telemetry as telemetry_glue
+from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError
 from flowfile_core.routes import converters as converters_module
 
 FIXTURE_DIR = Path(__file__).parent.parent / "flowfile" / "converters" / "fixtures"
@@ -149,3 +151,55 @@ class TestAuth:
             files={"file": ("formulas.yxmd", io.BytesIO(b"<AlteryxDocument />"), "application/octet-stream")},
         )
         assert response.status_code == 401
+
+
+class TestDomainEvents:
+    """The handler publishes neutral facts; the telemetry observer turns them into events elsewhere."""
+
+    @pytest.fixture
+    def published(self):
+        events._reset_for_tests()
+        captured: list[tuple[str, object]] = []
+        events.subscribe("alteryx_imported", lambda report: captured.append(("alteryx_imported", report)))
+        events.subscribe("alteryx_import_failed", lambda error: captured.append(("alteryx_import_failed", error)))
+        yield captured
+        events._reset_for_tests()
+        telemetry_glue._subscribed = False
+        telemetry_glue._subscribe()
+
+    def test_a_successful_import_publishes_the_report(self, published):
+        response = _post("unsupported.yxmd")
+        assert response.status_code == 200, response.text
+
+        assert [name for name, _ in published] == ["alteryx_imported"]
+        report = published[0][1]
+        assert isinstance(report, ConversionReport)
+        assert report.total_tools == response.json()["report"]["total_tools"]
+        assert {row.alteryx_plugin for row in report.rows} >= {
+            "AlteryxBasePluginsGui.TextInput.TextInput",
+            "AlteryxBasePluginsGui.DateTime.DateTime",
+            "Something.yxmc",
+        }
+
+    def test_a_parse_failure_publishes_the_error(self, published):
+        response = _post("invalid.xml")
+        assert response.status_code == 400
+
+        assert [name for name, _ in published] == ["alteryx_import_failed"]
+        assert isinstance(published[0][1], YxmdParseError)
+
+    def test_a_failure_to_open_the_flow_publishes_the_error(self, published, monkeypatch):
+        def _boom(*args, **kwargs):
+            raise RuntimeError("cannot open")
+
+        monkeypatch.setattr(converters_module.flow_file_handler, "import_flow", _boom)
+        response = _post("formulas.yxmd")
+        assert response.status_code == 502
+
+        assert [name for name, _ in published] == ["alteryx_import_failed"]
+        assert isinstance(published[0][1], RuntimeError)
+
+    def test_an_extension_rejection_publishes_nothing(self, published):
+        response = _post("workflow.txt", b"<AlteryxDocument />")
+        assert response.status_code == 400
+        assert published == []

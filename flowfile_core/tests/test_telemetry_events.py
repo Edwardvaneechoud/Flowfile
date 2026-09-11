@@ -20,7 +20,10 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import events
 from flowfile_core import telemetry as glue
+from flowfile_core.flowfile.converters.alteryx import YxmdParseError, convert_yxmd
 from shared import telemetry as client
+
+ALTERYX_FIXTURES = Path(__file__).parent / "flowfile" / "converters" / "fixtures"
 
 POISON = (
     "/Users/x/secret.csv",
@@ -441,6 +444,69 @@ def test_unknown_events_and_props_are_dropped(sent) -> None:
     assert emitted[0]["props"] == {"error_class": "ValueError"}
 
 
+@pytest.mark.parametrize(
+    ("plugin", "expected"),
+    [
+        ("AlteryxBasePluginsGui.Filter.Filter", "Filter"),
+        ("AlteryxGuiToolkit.TextBox.TextBox", "TextBox"),
+        ("AlteryxSpatialPluginsGui.RunningTotal.RunningTotal", "RunningTotal"),
+        ("AlteryxConnectorGui.Download.Download", "Download"),
+        ("Cleanse.yxmc", "macro_cleanse"),
+        ("C:\\Program Files\\Alteryx\\bin\\RuntimeData\\Macros\\CountRecords.yxmc", "macro_countrecords"),
+        ("C:\\Users\\x\\Quarterly Revenue (confidential).yxmc", "user_macro"),
+        ("/Users/x/secret.csv.yxmc", "user_macro"),
+        ("AcmeCorp.SecretUploader.SecretUploader", "custom_plugin"),
+        ("AlteryxBasePluginsGui", "custom_plugin"),
+        ("AlteryxBasePluginsGui.Bad Name.Bad Name", "custom_plugin"),
+        ("", "custom_plugin"),
+    ],
+)
+def test_alteryx_tool_label(plugin: str, expected: str) -> None:
+    assert glue.alteryx_tool_label(plugin) == expected
+
+
+def test_alteryx_import_reports_only_alteryx_names(sent, subscribed) -> None:
+    """A real conversion: supported tools, an unsupported official tool, and a user macro."""
+    data = (ALTERYX_FIXTURES / "unsupported.yxmd").read_bytes()
+    result = convert_yxmd(data, source_name="Quarterly Revenue (confidential).yxmd")
+    assert any(row.alteryx_plugin.endswith(".yxmc") for row in result.report.rows)
+
+    events.publish("alteryx_imported", report=result.report)
+
+    emitted = drain(sent)
+    assert [event["event"] for event in emitted] == ["alteryx_imported"]
+    assert emitted[0]["props"] == {
+        "tool_count_bucket": "4-7",
+        "converted_tools": ["DbFileOutput", "TextInput"],
+        "partial_tools": [],
+        "placeholder_tools": ["DateTime", "user_macro"],
+    }
+    blob = json.dumps(emitted)
+    assert "Something" not in blob, "the user macro's filename leaked"
+    assert "Quarterly" not in blob, "the workflow name leaked"
+
+
+def test_alteryx_import_failure_sends_only_the_error_class(sent, subscribed) -> None:
+    class UserDefinedWeirdError(Exception):
+        pass
+
+    events.publish("alteryx_import_failed", error=YxmdParseError("/Users/x/secret.csv is not a workflow"))
+    events.publish("alteryx_import_failed", error=UserDefinedWeirdError("password=hunter2"))
+
+    emitted = drain(sent)
+    assert [event["event"] for event in emitted] == ["alteryx_import_failed", "alteryx_import_failed"]
+    assert [event["props"] for event in emitted] == [{"error_class": "YxmdParseError"}, {"error_class": "OtherError"}]
+    blob = json.dumps(emitted)
+    for poison in POISON:
+        assert poison not in blob, f"leaked {poison!r}"
+
+
+def test_alteryx_snapshot_never_raises_on_a_broken_report(sent, subscribed) -> None:
+    assert glue.alteryx_import_snapshot(object()) is None
+    events.publish("alteryx_imported", report=object())
+    assert names(sent) == []
+
+
 class TestRouteMiddleware:
     """HTTP events come from one declarative table, not from handler bodies."""
 
@@ -535,7 +601,7 @@ class TestInstall:
 
         try:
             assert [m.cls for m in app.user_middleware] == [glue.TelemetryMiddleware]
-            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1]
+            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1, 1, 1]
         finally:
             events._reset_for_tests()
             glue._subscribed = False
@@ -554,6 +620,8 @@ class TestInstall:
                 "flow_run_crashed",
                 "kernel_exec",
                 "app_started",
+                "alteryx_imported",
+                "alteryx_import_failed",
             }
             assert all(len(handlers) == 1 for handlers in events._handlers.values())
         finally:

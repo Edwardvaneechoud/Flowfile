@@ -15,7 +15,7 @@ import yaml
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from flowfile_core import flow_file_handler
+from flowfile_core import events, flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError, convert_yxmd
@@ -74,6 +74,7 @@ async def import_alteryx_workflow(
     try:
         result = convert_yxmd(data, source_name=safe_name)
     except YxmdParseError as exc:
+        events.publish("alteryx_import_failed", error=exc)
         raise HTTPException(400, str(exc)) from exc
 
     flows_dir = storage.flows_directory
@@ -99,6 +100,8 @@ async def import_alteryx_workflow(
     except Exception as exc:
         flow_path.unlink(missing_ok=True)
         logger.exception("Opening the converted Alteryx flow failed (source=%s)", safe_name)
+        events.publish("alteryx_import_failed", error=exc)
         raise HTTPException(502, f"Opening the converted flow failed: {type(exc).__name__}: {exc}") from exc
 
+    events.publish("alteryx_imported", report=result.report)
     return AlteryxImportResponse(flow_id=flow_id, flow_path=str(flow_path), report=result.report)

@@ -14,6 +14,7 @@ class ToolReportRow(BaseModel):
 
     alteryx_tool_id: int
     alteryx_tool: str
+    alteryx_plugin: str = ""
     flowfile_node_ids: list[int] = Field(default_factory=list)
     flowfile_node_type: str | None = None
     status: ToolStatus
