@@ -120,6 +120,131 @@ TEXT_BOXES = b"""<?xml version="1.0"?>
 """
 
 
+DROPPED_CONNECTION = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput" />
+      <Properties><Configuration>
+        <File FileFormat="0">in.csv</File>
+        <FormatSpecificOptions><Delimeter>,</Delimeter></FormatSpecificOptions>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+LLM_WITH_CREDENTIALS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="LLMOverride_1_0" />
+      <Properties><Configuration>
+        <inputUrl>https://ayx-sandbox.bender.rocks/aims/</inputUrl>
+        <validCredentials>true</validCredentials>
+        <Secrets />
+        <Connection DcmType="ConnectionId">7a9a50b6-a4bd-4841-b4c9-3bfd051752d2</Connection>
+        <authServerDetails>
+          <client_id>aa7d8c1a-8001-49d5-86a0-f6a5322f5d46</client_id>
+          <token_endpoint>/as/token</token_endpoint>
+          <url>https://pingauth-sandbox.alteryxcloud.com</url>
+        </authServerDetails>
+        <llmConnectionId>01JB01XTJVFQCTCMMS9X3F3HX1</llmConnectionId>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+ODBC_INPUT = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput" />
+      <Properties><Configuration>
+        <Passwords><Password>Zm9vYmFy</Password></Passwords>
+        <File>odbc:DRIVER={ODBC Driver 18};SERVER=corp.database.windows.net;UID=reports;PWD=hunter2|||orders</File>
+        <FormatSpecificOptions />
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+YXDB_INPUT = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput" />
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File OutputFileName="" FileFormat="19" SearchSubDirs="False" RecordLimit="">..\\..\\..\\data\\OneToolData\\CustomerFile1.yxdb</File>
+          <FormatSpecificOptions />
+        </Configuration>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CustomerID" type="Int32" />
+            <Field name="Spend" type="Double" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort" />
+      <Properties><Configuration>
+        <SortInfo locale="0"><Field field="Spend" order="Desc" /></SortInfo>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def db_file_output(file_element: str, extra: str = "") -> bytes:
+    """A one-tool workflow whose Output Data tool writes the given File element."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Region" /></Fields>
+        <Data><r><c>North</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput" />
+      <Properties><Configuration>
+        {file_element}
+        <Passwords />
+        <FormatSpecificOptions />
+        {extra}
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
 def select_of_type(alteryx_type: str) -> bytes:
     """A one-tool workflow whose Select retypes a single field."""
     return f"""<?xml version="1.0"?>
@@ -256,7 +381,7 @@ def unsupported() -> ConversionResult:
 
 
 
-@pytest.mark.parametrize("fixture", ["zero_tools.yxmd", "invalid.xml"])
+@pytest.mark.parametrize("fixture", ["empty_canvas.yxmd", "invalid.xml"])
 def test_unusable_workflows_raise_parse_error(fixture: str):
     with pytest.raises(YxmdParseError):
         convert(fixture)
@@ -590,22 +715,102 @@ def test_placeholders_preserve_the_graph_shape(unsupported: ConversionResult):
     [
         (
             "all_supported.yxmd",
-            {"total": 13, "converted": 11, "partial": 2, "commented": 0, "placeholder": 0, "skipped": 0},
+            {
+                "total": 13,
+                "annotations": 0,
+                "converted": 11,
+                "partial": 2,
+                "commented": 0,
+                "placeholder": 0,
+                "skipped": 0,
+            },
         ),
-        ("formulas.yxmd", {"total": 2, "converted": 1, "partial": 0, "commented": 1, "placeholder": 0, "skipped": 0}),
-        ("containers.yxmd", {"total": 5, "converted": 5, "partial": 0, "commented": 0, "placeholder": 0, "skipped": 0}),
+        (
+            "formulas.yxmd",
+            {
+                "total": 2,
+                "annotations": 0,
+                "converted": 1,
+                "partial": 0,
+                "commented": 1,
+                "placeholder": 0,
+                "skipped": 0,
+            },
+        ),
+        (
+            "containers.yxmd",
+            {
+                "total": 4,
+                "annotations": 1,
+                "converted": 4,
+                "partial": 0,
+                "commented": 0,
+                "placeholder": 0,
+                "skipped": 0,
+            },
+        ),
         (
             "unsupported.yxmd",
-            {"total": 4, "converted": 2, "partial": 0, "commented": 0, "placeholder": 2, "skipped": 0},
+            {
+                "total": 4,
+                "annotations": 0,
+                "converted": 2,
+                "partial": 0,
+                "commented": 0,
+                "placeholder": 2,
+                "skipped": 0,
+            },
         ),
     ],
 )
 def test_report_counts(fixture: str, expected: dict):
     report = convert(fixture).report
     assert report.total_tools == expected["total"]
-    assert len(report.rows) == expected["total"]
+    assert report.total_annotations == expected["annotations"]
+    assert len(report.rows) == expected["total"] + expected["annotations"]
     for status in ("converted", "partial", "commented", "placeholder", "skipped"):
         assert getattr(report, status) == expected[status], status
+
+
+def test_a_comment_never_counts_as_a_converted_tool(containers: ConversionResult):
+    report = containers.report
+    comment_row = next(row for row in report.rows if row.flowfile_node_type == "comment")
+    assert comment_row.entity == "annotation"
+    assert comment_row.status == "converted"
+    # The comment is converted, but the coverage numbers only know about the four tools.
+    assert report.coverage.tools == 4
+    assert report.coverage.mapped == 4
+    assert report.coverage.mapped_percent == 100
+
+
+def test_coverage_reports_both_percentages_and_its_own_definition():
+    coverage = convert("unsupported.yxmd").report.coverage
+    assert (coverage.tools, coverage.mapped, coverage.converted) == (4, 2, 2)
+    assert (coverage.mapped_percent, coverage.converted_percent) == (50, 50)
+    assert "2 of 4 Alteryx tools" in coverage.definition
+    assert "50%" in coverage.definition
+
+
+def test_a_dropped_connection_downgrades_both_ends_to_partial():
+    result = convert_yxmd(DROPPED_CONNECTION, source_name="inline.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert rows[1].status == "partial"
+    assert rows[2].status == "partial"
+    for row in (rows[1], rows[2]):
+        assert any("was dropped" in message for message in row.messages)
+    # Still mapped — the tools converted, the wire did not.
+    assert result.report.coverage.mapped == 2
+    assert result.report.coverage.converted == 0
+
+
+def test_a_comment_only_workflow_imports_as_a_flow_with_no_nodes():
+    result = convert("zero_tools.yxmd")
+    assert result.flow_data.nodes == []
+    assert [comment.text for comment in result.flow_data.comments] == ["Workflow still to be built."]
+    report = result.report
+    assert (report.total_tools, report.total_annotations) == (0, 1)
+    assert report.coverage.tools == 0
+    assert report.coverage.mapped_percent == 0
 
 
 def test_text_box_becomes_a_canvas_comment(containers: ConversionResult):
@@ -635,8 +840,8 @@ def test_empty_text_box_is_skipped_not_imported_blank():
     assert rows[2].status == "skipped"
     assert rows[3].status == "converted"
     assert [comment.text for comment in result.flow_data.comments] == ["First line\nsecond line"]
-    assert result.report.total_tools == 3
-    assert (result.report.converted, result.report.skipped) == (2, 1)
+    assert (result.report.total_tools, result.report.total_annotations) == (1, 2)
+    assert (result.report.converted, result.report.skipped) == (1, 0)
     # A text box without a size gets a readable minimum instead of a zero box.
     assert (result.flow_data.comments[0].width, result.flow_data.comments[0].height) == (120, 40)
 
@@ -976,12 +1181,12 @@ def test_every_generated_polars_code_node_is_executable(price_paid: ConversionRe
 
 
 
-def test_placeholders_embed_the_original_configuration_and_annotation(price_paid: ConversionResult):
-    row = report_row(price_paid, 8)
+def test_placeholders_embed_the_original_configuration_and_annotation(unsupported: ConversionResult):
+    row = report_row(unsupported, 2)
     assert row.status == "placeholder"
-    code = dumped_nodes(price_paid)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
-    assert "# Alteryx annotation: 2016PPData.yxdb" in code
-    assert "2016PPData.yxdb</File>" in code
+    code = dumped_nodes(unsupported)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "# Alteryx annotation: Parse the date column" in code
+    assert "<OutputFieldName>DateTime_Out</OutputFieldName>" in code
     assert code.splitlines()[-1] == "output_df = input_df"
 
 
@@ -992,9 +1197,10 @@ def test_year_function_now_converts(price_paid: ConversionResult):
     assert settings["filter_input"]["advanced_filter"] == "year([Date of Transfer]) = 2016"
 
 
-def test_price_paid_workflow_converts_without_placeholders_beyond_the_yxdb_writer(price_paid: ConversionResult):
-    placeholders = [row for row in price_paid.report.rows if row.status == "placeholder"]
-    assert [row.alteryx_tool for row in placeholders] == ["DbFileOutput"]
+def test_price_paid_workflow_converts_without_any_placeholder(price_paid: ConversionResult):
+    assert [row.alteryx_tool for row in price_paid.report.rows if row.status == "placeholder"] == []
+    writer = report_row(price_paid, 8)
+    assert (writer.status, writer.flowfile_node_type) == ("partial", "output")
 
 
 PRICE_PAID_ROWS = [
@@ -1083,12 +1289,17 @@ def test_price_paid_workflow_runs_and_reproduces_the_alteryx_result(tmp_path: Pa
             received.path = received.abs_file_path = str(source)
             received.directory, received.name = str(tmp_path), source.name
 
+    writer = next(node for node in price_paid.flow_data.nodes if node.type == "output")
+    writer.setting_input.output_settings.directory = str(tmp_path)
+
     flow = open_flow(write_flow(price_paid, tmp_path / "flow.yaml"))
     run_info = flow.run_graph()
     assert run_info.success, [step for step in run_info.node_step_result if not step.success]
 
-    terminal = next(node for node in price_paid.flow_data.nodes if node.type == "polars_code" and not node.outputs)
-    frame = flow.get_node(terminal.id).get_resulting_data().data_frame.collect()
+    # The Alteryx workflow ends in a .yxdb writer; the converted flow really writes its Parquet twin.
+    written = tmp_path / "2016PPData.parquet"
+    assert written.exists()
+    frame = pl.read_parquet(written)
     # Year([Date of Transfer]) = 2016 AND [PPDCategory Type] = "A"
     assert frame["Transaction unique identifier"].to_list() == ["{A1}", "{A4}"]
     assert frame.schema["Price"] == pl.Int32
@@ -1207,15 +1418,190 @@ def test_transpose_becomes_unpivot_plus_rename(extra_tools: ConversionResult):
     assert rename["input_ids"] == [unpivot["id"]]
 
 
-def test_cross_tab_maps_to_pivot(extra_tools: ConversionResult):
+def test_cross_tab_maps_to_pivot_plus_alteryx_rename(extra_tools: ConversionResult):
     row = report_row(extra_tools, 5)
-    assert row.status == "partial"
-    assert any("underscores" in message for message in row.messages)
-    pivot = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["pivot_input"]
-    assert pivot["index_columns"] == ["region"]
-    assert pivot["pivot_column"] == "product"
-    assert pivot["value_col"] == "sales"
-    assert pivot["aggregations"] == ["sum"]
+    assert row.status == "converted"
+    assert row.messages == []
+    pivot, rename = (dumped_nodes(extra_tools)[node_id] for node_id in row.flowfile_node_ids)
+    assert pivot["setting_input"]["pivot_input"] == {
+        "index_columns": ["region"],
+        "pivot_column": "product",
+        "value_col": "sales",
+        "aggregations": ["sum"],
+    }
+    assert rename["type"] == "polars_code"
+    assert rename["input_ids"] == [pivot["id"]]
+    code = rename["setting_input"]["polars_code_input"]["polars_code"]
+    assert "_suffixes = [('', '')]" in code, "a lone Sum keeps the bare header"
+    assert "output_df = input_df.rename(_renames)" in code
+
+
+def cross_tab_after_text_input(fields: list[str], rows: list[tuple], config: str) -> bytes:
+    """A Text Input with several typed-by-inference columns feeding one Cross Tab; None is an empty cell."""
+    field_xml = "".join(f'<Field name="{name}" />' for name in fields)
+    row_xml = "".join(
+        "<r>" + "".join("<c />" if cell is None else f"<c>{cell}</c>" for cell in row) + "</r>" for row in rows
+    )
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields>{field_xml}</Fields><Data>{row_xml}</Data></Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.CrossTab.CrossTab" />
+      <Properties><Configuration>{config}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def run_cross_tab(document: bytes, tmp_path: Path) -> tuple[ConversionResult, pl.DataFrame | None, list]:
+    """Convert, run, and return the Cross Tab's output frame (None when the run failed) plus the failures."""
+    result = convert_yxmd(document, source_name="inline.yxmd")
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    failures = [step for step in run_info.node_step_result if not step.success]
+    if failures:
+        return result, None, failures
+    last_node = report_row(result, 2).flowfile_node_ids[-1]
+    return result, flow.get_node(last_node).get_resulting_data().data_frame.collect(), []
+
+
+PRESIDENTS = ["presidentNo", "VicePresidentNo", "Pres_or_VP", "Name"]
+PRESIDENT_ROWS = [
+    (1, None, "President", "George Washington"),
+    (1, 1, "Vice President", "John Adams"),
+    (3, None, "President", "Thomas Jefferson"),
+    (3, 1, "Vice President", "Aaron Burr"),
+    (3, 2, "Vice President", "George Clinton"),
+]
+
+# Cross_Tab.yxmd tool 141: Concat with the separator Alteryx writes as ``,\s`` (comma + space).
+CROSS_TAB_141 = (
+    '<GroupFields><Field field="presidentNo" /></GroupFields><HeaderField field="Pres_or_VP" />'
+    '<DataField field="Name" /><Methods><Method method="Concat" /><Separator>,\\s</Separator>'
+    '<FieldSize value="2048" /></Methods>'
+)
+# Cross_Tab.yxmd tool 143: the header field is null for every president.
+CROSS_TAB_143 = (
+    '<GroupFields><Field field="presidentNo" /></GroupFields><HeaderField field="VicePresidentNo" />'
+    '<DataField field="Name" /><Methods><Method method="Concat" /><Separator>,\\s</Separator>'
+    '<FieldSize value="2048" /></Methods>'
+)
+# Cross_Tab.yxmd tool 214 and Transpose.yxmd tool 202: two methods on one data field.
+CROSS_TAB_214 = (
+    '<GroupFields><Field field="Suggested Age Range" /></GroupFields><HeaderField field="Category" />'
+    '<DataField field="Value" /><Methods><Method method="Sum" /><Method method="Avg" /></Methods>'
+)
+
+
+def test_cross_tab_concat_joins_with_the_unescaped_separator(tmp_path: Path):
+    result, frame, failures = run_cross_tab(
+        cross_tab_after_text_input(PRESIDENTS, PRESIDENT_ROWS, CROSS_TAB_141), tmp_path
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "polars_code"
+    assert row.messages == [
+        "Alteryx truncates the concatenated values at 2048 characters (FieldSize); "
+        "Flowfile strings are unbounded, so the full values are kept."
+    ]
+    assert failures == []
+    assert frame.columns == ["presidentNo", "Concat_President", "Concat_Vice_President"]
+    assert frame.sort("presidentNo")["Concat_Vice_President"].to_list() == ["John Adams", "Aaron Burr, George Clinton"]
+
+
+def test_cross_tab_null_header_gets_its_own_column(tmp_path: Path):
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(PRESIDENTS, PRESIDENT_ROWS, CROSS_TAB_143), tmp_path)
+    assert failures == []
+    assert frame.columns == ["presidentNo", "Concat_1", "Concat_2", "Concat__Null_"]
+    assert frame.sort("presidentNo")["Concat__Null_"].to_list() == ["George Washington", "Thomas Jefferson"]
+
+
+def test_cross_tab_two_methods_prefix_the_alteryx_method_name(tmp_path: Path):
+    rows = [
+        ("Kids", "Fun and Games", 10),
+        ("Kids", "Fun and Games", 30),
+        ("Kids", "Educational", 5),
+        ("Teens", "Educational", 7),
+    ]
+    result, frame, failures = run_cross_tab(
+        cross_tab_after_text_input(["Suggested Age Range", "Category", "Value"], rows, CROSS_TAB_214), tmp_path
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "pivot"
+    assert failures == []
+    assert set(frame.columns) == {
+        "Suggested Age Range",
+        "Sum_Educational",
+        "Avg_Educational",
+        "Sum_Fun_and_Games",
+        "Avg_Fun_and_Games",
+    }
+    kids = frame.filter(pl.col("Suggested Age Range") == "Kids")
+    assert kids["Sum_Fun_and_Games"].to_list() == [40]
+    assert kids["Avg_Fun_and_Games"].to_list() == [20.0]
+
+
+def test_cross_tab_sanitises_headers_like_alteryx(tmp_path: Path):
+    rows = [("n", "New York", 1), ("n", "2019-Q1", 2), ("n", "a.b/c", 3)]
+    config = (
+        '<GroupFields><Field field="region" /></GroupFields><HeaderField field="city" />'
+        '<DataField field="sales" /><Methods><Method method="Sum" /></Methods>'
+    )
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(["region", "city", "sales"], rows, config), tmp_path)
+    assert failures == []
+    assert frame.columns == ["region", "2019_Q1", "New_York", "a_b_c"]
+
+
+def test_cross_tab_header_collision_stops_the_flow_naming_both_values(tmp_path: Path):
+    rows = [("n", "A-B", 1), ("n", "A B", 2)]
+    config = (
+        '<GroupFields><Field field="region" /></GroupFields><HeaderField field="city" />'
+        '<DataField field="sales" /><Methods><Method method="Sum" /></Methods>'
+    )
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(["region", "city", "sales"], rows, config), tmp_path)
+    assert frame is None
+    assert len(failures) == 1
+    assert "'A B' and 'A-B' both become column 'A_B'" in failures[0].error
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("Count", ["region", "Count_x"]),
+        ("Avg", ["region", "Avg_x"]),
+        ("Sum", ["region", "x"]),
+        ("First", ["region", "x"]),
+    ],
+)
+def test_cross_tab_prefixes_a_lone_method_unless_it_is_sum_first_or_last(tmp_path: Path, method: str, expected: list):
+    """Alteryx's Cross Tab docs: the method is prefixed unless Sum, First or Last is the only method."""
+    rows = [("n", "x", 1), ("n", "x", 2)]
+    config = (
+        '<GroupFields><Field field="region" /></GroupFields><HeaderField field="city" />'
+        f'<DataField field="sales" /><Methods><Method method="{method}" /></Methods>'
+    )
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(["region", "city", "sales"], rows, config), tmp_path)
+    assert failures == []
+    assert frame.columns == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(",\\s", ", "), ("\\t", "\t"), ("\\n", "\n"), (",", ","), ("\\\\s", "\\s"), ("|", "|")],
+)
+def test_cross_tab_separator_unescaping(raw: str, expected: str):
+    from flowfile_core.flowfile.converters.alteryx.mappers import _unescape_separator
+
+    assert _unescape_separator(raw) == expected
 
 
 def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
@@ -1224,7 +1610,7 @@ def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
     node = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]
     assert node["type"] == "cross_join"
     assert node["input_ids"] == [1]
-    assert node["right_input_id"] == 7
+    assert node["right_input_id"] == report_row(extra_tools, 6).flowfile_node_ids[0]
 
 
 def test_count_records_maps_the_macro_onto_record_count(tmp_path: Path):
@@ -1265,6 +1651,26 @@ def test_data_cleansing_ignores_the_case_dropdown_when_case_is_disabled():
     assert row.status == "converted"
     cleansing = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
     assert cleansing["case_mode"] == "none"
+
+
+def test_data_cleansing_converts_a_macro_build_without_the_null_checkboxes():
+    """The installed Cleanse.yxmc writes 11 values; the two null-removal ids are absent."""
+    config = cleanse_config({"Check Box (135)": None, "Check Box (136)": None})
+    result = convert_yxmd(macro_after_text_input("Cleanse.yxmc", config), source_name="inline.yxmd")
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "data_cleansing"
+    cleansing = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert cleansing["remove_null_rows"] is False
+    assert cleansing["remove_null_columns"] is False
+    assert cleansing["replace_nulls_with_blank"] is True
+
+
+def test_data_cleansing_still_reads_the_null_checkboxes_when_the_build_writes_them():
+    config = cleanse_config({"Check Box (135)": "True", "Check Box (136)": "True"})
+    result = convert_yxmd(macro_after_text_input("Cleanse.yxmc", config), source_name="inline.yxmd")
+    cleansing = dumped_nodes(result)[report_row(result, 2).flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert (cleansing["remove_null_rows"], cleansing["remove_null_columns"]) == (True, True)
 
 
 def test_data_cleansing_with_an_empty_field_list_cleanses_no_columns():
@@ -1353,11 +1759,13 @@ def test_extra_tools_flow_runs(tmp_path: Path, extra_tools: ConversionResult):
     assert set(transposed.columns) == {"region", "product", "Name", "Value"}
     assert transposed.height == 6
 
-    pivoted = flow.get_node(6).get_resulting_data().data_frame.collect().sort("region")
+    pivoted_id = report_row(extra_tools, 5).flowfile_node_ids[-1]
+    pivoted = flow.get_node(pivoted_id).get_resulting_data().data_frame.collect().sort("region")
     assert pivoted["apples"].to_list() == [10, 30]
     assert pivoted["pears"].to_list() == [20, 0]
 
-    appended = flow.get_node(8).get_resulting_data().data_frame.collect()
+    appended_id = report_row(extra_tools, 7).flowfile_node_ids[0]
+    appended = flow.get_node(appended_id).get_resulting_data().data_frame.collect()
     assert appended.height == 3
     assert appended["tax"].to_list() == [0.2, 0.2, 0.2]
 
@@ -1365,3 +1773,342 @@ def test_extra_tools_flow_runs(tmp_path: Path, extra_tools: ConversionResult):
     cleansed = flow.get_node(cleansed_id).get_resulting_data().data_frame.collect()
     assert cleansed["region"].to_list() == ["NORTH", "NORTH", "SOUTH"]
     assert cleansed["product"].to_list() == ["APPLES", "PEARS", "APPLES"]
+
+def placeholder_code(result: ConversionResult, node_id: int = 1) -> str:
+    return dumped_nodes(result)[node_id]["setting_input"]["polars_code_input"]["polars_code"]
+
+
+def test_credentials_never_reach_the_saved_flow():
+    result = convert_yxmd(LLM_WITH_CREDENTIALS, source_name="llm.yxmd")
+    code = placeholder_code(result)
+    for secret in (
+        "7a9a50b6-a4bd-4841-b4c9-3bfd051752d2",
+        "aa7d8c1a-8001-49d5-86a0-f6a5322f5d46",
+        "01JB01XTJVFQCTCMMS9X3F3HX1",
+    ):
+        assert secret not in code
+    assert "[redacted by Flowfile]" in code
+    # The shape of the configuration still survives, so the node can be rebuilt by hand.
+    assert "authServerDetails" in code
+    assert "https://ayx-sandbox.bender.rocks/aims/" in code
+    assert "Credential values were not copied out of the workflow:" in code
+    assert "llmConnectionId" in code
+
+
+def test_a_password_bearing_connection_string_is_blanked_whole():
+    result = convert_yxmd(ODBC_INPUT, source_name="odbc.yxmd")
+    code = placeholder_code(result)
+    assert "hunter2" not in code
+    assert "Zm9vYmFy" not in code
+    assert "corp.database.windows.net" not in code
+    assert "[redacted by Flowfile]" in code
+
+
+def test_an_ordinary_configuration_is_copied_untouched(unsupported: ConversionResult):
+    code = placeholder_code(unsupported, node_id=2)
+    assert "[redacted by Flowfile]" not in code
+    assert "Credential values were not copied" not in code
+
+
+def test_a_yxdb_input_reads_the_parquet_sibling():
+    result = convert_yxmd(YXDB_INPUT, source_name="yxdb.yxmd")
+    row = next(row for row in result.report.rows if row.alteryx_tool_id == 1)
+    assert row.status == "partial"
+    assert row.flowfile_node_type == "read"
+
+    received = dumped_nodes(result)[1]["setting_input"]["received_file"]
+    assert received["file_type"] == "parquet"
+    assert received["name"] == "CustomerFile1.parquet"
+    assert received["path"] == "..\\..\\..\\data\\OneToolData\\CustomerFile1.parquet"
+    assert received["directory"] == "..\\..\\..\\data\\OneToolData"
+
+
+def test_a_yxdb_input_names_the_command_that_creates_the_file():
+    row = next(
+        row for row in convert_yxmd(YXDB_INPUT, source_name="yxdb.yxmd").report.rows if row.alteryx_tool_id == 1
+    )
+    assert any("does not open .yxdb" in message for message in row.messages)
+    command = next(message for message in row.messages if "flowfile convert yxdb" in message)
+    assert '"..\\..\\..\\data\\OneToolData\\CustomerFile1.yxdb"' in command
+
+
+def test_a_yxdb_input_keeps_its_cached_columns_for_downstream_tools():
+    result = convert_yxmd(YXDB_INPUT, source_name="yxdb.yxmd")
+    # The Sort resolved its field, which only the cached schema of the .yxdb reader can supply.
+    sort_row = next(row for row in result.report.rows if row.alteryx_tool_id == 2)
+    assert sort_row.status == "converted"
+    nodes = dumped_nodes(result)
+    assert nodes[2]["setting_input"]["sort_input"][0]["column"] == "Spend"
+    assert nodes[1]["outputs"] == [2]
+
+
+def output_row_and_settings(data: bytes) -> tuple:
+    result = convert_yxmd(data, source_name="output.yxmd")
+    row = next(row for row in result.report.rows if row.alteryx_tool_id == 2)
+    node = dumped_nodes(result).get(row.flowfile_node_ids[0])
+    return row, node["setting_input"]
+
+
+def test_a_yxdb_output_writes_the_parquet_sibling():
+    row, settings = output_row_and_settings(
+        db_file_output('<File FileFormat="19" MaxRecords="">C:\\out\\orders.yxdb</File>')
+    )
+    assert row.status == "partial"
+    assert settings["output_settings"]["file_type"] == "parquet"
+    assert settings["output_settings"]["name"] == "orders.parquet"
+    assert settings["output_settings"]["directory"] == "C:\\out"
+    assert any("does not write .yxdb" in message for message in row.messages)
+
+
+def test_a_windows_variable_in_the_target_path_is_not_pretended_to_be_a_folder():
+    row, settings = output_row_and_settings(
+        db_file_output('<File FileFormat="0" MaxRecords="">%temp%OutputToolExample_Simple.csv</File>')
+    )
+    assert row.status == "partial"
+    assert settings["output_settings"]["name"] == "OutputToolExample_Simple.csv"
+    assert settings["output_settings"]["directory"] == ""
+    assert any("%temp%" in message for message in row.messages)
+
+
+def test_a_multi_file_output_is_refused_instead_of_written_as_one_file():
+    row, settings = output_row_and_settings(
+        db_file_output(
+            '<File FileFormat="19" MaxRecords="">%temp%OutputToolExample_RegionGrouped_.yxdb</File>',
+            extra='<MultiFile value="True" /><MultiFileType>Suffix</MultiFileType><MultiFileField>Region</MultiFileField>',
+        )
+    )
+    assert row.status == "placeholder"
+    assert any("one file per value of 'Region'" in message for message in row.messages)
+
+
+def test_an_ordinary_csv_output_still_converts_without_caveats():
+    row, settings = output_row_and_settings(
+        db_file_output('<File FileFormat="0" MaxRecords="">C:\\out\\orders.csv</File>')
+    )
+    assert row.status == "converted"
+    assert row.messages == []
+    assert settings["output_settings"]["name"] == "orders.csv"
+
+
+MULTI_FIELD_COPY_FIELDS = (
+    '<Fields orderChanged="False">'
+    '<Field name="value" /><Field name="*Unknown" /><Field name="Total " selected="False" />'
+    "</Fields>"
+)
+
+
+def multi_field_formula(affix_elements: str) -> bytes:
+    """The Multi-Field Formula as Alteryx writes it when it copies to new fields."""
+    return tool_after_text_input(
+        "AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula",
+        "<FieldType>Numeric</FieldType>"
+        + MULTI_FIELD_COPY_FIELDS
+        + affix_elements
+        + '<CopyOutput value="True" />'
+        + "<Expression>[_CurrentField_]/[Total ]*100</Expression>"
+        + '<ChangeFieldType value="False" />',
+    )
+
+
+def test_multi_field_formula_keeps_the_leading_space_of_an_alteryx_suffix():
+    result = convert_yxmd(
+        multi_field_formula("<NewFieldAddOn> % Total</NewFieldAddOn><NewFieldAddOnPos>Suffix</NewFieldAddOnPos>"),
+        source_name="inline.yxmd",
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    function = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["function"]
+    assert function["field"]["name"] == "value % Total"
+    assert function["function"] == "[value] / [Total ] * 100"
+
+
+def test_multi_field_formula_reads_a_prefix_affix():
+    result = convert_yxmd(
+        multi_field_formula("<NewFieldAddOn>New_</NewFieldAddOn><NewFieldAddOnPos>Prefix</NewFieldAddOnPos>"),
+        source_name="inline.yxmd",
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["function"]["field"]["name"] == "New_value"
+
+
+@pytest.mark.parametrize(
+    ("case_id", "affix_elements"),
+    [
+        ("no-affix-at-all", ""),
+        ("affix-without-a-position", "<NewFieldAddOn>New_</NewFieldAddOn>"),
+        ("position-without-an-affix", "<NewFieldAddOnPos>Prefix</NewFieldAddOnPos>"),
+        ("unknown-position", "<NewFieldAddOn>New_</NewFieldAddOn><NewFieldAddOnPos>Around</NewFieldAddOnPos>"),
+    ],
+)
+def test_multi_field_formula_fails_closed_when_the_new_names_are_unknown(case_id: str, affix_elements: str):
+    row = report_row(convert_yxmd(multi_field_formula(affix_elements), source_name="inline.yxmd"), 2)
+    assert row.status == "placeholder", case_id
+    assert any("not recorded in the workflow" in message for message in row.messages)
+
+
+def test_multi_field_formula_without_copy_output_still_writes_in_place():
+    document = tool_after_text_input(
+        "AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula",
+        "<FieldType>Text</FieldType>"
+        + MULTI_FIELD_COPY_FIELDS
+        + '<CopyOutput value="False" />'
+        + "<Expression>Uppercase([_CurrentField_])</Expression>"
+        + '<ChangeFieldType value="False" />',
+    )
+    result = convert_yxmd(document, source_name="inline.yxmd")
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["function"]["field"]["name"] == "value"
+
+
+def dsn_workflow(plugin: str, dsn: str, annotation: str = "") -> bytes:
+    """A one-tool reader/writer whose File element is an ODBC connection string."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="{plugin}" />
+      <Properties>
+        <Configuration>
+          <File>{dsn}</File>
+          <FormatSpecificOptions />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <DefaultAnnotationText>{annotation}</DefaultAnnotationText>
+        </Annotation>
+      </Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+""".encode()
+
+
+# Every one of these ends in a dot-segment, which is what made the first redaction guard miss:
+# `_extension` sliced the string before the guard ever saw it.
+DSN_CASES = [
+    (
+        "azure-dotted-host",
+        "odbc:DRIVER={ODBC Driver 18};SERVER=corp.database.windows.net;UID=r;PWD=hunter2",
+        ("hunter2", "corp.database.windows.net"),
+    ),
+    ("password-containing-a-dot", "odbc:SERVER=db01;UID=x;PWD=hun.ter2", ("hun.ter2", "ter2")),
+    (
+        "dsn-whose-tail-looks-like-a-yxdb",
+        "odbc:SERVER=corp.database.windows.net;UID=r;PWD=hunter2;DATABASE=archive.yxdb",
+        ("hunter2", "corp.database.windows.net"),
+    ),
+    ("uppercase-password-keyword", "odbc:SERVER=host.corp.local;UID=r;Password=hunter2", ("hunter2",)),
+]
+
+
+@pytest.mark.parametrize(
+    "plugin",
+    ["AlteryxBasePluginsGui.DbFileInput.DbFileInput", "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput"],
+)
+@pytest.mark.parametrize(("case_id", "dsn", "secrets"), DSN_CASES)
+def test_a_connection_string_never_reaches_the_report_or_the_saved_flow(
+    plugin: str, case_id: str, dsn: str, secrets: tuple[str, ...]
+):
+    result = convert_yxmd(dsn_workflow(plugin, dsn), source_name="dsn.yxmd")
+    row = result.report.rows[0]
+    # Every message the user sees, plus everything written into the flow file itself.
+    written = yaml.dump(result.flow_data.model_dump(mode="json"), allow_unicode=True)
+    haystack = " ".join(row.messages) + " " + written
+    for secret in secrets:
+        assert secret not in haystack, f"{case_id} ({plugin.rsplit('.', 1)[-1]}) leaked {secret!r}"
+    assert "[redacted by Flowfile]" in haystack, case_id
+
+
+
+DOTTED_DSN = "odbc:DRIVER={ODBC Driver 18};SERVER=corp.database.windows.net;UID=r;PWD=hunter2"
+
+CONNECTION_SOURCES = [
+    # The File value is refused as a connection, but the annotation repeats it — the row still says so.
+    ("dsn-repeated-in-the-annotation", "C:\\data\\orders.csv", DOTTED_DSN),
+    ("ftp-with-inline-credentials", "ftp://admin:x@host/data.csv", ""),
+    ("https-with-a-token-parameter", "https://host/export.csv?access_token=x", ""),
+    ("azure-storage-key-pairs", "AccountName=a;AccountKey=x;EndpointSuffix=core.windows.net", ""),
+    ("dsn-without-any-password", "odbc:DRIVER={SQL Server};SERVER=corp;Trusted_Connection=yes", ""),
+]
+
+
+@pytest.mark.parametrize(
+    "plugin",
+    ["AlteryxBasePluginsGui.DbFileInput.DbFileInput", "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput"],
+)
+@pytest.mark.parametrize(("case_id", "file_value", "annotation"), CONNECTION_SOURCES)
+def test_a_connection_source_is_named_on_the_row_and_never_left_green(
+    plugin: str, case_id: str, file_value: str, annotation: str
+):
+    result = convert_yxmd(dsn_workflow(plugin, file_value, annotation), source_name="dsn.yxmd")
+    row = result.report.rows[0]
+    assert any("remove any credentials before sharing" in message for message in row.messages), case_id
+    assert row.status != "converted", case_id
+
+
+@pytest.mark.parametrize(
+    "plugin",
+    ["AlteryxBasePluginsGui.DbFileInput.DbFileInput", "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput"],
+)
+@pytest.mark.parametrize(
+    "file_value",
+    [
+        "C:\\data\\customers.csv",
+        "..\\..\\..\\data\\OneToolData\\CustomerFile1.csv",
+        ".\\2016PPData.csv",
+        "%temp%OutputToolExample_Simple.csv",
+        "\\\\server\\share\\file.csv",
+        "C:\\Users\\me\\My Documents\\report v1.2.csv",
+    ],
+)
+def test_a_plain_path_is_never_called_a_connection_string(plugin: str, file_value: str):
+    row = convert_yxmd(dsn_workflow(plugin, file_value, file_value), source_name="plain.yxmd").report.rows[0]
+    assert not any("remove any credentials" in message for message in row.messages)
+    # A `%temp%` writer is partial for its own reason (the Windows variable), not for this one.
+    is_temp_writer = file_value.startswith("%") and "Output" in plugin
+    assert row.status == ("partial" if is_temp_writer else "converted"), row.messages
+
+
+def test_an_unreadable_format_is_described_never_echoed():
+    """The message must not become a second way to print the connection string."""
+    row = convert_yxmd(
+        dsn_workflow(
+            "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+            "odbc:DRIVER={SQL Server};SERVER=corp;Trusted_Connection=yes",
+        ),
+        source_name="dsn.yxmd",
+    ).report.rows[0]
+    unsupported = next(message for message in row.messages if "does not support" in message)
+    assert "an unrecognised format" in unsupported
+    assert "Trusted_Connection" not in unsupported
+    assert "corp" not in unsupported
+
+
+def test_an_ordinary_unsupported_format_is_still_quoted_by_name():
+    row = convert_yxmd(
+        dsn_workflow("AlteryxBasePluginsGui.DbFileInput.DbFileInput", "C:\\data\\customers.mdb"),
+        source_name="mdb.yxmd",
+    ).report.rows[0]
+    assert any("reads 'mdb', which Flowfile does not support" in message for message in row.messages)
+
+
+def test_the_redaction_notice_only_appears_when_something_was_blanked(unsupported: ConversionResult):
+    """A tool with nothing to hide must not be told its credentials were removed."""
+    for row in unsupported.report.rows:
+        if row.status != "placeholder":
+            continue
+        code = dumped_nodes(unsupported)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+        assert "Credential values were not copied" not in code
+
+
+def test_the_redaction_notice_names_each_blanked_element_once():
+    result = convert_yxmd(LLM_WITH_CREDENTIALS, source_name="llm.yxmd")
+    notice = next(
+        line
+        for line in placeholder_code(result).splitlines()
+        if "Credential values were not copied" in line
+    )
+    names = notice.split(":", 1)[1].strip().rstrip(".").split(", ")
+    assert names == sorted(set(names)), notice
+    assert "llmConnectionId" in names

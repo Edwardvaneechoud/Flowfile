@@ -172,8 +172,8 @@ def parse_yxmd(data: bytes) -> AlteryxWorkflow:
     nodes_element = root.find("Nodes")
     if nodes_element is not None:
         _collect_tools(nodes_element, tools, text_boxes)
-    if not tools:
-        raise YxmdParseError("The workflow contains no Alteryx tools to convert.")
+    if not tools and not text_boxes:
+        raise YxmdParseError("The workflow contains nothing to convert: no Alteryx tools and no comments.")
 
     return AlteryxWorkflow(
         name=_workflow_name(root),

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 
 import {
   NEW_NODE_REQUEST_URL,
+  coverageLine,
+  entityLabel,
   needsAttentionCount,
   nodeRequestLink,
   sortReportRows,
@@ -22,6 +24,7 @@ function makeRow(
   return {
     alteryx_tool_id: "1",
     alteryx_tool,
+    entity: "tool",
     flowfile_node_ids: [1],
     flowfile_node_type: "select",
     status,
@@ -34,11 +37,20 @@ function makeReport(overrides: Partial<AlteryxConversionReport> = {}): AlteryxCo
   return {
     workflow_name: "orders",
     total_tools: 0,
+    total_annotations: 0,
     converted: 0,
     partial: 0,
     commented: 0,
     placeholder: 0,
     skipped: 0,
+    coverage: {
+      tools: 0,
+      mapped: 0,
+      converted: 0,
+      mapped_percent: 0,
+      converted_percent: 0,
+      definition: "",
+    },
     rows: [],
     ...overrides,
   };
@@ -124,6 +136,56 @@ describe("summaryLine", () => {
 
   it("reports a workflow with nothing converted", () => {
     expect(summaryLine(makeReport({ total_tools: 0 }))).toBe("0 tools");
+  });
+
+  it("counts comments apart from the tools", () => {
+    const report = makeReport({ total_tools: 2, total_annotations: 3, converted: 2 });
+    expect(summaryLine(report)).toBe("2 tools · 2 converted · 3 comments");
+  });
+
+  it("says one comment in the singular", () => {
+    expect(summaryLine(makeReport({ total_tools: 1, total_annotations: 1, converted: 1 }))).toBe(
+      "1 tool · 1 converted · 1 comment",
+    );
+  });
+});
+
+describe("coverageLine", () => {
+  it("shows the definition the backend wrote", () => {
+    const report = makeReport({
+      total_tools: 4,
+      coverage: {
+        tools: 4,
+        mapped: 2,
+        converted: 2,
+        mapped_percent: 50,
+        converted_percent: 50,
+        definition: "2 of 4 Alteryx tools reached a Flowfile node (50%).",
+      },
+    });
+    expect(coverageLine(report)).toBe("2 of 4 Alteryx tools reached a Flowfile node (50%).");
+  });
+
+  it("is empty when an older payload carries no coverage", () => {
+    const report = makeReport();
+    // @ts-expect-error — simulating a report from a core that predates the coverage field.
+    report.coverage = undefined;
+    expect(coverageLine(report)).toBe("");
+  });
+});
+
+describe("entityLabel", () => {
+  it("names the emitted node type", () => {
+    expect(entityLabel(makeRow("Select", "converted"))).toBe("select");
+  });
+
+  it("calls an annotation without a node a comment", () => {
+    const row = makeRow("Comment", "skipped", { entity: "annotation", flowfile_node_type: null });
+    expect(entityLabel(row)).toBe("comment");
+  });
+
+  it("dashes a tool that emitted no node", () => {
+    expect(entityLabel(makeRow("Sample", "skipped", { flowfile_node_type: null }))).toBe("—");
   });
 });
 

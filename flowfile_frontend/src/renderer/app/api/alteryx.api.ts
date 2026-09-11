@@ -4,9 +4,13 @@ const API_BASE = "/converters";
 
 export type AlteryxToolStatus = "converted" | "partial" | "commented" | "placeholder" | "skipped";
 
+// A canvas comment is an annotation, never a tool — it must not reach the coverage numbers.
+export type AlteryxToolEntity = "tool" | "annotation";
+
 export interface AlteryxToolRow {
   alteryx_tool_id: string | number;
   alteryx_tool: string;
+  entity: AlteryxToolEntity;
   alteryx_tool_key?: string;
   flowfile_node_ids: number[];
   flowfile_node_type: string | null;
@@ -14,14 +18,25 @@ export interface AlteryxToolRow {
   messages: string[];
 }
 
+export interface AlteryxCoverageSummary {
+  tools: number;
+  mapped: number;
+  converted: number;
+  mapped_percent: number;
+  converted_percent: number;
+  definition: string;
+}
+
 export interface AlteryxConversionReport {
   workflow_name: string;
   total_tools: number;
+  total_annotations: number;
   converted: number;
   partial: number;
   commented: number;
   placeholder: number;
   skipped: number;
+  coverage: AlteryxCoverageSummary;
   rows: AlteryxToolRow[];
 }
 

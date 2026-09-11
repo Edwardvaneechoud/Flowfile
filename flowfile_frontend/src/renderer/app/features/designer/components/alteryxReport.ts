@@ -74,7 +74,18 @@ export function summaryLine(report: AlteryxConversionReport): string {
     const count = report[status] ?? 0;
     if (count > 0) parts.push(`${count} ${statusChip(status).label.toLowerCase()}`);
   }
+  const annotations = report.total_annotations ?? 0;
+  if (annotations > 0) parts.push(`${annotations} comment${annotations === 1 ? "" : "s"}`);
   return parts.join(" · ");
+}
+
+// The backend writes the sentence so both percentages are always shown together.
+export function coverageLine(report: AlteryxConversionReport): string {
+  return report.coverage?.definition ?? "";
+}
+
+export function entityLabel(row: AlteryxToolRow): string {
+  return row.flowfile_node_type || (row.entity === "annotation" ? "comment" : "—");
 }
 
 // Placeholder rows for an official Alteryx tool link to the open request for it, else to a prefilled new one.
