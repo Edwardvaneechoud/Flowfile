@@ -260,6 +260,16 @@ def _text(element: ET.Element | None, path: str, default: str = "") -> str:
     return found.text.strip()
 
 
+def _raw_text(element: ET.Element | None, path: str) -> str:
+    """The element's text exactly as written; unlike `_text` it keeps significant whitespace."""
+    if element is None:
+        return ""
+    found = element.find(path)
+    if found is None or found.text is None:
+        return ""
+    return found.text
+
+
 def _is_true(value: str | None) -> bool:
     return (value or "").strip().lower() == "true"
 
@@ -1000,18 +1010,115 @@ def _emit_prefix_suffix_rename(
 
 
 _CURRENT_FIELD_RE = re.compile(r"\[_CurrentField_\]", re.IGNORECASE)
-_CURRENT_FIELD_NAME_RE = re.compile(r"\[_CurrentFieldName_\]", re.IGNORECASE)
-_SPECIAL_FIELD_RE = re.compile(r"\[_[A-Za-z]\w*_\]")
+
+# Alteryx's FieldType picker, onto Flowfile's readable data-type groups.
+_MULTI_FIELD_TYPE_GROUPS: dict[str, str] = {
+    "numeric": "Numeric",
+    "text": "String",
+    "string": "String",
+    "bool": "Boolean",
+    "boolean": "Boolean",
+    "datetime": "Date",
+    "date": "Date",
+    "time": "Date",
+}
+_MULTI_FIELD_ALL_TYPES = frozenset({"all", "alltypes", "alltypesof", "any"})
+_MULTI_FIELD_UNKNOWN_MESSAGE = (
+    "Alteryx would also apply the expression to fields unknown at design time; "
+    "Flowfile applies it to the listed columns only."
+)
+_CURRENT_FIELD_TYPE_RE = re.compile(r"\[_CurrentFieldType_\]", re.IGNORECASE)
+_MULTI_FIELD_TYPE_NAME_MESSAGE = (
+    "Alteryx's [_CurrentFieldType_] yields Alteryx type names (V_WString, Double, Bool…); "
+    "Flowfile's yields Polars names (String, Float64, Boolean…) — review comparisons against type literals."
+)
 
 
-def _substitute_current_field(expression: str, name: str) -> str:
-    """Bind Alteryx's [_CurrentField_] / [_CurrentFieldName_] to one field.
+def _multi_field_selection(
+    names: list[str], selected: list[str], unknown_selected: bool, field_type: str
+) -> tuple[dict, list[str]]:
+    """Map one tool's field picker onto the node's selection settings, plus any caveat messages.
 
-    The replacements go through callables so a field name containing a backslash is inserted
-    literally instead of being read as a ``re.sub`` escape.
+    Alteryx picks fields by data type and then lets the user deselect individual ones, so a
+    selection that still covers every named field *and* ``*Unknown`` is the tool's "every field
+    of this type" state and becomes the node's data-type (or all-columns) mode. Anything
+    narrower becomes an explicit list, which cannot follow fields Alteryx would only have
+    discovered at run time — the caveat message says so. An unrecognised ``FieldType`` token
+    fails closed to the list rather than guessing a group.
     """
-    bound = _CURRENT_FIELD_RE.sub(lambda _match: f"[{name}]", expression)
-    return _CURRENT_FIELD_NAME_RE.sub(lambda _match: f'"{name}"', bound)
+    if unknown_selected and selected == names:
+        group = _MULTI_FIELD_TYPE_GROUPS.get(field_type)
+        if group is not None:
+            return {"selection_mode": "data_type", "selected_data_type": group}, []
+        if field_type in _MULTI_FIELD_ALL_TYPES:
+            return {"selection_mode": "all"}, []
+    return (
+        {"selection_mode": "list", "selected_columns": selected},
+        [_MULTI_FIELD_UNKNOWN_MESSAGE] if unknown_selected else [],
+    )
+
+
+def _multi_field_add_on(config: ET.Element) -> tuple[str, str]:
+    """The prefix/suffix new columns get, read raw because the add-on's leading spaces matter.
+
+    Newer workflows write one ``NewFieldAddOn`` plus a ``NewFieldAddOnPos`` side; older ones
+    wrote separate ``OutputPrefix``/``OutputSuffix`` tags.
+    """
+    found = config.find("NewFieldAddOn")
+    if found is None:
+        return _raw_text(config, "OutputPrefix"), _raw_text(config, "OutputSuffix")
+    add_on = found.text or ""
+    return ("", add_on) if _text(config, "NewFieldAddOnPos").lower() == "suffix" else (add_on, "")
+
+
+def _multi_field_output_type(config: ET.Element) -> tuple[str | None, list[str]]:
+    """The Flowfile type the results are cast to, with a message for whatever the mapping loses.
+
+    A declared string output is deliberately not honoured *when the tool's own ``FieldType`` picker
+    is already text*. Alteryx pre-fills ``OutputFieldType`` with the selection's own type, so a
+    text-mode tool echoes ``V_String`` without meaning "stringify"; casting to text there is a no-op
+    when the expression already returns text and an irreversible loss otherwise (Polars cannot cast
+    text back to Boolean, so a downstream Select that retypes the column fails). Keeping the produced
+    type is always recoverable — a later node can cast to text — so that echo follows the sibling
+    Formula mapper and stays ``Auto``. A Numeric/Date/Bool selection declaring ``V_String`` is not an
+    echo but a deliberate retype, and is honoured like any other cast.
+    """
+    if not _is_true(_attribute(config, "ChangeFieldType", "value")):
+        return None, []
+    declared = _attribute(config, "OutputFieldType", "type")
+    if not declared:
+        return None, []
+    mapped = _map_alteryx_type(declared)
+    if mapped is None:
+        return None, [
+            f"Alteryx output type '{declared}' has no Flowfile equivalent; the type the expression produces is kept."
+        ]
+    if mapped == "String" and _text(config, "FieldType").lower() in ("text", "string"):
+        return None, [
+            f"Alteryx writes the result into a '{declared}' field; Flowfile keeps the type the expression produces."
+        ]
+    if declared.lower() == "fixeddecimal":
+        return mapped, ["Alteryx FixedDecimal(size, scale) is stored as Float64; size and scale are not kept."]
+    return mapped, []
+
+
+def _multi_field_scope(selection: dict) -> str:
+    if selection["selection_mode"] == "all":
+        return "all columns"
+    if selection["selection_mode"] == "data_type":
+        return f"{selection['selected_data_type']} columns"
+    return f"{len(selection['selected_columns'])} column(s)"
+
+
+def _multi_field_output_columns(known: list[str], selection: dict, prefix: str, suffix: str) -> list[str] | None:
+    """Columns leaving the node in new-column mode, or ``None`` when the targets need the schema."""
+    if selection["selection_mode"] == "all":
+        targets = list(known)
+    elif selection["selection_mode"] == "list":
+        targets = [name for name in selection["selected_columns"] if name in known]
+    else:
+        return None
+    return [*known, *(f"{prefix}{name}{suffix}" for name in targets)]
 
 
 def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1019,52 +1126,74 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
     expression = _text(config, "Expression")
     if not expression:
         return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no expression configured."])
-    _, selected, _unknown = _field_selection(config)
+    names, selected, unknown_selected = _field_selection(config)
     if not selected:
         return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."])
 
     copy_output = _is_true(_attribute(config, "CopyOutput", "value"))
-    prefix, suffix = _text(config, "OutputPrefix"), _text(config, "OutputSuffix")
+    prefix, suffix = _multi_field_add_on(config)
     if copy_output and not prefix and not suffix:
         return _placeholder_row(
             tool,
             ctx,
             ["The Alteryx Multi-Field Formula writes to copied fields whose names are not recorded in the workflow."],
         )
-    declared_type = ""
-    if _is_true(_attribute(config, "ChangeFieldType", "value")):
-        declared_type = _attribute(config, "OutputFieldType", "type")
-    data_type = _map_alteryx_type(declared_type)
 
-    assignments: list[_Assignment] = []
-    for name in selected:
-        if '"' in name:
-            return _placeholder_row(
-                tool, ctx, [f"The Alteryx Multi-Field Formula field {name!r} cannot be written as a field reference."]
-            )
-        body = _substitute_current_field(expression, name)
-        if _SPECIAL_FIELD_RE.search(body):
+    selection, messages = _multi_field_selection(names, selected, unknown_selected, _text(config, "FieldType").lower())
+    output_data_type, type_messages = _multi_field_output_type(config)
+
+    outcome = try_translate(expression, allowed_specials=frozenset(transform_schema.MULTI_FIELD_PLACEHOLDERS))
+    status: ToolStatus = "converted"
+    description = _description(tool)
+    formula = outcome.translated
+    if formula is None:
+        reason = outcome.reason or "no reason recorded"
+        formula = _commented_formula_body(expression, reason, f"[{transform_schema.MULTI_FIELD_CURRENT_FIELD}]")
+        try:
+            simple_function_to_expr(formula)
+        except Exception:  # the comment body itself is unusable; degrade to a code placeholder
             return _placeholder_row(
                 tool,
                 ctx,
-                [
-                    "The Alteryx Multi-Field Formula uses a special field reference with no Flowfile equivalent.",
-                    f"Original expression: {_one_line(expression)}",
-                ],
+                [f"'{_one_line(expression)}': {reason}. Original expression preserved in a placeholder node."],
             )
-        assignments.append(_Assignment(f"{prefix}{name}{suffix}" if copy_output else name, body, data_type))
+        status = "commented"
+        description = _description(tool, f"{WARNING_PREFIX}Alteryx multi-field formula needs manual conversion")
+        messages.append(f"'{_one_line(expression)}': {reason}. The original expression is kept as a comment.")
+        # The stub echoes the input column, so a declared cast would break the identity pass-through.
+        if output_data_type is not None:
+            messages.append(
+                f"Alteryx output type '{_attribute(config, 'OutputFieldType', 'type')}' "
+                "is not applied until the expression is rebuilt."
+            )
+            output_data_type = None
+    else:
+        messages.extend(type_messages)
+        if _CURRENT_FIELD_TYPE_RE.search(expression):
+            status = "partial"
+            messages.append(_MULTI_FIELD_TYPE_NAME_MESSAGE)
 
-    row = _emit_formula_chain(tool, ctx, assignments)
-    row.messages.insert(
-        0,
-        f"The Alteryx Multi-Field Formula was expanded into one Flowfile formula per field: {', '.join(selected)}.",
+    settings = input_schema.NodeMultiFieldFormula(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        multi_field_formula_input=transform_schema.MultiFieldFormulaInput(
+            formula=formula,
+            output_mode="new" if copy_output else "replace",
+            output_prefix=prefix,
+            output_suffix=suffix,
+            output_data_type=output_data_type or transform_schema.AUTO_DATA_TYPE,
+            **selection,
+        ),
     )
-    if declared_type:
-        row.messages.append(
-            f"Alteryx stored the result as '{declared_type}'; Flowfile keeps the type the expression produces. "
-            "Add a Select node if you need the Alteryx type."
-        )
-    return row
+    node_id = ctx.add_node(tool, "multi_field_formula", settings, description=description)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    known = ctx.input_columns(tool.tool_id)
+    ctx.tool_columns[tool.tool_id] = (
+        _multi_field_output_columns(known, selection, prefix, suffix) if copy_output and known is not None else known
+    )
+    messages.insert(0, f"Mapped onto one multi-field formula node over {_multi_field_scope(selection)}.")
+    return _row(tool, status, [node_id], "multi_field_formula", messages)
 
 
 _REGEX_UNSUPPORTED = (("(?=", "lookahead"), ("(?!", "negative lookahead"), ("(?<", "lookbehind"))

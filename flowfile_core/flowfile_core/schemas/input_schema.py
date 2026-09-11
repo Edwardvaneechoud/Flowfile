@@ -1368,6 +1368,33 @@ class NodeFormula(NodeSingleInput):
         return f"{name} = {expr}" if name else expr
 
 
+class NodeMultiFieldFormula(NodeSingleInput):
+    """Settings for a node that applies one formula to many columns at once."""
+
+    multi_field_formula_input: transform_schema.MultiFieldFormulaInput = Field(
+        default_factory=transform_schema.MultiFieldFormulaInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the formula, the columns it targets and where the results land."""
+        s = self.multi_field_formula_input
+        expr = (s.formula or "").strip()
+        if not expr:
+            return ""
+        if len(expr) > 60:
+            expr = expr[:57] + "..."
+        if s.selection_mode == "all":
+            scope = "all columns"
+        elif s.selection_mode == "list":
+            scope = f"{len(s.selected_columns)} column(s)"
+        else:
+            scope = f"{s.selected_data_type or '(none)'} columns"
+        description = f"{expr} on {scope}"
+        if s.output_mode == "new":
+            description += f" → {s.output_prefix}*{s.output_suffix}"
+        return description
+
+
 class NodeWindowFunctions(NodeSingleInput):
     """Settings for a node that adds rolling, cumulative, rank or tile columns."""
 

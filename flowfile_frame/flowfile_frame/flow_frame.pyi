@@ -304,6 +304,9 @@ class FlowFrame:
     # Aggregate the columns in the LazyFrame to their minimum value.
     def min(self, description: Optional[str] = None) -> 'FlowFrame': ...
 
+    # Apply one Flowfile formula to many columns at once.
+    def multi_field_formula(self, formula: str, columns: list[str] | None = None, data_type: Literal['Numeric', 'String', 'Date', 'Other', 'Boolean', 'Binary', 'Complex'] | None = None, prefix: str = '', suffix: str = '', output_data_type: str | None = None, description: str | None = None) -> 'FlowFrame': ...
+
     # Aggregate the columns in the LazyFrame as the sum of their null value count.
     def null_count(self, description: Optional[str] = None) -> 'FlowFrame': ...
 

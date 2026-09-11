@@ -3,7 +3,7 @@
 Transform nodes modify and shape your data. These nodes handle everything from basic operations like filtering and sorting to more complex transformations like custom formulas and text manipulation.
 
 !!! info "Some transform nodes are not in Flowfile Lite"
-    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Add Record ID**, **Formula**, **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, **Rename Columns**, and **Polars Code**. **Data Cleansing**, **Text to Rows**, **Window Functions**, **SQL Query**, and **Python Script** are not available in Lite.
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Add Record ID**, **Formula**, **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, **Rename Columns**, and **Polars Code**. **Multi-Field Formula**, **Data Cleansing**, **Text to Rows**, **Window Functions**, **SQL Query**, and **Python Script** are not available in Lite.
 
 ## Node Details
 
@@ -73,6 +73,52 @@ The **Formula** node creates a new column — or replaces an existing one — by
 
 - If the column name is **new**, the column is added to the dataset.  
 - If the column name **already exists**, its values are replaced with the formula result.  
+
+---
+
+### ![Multi-Field Formula](../../../assets/images/nodes/multi_field_formula.svg){ width="50" height="50" } Multi-Field Formula
+
+The **Multi-Field Formula** node runs one formula over many columns instead of one [Formula](#formula) node per column: the same calculation across every numeric column, across a listed subset, or across the whole frame. The formula uses the same [Flowfile formula language](../../formulas/index.md), with three placeholders that bind to whichever column is being processed.
+
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: Multi-Field Formula settings drawer — Apply to, Formula, Output and Preview sections -->
+
+#### **Placeholders**
+
+| Placeholder | Binds to |
+|-------------|----------|
+| `[_CurrentField_]` | The column's value — what the calculation works on. |
+| `[_CurrentFieldName_]` | The column's name as text, e.g. `"revenue"`. |
+| `[_CurrentFieldType_]` | The column's data type as text, e.g. `"Float64"` or `"String"`. |
+
+Any other column can still be referenced by name, so `[_CurrentField_] / [Total]` is a valid formula.
+
+#### **Apply to**
+
+| Mode | Which columns |
+|------|---------------|
+| All columns | Every column of the input. |
+| Specific columns | The columns you pick, in the order you pick them. Names that no longer exist in the input are ignored. |
+| By data type | Every column of one group: Numeric, String, Date, Boolean, Binary, Complex, or Other. |
+
+Selecting nothing is not an error — the node passes the frame through unchanged.
+
+#### **Output**
+
+| Option | Effect |
+|--------|--------|
+| Overwrite selected columns | Each result replaces the column it came from. Names and column order are unchanged. |
+| Write to new columns | Each result becomes a new `prefix` + name + `suffix` column appended after the existing ones, and the source columns stay. At least one affix is required, and a generated name that already exists in the input is an error. |
+| Data type | `Auto` keeps whatever type the formula produces; any other value casts every result to that type. |
+
+All the expressions are evaluated in one pass over the input, so a formula that references a column which is itself being overwritten still reads that column's original value. The drawer's preview lists the columns the formula will touch and the names it will write.
+
+#### **Example: each month as a share of the total**
+
+A table with a `Total` column and twelve month columns. Set **Apply to** → *Specific columns* → the twelve month columns, and write the formula `[_CurrentField_] / [Total] * 100`.
+
+Set **Output** → *Write to new columns*, **Suffix** to ` % Total` (the leading space is part of it) and **Data type** to `Float64`. The twelve month columns keep their original values and `January % Total` … `December % Total` are appended after the existing columns.
+
+The same node is available in the Python API as [`multi_field_formula()`](../../python-api/reference/flowframe-operations.md#one-formula-over-many-columns). [Exporting to Python](../tutorials/code-generator.md) renders it as a `multi_field_formula()` call in the FlowFrame modes; the pure-Polars mode reports it as unsupported.
 
 ---
 

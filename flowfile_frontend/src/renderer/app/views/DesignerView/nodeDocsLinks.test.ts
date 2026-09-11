@@ -85,10 +85,10 @@ describe("NODE_DOC_PAGES", () => {
     expect(new Set(targets).size).toBe(targets.length);
   });
 
-  // 47 node templates ship in flowfile_core/configs/node_store/nodes.py; the two
-  // without a docs section are external_source (dev-only) and polars_lazy_frame.
-  it("covers the 45 documented node types", () => {
-    expect(entries).toHaveLength(45);
+  // 49 node templates ship in flowfile_core/configs/node_store/nodes.py; three have no
+  // docs section - external_source (dev-only), polars_lazy_frame, and data_cleansing.
+  it("covers the 46 documented node types", () => {
+    expect(entries).toHaveLength(46);
   });
 });
 

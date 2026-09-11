@@ -103,6 +103,16 @@ df = df.unique(subset=["product_id"])
 
 `remove_null_rows` and `remove_null_columns` look at the whole frame regardless of the column list. `remove_null_columns` is the one data-dependent keyword: which columns go is decided from a null count taken when the method is called, not at `collect()`.
 
+## One formula over many columns
+
+`multi_field_formula()` is the Python form of the [Multi-Field Formula node](../../visual-editor/nodes/transform.md#multi-field-formula): one [Flowfile formula](../../formulas/index.md) applied to many columns in a single call. Inside the formula `[_CurrentField_]` is the value of the column being processed, `[_CurrentFieldName_]` its name and `[_CurrentFieldType_]` its dtype, the last two as text. Narrow the selection with `columns=[...]` or `data_type="Numeric"` — they are mutually exclusive, and passing neither applies the formula to every column.
+
+```python
+--8<-- "docs/examples/multi_field_formula.py:example"
+```
+
+`prefix` or `suffix` sends the results to new columns and leaves the sources alone; with neither, each result overwrites the column it came from. `output_data_type` casts every result. All the expressions run in one `with_columns`, so a formula may reference a column that is itself being overwritten and still read its original value. Selecting nothing — an empty `columns` list, or a `data_type` no column matches — is a no-op rather than an error.
+
 ## String operations
 
 ```python

@@ -654,6 +654,21 @@ export interface DynamicRenameInput {
   selected_data_type: ReadableDataTypeGroup | null;
 }
 
+// Multi-Field Formula Types
+
+export type MultiFieldOutputMode = "replace" | "new";
+
+export interface MultiFieldFormulaInput {
+  formula: string;
+  selection_mode: ColumnSelectionMode;
+  selected_columns: string[];
+  selected_data_type: ReadableDataTypeGroup | null;
+  output_mode: MultiFieldOutputMode;
+  output_prefix: string;
+  output_suffix: string;
+  output_data_type: string;
+}
+
 // Graph Solver Types
 
 export interface GraphSolverInput {
@@ -1049,6 +1064,10 @@ export interface NodeRecordId extends NodeSingleInput {
 
 export interface NodeDynamicRename extends NodeSingleInput {
   dynamic_rename_input: DynamicRenameInput;
+}
+
+export interface NodeMultiFieldFormula extends NodeSingleInput {
+  multi_field_formula_input: MultiFieldFormulaInput;
 }
 
 export type SampleMethod = "first" | "random" | "random_fraction";

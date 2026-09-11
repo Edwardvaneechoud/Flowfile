@@ -35,6 +35,7 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
 
   // transform.html
   formula: "transform.html#formula",
+  multi_field_formula: "transform.html#multi-field-formula",
   select: "transform.html#select-data",
   dynamic_rename: "transform.html#rename-columns",
   filter: "transform.html#filter-data",

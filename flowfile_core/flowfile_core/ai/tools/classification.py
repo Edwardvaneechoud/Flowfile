@@ -40,6 +40,9 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "manual_input": "source",
     "filter": "static",
     "formula": "static",
+    # multi_field_formula derives its output columns from the settings plus the upstream
+    # schema, exactly like formula — the lazy with_columns yields them without reading data.
+    "multi_field_formula": "static",
     "select": "static",
     "dynamic_rename": "dynamic",
     # data_cleansing never changes a dtype and registers no schema_callback, so the

@@ -2480,16 +2480,48 @@ class FlowDataEngine:
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
     @staticmethod
+    def _select_target_columns(
+        columns: list[tuple[str, str]],
+        selection_mode: transform_schemas.ColumnSelectionMode,
+        selected_columns: list[str],
+        selected_data_type: transform_schemas.ReadableDataTypeGroup | None,
+    ) -> list[str]:
+        """Return the ordered column names a column-selection rule applies to.
+
+        Shared by every node that offers the `all` / `list` / `data_type` selection
+        triple (dynamic rename, multi-field formula). Unknown names in `selected_columns`
+        are silently dropped so stale UI state does not break execution; `"list"` mode
+        keeps the user's chosen order while the other modes keep schema order. An
+        unknown or unset `selection_mode` returns `[]`.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
+            selection_mode: Which selection rule to apply.
+            selected_columns: The listed column names, used in `"list"` mode.
+            selected_data_type: The wanted data-type group, used in `"data_type"` mode.
+
+        Returns:
+            The column names the rule should be applied to.
+        """
+        if selection_mode == "all":
+            return [name for name, _ in columns]
+        if selection_mode == "list":
+            available = {name for name, _ in columns}
+            return [c for c in selected_columns if c in available]
+        if selection_mode == "data_type":
+            if selected_data_type is None:
+                return []
+            return [name for name, group in columns if group == selected_data_type]
+        return []
+
+    @staticmethod
     def _select_rename_targets(
         columns: list[tuple[str, str]],
         settings: transform_schemas.DynamicRenameInput,
     ) -> list[str]:
         """Return the ordered list of column names the rename rule applies to.
 
-        Applies the `selection_mode` filter (`"all"`, `"list"`, or `"data_type"`) to
-        the incoming schema, preserving the original column order. Unknown column
-        names in `settings.selected_columns` are silently dropped so stale UI state
-        does not break execution. An unknown or unset `selection_mode` returns `[]`.
+        Thin delegate over `_select_target_columns`; see there for the selection rules.
 
         Args:
             columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
@@ -2498,18 +2530,107 @@ class FlowDataEngine:
         Returns:
             The column names the rename rule should be applied to, in schema order.
         """
-        mode = settings.selection_mode
-        if mode == "all":
-            return [name for name, _ in columns]
-        if mode == "list":
-            available = {name for name, _ in columns}
-            return [c for c in settings.selected_columns if c in available]
-        if mode == "data_type":
-            wanted = settings.selected_data_type
-            if wanted is None:
-                return []
-            return [name for name, group in columns if group == wanted]
-        return []
+        return FlowDataEngine._select_target_columns(
+            columns, settings.selection_mode, settings.selected_columns, settings.selected_data_type
+        )
+
+    @staticmethod
+    def build_multi_field_formula_expressions(
+        columns: list[tuple[str, str, str]],
+        settings: transform_schemas.MultiFieldFormulaInput,
+    ) -> list[pl.Expr]:
+        """Build the aliased expressions a multi-field formula produces.
+
+        Pure function — takes the incoming schema as `(name, data_type, data_type_group)`
+        tuples plus the settings and returns one expression per target column, ready for a
+        SINGLE `with_columns` call. One call is what makes the operation well-defined when a
+        target's formula references another target: every expression sees the ORIGINAL input
+        values, so `[_CurrentField_] / [Total] * 100` reads the untouched `Total` even when
+        `Total` is itself being overwritten.
+
+        Column names listed in `selected_columns` that are absent from the schema are silently
+        skipped, mirroring `_select_rename_targets` — stale UI state must not break a run. Zero
+        targets is a valid no-op and yields an empty list; validation still runs first, so a
+        misconfigured node errors even when it would touch nothing.
+
+        In `"new"` output mode the result names are `f"{prefix}{name}{suffix}"` and must not
+        collide with an incoming column: silently shadowing an input would make the single
+        `with_columns` order-dependent and lose data. Two targets producing the SAME output name
+        (a duplicated entry in `selected_columns`) is rejected for the same reason, in both
+        output modes — Polars would otherwise reject the duplicate alias with an opaque
+        `ComputeError`.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type, data_type_group)` tuples, in order.
+            settings: The multi-field formula configuration.
+
+        Returns:
+            The aliased expressions, in target order (possibly empty).
+
+        Raises:
+            ValueError: If the formula is empty, `"new"` mode has neither prefix nor suffix,
+                an output name already exists, two targets produce the same output name, or a
+                column name cannot be bound to `[_CurrentFieldName_]`.
+        """
+        if not settings.formula.strip():
+            raise ValueError("Multi-field formula: no formula configured")
+        new_mode = settings.output_mode == "new"
+        if new_mode and not settings.output_prefix and not settings.output_suffix:
+            raise ValueError("Multi-field formula: writing to new columns requires a prefix or a suffix")
+
+        targets = FlowDataEngine._select_target_columns(
+            [(name, group) for name, _, group in columns],
+            settings.selection_mode,
+            settings.selected_columns,
+            settings.selected_data_type,
+        )
+        data_types = {name: data_type for name, data_type, _ in columns}
+        existing = {name for name, _, _ in columns}
+
+        output_data_type = settings.output_data_type
+        cast_type = (
+            cast_str_to_polars_type(str(output_data_type))
+            if output_data_type not in (None, transform_schemas.AUTO_DATA_TYPE)
+            else None
+        )
+
+        expressions: list[pl.Expr] = []
+        seen: set[str] = set()
+        for name in targets:
+            bound = transform_schemas.bind_multi_field_formula(settings.formula, name, data_types.get(name, ""))
+            output_name = f"{settings.output_prefix}{name}{settings.output_suffix}" if new_mode else name
+            if new_mode and output_name in existing:
+                raise ValueError(f"Multi-field formula: output column '{output_name}' already exists")
+            if output_name in seen:
+                raise ValueError(
+                    f"Multi-field formula: output column '{output_name}' is produced by more than one selected column"
+                )
+            seen.add(output_name)
+            expr = to_expr(bound)
+            if cast_type is not None:
+                expr = expr.cast(cast_type)
+            expressions.append(expr.alias(output_name))
+        return expressions
+
+    def apply_multi_field_formula(self, settings: transform_schemas.MultiFieldFormulaInput) -> FlowDataEngine:
+        """Applies one formula to many columns at once.
+
+        Every selected column is bound into the formula via the `[_CurrentField_]`,
+        `[_CurrentFieldName_]` and `[_CurrentFieldType_]` placeholders and the results either
+        overwrite their source column or land in new prefixed/suffixed columns. Stays lazy.
+
+        Args:
+            settings: The multi-field formula configuration.
+
+        Returns:
+            A new `FlowDataEngine` with the computed columns, or this instance's DataFrame
+            unchanged when no column is selected.
+        """
+        columns = [(c.column_name, c.data_type, c.data_type_group) for c in self.schema]
+        expressions = self.build_multi_field_formula_expressions(columns, settings)
+        if not expressions:
+            return FlowDataEngine(self.data_frame, number_of_records=self.number_of_records, schema=self.schema)
+        return FlowDataEngine(self.data_frame.with_columns(expressions), number_of_records=self.number_of_records)
 
     @staticmethod
     def _compute_renamed_names(
