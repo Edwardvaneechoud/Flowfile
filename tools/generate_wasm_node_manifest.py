@@ -40,7 +40,7 @@ MANIFEST_PATH = REPO_ROOT / "flowfile_core" / "flowfile_core" / "flowfile" / "sh
 # (flowfile_wasm/src/stores/flow-store.ts read staging, engine nodes_io.py).
 FILE_TYPES = ["csv", "excel", "parquet"]
 
-EXPECTED_SUPPORTED = 23
+EXPECTED_SUPPORTED = 24
 EXPECTED_LOCKED = 16
 
 _NODE_FIELD_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*")

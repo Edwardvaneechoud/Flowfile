@@ -94,6 +94,8 @@ export const NODE_EXPLANATIONS: Record<string, string> = {
     'Stacks the rows of several tables into one. Columns that only some tables have are filled with None in the rows that lack them.',
   record_id:
     'Numbers the rows. enumerate() hands you the number and the row together on every pass of the loop, so there is no counter variable to maintain.',
+  record_count:
+    'Counts the rows. len() on the list is the whole job; the result is a one-row table with a single number_of_records column, the same shape the canvas produces.',
   head:
     'Takes a sample of the rows. Set to "first", that is a Python slice — rows[:n] — and a slice never complains when you ask for more rows than exist. The random methods have no plain-Python form, because the canvas samples with a seeded shuffle this script cannot reproduce row for row.',
   sample:
@@ -413,6 +415,18 @@ export const CONCEPTS: Record<string, Concept> = {
       '{**row}  copies a dict;  {"nr": i, **row}  puts nr first'
     ]
   },
+  'count-rows': {
+    title: 'len() counts the rows',
+    body: [
+      'The rows are a list, and the length of a list is len(rows) — no loop, no counter. The whole node is that one call.',
+      'The result is still a table, so it is wrapped as a one-row list of dicts with a single number_of_records key.'
+    ],
+    sketch: [
+      'rows = [{...}, {...}, {...}]',
+      'len(rows)              # 3',
+      '[{"number_of_records": len(rows)}]   # a one-row table'
+    ]
+  },
   slice: {
     title: 'A slice takes what is there',
     body: [
@@ -486,6 +500,7 @@ export const CONCEPT_FOR_NODE: Record<string, string> = {
   cross_join: 'nested-loop',
   union: 'column-union',
   record_id: 'enumerate',
+  record_count: 'count-rows',
   head: 'slice',
   sample: 'slice',
   dynamic_rename: 'key-rewrite',
@@ -1389,6 +1404,18 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
     this.addCode('')
   }
 
+  plainRecordCount(_node: FlowNode, varName: string, inputVars: InputVars): void {
+    const input = inputVars.main || 'rows'
+
+    this.section('Count Records')
+    this.teach(
+      'len() gives the row count in one call. The result is still a table, so it',
+      'is a one-row list holding a single number_of_records column.'
+    )
+    this.addCode(`${varName} = [{"number_of_records": len(${input})}]`)
+    this.addCode('')
+  }
+
   plainHead(node: FlowNode, varName: string, inputVars: InputVars): void {
     const settings = node.settings as NodeSampleSettings
     const input = inputVars.main || 'rows'
@@ -1916,6 +1943,7 @@ const PLAIN_HANDLERS = {
   sort: 'plainSort',
   unique: 'plainUnique',
   record_id: 'plainRecordId',
+  record_count: 'plainRecordCount',
   head: 'plainHead',
   sample: 'plainHead',
   dynamic_rename: 'plainDynamicRename',

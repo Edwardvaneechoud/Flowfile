@@ -96,6 +96,7 @@ export function createNodeCategories(): NodeCategory[] {
       docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate',
       nodes: [
         { type: 'group_by', name: 'Group By', icon: 'group_by.svg', inputs: 1, outputs: 1, keywords: ['aggregate', 'sum', 'mean', 'average', 'count', 'min', 'max', 'median', 'summarize'] },
+        { type: 'record_count', name: 'Count Records', icon: 'record_count.svg', inputs: 1, outputs: 1, keywords: ['count', 'rows', 'records', 'number of records', 'total', 'len', 'size'] },
         { type: 'pivot', name: 'Pivot', icon: 'pivot.svg', inputs: 1, outputs: 1, keywords: ['crosstab', 'wide', 'reshape', 'spread'] },
         { type: 'unpivot', name: 'Unpivot', icon: 'unpivot.svg', inputs: 1, outputs: 1, keywords: ['melt', 'long', 'reshape', 'gather'] }
       ]
@@ -150,6 +151,7 @@ export const SUPPORTED_NODE_TYPES = [
   'cross_join',
   'union',
   'group_by',
+  'record_count',
   'pivot',
   'unpivot',
   'explore_data',

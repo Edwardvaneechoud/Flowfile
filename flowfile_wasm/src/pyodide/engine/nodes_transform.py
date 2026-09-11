@@ -299,6 +299,33 @@ def execute_record_id(node_id: int, input_id: int, settings: dict) -> dict:
         return {"success": False, "error": format_error_lf("record_id", node_id, e, input_lf)}
 
 
+def build_record_count(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
+    """Build a one-row LazyFrame with a single 'number_of_records' count column.
+
+    Mirrors flowfile_core's FlowDataEngine.get_record_count; the node takes no
+    settings, so the argument is accepted only for signature symmetry.
+    """
+    return input_lf.select(pl.len().alias("number_of_records"))
+
+
+@log_node
+def execute_record_count(node_id: int, input_id: int, settings: dict) -> dict:
+    """Execute record count node - reduces the input to its row count (lazy)."""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
+        return {
+            "success": False,
+            "error": f"Count Records error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully.",
+        }
+
+    try:
+        result_lf = build_record_count(input_lf, settings)
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
+    except Exception as e:
+        return {"success": False, "error": format_error_lf("record_count", node_id, e, input_lf)}
+
+
 def _select_rename_targets(columns: list[tuple[str, str]], settings: dict) -> list[str]:
     """Return, in schema order, the column names the rename rule applies to.
 

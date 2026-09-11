@@ -141,6 +141,7 @@ const iconMap: Record<string, string> = {
   unique: 'unique.svg',
   dynamic_rename: 'dynamic_rename.svg',
   record_id: 'record_id.svg',
+  record_count: 'record_count.svg',
   head: 'sample.svg',
   explore_data: 'explore_data.svg',
   pivot: 'pivot.svg',
