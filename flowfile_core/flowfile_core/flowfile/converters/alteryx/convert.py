@@ -24,6 +24,7 @@ from flowfile_core.flowfile.converters.alteryx.report import (
     ToolReportRow,
     build_coverage,
 )
+from flowfile_core.flowfile.converters.alteryx.tool_identity import tool_key
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxWorkflow, parse_yxmd
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import schemas
@@ -167,6 +168,7 @@ def _emit_comments(
                     alteryx_tool_id=box.tool_id,
                     alteryx_tool=tool_label(box),
                     entity="annotation",
+                    alteryx_tool_key=tool_key(box.plugin),
                     status="skipped",
                     messages=["An empty Alteryx comment (a decorative box) was not imported."],
                 )
@@ -188,6 +190,7 @@ def _emit_comments(
                 alteryx_tool_id=box.tool_id,
                 alteryx_tool=tool_label(box),
                 entity="annotation",
+                alteryx_tool_key=tool_key(box.plugin),
                 flowfile_node_type="comment",
                 status="converted",
                 messages=["Imported as a canvas comment; colour, font and shape are not kept."],

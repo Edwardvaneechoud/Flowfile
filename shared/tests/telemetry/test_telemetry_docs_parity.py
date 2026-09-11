@@ -110,7 +110,7 @@ def test_documented_event_names_match_the_client_schema() -> None:
 
 
 def test_documented_props_match_the_client_schema(prop_rows) -> None:
-    documented = {(_code(row[0]), _code(row[1])) for row in prop_rows.values()}
+    documented = {(_code(row[0]), event) for row in prop_rows.values() for event in _values(row[1])}
     expected = {(prop, event) for event, props in telemetry.EVENTS.items() for prop in props}
     assert documented == expected
 
@@ -119,6 +119,7 @@ def test_documented_closed_value_sets_match_the_client_schema(prop_rows) -> None
     assert _values(prop_rows["node_count_bucket"][2]) == set(telemetry.NODE_COUNT_BUCKETS)
     assert _values(prop_rows["duration_bucket"][2]) == set(telemetry.DURATION_BUCKETS)
     assert _values(prop_rows["used_sample_data"][2]) == {"true", "false"}
+    assert _values(prop_rows["tool_count_bucket"][2]) == set(telemetry.NODE_COUNT_BUCKETS)
 
 
 def test_documented_export_targets_are_all_accepted_by_the_client(prop_rows) -> None:
@@ -129,9 +130,11 @@ def test_documented_export_targets_are_all_accepted_by_the_client(prop_rows) -> 
 
 
 def test_open_value_sets_stay_prose(prop_rows) -> None:
-    """``node_types`` and ``error_class`` are allowlists too long to enumerate."""
+    """``node_types``, ``error_class`` and the Alteryx tool lists are allowlists too long to enumerate."""
     assert _values(prop_rows["node_types"][2]) is None
     assert _values(prop_rows["error_class"][2]) is None
+    for prop in telemetry.LIST_PROPS - {"node_types"}:
+        assert _values(prop_rows[prop][2]) is None, prop
 
 
 def test_documented_node_type_cap_matches_the_client() -> None:

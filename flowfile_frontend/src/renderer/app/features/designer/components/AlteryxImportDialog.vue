@@ -81,6 +81,17 @@
               {{ statusChip(row.status).label }}
             </span>
             <span class="ax-node">{{ entityLabel(row) }}</span>
+            <el-button
+              v-if="requestLinks[index]"
+              link
+              type="primary"
+              size="small"
+              class="ax-request"
+              @click="openRequest(requestLinks[index])"
+            >
+              {{ requestLinks[index].label }}
+              <span class="material-icons ax-request-icon">open_in_new</span>
+            </el-button>
           </div>
           <ul v-if="row.messages.length" class="ax-messages">
             <li v-for="(message, i) in row.messages" :key="i">{{ message }}</li>
@@ -127,16 +138,20 @@ import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useRouter } from "vue-router";
 
+import { AlteryxApi } from "../../../api/alteryx.api";
 import { useAlteryxImport } from "../../../composables/useAlteryxImport";
+import { desktop } from "../../../../lib/desktop";
 import { useFlowStore } from "../../../stores/flow-store";
 import {
   coverageLine,
   entityLabel,
   needsAttentionCount,
+  nodeRequestLink,
   sortReportRows,
   statusChip,
   summaryLine,
 } from "./alteryxReport";
+import type { NodeRequestLink } from "./alteryxReport";
 
 const props = defineProps<{ visible: boolean }>();
 
@@ -160,6 +175,10 @@ const report = computed(() => controller.result.value?.report ?? null);
 const isConverting = computed(() => phase.value === "converting");
 
 const rows = computed(() => (report.value ? sortReportRows(report.value.rows) : []));
+const openIssues = ref<Record<string, string>>({});
+const requestLinks = computed(() =>
+  rows.value.map((row) => nodeRequestLink(row, openIssues.value)),
+);
 const attention = computed(() => (report.value ? needsAttentionCount(report.value) : 0));
 const summary = computed(() => (report.value ? summaryLine(report.value) : ""));
 const coverage = computed(() => (report.value ? coverageLine(report.value) : ""));
@@ -202,6 +221,19 @@ function onModelUpdate(open: boolean) {
   if (!open) close();
 }
 
+function openRequest(link: NodeRequestLink | null) {
+  if (link) void desktop.openExternal(link.url);
+}
+
+// Best effort: without the list every placeholder still offers "request", which may duplicate an open issue.
+async function loadOpenRequests() {
+  try {
+    openIssues.value = (await AlteryxApi.fetchNodeRequests()).issues;
+  } catch {
+    openIssues.value = {};
+  }
+}
+
 function openImportedFlow() {
   const imported = controller.result.value;
   if (!imported) return;
@@ -214,6 +246,10 @@ function openImportedFlow() {
   ElMessage.success(`Imported "${workflowName}"`);
   void router.push({ name: "designer" });
 }
+
+watch(phase, (current) => {
+  if (current === "report") void loadOpenRequests();
+});
 
 // @open never fires for a dialog mounted already-open — watch the prop instead.
 watch(
@@ -360,6 +396,16 @@ watch(
   align-items: center;
   gap: var(--spacing-2);
   font-size: 13px;
+}
+
+.ax-request {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.ax-request-icon {
+  font-size: 14px;
+  margin-left: 2px;
 }
 
 .ax-tool {

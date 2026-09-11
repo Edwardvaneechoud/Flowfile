@@ -4,11 +4,24 @@ import type {
   AlteryxToolRow,
   AlteryxToolStatus,
 } from "../../../api/alteryx.api";
+import { NEW_ISSUE_URL } from "../../../lib/docsLinks";
 
 export interface StatusChip {
   label: string;
   className: string;
 }
+
+export interface NodeRequestLink {
+  label: string;
+  url: string;
+  existing: boolean;
+}
+
+export const NEW_NODE_REQUEST_URL = NEW_ISSUE_URL;
+export const NODE_REQUEST_TEMPLATE = "alteryx_node_request.yml";
+
+// Keys the converter assigns to tools Alteryx does not ship; there is nothing to request for those.
+const NOT_REQUESTABLE = new Set(["custom_plugin", "user_macro"]);
 
 // Modifiers of the shared .status-badge system (styles/components/_status-badges.css).
 const CHIPS: Record<AlteryxToolStatus, StatusChip> = {
@@ -73,4 +86,25 @@ export function coverageLine(report: AlteryxConversionReport): string {
 
 export function entityLabel(row: AlteryxToolRow): string {
   return row.flowfile_node_type || (row.entity === "annotation" ? "comment" : "—");
+}
+
+// Placeholder rows for an official Alteryx tool link to the open request for it, else to a prefilled new one.
+export function nodeRequestLink(
+  row: AlteryxToolRow,
+  issues: Record<string, string>,
+): NodeRequestLink | null {
+  const key = row.alteryx_tool_key;
+  if (row.status !== "placeholder" || !key || NOT_REQUESTABLE.has(key)) return null;
+  const existing = issues[key];
+  if (existing) return { label: "Upvote request on GitHub", url: existing, existing: true };
+  const params = new URLSearchParams({
+    template: NODE_REQUEST_TEMPLATE,
+    title: `[Alteryx node] ${key}`,
+    tool: key,
+  });
+  return {
+    label: "Request node on GitHub",
+    url: `${NEW_NODE_REQUEST_URL}?${params}`,
+    existing: false,
+  };
 }
