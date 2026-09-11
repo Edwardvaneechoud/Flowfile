@@ -479,6 +479,7 @@ const FormulaSettings = defineAsyncComponent(() => import('./nodes/FormulaSettin
 import CrossJoinSettings from './nodes/CrossJoinSettings.vue'
 import UnionSettings from './nodes/UnionSettings.vue'
 import RecordIdSettings from './nodes/RecordIdSettings.vue'
+import RecordCountSettings from './nodes/RecordCountSettings.vue'
 import DynamicRenameSettings from './nodes/DynamicRenameSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
@@ -1323,6 +1324,7 @@ function getSettingsComponent(type: string) {
     unique: UniqueSettings,
     dynamic_rename: DynamicRenameSettings,
     record_id: RecordIdSettings,
+    record_count: RecordCountSettings,
     head: HeadSettings,
     explore_data: ExploreData,
     pivot: PivotSettings,

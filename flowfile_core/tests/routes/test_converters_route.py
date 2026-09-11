@@ -9,11 +9,15 @@ import io
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from flowfile_core import flow_file_handler, main
+from flowfile_core import events, flow_file_handler, main
+from flowfile_core import telemetry as telemetry_glue
+from flowfile_core.flowfile import node_requests
+from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError
 from flowfile_core.routes import converters as converters_module
 
 FIXTURE_DIR = Path(__file__).parent.parent / "flowfile" / "converters" / "fixtures"
@@ -149,3 +153,99 @@ class TestAuth:
             files={"file": ("formulas.yxmd", io.BytesIO(b"<AlteryxDocument />"), "application/octet-stream")},
         )
         assert response.status_code == 401
+
+
+class TestDomainEvents:
+    """The handler publishes neutral facts; the telemetry observer turns them into events elsewhere."""
+
+    @pytest.fixture
+    def published(self):
+        events._reset_for_tests()
+        captured: list[tuple[str, object]] = []
+        events.subscribe("alteryx_imported", lambda report: captured.append(("alteryx_imported", report)))
+        events.subscribe("alteryx_import_failed", lambda error: captured.append(("alteryx_import_failed", error)))
+        yield captured
+        events._reset_for_tests()
+        telemetry_glue._subscribed = False
+        telemetry_glue._subscribe()
+
+    def test_a_successful_import_publishes_the_report(self, published):
+        response = _post("unsupported.yxmd")
+        assert response.status_code == 200, response.text
+
+        assert [name for name, _ in published] == ["alteryx_imported"]
+        report = published[0][1]
+        assert isinstance(report, ConversionReport)
+        assert report.total_tools == response.json()["report"]["total_tools"]
+        assert {row.alteryx_tool_key for row in report.rows} >= {"TextInput", "DateTime", "user_macro"}
+
+    def test_a_parse_failure_publishes_the_error(self, published):
+        response = _post("invalid.xml")
+        assert response.status_code == 400
+
+        assert [name for name, _ in published] == ["alteryx_import_failed"]
+        assert isinstance(published[0][1], YxmdParseError)
+
+    def test_a_failure_to_open_the_flow_publishes_the_error(self, published, monkeypatch):
+        def _boom(*args, **kwargs):
+            raise RuntimeError("cannot open")
+
+        monkeypatch.setattr(converters_module.flow_file_handler, "import_flow", _boom)
+        response = _post("formulas.yxmd")
+        assert response.status_code == 502
+
+        assert [name for name, _ in published] == ["alteryx_import_failed"]
+        assert isinstance(published[0][1], RuntimeError)
+
+    def test_an_extension_rejection_publishes_nothing(self, published):
+        response = _post("workflow.txt", b"<AlteryxDocument />")
+        assert response.status_code == 400
+        assert published == []
+
+
+class TestNodeRequests:
+    """GET /converters/alteryx/node_requests proxies GitHub; stubbed at the httpx client boundary."""
+
+    ENDPOINT = "/converters/alteryx/node_requests"
+
+    @pytest.fixture(autouse=True)
+    def _fresh_cache(self):
+        node_requests._reset_cache()
+        yield
+        node_requests._reset_cache()
+
+    def _github_answers(self, monkeypatch, payload, status=200):
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.host == "api.github.com"
+            return httpx.Response(status, json=payload)
+
+        real_client = httpx.Client
+        monkeypatch.setattr(
+            node_requests.httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handler))
+        )
+
+    def test_report_keys_map_to_open_issues(self, monkeypatch):
+        issue_url = "https://github.com/edwardvaneechoud/Flowfile/issues/42"
+        self._github_answers(
+            monkeypatch,
+            [
+                {"number": 42, "title": "[Alteryx node] DateTime", "html_url": issue_url},
+                {"number": 43, "title": "unrelated", "html_url": "x"},
+            ],
+        )
+        response = client.get(self.ENDPOINT)
+        assert response.status_code == 200, response.text
+        assert response.json() == {"issues": {"DateTime": issue_url}}
+
+        report = _post("unsupported.yxmd").json()["report"]
+        placeholder_keys = {row["alteryx_tool_key"] for row in report["rows"] if row["status"] == "placeholder"}
+        assert "DateTime" in placeholder_keys
+
+    def test_a_github_failure_answers_empty_not_an_error(self, monkeypatch):
+        self._github_answers(monkeypatch, {"message": "rate limited"}, status=403)
+        response = client.get(self.ENDPOINT)
+        assert response.status_code == 200
+        assert response.json() == {"issues": {}}
+
+    def test_requires_auth(self):
+        assert unauthed_client.get(self.ENDPOINT).status_code == 401

@@ -231,6 +231,7 @@ const NODE_TYPE_VAR_LABEL: Record<string, string> = {
   union: 'combined',
   unique: 'deduped',
   record_id: 'with_record_id',
+  record_count: 'counted',
   sample: 'sampled',
   head: 'sampled',
   polars_code: 'transformed'
@@ -439,6 +440,9 @@ export class FlowToPolarsConverter {
         break
       case 'record_id':
         this.handleRecordId(node.settings as NodeRecordIdSettings, varName, inputVars)
+        break
+      case 'record_count':
+        this.handleRecordCount(varName, inputVars)
         break
       case 'dynamic_rename':
         this.handleDynamicRename(node.settings as NodeDynamicRenameSettings, varName, inputVars)
@@ -911,6 +915,12 @@ export class FlowToPolarsConverter {
     const name = settings.record_id_input?.name || 'record_id'
     const offset = settings.record_id_input?.offset ?? 1
     this.addCode(`${varName} = ${inputDf}.with_row_index(name=${toPythonValue(name)}, offset=${offset})`)
+    this.addCode('')
+  }
+
+  private handleRecordCount(varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    this.addCode(`${varName} = ${inputDf}.select(pl.len().alias("number_of_records"))`)
     this.addCode('')
   }
 
