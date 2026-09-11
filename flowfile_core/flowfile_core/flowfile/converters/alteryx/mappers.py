@@ -1895,6 +1895,126 @@ def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [unpivot_id, rename_id], "unpivot", [])
 
 
+CROSS_TAB_SAFE_CHARACTERS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
+CROSS_TAB_NULL_HEADER = "_Null_"
+# Alteryx prefixes "<Method>_" to every new column unless one of these is the only method
+# (Cross Tab tool docs, "Method for Aggregating Values"). Not yet verified in Designer.
+CROSS_TAB_PREFIX_FREE_METHODS = frozenset({"sum", "first", "last"})
+_SEPARATOR_ESCAPES = {"\\s": " ", "\\t": "\t", "\\n": "\n", "\\r": "\r", "\\\\": "\\"}
+_SEPARATOR_ESCAPE_RE = re.compile(r"\\[stnr\\]")
+
+
+def _cross_tab_prefixes(methods: list[str]) -> list[str]:
+    """Alteryx's per-method column prefix in the XML's own spelling (``Sum_``, ``Avg_``, ``Concat_``)."""
+    if len(methods) == 1 and methods[0].lower() in CROSS_TAB_PREFIX_FREE_METHODS:
+        return [""]
+    return [f"{method}_" for method in methods]
+
+
+def _unescape_separator(raw: str) -> str:
+    """Alteryx writes the Concat separator with ``\\s`` for a space (``,\\s`` = comma + space)."""
+    return _SEPARATOR_ESCAPE_RE.sub(lambda match: _SEPARATOR_ESCAPES[match.group(0)], raw)
+
+
+_CROSS_TAB_NAMING_HELPER = [
+    f"_safe = {CROSS_TAB_SAFE_CHARACTERS!r}",
+    "def _alteryx_names(_pairs, _prefix):",
+    "    _renames = {}",
+    "    _origins = {}",
+    "    for _column, _header in _pairs:",
+    "        _target = _prefix + ''.join(_ch if _ch in _safe else '_' for _ch in _header)",
+    "        assert _target not in _origins, (",
+    '            f"Alteryx Cross Tab header values {_origins[_target]!r} and {_header!r} both become "',
+    '            f"column {_target!r}; rename one of them before the Cross Tab."',
+    "        )",
+    "        _origins[_target] = _header",
+    "        _renames[_column] = _target",
+    "    return _renames",
+]
+
+
+def _cross_tab_rename_code(tool: AlteryxTool, index_columns: list[str], methods: list[str], aggs: list[str]) -> str:
+    """The polars_code that renames a native pivot's output columns the way Alteryx names them.
+
+    The pivot node names a new column ``<header>`` for one aggregation and ``<header>_<agg>``
+    for several (see ``flow_data_engine.do_pivot``); if that format changes, the suffix table
+    generated here must change with it. Header values are data, so the sanitising and the
+    collision check can only run when the flow runs.
+    """
+    prefixes = _cross_tab_prefixes(methods)
+    suffixes = [("_" + agg if len(aggs) > 1 else "", prefix) for agg, prefix in zip(aggs, prefixes, strict=True)]
+    lines = [
+        f"# Alteryx Cross Tab (ToolID {tool.tool_id}): name the pivot's new columns the way Alteryx does.",
+        "# Every character outside [0-9A-Za-z_] in a header value becomes '_', and with several methods",
+        "# the method is prefixed ('Sum_New_York'). Two header values that sanitise to the same name stop",
+        "# the flow here instead of one silently overwriting the other.",
+        f"_index = {index_columns!r}",
+        f"_suffixes = {suffixes!r}",
+        *_CROSS_TAB_NAMING_HELPER,
+        "_pairs = {}",
+        "for _column in input_df.collect_schema().names():",
+        "    if _column in _index:",
+        "        continue",
+        "    for _suffix, _prefix in _suffixes:",
+        "        if _column.endswith(_suffix):",
+        "            _pairs.setdefault(_prefix, []).append((_column, _column[: len(_column) - len(_suffix)]))",
+        "            break",
+        "_renames = {}",
+        "for _prefix, _columns in _pairs.items():",
+        "    _renames.update(_alteryx_names(_columns, _prefix))",
+        "output_df = input_df.rename(_renames)",
+    ]
+    return "\n".join(lines)
+
+
+def _cross_tab_pivot_code(
+    tool: AlteryxTool,
+    index_columns: list[str],
+    pivot_column: str,
+    value_col: str,
+    methods: list[str],
+    aggs: list[str],
+    separator: str,
+) -> str:
+    """The whole Cross Tab as polars_code, used when a method is Concat.
+
+    The native pivot's concat aggregation has no separator option, and adding one would touch
+    every layer that generates code for group_by; a generated pivot keeps the change inside the
+    importer. A null header value becomes the column ``_Null_``.
+    """
+    aggregates = []
+    for prefix, agg in zip(_cross_tab_prefixes(methods), aggs, strict=True):
+        if agg == "concat":
+            aggregates.append(f"({prefix!r}, pl.element().cast(pl.String).str.join({separator!r}))")
+        else:
+            aggregates.append(f"({prefix!r}, pl.element().{agg}())")
+    index = index_columns or ["_row"]
+    header = [
+        f"# Alteryx Cross Tab (ToolID {tool.tool_id}) as a Polars pivot; the new columns are named the way",
+        "# Alteryx names them (non-alphanumeric characters become '_', a null header becomes '_Null_').",
+        *(f"# {line}" for line in _original_config_lines(tool)),
+        f"_index = {index!r}",
+        *_CROSS_TAB_NAMING_HELPER,
+        "# Polars pivots eagerly; the header is a string with nulls given their own bucket.",
+        "_frame = input_df.collect().with_columns("
+        f"pl.col({pivot_column!r}).cast(pl.String).fill_null({CROSS_TAB_NULL_HEADER!r}))",
+    ]
+    if not index_columns:
+        header.append("_frame = _frame.with_columns(pl.lit(1).alias('_row'))")
+    body = [
+        "_wide = None",
+        f"for _prefix, _aggregate in [{', '.join(aggregates)}]:",
+        f"    _part = _frame.pivot(on={pivot_column!r}, index=_index, values={value_col!r}, "
+        "aggregate_function=_aggregate, maintain_order=True, sort_columns=True)",
+        "    _part = _part.rename(_alteryx_names([(_c, _c) for _c in _part.columns if _c not in _index], _prefix))",
+        "    _wide = _part if _wide is None else _wide.join(_part, on=_index, how='left')",
+    ]
+    if not index_columns:
+        body.append("_wide = _wide.drop('_row')")
+    body.append("output_df = _wide.lazy()")
+    return "\n".join([*header, *body])
+
+
 def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     index_columns = [element.get("field") for element in config.findall("GroupFields/Field") if element.get("field")]
@@ -1909,31 +2029,49 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     unmapped = [method for method in methods if _SUMMARIZE_ACTIONS.get(method.lower()) in (None, "groupby")]
     if unmapped:
         return _placeholder_row(tool, ctx, ["Unsupported Alteryx Cross Tab methods: " + ", ".join(unmapped)])
+    aggs = [_SUMMARIZE_ACTIONS[method.lower()] for method in methods]
+    ctx.tool_columns[tool.tool_id] = None
+
+    if "concat" in aggs:
+        separator = _unescape_separator(_raw_text(config, "Methods/Separator", ","))
+        code = _cross_tab_pivot_code(tool, index_columns, pivot_column, value_col, methods, aggs, separator)
+        settings = input_schema.NodePolarsCode(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+        node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+        ctx.register_all_outputs(tool.tool_id, node_id)
+        ctx.register_all_inputs(tool.tool_id, node_id)
+        messages = []
+        field_size = _attribute(config, "Methods/FieldSize", "value")
+        if field_size:
+            messages.append(
+                f"Alteryx truncates the concatenated values at {field_size} characters (FieldSize); "
+                "Flowfile strings are unbounded, so the full values are kept."
+            )
+        return _row(tool, "converted", [node_id], "polars_code", messages)
 
     settings = input_schema.NodePivot(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
         pivot_input=transform_schema.PivotInput(
-            index_columns=index_columns,
-            pivot_column=pivot_column,
-            value_col=value_col,
-            aggregations=[_SUMMARIZE_ACTIONS[method.lower()] for method in methods],
+            index_columns=index_columns, pivot_column=pivot_column, value_col=value_col, aggregations=aggs
         ),
     )
-    node_id = ctx.add_node(tool, "pivot", settings, description=_description(tool))
-    ctx.register_all_outputs(tool.tool_id, node_id)
-    ctx.register_all_inputs(tool.tool_id, node_id)
-    ctx.tool_columns[tool.tool_id] = None
-    return _row(
-        tool,
-        "partial",
-        [node_id],
-        "pivot",
-        [
-            "Alteryx replaces non-alphanumeric characters in the new Cross Tab column names with underscores; "
-            "Flowfile keeps the raw values, so downstream references may need updating."
-        ],
+    pivot_id = ctx.add_node(tool, "pivot", settings, description=_description(tool))
+    rename = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=_cross_tab_rename_code(tool, index_columns, methods, aggs)
+        ),
     )
+    rename_id = ctx.add_node(tool, "polars_code", rename, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
+    _link(ctx, pivot_id, rename_id)
+    ctx.register_all_inputs(tool.tool_id, pivot_id)
+    ctx.register_all_outputs(tool.tool_id, rename_id)
+    return _row(tool, "converted", [pivot_id, rename_id], "pivot", [])
 
 
 def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:

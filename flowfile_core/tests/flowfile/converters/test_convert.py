@@ -1418,15 +1418,190 @@ def test_transpose_becomes_unpivot_plus_rename(extra_tools: ConversionResult):
     assert rename["input_ids"] == [unpivot["id"]]
 
 
-def test_cross_tab_maps_to_pivot(extra_tools: ConversionResult):
+def test_cross_tab_maps_to_pivot_plus_alteryx_rename(extra_tools: ConversionResult):
     row = report_row(extra_tools, 5)
-    assert row.status == "partial"
-    assert any("underscores" in message for message in row.messages)
-    pivot = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["pivot_input"]
-    assert pivot["index_columns"] == ["region"]
-    assert pivot["pivot_column"] == "product"
-    assert pivot["value_col"] == "sales"
-    assert pivot["aggregations"] == ["sum"]
+    assert row.status == "converted"
+    assert row.messages == []
+    pivot, rename = (dumped_nodes(extra_tools)[node_id] for node_id in row.flowfile_node_ids)
+    assert pivot["setting_input"]["pivot_input"] == {
+        "index_columns": ["region"],
+        "pivot_column": "product",
+        "value_col": "sales",
+        "aggregations": ["sum"],
+    }
+    assert rename["type"] == "polars_code"
+    assert rename["input_ids"] == [pivot["id"]]
+    code = rename["setting_input"]["polars_code_input"]["polars_code"]
+    assert "_suffixes = [('', '')]" in code, "a lone Sum keeps the bare header"
+    assert "output_df = input_df.rename(_renames)" in code
+
+
+def cross_tab_after_text_input(fields: list[str], rows: list[tuple], config: str) -> bytes:
+    """A Text Input with several typed-by-inference columns feeding one Cross Tab; None is an empty cell."""
+    field_xml = "".join(f'<Field name="{name}" />' for name in fields)
+    row_xml = "".join(
+        "<r>" + "".join("<c />" if cell is None else f"<c>{cell}</c>" for cell in row) + "</r>" for row in rows
+    )
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields>{field_xml}</Fields><Data>{row_xml}</Data></Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.CrossTab.CrossTab" />
+      <Properties><Configuration>{config}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def run_cross_tab(document: bytes, tmp_path: Path) -> tuple[ConversionResult, pl.DataFrame | None, list]:
+    """Convert, run, and return the Cross Tab's output frame (None when the run failed) plus the failures."""
+    result = convert_yxmd(document, source_name="inline.yxmd")
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    failures = [step for step in run_info.node_step_result if not step.success]
+    if failures:
+        return result, None, failures
+    last_node = report_row(result, 2).flowfile_node_ids[-1]
+    return result, flow.get_node(last_node).get_resulting_data().data_frame.collect(), []
+
+
+PRESIDENTS = ["presidentNo", "VicePresidentNo", "Pres_or_VP", "Name"]
+PRESIDENT_ROWS = [
+    (1, None, "President", "George Washington"),
+    (1, 1, "Vice President", "John Adams"),
+    (3, None, "President", "Thomas Jefferson"),
+    (3, 1, "Vice President", "Aaron Burr"),
+    (3, 2, "Vice President", "George Clinton"),
+]
+
+# Cross_Tab.yxmd tool 141: Concat with the separator Alteryx writes as ``,\s`` (comma + space).
+CROSS_TAB_141 = (
+    '<GroupFields><Field field="presidentNo" /></GroupFields><HeaderField field="Pres_or_VP" />'
+    '<DataField field="Name" /><Methods><Method method="Concat" /><Separator>,\\s</Separator>'
+    '<FieldSize value="2048" /></Methods>'
+)
+# Cross_Tab.yxmd tool 143: the header field is null for every president.
+CROSS_TAB_143 = (
+    '<GroupFields><Field field="presidentNo" /></GroupFields><HeaderField field="VicePresidentNo" />'
+    '<DataField field="Name" /><Methods><Method method="Concat" /><Separator>,\\s</Separator>'
+    '<FieldSize value="2048" /></Methods>'
+)
+# Cross_Tab.yxmd tool 214 and Transpose.yxmd tool 202: two methods on one data field.
+CROSS_TAB_214 = (
+    '<GroupFields><Field field="Suggested Age Range" /></GroupFields><HeaderField field="Category" />'
+    '<DataField field="Value" /><Methods><Method method="Sum" /><Method method="Avg" /></Methods>'
+)
+
+
+def test_cross_tab_concat_joins_with_the_unescaped_separator(tmp_path: Path):
+    result, frame, failures = run_cross_tab(
+        cross_tab_after_text_input(PRESIDENTS, PRESIDENT_ROWS, CROSS_TAB_141), tmp_path
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "polars_code"
+    assert row.messages == [
+        "Alteryx truncates the concatenated values at 2048 characters (FieldSize); "
+        "Flowfile strings are unbounded, so the full values are kept."
+    ]
+    assert failures == []
+    assert frame.columns == ["presidentNo", "Concat_President", "Concat_Vice_President"]
+    assert frame.sort("presidentNo")["Concat_Vice_President"].to_list() == ["John Adams", "Aaron Burr, George Clinton"]
+
+
+def test_cross_tab_null_header_gets_its_own_column(tmp_path: Path):
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(PRESIDENTS, PRESIDENT_ROWS, CROSS_TAB_143), tmp_path)
+    assert failures == []
+    assert frame.columns == ["presidentNo", "Concat_1", "Concat_2", "Concat__Null_"]
+    assert frame.sort("presidentNo")["Concat__Null_"].to_list() == ["George Washington", "Thomas Jefferson"]
+
+
+def test_cross_tab_two_methods_prefix_the_alteryx_method_name(tmp_path: Path):
+    rows = [
+        ("Kids", "Fun and Games", 10),
+        ("Kids", "Fun and Games", 30),
+        ("Kids", "Educational", 5),
+        ("Teens", "Educational", 7),
+    ]
+    result, frame, failures = run_cross_tab(
+        cross_tab_after_text_input(["Suggested Age Range", "Category", "Value"], rows, CROSS_TAB_214), tmp_path
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.flowfile_node_type == "pivot"
+    assert failures == []
+    assert set(frame.columns) == {
+        "Suggested Age Range",
+        "Sum_Educational",
+        "Avg_Educational",
+        "Sum_Fun_and_Games",
+        "Avg_Fun_and_Games",
+    }
+    kids = frame.filter(pl.col("Suggested Age Range") == "Kids")
+    assert kids["Sum_Fun_and_Games"].to_list() == [40]
+    assert kids["Avg_Fun_and_Games"].to_list() == [20.0]
+
+
+def test_cross_tab_sanitises_headers_like_alteryx(tmp_path: Path):
+    rows = [("n", "New York", 1), ("n", "2019-Q1", 2), ("n", "a.b/c", 3)]
+    config = (
+        '<GroupFields><Field field="region" /></GroupFields><HeaderField field="city" />'
+        '<DataField field="sales" /><Methods><Method method="Sum" /></Methods>'
+    )
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(["region", "city", "sales"], rows, config), tmp_path)
+    assert failures == []
+    assert frame.columns == ["region", "2019_Q1", "New_York", "a_b_c"]
+
+
+def test_cross_tab_header_collision_stops_the_flow_naming_both_values(tmp_path: Path):
+    rows = [("n", "A-B", 1), ("n", "A B", 2)]
+    config = (
+        '<GroupFields><Field field="region" /></GroupFields><HeaderField field="city" />'
+        '<DataField field="sales" /><Methods><Method method="Sum" /></Methods>'
+    )
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(["region", "city", "sales"], rows, config), tmp_path)
+    assert frame is None
+    assert len(failures) == 1
+    assert "'A B' and 'A-B' both become column 'A_B'" in failures[0].error
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("Count", ["region", "Count_x"]),
+        ("Avg", ["region", "Avg_x"]),
+        ("Sum", ["region", "x"]),
+        ("First", ["region", "x"]),
+    ],
+)
+def test_cross_tab_prefixes_a_lone_method_unless_it_is_sum_first_or_last(tmp_path: Path, method: str, expected: list):
+    """Alteryx's Cross Tab docs: the method is prefixed unless Sum, First or Last is the only method."""
+    rows = [("n", "x", 1), ("n", "x", 2)]
+    config = (
+        '<GroupFields><Field field="region" /></GroupFields><HeaderField field="city" />'
+        f'<DataField field="sales" /><Methods><Method method="{method}" /></Methods>'
+    )
+    _, frame, failures = run_cross_tab(cross_tab_after_text_input(["region", "city", "sales"], rows, config), tmp_path)
+    assert failures == []
+    assert frame.columns == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(",\\s", ", "), ("\\t", "\t"), ("\\n", "\n"), (",", ","), ("\\\\s", "\\s"), ("|", "|")],
+)
+def test_cross_tab_separator_unescaping(raw: str, expected: str):
+    from flowfile_core.flowfile.converters.alteryx.mappers import _unescape_separator
+
+    assert _unescape_separator(raw) == expected
 
 
 def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
@@ -1435,7 +1610,7 @@ def test_append_fields_maps_to_cross_join(extra_tools: ConversionResult):
     node = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]
     assert node["type"] == "cross_join"
     assert node["input_ids"] == [1]
-    assert node["right_input_id"] == 7
+    assert node["right_input_id"] == report_row(extra_tools, 6).flowfile_node_ids[0]
 
 
 def test_count_records_maps_the_macro_onto_record_count(tmp_path: Path):
@@ -1584,11 +1759,13 @@ def test_extra_tools_flow_runs(tmp_path: Path, extra_tools: ConversionResult):
     assert set(transposed.columns) == {"region", "product", "Name", "Value"}
     assert transposed.height == 6
 
-    pivoted = flow.get_node(6).get_resulting_data().data_frame.collect().sort("region")
+    pivoted_id = report_row(extra_tools, 5).flowfile_node_ids[-1]
+    pivoted = flow.get_node(pivoted_id).get_resulting_data().data_frame.collect().sort("region")
     assert pivoted["apples"].to_list() == [10, 30]
     assert pivoted["pears"].to_list() == [20, 0]
 
-    appended = flow.get_node(8).get_resulting_data().data_frame.collect()
+    appended_id = report_row(extra_tools, 7).flowfile_node_ids[0]
+    appended = flow.get_node(appended_id).get_resulting_data().data_frame.collect()
     assert appended.height == 3
     assert appended["tax"].to_list() == [0.2, 0.2, 0.2]
 
