@@ -141,6 +141,7 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "external_source": "source",
     "filter": "filtered",
     "formula": "computed",
+    "multi_field_formula": "computed",
     "select": "selected",
     "dynamic_rename": "renamed",
     "data_cleansing": "cleansed",
@@ -2443,6 +2444,45 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         elif s.selection_mode == "data_type" and s.selected_data_type is not None:
             args.append(f"data_type={s.selected_data_type!r}")
         self._add_code(f"{var_name} = {input_df}.dynamic_rename({', '.join(args)})")
+        self._add_code("")
+
+    def _handle_multi_field_formula(
+        self, settings: input_schema.NodeMultiFieldFormula, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Multi-Field Formula nodes — emit ``df.multi_field_formula(...)``.
+
+        The selection kwargs mirror the engine's target rules rather than the method's
+        defaults: `data_type` mode with no data type selected picks no columns, so it has
+        to render as an explicit empty `columns` list — omitting the kwarg would mean
+        "all columns" and change what the exported script computes.
+
+        A `"new"` node with neither affix is rejected outright: the FlowFrame API reads the
+        absence of both as replace mode, so exporting it would silently overwrite the source
+        columns the graph itself refuses to touch.
+        """
+        input_df = input_vars.get("main", "df")
+        s = settings.multi_field_formula_input
+        if s.output_mode == "new" and not (s.output_prefix or s.output_suffix):
+            self.unsupported_nodes.append(
+                (settings.node_id, "multi_field_formula", "writing to new columns requires a prefix or a suffix")
+            )
+            return
+        args = [repr(s.formula)]
+        if s.selection_mode == "list":
+            args.append(f"columns={s.selected_columns!r}")
+        elif s.selection_mode == "data_type":
+            if s.selected_data_type is not None:
+                args.append(f"data_type={s.selected_data_type!r}")
+            else:
+                args.append("columns=[]")
+        if s.output_mode == "new":
+            if s.output_prefix:
+                args.append(f"prefix={s.output_prefix!r}")
+            if s.output_suffix:
+                args.append(f"suffix={s.output_suffix!r}")
+        if s.output_data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+            args.append(f"output_data_type={str(s.output_data_type)!r}")
+        self._add_code(f"{var_name} = {input_df}.multi_field_formula({', '.join(args)})")
         self._add_code("")
 
 

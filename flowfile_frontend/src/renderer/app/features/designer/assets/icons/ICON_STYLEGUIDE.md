@@ -132,7 +132,8 @@ white→transparent.)
 - **transform (blue):** filter=funnel · select=columns+✓ · formula=fx · sort=descending bars+↓ ·
   record_id=new ID column (sequential markers) + data rows · sample=bracketed subset over faint rows · unique=rows w/ duplicate ×'d ·
   text_to_rows=cell splitting · dynamic_rename=old→new · sql_query=cylinder+magnifier ·
-  python_code=Python logo (brand) · polars_code=Polars bear (brand)
+  python_code=Python logo (brand) · polars_code=Polars bear (brand) ·
+  multi_field_formula=fx over three columns
 - **aggregate (indigo):** group_by=rows→1 · pivot=grid+rotate · unpivot=cols→stack ·
   record_count=brace+# · window_functions=bars in a window frame
 - **combine (violet):** join=venn · cross_join=3×3 dot grid · union=stacks merge ·
@@ -189,7 +190,11 @@ np="flowfile_core/flowfile_core/configs/node_store/nodes.py"
 ut="flowfile_frontend/src/renderer/app/features/designer/utils.ts"
 d="flowfile_frontend/src/renderer/app/features/designer/assets/icons"
 imgs=[m for m in re.findall(r'image="([^"]+)"', open(np).read()) if m]
-builtin=set(re.findall(r'"([^"]+)"', open(ut).read().split("BUILTIN_ICONS")[1].split("]")[0]))
+src=open(ut).read()
+# BUILTIN_ICONS spreads SVG_NODE_ICONS, so both blocks have to be read.
+svg=set(re.findall(r'"([^"]+)"', src.split("SVG_NODE_ICONS = [")[1].split("];")[0]))
+lit=set(re.findall(r'"([^"]+)"', src.split("BUILTIN_ICONS = new Set<string>([")[1].split("]);")[0]))
+builtin=svg|lit
 for i in imgs:
     assert os.path.exists(f"{d}/{i}") and i in builtin, i
 print("ok", len(imgs))

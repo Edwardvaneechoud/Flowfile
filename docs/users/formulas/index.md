@@ -14,8 +14,9 @@ Every formula compiles to a native [Polars](https://pola.rs) expression before i
 | Surface | How |
 |---------|-----|
 | [Formula node](../visual-editor/nodes/transform.md#formula) | Create or replace a column with a formula. |
+| [Multi-Field Formula node](../visual-editor/nodes/transform.md#multi-field-formula) | Apply one formula to many columns at once; `[_CurrentField_]`, `[_CurrentFieldName_]` and `[_CurrentFieldType_]` bind to each selected column. |
 | [Filter node](../visual-editor/nodes/transform.md#filter-data) (advanced mode) | Keep rows where a formula evaluates to `true`; split mode routes passing and failing rows to separate outputs. |
-| [Python API](../python-api/concepts/formulas.md) | Pass formula strings to `with_columns(flowfile_formulas=...)`, `filter(flowfile_formula=...)`, and `filter_split(flowfile_formula=...)`. |
+| [Python API](../python-api/concepts/formulas.md) | Pass formula strings to `with_columns(flowfile_formulas=...)`, `multi_field_formula(formula, ...)`, `filter(flowfile_formula=...)`, and `filter_split(flowfile_formula=...)`. |
 
 ---
 

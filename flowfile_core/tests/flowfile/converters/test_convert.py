@@ -764,6 +764,16 @@ def regex_and_multifield() -> ConversionResult:
     return convert("regex_and_multifield.yxmd")
 
 
+@pytest.fixture()
+def multi_field_formula() -> ConversionResult:
+    return convert("multi_field_formula.yxmd")
+
+
+@pytest.fixture()
+def multi_field_formula_runs() -> ConversionResult:
+    return convert("multi_field_formula_runs.yxmd")
+
+
 def report_row(result: ConversionResult, tool_id: int):
     return next(row for row in result.report.rows if row.alteryx_tool_id == tool_id)
 
@@ -892,15 +902,326 @@ def test_unsupported_simple_filter_operator_keeps_the_original_configuration(sim
 
 
 
-def test_multi_field_formula_becomes_one_formula_per_selected_field(regex_and_multifield: ConversionResult):
+def multi_field_settings(result: ConversionResult, tool_id: int) -> dict:
+    row = report_row(result, tool_id)
+    assert row.flowfile_node_type == "multi_field_formula", row.messages
+    assert len(row.flowfile_node_ids) == 1
+    return dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["multi_field_formula_input"]
+
+
+def test_multi_field_formula_becomes_one_node_over_the_selected_fields(regex_and_multifield: ConversionResult):
+    """A partially selected picker keeps the placeholder expression on a single node."""
     row = report_row(regex_and_multifield, 3)
     assert row.status == "converted"
-    assert len(row.flowfile_node_ids) == 2
-    nodes = dumped_nodes(regex_and_multifield)
-    functions = [nodes[node_id]["setting_input"]["function"] for node_id in row.flowfile_node_ids]
-    assert [function["field"]["name"] for function in functions] == ["flag_a", "flag_b"]
-    assert functions[0]["function"] == '[flag_a] = "Y"'
-    assert functions[1]["function"] == '[flag_b] = "Y"'
+    assert len(row.flowfile_node_ids) == 1
+    settings = multi_field_settings(regex_and_multifield, 3)
+    assert settings["formula"] == '[_CurrentField_] = "Y"'
+    assert settings["selection_mode"] == "list"
+    assert settings["selected_columns"] == ["flag_a", "flag_b"]
+    assert settings["output_mode"] == "replace"
+    assert settings["output_data_type"] == "Auto"
+
+
+def test_multi_field_replace_over_a_data_type_keeps_the_placeholder(multi_field_formula: ConversionResult):
+    """Tool 36: every text field, in place, no type change."""
+    row = report_row(multi_field_formula, 36)
+    assert row.status == "converted"
+    assert row.messages[0] == "Mapped onto one multi-field formula node over String columns."
+    settings = multi_field_settings(multi_field_formula, 36)
+    assert settings["formula"] == "uppercase([_CurrentField_])"
+    assert settings["selection_mode"] == "data_type"
+    assert settings["selected_data_type"] == "String"
+    assert settings["selected_columns"] == []
+    assert settings["output_mode"] == "replace"
+    assert (settings["output_prefix"], settings["output_suffix"]) == ("", "")
+    assert settings["output_data_type"] == "Auto"
+
+
+def test_multi_field_copy_output_becomes_a_prefixed_new_column_mode(multi_field_formula: ConversionResult):
+    """Tool 37: the same selection, written to New_-prefixed copies."""
+    row = report_row(multi_field_formula, 37)
+    assert row.status == "converted"
+    settings = multi_field_settings(multi_field_formula, 37)
+    assert settings["output_mode"] == "new"
+    assert settings["output_prefix"] == "New_"
+    assert settings["output_suffix"] == ""
+    assert settings["selection_mode"] == "data_type"
+    assert settings["selected_data_type"] == "String"
+
+
+def test_multi_field_suffix_keeps_its_leading_space_and_the_trailing_space_column(
+    multi_field_formula: ConversionResult,
+):
+    """Tool 38: an explicit 12-column list, a ' % Total' suffix and a FixedDecimal output type."""
+    row = report_row(multi_field_formula, 38)
+    assert row.status == "converted"
+    settings = multi_field_settings(multi_field_formula, 38)
+    assert settings["selection_mode"] == "list"
+    assert settings["selected_columns"] == [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August ",
+        "September",
+        "October",
+        "November",
+        "December",
+    ]
+    # The translator normalises operator spacing; the raw Alteryx text is `[_CurrentField_]/[Total ]*100`.
+    assert settings["formula"] == "[_CurrentField_] / [Total ] * 100"
+    assert settings["output_mode"] == "new"
+    assert settings["output_suffix"] == " % Total"
+    assert settings["output_prefix"] == ""
+    assert settings["output_data_type"] == "Float64"
+    assert any("unknown at design time" in message for message in row.messages)
+    assert any("FixedDecimal" in message for message in row.messages)
+
+
+def test_every_multi_field_formula_tool_in_the_reference_workflow_converts(multi_field_formula: ConversionResult):
+    rows = [row for row in multi_field_formula.report.rows if row.alteryx_tool == "MultiFieldFormula"]
+    assert [row.alteryx_tool_id for row in rows] == [36, 37, 38]
+    assert {row.status for row in rows} == {"converted"}
+    assert {row.flowfile_node_type for row in rows} == {"multi_field_formula"}
+
+
+def test_untranslatable_multi_field_expression_is_commented_onto_an_identity_stub(
+    multi_field_formula_runs: ConversionResult,
+):
+    row = report_row(multi_field_formula_runs, 5)
+    assert row.status == "commented"
+    assert any("REGEX_Match" in message and "kept as a comment" in message for message in row.messages)
+    nodes = dumped_nodes(multi_field_formula_runs)
+    node = nodes[row.flowfile_node_ids[0]]
+    assert node["description"].startswith("⚠")
+    formula = node["setting_input"]["multi_field_formula_input"]["formula"]
+    assert formula.startswith("// Alteryx formula could not be converted automatically:")
+    assert "// Original: REGEX_Match([_CurrentField_], \"^A.*\")" in formula
+    assert formula.endswith("[_CurrentField_]")
+    # The stub has to stay a parseable formula, otherwise the node would not run.
+    simple_function_to_expr(formula)
+
+
+def test_imported_multi_field_formula_flow_runs(tmp_path: Path, multi_field_formula_runs: ConversionResult):
+    """The hand-written TextInput fixture must execute: replace, prefix, suffix+cast and the stub."""
+    flow = open_flow(write_flow(multi_field_formula_runs, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step for step in run_info.node_step_result if not step.success]
+
+    data = flow.get_node(5).get_resulting_data().data_frame.collect()
+    assert data.columns == ["name", "city", "jan", "Total ", "New_name", "New_city", "jan % Total"]
+    # Tool 2 overwrote in place; tool 5's comment stub left the same column untouched.
+    assert data["name"].to_list() == ["ANN", "BOB"]
+    assert data["city"].to_list() == ["ROME", "OSLO"]
+    # [_CurrentFieldName_] binds the column name as a literal.
+    assert data["New_name"].to_list() == ["name=ANN", "name=BOB"]
+    assert data["New_city"].to_list() == ["city=ROME", "city=OSLO"]
+    # The FixedDecimal output type lands as Float64 and the ' % Total' suffix keeps its space.
+    assert data["jan % Total"].to_list() == [25.0, 75.0]
+    assert data.schema["jan % Total"] == pl.Float64
+
+
+def test_multi_field_formula_runs_fixture_report_counts(multi_field_formula_runs: ConversionResult):
+    report = multi_field_formula_runs.report
+    assert report.total_tools == 8
+    assert (report.converted, report.commented) == (4, 3)
+    assert (report.partial, report.placeholder, report.skipped) == (1, 0, 0)
+
+
+MULTI_FIELD_PLUGIN = "AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula"
+ALL_FIELDS = '<Field name="name" /><Field name="city" /><Field name="qty" /><Field name="*Unknown" />'
+
+
+def multi_field_after_text_input(config: str) -> bytes:
+    """A Text Input (two text columns and a numeric one) feeding one Multi-Field Formula tool."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="name" /><Field name="city" /><Field name="qty" type="Int32" /></Fields>
+        <Data><r><c>ann</c><c>rome</c><c>2</c></r><r><c>bob</c><c>oslo</c><c>4</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="{MULTI_FIELD_PLUGIN}" />
+      <Properties><Configuration>{config}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def multi_field_inline(config: str) -> ConversionResult:
+    return convert_yxmd(multi_field_after_text_input(config), source_name="inline.yxmd")
+
+
+def test_all_types_picker_becomes_all_columns_mode():
+    result = multi_field_inline(
+        f"<FieldType>All</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"False\" /><Expression>ToString([_CurrentField_])</Expression>"
+    )
+    row = report_row(result, 2)
+    assert row.status == "converted"
+    assert row.messages == ["Mapped onto one multi-field formula node over all columns."]
+    assert multi_field_settings(result, 2)["selection_mode"] == "all"
+
+
+def test_unmapped_field_type_picker_falls_back_to_an_explicit_list():
+    """An unrecognised FieldType token must not guess a group; it lists what it can see."""
+    result = multi_field_inline(
+        f"<FieldType>Spatial</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"False\" /><Expression>ToString([_CurrentField_])</Expression>"
+    )
+    row = report_row(result, 2)
+    settings = multi_field_settings(result, 2)
+    assert settings["selection_mode"] == "list"
+    assert settings["selected_columns"] == ["name", "city", "qty"]
+    assert any("unknown at design time" in message for message in row.messages)
+
+
+def test_legacy_output_suffix_tag_keeps_its_leading_space():
+    """`OutputSuffix` is read raw like `NewFieldAddOn`; a stripped suffix would rename the column."""
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"True\" /><OutputSuffix> % Total</OutputSuffix>"
+        "<Expression>ToString([_CurrentField_])</Expression>"
+    )
+    settings = multi_field_settings(result, 2)
+    assert settings["output_mode"] == "new"
+    assert settings["output_suffix"] == " % Total"
+    assert settings["output_prefix"] == ""
+
+
+def test_add_on_without_a_position_defaults_to_a_prefix():
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"True\" /><NewFieldAddOn>New_</NewFieldAddOn>"
+        "<Expression>ToString([_CurrentField_])</Expression>"
+    )
+    settings = multi_field_settings(result, 2)
+    assert (settings["output_prefix"], settings["output_suffix"]) == ("New_", "")
+
+
+def test_add_on_position_is_matched_case_insensitively():
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"True\" /><NewFieldAddOn>_new</NewFieldAddOn>"
+        "<NewFieldAddOnPos>SUFFIX</NewFieldAddOnPos>"
+        "<Expression>ToString([_CurrentField_])</Expression>"
+    )
+    settings = multi_field_settings(result, 2)
+    assert (settings["output_prefix"], settings["output_suffix"]) == ("", "_new")
+
+
+def test_copy_output_without_an_add_on_becomes_a_placeholder():
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"True\" /><NewFieldAddOn />"
+        "<Expression>ToString([_CurrentField_])</Expression>"
+    )
+    row = report_row(result, 2)
+    assert row.status == "placeholder"
+    assert any("names are not recorded in the workflow" in message for message in row.messages)
+
+
+def test_mapped_output_type_is_applied_without_a_caveat():
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"False\" /><Expression>ToString([_CurrentField_])</Expression>"
+        "<ChangeFieldType value=\"True\" /><OutputFieldType type=\"Int32\" />"
+    )
+    row = report_row(result, 2)
+    assert multi_field_settings(result, 2)["output_data_type"] == "Int32"
+    assert row.messages == ["Mapped onto one multi-field formula node over String columns."]
+
+
+def test_unmappable_output_type_keeps_auto_and_says_so():
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"False\" /><Expression>ToString([_CurrentField_])</Expression>"
+        "<ChangeFieldType value=\"True\" /><OutputFieldType type=\"SpatialObj\" />"
+    )
+    row = report_row(result, 2)
+    assert multi_field_settings(result, 2)["output_data_type"] == "Auto"
+    assert row.messages[1] == (
+        "Alteryx output type 'SpatialObj' has no Flowfile equivalent; the type the expression produces is kept."
+    )
+
+
+def test_a_deliberate_retype_to_text_is_honoured():
+    """Only a Text selection echoing its own type is treated as a no-op; a Numeric one is a real cast."""
+    result = multi_field_inline(
+        f"<FieldType>Numeric</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"False\" /><Expression>ToString([_CurrentField_])</Expression>"
+        "<ChangeFieldType value=\"True\" /><OutputFieldType type=\"V_String\" size=\"254\" />"
+    )
+    row = report_row(result, 2)
+    assert multi_field_settings(result, 2)["output_data_type"] == "String"
+    assert not any("keeps the type the expression produces" in message for message in row.messages)
+
+
+def test_declared_string_output_type_is_ignored(price_paid: ConversionResult):
+    """price_paid tool 7 is the echo case: a Text selection whose OutputFieldType repeats V_String."""
+    settings = multi_field_settings(price_paid, 7)
+    assert settings["output_data_type"] == "Auto"
+    assert settings["selected_columns"] == ["Old/New"]
+    assert settings["formula"] == '[_CurrentField_] = "Y"'
+    assert report_row(price_paid, 7).messages[1] == (
+        "Alteryx writes the result into a 'V_String' field; Flowfile keeps the type the expression produces."
+    )
+
+
+def test_current_field_type_placeholder_downgrades_the_row_to_partial():
+    """The placeholder converts verbatim but yields Polars type names, so the row carries a caveat."""
+    result = multi_field_inline(
+        f"<FieldType>Text</FieldType><Fields>{ALL_FIELDS}</Fields>"
+        "<CopyOutput value=\"False\" />"
+        "<Expression>IIF([_CurrentFieldType_] = \"V_WString\", \"text\", \"other\")</Expression>"
+    )
+    row = report_row(result, 2)
+    assert row.status == "partial"
+    assert row.messages[1] == (
+        "Alteryx's [_CurrentFieldType_] yields Alteryx type names (V_WString, Double, Bool…); "
+        "Flowfile's yields Polars names (String, Float64, Boolean…) — review comparisons against type literals."
+    )
+
+
+def test_commented_stub_drops_the_declared_output_cast(tmp_path: Path, multi_field_formula_runs: ConversionResult):
+    """Tool 8: an Int32 cast on an identity stub over text would only fail at collect time."""
+    row = report_row(multi_field_formula_runs, 8)
+    assert row.status == "commented"
+    assert multi_field_settings(multi_field_formula_runs, 8)["output_data_type"] == "Auto"
+    assert "Alteryx output type 'Int32' is not applied until the expression is rebuilt." in row.messages
+
+    flow = open_flow(write_flow(multi_field_formula_runs, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step for step in run_info.node_step_result if not step.success]
+    data = flow.get_node(8).get_resulting_data().data_frame.collect()
+    assert data["city"].to_list() == ["ROME", "OSLO"]
+
+
+def test_current_field_type_and_record_id_tools_run(tmp_path: Path, multi_field_formula_runs: ConversionResult):
+    """Tool 6 keeps `[_CurrentFieldType_]`; tool 7's rejected `[_RecordID_]` becomes an identity stub."""
+    assert report_row(multi_field_formula_runs, 6).status == "partial"
+    record_id_row = report_row(multi_field_formula_runs, 7)
+    assert record_id_row.status == "commented"
+    stub = multi_field_settings(multi_field_formula_runs, 7)["formula"]
+    assert "_RecordID_" in stub
+    assert stub.endswith("[_CurrentField_]")
+
+    flow = open_flow(write_flow(multi_field_formula_runs, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+    data = flow.get_node(8).get_resulting_data().data_frame.collect()
+    assert data["type_name"].to_list() == ["String", "String"]
+    assert data["name"].to_list() == ["ANN", "BOB"]
 
 
 def test_regex_parse_becomes_runnable_polars_code(regex_and_multifield: ConversionResult):

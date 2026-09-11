@@ -10,6 +10,7 @@ from flowfile_core.flowfile.converters.alteryx.expression import (
     TranslationOutcome,
     try_translate,
 )
+from flowfile_core.schemas.transform_schema import MULTI_FIELD_PLACEHOLDERS
 
 # (FUNCTION_MAP key, Alteryx expression, expected Flowfile formula)
 FUNCTION_CASES: list[tuple[str, str, str]] = [
@@ -514,3 +515,21 @@ def test_isempty_of_a_parsed_date_evaluates_without_a_string_comparison():
     expr = simple_function_to_expr(outcome.translated)
     values = pl.DataFrame({"D": ["03/15/2021", "not a date"]}).select(expr.alias("o"))["o"].to_list()
     assert values == [False, True]
+
+
+MULTI_FIELD_SPECIALS = frozenset(MULTI_FIELD_PLACEHOLDERS)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [*(f"[{placeholder}]" for placeholder in MULTI_FIELD_PLACEHOLDERS), "[_currentfield_] + 1"],
+)
+def test_allowed_specials_keep_the_multi_field_placeholders_verbatim(expression: str):
+    """The multi-field mapper binds these itself, so the translator must pass them through as written."""
+    assert try_translate(expression, allowed_specials=MULTI_FIELD_SPECIALS).translated == expression
+
+
+def test_allowed_specials_still_reject_other_specials():
+    outcome = try_translate("[_RecordID_]", allowed_specials=MULTI_FIELD_SPECIALS)
+    assert outcome.translated is None
+    assert "[_RecordID_]" in outcome.reason

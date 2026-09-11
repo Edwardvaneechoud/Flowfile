@@ -32,6 +32,7 @@ const SVG_NODE_ICONS = [
   "join.svg",
   "kafka_source.svg",
   "manual_input.svg",
+  "multi_field_formula.svg",
   "output.svg",
   "pivot.svg",
   "polars_code.svg",

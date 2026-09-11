@@ -382,9 +382,10 @@ _CMP_OPS = {"=": "=", "==": "=", "!=": "!=", "<>": "!=", ">": ">", "<": "<", ">=
 
 
 class _Parser:
-    def __init__(self, tokens: list[_Token]) -> None:
+    def __init__(self, tokens: list[_Token], allowed_specials: frozenset[str] = frozenset()) -> None:
         self._tokens = tokens
         self._i = 0
+        self._allowed_specials = frozenset(special.lower() for special in allowed_specials)
 
     def parse(self) -> _Node:
         node = self._expr()
@@ -481,7 +482,7 @@ class _Parser:
             return _Literal(f'"{tok.value}"')
         if tok.kind == "field":
             self._i += 1
-            return _Field(_check_field_name(tok.value))
+            return _Field(_check_field_name(tok.value, self._allowed_specials))
         if tok.kind == "lparen":
             self._i += 1
             node = self._expr()
@@ -555,7 +556,8 @@ class _Parser:
         return node
 
 
-def _check_field_name(name: str) -> str:
+def _check_field_name(name: str, allowed_specials: frozenset[str] = frozenset()) -> str:
+    """Validate one ``[field]`` reference; ``allowed_specials`` holds lowercased `_..._` names to keep."""
     if not name.strip():
         raise _Untranslatable("empty field reference '[]'")
     if ":" in name:
@@ -563,7 +565,7 @@ def _check_field_name(name: str) -> str:
             f"row-offset field reference '[{name}]' has no Flowfile formula equivalent "
             "(formulas cannot look at other rows)"
         )
-    if re.fullmatch(r"_.+_", name):
+    if re.fullmatch(r"_.+_", name) and name.lower() not in allowed_specials:
         raise _Untranslatable(f"special Alteryx field reference '[{name}]' has no Flowfile formula equivalent")
     if "]" in name or "[" in name:
         raise _Untranslatable(f"malformed field reference '[{name}]'")
@@ -865,15 +867,20 @@ def _clean_reason(reason: str) -> str:
     return collapsed[:297] + "..." if len(collapsed) > 300 else collapsed
 
 
-def try_translate(alteryx_expr: str) -> TranslationOutcome:
-    """Translate an Alteryx expression, or explain why it cannot be translated."""
+def try_translate(alteryx_expr: str, *, allowed_specials: frozenset[str] = frozenset()) -> TranslationOutcome:
+    """Translate an Alteryx expression, or explain why it cannot be translated.
+
+    ``allowed_specials`` names the `_..._` field references the caller binds itself — the
+    Multi-Field Formula placeholders, which stay in the rendered formula as written instead
+    of being rejected. Every other special field reference is still refused.
+    """
     if not isinstance(alteryx_expr, str) or not alteryx_expr.strip():
         return TranslationOutcome(None, "the Alteryx expression is empty")
     try:
         tokens = _tokenize(alteryx_expr)
         if not tokens:
             return TranslationOutcome(None, "the Alteryx expression is empty")
-        rendered, _ = _emit(_Parser(tokens).parse())
+        rendered, _ = _emit(_Parser(tokens, allowed_specials).parse())
     except _Untranslatable as exc:
         return TranslationOutcome(None, _clean_reason(exc.reason))
     except RecursionError:

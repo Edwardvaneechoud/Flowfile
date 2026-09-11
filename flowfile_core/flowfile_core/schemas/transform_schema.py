@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict
@@ -1267,6 +1268,90 @@ class DynamicRenameInput(BaseModel):
     selection_mode: ColumnSelectionMode = "all"
     selected_columns: list[str] = Field(default_factory=list)
     selected_data_type: ReadableDataTypeGroup | None = None
+
+
+MultiFieldOutputMode = Literal["replace", "new"]
+
+MULTI_FIELD_CURRENT_FIELD = "_CurrentField_"
+MULTI_FIELD_CURRENT_FIELD_NAME = "_CurrentFieldName_"
+MULTI_FIELD_CURRENT_FIELD_TYPE = "_CurrentFieldType_"
+MULTI_FIELD_PLACEHOLDERS = (
+    MULTI_FIELD_CURRENT_FIELD,
+    MULTI_FIELD_CURRENT_FIELD_NAME,
+    MULTI_FIELD_CURRENT_FIELD_TYPE,
+)
+
+_MULTI_FIELD_CURRENT_FIELD_RE = re.compile(rf"\[{MULTI_FIELD_CURRENT_FIELD}\]", re.IGNORECASE)
+_MULTI_FIELD_CURRENT_FIELD_NAME_RE = re.compile(rf"\[{MULTI_FIELD_CURRENT_FIELD_NAME}\]", re.IGNORECASE)
+_MULTI_FIELD_CURRENT_FIELD_TYPE_RE = re.compile(rf"\[{MULTI_FIELD_CURRENT_FIELD_TYPE}\]", re.IGNORECASE)
+
+
+def bind_multi_field_formula(formula: str, column_name: str, data_type: str) -> str:
+    """Bind the three per-column placeholders of a multi-field formula to one column.
+
+    `[_CurrentField_]` becomes a column reference, `[_CurrentFieldName_]` a string literal
+    of the column's name and `[_CurrentFieldType_]` a string literal of the column's Polars
+    dtype base token (the part before any parameter list, so `Datetime(time_unit='us')`
+    binds as `Datetime`). Matching is case-insensitive, mirroring Alteryx.
+
+    The substitutions go through callables so a backslash inside a column name is inserted
+    literally instead of being read as a `re.sub` escape.
+
+    Args:
+        formula: The user's flowfile-formula text, still carrying placeholders.
+        column_name: Name of the column the formula is being bound to.
+        data_type: The column's Polars dtype as a string.
+
+    Returns:
+        The formula with every placeholder bound to this column.
+
+    Raises:
+        ValueError: If the column name contains a double quote and therefore cannot be written
+            as a string literal for `[_CurrentFieldName_]`. Single-quoting it would parse in
+            Python but not in polars-expr-transformer, whose `standardize_quotes` re-quotes the
+            literal without escaping, so such a name has no usable literal form at all.
+    """
+    bound = _MULTI_FIELD_CURRENT_FIELD_RE.sub(lambda _m: f"[{column_name}]", formula)
+    if _MULTI_FIELD_CURRENT_FIELD_NAME_RE.search(bound):
+        if '"' in column_name:
+            raise ValueError(f"Multi-field formula: column '{column_name}' cannot be written as a string literal")
+        literal = f'"{column_name}"'
+        bound = _MULTI_FIELD_CURRENT_FIELD_NAME_RE.sub(lambda _m: literal, bound)
+    type_token = (data_type or "").split("(", 1)[0]
+    return _MULTI_FIELD_CURRENT_FIELD_TYPE_RE.sub(lambda _m: f'"{type_token}"', bound)
+
+
+class MultiFieldFormulaInput(BaseModel):
+    """Defines settings for a multi-field formula operation.
+
+    Applies ONE flowfile-formula expression to MANY columns at once, rather than needing a
+    separate formula node per column. Inside the formula three placeholders bind to the
+    column currently being processed: `[_CurrentField_]` (its value), `[_CurrentFieldName_]`
+    (its name as a string literal) and `[_CurrentFieldType_]` (its Polars dtype base token
+    as a string literal).
+
+    Selection follows the same rules as `DynamicRenameInput`: all columns, a listed subset
+    (listed names that no longer exist are silently skipped, so stale UI state does not
+    break execution), or every column of one data-type group.
+
+    In `"replace"` output mode each result overwrites its source column, keeping the column
+    order. In `"new"` mode the results are written to `f"{output_prefix}{name}{output_suffix}"`
+    columns appended after the existing ones, and at least one affix is required. When
+    `output_data_type` is set to anything other than `"Auto"` the result is cast to that type.
+
+    Zero selected columns is a no-op: the frame passes through unchanged.
+    """
+
+    formula: str = Field(default="", json_schema_extra={"expression": True})
+
+    selection_mode: ColumnSelectionMode = "all"
+    selected_columns: list[str] = Field(default_factory=list)
+    selected_data_type: ReadableDataTypeGroup | None = None
+
+    output_mode: MultiFieldOutputMode = "replace"
+    output_prefix: str = ""
+    output_suffix: str = ""
+    output_data_type: DataType | Literal["Auto"] | DataTypeStr | None = AUTO_DATA_TYPE
 
 
 CleansingCaseMode = Literal["none", "uppercase", "lowercase", "titlecase"]

@@ -53,6 +53,16 @@ Like `filter`, but returns a `(pass, fail)` tuple of frames — rows matching th
 high_value, low_value = df.filter_split(flowfile_formula="[price] * [quantity] > 1000")
 ```
 
+## `multi_field_formula(formula, ...)`
+
+Applies one formula to many columns at once, with `[_CurrentField_]`, `[_CurrentFieldName_]` and `[_CurrentFieldType_]` binding to each column in turn. Narrow the selection with `columns=[...]` or `data_type="Numeric"`, and write the results to new columns by passing a `prefix` or a `suffix`.
+
+```python
+df = df.multi_field_formula("round([_CurrentField_], 2)", data_type="Numeric", suffix="_rounded")
+```
+
+See [One formula over many columns](../reference/flowframe-operations.md#one-formula-over-many-columns) for the full parameter list and the [Multi-Field Formula node](../../visual-editor/nodes/transform.md#multi-field-formula) for the placeholder table.
+
 ## Mixing formulas and expressions
 
 Both build the same lazy graph, so you can switch freely between them in one pipeline:
