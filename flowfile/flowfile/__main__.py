@@ -182,6 +182,61 @@ def _complete_run_if_needed(
         print(f"Warning: Notification processing failed: {e}", file=sys.stderr)
 
 
+CONVERT_USAGE = "Usage: flowfile convert yxdb <file-or-dir> [--out DIR] [--csv] [--overwrite]"
+
+
+def _run_convert_command(component: str | None, target: str | None, out: str | None, csv: bool, overwrite: bool) -> int:
+    """Convert Alteryx `.yxdb` data files the importer cannot read from an uploaded workflow."""
+    if component != "yxdb":
+        print(CONVERT_USAGE, file=sys.stderr)
+        return 1
+    if not target:
+        print(CONVERT_USAGE, file=sys.stderr)
+        return 1
+
+    source = Path(target)
+    if not source.exists():
+        print(f"Error: File not found: {target}", file=sys.stderr)
+        return 1
+
+    from flowfile_core.flowfile.converters.alteryx.yxdb import ConversionStats, convert_tree, convert_yxdb
+
+    out_dir = Path(out) if out else None
+    suffix = ".csv" if csv else ".parquet"
+    if source.is_dir():
+        results = convert_tree(source, out_dir, csv=csv, overwrite=overwrite)
+    else:
+        destination = out_dir / source.with_suffix(suffix).name if out_dir else None
+        try:
+            results = [convert_yxdb(source, destination, csv=csv, overwrite=overwrite)]
+        except Exception as exc:
+            results = [ConversionStats(source=source, error=str(exc))]
+
+    if not results:
+        print(f"No .yxdb files found under {source}")
+        return 0
+
+    failed = 0
+    skipped = 0
+    for stats in results:
+        if not stats.ok:
+            failed += 1
+            print(f"FAILED  {stats.source}: {stats.error}", file=sys.stderr)
+        elif stats.skipped:
+            skipped += 1
+            print(f"skipped {stats.source} -> {stats.destination} already exists (use --overwrite)")
+        else:
+            print(
+                f"{stats.source} -> {stats.destination}  {stats.rows} rows x {stats.columns} cols  {stats.seconds:.2f}s"
+            )
+        for warning in stats.warnings:
+            print(f"        warning: {warning}")
+
+    converted = len(results) - failed - skipped
+    print(f"{converted} converted, {skipped} skipped, {failed} failed")
+    return 1 if failed else 0
+
+
 def _run_project_command(action: str | None, arg: str | None) -> None:
     """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
     from fastapi import HTTPException
@@ -235,15 +290,20 @@ def main():
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument(
-        "command", nargs="?", choices=["run", "seed-demo", "remove-demo", "project"], help="Command to execute"
+        "command",
+        nargs="?",
+        choices=["run", "seed-demo", "remove-demo", "project", "convert"],
+        help="Command to execute",
     )
     parser.add_argument(
         "component",
         nargs="?",
-        choices=["ui", "core", "worker", "flow", "init", "open", "save"],
-        help="Component to run, or project sub-command (init/open/save)",
+        choices=["ui", "core", "worker", "flow", "init", "open", "save", "yxdb"],
+        help="Component to run, project sub-command (init/open/save), or convert format (yxdb)",
     )
-    parser.add_argument("file_path", nargs="?", help="Flow file path, project folder, or version message")
+    parser.add_argument(
+        "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
@@ -255,6 +315,9 @@ def main():
         help="Override a flow parameter (can be used multiple times): --param input_dir=/data --param threshold=100",
     )
     parser.add_argument("--run-id", type=int, default=None, help="Pre-created run ID for scheduled runs")
+    parser.add_argument("--out", default=None, help="Output directory for convert (default: beside the source)")
+    parser.add_argument("--csv", action="store_true", help="Convert to CSV instead of Parquet")
+    parser.add_argument("--overwrite", action="store_true", help="Replace existing converted files")
 
     args = parser.parse_args()
 
@@ -282,6 +345,10 @@ def main():
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
             sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
+    elif args.command == "convert":
+        sys.exit(
+            _run_convert_command(args.component, args.file_path, out=args.out, csv=args.csv, overwrite=args.overwrite)
+        )
     elif args.command == "project":
         _run_project_command(args.component, args.file_path)
     elif args.command in ("seed-demo", "remove-demo"):
@@ -302,6 +369,10 @@ def main():
         print("")
         print("  # Run a flow from a file")
         print("  flowfile run flow my_pipeline.yaml")
+        print("")
+        print("  # Convert Alteryx .yxdb data files to Parquet (needs: pip install 'flowfile[alteryx]')")
+        print("  flowfile convert yxdb my_data.yxdb")
+        print("  flowfile convert yxdb ./alteryx_data --out ./parquet_data")
         print("")
         print("  # Load or remove the optional demo catalog")
         print("  flowfile seed-demo")

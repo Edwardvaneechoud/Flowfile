@@ -90,6 +90,12 @@ psycopg2-binary = "^2.9.9"
 packaging = ">=24.0"
 psutil = ">=5.9.0"
 
+# Optional: reading Alteryx .yxdb data files (`flowfile convert yxdb`). Pure Python, MIT.
+yxdb = {version = ">=1.1.1", optional = true}
+
+
+[tool.poetry.extras]
+alteryx = ["yxdb"]
 
 [tool.poetry.scripts]
 flowfile_worker = "flowfile_worker.cli:run"
