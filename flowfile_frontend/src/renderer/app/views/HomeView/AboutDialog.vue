@@ -32,22 +32,22 @@
           <i class="fa-solid fa-comments"></i>
           <span>Discussions</span>
         </a>
-        <button v-if="isDesktop" class="about-link" :disabled="checking" @click="checkForUpdates">
+        <button class="about-link" :disabled="checking" @click="checkForUpdates">
           <i class="fa-solid fa-rotate"></i>
           <span>Check for updates</span>
         </button>
       </div>
-      <p v-if="isDesktop && updateStatus" class="about-update-status">{{ updateStatus }}</p>
+      <p v-if="updateStatus" class="about-update-status">{{ updateStatus }}</p>
       <p class="about-license">Released under the MIT License.</p>
     </div>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { desktop, isDesktop } from "../../../lib/desktop";
+import { ref, watch } from "vue";
+import { desktop } from "../../../lib/desktop";
 import { DOCS_BASE_URL } from "../../lib/docsLinks";
-import { useUpdateStore } from "../../stores/update-store";
+import { useAppUpdate } from "../../composables/useAppUpdate";
 
 const props = defineProps<{ visible: boolean; version?: string }>();
 
@@ -57,11 +57,18 @@ const emit = defineEmits<{
 
 const isVisible = ref(props.visible);
 
+const {
+  checking,
+  statusText: updateStatus,
+  checkForUpdates: runUpdateCheck,
+  resetStatus,
+} = useAppUpdate();
+
 watch(
   () => props.visible,
   (v) => {
     isVisible.value = v;
-    if (v) checkOutcome.value = "none";
+    if (v) resetStatus();
   },
 );
 
@@ -74,26 +81,9 @@ function openDocs() {
   void desktop.openExternal(DOCS_BASE_URL);
 }
 
-const updateStore = useUpdateStore();
-const checkOutcome = ref<"none" | "current" | "failed">("none");
-const checking = computed(() => updateStore.checking);
-
-const updateStatus = computed(() => {
-  if (checking.value) return "Checking…";
-  if (checkOutcome.value === "current") return "You're up to date";
-  if (checkOutcome.value === "failed") return "Couldn't check for updates";
-  return "";
-});
-
 async function checkForUpdates() {
-  checkOutcome.value = "none";
-  const info = await updateStore.checkNow();
-  if (info) {
-    // The prompt lives in AppLayout; About would otherwise stack under it.
-    isVisible.value = false;
-    return;
-  }
-  checkOutcome.value = updateStore.checkError ? "failed" : "current";
+  // The prompt lives in AppLayout; About would otherwise stack under it.
+  if (await runUpdateCheck()) isVisible.value = false;
 }
 </script>
 
