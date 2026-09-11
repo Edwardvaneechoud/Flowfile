@@ -25,6 +25,8 @@
           v-for="node in group.nodes"
           :key="node.item"
           :node="node"
+          :favorite="isFavorite(node.item)"
+          :hidden-node="group.key === HIDDEN_GROUP_KEY"
           :suppress-tooltip="nodeMenu !== null"
           @dragstart="onDragStart"
           @contextmenu="openNodeMenu"
@@ -45,19 +47,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
 import { useNodes } from "./useNodes";
-import { usePaletteGroups } from "./usePaletteGroups";
+import { HIDDEN_GROUP_KEY, usePaletteGroups } from "./usePaletteGroups";
 import { readinessKey, useKernelReadiness } from "../../composables/useKernelReadiness";
 import NodeListItem from "./NodeListItem.vue";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import { nodeDocsMenuOptions, nodeDocsUrl, READ_MORE_ACTION } from "./nodeDocsLinks";
 import { desktop } from "../../../lib/desktop";
 import type { NodeTemplate } from "../../types";
+import type { ContextMenuOption } from "../../components/common/ContextMenu/types";
 
 const { nodes } = useNodes();
-const { searchQuery, filteredGroups, isGroupOpen, toggleGroup } = usePaletteGroups(nodes);
+const {
+  searchQuery,
+  filteredGroups,
+  isGroupOpen,
+  toggleGroup,
+  isFavorite,
+  isHidden,
+  toggleFavorite,
+  toggleHidden,
+} = usePaletteGroups(nodes);
 
 // One batch readiness fetch for every kernel-env template with deps; the rows
 // (NodeListItem) read the shared cache keyed by their own dependency set.
@@ -79,7 +91,21 @@ const emit = defineEmits<{
 // One menu for the whole palette — only one can be open, and per-row menus would
 // each register document-level listeners for all ~45 rows.
 const nodeMenu = ref<{ node: NodeTemplate; x: number; y: number } | null>(null);
-const menuOptions = nodeDocsMenuOptions();
+
+const FAVORITE_ACTION = "favorite";
+const HIDE_ACTION = "hide";
+
+const menuOptions = computed<ContextMenuOption[]>(() => {
+  const item = nodeMenu.value?.node.item ?? "";
+  return [
+    {
+      label: isFavorite(item) ? "Remove from favorites" : "Add to favorites",
+      action: FAVORITE_ACTION,
+    },
+    { label: isHidden(item) ? "Unhide node" : "Hide node", action: HIDE_ACTION },
+    ...nodeDocsMenuOptions(),
+  ];
+});
 
 const openNodeMenu = (event: MouseEvent, node: NodeTemplate) => {
   nodeMenu.value = { node, x: event.clientX, y: event.clientY };
@@ -91,10 +117,13 @@ const onDragStart = (event: DragEvent, node: NodeTemplate) => {
 };
 
 const onMenuSelect = (action: string) => {
-  if (action !== READ_MORE_ACTION || !nodeMenu.value) return;
+  if (!nodeMenu.value) return;
+  const node = nodeMenu.value.node;
+  if (action === FAVORITE_ACTION) toggleFavorite(node.item);
+  else if (action === HIDE_ACTION) toggleHidden(node.item);
   // Synchronous: in web mode this is window.open, which needs the click's
   // user-gesture attribution to survive the popup blocker.
-  void desktop.openExternal(nodeDocsUrl(nodeMenu.value.node));
+  else if (action === READ_MORE_ACTION) void desktop.openExternal(nodeDocsUrl(node));
 };
 </script>
 

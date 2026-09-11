@@ -7,6 +7,12 @@ import { ref, computed, type Ref, type ComputedRef } from "vue";
 import type { NodeTemplate } from "../../types";
 
 const OPEN_STATE_STORAGE_KEY = "nodeList.groupOpenState";
+const FAVORITES_STORAGE_KEY = "nodeList.favorites";
+const HIDDEN_STORAGE_KEY = "nodeList.hiddenNodes";
+
+// Synthetic groups wrapping the regular palette: favorites on top, hidden at the bottom.
+export const FAVORITES_GROUP_KEY = "favorites";
+export const HIDDEN_GROUP_KEY = "hidden";
 
 // Fixed built-in order + today's labels (identical to the old CategoryKey map).
 export const BUILTIN_GROUPS: { key: string; label: string }[] = [
@@ -44,14 +50,31 @@ function labelFor(node: NodeTemplate | undefined, key: string): string {
   return titleCaseSlug(key);
 }
 
+export interface PaletteUserPrefs {
+  favorites?: ReadonlySet<string>;
+  hidden?: ReadonlySet<string>;
+}
+
 /**
  * Build the ordered palette groups from a flat node list.
  * Built-ins come first (fixed order, today's labels, only if non-empty), then
  * dynamic custom groups sorted alphabetically by display label.
+ *
+ * With user prefs, favorited nodes are additionally listed in a leading
+ * "Favorites" group (they stay in their own group too) and hidden nodes are
+ * pulled out of every regular group into a trailing "Hidden nodes" group.
+ * Both synthetic groups only appear when non-empty; prefs are keyed by
+ * `NodeTemplate.item`.
  */
-export function buildPaletteGroups(nodes: NodeTemplate[]): PaletteGroup[] {
+export function buildPaletteGroups(
+  nodes: NodeTemplate[],
+  prefs: PaletteUserPrefs = {},
+): PaletteGroup[] {
+  const hiddenNodes = prefs.hidden?.size ? nodes.filter((n) => prefs.hidden!.has(n.item)) : [];
+  const visible = hiddenNodes.length ? nodes.filter((n) => !prefs.hidden!.has(n.item)) : nodes;
+
   const byKey = new Map<string, NodeTemplate[]>();
-  for (const node of nodes) {
+  for (const node of visible) {
     const key = node.node_group || "custom";
     const bucket = byKey.get(key);
     if (bucket) bucket.push(node);
@@ -79,7 +102,31 @@ export function buildPaletteGroups(nodes: NodeTemplate[]): PaletteGroup[] {
   });
   dynamic.sort((a, b) => a.label.localeCompare(b.label));
 
-  return [...groups, ...dynamic];
+  const regular = [...groups, ...dynamic];
+  const result: PaletteGroup[] = [];
+
+  // Favorites keep palette order so the group reads the same as the list below it.
+  const favorites = prefs.favorites?.size
+    ? regular.flatMap((g) => g.nodes).filter((n) => prefs.favorites!.has(n.item))
+    : [];
+  if (favorites.length) {
+    result.push({
+      key: FAVORITES_GROUP_KEY,
+      label: "Favorites",
+      nodes: favorites,
+      isDynamic: false,
+    });
+  }
+  result.push(...regular);
+  if (hiddenNodes.length) {
+    result.push({
+      key: HIDDEN_GROUP_KEY,
+      label: "Hidden nodes",
+      nodes: hiddenNodes,
+      isDynamic: false,
+    });
+  }
+  return result;
 }
 
 function filterNode(node: NodeTemplate, query: string): boolean {
@@ -108,12 +155,35 @@ function persistOpenState(state: Record<string, boolean>): void {
   }
 }
 
+function loadItemSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistItemSet(key: string, items: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify([...items]));
+  } catch {
+    // Best-effort, same as open-state.
+  }
+}
+
 export function usePaletteGroups(nodes: Ref<NodeTemplate[]>) {
   const searchQuery = ref("");
   // Per-group open/closed, keyed by group key. New groups default open.
   const openState = ref<Record<string, boolean>>(loadOpenState());
+  // Per-node favorite / hidden flags keyed by NodeTemplate.item, persisted locally.
+  const favorites = ref<Set<string>>(loadItemSet(FAVORITES_STORAGE_KEY));
+  const hidden = ref<Set<string>>(loadItemSet(HIDDEN_STORAGE_KEY));
 
-  const allGroups = computed(() => buildPaletteGroups(nodes.value));
+  const allGroups = computed(() =>
+    buildPaletteGroups(nodes.value, { favorites: favorites.value, hidden: hidden.value }),
+  );
 
   // Search filters nodes within each group; empty groups drop out.
   const filteredGroups: ComputedRef<PaletteGroup[]> = computed(() => {
@@ -124,17 +194,62 @@ export function usePaletteGroups(nodes: Ref<NodeTemplate[]>) {
       .filter((group) => group.nodes.length > 0);
   });
 
+  // Every group defaults open except the hidden bucket, which stays out of the way.
+  const defaultOpen = (key: string): boolean => key !== HIDDEN_GROUP_KEY;
+
   const isGroupOpen = (key: string): boolean => {
     // While searching, matching groups are force-expanded.
     if (searchQuery.value.trim()) return true;
-    return openState.value[key] ?? true;
+    return openState.value[key] ?? defaultOpen(key);
   };
 
   const toggleGroup = (key: string): void => {
     if (searchQuery.value.trim()) return;
-    const next = { ...openState.value, [key]: !(openState.value[key] ?? true) };
+    const next = { ...openState.value, [key]: !(openState.value[key] ?? defaultOpen(key)) };
     openState.value = next;
     persistOpenState(next);
+  };
+
+  const isFavorite = (item: string): boolean => favorites.value.has(item);
+  const isHidden = (item: string): boolean => hidden.value.has(item);
+
+  const setFavorites = (next: Set<string>): void => {
+    favorites.value = next;
+    persistItemSet(FAVORITES_STORAGE_KEY, next);
+  };
+
+  const setHidden = (next: Set<string>): void => {
+    hidden.value = next;
+    persistItemSet(HIDDEN_STORAGE_KEY, next);
+  };
+
+  // Favoriting a hidden node unhides it; hiding a favorite drops the favorite.
+  const toggleFavorite = (item: string): void => {
+    const next = new Set(favorites.value);
+    if (next.has(item)) next.delete(item);
+    else {
+      next.add(item);
+      if (hidden.value.has(item)) {
+        const nextHidden = new Set(hidden.value);
+        nextHidden.delete(item);
+        setHidden(nextHidden);
+      }
+    }
+    setFavorites(next);
+  };
+
+  const toggleHidden = (item: string): void => {
+    const next = new Set(hidden.value);
+    if (next.has(item)) next.delete(item);
+    else {
+      next.add(item);
+      if (favorites.value.has(item)) {
+        const nextFavorites = new Set(favorites.value);
+        nextFavorites.delete(item);
+        setFavorites(nextFavorites);
+      }
+    }
+    setHidden(next);
   };
 
   return {
@@ -142,5 +257,9 @@ export function usePaletteGroups(nodes: Ref<NodeTemplate[]>) {
     filteredGroups,
     isGroupOpen,
     toggleGroup,
+    isFavorite,
+    isHidden,
+    toggleFavorite,
+    toggleHidden,
   };
 }
