@@ -76,9 +76,13 @@ class TestHappyPath:
         report = body["report"]
         assert report["workflow_name"] == "formulas"
         assert report["total_tools"] == 2
+        assert report["total_annotations"] == 0
         assert report["converted"] == 1
         assert report["commented"] == 1
         assert len(report["rows"]) == 2
+        assert report["coverage"]["mapped"] == 2
+        assert report["coverage"]["mapped_percent"] == 100
+        assert report["rows"][0]["entity"] == "tool"
 
     def test_written_yaml_is_the_converted_flow(self, flows_dir):
         response = _post("all_supported.yxmd")
@@ -87,6 +91,20 @@ class TestHappyPath:
         data = yaml.safe_load(Path(response.json()["flow_path"]).read_text(encoding="utf-8"))
         assert data["flowfile_name"] == "All Supported Tools"
         assert len(data["nodes"]) == len(flow_file_handler.get_flow(response.json()["flow_id"]).nodes)
+
+    def test_comment_only_workflow_opens_as_a_flow_with_no_nodes(self):
+        response = _post("zero_tools.yxmd")
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        flow = flow_file_handler.get_flow(body["flow_id"])
+        assert flow is not None
+        assert flow.nodes == []
+        assert [comment.text for comment in flow._comments.values()] == ["Workflow still to be built."]
+
+        report = body["report"]
+        assert (report["total_tools"], report["total_annotations"]) == (0, 1)
+        assert report["coverage"]["tools"] == 0
 
     def test_xml_extension_is_accepted(self):
         content = (FIXTURE_DIR / "formulas.yxmd").read_bytes()
@@ -117,10 +135,10 @@ class TestRejections:
         assert response.status_code == 400
         assert "AlteryxDocument" in response.json()["detail"]
 
-    def test_zero_tools(self):
-        response = _post("zero_tools.yxmd")
+    def test_nothing_to_convert(self):
+        response = _post("empty_canvas.yxmd")
         assert response.status_code == 400
-        assert "no Alteryx tools" in response.json()["detail"]
+        assert "nothing to convert" in response.json()["detail"]
 
     def test_oversized_upload(self, monkeypatch, flows_dir):
         monkeypatch.setattr(converters_module, "MAX_YXMD_SIZE", 32)

@@ -215,6 +215,13 @@ def test_wrong_root_element_raises():
         parse_yxmd(WRONG_ROOT)
 
 
-def test_workflow_without_tools_raises():
-    with pytest.raises(YxmdParseError, match="no Alteryx tools"):
-        parse_yxmd(read_fixture("zero_tools.yxmd"))
+def test_workflow_without_tools_or_comments_raises():
+    with pytest.raises(YxmdParseError, match="nothing to convert"):
+        parse_yxmd(read_fixture("empty_canvas.yxmd"))
+
+
+def test_comment_only_workflow_parses_with_no_tools():
+    workflow = parse_yxmd(read_fixture("zero_tools.yxmd"))
+    assert workflow.tools == []
+    assert len(workflow.text_boxes) == 1
+    assert workflow.text_boxes[0].configuration.findtext("Text") == "Workflow still to be built."

@@ -18,7 +18,12 @@ from flowfile_core.flowfile.converters.alteryx.mappers import (
     get_mapper,
     tool_label,
 )
-from flowfile_core.flowfile.converters.alteryx.report import ConversionReport, ConversionResult, ToolReportRow
+from flowfile_core.flowfile.converters.alteryx.report import (
+    ConversionReport,
+    ConversionResult,
+    ToolReportRow,
+    build_coverage,
+)
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxWorkflow, parse_yxmd
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import schemas
@@ -99,6 +104,16 @@ def _build_context(workflow: AlteryxWorkflow) -> EmitContext:
     return ctx
 
 
+def _report_dropped_connection(row: ToolReportRow | None, message: str) -> None:
+    """A tool that lost a wire is not fully converted, whichever end of the wire it sat on."""
+    if row is None:
+        return
+    if message not in row.messages:
+        row.messages.append(message)
+    if row.status == "converted":
+        row.status = "partial"
+
+
 def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolReportRow]) -> None:
     """Translate Alteryx wires into Flowfile edges via the anchor registries."""
     nodes = {node.id: node for node in ctx.nodes}
@@ -113,14 +128,12 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
             (connection.dest_tool_id, DEFAULT_INPUT_ANCHOR)
         )
         if origin is None or not targets:
-            missing_tool_id = connection.origin_tool_id if origin is None else connection.dest_tool_id
-            row = rows.get(missing_tool_id)
             message = (
                 f"A connection from ToolID {connection.origin_tool_id} ({connection.origin_anchor}) to "
                 f"ToolID {connection.dest_tool_id} ({connection.dest_anchor}) was dropped; reconnect it by hand."
             )
-            if row is not None and message not in row.messages:
-                row.messages.append(message)
+            for tool_id in (connection.origin_tool_id, connection.dest_tool_id):
+                _report_dropped_connection(rows.get(tool_id), message)
             continue
         source_id, handle = origin
         for target_id, kind in targets:
@@ -153,6 +166,7 @@ def _emit_comments(
                 ToolReportRow(
                     alteryx_tool_id=box.tool_id,
                     alteryx_tool=tool_label(box),
+                    entity="annotation",
                     status="skipped",
                     messages=["An empty Alteryx comment (a decorative box) was not imported."],
                 )
@@ -173,6 +187,7 @@ def _emit_comments(
             ToolReportRow(
                 alteryx_tool_id=box.tool_id,
                 alteryx_tool=tool_label(box),
+                entity="annotation",
                 flowfile_node_type="comment",
                 status="converted",
                 messages=["Imported as a canvas comment; colour, font and shape are not kept."],
@@ -181,13 +196,17 @@ def _emit_comments(
     return comments, rows
 
 
-def _build_report(workflow: AlteryxWorkflow, name: str, rows: list[ToolReportRow]) -> ConversionReport:
+def _build_report(name: str, rows: list[ToolReportRow]) -> ConversionReport:
+    """Count tools and annotations apart, so a wall of comments cannot flatter the coverage."""
+    tool_rows = [row for row in rows if row.entity == "tool"]
     report = ConversionReport(
         workflow_name=name,
-        total_tools=len(workflow.tools) + len(workflow.text_boxes),
+        total_tools=len(tool_rows),
+        total_annotations=len(rows) - len(tool_rows),
+        coverage=build_coverage(tool_rows),
         rows=rows,
     )
-    for row in rows:
+    for row in tool_rows:
         setattr(report, row.status, getattr(report, row.status) + 1)
     return report
 
@@ -228,4 +247,4 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
     )
     # Fail here rather than at open time if a mapper ever emits an unserializable payload.
     schemas.FlowfileData.model_validate(flow_data.model_dump(mode="json"))
-    return ConversionResult(flow_data=flow_data, report=_build_report(workflow, flow_name, rows))
+    return ConversionResult(flow_data=flow_data, report=_build_report(flow_name, rows))

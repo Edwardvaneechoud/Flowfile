@@ -258,6 +258,16 @@ def _text(element: ET.Element | None, path: str, default: str = "") -> str:
     return found.text.strip()
 
 
+def _raw_text(element: ET.Element | None, path: str, default: str = "") -> str:
+    """Element text with its whitespace intact, for values where a leading space is the value."""
+    if element is None:
+        return default
+    found = element.find(path)
+    if found is None or found.text is None:
+        return default
+    return found.text
+
+
 def _is_true(value: str | None) -> bool:
     return (value or "").strip().lower() == "true"
 
@@ -327,21 +337,124 @@ def _map_alteryx_type(alteryx_type: str | None) -> str | None:
     return _ALTERYX_TYPE_MAP.get(alteryx_type.strip().lower())
 
 
-def _config_xml_lines(tool: AlteryxTool) -> list[str]:
-    """The tool's ``<Configuration>`` element pretty-printed into lines."""
+_SECRET_NAME_RE = re.compile(r"password|secret|token|credential|client_?id|api_?key|connectionid|dcm", re.IGNORECASE)
+_CONNECTION_STRING_RE = re.compile(r"(?:^|[;:\s])(?:pwd|password)\s*=", re.IGNORECASE)
+REDACTED = "[redacted by Flowfile]"
+
+
+_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]+://|^[A-Za-z][A-Za-z0-9+.\-]{2,}:(?![\\/])")
+_KEY_VALUE_PAIRS_RE = re.compile(r";\s*[A-Za-z_][A-Za-z0-9_ .\-]*\s*=")
+_USER_PASSWORD_RE = re.compile(r"[^\s:@/\\]+:[^\s:@/\\]*@")
+_QUERY_PARAMETER_RE = re.compile(r"\?[A-Za-z0-9_.\-]+=")
+
+CONNECTION_NOTICE = (
+    "This node carries the original Alteryx connection string or URL; remove any credentials before sharing the flow."
+)
+
+
+def _looks_like_connection(value: str) -> bool:
+    """Whether a value reads as a connection string or URL rather than a plain file path.
+
+    A drive letter is deliberately not a scheme (``C:\\data`` is a path, ``odbc:`` is not), and a
+    single ``key=value`` is not enough — Alteryx writes those in ordinary paths.
+    """
+    text = value.strip()
+    if not text:
+        return False
+    return bool(
+        _SCHEME_RE.search(text)
+        or _KEY_VALUE_PAIRS_RE.search(text)
+        or _USER_PASSWORD_RE.search(text)
+        or _QUERY_PARAMETER_RE.search(text)
+    )
+
+
+def _flag_connection_source(tool: AlteryxTool, path: str, row: ToolReportRow) -> ToolReportRow:
+    """Say so when the tool's path or annotation still carries a connection string or URL.
+
+    The secret is already in the user's own ``.yxmd``, so this is about telling them what the
+    converted flow now contains, not about hiding it. A converted node drops to ``partial``
+    because sharing it needs a human decision first; a placeholder keeps its status.
+    """
+    annotations = f"{tool.annotation}\n{tool.default_annotation}"
+    if not (_looks_like_connection(path) or _looks_like_connection(annotations)):
+        return row
+    if CONNECTION_NOTICE not in row.messages:
+        row.messages.append(CONNECTION_NOTICE)
+    if row.status == "converted":
+        row.status = "partial"
+    return row
+
+
+def _carries_credentials(value: str) -> bool:
+    """Whether a ``<File>`` value is really a connection string carrying a password.
+
+    Such a value is not a path at all, so it must never be split into a directory and a name and
+    stored on a node — the saved flow file would carry the credentials, whatever the tail of the
+    string looks like.
+    """
+    return bool(_CONNECTION_STRING_RE.search(value))
+
+
+def _safe_path(value: str) -> str:
+    """A path safe to repeat in a report message; a connection string with a password is not."""
+    return REDACTED if _carries_credentials(value) else value
+
+
+_SIMPLE_EXTENSION_RE = re.compile(r"^[A-Za-z0-9]{1,8}$")
+UNRECOGNISED_FORMAT = "an unrecognised format"
+
+
+def _safe_extension(filename: str) -> str:
+    """How to name a file format in a message, quoted, without ever echoing the value.
+
+    ``_extension`` hands back whatever follows the last dot, which for a connection string is a
+    slice of the connection string. Only something that actually looks like an extension is
+    repeated; anything else is described, not quoted.
+    """
+    extension = _extension(filename)
+    return f"'{extension}'" if _SIMPLE_EXTENSION_RE.match(extension) else UNRECOGNISED_FORMAT
+
+
+def _redact_secrets(element: ET.Element) -> list[str]:
+    """Blank credential-shaped values in a config tree, returning the names that were blanked.
+
+    The placeholder comment is written into the saved flow file, so whatever Alteryx stored in
+    the tool configuration — DCM connection ids, OAuth client ids, ODBC passwords — would
+    otherwise land on disk in plain text. Matching is by name and fails closed: every attribute
+    of a credential-shaped element goes too, and any element whose text looks like a connection
+    string carrying a password is blanked whole even when its own name says nothing.
+    """
+    redacted: list[str] = []
+    for node in element.iter():
+        is_secret = bool(_SECRET_NAME_RE.search(node.tag)) or "DcmType" in node.attrib
+        for name in list(node.attrib):
+            if (is_secret or _SECRET_NAME_RE.search(name)) and node.attrib[name]:
+                node.attrib[name] = REDACTED
+                redacted.append(f"{node.tag}@{name}")
+        text = node.text or ""
+        if text.strip() and (is_secret or _CONNECTION_STRING_RE.search(text)):
+            node.text = REDACTED
+            redacted.append(node.tag)
+    return sorted(dict.fromkeys(redacted))
+
+
+def _config_xml_lines(tool: AlteryxTool) -> tuple[list[str], list[str]]:
+    """The tool's ``<Configuration>`` pretty-printed into lines, plus the names redacted out."""
     if tool.configuration is None:
-        return []
+        return [], []
     element = copy.deepcopy(tool.configuration)
+    redacted = _redact_secrets(element)
     ET.indent(element, space="  ")
     try:
         rendered = ET.tostring(element, encoding="unicode")
     except (TypeError, ValueError):
-        return []
+        return [], []
     lines = [line.rstrip()[:CONFIG_COMMENT_LINE_LIMIT] for line in rendered.splitlines() if line.strip()]
     if len(lines) > CONFIG_COMMENT_MAX_LINES:
         dropped = len(lines) - CONFIG_COMMENT_MAX_LINES
         lines = [*lines[:CONFIG_COMMENT_MAX_LINES], f"... ({dropped} more lines; see the original .yxmd)"]
-    return lines
+    return lines, redacted
 
 
 def _original_config_lines(tool: AlteryxTool) -> list[str]:
@@ -350,9 +463,12 @@ def _original_config_lines(tool: AlteryxTool) -> list[str]:
     annotation = tool.default_annotation or tool.annotation
     if annotation:
         lines.extend(f"Alteryx annotation: {part.strip()}" for part in annotation.splitlines() if part.strip())
-    config = _config_xml_lines(tool)
+    config, redacted = _config_xml_lines(tool)
     if config:
         lines.append(f"Original Alteryx configuration ({tool.plugin or tool_label(tool)}):")
+        if redacted:
+            names = ", ".join(redacted)
+            lines.append(f"Credential values were not copied out of the workflow: {names}.")
         lines.extend(config)
     return lines
 
@@ -1022,13 +1138,21 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
         return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."])
 
     copy_output = _is_true(_attribute(config, "CopyOutput", "value"))
-    prefix, suffix = _text(config, "OutputPrefix"), _text(config, "OutputSuffix")
-    if copy_output and not prefix and not suffix:
-        return _placeholder_row(
-            tool,
-            ctx,
-            ["The Alteryx Multi-Field Formula writes to copied fields whose names are not recorded in the workflow."],
-        )
+    prefix = suffix = ""
+    if copy_output:
+        # The affix is written verbatim: Alteryx's " % Total" keeps its leading space.
+        affix = _raw_text(config, "NewFieldAddOn")
+        position = _text(config, "NewFieldAddOnPos").lower()
+        if not affix or position not in ("prefix", "suffix"):
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    "The Alteryx Multi-Field Formula writes to copied fields whose names are not "
+                    "recorded in the workflow."
+                ],
+            )
+        prefix, suffix = (affix, "") if position == "prefix" else ("", affix)
     declared_type = ""
     if _is_true(_attribute(config, "ChangeFieldType", "value")):
         declared_type = _attribute(config, "OutputFieldType", "type")
@@ -1367,7 +1491,7 @@ def map_text_to_columns(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         return _placeholder_row(
             tool,
             ctx,
-            ["Only a single-character Alteryx delimiter can be converted; this tool uses " f"'{delimiter}'."],
+            [f"Only a single-character Alteryx delimiter can be converted; this tool uses '{delimiter}'."],
         )
 
     settings = input_schema.NodeTextToRows(
@@ -1502,18 +1626,65 @@ def _file_element_path(config: ET.Element) -> tuple[str, str]:
     return raw, ""
 
 
+YXDB_EXTENSION = "yxdb"
+YXDB_CONVERT_COMMAND = "flowfile convert yxdb"
+
+
+def _parquet_sibling(path: str, filename: str) -> tuple[str, str]:
+    """The ``<stem>.parquet`` path beside a ``.yxdb``, keeping the workflow's own separators."""
+    parquet_name = f"{filename[: -len(YXDB_EXTENSION) - 1]}.parquet"
+    return path[: len(path) - len(filename)] + parquet_name, parquet_name
+
+
+def _map_yxdb_input(tool: AlteryxTool, ctx: EmitContext, path: str, directory: str, filename: str) -> ToolReportRow:
+    """Read the Parquet sibling that ``flowfile convert yxdb`` writes next to a ``.yxdb``.
+
+    The importer never parses ``.yxdb`` itself — an upload cannot reach the user's data, so
+    conversion is a CLI step on the machine that holds it. The node is pointed at the file that
+    step produces and stays ``partial`` because nothing here can prove the file exists yet.
+    """
+    parquet_path, parquet_name = _parquet_sibling(path, filename)
+    received = input_schema.ReceivedTable.create_from_path(parquet_path, file_type="parquet")
+    received.name = parquet_name
+    received.directory = directory or None
+    if _is_foreign_absolute_path(parquet_path):
+        received.abs_file_path = parquet_path
+
+    settings = input_schema.NodeRead(flow_id=ctx.flow_id, node_id=ctx.new_node_id(), received_file=received)
+    warning = f"{WARNING_PREFIX}Reads the Parquet copy of '{filename}'"
+    node_id = ctx.add_node(tool, "read", settings, description=_description(tool, warning), is_start_node=True)
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = tool.output_fields or None
+    safe_source = _safe_path(path)
+    messages = [
+        f"Alteryx read '{safe_source}'. Flowfile does not open .yxdb files, so this node reads "
+        f"'{parquet_name}' beside it instead.",
+        f'Create that file once on the machine holding the data: {YXDB_CONVERT_COMMAND} "{safe_source}"',
+    ]
+    return _row(tool, "partial", [node_id], "read", messages)
+
+
 def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    path, _sheet = _file_element_path(_config(tool))
+    return _flag_connection_source(tool, path, _emit_file_input(tool, ctx))
+
+
+def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     path, sheet = _file_element_path(config)
-    if not path:
+    if not path or _carries_credentials(path):
         return _placeholder_row(
             tool, ctx, ["This Alteryx Input Data tool reads from a database or connection, not a file."]
         )
     directory, filename = _split_path(path)
+    if _extension(filename) == YXDB_EXTENSION:
+        return _map_yxdb_input(tool, ctx, path, directory, filename)
     file_type = _READ_FILE_TYPES.get(_extension(filename))
     if file_type is None:
         return _placeholder_row(
-            tool, ctx, [f"Alteryx input file format '{_extension(filename) or filename}' is not supported."]
+            tool,
+            ctx,
+            [f"This Alteryx Input Data tool reads {_safe_extension(filename)}, which Flowfile does not support."],
         )
 
     received = input_schema.ReceivedTable.create_from_path(path, file_type=file_type)
@@ -1537,7 +1708,9 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     node_ids = [node_id]
     messages: list[str] = []
     if _is_foreign_absolute_path(path):
-        messages.append(f"The workflow reads from '{path}'; repoint this node at your own copy of the file.")
+        messages.append(
+            f"The workflow reads from '{_safe_path(path)}'; repoint this node at your own copy of the file."
+        )
 
     headerless = received.table_settings.has_headers is False
     if headerless and tool.output_fields:
@@ -1567,18 +1740,59 @@ def _emit_positional_header_rename(tool: AlteryxTool, ctx: EmitContext, names: l
     return ctx.add_node(tool, "select", settings, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
 
 
+_ENVIRONMENT_PREFIX_RE = re.compile(r"^%([^%\\/]+)%")
+
+
+def _strip_environment_prefix(path: str) -> tuple[str, str]:
+    """Split a leading Windows environment variable (``%temp%out.yxdb``) off a target path."""
+    match = _ENVIRONMENT_PREFIX_RE.match(path)
+    if match is None:
+        return path, ""
+    return path[match.end() :].lstrip("\\/"), match.group(1)
+
+
 def map_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    path, _sheet = _file_element_path(_config(tool))
+    return _flag_connection_source(tool, path, _emit_file_output(tool, ctx))
+
+
+def _emit_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
-    path, sheet = _file_element_path(config)
-    if not path:
+    original_path, sheet = _file_element_path(config)
+    if not original_path or _carries_credentials(original_path):
         return _placeholder_row(
             tool, ctx, ["This Alteryx Output Data tool writes to a database or connection, not a file."]
         )
+    if _is_true(_attribute(config, "MultiFile", "value")):
+        split_field = _text(config, "MultiFileField")
+        target = f"one file per value of '{split_field}'" if split_field else "one file per group"
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Output Data tool writes {target}; a Flowfile output node writes a single file."]
+        )
+
+    path, environment_variable = _strip_environment_prefix(original_path)
     directory, filename = _split_path(path)
+    messages: list[str] = []
+    status: ToolStatus = "converted"
+    if _extension(filename) == YXDB_EXTENSION:
+        filename = f"{filename[: -len(YXDB_EXTENSION) - 1]}.parquet"
+        status = "partial"
+        messages.append(
+            f"Alteryx wrote '{_safe_path(original_path)}'. Flowfile does not write .yxdb, so this node writes "
+            f"'{filename}' instead; anything downstream in Alteryx has to read the Parquet file."
+        )
+    if environment_variable:
+        status = "partial"
+        messages.append(
+            f"The Alteryx path started with the Windows variable '%{environment_variable}%'; "
+            "set the target folder on this node before running."
+        )
     file_type = _WRITE_FILE_TYPES.get(_extension(filename))
     if file_type is None:
         return _placeholder_row(
-            tool, ctx, [f"Alteryx output file format '{_extension(filename) or filename}' is not supported."]
+            tool,
+            ctx,
+            [f"This Alteryx Output Data tool writes {_safe_extension(filename)}, which Flowfile does not support."],
         )
 
     table_settings = _OUTPUT_TABLE_SETTINGS[file_type]()
@@ -1604,7 +1818,7 @@ def map_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "output", [])
+    return _row(tool, status, [node_id], "output", messages)
 
 
 def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1743,8 +1957,7 @@ def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     if _config(tool).find("SelectConfiguration") is not None:
         status = "partial"
         messages.append(
-            "The Alteryx Append Fields field selection was not converted; "
-            "Flowfile keeps every column from both inputs."
+            "The Alteryx Append Fields field selection was not converted; Flowfile keeps every column from both inputs."
         )
     return _row(tool, status, [node_id], "cross_join", messages)
 
@@ -1792,6 +2005,8 @@ _CLEANSE_CHECKBOXES = {
     "Check Box (58)": "remove_numbers",
     "Check Box (70)": "remove_punctuation",
 }
+# The shipped macro build omits these two; an option Alteryx never wrote was never ticked.
+_CLEANSE_OPTIONAL_CHECKBOXES = frozenset({"Check Box (135)", "Check Box (136)"})
 _CLEANSE_FIELD_LIST = "List Box (11)"
 _CLEANSE_CASE_ENABLED = "Check Box (77)"
 _CLEANSE_CASE_MODE = "Drop Down (81)"
@@ -1814,7 +2029,10 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     The macro's configuration is a flat list of question values whose names are the
     widget ids baked into the shipped Cleanse.yxmc. Those ids have been stable across
     Alteryx releases for years but are not a contract, so a missing or unrecognized
-    name fails closed to a placeholder instead of guessing by position. The Flowfile
+    name fails closed to a placeholder instead of guessing by position. The two
+    null-row/null-column checkboxes are the exception: builds of the macro exist that
+    never write them, and whether that means the widget is absent or merely unticked,
+    both readings mean the option is off — so those two default to False. The Flowfile
     node was built for parity with this tool (same frame-wide null-row/column rules,
     character classes, whitespace precedence and dtype scoping), so recognized
     options translate one-to-one.
@@ -1822,7 +2040,7 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     values = {value.get("name", ""): (value.text or "").strip() for value in config.findall("Value")}
     expected = {*_CLEANSE_CHECKBOXES, _CLEANSE_FIELD_LIST, _CLEANSE_CASE_ENABLED, _CLEANSE_CASE_MODE}
-    missing = sorted(expected - set(values))
+    missing = sorted(expected - set(values) - _CLEANSE_OPTIONAL_CHECKBOXES)
     if missing:
         return _placeholder_row(
             tool, ctx, ["The Data Cleansing configuration is missing expected settings: " + ", ".join(missing) + "."]
@@ -1854,7 +2072,7 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             selection_mode="list",
             selected_columns=fields,
             case_mode=case_mode,
-            **{target: _is_true(values[name]) for name, target in _CLEANSE_CHECKBOXES.items()},
+            **{target: _is_true(values.get(name)) for name, target in _CLEANSE_CHECKBOXES.items()},
         ),
     )
     node_id = ctx.add_node(tool, "data_cleansing", settings, description=_description(tool))

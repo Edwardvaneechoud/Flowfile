@@ -71,6 +71,7 @@
         {{ headline }}
       </p>
       <p class="ax-summary">{{ summary }}</p>
+      <p class="ax-coverage">{{ coverage }}</p>
       <ul class="ax-rows">
         <li v-for="(row, index) in rows" :key="`${row.alteryx_tool_id}-${index}`" class="ax-row">
           <div class="ax-row-head">
@@ -79,7 +80,7 @@
             <span class="status-badge ax-chip" :class="statusChip(row.status).className">
               {{ statusChip(row.status).label }}
             </span>
-            <span class="ax-node">{{ row.flowfile_node_type || "—" }}</span>
+            <span class="ax-node">{{ entityLabel(row) }}</span>
           </div>
           <ul v-if="row.messages.length" class="ax-messages">
             <li v-for="(message, i) in row.messages" :key="i">{{ message }}</li>
@@ -128,7 +129,14 @@ import { useRouter } from "vue-router";
 
 import { useAlteryxImport } from "../../../composables/useAlteryxImport";
 import { useFlowStore } from "../../../stores/flow-store";
-import { needsAttentionCount, sortReportRows, statusChip, summaryLine } from "./alteryxReport";
+import {
+  coverageLine,
+  entityLabel,
+  needsAttentionCount,
+  sortReportRows,
+  statusChip,
+  summaryLine,
+} from "./alteryxReport";
 
 const props = defineProps<{ visible: boolean }>();
 
@@ -154,6 +162,7 @@ const isConverting = computed(() => phase.value === "converting");
 const rows = computed(() => (report.value ? sortReportRows(report.value.rows) : []));
 const attention = computed(() => (report.value ? needsAttentionCount(report.value) : 0));
 const summary = computed(() => (report.value ? summaryLine(report.value) : ""));
+const coverage = computed(() => (report.value ? coverageLine(report.value) : ""));
 
 const title = computed(() =>
   report.value ? `Imported "${report.value.workflow_name}"` : "Import Alteryx workflow",
@@ -322,9 +331,15 @@ watch(
 }
 
 .ax-summary {
-  margin: 0 0 var(--spacing-3);
+  margin: 0 0 var(--spacing-1);
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.ax-coverage {
+  margin: 0 0 var(--spacing-3);
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
 
 .ax-rows {

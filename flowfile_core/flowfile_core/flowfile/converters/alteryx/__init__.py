@@ -4,6 +4,7 @@ from flowfile_core.flowfile.converters.alteryx.convert import convert_yxmd
 from flowfile_core.flowfile.converters.alteryx.report import (
     ConversionReport,
     ConversionResult,
+    CoverageSummary,
     ToolReportRow,
 )
 from flowfile_core.flowfile.converters.alteryx.yxdb import (
@@ -18,6 +19,7 @@ __all__ = [
     "ConversionReport",
     "ConversionResult",
     "ConversionStats",
+    "CoverageSummary",
     "ToolReportRow",
     "YxmdParseError",
     "convert_tree",
