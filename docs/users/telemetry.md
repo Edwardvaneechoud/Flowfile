@@ -43,7 +43,7 @@ Every event is a flat JSON object with a fixed envelope. The canonical example �
 }
 ```
 
-The envelope: event name, a random per-event id (so a re-sent event can be recognised as the same one, [see below](#where-it-goes)), random install id, app version, platform (`darwin`/`linux`/`windows`/`other`), run mode (`electron`/`docker`/`package`/`other`), UTC timestamp. Event-specific fields live in `props`. The schema is closed — twelve events, fixed props, fixed value sets — and the client drops anything outside it before sending.
+The envelope: event name, a random per-event id (so a re-sent event can be recognised as the same one, [see below](#where-it-goes)), random install id, app version, platform (`darwin`/`linux`/`windows`/`other`), run mode (`electron`/`docker`/`package`/`other`), UTC timestamp. Event-specific fields live in `props`. The schema is closed — fourteen events, fixed props, fixed value sets — and the client drops anything outside it before sending.
 
 | Event | When it fires |
 |---|---|
@@ -59,8 +59,10 @@ The envelope: event name, a random per-event id (so a re-sent event can be recog
 | `schedule_created` | A schedule is created. |
 | `kernel_used` | A Python kernel is first used in an app session. |
 | `export_code_used` | Generated code is exported. |
+| `alteryx_imported` | An Alteryx workflow is imported. |
+| `alteryx_import_failed` | An Alteryx workflow cannot be parsed, or the converted flow fails to open. |
 
-Only three events carry props at all:
+Only five events carry props at all:
 
 | Prop | Event | Allowed values |
 |---|---|---|
@@ -68,14 +70,19 @@ Only three events carry props at all:
 | `node_types` | `flow_run_succeeded` | Built-in node type names only (as in the example above), sorted, capped at 60 entries; every custom node appears as `custom` |
 | `duration_bucket` | `flow_run_succeeded` | `<1s` · `1-10s` · `10-60s` · `1-5m` · `5-30m` · `30m+` |
 | `used_sample_data` | `flow_run_succeeded` | `true` · `false` |
-| `error_class` | `flow_run_failed` | An exception class name from a fixed allowlist, or `OtherError` — never the error message |
+| `error_class` | `flow_run_failed` · `alteryx_import_failed` | An exception class name from a fixed allowlist, or `OtherError` — never the error message |
 | `target` | `export_code_used` | `polars` · `flowframe` · `project_zip` · `project_save` |
+| `tool_count_bucket` | `alteryx_imported` | `1-3` · `4-7` · `8-15` · `16-30` · `31+` |
+| `converted_tools` | `alteryx_imported` | Alteryx's own tool names (for example `Filter` or `Summarize`) for the tools that converted cleanly, sorted, capped at 60 entries |
+| `partial_tools` | `alteryx_imported` | The same vocabulary, for tools that converted with parts left for you to finish |
+| `placeholder_tools` | `alteryx_imported` | The same vocabulary, for tools that became placeholders because Flowfile has no equivalent yet |
 
 Fine print, so the tables can't mislead:
 
 - `export_code_used` fires when you press Export or Download (or save a project to a folder), never when you open or switch the Code tab. The `polars` and `flowframe` downloads are built in the browser, so the app posts a small empty confirmation to `/editor/code_to_*/exported` to record it.
 - A run you cancel sends no completion event — only the `flow_run_started` that fired when it began.
 - `activation`, `catalog_used`, and `kernel_used` fire at most once per app session.
+- The `alteryx_imported` tool lists name only what Alteryx ships: an official tool's class name, or a shipped macro as `macro_<name>` (for example `macro_cleanse`). A third-party plugin is reported as `custom_plugin` and a macro you built yourself as `user_macro`. The workflow's name, a macro's file path and every tool's settings stay on your machine; this is how the maintainers learn which Alteryx tools to support next.
 - Seeding the built-in Demo catalog runs its flows with telemetry suppressed — Flowfile's own demo runs never count. Later runs of the demo's daily schedule, while the scheduler is enabled, count like any other scheduled run.
 
 ## What is never sent
@@ -88,6 +95,7 @@ No payload ever contains:
 - SQL
 - formulas
 - flow names or node names you typed
+- Alteryx workflow names, macro file paths, or the names of tools you or a vendor built
 - error message text — a failure sends only the exception class name
 - credentials, secrets, or tokens
 - hostnames or IP addresses as identity

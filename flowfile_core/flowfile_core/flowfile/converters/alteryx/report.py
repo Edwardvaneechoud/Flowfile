@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from flowfile_core.flowfile.converters.alteryx.tool_identity import CUSTOM_PLUGIN
 from flowfile_core.schemas import schemas
 
 ToolStatus = Literal["converted", "partial", "commented", "placeholder", "skipped"]
@@ -14,6 +15,7 @@ class ToolReportRow(BaseModel):
 
     alteryx_tool_id: int
     alteryx_tool: str
+    alteryx_tool_key: str = CUSTOM_PLUGIN
     flowfile_node_ids: list[int] = Field(default_factory=list)
     flowfile_node_type: str | None = None
     status: ToolStatus

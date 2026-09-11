@@ -1,0 +1,28 @@
+name: Alteryx node request
+description: Ask for an Alteryx tool that the importer turns into a placeholder today
+title: "[Alteryx node] "
+labels: ["alteryx-node-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep the title as `[Alteryx node] <ToolName>`. Flowfile's importer matches open requests by that title, so everyone who hits the same tool lands on this issue and can 👍 it instead of opening a duplicate.
+  - type: input
+    id: tool
+    attributes:
+      label: Alteryx tool
+      description: The tool's name as the import report shows it.
+      placeholder: DateTime
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: How do you use it?
+      description: Which settings matter to you, and what should the Flowfile equivalent do?
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Sample workflow (optional)
+      description: A minimal `.yxmd` snippet that uses the tool, with any private data removed.
+      render: xml

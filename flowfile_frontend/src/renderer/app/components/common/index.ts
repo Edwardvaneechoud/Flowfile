@@ -10,6 +10,7 @@ export { default as DateTimePicker } from "./DateTimePicker/DateTimePicker.vue";
 export * from "./DateTimePicker/isoDateTime";
 
 export { default as PageHelpModal } from "./PageHelpModal/PageHelpModal.vue";
+export { default as NodeRequestDialog } from "./NodeRequestDialog/NodeRequestDialog.vue";
 export { default as SaveStatusIndicator } from "./SaveStatusIndicator.vue";
 export { default as AutosaveConflictBanner } from "./AutosaveConflictBanner.vue";
 
