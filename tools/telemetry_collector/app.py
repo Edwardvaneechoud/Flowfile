@@ -28,6 +28,7 @@ MAX_BODY_BYTES = 256 * 1024
 MAX_BATCH_SIZE = 100
 MAX_STRING_LEN = 64
 MAX_NODE_TYPES = 60
+LIST_PROPS = frozenset({"node_types", "converted_tools", "partial_tools", "placeholder_tools"})
 
 APP_VERSION_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}")
 
@@ -50,6 +51,8 @@ EVENT_PROPS: dict[str, frozenset[str]] = {
     "schedule_created": frozenset(),
     "kernel_used": frozenset(),
     "export_code_used": frozenset({"target"}),
+    "alteryx_imported": frozenset({"tool_count_bucket", "converted_tools", "partial_tools", "placeholder_tools"}),
+    "alteryx_import_failed": frozenset({"error_class"}),
 }
 ALLOWED_EVENTS = frozenset(EVENT_PROPS)
 
@@ -81,7 +84,7 @@ def _valid_identifier(value: object) -> bool:
 
 
 def _valid_prop(key: str, value: object) -> bool:
-    if key == "node_count_bucket":
+    if key in ("node_count_bucket", "tool_count_bucket"):
         return isinstance(value, str) and value in NODE_COUNT_BUCKETS
     if key == "duration_bucket":
         return isinstance(value, str) and value in DURATION_BUCKETS
@@ -91,7 +94,7 @@ def _valid_prop(key: str, value: object) -> bool:
         return isinstance(value, str) and value in EXPORT_TARGETS
     if key == "error_class":
         return _valid_identifier(value)
-    if key == "node_types":
+    if key in LIST_PROPS:
         return (
             isinstance(value, list)
             and len(value) <= MAX_NODE_TYPES

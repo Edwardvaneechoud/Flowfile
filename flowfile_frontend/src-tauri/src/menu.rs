@@ -87,10 +87,18 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let docs = MenuItem::with_id(app, "help-docs", "Documentation", true, None::<&str>)?;
     let issues = MenuItem::with_id(app, "help-issues", "Report an Issue", true, None::<&str>)?;
+    let request_node = MenuItem::with_id(
+        app,
+        "help-request-node",
+        "Request a Node",
+        true,
+        None::<&str>,
+    )?;
     let repo = MenuItem::with_id(app, "help-repo", "View on GitHub", true, None::<&str>)?;
     let help_menu = SubmenuBuilder::new(app, "Help")
         .item(&docs)
         .item(&issues)
+        .item(&request_node)
         .separator()
         .item(&repo)
         .build()?;
@@ -118,6 +126,7 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
         }
         "help-docs" => open_external(app, DOCS_URL),
         "help-issues" => open_external(app, ISSUES_URL),
+        "help-request-node" => emit_help_request_node(app),
         "help-repo" => open_external(app, REPO_URL),
         _ => {}
     }
@@ -126,6 +135,11 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
 fn emit_zoom<R: Runtime>(app: &AppHandle<R>, direction: &str) {
     use tauri::Emitter;
     let _ = app.emit("view:zoom", direction);
+}
+
+fn emit_help_request_node<R: Runtime>(app: &AppHandle<R>) {
+    use tauri::Emitter;
+    let _ = app.emit("help:request-node", ());
 }
 
 fn open_external<R: Runtime>(app: &AppHandle<R>, url: &str) {

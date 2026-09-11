@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 
-import { needsAttentionCount, sortReportRows, statusChip, summaryLine } from "./alteryxReport";
+import {
+  NEW_NODE_REQUEST_URL,
+  needsAttentionCount,
+  nodeRequestLink,
+  sortReportRows,
+  statusChip,
+  summaryLine,
+} from "./alteryxReport";
 import type {
   AlteryxConversionReport,
   AlteryxToolRow,
@@ -117,5 +124,52 @@ describe("summaryLine", () => {
 
   it("reports a workflow with nothing converted", () => {
     expect(summaryLine(makeReport({ total_tools: 0 }))).toBe("0 tools");
+  });
+});
+
+describe("nodeRequestLink", () => {
+  const issues = { DateTime: "https://github.com/edwardvaneechoud/Flowfile/issues/42" };
+
+  it("links a placeholder for an official tool to its open request", () => {
+    const row = makeRow("DateTime", "placeholder", { alteryx_tool_key: "DateTime" });
+    expect(nodeRequestLink(row, issues)).toEqual({
+      label: "Upvote request on GitHub",
+      url: issues.DateTime,
+      existing: true,
+    });
+  });
+
+  it("prefills a new issue when no request is open yet", () => {
+    const row = makeRow("Tile", "placeholder", { alteryx_tool_key: "Tile" });
+    const link = nodeRequestLink(row, issues);
+    expect(link?.existing).toBe(false);
+    expect(link?.label).toBe("Request node on GitHub");
+    const url = new URL(link!.url);
+    expect(`${url.origin}${url.pathname}`).toBe(NEW_NODE_REQUEST_URL);
+    expect(url.searchParams.get("template")).toBe("alteryx_node_request.yml");
+    expect(url.searchParams.get("title")).toBe("[Alteryx node] Tile");
+    expect(url.searchParams.get("tool")).toBe("Tile");
+  });
+
+  it("offers nothing for converted rows, user macros, vendor plugins or rows without a key", () => {
+    expect(
+      nodeRequestLink(makeRow("Filter", "converted", { alteryx_tool_key: "Filter" }), issues),
+    ).toBeNull();
+    expect(
+      nodeRequestLink(makeRow("Filter", "partial", { alteryx_tool_key: "Filter" }), issues),
+    ).toBeNull();
+    expect(
+      nodeRequestLink(
+        makeRow("Something.yxmc", "placeholder", { alteryx_tool_key: "user_macro" }),
+        issues,
+      ),
+    ).toBeNull();
+    expect(
+      nodeRequestLink(
+        makeRow("Uploader", "placeholder", { alteryx_tool_key: "custom_plugin" }),
+        issues,
+      ),
+    ).toBeNull();
+    expect(nodeRequestLink(makeRow("DateTime", "placeholder"), issues)).toBeNull();
   });
 });

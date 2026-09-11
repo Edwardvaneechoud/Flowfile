@@ -8,6 +8,8 @@
 // docs site cannot be iframed inside the desktop shell.
 
 export const DOCS_BASE_URL = "https://edwardvaneechoud.github.io/Flowfile/";
+export const NEW_ISSUE_URL = "https://github.com/edwardvaneechoud/Flowfile/issues/new";
+export const NODE_REQUEST_ISSUE_URL = `${NEW_ISSUE_URL}?template=node_request.yml`;
 
 /**
  * Build an absolute docs URL from a site-relative path.
