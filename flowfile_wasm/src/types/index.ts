@@ -414,6 +414,10 @@ export interface NodeRecordIdSettings extends NodeSingleInput {
   record_id_input: RecordIdInput
 }
 
+export interface NodeRecordCountSettings extends NodeSingleInput {
+  // No additional settings needed — reduces the input to its row count.
+}
+
 export interface NodeDynamicRenameSettings extends NodeSingleInput {
   dynamic_rename_input: DynamicRenameInput
 }
@@ -469,6 +473,7 @@ export type NodeSettings =
   | NodeCrossJoinSettings
   | NodeUnionSettings
   | NodeRecordIdSettings
+  | NodeRecordCountSettings
   | NodeDynamicRenameSettings
   | NodeSampleSettings
   | NodePreviewSettings
@@ -650,6 +655,7 @@ export const NODE_TYPES = {
   sample: 'sample',
 
   // Aggregate/reshape nodes
+  record_count: 'record_count',
   pivot: 'pivot',
   unpivot: 'unpivot',
 

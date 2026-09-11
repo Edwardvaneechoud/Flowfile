@@ -12,6 +12,7 @@ import polarsCode from '../assets/icons/polars_code.svg'
 import formula from '../assets/icons/formula.svg'
 import unique from '../assets/icons/unique.svg'
 import recordId from '../assets/icons/record_id.svg'
+import recordCount from '../assets/icons/record_count.svg'
 import sample from '../assets/icons/sample.svg'
 import join from '../assets/icons/join.svg'
 import crossJoin from '../assets/icons/cross_join.svg'
@@ -38,6 +39,7 @@ export const iconUrls: Record<string, string> = {
   'formula.svg': formula,
   'unique.svg': unique,
   'record_id.svg': recordId,
+  'record_count.svg': recordCount,
   'sample.svg': sample,
   'join.svg': join,
   'cross_join.svg': crossJoin,

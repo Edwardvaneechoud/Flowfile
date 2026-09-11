@@ -36,6 +36,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Group By',
     intro: 'Group rows by columns and calculate aggregations like sum, count, mean, min, max, and more.'
   },
+  record_count: {
+    title: 'Count Records',
+    intro: 'Reduce the table to a single row holding the total number of records in a number_of_records column. No configuration needed.'
+  },
   join: {
     title: 'Join',
     intro: 'Combine two datasets based on matching column values. Supports inner, left, right, full, semi, and anti joins.'
