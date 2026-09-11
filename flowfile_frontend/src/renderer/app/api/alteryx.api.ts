@@ -7,7 +7,7 @@ export type AlteryxToolStatus = "converted" | "partial" | "commented" | "placeho
 export interface AlteryxToolRow {
   alteryx_tool_id: string | number;
   alteryx_tool: string;
-  alteryx_plugin?: string;
+  alteryx_tool_key?: string;
   flowfile_node_ids: number[];
   flowfile_node_type: string | null;
   status: AlteryxToolStatus;
@@ -31,6 +31,10 @@ export interface AlteryxImportResponse {
   report: AlteryxConversionReport;
 }
 
+export interface AlteryxNodeRequests {
+  issues: Record<string, string>;
+}
+
 export class AlteryxApi {
   static async importWorkflow(
     file: File,
@@ -49,6 +53,11 @@ export class AlteryxApi {
         }
       },
     });
+    return response.data;
+  }
+
+  static async fetchNodeRequests(): Promise<AlteryxNodeRequests> {
+    const response = await axios.get<AlteryxNodeRequests>(`${API_BASE}/alteryx/node_requests`);
     return response.data;
   }
 }

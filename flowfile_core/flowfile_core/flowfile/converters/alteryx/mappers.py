@@ -18,6 +18,7 @@ from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.flowfile.converters.alteryx.expression import TranslationOutcome, try_translate
 from flowfile_core.flowfile.converters.alteryx.report import ToolReportRow, ToolStatus
+from flowfile_core.flowfile.converters.alteryx.tool_identity import tool_key
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxConnection, AlteryxTool
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
@@ -238,7 +239,7 @@ def _row(
     return ToolReportRow(
         alteryx_tool_id=tool.tool_id,
         alteryx_tool=tool_label(tool),
-        alteryx_plugin=tool.plugin,
+        alteryx_tool_key=tool_key(tool.plugin),
         flowfile_node_ids=node_ids,
         flowfile_node_type=node_type,
         status=status,

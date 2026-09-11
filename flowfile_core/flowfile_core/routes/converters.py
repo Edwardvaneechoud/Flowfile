@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from flowfile_core import events, flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError, convert_yxmd
+from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError, convert_yxmd, node_requests
 from flowfile_core.routes.file_manager import _open_unique
 from shared.storage_config import storage
 
@@ -36,6 +36,12 @@ class AlteryxImportResponse(BaseModel):
     flow_id: int
     flow_path: str
     report: ConversionReport
+
+
+class AlteryxNodeRequests(BaseModel):
+    """Open GitHub requests for unsupported Alteryx tools, keyed by ``ToolReportRow.alteryx_tool_key``."""
+
+    issues: dict[str, str]
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -105,3 +111,9 @@ async def import_alteryx_workflow(
 
     events.publish("alteryx_imported", report=result.report)
     return AlteryxImportResponse(flow_id=flow_id, flow_path=str(flow_path), report=result.report)
+
+
+@router.get("/alteryx/node_requests", response_model=AlteryxNodeRequests)
+def alteryx_node_requests() -> AlteryxNodeRequests:
+    """Proxy the open node-request issues so the import dialog can link to them (the renderer cannot reach GitHub)."""
+    return AlteryxNodeRequests(issues=node_requests.open_requests())

@@ -444,32 +444,11 @@ def test_unknown_events_and_props_are_dropped(sent) -> None:
     assert emitted[0]["props"] == {"error_class": "ValueError"}
 
 
-@pytest.mark.parametrize(
-    ("plugin", "expected"),
-    [
-        ("AlteryxBasePluginsGui.Filter.Filter", "Filter"),
-        ("AlteryxGuiToolkit.TextBox.TextBox", "TextBox"),
-        ("AlteryxSpatialPluginsGui.RunningTotal.RunningTotal", "RunningTotal"),
-        ("AlteryxConnectorGui.Download.Download", "Download"),
-        ("Cleanse.yxmc", "macro_cleanse"),
-        ("C:\\Program Files\\Alteryx\\bin\\RuntimeData\\Macros\\CountRecords.yxmc", "macro_countrecords"),
-        ("C:\\Users\\x\\Quarterly Revenue (confidential).yxmc", "user_macro"),
-        ("/Users/x/secret.csv.yxmc", "user_macro"),
-        ("AcmeCorp.SecretUploader.SecretUploader", "custom_plugin"),
-        ("AlteryxBasePluginsGui", "custom_plugin"),
-        ("AlteryxBasePluginsGui.Bad Name.Bad Name", "custom_plugin"),
-        ("", "custom_plugin"),
-    ],
-)
-def test_alteryx_tool_label(plugin: str, expected: str) -> None:
-    assert glue.alteryx_tool_label(plugin) == expected
-
-
 def test_alteryx_import_reports_only_alteryx_names(sent, subscribed) -> None:
     """A real conversion: supported tools, an unsupported official tool, and a user macro."""
     data = (ALTERYX_FIXTURES / "unsupported.yxmd").read_bytes()
     result = convert_yxmd(data, source_name="Quarterly Revenue (confidential).yxmd")
-    assert any(row.alteryx_plugin.endswith(".yxmc") for row in result.report.rows)
+    assert "user_macro" in {row.alteryx_tool_key for row in result.report.rows}
 
     events.publish("alteryx_imported", report=result.report)
 
