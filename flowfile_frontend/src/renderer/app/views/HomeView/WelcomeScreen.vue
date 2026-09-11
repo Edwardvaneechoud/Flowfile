@@ -286,7 +286,34 @@
         </a>
         <template v-if="version">
           <span class="footer-sep" aria-hidden="true">·</span>
-          <span class="welcome-version">v{{ version }}</span>
+          <el-popover
+            ref="versionPopover"
+            placement="top"
+            :width="200"
+            trigger="click"
+            popper-class="version-popover"
+            :show-arrow="true"
+          >
+            <template #reference>
+              <button class="welcome-link welcome-version" type="button">v{{ version }}</button>
+            </template>
+            <div class="version-menu">
+              <button class="version-menu-item" type="button" @click="openReleaseNotes">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                <span>Release notes</span>
+              </button>
+              <button
+                class="version-menu-item"
+                type="button"
+                :disabled="checking"
+                @click="handleCheckForUpdates"
+              >
+                <i class="fa-solid fa-rotate"></i>
+                <span>Check for updates</span>
+              </button>
+              <p v-if="updateStatus" class="version-menu-status">{{ updateStatus }}</p>
+            </div>
+          </el-popover>
         </template>
       </footer>
     </div>
@@ -305,6 +332,7 @@ import { recentDisplayName, type RecentFlow } from "../../composables/useRecentF
 import type { FlowSettings } from "../../types";
 import { useTutorialStore } from "../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../components/tutorial/tutorials";
+import { useAppUpdate } from "../../composables/useAppUpdate";
 import AboutDialog from "./AboutDialog.vue";
 
 defineProps<{ recentFlows: RecentFlow[]; openFlows: FlowSettings[] }>();
@@ -323,7 +351,21 @@ const emit = defineEmits<{
 
 const router = useRouter();
 const aboutVisible = ref(false);
-const version = ref("");
+
+const {
+  version,
+  checking,
+  statusText: updateStatus,
+  checkForUpdates,
+  openReleaseNotes,
+} = useAppUpdate();
+
+const versionPopover = ref<{ hide: () => void } | null>(null);
+
+async function handleCheckForUpdates() {
+  // An offered release opens the prompt modal in AppLayout; get out of its way.
+  if (await checkForUpdates()) versionPopover.value?.hide();
+}
 
 const BANNER_DISMISSED_KEY = "flowfile-tutorial-banner-dismissed";
 const tutorialStore = useTutorialStore();
@@ -363,14 +405,9 @@ const toggleSection = (key: CollapsibleSection) => {
   }
 };
 
-onMounted(async () => {
+onMounted(() => {
   bannerDismissed.value = localStorage.getItem(BANNER_DISMISSED_KEY) === "true";
   loadCollapsed();
-  try {
-    version.value = (isDesktop ? await desktop.getAppVersion() : "") || __APP_VERSION__;
-  } catch {
-    version.value = __APP_VERSION__;
-  }
 });
 
 const goCatalog = () => router.push({ name: "catalog" });
@@ -1019,5 +1056,59 @@ function relativeTime(timestamp: number): string {
 .welcome-version {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
+}
+
+.welcome-version:hover {
+  color: var(--color-accent);
+}
+
+.version-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.version-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: none;
+  border-radius: var(--border-radius-md);
+  background-color: transparent;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.version-menu-item:hover:not(:disabled) {
+  background-color: var(--color-accent-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-accent);
+}
+
+.version-menu-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.version-menu-item i {
+  width: 16px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.version-menu-item:hover:not(:disabled) i {
+  color: var(--color-accent);
+}
+
+.version-menu-status {
+  margin: 0;
+  padding: 0 var(--spacing-3) var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 </style>

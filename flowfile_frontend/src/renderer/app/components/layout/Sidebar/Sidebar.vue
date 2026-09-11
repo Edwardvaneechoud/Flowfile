@@ -48,6 +48,16 @@
               <span>Privacy &amp; data collection</span>
             </button>
             <div class="sidebar-more-divider" aria-hidden="true"></div>
+            <button class="sidebar-more-item" @click="openReleaseNotes">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i>
+              <span>Release notes</span>
+            </button>
+            <button class="sidebar-more-item" :disabled="checking" @click="handleCheckForUpdates">
+              <i class="fa-solid fa-rotate"></i>
+              <span>Check for updates</span>
+            </button>
+            <p v-if="updateStatus" class="sidebar-more-status">{{ updateStatus }}</p>
+            <div class="sidebar-more-divider" aria-hidden="true"></div>
             <button class="sidebar-more-item" @click="toggleTheme">
               <i :class="isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon'"></i>
               <span>{{ isDark ? "Light mode" : "Dark mode" }}</span>
@@ -56,6 +66,7 @@
               <i class="fa-solid fa-right-from-bracket"></i>
               <span>Sign out</span>
             </button>
+            <p v-if="version" class="sidebar-more-version">Flowfile v{{ version }}</p>
           </div>
         </el-popover>
       </div>
@@ -84,6 +95,7 @@ import { DOCS_BASE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useMultiUser } from "../../../composables/useMultiUser";
 import { useTheme } from "../../../composables/useTheme";
+import { useAppUpdate } from "../../../composables/useAppUpdate";
 import { useProjectStore } from "../../../stores/project-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
@@ -200,6 +212,20 @@ const handleOpenDocumentation = () => {
 };
 
 const morePopover = ref<{ hide: () => void } | null>(null);
+
+const {
+  version,
+  checking,
+  statusText: updateStatus,
+  checkForUpdates,
+  openReleaseNotes,
+} = useAppUpdate();
+
+async function handleCheckForUpdates() {
+  // An offered release opens the prompt modal in AppLayout; get out of its way.
+  if (await checkForUpdates()) morePopover.value?.hide();
+}
+
 const showNodeRequest = ref(false);
 const handleRequestNode = () => {
   morePopover.value?.hide();
@@ -366,9 +392,34 @@ const handleLogout = () => {
   color: var(--color-danger);
 }
 
+.sidebar-more-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.sidebar-more-item:disabled:hover {
+  background-color: transparent;
+  color: var(--color-text-primary);
+}
+
 .sidebar-more-divider {
   height: 1px;
   margin: var(--spacing-1) var(--spacing-2);
   background-color: var(--color-border-primary);
+}
+
+.sidebar-more-status {
+  margin: 0;
+  padding: 0 var(--spacing-3) var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.sidebar-more-version {
+  margin: var(--spacing-1) 0 0;
+  padding: var(--spacing-1) var(--spacing-3) 0;
+  border-top: 1px solid var(--color-border-primary);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 </style>
