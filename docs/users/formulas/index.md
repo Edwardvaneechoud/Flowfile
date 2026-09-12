@@ -73,7 +73,8 @@ else "C" endif
 
 ### Functions
 
-There are 95 built-in functions for logic, strings, math, dates, and type conversion — see the [function reference](functions.md). Calls can be nested.
+--8<-- "docs/users/formulas/function_summary.snippet:total"
+Calls can be nested.
 
 ```text
 uppercase(left([last_name], 3))
@@ -114,17 +115,21 @@ concat(titlecase([first_name]), " ", titlecase([last_name]))
 date_diff_days(today(), [hire_date])
 ```
 
+Replace an email with a stable fingerprint so rows can still be grouped and joined, and encode a field for transport:
+
+```text
+sha256([email])
+```
+
+```text
+base64_encode([notes])
+```
+
 ---
 
 ## Function reference
 
-| Category | Functions | Examples |
-|----------|-----------|----------|
-| [Logic & Nulls](functions.md#logic-nulls) | 13 | `coalesce`, `ifnull`, `between`, `is_empty` |
-| [String](functions.md#string) | 23 | `concat`, `uppercase`, `trim`, `replace`, `split` |
-| [Math](functions.md#math) | 23 | `round`, `abs`, `floor`, `power`, `log` |
-| [Date & Time](functions.md#date-time) | 28 | `year`, `add_days`, `date_diff_days`, `format_date` |
-| [Type Conversion](functions.md#type-conversion) | 8 | `to_string`, `to_integer`, `to_date`, `to_boolean` |
+--8<-- "docs/users/formulas/function_summary.snippet:table"
 
 ---
 

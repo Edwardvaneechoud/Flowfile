@@ -74,6 +74,8 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     # type conversion
     "tonumber": _spec("ToNumber", "to_number", 1),
     "tostring": _spec("ToString", "to_string", 1),
+    # hashing; md5() hashes UTF-8 bytes, so only Alteryx's UTF8 variant produces the same digest
+    "md5_utf8": _spec("MD5_UTF8", "md5", 1),
     # math
     "abs": _spec("Abs", "abs", 1),
     "ceil": _spec("Ceil", "ceil", 1),
@@ -127,6 +129,14 @@ REJECTED_FUNCTIONS: dict[str, str] = {
     "spellnumber": "SpellNumber() has no Flowfile formula equivalent",
     "randint": "RandInt() is non-deterministic and has no verified Flowfile equivalent",
     "rand": "Rand() is non-deterministic and has no verified Flowfile equivalent",
+    "md5_ascii": (
+        "MD5_ASCII() hashes the ASCII bytes of the text while Flowfile's md5() hashes UTF-8 bytes; "
+        "the digests differ for any non-ASCII character, so use MD5_UTF8() instead"
+    ),
+    "md5_unicode": (
+        "MD5_UNICODE() hashes the UTF-16LE bytes of the text while Flowfile's md5() hashes UTF-8 bytes; "
+        "the digests never match, so use MD5_UTF8() instead"
+    ),
 }
 
 _DATETIME_ADD_UNITS = {
