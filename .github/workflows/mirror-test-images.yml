@@ -1,0 +1,80 @@
+name: Mirror Test Fixture Images to GHCR
+
+# MinIO went source-only in Oct 2025 and its Docker Hub repos were deleted; the
+# last community image survives only on quay. Mirroring it into GHCR keeps the
+# test job working if that copy disappears too.
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source image (digest-pinned)'
+        type: string
+        default: 'quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e'
+      package:
+        description: 'Package name under ghcr.io/<owner>'
+        type: string
+        default: 'flowfile-test-minio'
+      tag:
+        description: 'Tag to publish'
+        type: string
+        default: 'RELEASE.2025-09-07T16-13-09Z'
+
+concurrency:
+  group: mirror-test-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Copy image into GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy every architecture, preserving digests
+        env:
+          SOURCE: ${{ inputs.source }}
+          PACKAGE: ${{ inputs.package }}
+          TAG: ${{ inputs.tag }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo; }
+          # GHCR paths are lowercase; github.repository_owner keeps its display case.
+          DEST="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/${PACKAGE}:${TAG}"
+          skopeo copy --all --preserve-digests "docker://${SOURCE}" "docker://${DEST}"
+          echo "DEST=${DEST}" >> "$GITHUB_ENV"
+
+      - name: Verify the mirror is byte-identical to the source
+        run: |
+          set -euo pipefail
+          src=$(skopeo inspect --raw "docker://${SOURCE}" | sha256sum | cut -d' ' -f1)
+          dst=$(skopeo inspect --raw "docker://${DEST}" | sha256sum | cut -d' ' -f1)
+          if [ "$src" != "$dst" ]; then
+            echo "Manifest mismatch: source $src != mirror $dst" >&2
+            exit 1
+          fi
+          echo "Manifests match ($src)"
+        env:
+          SOURCE: ${{ inputs.source }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Mirrored \`${DEST}\`"
+            echo
+            echo "Point the fixture at it with \`TEST_MINIO_IMAGE=${DEST}\` (it is already the default)."
+            echo
+            echo "**One-time step:** new GHCR packages are private. Make this one public"
+            echo "(package settings -> Change visibility) so CI and contributors can pull"
+            echo "it without authenticating. Until then the fixture falls back to quay."
+          } >> "$GITHUB_STEP_SUMMARY"
