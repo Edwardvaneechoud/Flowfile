@@ -164,7 +164,7 @@ npm run build:lib      # BUILD_MODE=lib → dist/flowfile-editor.js (npm package
 npm run test:run       # vitest one-shot (happy-dom)
 ```
 - Fully standalone package (own package-lock); no backend. Pyodide **v0.27.7 loaded from CDN** (not an npm dep); dev server sets COOP/COEP headers required for SharedArrayBuffer (`flowfile_wasm/vite.config.ts:19-24`); embedders must set them on their host page.
-- Python engine pins for tests: `flowfile_wasm/tests/python/requirements.txt` — polars 1.18.0, pydantic 2.10.5, openpyxl 3.1.5, XlsxWriter 3.2.0, polars-expr-transformer 0.5.6 — must match the micropip pins in the stores.
+- Python engine pins for tests: `flowfile_wasm/tests/python/requirements.txt` — polars 1.18.0, pydantic 2.10.5, openpyxl 3.1.5, XlsxWriter 3.2.0, polars-expr-transformer 0.6.0 — must match `EXPR_TRANSFORMER_PACKAGE` in `src/composables/useFormulaTranslation.ts`, the single micropip pin in src/.
 - CI (`flowfile-wasm-build.yml`): Node 20 build + `build:lib` + a grep guard that `dist/flowfile-editor.js` contains no literal `import("https://` (breaks webpack5/esbuild embedders); `python-engine-tests` job (CPython 3.12 + pinned reqs); `pyodide-smoke` job (`npm install --no-save pyodide@0.27.7 parquet-wasm@0.7.1; node tests/pyodide-smoke/smoke.cjs`).
 - npm publish: tag `wasm-v*`; workflow asserts tag == package.json version; `npm publish --provenance --access public` from `dist` after `build:lib`.
 

@@ -1,3 +1,4 @@
+import hashlib
 import warnings
 from datetime import date, datetime
 
@@ -45,6 +46,7 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("reversestring", "ReverseString([Name])", "reverse([Name])"),
     ("tonumber", "ToNumber([Name])", "to_number([Name])"),
     ("tostring", "ToString([Amount])", "to_string([Amount])"),
+    ("md5_utf8", "MD5_UTF8([Name])", "md5([Name])"),
     ("abs", "Abs([Amount])", "abs([Amount])"),
     ("ceil", "Ceil([Amount])", "ceil([Amount])"),
     ("floor", "Floor([Amount])", "floor([Amount])"),
@@ -249,6 +251,9 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("unbracketed-field", "Amount + 1"),
     ("power-operator", "[Amount] ^ 2"),
     ("rowcount", "RowCount()"),
+    # Only MD5_UTF8 hashes the same bytes as Flowfile's md5(); the other two encodings differ.
+    ("md5-ascii", "MD5_ASCII([Name])"),
+    ("md5-unicode", "MD5_UNICODE([Name])"),
     # Only the format codes verified byte-identical in both dialects pass the whitelist.
     ("datetimeformat-unverified-code", 'DateTimeFormat([D], "%e %b %Y")'),
     ("datetimeformat-trailing-percent", 'DateTimeFormat([D], "%Y-%m-%")'),
@@ -515,6 +520,33 @@ def test_isempty_of_a_parsed_date_evaluates_without_a_string_comparison():
     expr = simple_function_to_expr(outcome.translated)
     values = pl.DataFrame({"D": ["03/15/2021", "not a date"]}).select(expr.alias("o"))["o"].to_list()
     assert values == [False, True]
+
+
+def test_md5_utf8_evaluates_to_the_alteryx_documented_digest():
+    """Alteryx MD5_UTF8 hashes the UTF-8 bytes of the text, which is exactly what md5() hashes.
+    'Lá' -> 68f0... is the worked example from Alteryx's own String Functions page."""
+    frame = pl.DataFrame({"Name": ["John", "Lá"]})
+    assert _evaluate("MD5_UTF8([Name])", frame) == [
+        hashlib.md5(b"John").hexdigest(),
+        "68f00289dc3be140b1dfd4e031d733f1",
+    ]
+
+
+def test_md5_ascii_and_unicode_stay_fail_closed_because_they_hash_other_bytes():
+    """Alteryx documents Md5_Ascii('Lá') as the digest of the narrow bytes and Md5_Unicode('Lá')
+    as the digest of the UTF-16LE bytes — neither equals the UTF-8 digest md5() would produce."""
+    documented = {
+        "latin-1": "0c0ee86cc87d87125ad8923562be952e",  # Md5_Ascii
+        "utf-16-le": "aa9969dfcca04249842cc457e5b3dd01",  # Md5_Unicode
+        "utf-8": "68f00289dc3be140b1dfd4e031d733f1",  # Md5_Utf8, the only one md5() reproduces
+    }
+    for encoding, digest in documented.items():
+        assert hashlib.md5("Lá".encode(encoding)).hexdigest() == digest
+
+    for expression in ("MD5_ASCII([Name])", "MD5_UNICODE([Name])"):
+        outcome = try_translate(expression)
+        assert outcome.translated is None
+        assert "MD5_UTF8" in outcome.reason
 
 
 MULTI_FIELD_SPECIALS = frozenset(MULTI_FIELD_PLACEHOLDERS)

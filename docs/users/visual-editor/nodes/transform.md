@@ -80,7 +80,7 @@ The **Formula** node creates a new column — or replaces an existing one — by
 
 The **Multi-Field Formula** node runs one formula over many columns instead of one [Formula](#formula) node per column: the same calculation across every numeric column, across a listed subset, or across the whole frame. The formula uses the same [Flowfile formula language](../../formulas/index.md), with three placeholders that bind to whichever column is being processed.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: Multi-Field Formula settings drawer — Apply to, Formula, Output and Preview sections -->
+![Multi-Field Formula settings: Apply to set to Specific columns, the formula [_CurrentField_] / [Total] * 100, Output set to Write to new columns with the suffix % Total and data type Float64, and the Preview mapping January through April onto January % Total through April % Total](../../../assets/images/guides/nodes/multi-field-formula-settings.png){ width="560" }
 
 #### **Placeholders**
 

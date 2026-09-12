@@ -10,5 +10,6 @@ pytest>=8,<9
 # (see ensurePyPackages calls in src/stores/flow-store.ts).
 openpyxl==3.1.5
 XlsxWriter==3.2.0
-# Formula node expr engine (micropip-installed in browser); 0.5.6+ makes polars-ds optional for Pyodide.
+# Formula node expr engine (micropip-installed in browser; see EXPR_TRANSFORMER_PACKAGE
+# in src/composables/useFormulaTranslation.ts). 0.5.6+ makes polars-ds optional for Pyodide.
 polars-expr-transformer==0.6.0

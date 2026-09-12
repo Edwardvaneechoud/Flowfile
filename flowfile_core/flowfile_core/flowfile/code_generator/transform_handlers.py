@@ -69,6 +69,7 @@ class TransformHandlersMixin(ConverterMixinBase):
         # (b) post-process the expression to replace `pl.` with `{self.framework}.`, or
         # (c) make to_polars_code() accept a framework prefix parameter.
         if can_convert_to_pl_code:
+            self._register_expr_stdlib_imports(pl_code)
             expr_str = f"({pl_code}).alias({self._py_str(col_name)})"
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
                 output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))

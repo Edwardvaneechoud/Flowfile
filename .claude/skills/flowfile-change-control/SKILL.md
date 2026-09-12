@@ -127,11 +127,12 @@ The codebase has a set of intentional, by-design refusals — places where a fea
 1. `make bump-version VERSION=X.Y.Z`
 2. `cd flowfile_frontend/src-tauri && cargo update -p flowfile` (manual — the bump script tells you to but doesn't do it)
 3. `make check-version` — must print "All versions in sync"
-4. Open a PR (branch protection blocks direct pushes to `main`), get it merged
-5. Tag the merge commit **lowercase** `vX.Y.Z` and push the tag
-6. This fires `pypi-release.yml`, `release.yaml`, **and** `docker-publish.yml` (app Docker images) simultaneously (§3b)
-7. **First release on the tag-triggered path:** confirm `docker-publish.yml` actually fired on the tag (tag pushes ignore the `paths:` filter — documented GH behavior, but unexercised here). If it didn't, `workflow_dispatch` with `publish_app: true` publishes the app images at the manifest version — the intended escape hatch, safe because the new version's tags don't exist on Docker Hub yet.
-8. **Automatic, but confirm it:** the `release` job generates `latest.json` with `tools/make_latest_json.py` and attaches it to the release (§3d) — check the asset landed (`gh release view vX.Y.Z --json assets | grep latest.json`)
+4. **If this release adds a telemetry event or prop** (`shared/telemetry.py` `EVENTS` changed): redeploy `tools/telemetry_collector` *before* tagging — the deployed collector silently drops unknown events, and `curl -s https://events.flowfile.app/health | jq .schema` must already list them
+5. Open a PR (branch protection blocks direct pushes to `main`), get it merged
+6. Tag the merge commit **lowercase** `vX.Y.Z` and push the tag
+7. This fires `pypi-release.yml`, `release.yaml`, **and** `docker-publish.yml` (app Docker images) simultaneously (§3b)
+8. **First release on the tag-triggered path:** confirm `docker-publish.yml` actually fired on the tag (tag pushes ignore the `paths:` filter — documented GH behavior, but unexercised here). If it didn't, `workflow_dispatch` with `publish_app: true` publishes the app images at the manifest version — the intended escape hatch, safe because the new version's tags don't exist on Docker Hub yet.
+9. **Automatic, but confirm it:** the `release` job generates `latest.json` with `tools/make_latest_json.py` and attaches it to the release (§3d) — check the asset landed (`gh release view vX.Y.Z --json assets | grep latest.json`)
 
 ### 3b. One `v*` tag push → three workflows
 

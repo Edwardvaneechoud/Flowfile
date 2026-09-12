@@ -1573,6 +1573,55 @@ def test_flowframe_formula_datetime_emission_is_runnable():
     verify_if_execute(code)
 
 
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_formula_hashing_function_imports_hashlib(export_func):
+    """A hashing formula emits a `hashlib.<algo>` lambda, so the export must import hashlib."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="product_hash", data_type="Auto"),
+            function="md5([product])"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    assert "hashlib." in code, f"expected a hashlib call in the generated code:\n{code}"
+    verify_code_contains(code, "import hashlib")
+
+    result = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_formula_encoding_function_round_trips(export_func):
+    """encode/decode translate to native str.encode/str.decode, so they need no stdlib import."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="product_b64", data_type="Auto"),
+            function="base64_encode([product])"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
 def test_native_cast_type_rendering():
     """Cast targets are validated: simple and parameterized types render, container types fall back."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
