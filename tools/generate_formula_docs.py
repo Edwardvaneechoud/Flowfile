@@ -23,6 +23,8 @@ from pathlib import Path
 
 from polars_expr_transformer.funcs import (
     date_functions,
+    encoding_functions,
+    hashing_functions,
     logic_functions,
     math_functions,
     string_functions,
@@ -35,6 +37,8 @@ CATEGORIES = [
     ("Math", math_functions),
     ("Date & Time", date_functions),
     ("Type Conversion", type_conversions),
+    ("Encoding", encoding_functions),
+    ("Hashing", hashing_functions),
 ]
 
 PLAYGROUND_URL = "https://edwardvaneechoud.github.io/polars_expr_transformer/"

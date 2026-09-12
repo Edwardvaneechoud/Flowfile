@@ -2,7 +2,7 @@ import { usePyodideStore } from '../stores/pyodide-store'
 import type { FlowNode, NodeFormulaSettings } from '../types'
 
 /** One pinned spec, shared with the run/trace harnesses so it cannot drift. */
-export const EXPR_TRANSFORMER_PACKAGE = 'polars-expr-transformer==0.5.6'
+export const EXPR_TRANSFORMER_PACKAGE = 'polars-expr-transformer==0.6.0'
 
 /**
  * Translate each formula node's expression to Polars code (to_polars_code).

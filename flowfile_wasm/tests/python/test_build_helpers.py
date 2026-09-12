@@ -78,7 +78,7 @@ def test_filter_advanced_expr_handles_functions_and_conjunctions():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "polars-expr-transformer <=0.5.7 executes Python from a formula: "
+        "polars-expr-transformer <=0.6.0 executes Python from a formula: "
         "token_classifier.standardize_quotes rewrites 'a\"b' to \"a\"b\" without escaping, "
         "and models.Classifier.get_pl_func eval()s the result. Affects every formula "
         "surface (formula node, advanced filter, core's settings validation), not just "
