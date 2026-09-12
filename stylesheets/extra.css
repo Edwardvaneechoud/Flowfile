@@ -1,0 +1,235 @@
+/* docs/stylesheets/extra.css — Flowfile brand layer.
+   Pages must not use inline styles; visual variety comes from these shared
+   classes plus Material's grid cards / content tabs. */
+
+.md-grid {
+    max-width: 1920px;
+}
+
+/* Density: a more compact type scale than Material's defaults
+   (maintainer preference — body 0.8rem→0.75rem, headings pulled in) */
+.md-typeset {
+    font-size: 0.75rem;
+    line-height: 1.55;
+}
+
+.md-typeset h1 {
+    font-size: 1.7em;
+    margin: 0 0 1em;
+}
+
+.md-typeset h2 {
+    font-size: 1.35em;
+    margin: 1.4em 0 0.65em;
+}
+
+.md-typeset h3 {
+    font-size: 1.15em;
+    margin: 1.2em 0 0.6em;
+}
+
+.md-typeset h4 {
+    font-size: 1em;
+}
+
+/* Brand palette — the logo's wave layers:
+   cyan #2DD5D3, cerulean #26A8E0, royal #1D76D6, navy #233588.
+   Cyan is the signature accent; royal carries text/links (contrast);
+   navy is the header bar. Legacy var names (--ff-teal / --ff-purple)
+   are kept and remapped so component rules stay untouched. */
+:root,
+[data-md-color-scheme="default"] {
+    --ff-cyan: #2DD5D3;
+    --ff-cerulean: #26A8E0;
+    --ff-royal: #1D76D6;
+    --ff-navy: #233588;
+    --ff-teal: #2DD5D3;
+    --ff-teal-dark: #1D76D6;
+    --ff-purple: #233588;
+    --ff-purple-light: #1D76D6;
+    --md-primary-fg-color: #1D76D6;
+    --md-primary-fg-color--light: #26A8E0;
+    --md-primary-fg-color--dark: #233588;
+    --md-accent-fg-color: #26A8E0;
+}
+
+[data-md-color-scheme="slate"] {
+    --ff-cyan: #2DD5D3;
+    --ff-cerulean: #26A8E0;
+    --ff-royal: #4a90e8;
+    --ff-navy: #233588;
+    --ff-teal: #2DD5D3;
+    --ff-teal-dark: #2DD5D3;
+    --ff-purple: #6f9dfc;
+    --ff-purple-light: #4a90e8;
+    --md-primary-fg-color: #1D76D6;
+    --md-primary-fg-color--light: #26A8E0;
+    --md-primary-fg-color--dark: #233588;
+    --md-accent-fg-color: #2DD5D3;
+}
+
+/* Header + nav tabs: translucent brand-navy bar (logo base layer), blurred so
+   scrolled content stays readable underneath; cyan accents on it */
+.md-header,
+.md-tabs {
+    background: color-mix(in srgb, var(--ff-navy) 55%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    color: #fff;
+}
+
+.md-header {
+    box-shadow: none;
+}
+
+.md-tabs__link--active,
+.md-tabs__link:hover {
+    color: var(--ff-cyan);
+    opacity: 1;
+}
+
+.md-search__input {
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #fff;
+}
+
+.md-search__input::placeholder,
+.md-search__input + .md-search__icon {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* Material grid cards: brand accent bar + hover lift */
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
+    border-radius: 0.4rem;
+    border-top: 3px solid transparent;
+    background:
+        linear-gradient(var(--md-default-bg-color), var(--md-default-bg-color)) padding-box,
+        linear-gradient(90deg, var(--ff-teal), var(--ff-purple)) border-box;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    border-color: transparent;
+}
+
+/* Installer platform cards (installation.md) */
+.md-typeset .ff-install-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 0.7rem;
+    margin: 1em 0 0.6em;
+}
+
+.md-typeset a.ff-install-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 1.1rem 0.8rem 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--md-default-fg-color) 18%, transparent);
+    border-radius: 0.5rem;
+    color: var(--md-default-fg-color);
+    text-align: center;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-typeset a.ff-install-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--ff-cerulean);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    color: var(--md-default-fg-color);
+}
+
+.md-typeset a.ff-install-card.ff-detected {
+    border-color: var(--ff-royal);
+}
+
+.md-typeset .ff-install-card svg {
+    width: 30px;
+    height: 30px;
+    opacity: 0.9;
+}
+
+.md-typeset .ff-install-card strong {
+    font-size: 0.75rem;
+}
+
+.md-typeset .ff-install-card small {
+    color: var(--md-default-fg-color--light);
+    font-size: 0.62rem;
+}
+
+.md-typeset .ff-detected-badge {
+    display: none;
+    position: absolute;
+    top: -0.55rem;
+    right: 0.6rem;
+    padding: 0.05rem 0.5rem;
+    border-radius: 1rem;
+    background: var(--ff-royal);
+    color: #fff;
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+
+.md-typeset .ff-install-card.ff-detected .ff-detected-badge {
+    display: inline-block;
+}
+
+.md-typeset .ff-install-version {
+    text-align: center;
+    font-size: 0.7rem;
+    color: var(--md-default-fg-color--light);
+}
+
+/* Two-path chooser (quickstart, guides-by-audience) */
+.md-typeset .ff-paths {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.8rem;
+    margin: 1em 0;
+}
+
+.md-typeset a.ff-path {
+    display: block;
+    padding: 0.9rem 1rem;
+    border-radius: 0.4rem;
+    border: 1px solid;
+    color: var(--md-default-fg-color);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-typeset a.ff-path:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.md-typeset a.ff-path > strong {
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 0.2rem;
+}
+
+.md-typeset a.ff-path-teal {
+    border-color: var(--ff-teal-dark);
+    background: color-mix(in srgb, var(--ff-teal) 8%, transparent);
+}
+
+.md-typeset a.ff-path-teal > strong {
+    color: var(--ff-teal-dark);
+}
+
+.md-typeset a.ff-path-purple {
+    border-color: var(--ff-purple);
+    background: color-mix(in srgb, var(--ff-purple) 8%, transparent);
+}
+
+.md-typeset a.ff-path-purple > strong {
+    color: var(--ff-purple);
+}

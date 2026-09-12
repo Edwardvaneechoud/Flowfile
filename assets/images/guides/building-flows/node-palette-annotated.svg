@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 470" role="img" aria-label="Flowfile's node palette grouped into its seven real categories — Input Sources, Transformations, Combine Operations, Aggregations, Machine Learning, Output Operations and User Defined Operations — with the five everyday workhorse nodes (Read data, Filter data, Formula, Join and Group by) highlighted in brand cyan and the rest of the toolbox dimmed.">
+  <defs>
+    <linearGradient id="wg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .kick { font-family:Roboto,Arial,sans-serif; font-size:12.5px; fill:#6b7280; }
+    .hd   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
+    .cn   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:11px; fill:#233588; }
+    .dn   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    .cap  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .hchip{ fill:#ffffff; stroke:#2DD5D3; stroke-width:1.7; }
+    .dchip{ fill:rgba(140,150,165,0.11); stroke:rgba(140,150,165,0.40); stroke-width:1.1; }
+    .dic  { fill:none; stroke:#aeb6c0; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+    .lart { fill:none; stroke:#ffffff; stroke-width:4.5; stroke-linecap:round; stroke-linejoin:round; }
+    @media (prefers-color-scheme: dark) {
+      .kick, .cap { fill:#aeb6c0; }
+      .hd { fill:#c7cfd8; }
+      .dn { fill:#a4acb6; }
+    }
+    [data-md-color-scheme="slate"] .kick, [data-md-color-scheme="slate"] .cap { fill:#aeb6c0; }
+    [data-md-color-scheme="slate"] .hd { fill:#c7cfd8; }
+    [data-md-color-scheme="slate"] .dn { fill:#a4acb6; }
+  </style>
+
+  <text class="kick" x="470" y="34" text-anchor="middle">A big toolbox &#8212; but most days, five nodes do the work.</text>
+
+  <!-- ============ row 1 headers ============ -->
+  <g>
+    <text class="hd" x="120" y="70" text-anchor="middle">Input Sources</text><rect x="107" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="348" y="70" text-anchor="middle">Transformations</text><rect x="335" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="576" y="70" text-anchor="middle">Combine Operations</text><rect x="563" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="804" y="70" text-anchor="middle">Aggregations</text><rect x="791" y="77" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+  </g>
+
+  <!-- ============ INPUT SOURCES (x=20) ============ -->
+  <!-- Read data ★ -->
+  <rect class="hchip" x="20" y="92" width="200" height="32" rx="8"/>
+  <g transform="translate(42,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><rect x="28" y="26" width="44" height="38" rx="5" fill="#ffffff" fill-opacity="0.18"/><line x1="28" y1="39" x2="72" y2="39" stroke-width="4"/><line x1="46" y1="39" x2="46" y2="64" stroke-width="3.5"/><line x1="28" y1="52" x2="72" y2="52" stroke-width="3.5"/><line x1="50" y1="68" x2="50" y2="82"/><polyline points="43,75 50,82 57,75"/></g></g>
+  <text class="cn" x="62" y="112">Read data</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="20" y="132" width="200" height="32" rx="8"/><rect class="dic" x="34" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="38" y1="148" x2="46" y2="148"/><text class="dn" x="62" y="152">Read from Database</text>
+  <rect class="dchip" x="20" y="172" width="200" height="32" rx="8"/><rect class="dic" x="34" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="38" y1="188" x2="46" y2="188"/><text class="dn" x="62" y="192">Read from cloud provider</text>
+
+  <!-- ============ TRANSFORMATIONS (x=248) ============ -->
+  <!-- Filter data ★ -->
+  <rect class="hchip" x="248" y="92" width="200" height="32" rx="8"/>
+  <g transform="translate(270,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><path d="M28 28 H72 L56 50 V66 L44 72 V50 Z" fill="#ffffff" fill-opacity="0.18"/><circle cx="50" cy="80" r="2.6" fill="#ffffff" stroke="none"/></g></g>
+  <text class="cn" x="290" y="112">Filter data</text>
+  <!-- Formula ★ -->
+  <rect class="hchip" x="248" y="132" width="200" height="32" rx="8"/>
+  <g transform="translate(270,148) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><path d="M30 72 V40 a10 10 0 0 1 12 -10"/><line x1="24" y1="48" x2="42" y2="48"/><line x1="56" y1="44" x2="74" y2="72"/><line x1="74" y1="44" x2="56" y2="72"/></g></g>
+  <text class="cn" x="290" y="152">Formula</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="248" y="172" width="200" height="32" rx="8"/><rect class="dic" x="262" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="266" y1="188" x2="274" y2="188"/><text class="dn" x="290" y="192">Select data</text>
+  <rect class="dchip" x="248" y="212" width="200" height="32" rx="8"/><rect class="dic" x="262" y="221" width="16" height="12" rx="2.5"/><line class="dic" x1="266" y1="228" x2="274" y2="228"/><text class="dn" x="290" y="232">Sort data</text>
+
+  <!-- ============ COMBINE OPERATIONS (x=476) ============ -->
+  <!-- Join ★ -->
+  <rect class="hchip" x="476" y="92" width="200" height="32" rx="8"/>
+  <g transform="translate(498,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g stroke="#ffffff" stroke-width="4.5" fill="#ffffff"><circle cx="40" cy="50" r="17" fill-opacity="0.26"/><circle cx="60" cy="50" r="17" fill-opacity="0.26"/></g></g>
+  <text class="cn" x="518" y="112">Join</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="476" y="132" width="200" height="32" rx="8"/><rect class="dic" x="490" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="494" y1="148" x2="502" y2="148"/><text class="dn" x="518" y="152">Cross join</text>
+  <rect class="dchip" x="476" y="172" width="200" height="32" rx="8"/><rect class="dic" x="490" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="494" y1="188" x2="502" y2="188"/><text class="dn" x="518" y="192">Fuzzy match</text>
+  <rect class="dchip" x="476" y="212" width="200" height="32" rx="8"/><rect class="dic" x="490" y="221" width="16" height="12" rx="2.5"/><line class="dic" x1="494" y1="228" x2="502" y2="228"/><text class="dn" x="518" y="232">Union data</text>
+
+  <!-- ============ AGGREGATIONS (x=704) ============ -->
+  <!-- Group by ★ -->
+  <rect class="hchip" x="704" y="92" width="200" height="32" rx="8"/>
+  <g transform="translate(726,108) scale(0.27) translate(-50,-50)"><circle cx="50" cy="50" r="48" fill="url(#wg)"/><g class="lart"><line x1="26" y1="34" x2="42" y2="34"/><line x1="26" y1="50" x2="42" y2="50"/><line x1="26" y1="66" x2="42" y2="66"/><line x1="50" y1="50" x2="68" y2="50" stroke-width="4"/><polyline points="61,43 68,50 61,57" stroke-width="4"/></g></g>
+  <text class="cn" x="746" y="112">Group by</text>
+  <!-- dimmed -->
+  <rect class="dchip" x="704" y="132" width="200" height="32" rx="8"/><rect class="dic" x="718" y="141" width="16" height="12" rx="2.5"/><line class="dic" x1="722" y1="148" x2="730" y2="148"/><text class="dn" x="746" y="152">Pivot data</text>
+  <rect class="dchip" x="704" y="172" width="200" height="32" rx="8"/><rect class="dic" x="718" y="181" width="16" height="12" rx="2.5"/><line class="dic" x1="722" y1="188" x2="730" y2="188"/><text class="dn" x="746" y="192">Unpivot data</text>
+  <rect class="dchip" x="704" y="212" width="200" height="32" rx="8"/><rect class="dic" x="718" y="221" width="16" height="12" rx="2.5"/><line class="dic" x1="722" y1="228" x2="730" y2="228"/><text class="dn" x="746" y="232">Count records</text>
+
+  <!-- ============ row 2 headers ============ -->
+  <g>
+    <text class="hd" x="242" y="278" text-anchor="middle">Machine Learning</text><rect x="229" y="285" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="470" y="278" text-anchor="middle">Output Operations</text><rect x="457" y="285" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+    <text class="hd" x="698" y="278" text-anchor="middle">User Defined Operations</text><rect x="685" y="285" width="26" height="2.6" rx="1.3" fill="url(#wg)"/>
+  </g>
+
+  <!-- ============ MACHINE LEARNING (x=142) ============ -->
+  <rect class="dchip" x="142" y="300" width="200" height="32" rx="8"/><rect class="dic" x="156" y="309" width="16" height="12" rx="2.5"/><line class="dic" x1="160" y1="316" x2="168" y2="316"/><text class="dn" x="184" y="320">Train Model</text>
+  <rect class="dchip" x="142" y="340" width="200" height="32" rx="8"/><rect class="dic" x="156" y="349" width="16" height="12" rx="2.5"/><line class="dic" x1="160" y1="356" x2="168" y2="356"/><text class="dn" x="184" y="360">Apply Model</text>
+  <rect class="dchip" x="142" y="380" width="200" height="32" rx="8"/><rect class="dic" x="156" y="389" width="16" height="12" rx="2.5"/><line class="dic" x1="160" y1="396" x2="168" y2="396"/><text class="dn" x="184" y="400">Evaluate Model</text>
+
+  <!-- ============ OUTPUT OPERATIONS (x=370) ============ -->
+  <rect class="dchip" x="370" y="300" width="200" height="32" rx="8"/><rect class="dic" x="384" y="309" width="16" height="12" rx="2.5"/><line class="dic" x1="388" y1="316" x2="396" y2="316"/><text class="dn" x="412" y="320">Write data</text>
+  <rect class="dchip" x="370" y="340" width="200" height="32" rx="8"/><rect class="dic" x="384" y="349" width="16" height="12" rx="2.5"/><line class="dic" x1="388" y1="356" x2="396" y2="356"/><text class="dn" x="412" y="360">Write to cloud provider</text>
+  <rect class="dchip" x="370" y="380" width="200" height="32" rx="8"/><rect class="dic" x="384" y="389" width="16" height="12" rx="2.5"/><line class="dic" x1="388" y1="396" x2="396" y2="396"/><text class="dn" x="412" y="400">Explore data</text>
+
+  <!-- ============ USER DEFINED OPERATIONS (x=598) ============ -->
+  <text class="dn" x="698" y="316" text-anchor="middle">your own nodes &#8212;</text>
+  <text class="dn" x="698" y="332" text-anchor="middle">built in the Node Designer</text>
+
+  <text class="cap" x="470" y="444" text-anchor="middle">The five in cyan &#8212; Read data, Filter data, Formula, Join, Group by &#8212; cover most flows. The rest waits until you need it.</text>
+</svg>

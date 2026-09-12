@@ -1,0 +1,234 @@
+/* Formula function reference (docs/users/formulas/functions.md).
+   Card layout mirroring the polars-expr-transformer playground. */
+
+.fn-search {
+  width: 100%;
+  padding: 0.6rem 1rem;
+  margin: 0.5rem 0 0.9rem;
+  font-size: 0.75rem;
+  font-family: var(--md-text-font-family);
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.6rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.fn-search:focus {
+  outline: none;
+  border-color: var(--md-primary-fg-color);
+}
+
+.fn-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 1.2rem;
+}
+
+.fn-chip {
+  padding: 0.22rem 0.85rem;
+  font-size: 0.68rem;
+  font-family: var(--md-text-font-family);
+  color: var(--md-default-fg-color--light);
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 2rem;
+  cursor: pointer;
+}
+
+.fn-chip span {
+  opacity: 0.55;
+  margin-left: 0.1rem;
+}
+
+.fn-chip:hover {
+  border-color: var(--md-primary-fg-color--light);
+  color: var(--md-primary-fg-color);
+}
+
+.fn-chip.active {
+  color: var(--md-primary-fg-color);
+  border-color: var(--md-primary-fg-color);
+  font-weight: 700;
+}
+
+.fn-category {
+  scroll-margin-top: 4rem;
+}
+
+.md-typeset .fn-category h2 {
+  color: var(--md-primary-fg-color);
+  font-weight: 700;
+  margin: 1.6em 0 0.8em;
+}
+
+.fn-category .fn-count {
+  font-weight: 400;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.85em;
+}
+
+.fn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.9rem;
+}
+
+.fn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.7rem;
+  background: var(--md-default-bg-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  scroll-margin-top: 4rem;
+}
+
+.fn-card:target {
+  border-color: var(--md-primary-fg-color);
+}
+
+/* The filtering JS toggles the `hidden` attribute; without this rule the
+   display values above would override the browser's [hidden] handling. */
+.fn-card[hidden],
+.fn-category[hidden] {
+  display: none;
+}
+
+.fn-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.md-typeset .fn-sig {
+  padding: 0;
+  background: none;
+  font-weight: 700;
+  font-size: 0.72rem;
+  color: var(--md-primary-fg-color);
+  word-break: break-word;
+}
+
+.md-typeset .fn-try {
+  flex-shrink: 0;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.62rem;
+  white-space: nowrap;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.45rem;
+  color: var(--md-typeset-a-color);
+}
+
+.md-typeset .fn-try:hover {
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset .fn-desc {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--md-default-fg-color);
+}
+
+.fn-example {
+  padding: 0.5rem 0.7rem;
+  font-size: 0.66rem;
+  line-height: 1.5;
+  background: var(--md-code-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  font-family: var(--md-code-font-family);
+}
+
+.md-typeset .fn-example code {
+  padding: 0;
+  background: none;
+}
+
+.fn-arrow {
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset .fn-result {
+  color: #2e9e5b;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .fn-result {
+  color: #6fd596;
+}
+
+.fn-ctx {
+  display: block;
+  margin-top: 0.1rem;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Reset Material's admonition-style <details> inside cards to a plain
+   text disclosure, like the playground. */
+.md-typeset .fn-card details.fn-params {
+  display: block;
+  margin: auto 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 0.62rem;
+}
+
+.md-typeset .fn-card .fn-params > summary {
+  display: block;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.62rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset .fn-card .fn-params > summary:hover {
+  color: var(--md-primary-fg-color);
+}
+
+.md-typeset .fn-card .fn-params > summary::before,
+.md-typeset .fn-card .fn-params > summary::after {
+  display: none;
+}
+
+.md-typeset .fn-card .fn-params > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fn-toggle {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.fn-params[open] .fn-toggle {
+  transform: rotate(90deg);
+}
+
+.md-typeset .fn-card .fn-params ul {
+  margin: 0.4em 0 0;
+  padding-left: 1.1em;
+  font-size: 0.62rem;
+  color: var(--md-default-fg-color--light);
+  list-style: disc;
+}
+
+.md-typeset .fn-card .fn-params li {
+  margin: 0 0 0.2em;
+}
+
+.md-typeset .fn-no-results {
+  font-size: 0.75rem;
+  color: var(--md-default-fg-color--light);
+  font-style: italic;
+}
