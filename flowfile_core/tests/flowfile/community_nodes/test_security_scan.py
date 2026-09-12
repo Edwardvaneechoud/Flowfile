@@ -3,8 +3,10 @@
 The corpus lives under ``corpus_malicious/``:
   - ``deny/``   one file per hard-deny idiom, mapped to the rule id it must trip.
   - ``benign/`` capable-but-safe nodes that must pass with an exact capability set.
-  - ``evade/``  known static-analysis blind spots, marked xfail(strict) so that
-                hardening the scanner surfaces as an XPASS to prune.
+
+A known static-analysis blind spot goes in ``evade/`` as an xfail(strict) test, so
+hardening the scanner surfaces as an XPASS that promotes the fixture into ``deny/``
+(the attribute-stored payload and attrgetter trampoline evasions went that way).
 """
 
 import ast
@@ -38,8 +40,10 @@ DENY_EXPECTATIONS = {
     "base64_to_exec": "FF-SEC-003",
     "zlib_to_exec": "FF-SEC-003",
     "marshal_to_exec": "FF-SEC-003",
+    "attribute_stored_payload": "FF-SEC-003",
     "getattr_builtin_chain": "FF-SEC-004",
     "globals_index": "FF-SEC-004",
+    "attrgetter_trampoline": "FF-SEC-004",
     "ctypes_ffi": "FF-SEC-005",
     "os_system": "FF-SEC-006",
     "subprocess_shell_true": "FF-SEC-007",
@@ -94,33 +98,6 @@ def test_every_benign_fixture_is_mapped():
 def test_all_corpus_fixtures_are_valid_python():
     for path in CORPUS.rglob("*.pytxt"):
         ast.parse(path.read_text())  # must not raise; fixtures are real code, not gibberish
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FF-SEC-003 taint tracking is same-function and simple-name only. A payload decoded into "
-        "self.code in one method and exec'd in another evades the decode->exec dataflow rule (the "
-        "literal exec is still caught by FF-SEC-001, but the decode provenance is lost). Documents "
-        "a known static-analysis limit; the reviewed PR gate is the real control."
-    ),
-)
-def test_evasion_attribute_stored_payload_crossing_functions():
-    report = scan_source(_read("evade/attribute_stored_payload.pytxt"))
-    assert any(f.rule_id == "FF-SEC-003" for f in report.findings)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "operator.attrgetter('system')(os) resolves os.system without a static attribute chain, so "
-        "the reflective trampoline slips past AST scanning entirely. Documents a known limit; the "
-        "reviewed PR gate is the real control."
-    ),
-)
-def test_evasion_attrgetter_trampoline():
-    report = scan_source(_read("evade/attrgetter_trampoline.pytxt"))
-    assert report.passed is False
 
 
 def test_syntax_error_is_single_deny():

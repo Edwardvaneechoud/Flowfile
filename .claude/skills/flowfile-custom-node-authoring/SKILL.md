@@ -221,7 +221,7 @@ The scanner (`community_nodes/security_scan.py`) is a conservative pre-filter; t
 ### 4.1 DENY — never emit these (`security_scan.py:15-37`)
 
 - `eval`/`exec`/`compile`; `__import__`/`importlib.import_module`/`importlib.util`.
-- `getattr`/`globals()`/`vars()`/`__builtins__` resolving a dangerous builtin, or `getattr` with a **non-constant** name.
+- `getattr`/`operator.attrgetter`/`operator.methodcaller`/`globals()`/`vars()`/`__builtins__` resolving a dangerous builtin, or any of them with a **non-constant** name.
 - `ctypes`/`cffi`/`_ctypes`; `os.system`/`os.popen*`/`os.exec*`/`os.spawn*` (and `posix.system`/`posix.popen*`).
 - `subprocess` with `shell=True` **or** non-literal args; `pty`/`os.forkpty`; importing **both** `socket` and `subprocess`.
 - `sys._getframe`/`inspect.stack`/`inspect.currentframe`; importing `pip`/`ensurepip`.
