@@ -5192,7 +5192,7 @@ def test_group_by_concat_aggregation(export_func):
 
     code = export_func(flow)
     if export_func is export_flow_to_polars:
-        verify_code_contains(code, 'pl.col("region").str.concat().alias("all_regions")')
+        verify_code_contains(code, 'pl.col("region").str.join(\',\').alias("all_regions")')
     verify_if_execute(code)
 
 

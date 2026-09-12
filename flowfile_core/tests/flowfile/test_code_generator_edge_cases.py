@@ -198,22 +198,11 @@ class TestBasicFilterOperators:
         code = export_flow_to_polars(flow)
         assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
 
-    @pytest.mark.xfail(
-        reason="BUG: Flow's IN filter quotes numeric values incorrectly. "
-               "Flow checks 'is_numeric' on whole value '1, 3, 5' (fails due to commas), "
-               "while code generator correctly splits first then checks each value. "
-               "See flow_graph.py:1055-1056 vs code_generator.py:1517-1522"
-    )
     def test_in_operator_numeric(self, sample_data_flow):
         """Test IN operator with numeric values - compare flow result with generated code.
 
-        BUG FOUND: There's an inconsistency between how the flow and the code generator
-        handle IN operator values. The flow checks if the whole value string "1, 3, 5"
-        is numeric (it's not, due to commas), so it quotes all values as strings.
-        The code generator splits first, then checks each individual value "1", "3", "5"
-        and correctly generates integers.
-
-        This test will fail until the bug is fixed in flow_graph.py.
+        Both sides split the comma-separated value list before deciding whether to
+        quote, so "1, 3, 5" on an integer column compares as integers in each.
         """
         flow = sample_data_flow
         filter_node = input_schema.NodeFilter(
@@ -456,19 +445,11 @@ class TestRecordIdDeprecation:
 class TestUniqueOperationVariations:
     """Test unique operation with different configurations."""
 
-    @pytest.mark.xfail(
-        reason="BUG: Flow's unique with empty columns uses group_by internally, "
-               "which requires at least one key. Generated code uses .unique(keep='first') "
-               "which works on all columns. The flow should handle empty columns the same way."
-    )
     def test_unique_without_columns(self):
         """Test unique operation on all columns - compare flow result with generated code.
 
-        BUG FOUND: The flow's unique implementation uses group_by internally, which
-        requires at least one key column. When columns=[] (empty), it fails with:
-        "at least one key is required in a group_by operation"
-
-        The code generator correctly generates `.unique(keep='first')` which works.
+        columns=[] must behave like columns=None: unique over every column with the
+        configured keep strategy, on both the engine and the generated code.
         """
         flow = create_basic_flow()
         data = input_schema.NodeManualInput(
@@ -763,22 +744,11 @@ class TestEmptyDataHandling:
 class TestGroupByEdgeCases:
     """Test group by edge cases."""
 
-    @pytest.mark.xfail(
-        reason="BUG: Delimiter mismatch in str.concat. "
-               "Code generator uses default '-' delimiter, flow uses ',' delimiter. "
-               "Generated: str.concat() → ['x-y'], Flow: str.concat(',') → ['x,y']. "
-               "See code_generator.py:1564 - should specify delimiter=','"
-    )
     def test_groupby_with_concat_aggregation(self):
         """Test groupby with string concatenation aggregation - compare flow result with generated code.
 
-        BUG FOUND: The code generator's str.concat() uses the default delimiter "-" (hyphen),
-        but the flow uses "," (comma) as the delimiter.
-
-        Result from generated code: ['x-y', 'z']
-        Result from flow: ['x,y', 'z']
-
-        The code generator should specify delimiter=',' to match the flow's behavior.
+        Both sides join group members with transform_schema.STRING_CONCAT_DELIMITER,
+        so ["x", "y"] becomes "x,y" in the engine and in the generated code.
         """
         flow = create_basic_flow()
         data = input_schema.NodeManualInput(
@@ -812,8 +782,7 @@ class TestGroupByEdgeCases:
         add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
         code = export_flow_to_polars(flow)
-        # Check that concat uses str.concat (deprecated - should be str.join)
-        assert "str.concat" in code or "str.join" in code
+        assert "str.join" in code
         assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
 
 
@@ -909,17 +878,17 @@ class TestConverterHelperMethods:
         assert converter._get_polars_dtype("UnknownType") == "pl.Utf8"
 
     def test_get_agg_function_mapping(self):
-        """Test aggregation function name mapping"""
+        """Test aggregation name to Polars call mapping"""
         flow = create_basic_flow()
         converter = FlowGraphToPolarsConverter(flow)
 
-        assert converter._get_agg_function("avg") == "mean"
-        assert converter._get_agg_function("average") == "mean"
-        assert converter._get_agg_function("concat") == "str.concat"
+        assert converter._get_agg_function("avg") == "mean()"
+        assert converter._get_agg_function("average") == "mean()"
+        assert converter._get_agg_function("concat") == "str.join(',')"
 
-        assert converter._get_agg_function("sum") == "sum"
-        assert converter._get_agg_function("min") == "min"
-        assert converter._get_agg_function("max") == "max"
+        assert converter._get_agg_function("sum") == "sum()"
+        assert converter._get_agg_function("min") == "min()"
+        assert converter._get_agg_function("max") == "max()"
 
 
 class TestUnsupportedNodeHandling:
@@ -1001,13 +970,12 @@ class TestDeprecatedMethodUsage:
 
         # TODO: When fixed, change to: assert uses_modern and not uses_deprecated
 
-    def test_groupby_concat_uses_deprecated_str_concat(self):
-        """Test that string concatenation in group_by uses deprecated str.concat.
+    def test_groupby_concat_uses_str_join(self):
+        """Test that string concatenation in group_by uses str.join, not the deprecated str.concat.
 
-        BUG: The code generator uses `str.concat()` for string concatenation
-        which is deprecated. It should use `str.join()` instead.
-
-        The default delimiter also changed from '-' to '' (empty string).
+        `str.concat()` is deprecated in Polars and its default delimiter ('-') differs
+        from `str.join()` (''), so the generated code must name the modern method and
+        pass the engine's delimiter explicitly.
 
         See: https://docs.pola.rs/api/python/stable/reference/expressions/api/polars.Expr.str.join.html
         """
@@ -1044,14 +1012,10 @@ class TestDeprecatedMethodUsage:
 
         code = export_flow_to_polars(flow)
 
-        # Document the deprecated method usage
         uses_deprecated = "str.concat" in code
         uses_modern = "str.join" in code
 
-        # Currently the code generator uses the deprecated method
-        assert uses_deprecated or uses_modern, "Neither deprecated nor modern method found"
-
-        # TODO: When fixed, change to: assert uses_modern and not uses_deprecated
+        assert uses_modern and not uses_deprecated, "Generated code should use str.join, not str.concat"
 
 
 class TestFilterOperatorSpaceVariants:

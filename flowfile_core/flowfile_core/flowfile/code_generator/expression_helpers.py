@@ -145,10 +145,10 @@ class ExpressionHelpersMixin(ConverterMixinBase):
         return dtype_map.get(dtype_str, f"{fw}.Utf8")
 
     def _get_agg_function(self, agg: str) -> str:
-        """Get Polars aggregation function name."""
+        """Get the Polars aggregation call for an ``AggColl.agg`` name, e.g. ``"sum"`` -> ``"sum()"``."""
         agg_map = {
-            "avg": "mean",
-            "average": "mean",
-            "concat": "str.concat",
+            "avg": "mean()",
+            "average": "mean()",
+            "concat": f"str.join({transform_schema.STRING_CONCAT_DELIMITER!r})",
         }
-        return agg_map.get(agg, agg)
+        return agg_map.get(agg, f"{agg}()")
