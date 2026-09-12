@@ -7,7 +7,9 @@
 | `containers.yxmd` | tool containers, nested tools, text boxes (imported as canvas comments) |
 | `unsupported.yxmd` | tools with no mapper, plus a macro node |
 | `dynamic_rename.yxmd` | Dynamic Rename formula / first-row / prefix+suffix / unsupported modes |
-| `regex_and_multifield.yxmd` | RegEx parse and match, Multi-Field Formula |
+| `multi_field_formula.yxmd` | the maintainer's Multi-Field Formula sample: overwrite every text field, a `New_` prefixed copy, and a percent-of-total over 12 listed numeric fields with a FixedDecimal output type |
+| `multi_field_formula_runs.yxmd` | the same three Multi-Field Formula shapes plus a `[_CurrentFieldType_]` tool, an untranslatable expression, a rejected `[_RecordID_]` special and an untranslatable expression carrying a declared `Int32` output type, fed by a Text Input, so the imported flow can actually be executed |
+| `regex_and_multifield.yxmd` | RegEx parse and match, plus a Multi-Field Formula over an explicitly listed subset of fields |
 | `simple_filter.yxmd` | simple-mode Filter operators, including an unsupported one |
 | `price_paid.yxmd` | a real published Alteryx workflow (UK Price Paid extract) |
 | `extra_tools.yxmd` | Record ID, Running Total, Transpose, Cross Tab, Append Fields, Data Cleansing (macro) |

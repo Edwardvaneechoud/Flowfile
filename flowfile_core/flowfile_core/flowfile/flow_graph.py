@@ -4408,6 +4408,39 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_multi_field_formula(self, settings: input_schema.NodeMultiFieldFormula) -> "FlowGraph":
+        """Adds a node that applies one formula to many columns at once.
+
+        The formula's `[_CurrentField_]`, `[_CurrentFieldName_]` and `[_CurrentFieldType_]`
+        placeholders bind to each selected column in turn, across all columns, a listed
+        subset, or every column of one data type. Results either overwrite their source
+        column or land in new prefixed/suffixed columns, optionally cast to a chosen type.
+
+        No schema callback is registered: schema prediction runs the node function against
+        schema-only placeholder frames, and the lazy `with_columns` yields the output schema
+        — new column names and cast dtypes included — without touching data.
+
+        Args:
+            settings: The multi-field formula configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.apply_multi_field_formula(settings.multi_field_formula_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="multi_field_formula",
+            renew_schema=False,
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_data_cleansing(self, settings: input_schema.NodeDataCleansing) -> "FlowGraph":
         """Adds a node that fixes common data quality issues.
 

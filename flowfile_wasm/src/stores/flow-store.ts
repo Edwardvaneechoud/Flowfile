@@ -36,7 +36,7 @@ const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
 // polars-expr-transformer pin (browser micropip + tests/python/requirements.txt).
-const EXPR_TRANSFORMER_PKG = 'polars-expr-transformer==0.5.6'
+const EXPR_TRANSFORMER_PKG = 'polars-expr-transformer==0.6.0'
 
 // Single-input transform nodes share one bridge shape —
 // execute_<fn>(nodeId, inputId, settings) — and differ only in the engine

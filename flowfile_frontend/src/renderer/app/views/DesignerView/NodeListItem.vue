@@ -10,20 +10,26 @@
     <template #reference>
       <div
         class="node-item"
-        :data-tutorial-node="node.item"
+        :class="{ 'node-item--hidden': hiddenNode }"
+        :data-tutorial-node="tutorialTarget ? node.item : undefined"
         draggable="true"
         @dragstart="emit('dragstart', $event, node)"
         @contextmenu.prevent.stop="emit('contextmenu', $event, node)"
       >
         <img :src="iconUrl" :alt="node.name" class="node-image" />
         <span class="node-name">{{ node.name }}</span>
-        <span
-          v-if="node.execution_environment === 'kernel'"
-          class="kernel-badge"
-          :class="kernelBadgeClass"
-          :title="kernelBadgeTitle"
-        >
-          <KernelBadgeIcon />
+        <span class="node-trailing">
+          <span v-if="favorite" class="favorite-badge" title="Favorite">
+            <el-icon><StarFilled /></el-icon>
+          </span>
+          <span
+            v-if="node.execution_environment === 'kernel'"
+            class="kernel-badge"
+            :class="kernelBadgeClass"
+            :title="kernelBadgeTitle"
+          >
+            <KernelBadgeIcon />
+          </span>
         </span>
       </div>
     </template>
@@ -37,13 +43,23 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { StarFilled } from "@element-plus/icons-vue";
 import type { NodeTemplate } from "../../types";
 import { useNodeIconUrl } from "../../composables/useCustomNodeIcon";
 import { readinessKey, useKernelReadiness } from "../../composables/useKernelReadiness";
 import { renderSafeMarkdown } from "../../lib/markdown";
 import KernelBadgeIcon from "./KernelBadgeIcon.vue";
 
-const props = defineProps<{ node: NodeTemplate; suppressTooltip?: boolean }>();
+const props = defineProps<{
+  node: NodeTemplate;
+  suppressTooltip?: boolean;
+  favorite?: boolean;
+  // Rendered inside the "Hidden nodes" group: dimmed but still draggable.
+  hiddenNode?: boolean;
+  // A favorited node renders twice; only its in-category copy carries the
+  // data-tutorial-node hook so the tour's querySelector stays unambiguous.
+  tutorialTarget?: boolean;
+}>();
 
 // Both must be declared: el-popover is the root and does not forward $attrs to
 // its trigger, so an undeclared native-named listener is silently dropped.
@@ -106,6 +122,24 @@ const kernelBadgeTitle = computed(() => {
   background-color: var(--color-background-tertiary);
 }
 
+.node-item--hidden {
+  opacity: 0.55;
+}
+
+.node-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1-5);
+  margin-left: auto;
+}
+
+.favorite-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-warning, #f59e0b);
+  font-size: var(--font-size-sm);
+}
+
 .node-image {
   width: 24px;
   height: 24px;
@@ -120,7 +154,6 @@ const kernelBadgeTitle = computed(() => {
 .kernel-badge {
   display: inline-flex;
   align-items: center;
-  margin-left: auto;
   color: var(--color-text-secondary);
   opacity: 0.7;
 }

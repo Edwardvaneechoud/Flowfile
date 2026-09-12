@@ -1460,3 +1460,34 @@ def test_subflow_custom_node_ships_flowfile_ctx_shim(tmp_path):
     assert "flowfile_ctx.py" in file_paths(manifest)
     assert "import flowfile_ctx" in _ctx_custom_module(manifest)
     ast.parse(get_file(manifest, "subflows/ctx_subflow.py"))
+
+
+def test_project_export_runs_a_multi_field_formula():
+    """The project exporter inherits the FlowFrame handler, so the node must survive a project run."""
+    flow = create_basic_flow(name="multi_field_formula_project")
+    add_sample_input(flow, node_id=1)
+    flow.add_multi_field_formula(
+        input_schema.NodeMultiFieldFormula(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            is_setup=True,
+            multi_field_formula_input=transform_schema.MultiFieldFormulaInput(
+                formula="[_CurrentField_] * 2",
+                selection_mode="all",
+                output_mode="new",
+                output_prefix="dbl_",
+            ),
+        )
+    )
+    _connect(flow, 1, 2)
+
+    manifest = export_flow_to_project(flow)
+    pipeline = get_file(manifest, "pipeline.py")
+    assert ".multi_field_formula(" in pipeline
+    assert "prefix='dbl_'" in pipeline
+    ast.parse(pipeline)
+
+    result = _run_pipeline_module(pipeline)
+    assert result.columns == ["id", "age", "dbl_id", "dbl_age"]
+    assert result["dbl_age"].to_list() == [50, 60, 70]

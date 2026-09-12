@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ref } from "vue";
-import { buildPaletteGroups, usePaletteGroups, BUILTIN_GROUPS } from "./usePaletteGroups";
+import {
+  buildPaletteGroups,
+  usePaletteGroups,
+  BUILTIN_GROUPS,
+  FAVORITES_GROUP_KEY,
+  HIDDEN_GROUP_KEY,
+} from "./usePaletteGroups";
 import type { NodeTemplate } from "../../types";
 
 function makeNode(overrides: Partial<NodeTemplate>): NodeTemplate {
@@ -117,6 +123,55 @@ describe("buildPaletteGroups", () => {
     expect(groups[0].key).toBe("custom");
   });
 
+  it("lists favorites in a leading group, in palette order, without removing them from their group", () => {
+    const nodes = [
+      makeNode({ item: "out", name: "Out", node_group: "output" }),
+      makeNode({ item: "inp", name: "In", node_group: "input" }),
+      makeNode({ item: "trn", name: "Trn", node_group: "transform" }),
+    ];
+    const groups = buildPaletteGroups(nodes, { favorites: new Set(["out", "inp"]) });
+    expect(groups.map((g) => g.key)).toEqual([FAVORITES_GROUP_KEY, "input", "transform", "output"]);
+    expect(groups[0].nodes.map((n) => n.item)).toEqual(["inp", "out"]);
+    expect(groups[1].nodes.map((n) => n.item)).toEqual(["inp"]);
+    expect(groups[0].isDynamic).toBe(false);
+  });
+
+  it("moves hidden nodes out of their group into a trailing hidden group", () => {
+    const nodes = [
+      makeNode({ item: "a", name: "A", node_group: "input" }),
+      makeNode({ item: "b", name: "B", node_group: "input" }),
+      makeNode({ item: "z", name: "Z", node_group: "zoo", custom_node: true }),
+    ];
+    const groups = buildPaletteGroups(nodes, { hidden: new Set(["b", "z"]) });
+    expect(groups.map((g) => g.key)).toEqual(["input", HIDDEN_GROUP_KEY]);
+    expect(groups[0].nodes.map((n) => n.item)).toEqual(["a"]);
+    expect(groups[1].nodes.map((n) => n.item)).toEqual(["b", "z"]);
+  });
+
+  it("keeps a custom node_group named like a synthetic group distinct from it", () => {
+    const nodes = [
+      makeNode({ item: "a", name: "A", node_group: "input" }),
+      makeNode({ item: "h", name: "H", node_group: "hidden", custom_node: true }),
+      makeNode({ item: "f", name: "F", node_group: "favorites", custom_node: true }),
+    ];
+    const groups = buildPaletteGroups(nodes, {
+      favorites: new Set(["a"]),
+      hidden: new Set(["f"]),
+    });
+    const keys = groups.map((g) => g.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual([FAVORITES_GROUP_KEY, "input", "hidden", HIDDEN_GROUP_KEY]);
+  });
+
+  it("omits the synthetic groups when prefs reference unknown or no nodes", () => {
+    const nodes = [makeNode({ item: "a", name: "A", node_group: "input" })];
+    const groups = buildPaletteGroups(nodes, {
+      favorites: new Set(["gone"]),
+      hidden: new Set(["also_gone"]),
+    });
+    expect(groups.map((g) => g.key)).toEqual(["input"]);
+  });
+
   it("exposes all seven built-in groups in canonical order", () => {
     expect(BUILTIN_GROUPS.map((g) => g.key)).toEqual([
       "input",
@@ -180,5 +235,74 @@ describe("usePaletteGroups", () => {
     const { isGroupOpen } = usePaletteGroups(nodes);
     // A group never toggled has no stored entry yet — defaults open.
     expect(isGroupOpen("geo")).toBe(true);
+  });
+
+  it("persists favorites and hidden nodes to localStorage", () => {
+    const nodes = ref([
+      makeNode({ item: "a", name: "Alpha", node_group: "input" }),
+      makeNode({ item: "b", name: "Beta", node_group: "input" }),
+    ]);
+    const { filteredGroups, toggleFavorite, toggleHidden, isFavorite, isHidden } =
+      usePaletteGroups(nodes);
+
+    toggleFavorite("a");
+    toggleHidden("b");
+    expect(isFavorite("a")).toBe(true);
+    expect(isHidden("b")).toBe(true);
+    expect(filteredGroups.value.map((g) => g.key)).toEqual([
+      FAVORITES_GROUP_KEY,
+      "input",
+      HIDDEN_GROUP_KEY,
+    ]);
+    expect(JSON.parse(localStorage.getItem("nodeList.favorites")!)).toEqual(["a"]);
+    expect(JSON.parse(localStorage.getItem("nodeList.hiddenNodes")!)).toEqual(["b"]);
+
+    const second = usePaletteGroups(nodes);
+    expect(second.isFavorite("a")).toBe(true);
+    expect(second.isHidden("b")).toBe(true);
+
+    second.toggleFavorite("a");
+    second.toggleHidden("b");
+    expect(second.filteredGroups.value.map((g) => g.key)).toEqual(["input"]);
+  });
+
+  it("keeps favorite and hidden mutually exclusive", () => {
+    const nodes = ref([makeNode({ item: "a", name: "Alpha", node_group: "input" })]);
+    const { toggleFavorite, toggleHidden, isFavorite, isHidden } = usePaletteGroups(nodes);
+
+    toggleFavorite("a");
+    toggleHidden("a");
+    expect(isHidden("a")).toBe(true);
+    expect(isFavorite("a")).toBe(false);
+
+    toggleFavorite("a");
+    expect(isFavorite("a")).toBe(true);
+    expect(isHidden("a")).toBe(false);
+  });
+
+  it("collapses the hidden group by default but still searches it", () => {
+    const nodes = ref([
+      makeNode({ item: "a", name: "Alpha", node_group: "input" }),
+      makeNode({ item: "b", name: "Beta", node_group: "input" }),
+    ]);
+    const { searchQuery, filteredGroups, isGroupOpen, toggleGroup, toggleHidden } =
+      usePaletteGroups(nodes);
+    toggleHidden("b");
+
+    expect(isGroupOpen(HIDDEN_GROUP_KEY)).toBe(false);
+    toggleGroup(HIDDEN_GROUP_KEY);
+    expect(isGroupOpen(HIDDEN_GROUP_KEY)).toBe(true);
+
+    searchQuery.value = "bet";
+    expect(filteredGroups.value.map((g) => g.key)).toEqual([HIDDEN_GROUP_KEY]);
+  });
+
+  it("ignores malformed persisted favorites", () => {
+    localStorage.setItem("nodeList.favorites", '{"not":"a list"}');
+    localStorage.setItem("nodeList.hiddenNodes", '[1, "b"]');
+    const nodes = ref([makeNode({ item: "b", name: "Beta", node_group: "input" })]);
+    const { isFavorite, isHidden } = usePaletteGroups(nodes);
+    expect(isFavorite("b")).toBe(false);
+    expect(isHidden("b")).toBe(true);
   });
 });

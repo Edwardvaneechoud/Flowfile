@@ -1,0 +1,149 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Fields>
+          <Field name="name" />
+          <Field name="city" />
+          <Field name="jan" />
+          <Field name="Total " />
+        </Fields>
+        <Data>
+          <r><c>ann</c><c>rome</c><c>5</c><c>20</c></r>
+          <r><c>bob</c><c>oslo</c><c>15</c><c>20</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="110" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields>
+          <Field name="name" />
+          <Field name="city" />
+          <Field name="*Unknown" />
+        </Fields>
+        <CopyOutput value="False" />
+        <Expression>Uppercase([_CurrentField_])</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="210" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields>
+          <Field name="name" />
+          <Field name="city" />
+          <Field name="*Unknown" />
+        </Fields>
+        <NewFieldAddOn>New_</NewFieldAddOn>
+        <NewFieldAddOnPos>Prefix</NewFieldAddOnPos>
+        <CopyOutput value="True" />
+        <Expression>[_CurrentFieldName_] + "=" + [_CurrentField_]</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="310" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Numeric</FieldType>
+        <Fields>
+          <Field name="jan" />
+          <Field name="*Unknown" />
+          <Field name="Total " selected="False" />
+        </Fields>
+        <NewFieldAddOn><![CDATA[ % Total]]></NewFieldAddOn>
+        <NewFieldAddOnPos>Suffix</NewFieldAddOnPos>
+        <CopyOutput value="True" />
+        <Expression>[_CurrentField_]/[Total ]*100</Expression>
+        <ChangeFieldType value="True" />
+        <OutputFieldType type="FixedDecimal" size="4" scale="1" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="410" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields>
+          <Field name="name" />
+          <Field name="city" selected="False" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <CopyOutput value="False" />
+        <Expression>REGEX_Match([_CurrentField_], "^A.*")</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="510" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields>
+          <Field name="name" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <NewFieldAddOn>type_</NewFieldAddOn>
+        <NewFieldAddOnPos>Prefix</NewFieldAddOnPos>
+        <CopyOutput value="True" />
+        <Expression>[_CurrentFieldType_]</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="610" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields>
+          <Field name="name" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <CopyOutput value="False" />
+        <Expression>[_RecordID_]</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula">
+        <Position x="710" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields>
+          <Field name="city" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <CopyOutput value="False" />
+        <Expression>REGEX_Match([_CurrentField_], "^R.*")</Expression>
+        <ChangeFieldType value="True" />
+        <OutputFieldType type="Int32" size="4" scale="0" />
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="3" Connection="Output" /><Destination ToolID="4" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="4" Connection="Output" /><Destination ToolID="5" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="5" Connection="Output" /><Destination ToolID="6" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="6" Connection="Output" /><Destination ToolID="7" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="7" Connection="Output" /><Destination ToolID="8" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Multi-field formula runs</Name></MetaInfo></Properties>
+</AlteryxDocument>

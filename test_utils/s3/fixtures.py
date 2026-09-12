@@ -21,6 +21,13 @@ MINIO_ACCESS_KEY = os.environ.get("TEST_MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("TEST_MINIO_SECRET_KEY", "minioadmin")
 MINIO_CONTAINER_NAME = os.environ.get("TEST_MINIO_CONTAINER", "test-minio-s3")
 MINIO_ENDPOINT_URL = f"http://{MINIO_HOST}:{MINIO_PORT}"
+# MinIO deleted minio/minio from Docker Hub after going source-only; this is the
+# last community image, mirrored into GHCR in case the quay copy goes too.
+DEFAULT_MINIO_IMAGE = "ghcr.io/edwardvaneechoud/flowfile-test-minio:RELEASE.2025-09-07T16-13-09Z"
+UPSTREAM_MINIO_IMAGE = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+MINIO_IMAGE = os.environ.get("TEST_MINIO_IMAGE", DEFAULT_MINIO_IMAGE)
+# An explicit override is honoured as-is; only the default falls back.
+MINIO_IMAGE_FALLBACK = "" if "TEST_MINIO_IMAGE" in os.environ else UPSTREAM_MINIO_IMAGE
 
 IS_MACOS = os.uname().sysname == 'Darwin' if hasattr(os, 'uname') else False
 IS_WINDOWS = os.name == 'nt'
@@ -147,6 +154,27 @@ def is_docker_available() -> bool:
         return False
 
 
+def _image_available(image: str) -> bool:
+    """True if the image is already local or can be pulled."""
+    if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0:
+        return True
+    logger.info(f"Pulling {image}...")
+    try:
+        return subprocess.run(["docker", "pull", image], capture_output=True, timeout=600).returncode == 0
+    except subprocess.SubprocessError:
+        return False
+
+
+def resolve_minio_image() -> str:
+    """The configured image, falling back to the upstream copy when unreachable."""
+    if _image_available(MINIO_IMAGE):
+        return MINIO_IMAGE
+    if MINIO_IMAGE_FALLBACK and _image_available(MINIO_IMAGE_FALLBACK):
+        logger.warning(f"{MINIO_IMAGE} unavailable, using {MINIO_IMAGE_FALLBACK}")
+        return MINIO_IMAGE_FALLBACK
+    return MINIO_IMAGE
+
+
 def start_minio_container() -> bool:
     """Start MinIO container with initialization"""
     if is_container_running(MINIO_CONTAINER_NAME):
@@ -162,7 +190,7 @@ def start_minio_container() -> bool:
             "-e", f"MINIO_ROOT_USER={MINIO_ACCESS_KEY}",
             "-e", f"MINIO_ROOT_PASSWORD={MINIO_SECRET_KEY}",
             "-v", f"{MINIO_CONTAINER_NAME}-data:/data",
-            "minio/minio", "server", "/data", "--console-address", ":9001"
+            resolve_minio_image(), "server", "/data", "--console-address", ":9001"
         ], check=True)
 
         if wait_for_minio():
