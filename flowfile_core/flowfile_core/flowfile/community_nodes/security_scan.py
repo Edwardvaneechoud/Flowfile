@@ -7,17 +7,17 @@ dataflow, ``getattr``-into-builtins, ``ctypes``/FFI, shell subprocess, reverse-s
 shapes, runtime pip, opaque blobs, env enumeration) and surfaces capabilities
 (network, filesystem, subprocess, env reads, serialization, secrets) so the
 in-app consent dialog can disclose them. It is deliberately conservative and
-easy to evade: reflection, attribute-stored payloads crossing functions, and
-novel encodings can slip past static analysis. The real control is the reviewed
-PR gate on the community repo; this scan is a fast pre-filter and a capability
+easy to evade: novel encodings and dataflow through anything other than a local
+name or ``self.<attr>`` can slip past static analysis. The real control is the
+reviewed PR gate on the community repo; this scan is a fast pre-filter and a capability
 discloser, not a sandbox.
 
 Rule tiers and rationale (stable ids; never renumber):
   FF-SEC-000 deny  unparseable source — a node that can't parse can't be trusted.
   FF-SEC-001 deny  eval/exec/compile — a data node never needs to run arbitrary code.
   FF-SEC-002 deny  __import__/importlib indirection — dynamic import hides the real target.
-  FF-SEC-003 deny  decode-then-exec dataflow — the canonical obfuscated-RCE shape.
-  FF-SEC-004 deny  getattr/globals()/vars()/__builtins__ into builtins — reflection to eval/system.
+  FF-SEC-003 deny  decode-then-exec dataflow, also via self.<attr> across methods — obfuscated RCE.
+  FF-SEC-004 deny  getattr/operator.attrgetter/globals()/vars()/__builtins__ into builtins — reflection.
   FF-SEC-005 deny  ctypes/cffi/_ctypes — native FFI escapes every Python-level guard.
   FF-SEC-006 deny  os.system/popen/exec*/spawn* — direct shell/command execution.
   FF-SEC-007 deny  subprocess with shell=True or non-literal args — command injection surface.
@@ -80,6 +80,7 @@ _EXEC_BUILTINS = frozenset({"eval", "exec", "compile"})
 _SUBPROCESS_FUNCS = frozenset({"run", "call", "check_call", "check_output", "Popen", "getoutput", "getstatusoutput"})
 _GETATTR_BUILTIN_NAMES = frozenset({"eval", "exec", "compile", "system", "__import__"})
 _ENUM_WRAPPERS = frozenset({"dict", "list", "set", "tuple", "sorted", "frozenset"})
+_ATTR_RESOLVERS = frozenset({"operator.attrgetter", "operator.methodcaller"})
 _BASE64ISH = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-")
 
 _OPAQUE_HARD_LEN = 4096
@@ -137,6 +138,11 @@ def _is_opaque_blob(text: str) -> bool:
     return _shannon_entropy(text) > _OPAQUE_ENTROPY
 
 
+def _is_self_attribute(node: ast.AST) -> bool:
+    """``self.<attr>`` — the one cross-method carrier worth tracking in a node class."""
+    return isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self"
+
+
 def _pip_in_call(node: ast.Call) -> bool:
     for sub in ast.walk(node):
         if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
@@ -172,8 +178,10 @@ class _Scanner:
         self.import_map: dict[str, str] = {}
         self.imported_modules: set[str] = set()
         self.scope_of: dict[int, object] = {}
+        self.class_of: dict[int, object] = {}
         self.decode_sites: dict[int, ast.Call] = {}
         self.taint: dict[tuple, set[int]] = {}
+        self.attr_taint: dict[tuple, set[int]] = {}
         self.consumed_decodes: set[int] = set()
 
     def run(self) -> ScanReport:
@@ -237,13 +245,15 @@ class _Scanner:
                     self.import_map[bound] = f"{module}.{alias.name}" if module else alias.name
 
     def _annotate_scopes(self):
-        def visit(node, scope):
+        def visit(node, scope, cls):
             self.scope_of[id(node)] = scope
+            self.class_of[id(node)] = cls
             child_scope = id(node) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) else scope
+            child_cls = id(node) if isinstance(node, ast.ClassDef) else cls
             for child in ast.iter_child_nodes(node):
-                visit(child, child_scope)
+                visit(child, child_scope, child_cls)
 
-        visit(self.tree, "module")
+        visit(self.tree, "module", None)
 
     def _is_decode_call(self, node: ast.Call) -> bool:
         canonical = self._canonical(node.func)
@@ -279,10 +289,13 @@ class _Scanner:
                 continue
             scope = self.scope_of.get(id(node), "module")
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            cls = self.class_of.get(id(node))
             for target in targets:
                 for name_node in ast.walk(target):
                     if isinstance(name_node, ast.Name):
                         self.taint.setdefault((scope, name_node.id), set()).update(decode_ids)
+                if _is_self_attribute(target):
+                    self.attr_taint.setdefault((cls, target.attr), set()).update(decode_ids)
 
     def _walk(self):
         for node in ast.walk(self.tree):
@@ -339,6 +352,8 @@ class _Scanner:
             self._add("FF-SEC-002", "deny", f"dynamic import via {canonical}", node)
         if canonical == "getattr":
             self._check_getattr(node)
+        if canonical in _ATTR_RESOLVERS:
+            self._check_attr_resolver(node, canonical)
         if (
             canonical == "os.system"
             or canonical == "posix.system"
@@ -372,6 +387,7 @@ class _Scanner:
 
     def _check_decode_to_exec(self, node: ast.Call):
         scope = self.scope_of.get(id(node), "module")
+        cls = self.class_of.get(id(node))
         reached: set[int] = set()
         for arg in list(node.args) + [kw.value for kw in node.keywords]:
             for sub in ast.walk(arg):
@@ -379,6 +395,8 @@ class _Scanner:
                     reached.add(id(sub))
                 if isinstance(sub, ast.Name):
                     reached.update(self.taint.get((scope, sub.id), set()))
+                elif _is_self_attribute(sub):
+                    reached.update(self.attr_taint.get((cls, sub.attr), set()))
         if reached:
             self.consumed_decodes.update(reached)
             self._add("FF-SEC-003", "deny", "decoded/deserialized data flows into exec/eval/compile", node)
@@ -392,6 +410,23 @@ class _Scanner:
                 self._add("FF-SEC-004", "deny", f"getattr(..., {name_arg.value!r}) resolves a dangerous builtin", node)
         else:
             self._add("FF-SEC-004", "deny", "getattr with a non-constant attribute name (reflection)", node)
+
+    def _check_attr_resolver(self, node: ast.Call, canonical: str):
+        """operator.attrgetter('system')(os) reaches a builtin with no static attribute chain."""
+        if not node.args:
+            return
+        names = node.args if canonical.endswith("attrgetter") else node.args[:1]
+        for name_arg in names:
+            if isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str):
+                if any(part in _GETATTR_BUILTIN_NAMES for part in name_arg.value.split(".")):
+                    self._add(
+                        "FF-SEC-004",
+                        "deny",
+                        f"{canonical}({name_arg.value!r}) resolves a dangerous builtin",
+                        node,
+                    )
+            else:
+                self._add("FF-SEC-004", "deny", f"{canonical}() with a non-constant attribute name (reflection)", node)
 
     def _check_subprocess(self, node: ast.Call, canonical: str):
         shell_true = any(

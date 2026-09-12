@@ -80,9 +80,10 @@ def test_filter_advanced_expr_handles_functions_and_conjunctions():
     reason=(
         "polars-expr-transformer <=0.6.0 executes Python from a formula: "
         "token_classifier.standardize_quotes rewrites 'a\"b' to \"a\"b\" without escaping, "
-        "and models.Classifier.get_pl_func eval()s the result. Affects every formula "
+        "and models.Classifier.get_pl_func eval()s the result (to_polars_code's "
+        "_validate_polars_code is a second eval sink). Affects every formula "
         "surface (formula node, advanced filter, core's settings validation), not just "
-        "this one. Drop the xfail once the pin is raised past the fix."
+        "this one. Needs an upstream fix; drop the xfail once the pin is raised past it."
     ),
 )
 def test_filter_advanced_expr_does_not_evaluate_python(tmp_path):
