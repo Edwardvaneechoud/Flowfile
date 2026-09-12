@@ -2,11 +2,11 @@
 
 # Function Reference
 
-All 95 built-in functions of the [Flowfile formula language](index.md). This reference is generated from the library's docstrings. Unless noted, every argument accepts a literal value, a `[column]` reference or a nested expression. Click *Try it ▸* to load an example into the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/).
+All 106 built-in functions of the [Flowfile formula language](index.md). This reference is generated from the library's docstrings. Unless noted, every argument accepts a literal value, a `[column]` reference or a nested expression. Click *Try it ▸* to load an example into the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/).
 
 <input class="fn-search" type="search" placeholder="Search functions… (e.g. 'date', 'trim', 'null')" aria-label="Search functions">
 
-<div class="fn-chips"><button class="fn-chip active" data-cat="all">All <span>95</span></button><button class="fn-chip" data-cat="logic-nulls">Logic &amp; Nulls <span>13</span></button><button class="fn-chip" data-cat="string">String <span>23</span></button><button class="fn-chip" data-cat="math">Math <span>23</span></button><button class="fn-chip" data-cat="date-time">Date &amp; Time <span>28</span></button><button class="fn-chip" data-cat="type-conversion">Type Conversion <span>8</span></button></div>
+<div class="fn-chips"><button class="fn-chip active" data-cat="all">All <span>106</span></button><button class="fn-chip" data-cat="logic-nulls">Logic &amp; Nulls <span>13</span></button><button class="fn-chip" data-cat="string">String <span>23</span></button><button class="fn-chip" data-cat="math">Math <span>23</span></button><button class="fn-chip" data-cat="date-time">Date &amp; Time <span>28</span></button><button class="fn-chip" data-cat="type-conversion">Type Conversion <span>8</span></button><button class="fn-chip" data-cat="encoding">Encoding <span>6</span></button><button class="fn-chip" data-cat="hashing">Hashing <span>5</span></button></div>
 
 <section class="fn-category" id="logic-nulls" data-cat="logic-nulls">
 <h2>Logic &amp; Nulls <span class="fn-count">(13)</span></h2>
@@ -604,6 +604,84 @@ All 95 built-in functions of the [Flowfile formula language](index.md). This ref
 <p class="fn-desc">Converts a column or value to text.</p>
 <div class="fn-example"><code>to_string([age])</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;30&quot;</code><span class="fn-ctx">when [age] is 30</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>value</code> — The column or value to convert to text</li><li><strong>Returns</strong> — The text representation</li></ul></details>
+</article>
+</div>
+</section>
+
+<section class="fn-category" id="encoding" data-cat="encoding">
+<h2>Encoding <span class="fn-count">(6)</span></h2>
+<div class="fn-grid">
+<article class="fn-card" id="base64_decode" data-text="base64_decode(text) decodes base64 text back into readable text. text that is not valid base64 becomes empty, and the decoded result has to be text itself. encoding">
+<header><code class="fn-sig">base64_decode(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=base64_decode%28%22Sm9obg%3D%3D%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Decodes base64 text back into readable text. Text that is not valid base64 becomes empty, and the decoded result has to be text itself.</p>
+<div class="fn-example"><code>base64_decode(&quot;Sm9obg==&quot;)</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;John&quot;</code></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to decode</li><li><strong>Returns</strong> — The decoded text</li></ul></details>
+</article>
+<article class="fn-card" id="base64_encode" data-text="base64_encode(text) encodes text as base64. encoding">
+<header><code class="fn-sig">base64_encode(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=base64_encode%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Encodes text as base64.</p>
+<div class="fn-example"><code>base64_encode([first_name])</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;Sm9obg==&quot;</code><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to encode</li><li><strong>Returns</strong> — The base64 text</li></ul></details>
+</article>
+<article class="fn-card" id="decode" data-text="decode(text, encoding=&#x27;base64&#x27;) decodes base64 or hexadecimal text back into readable text. text that is not valid for the encoding becomes empty, and the decoded result has to be text itself. encoding">
+<header><code class="fn-sig">decode(text, encoding=&#x27;base64&#x27;)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=decode%28%22Sm9obg%3D%3D%22%2C%20%22base64%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Decodes base64 or hexadecimal text back into readable text. Text that is not valid for the encoding becomes empty, and the decoded result has to be text itself.</p>
+<div class="fn-example"><code>decode(&quot;Sm9obg==&quot;, &quot;base64&quot;)</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;John&quot;</code></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to decode</li><li><code>encoding</code> — Which encoding the text uses, either &#x27;base64&#x27; (default) or &#x27;hex&#x27;</li><li><strong>Returns</strong> — The decoded text</li></ul></details>
+</article>
+<article class="fn-card" id="encode" data-text="encode(text, encoding=&#x27;base64&#x27;) encodes text as base64 or hexadecimal. encoding">
+<header><code class="fn-sig">encode(text, encoding=&#x27;base64&#x27;)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=encode%28%5Bfirst_name%5D%2C%20%22base64%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Encodes text as base64 or hexadecimal.</p>
+<div class="fn-example"><code>encode([first_name], &quot;base64&quot;)</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;Sm9obg==&quot;</code><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to encode</li><li><code>encoding</code> — Which encoding to use, either &#x27;base64&#x27; (default) or &#x27;hex&#x27;</li><li><strong>Returns</strong> — The encoded text</li></ul></details>
+</article>
+<article class="fn-card" id="hex_decode" data-text="hex_decode(text) decodes hexadecimal text back into readable text. text that is not valid hexadecimal becomes empty, and the decoded result has to be text itself. encoding">
+<header><code class="fn-sig">hex_decode(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=hex_decode%28%224a6f686e%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Decodes hexadecimal text back into readable text. Text that is not valid hexadecimal becomes empty, and the decoded result has to be text itself.</p>
+<div class="fn-example"><code>hex_decode(&quot;4a6f686e&quot;)</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;John&quot;</code></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to decode</li><li><strong>Returns</strong> — The decoded text</li></ul></details>
+</article>
+<article class="fn-card" id="hex_encode" data-text="hex_encode(text) encodes text as hexadecimal. encoding">
+<header><code class="fn-sig">hex_encode(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=hex_encode%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Encodes text as hexadecimal.</p>
+<div class="fn-example"><code>hex_encode([first_name])</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;4a6f686e&quot;</code><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to encode</li><li><strong>Returns</strong> — The hexadecimal text</li></ul></details>
+</article>
+</div>
+</section>
+
+<section class="fn-category" id="hashing" data-cat="hashing">
+<h2>Hashing <span class="fn-count">(5)</span></h2>
+<div class="fn-grid">
+<article class="fn-card" id="hash" data-text="hash(value) creates a fast numeric fingerprint of a value, useful for grouping or comparing values without storing them. note that this is a fast, non-cryptographic hash whose numbers may change between polars versions. use sha256 when you need a fingerprint that stays the same over time. hashing">
+<header><code class="fn-sig">hash(value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=hash%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Creates a fast numeric fingerprint of a value, useful for grouping or comparing values without storing them. Note that this is a fast, non-cryptographic hash whose numbers may change between Polars versions. Use sha256 when you need a fingerprint that stays the same over time.</p>
+<div class="fn-example"><code>hash([first_name])</code> <span class="fn-arrow">→</span> <span class="fn-result">a number like 10309318109784178017</span><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>value</code> — The column or value to fingerprint</li><li><strong>Returns</strong> — A whole number fingerprint of the value</li></ul></details>
+</article>
+<article class="fn-card" id="md5" data-text="md5(text) creates an md5 hash of text, written as 32 hexadecimal characters. note that md5 is not considered secure for passwords or signatures; use sha256 for those. hashing">
+<header><code class="fn-sig">md5(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=md5%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Creates an MD5 hash of text, written as 32 hexadecimal characters. Note that MD5 is not considered secure for passwords or signatures; use sha256 for those.</p>
+<div class="fn-example"><code>md5([first_name])</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;61409aa1fd47d4a5332de23cbf59a36f&quot;</code><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to hash</li><li><strong>Returns</strong> — The MD5 hash as text</li></ul></details>
+</article>
+<article class="fn-card" id="sha1" data-text="sha1(text) creates a sha-1 hash of text, written as 40 hexadecimal characters. note that sha-1 is not considered secure for passwords or signatures; use sha256 for those. hashing">
+<header><code class="fn-sig">sha1(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=sha1%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Creates a SHA-1 hash of text, written as 40 hexadecimal characters. Note that SHA-1 is not considered secure for passwords or signatures; use sha256 for those.</p>
+<div class="fn-example"><code>sha1([first_name])</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;5753a498f025464d72e088a9d5d6e872592d5f91&quot;</code><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to hash</li><li><strong>Returns</strong> — The SHA-1 hash as text</li></ul></details>
+</article>
+<article class="fn-card" id="sha256" data-text="sha256(text) creates a sha-256 hash of text, written as 64 hexadecimal characters. hashing">
+<header><code class="fn-sig">sha256(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=sha256%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Creates a SHA-256 hash of text, written as 64 hexadecimal characters.</p>
+<div class="fn-example"><code>sha256([first_name])</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;a8cfcd74832004951b4408cdb0a5dbcd8c7e52d43f7fe244bf720582e05241da&quot;</code><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to hash</li><li><strong>Returns</strong> — The SHA-256 hash as text</li></ul></details>
+</article>
+<article class="fn-card" id="sha512" data-text="sha512(text) creates a sha-512 hash of text, written as 128 hexadecimal characters. hashing">
+<header><code class="fn-sig">sha512(text)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=sha512%28%5Bfirst_name%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
+<p class="fn-desc">Creates a SHA-512 hash of text, written as 128 hexadecimal characters.</p>
+<div class="fn-example"><code>sha512([first_name])</code> <span class="fn-arrow">→</span> <span class="fn-result">a 128 character hash starting with &quot;41b6d0cd5ddab150&quot;</span><span class="fn-ctx">when [first_name] is &quot;John&quot;</span></div>
+<details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>text</code> — The column or text to hash</li><li><strong>Returns</strong> — The SHA-512 hash as text</li></ul></details>
 </article>
 </div>
 </section>
