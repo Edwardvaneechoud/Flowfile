@@ -304,15 +304,16 @@ check_stubs: stubs
 	@echo "Stubs are in sync."
 
 # Regenerate the formula function reference (docs/users/formulas/functions.md)
-# from the polars-expr-transformer docstrings. Run after bumping the
-# polars-expr-transformer pin.
+# and the counts snippet index.md includes, from the polars-expr-transformer
+# docstrings. Run after bumping the polars-expr-transformer pin.
 formula_docs:
 	@echo "Generating formula function reference..."
 	$(POETRY_RUN) python tools/generate_formula_docs.py
 
-# Drift check: regenerate and fail if the committed page changed.
+# Drift check: regenerate and fail if the committed page or the counts snippet
+# that index.md includes changed.
 check_formula_docs: formula_docs
-	@if ! git diff --exit-code -- docs/users/formulas/functions.md; then \
+	@if ! git diff --exit-code -- docs/users/formulas/functions.md docs/users/formulas/function_summary.snippet; then \
 		echo "ERROR: formula docs are out of sync. Run 'make formula_docs' and commit the result."; \
 		exit 1; \
 	fi

@@ -130,6 +130,7 @@ import { useFlowStore } from '../../stores/flow-store'
 import { usePyodideStore } from '../../stores/pyodide-store'
 import { resolveDynamicRenameMap } from '../../stores/schema-inference'
 import { dataTypeGroup } from '../../utils/dtypeGroup'
+import { EXPR_TRANSFORMER_PACKAGE } from '../../composables/useFormulaTranslation'
 import type {
   NodeDynamicRenameSettings,
   DynamicRenameInput,
@@ -138,8 +139,6 @@ import type {
   ColumnSelectionMode,
   ReadableDataTypeGroup,
 } from '../../types'
-
-const FORMULA_PACKAGE = 'polars-expr-transformer==0.5.6'
 
 const props = defineProps<{
   nodeId: number
@@ -257,7 +256,7 @@ function refreshPreview() {
   if (previewTimer) clearTimeout(previewTimer)
   previewTimer = setTimeout(async () => {
     try {
-      await pyodideStore.ensurePyPackages([FORMULA_PACKAGE])
+      await pyodideStore.ensurePyPackages([EXPR_TRANSFORMER_PACKAGE])
       const settingsJson = JSON.stringify(JSON.stringify(s))
       const colsJson = JSON.stringify(
         JSON.stringify(columns.value.map(c => ({ name: c.name, data_type: c.data_type })))
@@ -323,7 +322,7 @@ const extensions: Extension[] = [
 onMounted(async () => {
   if (!pyodideStore.isReady) return
   try {
-    await pyodideStore.ensurePyPackages([FORMULA_PACKAGE])
+    await pyodideStore.ensurePyPackages([EXPR_TRANSFORMER_PACKAGE])
     const names = await pyodideStore.runPythonWithResult(
       'from polars_expr_transformer.function_overview import get_all_expressions\nget_all_expressions()'
     )

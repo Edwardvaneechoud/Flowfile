@@ -1824,12 +1824,13 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         The validation namespace includes ``pl`` and ``datetime``, so generated
         snippets may reference them (e.g. ``today()`` translates to
         ``ff.lit(datetime.datetime.today())``); the emitted script must import
-        whatever the snippet uses or it fails with NameError at runtime.
+        whatever the snippet uses or it fails with NameError at runtime. Hashing
+        functions reference ``hashlib`` from inside a ``map_elements`` lambda, whose
+        body never runs during validation — so only the emitted import catches it.
         """
         ff_code = _try_translate_to_ff_code(formula)
         if ff_code:
-            if re.search(r"\bdatetime\.", ff_code):
-                self.imports.add("import datetime")
+            self._register_expr_stdlib_imports(ff_code)
             if re.search(r"\bpl\.", ff_code):
                 self.imports.add("import polars as pl")
         return ff_code

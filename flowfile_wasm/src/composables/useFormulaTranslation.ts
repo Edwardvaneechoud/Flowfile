@@ -1,7 +1,11 @@
 import { usePyodideStore } from '../stores/pyodide-store'
 import type { FlowNode, NodeFormulaSettings } from '../types'
 
-/** One pinned spec, shared with the run/trace harnesses so it cannot drift. */
+/**
+ * The single polars-expr-transformer pin for src/ — every micropip install of
+ * this package must use it, so two nodes can never race different versions into
+ * one Pyodide runtime. Keep in sync with tests/python/requirements.txt.
+ */
 export const EXPR_TRANSFORMER_PACKAGE = 'polars-expr-transformer==0.6.0'
 
 /**

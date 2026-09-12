@@ -26,7 +26,7 @@ pretty", never "wrong". The round-trip tests (exec the generated code,
 | File | Responsibility |
 |------|----------------|
 | `code_generator.py` | Orchestration: node dispatch, chain fusion, boundary naming, final-code assembly. Holds the base `FlowGraphCodeConverter` plus the `…ToPolarsConverter` / `…ToFlowFrameConverter` subclasses and the `export_flow_to_*` entry points. |
-| `base.py` | `ConverterMixinBase` — type-only (`TYPE_CHECKING`) declaration of the converter state/helpers the handler mixins share, so cross-class `self.*` references resolve for static checkers. No runtime effect. |
+| `base.py` | `ConverterMixinBase` — `TYPE_CHECKING` declaration of the converter state the handler mixins share, so cross-class `self.*` references resolve for static checkers, plus the few shared runtime helpers (`_py_str`/`_py_path` literal rendering, `_register_expr_stdlib_imports`). |
 | `join_handlers.py` | `JoinHandlersMixin` — standard / semi-anti / cross joins, join-key transforms, post-join processing. |
 | `transform_handlers.py` | `TransformHandlersMixin` — row/column transforms (group_by, formula, pivot, sort, window, fuzzy match, record_id, …). |
 | `connector_handlers.py` | `ConnectorHandlersMixin` — external connectors (cloud storage, Kafka, database, REST API, catalog readers/writers). |

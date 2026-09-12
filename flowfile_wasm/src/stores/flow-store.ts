@@ -9,6 +9,7 @@ import { asFileContent, contentByteSize, isBinary, type FileContent } from '../t
 import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
 import { fetchRemoteFile } from '../utils/remote-file'
 import { isPlaceholderNode as isPlaceholderNodeDef, placeholderLabel, placeholderReason } from '../utils/placeholder'
+import { EXPR_TRANSFORMER_PACKAGE } from '../composables/useFormulaTranslation'
 import type {
   BlockedInfo,
   FlowNode,
@@ -35,9 +36,6 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
-// polars-expr-transformer pin (browser micropip + tests/python/requirements.txt).
-const EXPR_TRANSFORMER_PKG = 'polars-expr-transformer==0.6.0'
-
 // Single-input transform nodes share one bridge shape —
 // execute_<fn>(nodeId, inputId, settings) — and differ only in the engine
 // function name. Keep these keys in sync with the single-input `case` labels
@@ -61,12 +59,12 @@ const SINGLE_INPUT_EXECUTORS: Record<string, string> = {
 // Lazily-installed packages some single-input executors need before running.
 // Returns the packages required for the given settings (empty = none).
 const SINGLE_INPUT_PACKAGES: Record<string, (settings: any) => string[]> = {
-  formula: () => [EXPR_TRANSFORMER_PKG],
+  formula: () => [EXPR_TRANSFORMER_PACKAGE],
   // dynamic_rename only needs the expr engine in formula mode.
   dynamic_rename: (s) =>
-    s?.dynamic_rename_input?.rename_mode === 'formula' ? [EXPR_TRANSFORMER_PKG] : [],
+    s?.dynamic_rename_input?.rename_mode === 'formula' ? [EXPR_TRANSFORMER_PACKAGE] : [],
   // an advanced filter is a flowfile formula, so it needs the same engine.
-  filter: (s) => (s?.filter_input?.mode === 'advanced' ? [EXPR_TRANSFORMER_PKG] : []),
+  filter: (s) => (s?.filter_input?.mode === 'advanced' ? [EXPR_TRANSFORMER_PACKAGE] : []),
 }
 
 
