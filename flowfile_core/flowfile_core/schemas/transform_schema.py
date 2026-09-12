@@ -116,9 +116,12 @@ def get_func_type_mapping(func: str):
         return "Utf8"
 
 
+STRING_CONCAT_DELIMITER = ","
+
+
 def string_concat(*column: str):
     """A simple wrapper to concatenate string columns in Polars."""
-    return pl.col(column).cast(pl.Utf8).str.concat(delimiter=",")
+    return pl.col(column).cast(pl.Utf8).str.join(STRING_CONCAT_DELIMITER)
 
 
 SideLit = Literal["left", "right"]

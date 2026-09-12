@@ -15,6 +15,13 @@ gaps **measurably** — never "by eye".
 
 The maintainer named this the single hardest live problem in the repo (2026-07-03).
 
+> **Status 2026-09-12 (branch `fix/xfails`):** rows S1, X1, X2 and D1 are closed — the three edge-case
+> markers are deleted, `make_unique` treats `columns=[]` as all-columns (keeping `keep=strategy`), and
+> concat aggregations emit `str.join(',')` through the shared `transform_schema.STRING_CONCAT_DELIMITER`
+> (the engine's `string_concat` uses the same constant). Scoreboard: edge-case `49 passed, 0 xfailed,
+> 0 xpassed`, corpus `692 passed`, custom-nodes `20 passed`. Phases 3.1, 3.2 and 3.4 below are
+> historical; D2 and F1–F4 remain open.
+
 ## What "parity" means (the only success criterion)
 
 Parity holds for a flow when, for every output node:
@@ -139,16 +146,16 @@ Every known divergence, with a status column. Work top-down; each row links to a
 
 | ID | Divergence | Buggy side | Location (verify before editing) | Guard test | Status 2026-07-03 |
 |----|-----------|-----------|----------------------------------|-----------|-------------------|
-| S1 | **Stale XPASS**: IN-filter numeric quoting — flow now splits on `,` before the numeric check, matching the emitter | (already fixed in `filter_expressions.py:_build_in_expression`, splits at `:155`) | marker `test_code_generator_edge_cases.py:201` | `TestBasicFilterOperators::test_in_operator_numeric` | **XPASS — delete marker** |
-| X1 | `unique(columns=[])` (all columns): flow's unique uses `group_by` internally → "at least one key is required in a group_by operation"; emitted `.unique(keep='first')` is correct | **flow engine (executor)** | fix site `flow_data_engine.py:2686` (`make_unique`, called from `flow_graph.py:2415`); marker `test_code_generator_edge_cases.py:459` | `TestUniqueOperationVariations::test_unique_without_columns` | **live xfail** |
-| X2 | group_by concat aggregation: emitter emits `str.concat` with default `-` delimiter; flow uses `,` → `['x-y']` vs `['x,y']` | **emitter** | map `expression_helpers.py:152` (`"concat": "str.concat"`), emitted with no args at `transform_handlers.py:28`; engine truth: `transform_schema.py:119` (`string_concat`, `delimiter=","`) | `TestGroupByEdgeCases::test_groupby_with_concat_aggregation` | **live xfail** |
-| D1 | Emitter emits deprecated `str.concat` (Polars → `str.join`; note default delim differs: `-` vs `""`) | emitter | `expression_helpers.py:152` | `test_groupby_concat_uses_deprecated_str_concat:1004` (asserts deprecated form; TODO@:1054) | **passing, documents debt** |
+| S1 | **Stale XPASS**: IN-filter numeric quoting — flow now splits on `,` before the numeric check, matching the emitter | (already fixed in `filter_expressions.py:_build_in_expression`, splits at `:155`) | marker `test_code_generator_edge_cases.py:201` | `TestBasicFilterOperators::test_in_operator_numeric` | **closed 2026-09-12** |
+| X1 | `unique(columns=[])` (all columns): flow's unique uses `group_by` internally → "at least one key is required in a group_by operation"; emitted `.unique(keep='first')` is correct | **flow engine (executor)** | fix site `flow_data_engine.py:2686` (`make_unique`, called from `flow_graph.py:2415`); marker `test_code_generator_edge_cases.py:459` | `TestUniqueOperationVariations::test_unique_without_columns` | **closed 2026-09-12** |
+| X2 | group_by concat aggregation: emitter emits `str.concat` with default `-` delimiter; flow uses `,` → `['x-y']` vs `['x,y']` | **emitter** | map `expression_helpers.py:152` (`"concat": "str.concat"`), emitted with no args at `transform_handlers.py:28`; engine truth: `transform_schema.py:119` (`string_concat`, `delimiter=","`) | `TestGroupByEdgeCases::test_groupby_with_concat_aggregation` | **closed 2026-09-12** |
+| D1 | Emitter emits deprecated `str.concat` (Polars → `str.join`; note default delim differs: `-` vs `""`) | emitter | `expression_helpers.py:152` | `test_groupby_concat_uses_deprecated_str_concat:1004` (asserts deprecated form; TODO@:1054) | **closed 2026-09-12** (emits `str.join(',')`) |
 | D2 | Emitter emits deprecated `with_row_count` (Polars → `with_row_index`) | emitter | `transform_handlers.py:370` | `test_record_id_uses_deprecated_with_row_count:960` (TODO@:1002) | **passing, documents debt** |
 | F1 | FlowFrame export: right joins emit `.collect().lazy()` → returns a `pl.LazyFrame`, breaks the FlowFrame chain | emitter (FlowFrame framework) | `join_handlers.py:477` `TODO(FlowFrame)` | (no dedicated round-trip guard) | **open** |
 | F2 | FlowFrame export: formula nodes emit `pl.col`/`pl.lit` without `import polars as pl` when `framework == "ff"` | emitter (FlowFrame framework) | `transform_handlers.py:54` `TODO(FlowFrame)` (+ `:326`) | (partial via `test_flowframe_formula_*`) | **open** |
 | F3 | FlowFrame export: fuzzy-match serializes Polars `Expr` via `repr` → invalid code `pl.lit(<Expr ['len()'] at 0x...>)` | emitter (FlowFrame framework) | `transform_handlers.py:259` `TODO(FlowFrame)` | (none) | **open** |
 | F4 | FlowFrame export: polars-code nodes reference `ff.LazyFrame`, which the `flowfile` package does not export | emitter (FlowFrame framework) | `code_generator.py:567` `TODO(FlowFrame)` | (none) | **open** |
-| S2 | **Stale XPASS (adjacent subsystem, not codegen)**: node-designer `"numeric"` string alias | (fixed) | marker `node_designer/test_node_designer.py:516` | `TestNumericStringAliasBug` | **XPASS — delete marker** (out of campaign scope; clean up if touching node_designer) |
+| S2 | **Stale XPASS (adjacent subsystem, not codegen)**: node-designer `"numeric"` string alias | (fixed) | marker `node_designer/test_node_designer.py:516` | `TestNumericStringAliasBug` | **closed** (marker already gone from `main`) |
 
 Two secondary emitter defects that are not yet guarded by a parity test (open, lower priority): param
 codegen accepts Python keywords as parameter names → invalid signature (`param_codegen.py:38`); typed
@@ -431,10 +438,10 @@ commit `f6963c77`, branch `feature/claude-skills`). Re-verify volatile facts bef
 
 | Fact | Re-verify command |
 |------|-------------------|
-| Baseline `46 passed, 2 xfailed, 1 xpassed` | `FLOWFILE_DB_PATH=/tmp/v.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_edge_cases.py -q -rX \| tail -1` |
-| Corpus `653 passed` | `FLOWFILE_DB_PATH=/tmp/v2.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator.py -q \| tail -1` |
-| Custom-nodes file `5 passed` (Polars exporter only) | `FLOWFILE_DB_PATH=/tmp/v5.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_custom_nodes.py -q \| tail -1` |
-| Per-class gate baselines: GroupBy `1 xfailed`, Deprecated `2 passed`, RecordId `1 passed`, Unique `1 passed, 1 xfailed` | class-scoped pytest exactly as written in each Phase 3 gate |
+| Baseline `49 passed, 0 xfailed, 0 xpassed` (2026-09-12; was 46/2/1) | `FLOWFILE_DB_PATH=/tmp/v.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_edge_cases.py -q -rX \| tail -1` |
+| Corpus `692 passed` (2026-09-12; was 653) | `FLOWFILE_DB_PATH=/tmp/v2.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator.py -q \| tail -1` |
+| Custom-nodes file `20 passed` (2026-09-12; was 5) | `FLOWFILE_DB_PATH=/tmp/v5.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_custom_nodes.py -q \| tail -1` |
+| Per-class gate baselines (2026-09-12): GroupBy `1 passed`, Deprecated `2 passed`, RecordId `1 passed`, Unique `2 passed` | class-scoped pytest exactly as written in each Phase 3 gate |
 | Corpus dual-exporter parametrization (88 sites) | `grep -c 'parametrize("export_func"' flowfile_core/tests/flowfile/test_code_generator.py` |
 | Engine concat delimiter is hard-coded `,` (`string_concat`) | `sed -n '113,120p' flowfile_core/flowfile_core/schemas/transform_schema.py` |
 | Emitter emits agg names with no args (X2 mechanism) | `grep -n '_get_agg_function' -A4 flowfile_core/flowfile_core/flowfile/code_generator/transform_handlers.py` |

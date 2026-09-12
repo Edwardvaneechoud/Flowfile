@@ -34,7 +34,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                 agg_func = self._get_agg_function(agg_col.agg)
                 old = self._py_str(agg_col.old_name)
                 new = self._py_str(agg_col.new_name)
-                expr = f"{self.framework}.col({old}).{agg_func}().alias({new})"
+                expr = f"{self.framework}.col({old}).{agg_func}.alias({new})"
                 agg_exprs.append(expr)
 
         if has_renamed_key:
