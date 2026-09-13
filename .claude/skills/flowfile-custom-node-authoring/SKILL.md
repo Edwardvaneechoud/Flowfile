@@ -110,6 +110,7 @@ class MyNodeSettings(nd.NodeSettings):
 | Component | Constructor args (defaults) |
 |---|---|
 | `TextInput` | `label`, `default=""`, `placeholder=""` |
+| `FilePicker` | `label`, `default=""`, `placeholder=""`, `mode="open"\|"create"`, `file_types=[]`, `allow_directory=False` — path string via the standard file browser (server-side filesystem) |
 | `NumericInput` | `label`, `default=None`, `min_value=None`, `max_value=None` |
 | `SliderInput` | `label`, `default=None`, `min_value=0`, `max_value=100`, `step=1` |
 | `ToggleSwitch` | `label`, `default=False`, `description=None` |

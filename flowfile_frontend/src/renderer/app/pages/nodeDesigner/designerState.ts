@@ -5,6 +5,7 @@
 
 export type ComponentType =
   | "TextInput"
+  | "FilePicker"
   | "NumericInput"
   | "SliderInput"
   | "ToggleSwitch"
@@ -33,6 +34,15 @@ export interface TextInputState extends ComponentBase {
   component_type: "TextInput";
   default?: string | null;
   placeholder?: string | null;
+}
+
+export interface FilePickerState extends ComponentBase {
+  component_type: "FilePicker";
+  default?: string | null;
+  placeholder?: string | null;
+  mode: "open" | "create";
+  file_types: string[];
+  allow_directory: boolean;
 }
 
 export interface NumericInputState extends ComponentBase {
@@ -92,6 +102,7 @@ export interface ColumnActionInputState extends ComponentBase {
 
 export type ComponentState =
   | TextInputState
+  | FilePickerState
   | NumericInputState
   | SliderInputState
   | ToggleSwitchState
