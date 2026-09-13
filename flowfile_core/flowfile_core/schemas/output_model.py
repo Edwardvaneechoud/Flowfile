@@ -1,8 +1,11 @@
 import time
-from datetime import datetime
+from datetime import date, datetime, time as time_of_day, timedelta
+from decimal import Decimal
+from enum import Enum
 from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup
 
@@ -78,6 +81,43 @@ class FileColumn(BaseModel):
     size: int | None = None
 
 
+# Preview cells arrive straight from polars `.to_dicts()` / arrow `.to_pylist()`,
+# so a Binary or Object column hands pydantic raw Python bytes. Those are not
+# JSON-serializable: non-UTF-8 bytes (any real WKB geometry) raise and take the
+# whole preview response down with them, while UTF-8-decodable bytes are worse
+# still — they silently render as mojibake text. Coerce by value, not by dtype:
+# pl.Object reports data_type_group "Other", so a dtype-keyed guard would miss it.
+_JSON_NATIVE = (bool, int, float, str)
+_BINARY_PREVIEW_BYTES = 16
+
+
+def _format_binary_cell(raw: bytes) -> str:
+    """Render bytes as GIS-conventional uppercase hex, truncated with a byte count."""
+    head = raw[:_BINARY_PREVIEW_BYTES].hex().upper()
+    if len(raw) <= _BINARY_PREVIEW_BYTES:
+        return f"0x{head}"
+    return f"0x{head}\u2026 ({len(raw)} bytes)"
+
+
+def make_preview_cell_json_safe(value: Any) -> Any:
+    """Coerce one preview cell to a JSON-serializable value, recursing into containers.
+
+    Lists and structs are preserved as lists/dicts so the frontend keeps rendering
+    them as JSON; only genuinely unserializable leaves are replaced.
+    """
+    if value is None or isinstance(value, _JSON_NATIVE):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return _format_binary_cell(bytes(value))
+    if isinstance(value, dict):
+        return {k: make_preview_cell_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [make_preview_cell_json_safe(v) for v in value]
+    if isinstance(value, (datetime, date, time_of_day, timedelta, Decimal, UUID, Enum)):
+        return value
+    return str(value)
+
+
 class TableExample(BaseModel):
     """Represents a preview of a table, including schema and sample data.
 
@@ -94,6 +134,13 @@ class TableExample(BaseModel):
     data: list[dict] | None = None
     has_example_data: bool = False
     has_run_with_current_setup: bool = False
+
+    @field_validator("data")
+    @classmethod
+    def _sanitize_preview_rows(cls, rows: list[dict] | None) -> list[dict] | None:
+        if not rows:
+            return rows
+        return [{k: make_preview_cell_json_safe(v) for k, v in row.items()} for row in rows]
 
 
 class NodeInputNameInfo(BaseModel):

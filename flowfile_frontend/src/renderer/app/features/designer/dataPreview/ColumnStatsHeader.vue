@@ -1,9 +1,13 @@
 <template>
   <div class="dp-col-header" @click="onHeaderClicked">
     <span class="dp-col-header__label" :title="params.displayName">{{ params.displayName }}</span>
-    <span v-if="params.dataType" class="dp-col-header__dtype" :title="params.dataType">{{
-      params.dataType
-    }}</span>
+    <span
+      v-if="params.dataType"
+      class="dp-col-header__dtype"
+      :class="{ 'dp-col-header__dtype--geometry': params.isGeometry }"
+      :title="params.isGeometry ? `geometry (${params.dataType})` : params.dataType"
+      >{{ params.isGeometry ? "geometry" : params.dataType }}</span
+    >
     <span v-if="sortDirection" class="dp-col-header__icon material-icons" aria-hidden="true">
       {{ sortDirection === "asc" ? "arrow_upward" : "arrow_downward" }}
     </span>
@@ -24,11 +28,14 @@
 // Custom AG Grid header: label + data-type pill + click-to-sort + a dedicated
 // ⓘ button that requests column statistics via grid context. The ⓘ is a
 // separate, deliberate click — stats compute never rides along on a sort click.
-// dataType arrives via headerComponentParams from the preview's table_schema.
+// dataType arrives via headerComponentParams from the preview's table_schema;
+// isGeometry rides along when the preview detected WKT in the column's values.
 import { onBeforeUnmount, ref } from "vue";
 import type { IHeaderParams } from "@ag-grid-community/core";
 
-const props = defineProps<{ params: IHeaderParams & { dataType?: string } }>();
+const props = defineProps<{
+  params: IHeaderParams & { dataType?: string; isGeometry?: boolean };
+}>();
 
 const sortDirection = ref<"asc" | "desc" | null>(props.params.column.getSort() ?? null);
 
@@ -88,6 +95,12 @@ const onInfoClicked = (event: MouseEvent) => {
   line-height: 13px;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.dp-col-header__dtype--geometry {
+  background: var(--color-accent-soft, rgba(99, 102, 241, 0.12));
+  border-color: var(--color-accent, #6366f1);
+  color: var(--color-accent, #6366f1);
 }
 
 .dp-col-header__icon {
