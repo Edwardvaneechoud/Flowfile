@@ -18,7 +18,8 @@ from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.flowfile.converters.alteryx.expression import TranslationOutcome, try_translate
 from flowfile_core.flowfile.converters.alteryx.report import ToolReportRow, ToolStatus
-from flowfile_core.flowfile.converters.alteryx.tool_identity import tool_key
+from flowfile_core.flowfile.converters.alteryx.scope import census_tool_name, classify
+from flowfile_core.flowfile.converters.alteryx.tool_identity import is_official, tool_key
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxConnection, AlteryxTool
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
@@ -235,14 +236,21 @@ def _row(
     node_ids: list[int],
     node_type: str | None,
     messages: list[str] | None = None,
+    *,
+    reason: str,
 ) -> ToolReportRow:
+    """One report row. ``reason`` is required: every status has a cause worth naming."""
+    key = tool_key(tool.plugin)
     return ToolReportRow(
         alteryx_tool_id=tool.tool_id,
         alteryx_tool=tool_label(tool),
-        alteryx_tool_key=tool_key(tool.plugin),
+        census_name=census_tool_name(tool),
+        alteryx_tool_key=key,
         flowfile_node_ids=node_ids,
         flowfile_node_type=node_type,
         status=status,
+        reason=reason,
+        requestable=is_official(key),
         messages=messages or [],
     )
 
@@ -384,7 +392,7 @@ def _flag_connection_source(tool: AlteryxTool, path: str, row: ToolReportRow) ->
     if CONNECTION_NOTICE not in row.messages:
         row.messages.append(CONNECTION_NOTICE)
     if row.status == "converted":
-        row.status = "partial"
+        row.status, row.reason = "partial", "connection_string"
     return row
 
 
@@ -475,11 +483,17 @@ def _original_config_lines(tool: AlteryxTool) -> list[str]:
     return lines
 
 
-def _placeholder_code(tool: AlteryxTool, num_inputs: int, notes: list[str]) -> str:
-    lines = [
-        f"# Alteryx tool '{tool_label(tool)}' (ToolID {tool.tool_id}) could not be converted automatically.",
-        "# This node passes its input through unchanged; rebuild the logic here.",
-    ]
+def _placeholder_code(tool: AlteryxTool, num_inputs: int, notes: list[str], header: str | None = None) -> str:
+    """The passthrough body. *header* replaces the two-line "could not be converted" preamble."""
+    identity = f"# Alteryx tool '{tool_label(tool)}' (ToolID {tool.tool_id})"
+    lines = (
+        [f"{identity}: {header}"]
+        if header
+        else [
+            f"{identity} could not be converted automatically.",
+            "# This node passes its input through unchanged; rebuild the logic here.",
+        ]
+    )
     lines.extend(f"# {_one_line(note)}" for note in notes)
     lines.extend(f"# {line}" for line in _original_config_lines(tool))
     if num_inputs == 0:
@@ -500,15 +514,26 @@ def emit_placeholder(
     dx: int = 0,
     dy: int = 0,
     register_anchors: bool = True,
+    wording: str | None = None,
+    code_wording: str | None = None,
 ) -> int:
-    """Emit the polars_code passthrough that keeps the graph shape intact."""
+    """Emit the polars_code passthrough that keeps the graph shape intact.
+
+    *wording* and *code_wording* carry a sentence that replaces the default "needs manual
+    conversion" text on the node description and in the generated code. A node standing in for
+    a tool Flowfile will never convert is not a defect, so the description also loses its ⚠.
+    """
     inputs = ctx.input_count(tool.tool_id) if num_inputs is None else num_inputs
     settings = input_schema.NodePolarsCode(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
-        polars_code_input=transform_schema.PolarsCodeInput(polars_code=_placeholder_code(tool, inputs, messages)),
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=_placeholder_code(tool, inputs, messages, code_wording)
+        ),
     )
-    warning = f"{WARNING_PREFIX}Needs manual conversion: Alteryx '{tool_label(tool)}' (ToolID {tool.tool_id})"
+    warning = wording or (
+        f"{WARNING_PREFIX}Needs manual conversion: Alteryx '{tool_label(tool)}' (ToolID {tool.tool_id})"
+    )
     node_id = ctx.add_node(
         tool,
         "polars_code",
@@ -525,17 +550,31 @@ def emit_placeholder(
 
 
 def map_unsupported(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
-    """Fallback mapper for every tool without a dedicated implementation."""
-    message = f"Alteryx tool '{tool_label(tool)}' has no Flowfile equivalent; a passthrough placeholder was inserted."
-    node_id = emit_placeholder(tool, ctx, [])
+    """Fallback mapper for every tool without a dedicated implementation.
+
+    The only place scope is consulted: a tool Flowfile has decided not to convert says so in
+    its own words instead of promising a manual rebuild that is never coming. Everything else
+    is an honest placeholder, which is also where an unlisted tool lands.
+    """
+    verdict = classify(census_tool_name(tool))
+    if verdict is None:
+        message = (
+            f"Alteryx tool '{tool_label(tool)}' has no Flowfile equivalent; a passthrough placeholder was inserted."
+        )
+        node_id = emit_placeholder(tool, ctx, [])
+        ctx.tool_columns[tool.tool_id] = None
+        return _row(tool, "placeholder", [node_id], "polars_code", [message], reason="unmapped_tool")
+
+    node_id = emit_placeholder(tool, ctx, [], wording=verdict.sentence, code_wording=verdict.sentence)
     ctx.tool_columns[tool.tool_id] = None
-    return _row(tool, "placeholder", [node_id], "polars_code", [message])
+    return _row(tool, verdict.status, [node_id], "polars_code", [verdict.sentence], reason=verdict.reason)
 
 
-def _placeholder_row(tool: AlteryxTool, ctx: EmitContext, messages: list[str]) -> ToolReportRow:
+def _placeholder_row(tool: AlteryxTool, ctx: EmitContext, messages: list[str], reason: str) -> ToolReportRow:
+    """A tool whose configuration the mapper read and would not guess at; never scope-aware."""
     node_id = emit_placeholder(tool, ctx, messages)
     ctx.tool_columns[tool.tool_id] = None
-    return _row(tool, "placeholder", [node_id], "polars_code", messages)
+    return _row(tool, "placeholder", [node_id], "polars_code", messages, reason=reason)
 
 
 def _parse_number(value: str) -> tuple[bool, bool]:
@@ -603,7 +642,7 @@ def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             "Column types were inferred from the entered values (Alteryx stores Text Input cells as text): "
             + ", ".join(inferred)
         )
-    return _row(tool, "converted", [node_id], "manual_input", messages)
+    return _row(tool, "converted", [node_id], "manual_input", messages, reason="converted")
 
 
 def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -646,12 +685,13 @@ def map_select(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     messages = []
     status: ToolStatus = "converted"
+    reason = "converted"
     if unmapped_types:
-        status = "partial"
+        status, reason = "partial", "option_unsupported"
         messages.append(
             "These Alteryx data types have no Flowfile equivalent and were left unchanged: " + ", ".join(unmapped_types)
         )
-    return _row(tool, status, [node_id], "select", messages)
+    return _row(tool, status, [node_id], "select", messages, reason=reason)
 
 
 # Rebuilding the Alteryx expression from the simple-mode triple reuses the fail-closed translator.
@@ -733,7 +773,7 @@ def map_filter(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             f"Original expression: {_one_line(expression)}",
             "Both Alteryx branches now receive unfiltered data until this node is rebuilt.",
         ]
-        return _placeholder_row(tool, ctx, messages)
+        return _placeholder_row(tool, ctx, messages, reason="translator_refused")
 
     settings = input_schema.NodeFilter(
         flow_id=ctx.flow_id,
@@ -748,7 +788,7 @@ def map_filter(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         ctx.register_output(tool.tool_id, "False", node_id, FAIL_HANDLE)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "filter", [])
+    return _row(tool, "converted", [node_id], "filter", [], reason="converted")
 
 
 def _commented_formula_body(expression: str, reason: str, stub: str) -> str:
@@ -859,15 +899,18 @@ def _emit_formula_chain(tool: AlteryxTool, ctx: EmitContext, assignments: list[_
     ctx.tool_columns[tool.tool_id] = known
 
     status: ToolStatus = "placeholder" if placeholder else ("commented" if commented else "converted")
+    reason = "converted" if status == "converted" else "translator_refused"
     if len(node_ids) > 1:
         messages.insert(0, f"{len(node_ids)} Alteryx assignments became {len(node_ids)} chained Flowfile nodes.")
-    return _row(tool, status, node_ids, "formula", messages)
+    return _row(tool, status, node_ids, "formula", messages, reason=reason)
 
 
 def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     assignments = _formula_assignments(tool)
     if not assignments:
-        return _placeholder_row(tool, ctx, ["The Alteryx Formula tool has no expressions configured."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Formula tool has no expressions configured."], reason="mapper_refused"
+        )
     return _emit_formula_chain(tool, ctx, assignments)
 
 
@@ -958,7 +1001,7 @@ def _emit_dynamic_rename(
     node_id = ctx.add_node(tool, "dynamic_rename", settings, description=_description(tool))
     _register_rename_anchors(ctx, tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = None
-    return _row(tool, "converted", [node_id], "dynamic_rename", messages)
+    return _row(tool, "converted", [node_id], "dynamic_rename", messages, reason="converted")
 
 
 def _static_rename_to_select(
@@ -970,7 +1013,9 @@ def _static_rename_to_select(
         transform_schema.SelectInput(old_name=old, new_name=new, keep=True) for old, new in pairs if new and old != new
     ]
     if not select_input:
-        return _placeholder_row(tool, ctx, ["The Alteryx Dynamic Rename resolved to no column renames."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Dynamic Rename resolved to no column renames."], reason="mapper_refused"
+        )
     settings = input_schema.NodeSelect(
         flow_id=ctx.flow_id, node_id=ctx.new_node_id(), keep_missing=True, select_input=select_input
     )
@@ -988,7 +1033,7 @@ def _static_rename_to_select(
         messages.append(
             f"Only {len(new_names)} name(s) were available for {len(targets)} column(s); the rest keep their names."
         )
-    return _row(tool, "partial", [node_id], "select", messages)
+    return _row(tool, "partial", [node_id], "select", messages, reason="option_unsupported")
 
 
 def _rename_from_right_input(
@@ -996,7 +1041,9 @@ def _rename_from_right_input(
 ) -> ToolReportRow:
     source = ctx.source_tool(tool.tool_id, DYNAMIC_RENAME_SOURCE_ANCHORS)
     if source is None:
-        return _placeholder_row(tool, ctx, ["The Alteryx Dynamic Rename field-name input is not connected."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Dynamic Rename field-name input is not connected."], reason="mapper_refused"
+        )
     if mode == "rightinputmetadata":
         new_names = ctx.tool_columns.get(source.tool_id)
         if not new_names:
@@ -1007,6 +1054,7 @@ def _rename_from_right_input(
                     "The Alteryx Dynamic Rename takes its names from the right input's column names, "
                     f"which are not known at import time for '{tool_label(source)}' (ToolID {source.tool_id})."
                 ],
+                reason="mapper_refused",
             )
         return _static_rename_to_select(
             tool, ctx, targets, new_names, f"the columns of '{tool_label(source)}' (ToolID {source.tool_id})"
@@ -1016,7 +1064,10 @@ def _rename_from_right_input(
     input_mode = _text(names_from_rows, "InputMode") if names_from_rows is not None else ""
     if input_mode and input_mode.strip().lower() != "positional":
         return _placeholder_row(
-            tool, ctx, [f"Alteryx Dynamic Rename input mode '{input_mode}' has no Flowfile equivalent."]
+            tool,
+            ctx,
+            [f"Alteryx Dynamic Rename input mode '{input_mode}' has no Flowfile equivalent."],
+            reason="option_unsupported",
         )
     column = _text(names_from_rows, "NewName") if names_from_rows is not None else ""
     new_names = _text_input_values(source, column)
@@ -1029,6 +1080,7 @@ def _rename_from_right_input(
                 f"'{tool_label(source)}' (ToolID {source.tool_id}), which cannot be read at import time; "
                 "rebuild this as a Select node once you know the names."
             ],
+            reason="mapper_refused",
         )
     return _static_rename_to_select(
         tool, ctx, targets, new_names, f"the rows of '{tool_label(source)}' (ToolID {source.tool_id})"
@@ -1061,6 +1113,7 @@ def map_dynamic_rename(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
                     f"The Alteryx Dynamic Rename formula could not be converted: {outcome.reason}.",
                     f"Original expression: {_one_line(expression)}",
                 ],
+                reason="translator_refused",
             )
         return _emit_dynamic_rename(
             tool,
@@ -1073,14 +1126,19 @@ def map_dynamic_rename(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         prefix = _text(config, ".//Prefix")
         suffix = _text(config, ".//Suffix")
         if not prefix and not suffix:
-            return _placeholder_row(tool, ctx, ["The Alteryx Dynamic Rename has no prefix or suffix configured."])
+            return _placeholder_row(
+                tool, ctx, ["The Alteryx Dynamic Rename has no prefix or suffix configured."], reason="mapper_refused"
+            )
         return _emit_prefix_suffix_rename(tool, ctx, prefix, suffix, selection)
 
     if mode in ("rightinputrows", "rightinputmetadata"):
         return _rename_from_right_input(tool, ctx, config, selected or names, mode)
 
     return _placeholder_row(
-        tool, ctx, [f"Alteryx Dynamic Rename mode '{raw_mode or '(empty)'}' has no Flowfile equivalent."]
+        tool,
+        ctx,
+        [f"Alteryx Dynamic Rename mode '{raw_mode or '(empty)'}' has no Flowfile equivalent."],
+        reason="option_unsupported",
     )
 
 
@@ -1112,7 +1170,7 @@ def _emit_prefix_suffix_rename(
     messages = []
     if len(node_ids) > 1:
         messages.append("Alteryx applies the prefix and the suffix in one tool; Flowfile needs one node for each.")
-    return _row(tool, "converted", node_ids, "dynamic_rename", messages)
+    return _row(tool, "converted", node_ids, "dynamic_rename", messages, reason="converted")
 
 
 _CURRENT_FIELD_RE = re.compile(r"\[_CurrentField_\]", re.IGNORECASE)
@@ -1231,10 +1289,14 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
     config = _config(tool)
     expression = _text(config, "Expression")
     if not expression:
-        return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no expression configured."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Multi-Field Formula tool has no expression configured."], reason="mapper_refused"
+        )
     names, selected, unknown_selected = _field_selection(config)
     if not selected:
-        return _placeholder_row(tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."], reason="mapper_refused"
+        )
 
     copy_output = _is_true(_attribute(config, "CopyOutput", "value"))
     prefix, suffix = _multi_field_add_on(config)
@@ -1243,6 +1305,7 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
             tool,
             ctx,
             ["The Alteryx Multi-Field Formula writes to copied fields whose names are not recorded in the workflow."],
+            reason="mapper_refused",
         )
 
     selection, messages = _multi_field_selection(names, selected, unknown_selected, _text(config, "FieldType").lower())
@@ -1250,22 +1313,24 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
 
     outcome = try_translate(expression, allowed_specials=frozenset(transform_schema.MULTI_FIELD_PLACEHOLDERS))
     status: ToolStatus = "converted"
+    reason = "converted"
     description = _description(tool)
     formula = outcome.translated
     if formula is None:
-        reason = outcome.reason or "no reason recorded"
-        formula = _commented_formula_body(expression, reason, f"[{transform_schema.MULTI_FIELD_CURRENT_FIELD}]")
+        refusal = outcome.reason or "no reason recorded"
+        formula = _commented_formula_body(expression, refusal, f"[{transform_schema.MULTI_FIELD_CURRENT_FIELD}]")
         try:
             simple_function_to_expr(formula)
         except Exception:  # the comment body itself is unusable; degrade to a code placeholder
             return _placeholder_row(
                 tool,
                 ctx,
-                [f"'{_one_line(expression)}': {reason}. Original expression preserved in a placeholder node."],
+                [f"'{_one_line(expression)}': {refusal}. Original expression preserved in a placeholder node."],
+                reason="translator_refused",
             )
-        status = "commented"
+        status, reason = "commented", "translator_refused"
         description = _description(tool, f"{WARNING_PREFIX}Alteryx multi-field formula needs manual conversion")
-        messages.append(f"'{_one_line(expression)}': {reason}. The original expression is kept as a comment.")
+        messages.append(f"'{_one_line(expression)}': {refusal}. The original expression is kept as a comment.")
         # The stub echoes the input column, so a declared cast would break the identity pass-through.
         if output_data_type is not None:
             messages.append(
@@ -1276,7 +1341,7 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
     else:
         messages.extend(type_messages)
         if _CURRENT_FIELD_TYPE_RE.search(expression):
-            status = "partial"
+            status, reason = "partial", "option_unsupported"
             messages.append(_MULTI_FIELD_TYPE_NAME_MESSAGE)
 
     settings = input_schema.NodeMultiFieldFormula(
@@ -1299,7 +1364,7 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
         _multi_field_output_columns(known, selection, prefix, suffix) if copy_output and known is not None else known
     )
     messages.insert(0, f"Mapped onto one multi-field formula node over {_multi_field_scope(selection)}.")
-    return _row(tool, status, [node_id], "multi_field_formula", messages)
+    return _row(tool, status, [node_id], "multi_field_formula", messages, reason=reason)
 
 
 _REGEX_UNSUPPORTED = (("(?=", "lookahead"), ("(?!", "negative lookahead"), ("(?<", "lookbehind"))
@@ -1430,7 +1495,9 @@ def map_regex(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     if reason is None:
         code, reason = _regex_code(config, method, column)
     if reason is not None:
-        return _placeholder_row(tool, ctx, [f"The Alteryx RegEx tool could not be converted: {reason}."])
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx RegEx tool could not be converted: {reason}."], reason="option_unsupported"
+        )
 
     header = [
         f"# Alteryx RegEx (ToolID {tool.tool_id}) translated to Polars; check the result against Alteryx.",
@@ -1458,7 +1525,7 @@ def map_regex(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             f"Tokenize splits every match of the expression in '{column}' across {len(added)} columns "
             f"({', '.join(added)}); '{column}' itself is kept."
         )
-    return _row(tool, "partial", [node_id], "polars_code", messages)
+    return _row(tool, "partial", [node_id], "polars_code", messages, reason="option_unsupported")
 
 
 def _regex_added_columns(config: ET.Element, method: str, column: str) -> list[str]:
@@ -1480,13 +1547,15 @@ def map_sort(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         if element.get("field")
     ]
     if not sort_input:
-        return _placeholder_row(tool, ctx, ["The Alteryx Sort tool has no sort fields configured."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Sort tool has no sort fields configured."], reason="mapper_refused"
+        )
     settings = input_schema.NodeSort(flow_id=ctx.flow_id, node_id=ctx.new_node_id(), sort_input=sort_input)
     node_id = ctx.add_node(tool, "sort", settings, description=_description(tool))
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "sort", [])
+    return _row(tool, "converted", [node_id], "sort", [], reason="converted")
 
 
 def map_summarize(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1508,9 +1577,12 @@ def map_summarize(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             tool,
             ctx,
             ["Unsupported Alteryx Summarize actions: " + ", ".join(unmapped)],
+            reason="option_unsupported",
         )
     if not agg_cols:
-        return _placeholder_row(tool, ctx, ["The Alteryx Summarize tool has no aggregations configured."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Summarize tool has no aggregations configured."], reason="mapper_refused"
+        )
 
     settings = input_schema.NodeGroupBy(
         flow_id=ctx.flow_id,
@@ -1521,7 +1593,7 @@ def map_summarize(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = [agg.new_name for agg in agg_cols]
-    return _row(tool, "converted", [node_id], "group_by", [])
+    return _row(tool, "converted", [node_id], "group_by", [], reason="converted")
 
 
 def map_sample(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1530,14 +1602,21 @@ def map_sample(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     group_fields = config.find("GroupFields")
     if mode.lower() != "first":
         return _placeholder_row(
-            tool, ctx, [f"Alteryx Sample mode '{mode}' has no Flowfile equivalent; only 'First N' is converted."]
+            tool,
+            ctx,
+            [f"Alteryx Sample mode '{mode}' has no Flowfile equivalent; only 'First N' is converted."],
+            reason="option_unsupported",
         )
     if group_fields is not None and len(list(group_fields)) > 0:
-        return _placeholder_row(tool, ctx, ["Grouped Alteryx sampling has no Flowfile equivalent."])
+        return _placeholder_row(
+            tool, ctx, ["Grouped Alteryx sampling has no Flowfile equivalent."], reason="option_unsupported"
+        )
     try:
         size = int(float(_text(config, "N") or "1"))
     except ValueError:
-        return _placeholder_row(tool, ctx, ["The Alteryx Sample record count could not be read."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Sample record count could not be read."], reason="mapper_refused"
+        )
 
     settings = input_schema.NodeSample(
         flow_id=ctx.flow_id, node_id=ctx.new_node_id(), sample_method="first", sample_size=size
@@ -1546,7 +1625,7 @@ def map_sample(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "sample", [])
+    return _row(tool, "converted", [node_id], "sample", [], reason="converted")
 
 
 def map_unique(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1566,8 +1645,9 @@ def map_unique(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     node_ids = [node_id]
     messages: list[str] = []
     status: ToolStatus = "converted"
+    reason = "converted"
     if ctx.has_outgoing(tool.tool_id, "Dupes"):
-        status = "partial"
+        status, reason = "partial", "option_unsupported"
         messages.append(
             "The Alteryx duplicates (D) output has no Flowfile equivalent; "
             "a passthrough placeholder now feeds that branch with the unfiltered input."
@@ -1583,7 +1663,7 @@ def map_unique(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         ctx.register_output(tool.tool_id, "Dupes", dupes_id)
         ctx.register_all_inputs(tool.tool_id, dupes_id)
         node_ids.append(dupes_id)
-    return _row(tool, status, node_ids, "unique", messages)
+    return _row(tool, status, node_ids, "unique", messages, reason=reason)
 
 
 def map_text_to_columns(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1599,12 +1679,14 @@ def map_text_to_columns(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             tool,
             ctx,
             [f"Alteryx Text To Columns split type '{split_type}' has no Flowfile equivalent (only split to rows)."],
+            reason="option_unsupported",
         )
     if not column or len(delimiter) != 1:
         return _placeholder_row(
             tool,
             ctx,
             [f"Only a single-character Alteryx delimiter can be converted; this tool uses '{delimiter}'."],
+            reason="option_unsupported",
         )
 
     settings = input_schema.NodeTextToRows(
@@ -1621,7 +1703,7 @@ def map_text_to_columns(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "text_to_rows", [])
+    return _row(tool, "converted", [node_id], "text_to_rows", [], reason="converted")
 
 
 def map_union(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1638,12 +1720,13 @@ def map_union(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     messages: list[str] = []
     status: ToolStatus = "converted"
+    reason = "converted"
     if mode.lower() != "byname":
-        status = "partial"
+        status, reason = "partial", "option_unsupported"
         messages.append(
             f"Alteryx union mode '{mode}' was converted to Flowfile's name-based union; verify the column order."
         )
-    return _row(tool, status, [node_id], "union", messages)
+    return _row(tool, status, [node_id], "union", messages, reason=reason)
 
 
 def _join_settings(ctx: EmitContext, mapping: list[tuple[str, str]], how: str, swap: bool) -> input_schema.NodeJoin:
@@ -1677,9 +1760,13 @@ def map_join(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ]
     by_record_position = config.find("JoinByRecordPos")
     if by_record_position is not None and _is_true(by_record_position.get("value")):
-        return _placeholder_row(tool, ctx, ["Alteryx 'join by record position' has no Flowfile equivalent."])
+        return _placeholder_row(
+            tool, ctx, ["Alteryx 'join by record position' has no Flowfile equivalent."], reason="option_unsupported"
+        )
     if not left_fields or len(left_fields) != len(right_fields):
-        return _placeholder_row(tool, ctx, ["The Alteryx join keys could not be read as matching pairs."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx join keys could not be read as matching pairs."], reason="mapper_refused"
+        )
 
     mapping = list(zip(left_fields, right_fields, strict=True))
     wants_join = ctx.has_outgoing(tool.tool_id, "Join")
@@ -1718,15 +1805,16 @@ def map_join(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     ctx.tool_columns[tool.tool_id] = None
     status: ToolStatus = "converted"
+    reason = "converted"
     if config.find("SelectConfiguration") is not None:
-        status = "partial"
+        status, reason = "partial", "option_unsupported"
         messages.append(
             "The Alteryx join's field selection and renames were not converted; "
             "Flowfile keeps every column from both inputs."
         )
     elif messages:
-        status = "partial"
-    return _row(tool, status, node_ids, "join", messages)
+        status, reason = "partial", "option_unsupported"
+    return _row(tool, status, node_ids, "join", messages, reason=reason)
 
 
 def _file_element_path(config: ET.Element) -> tuple[str, str]:
@@ -1774,7 +1862,7 @@ def _map_yxdb_input(tool: AlteryxTool, ctx: EmitContext, path: str, directory: s
         f"'{parquet_name}' beside it instead.",
         f'Create that file once on the machine holding the data: {YXDB_CONVERT_COMMAND} "{safe_source}"',
     ]
-    return _row(tool, "partial", [node_id], "read", messages)
+    return _row(tool, "partial", [node_id], "read", messages, reason="file_format")
 
 
 def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1787,7 +1875,10 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     path, sheet = _file_element_path(config)
     if not path or _carries_credentials(path):
         return _placeholder_row(
-            tool, ctx, ["This Alteryx Input Data tool reads from a database or connection, not a file."]
+            tool,
+            ctx,
+            ["This Alteryx Input Data tool reads from a database or connection, not a file."],
+            reason="connection_string",
         )
     directory, filename = _split_path(path)
     if _extension(filename) == YXDB_EXTENSION:
@@ -1798,6 +1889,7 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             tool,
             ctx,
             [f"This Alteryx Input Data tool reads {_safe_extension(filename)}, which Flowfile does not support."],
+            reason="file_format",
         )
 
     received = input_schema.ReceivedTable.create_from_path(path, file_type=file_type)
@@ -1839,7 +1931,7 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         )
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = tool.output_fields or None
-    return _row(tool, "converted", node_ids, "read", messages)
+    return _row(tool, "converted", node_ids, "read", messages, reason="converted")
 
 
 def _emit_positional_header_rename(tool: AlteryxTool, ctx: EmitContext, names: list[str]) -> int:
@@ -1874,28 +1966,37 @@ def _emit_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     original_path, sheet = _file_element_path(config)
     if not original_path or _carries_credentials(original_path):
         return _placeholder_row(
-            tool, ctx, ["This Alteryx Output Data tool writes to a database or connection, not a file."]
+            tool,
+            ctx,
+            ["This Alteryx Output Data tool writes to a database or connection, not a file."],
+            reason="connection_string",
         )
     if _is_true(_attribute(config, "MultiFile", "value")):
         split_field = _text(config, "MultiFileField")
         target = f"one file per value of '{split_field}'" if split_field else "one file per group"
         return _placeholder_row(
-            tool, ctx, [f"The Alteryx Output Data tool writes {target}; a Flowfile output node writes a single file."]
+            tool,
+            ctx,
+            [f"The Alteryx Output Data tool writes {target}; a Flowfile output node writes a single file."],
+            reason="option_unsupported",
         )
 
     path, environment_variable = _strip_environment_prefix(original_path)
     directory, filename = _split_path(path)
     messages: list[str] = []
     status: ToolStatus = "converted"
+    reason = "converted"
     if _extension(filename) == YXDB_EXTENSION:
         filename = f"{filename[: -len(YXDB_EXTENSION) - 1]}.parquet"
-        status = "partial"
+        status, reason = "partial", "file_format"
         messages.append(
             f"Alteryx wrote '{_safe_path(original_path)}'. Flowfile does not write .yxdb, so this node writes "
             f"'{filename}' instead; anything downstream in Alteryx has to read the Parquet file."
         )
     if environment_variable:
         status = "partial"
+        # the format change is the bigger cause, so it keeps the slug when both apply
+        reason = "option_unsupported" if reason == "converted" else reason
         messages.append(
             f"The Alteryx path started with the Windows variable '%{environment_variable}%'; "
             "set the target folder on this node before running."
@@ -1906,6 +2007,7 @@ def _emit_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             tool,
             ctx,
             [f"This Alteryx Output Data tool writes {_safe_extension(filename)}, which Flowfile does not support."],
+            reason="file_format",
         )
 
     table_settings = _OUTPUT_TABLE_SETTINGS[file_type]()
@@ -1931,7 +2033,7 @@ def _emit_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, status, [node_id], "output", messages)
+    return _row(tool, status, [node_id], "output", messages, reason=reason)
 
 
 def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1940,7 +2042,7 @@ def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "explore_data", [])
+    return _row(tool, "converted", [node_id], "explore_data", [], reason="viewer")
 
 
 def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1949,12 +2051,17 @@ def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     field_type = _text(config, "FieldType")
     if field_type and _map_alteryx_type(field_type) not in ("Int16", "Int32", "Int64"):
         return _placeholder_row(
-            tool, ctx, [f"Alteryx Record ID type '{field_type}' is not an integer; Flowfile record IDs are integers."]
+            tool,
+            ctx,
+            [f"Alteryx Record ID type '{field_type}' is not an integer; Flowfile record IDs are integers."],
+            reason="option_unsupported",
         )
     try:
         offset = int(_text(config, "StartValue") or "1")
     except ValueError:
-        return _placeholder_row(tool, ctx, ["The Alteryx Record ID start value could not be read."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Record ID start value could not be read."], reason="mapper_refused"
+        )
 
     settings = input_schema.NodeRecordId(
         flow_id=ctx.flow_id,
@@ -1966,7 +2073,7 @@ def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_inputs(tool.tool_id, node_id)
     known = ctx.input_columns(tool.tool_id)
     ctx.tool_columns[tool.tool_id] = [name, *known] if known is not None else None
-    return _row(tool, "converted", [node_id], "record_id", [])
+    return _row(tool, "converted", [node_id], "record_id", [], reason="converted")
 
 
 def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1978,10 +2085,15 @@ def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         if element.get("field") and _is_true(element.get("selected"))
     ]
     if not selected:
-        return _placeholder_row(tool, ctx, ["The Alteryx Transpose tool selects no data fields."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Transpose tool selects no data fields."], reason="mapper_refused"
+        )
     if "*Unknown" in selected:
         return _placeholder_row(
-            tool, ctx, ["The Alteryx Transpose selects '*Unknown' data fields, so the column set is not static."]
+            tool,
+            ctx,
+            ["The Alteryx Transpose selects '*Unknown' data fields, so the column set is not static."],
+            reason="option_unsupported",
         )
 
     settings = input_schema.NodeUnpivot(
@@ -2005,7 +2117,7 @@ def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_inputs(tool.tool_id, unpivot_id)
     ctx.register_all_outputs(tool.tool_id, rename_id)
     ctx.tool_columns[tool.tool_id] = [*key_fields, "Name", "Value"]
-    return _row(tool, "converted", [unpivot_id, rename_id], "unpivot", [])
+    return _row(tool, "converted", [unpivot_id, rename_id], "unpivot", [], reason="converted")
 
 
 CROSS_TAB_SAFE_CHARACTERS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
@@ -2136,12 +2248,18 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     raw_methods = ((element.get("method") or "").strip() for element in config.findall("Methods/Method"))
     methods = [method for method in raw_methods if method]
     if not pivot_column or not value_col:
-        return _placeholder_row(tool, ctx, ["The Alteryx Cross Tab header or data field could not be read."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Cross Tab header or data field could not be read."], reason="mapper_refused"
+        )
     if not methods:
-        return _placeholder_row(tool, ctx, ["The Alteryx Cross Tab tool has no aggregation methods configured."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Cross Tab tool has no aggregation methods configured."], reason="mapper_refused"
+        )
     unmapped = [method for method in methods if _SUMMARIZE_ACTIONS.get(method.lower()) in (None, "groupby")]
     if unmapped:
-        return _placeholder_row(tool, ctx, ["Unsupported Alteryx Cross Tab methods: " + ", ".join(unmapped)])
+        return _placeholder_row(
+            tool, ctx, ["Unsupported Alteryx Cross Tab methods: " + ", ".join(unmapped)], reason="option_unsupported"
+        )
     aggs = [_SUMMARIZE_ACTIONS[method.lower()] for method in methods]
     ctx.tool_columns[tool.tool_id] = None
 
@@ -2163,7 +2281,7 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
                 f"Alteryx truncates the concatenated values at {field_size} characters (FieldSize); "
                 "Flowfile strings are unbounded, so the full values are kept."
             )
-        return _row(tool, "converted", [node_id], "polars_code", messages)
+        return _row(tool, "converted", [node_id], "polars_code", messages, reason="converted")
 
     settings = input_schema.NodePivot(
         flow_id=ctx.flow_id,
@@ -2184,7 +2302,7 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     _link(ctx, pivot_id, rename_id)
     ctx.register_all_inputs(tool.tool_id, pivot_id)
     ctx.register_all_outputs(tool.tool_id, rename_id)
-    return _row(tool, "converted", [pivot_id, rename_id], "pivot", [])
+    return _row(tool, "converted", [pivot_id, rename_id], "pivot", [], reason="converted")
 
 
 def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2205,12 +2323,13 @@ def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     messages: list[str] = []
     status: ToolStatus = "converted"
+    reason = "converted"
     if _config(tool).find("SelectConfiguration") is not None:
-        status = "partial"
+        status, reason = "partial", "option_unsupported"
         messages.append(
             "The Alteryx Append Fields field selection was not converted; Flowfile keeps every column from both inputs."
         )
-    return _row(tool, status, [node_id], "cross_join", messages)
+    return _row(tool, status, [node_id], "cross_join", messages, reason=reason)
 
 
 def map_running_total(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2222,7 +2341,9 @@ def map_running_total(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         )
     )
     if not total_fields:
-        return _placeholder_row(tool, ctx, ["The Alteryx Running Total tool has no fields to total."])
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Running Total tool has no fields to total."], reason="mapper_refused"
+        )
 
     settings = input_schema.NodeWindowFunctions(
         flow_id=ctx.flow_id,
@@ -2241,7 +2362,7 @@ def map_running_total(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     known = ctx.input_columns(tool.tool_id)
     added = [f"RunTot_{name}" for name in total_fields]
     ctx.tool_columns[tool.tool_id] = [*known, *added] if known is not None else None
-    return _row(tool, "converted", [node_id], "window_functions", [])
+    return _row(tool, "converted", [node_id], "window_functions", [], reason="converted")
 
 
 _CLEANSE_CHECKBOXES = {
@@ -2294,26 +2415,40 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     missing = sorted(expected - set(values) - _CLEANSE_OPTIONAL_CHECKBOXES)
     if missing:
         return _placeholder_row(
-            tool, ctx, ["The Data Cleansing configuration is missing expected settings: " + ", ".join(missing) + "."]
+            tool,
+            ctx,
+            ["The Data Cleansing configuration is missing expected settings: " + ", ".join(missing) + "."],
+            reason="mapper_refused",
         )
     unrecognized = sorted(set(values) - expected)
     if unrecognized:
         return _placeholder_row(
-            tool, ctx, ["The Data Cleansing configuration has unrecognized settings: " + ", ".join(unrecognized) + "."]
+            tool,
+            ctx,
+            ["The Data Cleansing configuration has unrecognized settings: " + ", ".join(unrecognized) + "."],
+            reason="option_unsupported",
         )
     fields = _parse_cleanse_fields(values[_CLEANSE_FIELD_LIST])
     if fields is None:
-        return _placeholder_row(tool, ctx, ["The Data Cleansing field list could not be read."])
+        return _placeholder_row(
+            tool, ctx, ["The Data Cleansing field list could not be read."], reason="mapper_refused"
+        )
     if "*Unknown" in fields:
         return _placeholder_row(
-            tool, ctx, ["The Data Cleansing tool cleanses dynamic or unknown fields, which Flowfile cannot express."]
+            tool,
+            ctx,
+            ["The Data Cleansing tool cleanses dynamic or unknown fields, which Flowfile cannot express."],
+            reason="option_unsupported",
         )
     case_mode = "none"
     if _is_true(values[_CLEANSE_CASE_ENABLED]):
         case_mode = _CLEANSE_CASE_MODES.get(values[_CLEANSE_CASE_MODE].lower())
         if case_mode is None:
             return _placeholder_row(
-                tool, ctx, [f"The Data Cleansing case mode '{values[_CLEANSE_CASE_MODE]}' is not recognized."]
+                tool,
+                ctx,
+                [f"The Data Cleansing case mode '{values[_CLEANSE_CASE_MODE]}' is not recognized."],
+                reason="option_unsupported",
             )
 
     settings = input_schema.NodeDataCleansing(
@@ -2331,7 +2466,7 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_inputs(tool.tool_id, node_id)
     known = ctx.input_columns(tool.tool_id)
     ctx.tool_columns[tool.tool_id] = None if settings.cleansing_input.remove_null_columns else known
-    return _row(tool, "converted", [node_id], "data_cleansing", [])
+    return _row(tool, "converted", [node_id], "data_cleansing", [], reason="converted")
 
 
 def map_count_records(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2358,7 +2493,7 @@ def map_count_records(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_all_inputs(tool.tool_id, count_id)
     ctx.register_all_outputs(tool.tool_id, rename_id)
     ctx.tool_columns[tool.tool_id] = ["Count"]
-    return _row(tool, "converted", [count_id, rename_id], "record_count", [])
+    return _row(tool, "converted", [count_id, rename_id], "record_count", [], reason="converted")
 
 
 TOOL_MAPPERS: dict[str, ToolMapper] = {

@@ -77,7 +77,11 @@
           <div class="ax-row-head">
             <span class="ax-tool" :title="row.alteryx_tool">{{ row.alteryx_tool }}</span>
             <span class="ax-tool-id">#{{ row.alteryx_tool_id }}</span>
-            <span class="status-badge ax-chip" :class="statusChip(row.status).className">
+            <span
+              class="status-badge ax-chip"
+              :class="statusChip(row.status).className"
+              :title="row.reason"
+            >
               {{ statusChip(row.status).label }}
             </span>
             <span class="ax-node">{{ entityLabel(row) }}</span>
@@ -145,6 +149,7 @@ import { useFlowStore } from "../../../stores/flow-store";
 import {
   coverageLine,
   entityLabel,
+  headline as reportHeadline,
   needsAttentionCount,
   nodeRequestLink,
   sortReportRows,
@@ -187,13 +192,7 @@ const title = computed(() =>
   report.value ? `Imported "${report.value.workflow_name}"` : "Import Alteryx workflow",
 );
 
-const headline = computed(() => {
-  if (!report.value) return "";
-  const count = attention.value;
-  if (count === 0) return "Every tool converted — the flow is ready to open.";
-  const subject = count === 1 ? "1 tool needs" : `${count} tools need`;
-  return `${subject} manual work — the flow opens with notes on those nodes.`;
-});
+const headline = computed(() => (report.value ? reportHeadline(report.value) : ""));
 
 function pickFile() {
   fileInput.value?.click();

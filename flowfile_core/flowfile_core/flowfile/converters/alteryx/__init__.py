@@ -1,6 +1,6 @@
 """Alteryx converters: `.yxmd` workflows -> Flowfile flows, `.yxdb` data -> Parquet."""
 
-from flowfile_core.flowfile.converters.alteryx.convert import convert_yxmd
+from flowfile_core.flowfile.converters.alteryx.convert import build_report, convert_yxmd, dump_flow_yaml
 from flowfile_core.flowfile.converters.alteryx.report import (
     ConversionReport,
     ConversionResult,
@@ -22,8 +22,10 @@ __all__ = [
     "CoverageSummary",
     "ToolReportRow",
     "YxmdParseError",
+    "build_report",
     "convert_tree",
     "convert_yxdb",
     "convert_yxmd",
+    "dump_flow_yaml",
     "read_yxdb",
 ]

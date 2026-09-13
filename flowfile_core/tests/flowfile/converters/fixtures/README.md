@@ -13,6 +13,7 @@
 | `simple_filter.yxmd` | simple-mode Filter operators, including an unsupported one |
 | `price_paid.yxmd` | a real published Alteryx workflow (UK Price Paid extract) |
 | `extra_tools.yxmd` | Record ID, Running Total, Transpose, Cross Tab, Append Fields, Data Cleansing (macro) |
+| `out_of_scope.yxmd` | the scope registry's three shapes — an official spatial/reporting plugin, a vendor namespace that collapses to `custom_plugin`, a macro that collapses to `user_macro` — plus two no-ops and an in-scope tool with no mapper |
 | `zero_tools.yxmd`, `invalid.xml` | parse failures |
 
 Real workflows to test against come from:

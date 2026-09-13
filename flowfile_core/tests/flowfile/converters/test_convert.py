@@ -8,6 +8,7 @@ import yaml
 from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.flowfile.converters.alteryx import ConversionResult, YxmdParseError, convert_yxmd
+from flowfile_core.flowfile.converters.alteryx.scope import BUCKETS
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -191,7 +192,8 @@ YXDB_INPUT = b"""<?xml version="1.0"?>
       <Properties>
         <Configuration>
           <Passwords />
-          <File OutputFileName="" FileFormat="19" SearchSubDirs="False" RecordLimit="">..\\..\\..\\data\\OneToolData\\CustomerFile1.yxdb</File>
+          <File OutputFileName="" FileFormat="19" SearchSubDirs="False"
+                RecordLimit="">..\\..\\..\\data\\OneToolData\\CustomerFile1.yxdb</File>
           <FormatSpecificOptions />
         </Configuration>
         <MetaInfo connection="Output">
@@ -377,6 +379,11 @@ def containers() -> ConversionResult:
 @pytest.fixture()
 def unsupported() -> ConversionResult:
     return convert("unsupported.yxmd")
+
+
+@pytest.fixture()
+def out_of_scope() -> ConversionResult:
+    return convert("out_of_scope.yxmd")
 
 
 
@@ -761,6 +768,20 @@ def test_placeholders_preserve_the_graph_shape(unsupported: ConversionResult):
                 "skipped": 0,
             },
         ),
+        (
+            "out_of_scope.yxmd",
+            {
+                "total": 8,
+                "annotations": 0,
+                "converted": 1,
+                "partial": 0,
+                "commented": 0,
+                "placeholder": 1,
+                "out_of_scope": 4,
+                "no_op": 2,
+                "skipped": 0,
+            },
+        ),
     ],
 )
 def test_report_counts(fixture: str, expected: dict):
@@ -768,8 +789,8 @@ def test_report_counts(fixture: str, expected: dict):
     assert report.total_tools == expected["total"]
     assert report.total_annotations == expected["annotations"]
     assert len(report.rows) == expected["total"] + expected["annotations"]
-    for status in ("converted", "partial", "commented", "placeholder", "skipped"):
-        assert getattr(report, status) == expected[status], status
+    for status in ("converted", "partial", "commented", "placeholder", "out_of_scope", "no_op", "skipped"):
+        assert getattr(report, status) == expected.get(status, 0), status
 
 
 def test_a_comment_never_counts_as_a_converted_tool(containers: ConversionResult):
@@ -781,6 +802,130 @@ def test_a_comment_never_counts_as_a_converted_tool(containers: ConversionResult
     assert report.coverage.tools == 4
     assert report.coverage.mapped == 4
     assert report.coverage.mapped_percent == 100
+
+
+SCOPE_EXPECTATIONS = {
+    2: ("out_of_scope", "scope:spatial"),
+    3: ("out_of_scope", "scope:reporting"),
+    4: ("out_of_scope", "scope:computer_vision"),
+    5: ("no_op", "no_op"),
+    6: ("no_op", "no_op"),
+    7: ("placeholder", "unmapped_tool"),
+    8: ("out_of_scope", "scope:genai"),
+}
+
+
+@pytest.mark.parametrize(("tool_id", "expected"), sorted(SCOPE_EXPECTATIONS.items()))
+def test_scope_decides_the_status_and_reason(out_of_scope: ConversionResult, tool_id: int, expected: tuple[str, str]):
+    row = next(row for row in out_of_scope.report.rows if row.alteryx_tool_id == tool_id)
+    assert (row.status, row.reason) == expected
+
+
+def test_a_vendor_plugin_and_a_user_macro_are_still_placed_by_their_census_name(out_of_scope: ConversionResult):
+    """`tool_key` collapses both to a fixed key, so only `census_name` can carry scope."""
+    rows = {row.alteryx_tool_id: row for row in out_of_scope.report.rows}
+    assert (rows[4].alteryx_tool_key, rows[4].census_name) == ("custom_plugin", "ImageInput_1_0")
+    assert (rows[8].alteryx_tool_key, rows[8].census_name) == ("user_macro", "Precision_Match.yxmc")
+    assert rows[8].alteryx_tool == "Precision Match\\Precision_Match.yxmc"
+
+
+def test_only_a_tool_alteryx_ships_is_requestable(out_of_scope: ConversionResult):
+    """The dialog gates its "Request node" button on this, so it must not name someone's own macro."""
+    rows = {row.alteryx_tool_id: row for row in out_of_scope.report.rows}
+    assert rows[7].requestable is True
+    assert rows[4].requestable is False
+    assert rows[8].requestable is False
+
+
+def test_an_out_of_scope_node_says_why_instead_of_promising_a_rebuild(out_of_scope: ConversionResult):
+    row = next(row for row in out_of_scope.report.rows if row.alteryx_tool_id == 2)
+    sentence = BUCKETS["spatial"]
+    assert row.messages == [sentence]
+
+    node = dumped_nodes(out_of_scope)[row.flowfile_node_ids[0]]
+    assert node["description"] == sentence
+    assert not node["description"].startswith("⚠")
+    code = node["setting_input"]["polars_code_input"]["polars_code"]
+    assert code.startswith(f"# Alteryx tool 'Buffer' (ToolID 2): {sentence}")
+    assert "could not be converted automatically" not in code
+    assert "rebuild the logic here" not in code
+
+
+def test_a_no_op_node_says_it_does_nothing(out_of_scope: ConversionResult):
+    row = next(row for row in out_of_scope.report.rows if row.alteryx_tool_id == 5)
+    assert row.messages == [BUCKETS["no_op"]]
+    node = dumped_nodes(out_of_scope)[row.flowfile_node_ids[0]]
+    assert node["description"] == BUCKETS["no_op"]
+    assert node["setting_input"]["polars_code_input"]["polars_code"].endswith("output_df = input_df")
+
+
+def test_an_out_of_scope_tool_still_passes_its_data_through(out_of_scope: ConversionResult):
+    nodes = dumped_nodes(out_of_scope)
+    assert [nodes[node_id]["outputs"] for node_id in sorted(nodes)] == [[2], [3], [4], [5], [6], [7], [8], []]
+    assert [nodes[node_id]["input_ids"] for node_id in sorted(nodes)] == [[], [1], [2], [3], [4], [5], [6], [7]]
+
+
+def test_out_of_scope_tools_leave_the_in_scope_denominator(out_of_scope: ConversionResult):
+    coverage = out_of_scope.report.coverage
+    # 8 tools, 6 of them settled non-goals: only TextInput and DateTime are Flowfile's to convert.
+    assert (coverage.tools, coverage.in_scope, coverage.mapped) == (8, 2, 1)
+    assert (coverage.mapped_percent, coverage.in_scope_percent) == (12, 50)
+    assert "1 of 8 Alteryx tools reached a Flowfile node (12% of all tools)" in coverage.definition
+    assert "of the 2 tools Flowfile aims to convert, 50%" in coverage.definition
+    assert "1 of the mapped tools need no manual work" in coverage.definition
+
+
+def test_the_definition_sentence_reads_as_english_on_a_one_tool_canvas():
+    from flowfile_core.flowfile.converters.alteryx.report import ToolReportRow, build_coverage
+
+    row = ToolReportRow(alteryx_tool_id=1, alteryx_tool="Filter", status="converted", reason="converted")
+    definition = build_coverage([row]).definition
+    assert "1 of 1 Alteryx tool reached a Flowfile node" in definition
+    assert "of the 1 tool Flowfile aims to convert, 100%" in definition
+
+
+FAILURE_REASONS = frozenset(
+    {
+        "translator_refused",
+        "option_unsupported",
+        "connection_string",
+        "dropped_connection",
+        "file_format",
+        "row_order_unknown",
+        "unmapped_tool",
+        "mapper_refused",
+        "no_op",
+        *(f"scope:{bucket}" for bucket in BUCKETS if bucket != "no_op"),
+    }
+)
+CONVERTIBLE_FIXTURES = [
+    "all_supported.yxmd",
+    "containers.yxmd",
+    "dynamic_rename.yxmd",
+    "extra_tools.yxmd",
+    "formulas.yxmd",
+    "multi_field_formula.yxmd",
+    "multi_field_formula_runs.yxmd",
+    "out_of_scope.yxmd",
+    "price_paid.yxmd",
+    "regex_and_multifield.yxmd",
+    "simple_filter.yxmd",
+    "unsupported.yxmd",
+    "zero_tools.yxmd",
+]
+
+
+@pytest.mark.parametrize("fixture", CONVERTIBLE_FIXTURES)
+def test_every_row_carries_a_reason_that_matches_its_status(fixture: str):
+    """A reason is only worth having if it cannot contradict the status beside it."""
+    for row in convert(fixture).report.rows:
+        assert row.reason, row.alteryx_tool
+        if row.entity == "annotation":
+            assert row.reason == "annotation", row.alteryx_tool
+        elif row.status == "converted":
+            assert row.reason in ("converted", "viewer"), (row.alteryx_tool, row.reason)
+        else:
+            assert row.reason in FAILURE_REASONS, (row.alteryx_tool, row.status, row.reason)
 
 
 def test_coverage_reports_both_percentages_and_its_own_definition():
@@ -2195,7 +2340,10 @@ def test_a_multi_file_output_is_refused_instead_of_written_as_one_file():
     row, settings = output_row_and_settings(
         db_file_output(
             '<File FileFormat="19" MaxRecords="">%temp%OutputToolExample_RegionGrouped_.yxdb</File>',
-            extra='<MultiFile value="True" /><MultiFileType>Suffix</MultiFileType><MultiFileField>Region</MultiFileField>',
+            extra=(
+                '<MultiFile value="True" /><MultiFileType>Suffix</MultiFileType>'
+                "<MultiFileField>Region</MultiFileField>"
+            ),
         )
     )
     assert row.status == "placeholder"

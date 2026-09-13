@@ -2,7 +2,14 @@ import axios from "../services/axios.config";
 
 const API_BASE = "/converters";
 
-export type AlteryxToolStatus = "converted" | "partial" | "commented" | "placeholder" | "skipped";
+export type AlteryxToolStatus =
+  | "converted"
+  | "partial"
+  | "commented"
+  | "placeholder"
+  | "out_of_scope"
+  | "no_op"
+  | "skipped";
 
 // A canvas comment is an annotation, never a tool — it must not reach the coverage numbers.
 export type AlteryxToolEntity = "tool" | "annotation";
@@ -10,20 +17,27 @@ export type AlteryxToolEntity = "tool" | "annotation";
 export interface AlteryxToolRow {
   alteryx_tool_id: string | number;
   alteryx_tool: string;
+  // The macro filename / tool name the scope registry and the coverage table group on.
+  census_name?: string;
   entity: AlteryxToolEntity;
   alteryx_tool_key?: string;
   flowfile_node_ids: number[];
   flowfile_node_type: string | null;
   status: AlteryxToolStatus;
+  reason?: string;
+  // Set by core from the tool's namespace: only something Alteryx ships can be requested.
+  requestable?: boolean;
   messages: string[];
 }
 
 export interface AlteryxCoverageSummary {
   tools: number;
+  in_scope: number;
   mapped: number;
   converted: number;
   mapped_percent: number;
   converted_percent: number;
+  in_scope_percent: number;
   definition: string;
 }
 
@@ -35,6 +49,8 @@ export interface AlteryxConversionReport {
   partial: number;
   commented: number;
   placeholder: number;
+  out_of_scope: number;
+  no_op: number;
   skipped: number;
   coverage: AlteryxCoverageSummary;
   rows: AlteryxToolRow[];

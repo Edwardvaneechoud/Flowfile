@@ -8,6 +8,9 @@ report describing what a user still has to finish by hand.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TextIO
+
+import yaml
 
 from flowfile_core.flowfile.converters.alteryx.mappers import (
     DEFAULT_INPUT_ANCHOR,
@@ -24,6 +27,7 @@ from flowfile_core.flowfile.converters.alteryx.report import (
     ToolReportRow,
     build_coverage,
 )
+from flowfile_core.flowfile.converters.alteryx.scope import census_tool_name
 from flowfile_core.flowfile.converters.alteryx.tool_identity import tool_key
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxWorkflow, parse_yxmd
 from flowfile_core.flowfile.utils import create_unique_id
@@ -38,7 +42,7 @@ SYNTHETIC_Y_STEP = 200
 COMMENT_MIN_WIDTH = 120
 COMMENT_MIN_HEIGHT = 40
 
-__all__ = ["convert_yxmd"]
+__all__ = ["build_report", "convert_yxmd", "dump_flow_yaml"]
 
 
 def _synthetic_positions(workflow: AlteryxWorkflow) -> dict[int, tuple[int, int]]:
@@ -112,7 +116,7 @@ def _report_dropped_connection(row: ToolReportRow | None, message: str) -> None:
     if message not in row.messages:
         row.messages.append(message)
     if row.status == "converted":
-        row.status = "partial"
+        row.status, row.reason = "partial", "dropped_connection"
 
 
 def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolReportRow]) -> None:
@@ -167,9 +171,11 @@ def _emit_comments(
                 ToolReportRow(
                     alteryx_tool_id=box.tool_id,
                     alteryx_tool=tool_label(box),
+                    census_name=census_tool_name(box),
                     entity="annotation",
                     alteryx_tool_key=tool_key(box.plugin),
                     status="skipped",
+                    reason="annotation",
                     messages=["An empty Alteryx comment (a decorative box) was not imported."],
                 )
             )
@@ -189,18 +195,24 @@ def _emit_comments(
             ToolReportRow(
                 alteryx_tool_id=box.tool_id,
                 alteryx_tool=tool_label(box),
+                census_name=census_tool_name(box),
                 entity="annotation",
                 alteryx_tool_key=tool_key(box.plugin),
                 flowfile_node_type="comment",
                 status="converted",
+                reason="annotation",
                 messages=["Imported as a canvas comment; colour, font and shape are not kept."],
             )
         )
     return comments, rows
 
 
-def _build_report(name: str, rows: list[ToolReportRow]) -> ConversionReport:
-    """Count tools and annotations apart, so a wall of comments cannot flatter the coverage."""
+def build_report(name: str, rows: list[ToolReportRow]) -> ConversionReport:
+    """Count tools and annotations apart, so a wall of comments cannot flatter the coverage.
+
+    Every status must have a counter of the same name on :class:`ConversionReport`, otherwise
+    the ``setattr`` below raises while converting instead of losing the count silently.
+    """
     tool_rows = [row for row in rows if row.entity == "tool"]
     report = ConversionReport(
         workflow_name=name,
@@ -212,6 +224,17 @@ def _build_report(name: str, rows: list[ToolReportRow]) -> ConversionReport:
     for row in tool_rows:
         setattr(report, row.status, getattr(report, row.status) + 1)
     return report
+
+
+def dump_flow_yaml(flow_data: schemas.FlowfileData, handle: TextIO) -> None:
+    """Write a converted flow as the YAML `flow_file_handler.import_flow` reads back."""
+    yaml.dump(
+        flow_data.model_dump(mode="json"),
+        handle,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+    )
 
 
 def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
@@ -250,4 +273,7 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
     )
     # Fail here rather than at open time if a mapper ever emits an unserializable payload.
     schemas.FlowfileData.model_validate(flow_data.model_dump(mode="json"))
-    return ConversionResult(flow_data=flow_data, report=_build_report(flow_name, rows))
+    return ConversionResult(flow_data=flow_data, report=build_report(flow_name, rows))
+
+
+_build_report = build_report
