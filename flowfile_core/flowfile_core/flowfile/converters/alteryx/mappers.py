@@ -209,13 +209,18 @@ class EmitContext:
                 return self.tool_columns.get(connection.origin_tool_id)
         return None
 
-    def source_tool(self, tool_id: int, anchors: tuple[str, ...]) -> AlteryxTool | None:
-        """The tool feeding the first of ``anchors`` that is actually wired."""
+    def source_connection(self, tool_id: int, anchors: tuple[str, ...]) -> AlteryxConnection | None:
+        """The wire into the first of ``anchors`` that is actually connected."""
         for anchor in anchors:
             for connection in self.inbound.get(tool_id, []):
                 if connection.dest_anchor == anchor:
-                    return self.tools.get(connection.origin_tool_id)
+                    return connection
         return None
+
+    def source_tool(self, tool_id: int, anchors: tuple[str, ...]) -> AlteryxTool | None:
+        """The tool feeding the first of ``anchors`` that is actually wired."""
+        connection = self.source_connection(tool_id, anchors)
+        return self.tools.get(connection.origin_tool_id) if connection is not None else None
 
     def suppress_input(self, tool_id: int, anchors: tuple[str, ...]) -> None:
         """Mark anchors this mapper resolved at convert time so wiring skips them silently."""
@@ -1085,13 +1090,16 @@ def _static_rename_to_select(
 def _rename_from_right_input(
     tool: AlteryxTool, ctx: EmitContext, config: ET.Element, targets: list[str], mode: str
 ) -> ToolReportRow:
-    source = ctx.source_tool(tool.tool_id, DYNAMIC_RENAME_SOURCE_ANCHORS)
-    if source is None:
+    connection = ctx.source_connection(tool.tool_id, DYNAMIC_RENAME_SOURCE_ANCHORS)
+    source = ctx.tools.get(connection.origin_tool_id) if connection is not None else None
+    if connection is None or source is None:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Dynamic Rename field-name input is not connected."], reason="mapper_refused"
         )
     if mode == "rightinputmetadata":
-        new_names = ctx.tool_columns.get(source.tool_id)
+        # The wire may come from one anchor of a multi-output tool (a Join's L or R passes one
+        # input through), so the lookup is per anchor, the same one the join consumers use.
+        new_names = _anchor_columns(ctx, tool.tool_id, connection.dest_anchor)
         if not new_names:
             return _placeholder_row(
                 tool,
@@ -1344,14 +1352,16 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
         return _placeholder_row(
             tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."], reason="mapper_refused"
         )
+    selection, messages = _multi_field_selection(names, selected, unknown_selected, _text(config, "FieldType").lower())
     # [_CurrentFieldName_] binds to a double-quoted literal, which a name holding a double quote
     # has no form for; without this the node imports cleanly and raises when the flow runs.
     names_unchecked = False
     if _CURRENT_FIELD_NAME_RE.search(expression):
-        # With *Unknown selected the node also touches columns the tool's own field list never
-        # named, so the upstream schema has to be checked too — or the gap has to be admitted.
+        # In data-type or all-columns mode the node also touches columns the tool's own field list
+        # never named, so the upstream schema has to be checked too — or the gap has to be
+        # admitted. A deselected field puts the node in list mode, where only the list matters.
         in_scope = list(selected)
-        if unknown_selected:
+        if selection["selection_mode"] != "list":
             upstream = ctx.input_columns(tool.tool_id)
             if upstream is None:
                 names_unchecked = True
@@ -1380,7 +1390,6 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
             reason="mapper_refused",
         )
 
-    selection, messages = _multi_field_selection(names, selected, unknown_selected, _text(config, "FieldType").lower())
     output_data_type, type_messages = _multi_field_output_type(config)
 
     outcome = try_translate(expression, allowed_specials=frozenset(transform_schema.MULTI_FIELD_PLACEHOLDERS))
@@ -1577,9 +1586,14 @@ def map_regex(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         return _placeholder_row(
             tool, ctx, [f"The Alteryx RegEx tool could not be converted: {reason}."], reason="option_unsupported"
         )
-    refusal = _backslash_refusal(
-        {"the field": column, "the pattern": pattern, "an output column": _regex_added_columns(config, method, column)}
-    )
+    screened: dict[str, str | list[str]] = {
+        "the field": column,
+        "the pattern": pattern,
+        "an output column": _regex_added_columns(config, method, column),
+    }
+    if method == "replace":
+        screened["the replacement"] = _attribute(config, "Replace", "expression")
+    refusal = _backslash_refusal(screened)
     if refusal is not None:
         return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
 
@@ -1620,9 +1634,9 @@ def _regex_added_columns(config: ET.Element, method: str, column: str) -> list[s
     return []
 
 
-def map_sort(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
-    config = _config(tool)
-    sort_input = [
+def _sort_fields(config: ET.Element) -> list[transform_schema.SortByInput]:
+    """The Sort tool's keys; an empty list is the one thing that stops it becoming a sort node."""
+    return [
         transform_schema.SortByInput(
             column=element.get("field") or "",
             how="desc" if (element.get("order") or "").lower().startswith("desc") else "asc",
@@ -1630,6 +1644,10 @@ def map_sort(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         for element in config.findall("SortInfo/Field")
         if element.get("field")
     ]
+
+
+def map_sort(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    sort_input = _sort_fields(_config(tool))
     if not sort_input:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Sort tool has no sort fields configured."], reason="mapper_refused"
@@ -2252,7 +2270,9 @@ def _excel_sheet(table: str) -> tuple[str, str | None]:
     if not name:
         return "", None
     if not name.endswith(EXCEL_SHEET_SUFFIX):
-        return "", f"'{name}' is an Excel named range, and Flowfile's Excel reader only addresses whole sheets"
+        return "", (
+            f"'{name}' is an Excel named range, and Flowfile's Excel reader or writer only addresses whole sheets"
+        )
     return name[: -len(EXCEL_SHEET_SUFFIX)], None
 
 
@@ -2770,6 +2790,9 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     if "concat" in aggs:
         separator = _unescape_separator(_raw_text(config, "Methods/Separator", ","))
+        refusal = _backslash_refusal({"the Concat separator": separator})
+        if refusal is not None:
+            return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
         code = _cross_tab_pivot_code(tool, index_columns, pivot_column, value_col, methods, aggs, separator)
         settings = input_schema.NodePolarsCode(
             flow_id=ctx.flow_id,
@@ -2812,6 +2835,7 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
 # Alteryx errors or warns when one Target record gains more than this many appended records.
 _APPEND_CARTESIAN_GUARD = 16
+_APPEND_CARTESIAN_MODES = frozenset({"allow", "warn", "error"})
 
 
 def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2860,6 +2884,13 @@ def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         messages.append(
             f"Alteryx stops with an error when a Target record gains more than {_APPEND_CARTESIAN_GUARD} "
             "appended records; Flowfile's cross join has no such guard and produces the full result instead."
+        )
+    elif cartesian_mode.lower() not in _APPEND_CARTESIAN_MODES:
+        status, reason = "partial", "option_unsupported"
+        messages.append(
+            f"This Alteryx Append Fields tool sets CartesianMode to '{_one_line(cartesian_mode)}', which is not "
+            "one of the settings Flowfile knows (Allow, Warn, Error); if it is an erroring one, Flowfile's cross "
+            "join produces the full result where Alteryx would stop."
         )
     return _row(tool, status, [node_id], "cross_join", messages, reason=reason)
 
@@ -2915,16 +2946,19 @@ _ORDER_STATING_TOOLS = frozenset({"Sort"})
 
 
 def _emitted_sort(ctx: EmitContext, source: AlteryxTool) -> bool:
-    """True only when this tool really became a Flowfile sort node.
+    """True only when this tool becomes a Flowfile sort node.
 
     A Sort the mapper refused is a passthrough placeholder, which states no order at all, so the
-    tool's name on its own is not enough. A Sort mapped later in the document has not registered
-    its output yet and is treated as unknown, which fails closed.
+    tool's name on its own is not enough. Mapping runs in document order, so a Sort that has
+    registered an output is judged by the node it emitted; one not yet mapped is judged by the
+    only thing that can make ``map_sort`` refuse it, an empty key list.
     """
     if source.tool_name not in _ORDER_STATING_TOOLS:
         return False
     origin = ctx.output_map.get((source.tool_id, DEFAULT_OUTPUT_ANCHOR))
-    return origin is not None and any(node.id == origin[0] and node.type == "sort" for node in ctx.nodes)
+    if origin is not None:
+        return any(node.id == origin[0] and node.type == "sort" for node in ctx.nodes)
+    return bool(_sort_fields(_config(source)))
 
 
 def _feeds_in_stated_order(ctx: EmitContext, tool_id: int) -> bool:

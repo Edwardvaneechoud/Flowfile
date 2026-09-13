@@ -43,7 +43,7 @@ SYNTHETIC_Y_STEP = 200
 COMMENT_MIN_WIDTH = 120
 COMMENT_MIN_HEIGHT = 40
 
-__all__ = ["build_report", "convert_yxmd", "dump_flow_yaml"]
+__all__ = ["build_report", "convert_yxmd", "dump_flow_yaml", "emit_tools"]
 
 
 def _synthetic_positions(workflow: AlteryxWorkflow) -> dict[int, tuple[int, int]]:
@@ -269,6 +269,18 @@ def dump_flow_yaml(flow_data: schemas.FlowfileData, handle: TextIO) -> None:
     )
 
 
+def emit_tools(workflow: AlteryxWorkflow) -> tuple[EmitContext, dict[int, ToolReportRow]]:
+    """Run every tool mapper in document order and hand back the shared state they wrote.
+
+    The context is what a downstream mapper is told about its inputs (``tool_columns``,
+    ``anchor_columns``), which the finished flow no longer shows, so tests pin it here.
+    """
+    workflow.connections = _order_connections(workflow.connections)
+    ctx = _build_context(workflow)
+    rows_by_tool = {tool.tool_id: get_mapper(tool)(tool, ctx) for tool in workflow.tools}
+    return ctx, rows_by_tool
+
+
 def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
     """Convert Alteryx workflow bytes into a Flowfile flow plus a conversion report.
 
@@ -276,16 +288,9 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
         YxmdParseError: when the bytes are not a usable Alteryx workflow.
     """
     workflow = parse_yxmd(data)
-    workflow.connections = _order_connections(workflow.connections)
     flow_name = workflow.name or Path(source_name).stem or "Imported Alteryx workflow"
-    ctx = _build_context(workflow)
-
-    rows: list[ToolReportRow] = []
-    rows_by_tool: dict[int, ToolReportRow] = {}
-    for tool in workflow.tools:
-        row = get_mapper(tool)(tool, ctx)
-        rows.append(row)
-        rows_by_tool[tool.tool_id] = row
+    ctx, rows_by_tool = emit_tools(workflow)
+    rows: list[ToolReportRow] = list(rows_by_tool.values())
     comments, comment_rows = _emit_comments(workflow, ctx)
     rows.extend(comment_rows)
 

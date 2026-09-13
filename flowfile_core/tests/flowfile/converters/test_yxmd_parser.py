@@ -129,9 +129,7 @@ def test_all_supported_has_no_text_boxes(all_supported: AlteryxWorkflow):
 
 
 def test_connections_are_parsed_with_anchors(all_supported: AlteryxWorkflow):
-    wires = {
-        (c.origin_tool_id, c.origin_anchor, c.dest_tool_id, c.dest_anchor) for c in all_supported.connections
-    }
+    wires = {(c.origin_tool_id, c.origin_anchor, c.dest_tool_id, c.dest_anchor) for c in all_supported.connections}
     assert len(all_supported.connections) == 16
     expected = {
         (1, "Output", 2, "Input"),
@@ -177,9 +175,12 @@ MULTI_INPUT_OUT_OF_ORDER = b"""<?xml version="1.0"?>
         <Data><r><c>3</c></r></Data></Configuration></Properties></Node>
   </Nodes>
   <Connections>
-    <Connection name="#3"><Origin ToolID="4" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
-    <Connection name="#1"><Origin ToolID="2" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
-    <Connection name="#2"><Origin ToolID="3" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#3"><Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#2"><Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="1" Connection="Input" /></Connection>
   </Connections>
 </AlteryxDocument>
 """
