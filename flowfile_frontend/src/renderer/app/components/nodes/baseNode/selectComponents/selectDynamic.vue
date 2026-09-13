@@ -169,6 +169,14 @@
                         :value="dataType"
                       />
                     </el-select>
+                    <span
+                      v-if="props.sourceSemanticTypes[column.old_name] === 'geometry'"
+                      class="semantic-marker material-icons"
+                      role="img"
+                      :aria-label="geometryTitle(props.sourceTypes[column.old_name])"
+                      :title="geometryTitle(props.sourceTypes[column.old_name])"
+                      >{{ GEOMETRY_ICON }}</span
+                    >
                     <button
                       v-if="isTypeChanged(column)"
                       type="button"
@@ -242,9 +250,10 @@
 
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
-import { SelectInput } from "../../../../types/node.types";
+import { SelectInput, SemanticType } from "../../../../types/node.types";
 import { useNodeStore } from "../../../../stores/column-store";
 import { NO_AUTOFILL } from "../../../../utils/noAutofill";
+import { GEOMETRY_ICON, geometryTitle } from "../../../../utils/geometry";
 import UnavailableField from "./UnavailableFields.vue";
 import {
   EMPTY_SELECTION,
@@ -281,6 +290,8 @@ const props = withDefaults(
     originalColumnHeader?: string;
     /** old_name → upstream data type; lets the change marker restore it. */
     sourceTypes?: Record<string, string>;
+    /** old_name → upstream semantic type; marks e.g. geometry beside the castable dtype. */
+    sourceSemanticTypes?: Record<string, SemanticType>;
   }>(),
   {
     selectInputs: () => [],
@@ -293,6 +304,7 @@ const props = withDefaults(
     showTitle: true,
     originalColumnHeader: "Original column name",
     sourceTypes: () => ({}),
+    sourceSemanticTypes: () => ({}),
   },
 );
 

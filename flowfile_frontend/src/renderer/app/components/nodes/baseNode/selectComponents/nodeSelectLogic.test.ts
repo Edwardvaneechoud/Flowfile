@@ -3,6 +3,7 @@ import {
   applySelectPositions,
   createSelectInput,
   restoreSourceType,
+  sourceSemanticTypesFromSchema,
   sourceTypesFromSchema,
 } from "./nodeSelectLogic";
 import type { FileColumn, SelectInput } from "../../../../types/node.types";
@@ -124,6 +125,18 @@ describe("sourceTypesFromSchema", () => {
 
   it("is empty when the upstream schema is unknown", () => {
     expect(sourceTypesFromSchema(undefined)).toEqual({});
+  });
+});
+
+describe("sourceSemanticTypesFromSchema", () => {
+  it("keeps only the columns core marked, keyed by upstream name", () => {
+    const schema = [
+      { ...column("g", "Extension('geoarrow.wkb', Binary, '{}')"), semantic_type: "geometry" },
+      { ...column("s", "String"), semantic_type: null },
+      column("n", "Int64"),
+    ] as FileColumn[];
+    expect(sourceSemanticTypesFromSchema(schema)).toEqual({ g: "geometry" });
+    expect(sourceSemanticTypesFromSchema(undefined)).toEqual({});
   });
 });
 

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, SemanticType
 
 
 class NodeResult(BaseModel):
@@ -67,11 +67,17 @@ class FileColumn(BaseModel):
     The statistics fields are None until they are actually computed — either
     never (plain schema previews) or exactly, on demand, via the column-stats
     endpoint writing into the node's ``FlowfileColumn``.
+
+    ``semantic_type`` says what the values mean beyond their storage dtype
+    (``data_type`` stays the castable truth). It is derived from a declared
+    dtype only — today a GeoArrow extension — never from sampled values, so
+    the frontend can label every surface from this one field.
     """
 
     name: str
     data_type: str
     data_type_group: ReadableDataTypeGroup = "Other"
+    semantic_type: SemanticType | None = None
     is_unique: bool = False
     max_value: str | None = None
     min_value: str | None = None

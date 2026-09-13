@@ -1,6 +1,18 @@
 import { formatCellValue } from "./cellFormat";
+import type { SemanticType } from "../types/node.types";
 
-// WKT is plain text under a user-chosen name: detect by value, stricter than a real parser.
+// A column is geometry only when core declares it (FileColumn.semantic_type, derived from a
+// GeoArrow dtype). The WKT parser below is display-only: it summarises a cell, never labels a column.
+
+export const isGeometryColumn = (column: { semantic_type?: SemanticType | null }): boolean =>
+  column.semantic_type === "geometry";
+
+/** The one phrase every geometry surface shows: header pill, stats panel, select node, formula list. */
+export const geometryTitle = (dataType?: string): string =>
+  dataType ? `Geometry (GeoArrow), stored as ${dataType}` : "Geometry (GeoArrow)";
+
+/** Material icon for a column-level geometry mark. */
+export const GEOMETRY_ICON = "pentagon";
 
 const KEYWORDS = [
   "POINT",
@@ -115,50 +127,20 @@ export const parseWkt = (value: unknown): GeometryInfo | null => {
 
 export const isWktValue = (value: unknown): boolean => parseWkt(value) !== null;
 
-/** Values that carry no evidence either way and must not decide a column. */
-const isBlank = (value: unknown): boolean =>
-  value === null ||
-  value === undefined ||
-  (typeof value === "string" && (value.trim() === "" || /^(n\/a|null|-)$/i.test(value.trim())));
-
-/** Every non-blank value must parse, so a notes column with one WKT-looking row stays out. */
-export const isGeometryColumn = (values: unknown[]): boolean => {
-  let hits = 0;
-  for (const value of values) {
-    if (isBlank(value)) continue;
-    if (!isWktValue(value)) return false;
-    hits++;
+/** Material icon for one cell by shape; WKB and native encodings get the generic mark. */
+export const geometryIcon = (value: unknown): string => {
+  switch (parseWkt(value)?.type) {
+    case "Point":
+    case "MultiPoint":
+      return "place";
+    case "LineString":
+    case "MultiLineString":
+      return "polyline";
+    case "GeometryCollection":
+      return "layers";
+    default:
+      return GEOMETRY_ICON;
   }
-  return hits > 0;
-};
-
-/** True for a dtype polars surfaces from a GeoArrow extension field. */
-export const isGeoArrowDataType = (dataType: string | undefined): boolean =>
-  typeof dataType === "string" && /geoarrow/i.test(dataType);
-
-interface GeometryColumnCandidate {
-  name: string;
-  data_type?: string;
-  data_type_group?: string;
-}
-
-/** Sniff only string columns; a GeoArrow dtype is declared, so trust it without sniffing. */
-export const detectGeometryColumns = (
-  schema: GeometryColumnCandidate[] | null | undefined,
-  rows: Record<string, unknown>[] | null | undefined,
-): Set<string> => {
-  const detected = new Set<string>();
-  if (!schema?.length) return detected;
-  for (const column of schema) {
-    if (isGeoArrowDataType(column.data_type)) {
-      detected.add(column.name);
-      continue;
-    }
-    if (column.data_type_group !== "String") continue;
-    if (!rows?.length) continue;
-    if (isGeometryColumn(rows.map((row) => row[column.name]))) detected.add(column.name);
-  }
-  return detected;
 };
 
 const formatOrdinate = (n: number): string => {
@@ -167,23 +149,19 @@ const formatOrdinate = (n: number): string => {
   return String(Math.round(n * 1e4) / 1e4);
 };
 
-/** Compact cell summary — raw WKT is unreadable at 200px; full text stays in the tooltip. */
+/** Compact WKT summary — raw text is unreadable at 200px; null for anything that is not WKT. */
 export const describeGeometry = (value: unknown): string | null => {
   const info = parseWkt(value);
   if (!info) return null;
   const tag = info.dimension ? ` ${info.dimension}` : "";
-  if (info.points === 0) return `◆ ${info.type}${tag} (empty)`;
+  if (info.points === 0) return `${info.type}${tag} (empty)`;
   if (info.coordinate) {
     const [x, y] = info.coordinate;
-    return `◆ ${info.type}${tag} (${formatOrdinate(x)}, ${formatOrdinate(y)})`;
+    return `${info.type}${tag} (${formatOrdinate(x)}, ${formatOrdinate(y)})`;
   }
-  return `◆ ${info.type}${tag} · ${info.points.toLocaleString()} pts`;
+  return `${info.type}${tag} · ${info.points.toLocaleString()} pts`;
 };
 
-/** AG Grid valueFormatter; display-only, so Cmd+C and the cell editor still see raw WKT. */
+/** AG Grid valueFormatter; display-only, so Cmd+C and the cell editor still see the raw value. */
 export const geometryCellFormatter = (params: { value: unknown }): string =>
   describeGeometry(params.value) ?? formatCellValue(params.value);
-
-/** AG Grid `tooltipValueGetter` exposing the untruncated WKT behind the summary. */
-export const geometryTooltipGetter = (params: { value: unknown }): string =>
-  formatCellValue(params.value);

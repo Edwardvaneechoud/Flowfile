@@ -275,6 +275,14 @@
   opacity: 0.6;
 }
 
+/* Semantic mark (geometry) beside the castable dtype; same accent family as Complex badges. */
+.column-list .semantic-marker {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--color-accent-dark);
+  cursor: help;
+}
+
 /* ===== Drop indicator =====
    Inset shadow, not a border: a border shifts the row and the target flickers. */
 .column-list tbody tr.is-drop-before > td,
