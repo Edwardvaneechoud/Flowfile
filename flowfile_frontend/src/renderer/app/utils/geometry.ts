@@ -1,12 +1,6 @@
 import { formatCellValue } from "./cellFormat";
 
-// Geometry reaches the preview as ordinary WKT text in a plain string column, so
-// neither the dtype nor the column name identifies it — the geospatial nodes emit
-// "geometry", "zone", "centre" and "<name>_right", and every one of those names is
-// a user-editable setting. Detection is therefore value-shaped, and deliberately
-// stricter than a real WKT parser: parsers accept trailing input (DuckDB turns
-// "POINT (4.9 52.3) is Amsterdam" into a valid point), which is exactly the
-// free-text false positive a detector has to reject.
+// WKT is plain text under a user-chosen name: detect by value, stricter than a real parser.
 
 const KEYWORDS = [
   "POINT",
@@ -18,24 +12,20 @@ const KEYWORDS = [
   "GEOMETRYCOLLECTION",
 ] as const;
 
-// Optional EWKT SRID prefix, the keyword, an optional Z/M/ZM dimension tag, then
-// either EMPTY or an opening paren. Producers emit both "POINT (" and "POINT(".
+// Optional SRID prefix, keyword, optional Z/M/ZM tag, then EMPTY or "(" (spacing varies).
 const HEAD = new RegExp(
   `^\\s*(?:SRID=\\d{1,7}\\s*;\\s*)?(${KEYWORDS.join("|")})\\s*(ZM|Z|M)?\\s*(?:(EMPTY)\\s*$|\\()`,
   "i",
 );
 
-// A WKT body may only contain coordinates, separators and nesting. Anything else
-// (a letter, a colon) means it is prose that merely opens like geometry.
+// Anything outside this alphabet is prose that merely opens like geometry.
 const BODY_ALPHABET = /^[-+0-9.eE\s,()]*$/;
 
-// Accepts bare integers, ".5", "4.0", both exponent spellings, and the inf/nan
-// that a bad CRS transform can produce.
+// Bare ints, ".5", both exponent spellings, and the inf/nan a bad CRS transform emits.
 const NUMBER = "[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?|[-+]?(?:inf|nan)";
 const COORD_PAIR = new RegExp(`(?:${NUMBER})\\s+(?:${NUMBER})`, "i");
 
-// A single cell is bounded work, but a pathological value should not be able to
-// stall the grid; geometry beyond this is summarised without a vertex count.
+// Cap pathological values so one cell cannot stall the grid.
 const MAX_LEN = 1 << 20;
 
 export interface GeometryInfo {
@@ -82,16 +72,11 @@ const bodyIsBalanced = (body: string): boolean => {
 const countPoints = (body: string): number =>
   body.split(",").filter((chunk) => /\d/.test(chunk)).length;
 
-// A failed CRS transform emits "POINT (inf inf)". Fold those tokens to a digit so
-// the body alphabet can stay strict rather than admitting letters.
+// A failed CRS transform emits "POINT (inf inf)"; fold to a digit to keep the alphabet strict.
 const normalizeBody = (body: string): string => body.replace(/[-+]?\b(?:inf|nan)\b/gi, "0");
 
-// A GEOMETRYCOLLECTION body legitimately contains child type keywords. Strip only
-// those — anything else left in the body is still prose and still rejected.
-const CHILD_KEYWORD = new RegExp(
-  `\\b(?:${KEYWORDS.join("|")})\\s*(?:ZM|Z|M)?\\s*(?:EMPTY)?`,
-  "gi",
-);
+// A GEOMETRYCOLLECTION body holds child keywords; strip only those, prose still rejected.
+const CHILD_KEYWORD = new RegExp(`\\b(?:${KEYWORDS.join("|")})\\s*(?:ZM|Z|M)?\\s*(?:EMPTY)?`, "gi");
 
 const toNumber = (token: string): number => {
   const lowered = token.toLowerCase();
@@ -136,12 +121,7 @@ const isBlank = (value: unknown): boolean =>
   value === undefined ||
   (typeof value === "string" && (value.trim() === "" || /^(n\/a|null|-)$/i.test(value.trim())));
 
-/**
- * A column is geometry when every value that carries evidence parses as WKT, and
- * at least one does. Requiring *all* of them is what keeps a notes column with a
- * single WKT-looking row out; skipping blanks is what still catches a column whose
- * first rows are null, since the preview sample is always the first 100 rows.
- */
+/** Every non-blank value must parse, so a notes column with one WKT-looking row stays out. */
 export const isGeometryColumn = (values: unknown[]): boolean => {
   let hits = 0;
   for (const value of values) {
@@ -162,13 +142,7 @@ interface GeometryColumnCandidate {
   data_type_group?: string;
 }
 
-/**
- * Names of the columns to treat as geometry, from the schema plus the sample rows.
- *
- * Only string columns are sniffed — the dtype group is a free pre-filter that skips
- * every numeric, date and nested column before any text work. A GeoArrow extension
- * dtype is taken at its word without sniffing, since it is a declared type.
- */
+/** Sniff only string columns; a GeoArrow dtype is declared, so trust it without sniffing. */
 export const detectGeometryColumns = (
   schema: GeometryColumnCandidate[] | null | undefined,
   rows: Record<string, unknown>[] | null | undefined,
@@ -193,11 +167,7 @@ const formatOrdinate = (n: number): string => {
   return String(Math.round(n * 1e4) / 1e4);
 };
 
-/**
- * Compact one-line summary for a geometry cell. Raw WKT is unreadable in a 200px
- * column — a 50-vertex polygon is over a thousand characters — so show the shape
- * and its size, and leave the full text to the tooltip and the clipboard.
- */
+/** Compact cell summary — raw WKT is unreadable at 200px; full text stays in the tooltip. */
 export const describeGeometry = (value: unknown): string | null => {
   const info = parseWkt(value);
   if (!info) return null;
@@ -210,12 +180,7 @@ export const describeGeometry = (value: unknown): string | null => {
   return `◆ ${info.type}${tag} · ${info.points.toLocaleString()} pts`;
 };
 
-/**
- * AG Grid `valueFormatter` for a detected geometry column.
- *
- * Display only: the clipboard path builds its TSV from the raw row values, so
- * Cmd+C still yields the full WKT, and so does the cell editor.
- */
+/** AG Grid valueFormatter; display-only, so Cmd+C and the cell editor still see raw WKT. */
 export const geometryCellFormatter = (params: { value: unknown }): string =>
   describeGeometry(params.value) ?? formatCellValue(params.value);
 

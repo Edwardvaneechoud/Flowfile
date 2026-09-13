@@ -1,5 +1,6 @@
 import time
-from datetime import date, datetime, time as time_of_day, timedelta
+from datetime import date, datetime, timedelta
+from datetime import time as time_of_day
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal
@@ -81,13 +82,8 @@ class FileColumn(BaseModel):
     size: int | None = None
 
 
-# Preview cells arrive straight from polars `.to_dicts()` / arrow `.to_pylist()`,
-# so a Binary or Object column hands pydantic raw Python bytes. Those are not
-# JSON-serializable: non-UTF-8 bytes (any real WKB geometry) raise and take the
-# whole preview response down with them, while UTF-8-decodable bytes are worse
-# still — they silently render as mojibake text. Coerce by value, not by dtype:
-# pl.Object reports data_type_group "Other", so a dtype-keyed guard would miss it.
-_JSON_NATIVE = (bool, int, float, str)
+# Coerce by value, not dtype: pl.Object reports group "Other", so a dtype guard misses it.
+_JSON_NATIVE = bool | int | float | str
 _BINARY_PREVIEW_BYTES = 16
 
 
@@ -107,13 +103,13 @@ def make_preview_cell_json_safe(value: Any) -> Any:
     """
     if value is None or isinstance(value, _JSON_NATIVE):
         return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
+    if isinstance(value, bytes | bytearray | memoryview):
         return _format_binary_cell(bytes(value))
     if isinstance(value, dict):
         return {k: make_preview_cell_json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, list | tuple | set):
         return [make_preview_cell_json_safe(v) for v in value]
-    if isinstance(value, (datetime, date, time_of_day, timedelta, Decimal, UUID, Enum)):
+    if isinstance(value, datetime | date | time_of_day | timedelta | Decimal | UUID | Enum):
         return value
     return str(value)
 

@@ -28,8 +28,7 @@
 // Custom AG Grid header: label + data-type pill + click-to-sort + a dedicated
 // ⓘ button that requests column statistics via grid context. The ⓘ is a
 // separate, deliberate click — stats compute never rides along on a sort click.
-// dataType arrives via headerComponentParams from the preview's table_schema;
-// isGeometry rides along when the preview detected WKT in the column's values.
+// dataType and isGeometry arrive via headerComponentParams from the preview.
 import { onBeforeUnmount, ref } from "vue";
 import type { IHeaderParams } from "@ag-grid-community/core";
 

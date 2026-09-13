@@ -476,8 +476,7 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      // Geometry is plain WKT text, so it has to be recognised from the sample
-      // rather than the schema; the summary is display-only and copy keeps the WKT.
+      // Geometry is plain text, so it is recognised from the sample, not the schema.
       const geometryColumns = detectGeometryColumns(resp.table_schema, resp.data);
       columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => {
         const isGeometry = geometryColumns.has(item.name);
