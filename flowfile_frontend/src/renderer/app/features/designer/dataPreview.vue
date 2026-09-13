@@ -65,6 +65,7 @@
           :default-col-def="defaultColDef"
           :column-defs="columnDefs"
           :suppress-field-dot-notation="true"
+          :enable-browser-tooltips="true"
           class="ag-theme-balham dp-grid"
           :class="{ 'dp-grid--collapsed': showFetchButton }"
           :row-data="rowData"
@@ -134,6 +135,11 @@ import debounce from "lodash/debounce";
 import { TableExample, FileColumn } from "../../components/nodes/baseNode/nodeInterfaces";
 import { NodeApi } from "../../api/node.api";
 import { cellValueFormatter, formatCellValue } from "../../utils/cellFormat";
+import {
+  detectGeometryColumns,
+  geometryCellFormatter,
+  geometryTooltipGetter,
+} from "../../utils/geometry";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
@@ -470,13 +476,20 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => ({
-        field: item.name,
-        headerName: item.name,
-        resizable: true,
-        headerComponentParams: { dataType: item.data_type },
-        valueFormatter: cellValueFormatter,
-      }));
+      // Geometry is plain WKT text, so it has to be recognised from the sample
+      // rather than the schema; the summary is display-only and copy keeps the WKT.
+      const geometryColumns = detectGeometryColumns(resp.table_schema, resp.data);
+      columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => {
+        const isGeometry = geometryColumns.has(item.name);
+        return {
+          field: item.name,
+          headerName: item.name,
+          resizable: true,
+          headerComponentParams: { dataType: item.data_type, isGeometry },
+          valueFormatter: isGeometry ? geometryCellFormatter : cellValueFormatter,
+          tooltipValueGetter: isGeometry ? geometryTooltipGetter : undefined,
+        };
+      });
 
       if (resp.has_example_data === false) {
         showFetchButton.value = true;
