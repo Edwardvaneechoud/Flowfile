@@ -77,6 +77,32 @@ return lf.with_columns(
     whenToUse: "Free-form text, or a column name typed by hand.",
   },
   {
+    type: "FilePicker",
+    label: "File Picker",
+    icon: "fa-solid fa-folder-open",
+    whatItDoes: "A path field with a Browse button that opens Flowfile's standard file browser.",
+    returns: { accessor: ".value", type: "str" },
+    configure: [
+      { prop: "default", desc: "Initial path (defaults to an empty string)." },
+      { prop: "placeholder", desc: "Hint text shown while the field is empty." },
+      {
+        prop: "mode",
+        desc: 'Use "open" to pick an existing path, or "create" to also allow naming a new file.',
+      },
+      {
+        prop: "file_types",
+        desc: 'Extensions the browser lists, e.g. ["csv", "parquet"]. Omit to show every file.',
+      },
+      { prop: "allow_directory", desc: "Let the user select a folder instead of a file." },
+    ],
+    needsInput: false,
+    howToUse: `path = self.settings_schema.source.input_file.value
+return pl.scan_csv(path)`,
+    whenToUse:
+      "Any setting that is a file or folder path \u2014 the browser beats typing one by hand (TextInput for free-form text).",
+    note: "The browser runs on the machine hosting flowfile_core, so in Docker or the web UI it lists the server's filesystem, not the viewer's.",
+  },
+  {
     type: "NumericInput",
     label: "Numeric Input",
     icon: "fa-solid fa-hashtag",

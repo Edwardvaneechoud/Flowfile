@@ -414,6 +414,20 @@ def test_multi_input_node_without_settings():
     assert state.sections == []
 
 
+def test_file_picker_kwargs_are_lifted():
+    result = parse("insubset_file_picker.py")
+    assert result.mode == "designer"
+    assert codes(result) == set()
+
+    input_file, target_dir = result.designer_state.sections[0].components
+    assert input_file.component_type == "FilePicker"
+    assert input_file.placeholder == "/data/input.csv"
+    assert input_file.file_types == ["csv", "parquet"]
+    assert (input_file.mode, input_file.allow_directory) == ("open", False)
+    assert (target_dir.mode, target_dir.allow_directory) == ("create", True)
+    assert target_dir.file_types == []
+
+
 def test_multi_output_with_output_names():
     result = parse("insubset_multi_output.py")
     assert result.mode == "designer"

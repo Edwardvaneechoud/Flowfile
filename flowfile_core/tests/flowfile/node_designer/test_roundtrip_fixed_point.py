@@ -22,6 +22,7 @@ from flowfile_core.flowfile.node_designer.state import (
     DesignerState,
     EnvironmentState,
     ExampleInput,
+    FilePickerState,
     NumericInputState,
     SecretSelectorState,
     SectionState,
@@ -107,6 +108,7 @@ def _component(rng: random.Random, taken: set[str]):
     kind = rng.choice(
         [
             "TextInput",
+            "FilePicker",
             "NumericInput",
             "SliderInput",
             "ToggleSwitch",
@@ -123,6 +125,16 @@ def _component(rng: random.Random, taken: set[str]):
     if kind == "TextInput":
         return TextInputState(
             name=name, label=label, default=_maybe(rng, _text(rng)), placeholder=_maybe(rng, _text(rng))
+        )
+    if kind == "FilePicker":
+        return FilePickerState(
+            name=name,
+            label=label,
+            default=_maybe(rng, _text(rng)),
+            placeholder=_maybe(rng, _text(rng)),
+            mode=rng.choice(["open", "create"]),
+            file_types=[f"ext{i}" for i in range(rng.randint(0, 3))],
+            allow_directory=rng.random() < 0.5,
         )
     if kind == "NumericInput":
         return NumericInputState(

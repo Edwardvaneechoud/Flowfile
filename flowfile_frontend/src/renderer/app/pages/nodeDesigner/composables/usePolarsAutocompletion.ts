@@ -304,6 +304,7 @@ export const PY_TYPE: Record<string, string> = {
   SliderInput: "float",
   NumericInput: "float",
   TextInput: "str",
+  FilePicker: "str",
   ToggleSwitch: "bool",
   SingleSelect: "str",
   MultiSelect: "list",
