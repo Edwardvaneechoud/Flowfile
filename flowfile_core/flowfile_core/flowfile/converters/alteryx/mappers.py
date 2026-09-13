@@ -130,6 +130,9 @@ class EmitContext:
     input_map: dict[tuple[int, str], list[tuple[int, str]]] = field(default_factory=dict)
     # best-effort column tracker: tool id -> columns leaving that tool (None = unknown)
     tool_columns: dict[int, list[str] | None] = field(default_factory=dict)
+    # (tool id, output anchor) -> columns leaving *that anchor*, when they are not the tool's own.
+    # A Join's L and R anchors carry one input through untouched, not the join's projection.
+    anchor_columns: dict[tuple[int, str], list[str] | None] = field(default_factory=dict)
     # every parsed tool by id, so a mapper can read the tool feeding one of its anchors
     tools: dict[int, AlteryxTool] = field(default_factory=dict)
     # (dest tool id, dest anchor) pairs a mapper resolved at convert time and does not want wired
@@ -200,6 +203,9 @@ class EmitContext:
         """Columns arriving on one anchor, when they are confidently known."""
         for connection in self.inbound.get(tool_id, []):
             if connection.dest_anchor == anchor:
+                key = (connection.origin_tool_id, connection.origin_anchor)
+                if key in self.anchor_columns:
+                    return self.anchor_columns[key]
                 return self.tool_columns.get(connection.origin_tool_id)
         return None
 
@@ -315,8 +321,48 @@ def _description(tool: AlteryxTool, warning: str = "") -> str:
     return " — ".join(parts)
 
 
+_COMMENT_BREAK_RE = re.compile(r"[\r\n\x0b\x0c\x1c-\x1e\x85  ]")
+
+
+def _backslash_refusal(values: dict[str, str | list[str]]) -> str | None:
+    """Why a name or value cannot be embedded in generated code, or None when all of them can.
+
+    The code node strips comments before running, and its scanner reads any quote preceded by a
+    backslash as escaped. ``repr()`` doubles a trailing backslash, so a value *ending* in one puts
+    a backslash immediately before the closing quote: the scanner never leaves the string, and the
+    rest of that line is misread — a later quote toggles wrongly and the line truncates into a
+    SyntaxError when the flow runs. A backslash anywhere else is harmless, which is why this is not
+    a "contains" check: regex patterns are full of ``\\d`` and ``\\s`` and convert correctly.
+    """
+    offenders = [
+        f"{label} '{_one_line(value)}'"
+        for label, item in values.items()
+        for value in ([item] if isinstance(item, str) else item)
+        if value.endswith("\\")
+    ]
+    if not offenders:
+        return None
+    return (
+        f"Flowfile could not generate code for this tool: {', '.join(offenders)} ends with a backslash, "
+        "which the code node's comment stripper misreads."
+    )
+
+
+def _comment_safe(value: str) -> str:
+    """Neutralise anything that could end a generated ``#`` comment line.
+
+    Alteryx text reaches the mapper already unescaped, so a ``&#10;`` in a Plugin attribute, an
+    annotation or a field name is a real newline by the time it is interpolated; a line break
+    inside a comment ends the comment and the rest of the attribute becomes code that runs with
+    the flow. This is the one sanitiser for text that lands in a comment. Text that lands as a
+    *value* is ``repr()``-quoted instead, which escapes every one of these characters.
+    """
+    return _COMMENT_BREAK_RE.sub(" ", value)
+
+
 def _one_line(value: str, limit: int = 200) -> str:
-    collapsed = " ".join(value.split())
+    """`_comment_safe` plus collapsing runs of whitespace and truncating to *limit*."""
+    collapsed = " ".join(_comment_safe(value).split())
     return collapsed[: limit - 3] + "..." if len(collapsed) > limit else collapsed
 
 
@@ -460,7 +506,7 @@ def _config_xml_lines(tool: AlteryxTool) -> tuple[list[str], list[str]]:
         rendered = ET.tostring(element, encoding="unicode")
     except (TypeError, ValueError):
         return [], []
-    lines = [line.rstrip()[:CONFIG_COMMENT_LINE_LIMIT] for line in rendered.splitlines() if line.strip()]
+    lines = [_comment_safe(line.rstrip())[:CONFIG_COMMENT_LINE_LIMIT] for line in rendered.splitlines() if line.strip()]
     if len(lines) > CONFIG_COMMENT_MAX_LINES:
         dropped = len(lines) - CONFIG_COMMENT_MAX_LINES
         lines = [*lines[:CONFIG_COMMENT_MAX_LINES], f"... ({dropped} more lines; see the original .yxmd)"]
@@ -472,12 +518,12 @@ def _original_config_lines(tool: AlteryxTool) -> list[str]:
     lines: list[str] = []
     annotation = tool.default_annotation or tool.annotation
     if annotation:
-        lines.extend(f"Alteryx annotation: {part.strip()}" for part in annotation.splitlines() if part.strip())
+        lines.extend(f"Alteryx annotation: {_one_line(part)}" for part in annotation.splitlines() if part.strip())
     config, redacted = _config_xml_lines(tool)
     if config:
-        lines.append(f"Original Alteryx configuration ({tool.plugin or tool_label(tool)}):")
+        lines.append(f"Original Alteryx configuration ({_one_line(tool.plugin or tool_label(tool))}):")
         if redacted:
-            names = ", ".join(redacted)
+            names = _one_line(", ".join(redacted))
             lines.append(f"Credential values were not copied out of the workflow: {names}.")
         lines.extend(config)
     return lines
@@ -485,7 +531,7 @@ def _original_config_lines(tool: AlteryxTool) -> list[str]:
 
 def _placeholder_code(tool: AlteryxTool, num_inputs: int, notes: list[str], header: str | None = None) -> str:
     """The passthrough body. *header* replaces the two-line "could not be converted" preamble."""
-    identity = f"# Alteryx tool '{tool_label(tool)}' (ToolID {tool.tool_id})"
+    identity = f"# Alteryx tool '{_one_line(tool_label(tool))}' (ToolID {tool.tool_id})"
     lines = (
         [f"{identity}: {header}"]
         if header
@@ -793,7 +839,7 @@ def map_filter(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
 def _commented_formula_body(expression: str, reason: str, stub: str) -> str:
     return (
-        f"// Alteryx formula could not be converted automatically: {reason}.\n"
+        f"// Alteryx formula could not be converted automatically: {_one_line(reason)}.\n"
         f"// Original: {_one_line(expression)}\n"
         f"{stub}"
     )
@@ -1191,6 +1237,7 @@ _MULTI_FIELD_UNKNOWN_MESSAGE = (
     "Alteryx would also apply the expression to fields unknown at design time; "
     "Flowfile applies it to the listed columns only."
 )
+_CURRENT_FIELD_NAME_RE = re.compile(r"\[_CurrentFieldName_\]", re.IGNORECASE)
 _CURRENT_FIELD_TYPE_RE = re.compile(r"\[_CurrentFieldType_\]", re.IGNORECASE)
 _MULTI_FIELD_TYPE_NAME_MESSAGE = (
     "Alteryx's [_CurrentFieldType_] yields Alteryx type names (V_WString, Double, Bool…); "
@@ -1297,6 +1344,31 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
         return _placeholder_row(
             tool, ctx, ["The Alteryx Multi-Field Formula tool has no fields selected."], reason="mapper_refused"
         )
+    # [_CurrentFieldName_] binds to a double-quoted literal, which a name holding a double quote
+    # has no form for; without this the node imports cleanly and raises when the flow runs.
+    names_unchecked = False
+    if _CURRENT_FIELD_NAME_RE.search(expression):
+        # With *Unknown selected the node also touches columns the tool's own field list never
+        # named, so the upstream schema has to be checked too — or the gap has to be admitted.
+        in_scope = list(selected)
+        if unknown_selected:
+            upstream = ctx.input_columns(tool.tool_id)
+            if upstream is None:
+                names_unchecked = True
+            else:
+                in_scope.extend(upstream)
+        unquotable = [name for name in dict.fromkeys(in_scope) if '"' in name]
+        if unquotable:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    f"'{_one_line(expression)}' uses [_CurrentFieldName_], and the field "
+                    f"{', '.join(repr(name) for name in unquotable)} contains a double quote, which a "
+                    "Flowfile formula cannot write as a string literal."
+                ],
+                reason="mapper_refused",
+            )
 
     copy_output = _is_true(_attribute(config, "CopyOutput", "value"))
     prefix, suffix = _multi_field_add_on(config)
@@ -1343,6 +1415,13 @@ def map_multi_field_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRo
         if _CURRENT_FIELD_TYPE_RE.search(expression):
             status, reason = "partial", "option_unsupported"
             messages.append(_MULTI_FIELD_TYPE_NAME_MESSAGE)
+        if names_unchecked:
+            status, reason = "partial", "option_unsupported"
+            messages.append(
+                "This formula binds [_CurrentFieldName_] to every column it runs over, including ones "
+                "Flowfile cannot see from the workflow; a column name containing a double quote cannot "
+                "be written as a literal and will stop the flow when it runs."
+            )
 
     settings = input_schema.NodeMultiFieldFormula(
         flow_id=ctx.flow_id,
@@ -1498,6 +1577,11 @@ def map_regex(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         return _placeholder_row(
             tool, ctx, [f"The Alteryx RegEx tool could not be converted: {reason}."], reason="option_unsupported"
         )
+    refusal = _backslash_refusal(
+        {"the field": column, "the pattern": pattern, "an output column": _regex_added_columns(config, method, column)}
+    )
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
 
     header = [
         f"# Alteryx RegEx (ToolID {tool.tool_id}) translated to Polars; check the result against Alteryx.",
@@ -1666,44 +1750,227 @@ def map_unique(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, status, node_ids, "unique", messages, reason=reason)
 
 
+# The Text To Columns help, quoted verbatim in the corpus workflow's own comments, documents
+# these three escapes as single characters — `\s` is a space, not a whitespace class.
+_T2C_DELIMITER_ESCAPES = {"s": " ", "t": "\t", "n": "\n", "\\": "\\"}
+_T2C_EXTRA_IN_LAST = "last"
+
+
+def _text_to_columns_delimiters(raw: str) -> tuple[list[str], str | None]:
+    """The distinct characters Alteryx's delimiter box means, or why it could not be read.
+
+    Every character in the box is a delimiter in its own right, so the box is a character set
+    rather than a separator string; ``\\s``, ``\\t`` and ``\\n`` name one character each.
+    """
+    characters: list[str] = []
+    index = 0
+    while index < len(raw):
+        character = raw[index]
+        if character != "\\":
+            characters.append(character)
+            index += 1
+            continue
+        escape = raw[index + 1 : index + 2]
+        if escape not in _T2C_DELIMITER_ESCAPES:
+            return [], f"the delimiter escape '\\{escape}' is not one Alteryx documents"
+        characters.append(_T2C_DELIMITER_ESCAPES[escape])
+        index += 2
+    distinct = list(dict.fromkeys(characters))
+    return distinct, None if distinct else "the tool has no delimiter configured"
+
+
+def _t2c_collapse_expression(column: str, characters: list[str]) -> tuple[str, str]:
+    """A Polars expression reducing every delimiter to the first one, plus that separator.
+
+    Polars splits on a literal, not a character set, so the other delimiters are rewritten to
+    the first one. Replacing a delimiter with a delimiter cannot merge two fields, because every
+    occurrence of either character was already a split point.
+    """
+    separator = characters[0]
+    expression = f"pl.col({column!r})"
+    for other in characters[1:]:
+        expression += f".str.replace_all({other!r}, {separator!r}, literal=True)"
+    return expression, separator
+
+
+def _text_to_columns_rows_code(tool: AlteryxTool, column: str, characters: list[str]) -> str:
+    """Split to rows on a set of delimiters; the split column keeps its name and position."""
+    expression, separator = _t2c_collapse_expression(column, characters)
+    return "\n".join(
+        [
+            f"# Alteryx Text To Columns (ToolID {tool.tool_id}): split {column!r} to rows on any of "
+            f"{''.join(characters)!r}.",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            f"output_df = input_df.with_columns({expression}.str.split({separator!r})).explode({column!r})",
+        ]
+    )
+
+
+def _text_to_columns_columns_code(tool: AlteryxTool, column: str, characters: list[str], names: list[str]) -> str:
+    """Split to columns: ``splitn`` leaves extra text in the last field, as ErrorHandling='Last' asks.
+
+    The new columns take the split column's place, which is where Alteryx puts them; the source
+    column itself does not survive, so the generated select rebuilds the order at run time.
+    """
+    expression, separator = _t2c_collapse_expression(column, characters)
+    return "\n".join(
+        [
+            f"# Alteryx Text To Columns (ToolID {tool.tool_id}): split {column!r} into {len(names)} columns on any of "
+            f"{''.join(characters)!r}; extra text stays in the last column.",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            f"_names = {names!r}",
+            "_order = []",
+            "for _column in input_df.collect_schema().names():",
+            f"    if _column == {column!r}:",
+            "        _order.extend(_names)",
+            "    else:",
+            "        _order.append(_column)",
+            f"_split = {expression}.str.splitn({separator!r}, {len(names)})"
+            ".struct.rename_fields(_names).alias('_alteryx_split')",
+            f"output_df = input_df.with_columns(_split).drop({column!r}).unnest('_alteryx_split').select(_order)",
+        ]
+    )
+
+
 def map_text_to_columns(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     column = _text(config, "Field")
-    split_type = _text(config, "SplitType") or "SplitToRows"
+    if not column:
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Text To Columns tool has no field to split."], reason="mapper_refused"
+        )
+
+    flags = _attribute(config, "Flags", "value", "0")
+    if flags not in ("", "0"):
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"This Alteryx Text To Columns tool uses advanced options (Flags={flags}) that are not supported."],
+            reason="option_unsupported",
+        )
+
     delimiters_element = config.find("Delimeters")
-    delimiter = (delimiters_element.get("value") if delimiters_element is not None else "") or ""
-    root_name = _text(config, "RootName")
-
-    if split_type.lower() != "splittorows":
+    raw_delimiters = (delimiters_element.get("value") if delimiters_element is not None else "") or ""
+    characters, refusal = _text_to_columns_delimiters(raw_delimiters)
+    if refusal is not None:
         return _placeholder_row(
             tool,
             ctx,
-            [f"Alteryx Text To Columns split type '{split_type}' has no Flowfile equivalent (only split to rows)."],
-            reason="option_unsupported",
-        )
-    if not column or len(delimiter) != 1:
-        return _placeholder_row(
-            tool,
-            ctx,
-            [f"Only a single-character Alteryx delimiter can be converted; this tool uses '{delimiter}'."],
+            [f"The Alteryx Text To Columns delimiters could not be read: {refusal}."],
             reason="option_unsupported",
         )
 
-    settings = input_schema.NodeTextToRows(
-        flow_id=ctx.flow_id,
-        node_id=ctx.new_node_id(),
-        text_to_rows_input=transform_schema.TextToRowsInput(
-            column_to_split=column,
-            output_column_name=root_name if root_name and root_name != column else None,
-            split_by_fixed_value=True,
-            split_fixed_value=delimiter,
-        ),
-    )
-    node_id = ctx.add_node(tool, "text_to_rows", settings, description=_description(tool))
+    # <NumFields> is the mode: 1 means split to rows, anything larger is that many columns.
+    raw_count = _attribute(config, "NumFields", "value")
+    try:
+        count = int(raw_count)
+    except ValueError:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"The Alteryx Text To Columns number of columns could not be read ('{raw_count}')."],
+            reason="mapper_refused",
+        )
+    if count < 1:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"The Alteryx Text To Columns number of columns is {count}, which is not a split."],
+            reason="mapper_refused",
+        )
+
+    if count == 1:
+        return _emit_text_to_rows(tool, ctx, column, characters, _text(config, "RootName"))
+    return _emit_text_to_columns(tool, ctx, config, column, characters, count)
+
+
+def _emit_text_to_rows(
+    tool: AlteryxTool, ctx: EmitContext, column: str, characters: list[str], root_name: str
+) -> ToolReportRow:
+    """Split to rows: the native node for one delimiter, generated code for a set of them.
+
+    The split column keeps its own name whichever branch runs. Alteryx's help, quoted in its own
+    Text To Columns example, says split-to-rows leaves "the output columns the same as the input
+    columns", and none of the rows-mode configurations carries a ``<RootName>`` at all — it is a
+    split-to-columns setting. One that is present and different is reported, never applied.
+    """
+    messages: list[str] = []
+    if root_name and root_name != column:
+        messages.append(
+            f"Alteryx splits '{column}' into rows under its own name; the tool's output root name "
+            f"'{_one_line(root_name)}' applies to split-to-columns only and was not used."
+        )
+    if len(characters) > 1:
+        refusal = _backslash_refusal({"the field": column, "a delimiter": characters})
+        if refusal is not None:
+            return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+        settings = input_schema.NodePolarsCode(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code=_text_to_columns_rows_code(tool, column, characters)
+            ),
+        )
+        node_type = "polars_code"
+    else:
+        settings = input_schema.NodeTextToRows(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            text_to_rows_input=transform_schema.TextToRowsInput(
+                column_to_split=column,
+                output_column_name=None,
+                split_by_fixed_value=True,
+                split_fixed_value=characters[0],
+            ),
+        )
+        node_type = "text_to_rows"
+    node_id = ctx.add_node(tool, node_type, settings, description=_description(tool))
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "text_to_rows", [], reason="converted")
+    return _row(tool, "converted", [node_id], node_type, messages, reason="converted")
+
+
+def _emit_text_to_columns(
+    tool: AlteryxTool, ctx: EmitContext, config: ET.Element, column: str, characters: list[str], count: int
+) -> ToolReportRow:
+    """Split to columns: ``<RootName>1..N``, replacing the split column as Alteryx does."""
+    error_handling = _text(config, "ErrorHandling")
+    if error_handling.lower() != _T2C_EXTRA_IN_LAST:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                f"Alteryx Text To Columns handles extra characters as '{error_handling or 'not set'}'; "
+                "only 'Last' (leave the extra text in the last column) is converted."
+            ],
+            reason="option_unsupported",
+        )
+
+    root_name = _text(config, "RootName") or column
+    names = [f"{root_name}{index}" for index in range(1, count + 1)]
+    refusal = _backslash_refusal({"the field": column, "a delimiter": characters, "an output column": names})
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=_text_to_columns_columns_code(tool, column, characters, names)
+        ),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    known = ctx.input_columns(tool.tool_id)
+    if known is None:
+        ctx.tool_columns[tool.tool_id] = None
+    else:
+        ctx.tool_columns[tool.tool_id] = [
+            name for existing in known for name in (names if existing == column else [existing])
+        ]
+    message = f"'{column}' became {count} columns ({', '.join(names)}) and does not survive, as in Alteryx."
+    return _row(tool, "converted", [node_id], "polars_code", [message], reason="converted")
 
 
 def map_union(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -1729,7 +1996,113 @@ def map_union(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, status, [node_id], "union", messages, reason=reason)
 
 
-def _join_settings(ctx: EmitContext, mapping: list[tuple[str, str]], how: str, swap: bool) -> input_schema.NodeJoin:
+_JOIN_UNKNOWN_FIELD = "*Unknown"
+_JOIN_SIDE_PREFIXES = (("left", "Left_"), ("right", "Right_"))
+
+
+def _declared_output_columns(tool: AlteryxTool) -> list[str] | None:
+    """The columns a tool states without being mapped: Alteryx's cached schema, else a Text Input's own fields."""
+    if tool.output_fields:
+        return list(tool.output_fields)
+    if tool.tool_name == "TextInput":
+        names = [element.get("name") for element in _config(tool).findall("Fields/Field")]
+        return [name for name in names if name] or None
+    return None
+
+
+def _anchor_columns(ctx: EmitContext, tool_id: int, anchor: str) -> list[str] | None:
+    """Columns arriving on one anchor, including from a tool that has not been mapped yet.
+
+    Mapping runs in document order, which is not topological, so a join can be reached before
+    the tool feeding it. A tool that *has* been mapped is authoritative even when it answers
+    "unknown"; only an unmapped one falls back to the schema it declares.
+    """
+    for connection in ctx.inbound.get(tool_id, []):
+        if connection.dest_anchor != anchor:
+            continue
+        key = (connection.origin_tool_id, connection.origin_anchor)
+        if key in ctx.anchor_columns:
+            return ctx.anchor_columns[key]
+        if connection.origin_tool_id in ctx.tool_columns:
+            return ctx.tool_columns[connection.origin_tool_id]
+        source = ctx.tools.get(connection.origin_tool_id)
+        return _declared_output_columns(source) if source is not None else None
+    return None
+
+
+def _join_by_record_position(config: ET.Element) -> bool:
+    """Alteryx writes this as an attribute on ``<Configuration>``; the element form is a fixture shape."""
+    return _is_true(config.get("joinByRecordPos")) or _is_true(_attribute(config, "JoinByRecordPos", "value"))
+
+
+def _resolve_join_field(field: str, left_columns: list[str], right_columns: list[str]) -> tuple[str, str] | None:
+    """``(side, column)`` for one Alteryx join SelectField, or None when it names no known column.
+
+    Alteryx prefixes a field with ``Left_``/``Right_`` only when the bare name also exists on the
+    other side, so a column that really is called ``Right_id`` has to win over the prefix reading.
+    A name on both sides unprefixed is the left one, which is why left is tried first.
+    """
+    for side, columns in (("left", left_columns), ("right", right_columns)):
+        if field in columns:
+            return side, field
+    for side, prefix in _JOIN_SIDE_PREFIXES:
+        columns = left_columns if side == "left" else right_columns
+        if field.startswith(prefix) and field[len(prefix) :] in columns:
+            return side, field[len(prefix) :]
+    return None
+
+
+def _join_select_config(
+    config: ET.Element, left_columns: list[str] | None, right_columns: list[str] | None, anchor: str = "Join"
+) -> tuple[list[transform_schema.SelectInput], list[transform_schema.SelectInput], str | None]:
+    """Alteryx's join field selection as Flowfile select lists, or a reason it was not converted.
+
+    The lists are emitted in full and in upstream order because Flowfile appends columns the
+    selection does not mention, which would otherwise reorder the output. Alteryx's own output
+    name — the one downstream tools reference — is kept verbatim, prefix included.
+    """
+    selection = config.find(f"SelectConfiguration/Configuration[@outputConnection='{anchor}']")
+    if selection is None:
+        return [], [], None
+
+    entries: list[tuple[str, str, bool]] = []
+    for element in selection.findall("SelectFields/SelectField"):
+        field = element.get("field") or ""
+        selected = _is_true(element.get("selected"))
+        if field == _JOIN_UNKNOWN_FIELD:
+            if not selected:
+                return [], [], "the selection drops every field it does not list, which Flowfile cannot express"
+            continue
+        entries.append((field, element.get("rename") or field, selected))
+    if not entries:
+        # Nothing is renamed or dropped, which is already what a Flowfile join does.
+        return [], [], None
+    if left_columns is None or right_columns is None:
+        return [], [], "Flowfile could not tell which input each selected field comes from"
+
+    chosen: dict[tuple[str, str], tuple[str, bool]] = {}
+    for field, new_name, selected in entries:
+        resolved = _resolve_join_field(field, left_columns, right_columns)
+        if resolved is None:
+            return [], [], f"the selected field '{field}' does not match a column on either input"
+        chosen[resolved] = (new_name, selected)
+
+    selects: dict[str, list[transform_schema.SelectInput]] = {"left": [], "right": []}
+    for side, columns in (("left", left_columns), ("right", right_columns)):
+        for column in columns:
+            new_name, keep = chosen.get((side, column), (column, True))
+            selects[side].append(transform_schema.SelectInput(old_name=column, new_name=new_name, keep=keep))
+    return selects["left"], selects["right"], None
+
+
+def _join_settings(
+    ctx: EmitContext,
+    mapping: list[tuple[str, str]],
+    how: str,
+    swap: bool,
+    left_select: list[transform_schema.SelectInput] | None = None,
+    right_select: list[transform_schema.SelectInput] | None = None,
+) -> input_schema.NodeJoin:
     join_mapping = [
         transform_schema.JoinMap(left_col=right, right_col=left)
         if swap
@@ -1741,8 +2114,8 @@ def _join_settings(ctx: EmitContext, mapping: list[tuple[str, str]], how: str, s
         node_id=ctx.new_node_id(),
         join_input=transform_schema.JoinInput(
             join_mapping=join_mapping,
-            left_select=transform_schema.JoinInputs(renames=[]),
-            right_select=transform_schema.JoinInputs(renames=[]),
+            left_select=transform_schema.JoinInputs(renames=left_select or []),
+            right_select=transform_schema.JoinInputs(renames=right_select or []),
             how=how,
         ),
     )
@@ -1758,8 +2131,7 @@ def map_join(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         for element in config.findall("JoinInfo[@connection='Right']/Field")
         if element.get("field")
     ]
-    by_record_position = config.find("JoinByRecordPos")
-    if by_record_position is not None and _is_true(by_record_position.get("value")):
+    if _join_by_record_position(config):
         return _placeholder_row(
             tool, ctx, ["Alteryx 'join by record position' has no Flowfile equivalent."], reason="option_unsupported"
         )
@@ -1775,10 +2147,14 @@ def map_join(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     if not (wants_join or wants_left or wants_right):
         wants_join = True
 
+    left_columns = _anchor_columns(ctx, tool.tool_id, "Left")
+    right_columns = _anchor_columns(ctx, tool.tool_id, "Right")
+    left_select, right_select, select_refusal = _join_select_config(config, left_columns, right_columns)
+
     node_ids: list[int] = []
     messages: list[str] = []
     if wants_join:
-        inner = _join_settings(ctx, mapping, "inner", swap=False)
+        inner = _join_settings(ctx, mapping, "inner", swap=False, left_select=left_select, right_select=right_select)
         inner_id = ctx.add_node(tool, "join", inner, description=_description(tool))
         ctx.register_output(tool.tool_id, DEFAULT_OUTPUT_ANCHOR, inner_id)
         ctx.register_output(tool.tool_id, "Join", inner_id)
@@ -1803,28 +2179,81 @@ def map_join(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         node_ids.append(anti_right_id)
         messages.append("The unmatched-right (R) output became an anti join with the inputs swapped.")
 
-    ctx.tool_columns[tool.tool_id] = None
+    ctx.tool_columns[tool.tool_id] = _join_output_columns(left_select, right_select) if left_select else None
+    # The L and R anchors are anti joins: each passes one input through untouched, so a consumer
+    # wired to them must not be told the inner join's projection.
+    if wants_left:
+        ctx.anchor_columns[(tool.tool_id, "Left")] = left_columns
+    if wants_right:
+        ctx.anchor_columns[(tool.tool_id, "Right")] = right_columns
+
     status: ToolStatus = "converted"
     reason = "converted"
-    if config.find("SelectConfiguration") is not None:
+    if select_refusal is not None:
         status, reason = "partial", "option_unsupported"
         messages.append(
-            "The Alteryx join's field selection and renames were not converted; "
+            f"The Alteryx join's field selection and renames were not converted because {select_refusal}; "
             "Flowfile keeps every column from both inputs."
         )
-    elif messages:
+    else:
+        misplaced = _join_kept_right_keys(mapping, right_select)
+        if misplaced:
+            status, reason = "partial", "option_unsupported"
+            messages.append(
+                f"Alteryx puts the kept join key(s) {', '.join(misplaced)} where the right input's columns "
+                "start; Flowfile's join appends them after the other columns, so the values match but the "
+                "column order does not."
+            )
+    if messages and status == "converted":
         status, reason = "partial", "option_unsupported"
     return _row(tool, status, node_ids, "join", messages, reason=reason)
 
 
+def _join_kept_right_keys(
+    mapping: list[tuple[str, str]], right_select: list[transform_schema.SelectInput]
+) -> list[str]:
+    """Right-side join keys the selection keeps, which Flowfile's join can only place last."""
+    keys = {right for _left, right in mapping}
+    return [select.new_name for select in right_select if select.keep and select.old_name in keys]
+
+
+def _join_output_columns(
+    left_select: list[transform_schema.SelectInput], right_select: list[transform_schema.SelectInput]
+) -> list[str]:
+    return [select.new_name for select in [*left_select, *right_select] if select.keep]
+
+
 def _file_element_path(config: ET.Element) -> tuple[str, str]:
-    """Return (path, sheet) for an Alteryx File element, splitting the ``|||sheet$`` suffix."""
+    """Return (path, table) for an Alteryx File element, splitting the ``|||`` suffix off unchanged.
+
+    The suffix is not always a worksheet, so it is handed on verbatim for ``_excel_sheet`` to read.
+    """
     element = config.find("File")
     raw = (element.text or "").strip() if element is not None and element.text else ""
     if "|||" in raw:
-        path, _, sheet = raw.partition("|||")
-        return path.strip(), sheet.strip().rstrip("$")
+        path, _, table = raw.partition("|||")
+        return path.strip(), table.strip()
     return raw, ""
+
+
+EXCEL_SHEET_SUFFIX = "$"
+EXCEL_SHEET_LIST = "<List of Sheet Names>"
+
+
+def _excel_sheet(table: str) -> tuple[str, str | None]:
+    """The worksheet an Alteryx Excel path names, or why Flowfile cannot read what it points at.
+
+    Alteryx quotes the name in backticks and marks a worksheet with the trailing ``$`` the Excel
+    drivers use; without that marker the name is a named range, which Flowfile cannot address.
+    """
+    if table == EXCEL_SHEET_LIST:
+        return "", "it reads the workbook's list of sheet names rather than the data in a sheet"
+    name = table.strip("`")
+    if not name:
+        return "", None
+    if not name.endswith(EXCEL_SHEET_SUFFIX):
+        return "", f"'{name}' is an Excel named range, and Flowfile's Excel reader only addresses whole sheets"
+    return name[: -len(EXCEL_SHEET_SUFFIX)], None
 
 
 YXDB_EXTENSION = "yxdb"
@@ -1872,7 +2301,7 @@ def map_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
 def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
-    path, sheet = _file_element_path(config)
+    path, table = _file_element_path(config)
     if not path or _carries_credentials(path):
         return _placeholder_row(
             tool,
@@ -1892,13 +2321,24 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             reason="file_format",
         )
 
+    sheet = ""
+    if file_type == "excel" and table:
+        sheet, refusal = _excel_sheet(table)
+        if refusal is not None:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [f"This Alteryx Input Data tool was not converted because {refusal}."],
+                reason="option_unsupported",
+            )
+
     received = input_schema.ReceivedTable.create_from_path(path, file_type=file_type)
     received.name = filename
     received.directory = directory or None
     if _is_foreign_absolute_path(path):
         # Resolving a foreign path against this machine's cwd would invent a path that points nowhere.
         received.abs_file_path = path
-    if file_type == "excel" and sheet:
+    if sheet:
         received.table_settings.sheet_name = sheet
     if file_type in ("csv", "json"):
         delimiter = _text(config, "FormatSpecificOptions/Delimeter")
@@ -1963,7 +2403,7 @@ def map_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
 def _emit_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
-    original_path, sheet = _file_element_path(config)
+    original_path, table = _file_element_path(config)
     if not original_path or _carries_credentials(original_path):
         return _placeholder_row(
             tool,
@@ -2015,8 +2455,19 @@ def _emit_file_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         delimiter = _text(config, "FormatSpecificOptions/Delimeter")
         if len(delimiter) == 1:
             table_settings.delimiter = delimiter
-    if file_type == "excel" and sheet:
-        table_settings.sheet_name = sheet
+    if file_type == "excel" and table:
+        # The `|||` suffix is only sometimes a worksheet; writing it raw put backticks and the
+        # driver's trailing `$` into the sheet name.
+        sheet, refusal = _excel_sheet(table)
+        if refusal is not None:
+            status = "partial"
+            reason = "option_unsupported" if reason == "converted" else reason
+            messages.append(
+                f"The Alteryx Output Data tool writes to '{_one_line(table)}', but {refusal}; "
+                "this node writes the workbook's default sheet instead."
+            )
+        elif sheet:
+            table_settings.sheet_name = sheet
 
     settings = input_schema.NodeOutput(
         flow_id=ctx.flow_id,
@@ -2045,6 +2496,31 @@ def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "explore_data", [], reason="viewer")
 
 
+_RECORD_ID_LAST_POSITION = "1"
+
+
+def _record_id_code(tool: AlteryxTool, name: str, start: int, group_fields: list[str], last: bool) -> str:
+    """Alteryx's Record ID as generated code, for what Flowfile's row index cannot express.
+
+    Polars numbers rows from zero upwards, so a start value below zero has to be counted and then
+    shifted; and the node always puts its column first, which is not where Alteryx's Position=1 asks
+    for it.
+    """
+    counter = "pl.int_range(pl.len(), dtype=pl.Int64)"
+    if group_fields:
+        counter += f".over({group_fields!r})"
+    lines = [
+        f"# Alteryx Record ID (ToolID {tool.tool_id}): {name!r} starting at {start}"
+        + (f", restarting for each {_one_line(', '.join(group_fields))}" if group_fields else "")
+        + (", added as the last column." if last else ", added as the first column."),
+        *(f"# {line}" for line in _original_config_lines(tool)),
+        f"output_df = input_df.with_columns(({counter} + {start}).alias({name!r}))",
+    ]
+    if not last:
+        lines.append(f"output_df = output_df.select([pl.col({name!r}), pl.exclude({name!r})])")
+    return "\n".join(lines)
+
+
 def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     name = _text(config, "FieldName") or "RecordID"
@@ -2062,18 +2538,42 @@ def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Record ID start value could not be read."], reason="mapper_refused"
         )
+    group_fields = [element.get("name") for element in config.findall("GroupFields/Field") if element.get("name")]
+    last = _text(config, "Position") == _RECORD_ID_LAST_POSITION
 
-    settings = input_schema.NodeRecordId(
-        flow_id=ctx.flow_id,
-        node_id=ctx.new_node_id(),
-        record_id_input=transform_schema.RecordIdInput(output_column_name=name, offset=offset),
-    )
-    node_id = ctx.add_node(tool, "record_id", settings, description=_description(tool))
+    if offset < 0 or last:
+        refusal = _backslash_refusal({"the record id field": name, "a group field": group_fields})
+        if refusal is not None:
+            return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+        settings = input_schema.NodePolarsCode(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code=_record_id_code(tool, name, offset, group_fields, last)
+            ),
+        )
+        node_type = "polars_code"
+    else:
+        settings = input_schema.NodeRecordId(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            record_id_input=transform_schema.RecordIdInput(
+                output_column_name=name,
+                offset=offset,
+                group_by=bool(group_fields),
+                group_by_columns=group_fields,
+            ),
+        )
+        node_type = "record_id"
+    node_id = ctx.add_node(tool, node_type, settings, description=_description(tool))
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     known = ctx.input_columns(tool.tool_id)
-    ctx.tool_columns[tool.tool_id] = [name, *known] if known is not None else None
-    return _row(tool, "converted", [node_id], "record_id", [], reason="converted")
+    if known is None:
+        ctx.tool_columns[tool.tool_id] = None
+    else:
+        ctx.tool_columns[tool.tool_id] = [*known, name] if last else [name, *known]
+    return _row(tool, "converted", [node_id], node_type, [], reason="converted")
 
 
 def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2261,6 +2761,11 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             tool, ctx, ["Unsupported Alteryx Cross Tab methods: " + ", ".join(unmapped)], reason="option_unsupported"
         )
     aggs = [_SUMMARIZE_ACTIONS[method.lower()] for method in methods]
+    refusal = _backslash_refusal(
+        {"the header field": pivot_column, "the data field": value_col, "a group field": index_columns}
+    )
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
     ctx.tool_columns[tool.tool_id] = None
 
     if "concat" in aggs:
@@ -2305,13 +2810,23 @@ def map_cross_tab(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [pivot_id, rename_id], "pivot", [], reason="converted")
 
 
+# Alteryx errors or warns when one Target record gains more than this many appended records.
+_APPEND_CARTESIAN_GUARD = 16
+
+
 def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    config = _config(tool)
+    # "Targets" is the left input and "Source" the right, matching the anchors registered below.
+    left_columns = _anchor_columns(ctx, tool.tool_id, "Targets")
+    right_columns = _anchor_columns(ctx, tool.tool_id, "Source")
+    left_select, right_select, select_refusal = _join_select_config(config, left_columns, right_columns, "Output")
+
     settings = input_schema.NodeCrossJoin(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
         cross_join_input=transform_schema.CrossJoinInput(
-            left_select=transform_schema.JoinInputs(renames=[]),
-            right_select=transform_schema.JoinInputs(renames=[]),
+            left_select=transform_schema.JoinInputs(renames=left_select),
+            right_select=transform_schema.JoinInputs(renames=right_select),
         ),
     )
     node_id = ctx.add_node(tool, "cross_join", settings, description=_description(tool))
@@ -2319,15 +2834,32 @@ def map_append_fields(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     ctx.register_input(tool.tool_id, DEFAULT_INPUT_ANCHOR, node_id, MAIN)
     ctx.register_input(tool.tool_id, "Targets", node_id, MAIN)
     ctx.register_input(tool.tool_id, "Source", node_id, RIGHT)
-    ctx.tool_columns[tool.tool_id] = None
+    ctx.tool_columns[tool.tool_id] = _join_output_columns(left_select, right_select) if left_select else None
 
     messages: list[str] = []
     status: ToolStatus = "converted"
     reason = "converted"
-    if _config(tool).find("SelectConfiguration") is not None:
+    if select_refusal is not None:
         status, reason = "partial", "option_unsupported"
         messages.append(
-            "The Alteryx Append Fields field selection was not converted; Flowfile keeps every column from both inputs."
+            f"The Alteryx Append Fields field selection was not converted because {select_refusal}; "
+            "Flowfile keeps every column from both inputs."
+        )
+    # Alteryx's "Warn" still appends everything, so only "Error" changes what the workflow produces.
+    cartesian_mode = _text(config, "CartesianMode")
+    if not cartesian_mode:
+        status, reason = "partial", "option_unsupported"
+        messages.append(
+            "This Alteryx Append Fields tool does not say what to do when a Target record gains more than "
+            f"{_APPEND_CARTESIAN_GUARD} appended records; every workflow in the corpus states it, so which "
+            "setting Alteryx would fall back to is not something the file shows. If it is the erroring one, "
+            "Flowfile's cross join produces the full result where Alteryx would stop."
+        )
+    elif cartesian_mode.lower() == "error":
+        status, reason = "partial", "option_unsupported"
+        messages.append(
+            f"Alteryx stops with an error when a Target record gains more than {_APPEND_CARTESIAN_GUARD} "
+            "appended records; Flowfile's cross join has no such guard and produces the full result instead."
         )
     return _row(tool, status, [node_id], "cross_join", messages, reason=reason)
 
@@ -2362,7 +2894,51 @@ def map_running_total(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     known = ctx.input_columns(tool.tool_id)
     added = [f"RunTot_{name}" for name in total_fields]
     ctx.tool_columns[tool.tool_id] = [*known, *added] if known is not None else None
-    return _row(tool, "converted", [node_id], "window_functions", [], reason="converted")
+
+    # A running total accumulates in row order, and the tool's configuration never states one.
+    if _feeds_in_stated_order(ctx, tool.tool_id):
+        return _row(tool, "converted", [node_id], "window_functions", [], reason="converted")
+    return _row(
+        tool,
+        "partial",
+        [node_id],
+        "window_functions",
+        [
+            "The running total accumulates in the order the rows arrive, which this workflow does not "
+            "state; sort the rows upstream if the order matters."
+        ],
+        reason="row_order_unknown",
+    )
+
+
+_ORDER_STATING_TOOLS = frozenset({"Sort"})
+
+
+def _emitted_sort(ctx: EmitContext, source: AlteryxTool) -> bool:
+    """True only when this tool really became a Flowfile sort node.
+
+    A Sort the mapper refused is a passthrough placeholder, which states no order at all, so the
+    tool's name on its own is not enough. A Sort mapped later in the document has not registered
+    its output yet and is treated as unknown, which fails closed.
+    """
+    if source.tool_name not in _ORDER_STATING_TOOLS:
+        return False
+    origin = ctx.output_map.get((source.tool_id, DEFAULT_OUTPUT_ANCHOR))
+    return origin is not None and any(node.id == origin[0] and node.type == "sort" for node in ctx.nodes)
+
+
+def _feeds_in_stated_order(ctx: EmitContext, tool_id: int) -> bool:
+    """Whether *every* stream arriving on the input anchor was put in a stated order.
+
+    One unsorted stream is enough to make an order-dependent result order-dependent again, so
+    this is an all-of check over the anchor's wires, not a look at whichever one comes first.
+    """
+    sources = [
+        ctx.tools.get(connection.origin_tool_id)
+        for connection in ctx.inbound.get(tool_id, [])
+        if connection.dest_anchor == DEFAULT_INPUT_ANCHOR
+    ]
+    return bool(sources) and all(source is not None and _emitted_sort(ctx, source) for source in sources)
 
 
 _CLEANSE_CHECKBOXES = {

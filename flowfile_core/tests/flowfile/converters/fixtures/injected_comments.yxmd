@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<!-- A hostile upload: every XML string that reaches a generated comment carries a line break
+     (&#10;), so an unsanitised interpolation would plant runnable Python inside a `#` line.
+     INJECTED_MARKER must never become code in any generated body. -->
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="601">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput"><Position x="60" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="1" />
+        <Fields><Field name="grp" /><Field name="letters" /></Fields>
+        <Data><r><c>north</c><c>a-b-c</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="602">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Nonesuch.Nonesuch&#10;INJECTED_MARKER = 1"><Position x="180" y="60" /></GuiSettings>
+      <Properties>
+        <Configuration><Setting value="unsupported&#10;INJECTED_MARKER = 2" /></Configuration>
+        <Annotation DisplayMode="0"><DefaultAnnotationText>note&#10;INJECTED_MARKER = 3</DefaultAnnotationText></Annotation>
+      </Properties>
+    </Node>
+    <Node ToolID="603">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RecordID.RecordID"><Position x="300" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <FieldName>rid</FieldName>
+        <StartValue>-5</StartValue>
+        <FieldType>Int32</FieldType>
+        <Position>1</Position>
+        <GroupFields orderChanged="False"><Field name="grp&#10;INJECTED_MARKER = 4" /></GroupFields>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="604">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="420" y="60" /></GuiSettings>
+      <Properties>
+        <Configuration><Field>letters</Field><Delimeters value="-\s" /><NumFields value="1" /><Flags value="0" /></Configuration>
+        <Annotation DisplayMode="0"><DefaultAnnotationText>split&#10;INJECTED_MARKER = 5</DefaultAnnotationText></Annotation>
+      </Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection name="#1"><Origin ToolID="601" Connection="Output" /><Destination ToolID="602" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="602" Connection="Output" /><Destination ToolID="603" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="603" Connection="Output" /><Destination ToolID="604" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Injected comments</Name></MetaInfo></Properties>
+</AlteryxDocument>

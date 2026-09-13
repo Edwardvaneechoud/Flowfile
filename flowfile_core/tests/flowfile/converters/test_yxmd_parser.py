@@ -158,6 +158,37 @@ def test_missing_connection_attribute_falls_back_to_default_anchors():
     workflow = parse_yxmd(MINIMAL_WITHOUT_ANCHORS)
     connection = workflow.connections[0]
     assert (connection.origin_anchor, connection.dest_anchor) == ("Output", "Input")
+    assert connection.name == ""
+
+
+MULTI_INPUT_OUT_OF_ORDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.Union.Union" />
+      <Properties><Configuration><Mode>ByName</Mode></Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>2</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="4"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>3</c></r></Data></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection name="#3"><Origin ToolID="4" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="2" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#2"><Origin ToolID="3" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_connection_names_are_kept_in_document_order_by_the_parser():
+    # The parser reads the file; putting the wires in Alteryx's order is the converter's job.
+    workflow = parse_yxmd(MULTI_INPUT_OUT_OF_ORDER)
+    assert [(c.name, c.origin_tool_id) for c in workflow.connections] == [("#3", 4), ("#1", 2), ("#2", 3)]
 
 
 def test_containers_are_flattened_recursively(containers: AlteryxWorkflow):

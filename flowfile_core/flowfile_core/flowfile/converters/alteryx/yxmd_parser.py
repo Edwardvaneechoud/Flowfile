@@ -38,12 +38,18 @@ class AlteryxTool:
 
 @dataclass
 class AlteryxConnection:
-    """One wire between two tools, keyed by the anchor names on both ends."""
+    """One wire between two tools, keyed by the anchor names on both ends.
+
+    ``name`` is Alteryx's own label for the wire, written as ``#1``/``#2``/``#3`` on the wires
+    into a multi-input tool. It is the order those inputs are consumed in, which document order
+    is not, so it is the only record of a Union's or a multi-input macro's input order.
+    """
 
     origin_tool_id: int
     origin_anchor: str
     dest_tool_id: int
     dest_anchor: str
+    name: str = ""
 
 
 @dataclass
@@ -146,6 +152,7 @@ def _parse_connections(root: ET.Element) -> list[AlteryxConnection]:
                 origin_anchor=origin.get("Connection") or DEFAULT_ORIGIN_ANCHOR,
                 dest_tool_id=dest_id,
                 dest_anchor=destination.get("Connection") or DEFAULT_DESTINATION_ANCHOR,
+                name=connection.get("name") or "",
             )
         )
     return connections

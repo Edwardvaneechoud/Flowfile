@@ -7,6 +7,7 @@ report describing what a user still has to finish by hand.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TextIO
 
@@ -29,7 +30,7 @@ from flowfile_core.flowfile.converters.alteryx.report import (
 )
 from flowfile_core.flowfile.converters.alteryx.scope import census_tool_name
 from flowfile_core.flowfile.converters.alteryx.tool_identity import tool_key
-from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxWorkflow, parse_yxmd
+from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxConnection, AlteryxWorkflow, parse_yxmd
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import schemas
 from shared._version import get_version
@@ -93,6 +94,37 @@ def _compute_positions(workflow: AlteryxWorkflow) -> dict[int, tuple[int, int]]:
     for index, tool in enumerate(unpositioned):
         positions[tool.tool_id] = (X_OFFSET + index * SYNTHETIC_X_STEP, base_y)
     return positions
+
+
+_CONNECTION_ORDINAL_RE = re.compile(r"^#(\d+)$")
+
+
+def _connection_ordinal(connection: AlteryxConnection) -> int | None:
+    match = _CONNECTION_ORDINAL_RE.match(connection.name)
+    return int(match.group(1)) if match else None
+
+
+def _order_connections(connections: list[AlteryxConnection]) -> list[AlteryxConnection]:
+    """Reorder the wires into each anchor the way Alteryx numbered them.
+
+    Only wires sharing one destination anchor are permuted, and only when every one of them
+    carries a distinct ``#N``; everything else keeps document order, which is all the file says.
+    """
+    groups: dict[tuple[int, str], list[int]] = {}
+    for index, connection in enumerate(connections):
+        groups.setdefault((connection.dest_tool_id, connection.dest_anchor), []).append(index)
+
+    ordered = list(connections)
+    for positions in groups.values():
+        if len(positions) < 2:
+            continue
+        ordinals = [_connection_ordinal(connections[position]) for position in positions]
+        if None in ordinals or len(set(ordinals)) != len(ordinals):
+            continue
+        by_ordinal = [position for _, position in sorted(zip(ordinals, positions, strict=True))]
+        for slot, position in zip(positions, by_ordinal, strict=True):
+            ordered[slot] = connections[position]
+    return ordered
 
 
 def _build_context(workflow: AlteryxWorkflow) -> EmitContext:
@@ -244,6 +276,7 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
         YxmdParseError: when the bytes are not a usable Alteryx workflow.
     """
     workflow = parse_yxmd(data)
+    workflow.connections = _order_connections(workflow.connections)
     flow_name = workflow.name or Path(source_name).stem or "Imported Alteryx workflow"
     ctx = _build_context(workflow)
 

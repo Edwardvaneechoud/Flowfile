@@ -1,5 +1,6 @@
 """Tests for the Alteryx -> Flowfile tool mappers and the convert orchestrator."""
 
+import ast
 from pathlib import Path
 
 import polars as pl
@@ -636,12 +637,247 @@ def test_text_to_columns_splits_to_rows(all_supported: ConversionResult):
     }
 
 
+# (tool id, status, flowfile node type, a fragment the row's message or code must contain).
+# (tool id, status, node type, a fragment the row's message or emitted settings must contain).
+TEXT_TO_COLUMNS_CASES = [
+    (812, "converted", "polars_code", "Blend1, Blend2, Blend3"),
+    (813, "converted", "polars_code", "Portion1, Portion2, Portion3"),
+    (814, "placeholder", "polars_code", "Flags=8"),
+    (815, "converted", "text_to_rows", "'split_fixed_value': '\\t'"),
+    (816, "converted", "polars_code", "to rows on any of"),
+    (817, "placeholder", "polars_code", "Flags=24"),
+    (818, "converted", "polars_code", "Portion31, Portion32"),
+]
+
+
+@pytest.fixture()
+def text_to_columns() -> ConversionResult:
+    return convert("text_to_columns.yxmd")
+
+
+@pytest.mark.parametrize(("tool_id", "status", "node_type", "fragment"), TEXT_TO_COLUMNS_CASES)
+def test_text_to_columns_reads_numfields_as_the_mode(
+    text_to_columns: ConversionResult, tool_id: int, status: str, node_type: str, fragment: str
+):
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == tool_id)
+    assert (row.status, row.flowfile_node_type) == (status, node_type)
+    node = dumped_nodes(text_to_columns)[row.flowfile_node_ids[0]]
+    haystack = " ".join([*row.messages, str(node["setting_input"])])
+    assert fragment in haystack
+
+
+def test_text_to_columns_flags_message_does_not_claim_which_bit_is_which(text_to_columns: ConversionResult):
+    """Which bit means what is an open Designer question, so the refusal must not assert one."""
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == 814)
+    message = row.messages[0].lower()
+    assert "not supported" in message
+    assert not any(claim in message for claim in ("quote", "bracket", "empty field"))
+
+
+def test_text_to_columns_keeps_the_split_columns_in_place(text_to_columns: ConversionResult):
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == 812)
+    code = dumped_nodes(text_to_columns)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    frame = pl.LazyFrame({"BatchNo": [7], "Blend": ["oat;barley;rye"], "Mill": ["Vetle"]})
+    result = polars_code_parser.get_executable(code, 1)(frame).collect()
+    assert result.columns == ["BatchNo", "Blend1", "Blend2", "Blend3", "Mill"]
+    assert result.row(0) == (7, "oat", "barley", "rye", "Vetle")
+
+
+def test_text_to_columns_escapes_name_one_character_each(text_to_columns: ConversionResult):
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == 816)
+    code = dumped_nodes(text_to_columns)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    result = polars_code_parser.get_executable(code, 1)(pl.LazyFrame({"Portion3": ["a~b c{d}e"]})).collect()
+    assert result["Portion3"].to_list() == ["a", "b", "c", "d", "e"]
+
+
+def test_text_to_columns_falls_back_to_the_field_name_when_the_root_name_is_empty(
+    text_to_columns: ConversionResult,
+):
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == 818)
+    assert "Portion31, Portion32, Portion33, Portion34" in row.messages[0]
+
+
+@pytest.mark.parametrize("tool_id", [815, 816])
+def test_split_to_rows_keeps_the_source_column_name_in_both_branches(
+    text_to_columns: ConversionResult, tool_id: int
+):
+    """Alteryx's own help says split-to-rows leaves the output columns as the input columns."""
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == tool_id)
+    settings = dumped_nodes(text_to_columns)[row.flowfile_node_ids[0]]["setting_input"]
+    body = str(settings)
+    assert "Leftover" not in body or "root name" in " ".join(row.messages)
+    if row.flowfile_node_type == "text_to_rows":
+        assert settings["text_to_rows_input"]["output_column_name"] is None
+
+
+def test_split_to_rows_reports_a_root_name_it_did_not_apply(text_to_columns: ConversionResult):
+    # Tool 816 carries RootName "Leftover"; rows mode never renames, so it must be reported.
+    row = next(row for row in text_to_columns.report.rows if row.alteryx_tool_id == 816)
+    assert any("Leftover" in message and "not used" in message for message in row.messages)
+
+
+TEXT_TO_COLUMNS_DROP_EXTRA = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns" />
+      <Properties><Configuration>
+        <Field>Address</Field>
+        <ErrorHandling>Drop</ErrorHandling>
+        <RootName>Address</RootName>
+        <Delimeters value="," />
+        <NumFields value="2" />
+        <Flags value="0" />
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+def test_text_to_columns_refuses_extra_character_handling_it_cannot_express():
+    result = convert_yxmd(TEXT_TO_COLUMNS_DROP_EXTRA, source_name="drop_extra.yxmd")
+    row = result.report.rows[0]
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert "'Drop'" in row.messages[0]
+
+
+# The three `|||` suffixes the corpus carries (01 In Out/Input_Data.yxmd tools 80, 78 and 137).
+EXCEL_INPUT = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput" />
+      <Properties><Configuration><Passwords />
+        <File RecordLimit="" SearchSubDirs="False" FileFormat="0">C:\\data\\Book.xlsx|||%s</File>
+      </Configuration></Properties></Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+@pytest.mark.parametrize(
+    ("suffix", "status", "sheet"),
+    [
+        (b"`Output$`", "converted", "Output"),
+        (b"`Sheet 1$`", "converted", "Sheet 1"),
+        (b"`NamedRangeExample`", "placeholder", None),
+        (b"&lt;List of Sheet Names&gt;", "placeholder", None),
+    ],
+)
+def test_excel_sheet_is_read_without_its_backticks_and_a_named_range_is_refused(
+    suffix: bytes, status: str, sheet: str | None
+):
+    result = convert_yxmd(EXCEL_INPUT % suffix, source_name="excel.yxmd")
+    row = result.report.rows[0]
+    assert row.status == status
+    if sheet is None:
+        return
+    settings = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["received_file"]
+    assert settings["table_settings"]["sheet_name"] == sheet
+
+
+EXCEL_OUTPUT = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput" />
+      <Properties><Configuration><Passwords />
+        <File MaxRecords="" FileFormat="0">C:\\out\\Book.xlsx|||%s</File>
+      </Configuration></Properties></Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+@pytest.mark.parametrize(
+    ("suffix", "status", "sheet"),
+    [
+        (b"`Results$`", "converted", "Results"),
+        (b"Results$", "converted", "Results"),
+        (b"`NamedRangeExample`", "partial", None),
+        (b"&lt;List of Sheet Names&gt;", "partial", None),
+    ],
+)
+def test_excel_output_reads_the_sheet_suffix_the_same_way_the_input_does(
+    suffix: bytes, status: str, sheet: str | None
+):
+    result = convert_yxmd(EXCEL_OUTPUT % suffix, source_name="excel_out.yxmd")
+    row = result.report.rows[0]
+    assert row.status == status
+    settings = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["output_settings"]
+    # The raw `|||` suffix must never reach the sheet name, backticks and trailing `$` included.
+    assert settings["table_settings"]["sheet_name"] == (sheet or "Sheet1")
+    if sheet is None:
+        assert "default sheet" in row.messages[0]
+
+
 def test_file_output_splits_the_windows_path(all_supported: ConversionResult):
     settings = dumped_nodes(all_supported)[12]["setting_input"]["output_settings"]
     assert settings["name"] == "result.csv"
     assert settings["directory"] == FIXTURE_OUTPUT_DIR
     assert settings["file_type"] == "csv"
     assert settings["write_mode"] == "overwrite"
+
+
+MULTI_INPUT_OUT_OF_ORDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.Union.Union" />
+      <Properties><Configuration><Mode>ByName</Mode></Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>2</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="4"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>3</c></r></Data></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection name="#3"><Origin ToolID="4" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="2" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#2"><Origin ToolID="3" Connection="Output" /><Destination ToolID="1" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_multi_input_wires_follow_the_numbers_alteryx_wrote_not_document_order():
+    result = convert_yxmd(MULTI_INPUT_OUT_OF_ORDER, source_name="union.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    union = dumped_nodes(result)[rows[1].flowfile_node_ids[0]]
+    # #1, #2, #3 are tools 2, 3, 4 — document order would have put tool 4 first.
+    assert union["input_ids"] == [rows[tool_id].flowfile_node_ids[0] for tool_id in (2, 3, 4)]
+
+
+MIXED_NUMBERED_WIRES = MULTI_INPUT_OUT_OF_ORDER.replace(
+    b'<Connection name="#1"><Origin ToolID="2"', b"<Connection><Origin ToolID=\"2\""
+)
+DUPLICATE_NUMBERED_WIRES = MULTI_INPUT_OUT_OF_ORDER.replace(
+    b'<Connection name="#1"><Origin ToolID="2"', b'<Connection name="#2"><Origin ToolID="2"'
+)
+
+
+def test_partly_numbered_wires_keep_document_order():
+    """Alteryx numbers all of an anchor's wires or none; a partial set states nothing."""
+    result = convert_yxmd(MIXED_NUMBERED_WIRES, source_name="union.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    union = dumped_nodes(result)[rows[1].flowfile_node_ids[0]]
+    assert union["input_ids"] == [rows[tool_id].flowfile_node_ids[0] for tool_id in (4, 2, 3)]
+
+
+def test_duplicate_wire_numbers_keep_document_order():
+    result = convert_yxmd(DUPLICATE_NUMBERED_WIRES, source_name="union.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    union = dumped_nodes(result)[rows[1].flowfile_node_ids[0]]
+    assert union["input_ids"] == [rows[tool_id].flowfile_node_ids[0] for tool_id in (4, 2, 3)]
+
+
+def test_unnumbered_wires_keep_document_order():
+    result = convert_yxmd(MULTI_INPUT_OUT_OF_ORDER.replace(b' name="#', b' data-name="#'), source_name="union.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    union = dumped_nodes(result)[rows[1].flowfile_node_ids[0]]
+    assert union["input_ids"] == [rows[tool_id].flowfile_node_ids[0] for tool_id in (4, 2, 3)]
 
 
 def test_union_maps_by_name_to_relaxed(all_supported: ConversionResult):
@@ -669,6 +905,139 @@ def test_join_fans_out_to_inner_and_two_anti_joins(all_supported: ConversionResu
 
     union_id = node_of_type(nodes, "union")[0]["id"]
     assert all(node["outputs"] == [union_id] for node in joins)
+
+
+@pytest.fixture()
+def join_select() -> ConversionResult:
+    return convert("join_select.yxmd")
+
+
+def join_selects(result: ConversionResult, tool_id: int) -> tuple[list[tuple], list[tuple]]:
+    row = next(row for row in result.report.rows if row.alteryx_tool_id == tool_id)
+    node = next(node for node in result.flow_data.nodes if node.id == row.flowfile_node_ids[0])
+    join_input = node.setting_input.join_input
+    return tuple(
+        [(entry.old_name, entry.new_name, entry.keep) for entry in side.renames]
+        for side in (join_input.left_select, join_input.right_select)
+    )
+
+
+def test_join_select_keeps_alteryx_own_output_names(join_select: ConversionResult):
+    left, right = join_selects(join_select, 741)
+    assert left == [("CrateId", "CrateId", True), ("Grower", "Grower", True), ("Variety", "Variety", True)]
+    # Right_CrateId is what Alteryx calls the column, so it is what downstream tools reference.
+    assert right == [("CrateId", "Right_CrateId", True), ("PickedOn", "PickedOn", True)]
+
+
+def test_a_kept_right_join_key_is_partial_because_it_cannot_be_placed(join_select: ConversionResult):
+    """Alteryx puts it where the right input starts; Flowfile's join can only append it."""
+    row = next(row for row in join_select.report.rows if row.alteryx_tool_id == 741)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert "Right_CrateId" in row.messages[0] and "column order" in row.messages[0]
+
+
+def test_a_join_without_a_kept_right_key_stays_converted(join_select: ConversionResult):
+    row = next(row for row in join_select.report.rows if row.alteryx_tool_id == 742)
+    assert (row.status, row.messages) == ("converted", [])
+
+
+def test_an_l_anchor_consumer_is_not_told_the_inner_joins_projection(join_select: ConversionResult):
+    """Tool 744's L output is an anti join carrying the left input through, not the projection."""
+    result = join_select
+    sort_row = next(row for row in result.report.rows if row.alteryx_tool_id == 745)
+    assert sort_row.status == "converted"
+    left_columns = ["CrateId", "Grower", "Variety"]
+    # The inner projection would have added Right_CrateId and PickedOn; the L anchor has neither.
+    assert next(
+        row for row in result.report.rows if row.alteryx_tool_id == 744
+    ).status == "partial"
+    node = next(node for node in result.flow_data.nodes if node.id == sort_row.flowfile_node_ids[0])
+    assert node.type == "sort"
+    assert [entry.column for entry in node.setting_input.sort_input] == ["CrateId"]
+    assert left_columns == ["CrateId", "Grower", "Variety"]
+
+
+def test_join_select_drops_the_fields_alteryx_deselected(join_select: ConversionResult):
+    _left, right = join_selects(join_select, 742)  # noqa: F841 - only the right side is asserted
+    assert right == [
+        ("Grower", "Right_Grower", False),
+        ("Variety", "Right_Variety", False),
+        ("Packhouse", "Packhouse", True),
+    ]
+
+
+def test_join_by_record_position_is_read_from_the_attribute_alteryx_writes(join_select: ConversionResult):
+    row = next(row for row in join_select.report.rows if row.alteryx_tool_id == 743)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert "record position" in row.messages[0]
+
+
+def test_join_select_is_read_when_the_source_tool_is_later_in_the_document(join_select: ConversionResult):
+    # Every Text Input sits after the joins, so the columns come from what they declare.
+    for tool_id in (741, 742):
+        row = next(row for row in join_select.report.rows if row.alteryx_tool_id == tool_id)
+        assert not any("could not tell which input" in message for message in row.messages)
+
+
+JOIN_SELECT_UNKNOWN_COLUMNS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join" />
+      <Properties><Configuration joinByRecordPos="False">
+        <JoinInfo connection="Left"><Field field="id" /></JoinInfo>
+        <JoinInfo connection="Right"><Field field="id" /></JoinInfo>
+        <SelectConfiguration><Configuration outputConnection="Join"><SelectFields>
+          <SelectField field="Right_id" selected="False" rename="Right_id" />
+          <SelectField field="*Unknown" selected="True" />
+        </SelectFields></Configuration></SelectConfiguration>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+def test_join_select_is_refused_when_the_input_columns_are_unknown():
+    row = convert_yxmd(JOIN_SELECT_UNKNOWN_COLUMNS, source_name="join.yxmd").report.rows[0]
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert "could not tell which input" in row.messages[0]
+
+
+APPEND_FIELDS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AppendFields.AppendFields" />
+      <Properties><Configuration>
+        <CartesianMode>%s</CartesianMode>
+        <SelectConfiguration><Configuration outputConnection="Output"><SelectFields>
+          <SelectField field="*Unknown" selected="True" />
+        </SelectFields></Configuration></SelectConfiguration>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+@pytest.mark.parametrize(
+    ("mode", "status"), [(b"Allow", "converted"), (b"Warn", "converted"), (b"Error", "partial")]
+)  # a missing <CartesianMode> is covered separately: the file states nothing, so it fails closed
+def test_append_fields_keeps_everything_and_warns_only_on_the_cartesian_guard(mode: bytes, status: str):
+    row = convert_yxmd(APPEND_FIELDS % mode, source_name="append.yxmd").report.rows[0]
+    assert row.status == status
+    assert row.flowfile_node_type == "cross_join"
+    # "*Unknown selected=True" alone is Flowfile's own default, so it is not a reason to downgrade.
+    assert not any("field selection" in message for message in row.messages)
+
+
+def test_append_fields_without_a_cartesian_mode_fails_closed():
+    without = APPEND_FIELDS % b"Allow"
+    without = without.replace(b"        <CartesianMode>Allow</CartesianMode>\n", b"")
+    row = convert_yxmd(without, source_name="append.yxmd").report.rows[0]
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert "does not say what to do" in row.messages[0]
 
 
 def test_anti_right_join_swaps_the_key_mapping():
@@ -904,15 +1273,86 @@ CONVERTIBLE_FIXTURES = [
     "dynamic_rename.yxmd",
     "extra_tools.yxmd",
     "formulas.yxmd",
+    "injected_comments.yxmd",
+    "join_select.yxmd",
     "multi_field_formula.yxmd",
     "multi_field_formula_runs.yxmd",
     "out_of_scope.yxmd",
     "price_paid.yxmd",
     "regex_and_multifield.yxmd",
     "simple_filter.yxmd",
+    "text_to_columns.yxmd",
     "unsupported.yxmd",
     "zero_tools.yxmd",
 ]
+
+
+def generated_bodies(result: ConversionResult) -> list[str]:
+    """Every `polars_code` body the conversion emitted."""
+    return [
+        node["setting_input"]["polars_code_input"]["polars_code"]
+        for node in node_of_type(dumped_nodes(result), "polars_code")
+    ]
+
+
+@pytest.mark.parametrize("fixture", CONVERTIBLE_FIXTURES)
+def test_every_generated_body_is_parseable_python(fixture: str):
+    """An XML string that reached a `#` line unsanitised would show up here as a SyntaxError."""
+    for body in generated_bodies(convert(fixture)):
+        ast.parse(body)
+
+
+INJECTED_MARKER = "INJECTED_MARKER"
+
+
+def test_a_line_break_in_xml_cannot_escape_a_generated_comment():
+    """The marker may appear in a comment or inside a quoted value, but never as code.
+
+    Had a line break escaped its `#` line, `INJECTED_MARKER = 4` would parse as an assignment,
+    so looking for it among the tree's names is what distinguishes injected code from data.
+    """
+    bodies = generated_bodies(convert("injected_comments.yxmd"))
+    assert bodies, "the fixture must emit generated code for this to prove anything"
+    for body in bodies:
+        names = {node.id for node in ast.walk(ast.parse(body)) if isinstance(node, ast.Name)}
+        assert not any(INJECTED_MARKER in name for name in names), f"marker became code:\n{body}"
+    # The marker really does reach the generated text, so the assertion above is not vacuous.
+    assert any(INJECTED_MARKER in body for body in bodies)
+
+
+def test_the_injected_fixture_still_dispatches_to_the_real_mappers():
+    rows = {row.alteryx_tool_id: row for row in convert("injected_comments.yxmd").report.rows}
+    assert rows[604].status == "converted" and rows[604].alteryx_tool == "TextToColumns"
+    assert rows[603].status == "converted" and rows[603].alteryx_tool == "RecordID"
+
+
+BACKSLASH_NAME = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns" />
+      <Properties><Configuration>
+        <Field>a\\</Field>
+        <Delimeters value="-\\s" />
+        <NumFields value="1" />
+        <Flags value="0" />
+      </Configuration></Properties></Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+def test_a_name_ending_in_a_backslash_is_refused_instead_of_generated():
+    # repr() doubles the trailing backslash, which desynchronises the code node's comment
+    # stripper and truncates the line into a SyntaxError when the flow runs.
+    row = convert_yxmd(BACKSLASH_NAME, source_name="backslash.yxmd").report.rows[0]
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert "ends with a backslash" in row.messages[0]
+
+
+def test_a_backslash_that_is_not_trailing_still_converts():
+    row = convert_yxmd(BACKSLASH_NAME.replace(b"<Field>a\\</Field>", b"<Field>a\\b</Field>"),
+                       source_name="backslash.yxmd").report.rows[0]
+    assert row.status == "converted"
 
 
 @pytest.mark.parametrize("fixture", CONVERTIBLE_FIXTURES)
@@ -1372,6 +1812,73 @@ def test_imported_multi_field_formula_flow_runs(tmp_path: Path, multi_field_form
     # The FixedDecimal output type lands as Float64 and the ' % Total' suffix keeps its space.
     assert data["jan % Total"].to_list() == [25.0, 75.0]
     assert data.schema["jan % Total"] == pl.Float64
+
+
+MULTI_FIELD_QUOTED_NAME = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula" />
+      <Properties><Configuration>
+        <Fields>
+          <Field name="plain" selected="True" />
+          <Field name="say &quot;hi&quot;" selected="%s" />
+        </Fields>
+        <FieldType>String</FieldType>
+        <CopyOutput value="False" />
+        <Expression>[_CurrentFieldName_] + "=" + [_CurrentField_]</Expression>
+      </Configuration></Properties></Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+def test_multi_field_formula_refuses_a_quoted_field_name_at_import():
+    row = convert_yxmd(MULTI_FIELD_QUOTED_NAME % b"True", source_name="mff.yxmd").report.rows[0]
+    # Without this the node imports cleanly and bind_multi_field_formula raises when the flow runs.
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert "double quote" in row.messages[0]
+
+
+MULTI_FIELD_UNKNOWN_UPSTREAM = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="plain" /><Field name="say &quot;hi&quot;" /></Fields>
+        <Data><r><c>1</c><c>2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula" />
+      <Properties><Configuration>
+        <Fields><Field name="plain" selected="True" /><Field name="*Unknown" selected="True" /></Fields>
+        <FieldType>String</FieldType>
+        <CopyOutput value="False" />
+        <Expression>[_CurrentFieldName_] + "=" + [_CurrentField_]</Expression>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="%s" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_multi_field_formula_checks_upstream_columns_when_unknown_is_selected():
+    """*Unknown means the node also runs over columns the tool's own field list never named."""
+    row = report_row(convert_yxmd(MULTI_FIELD_UNKNOWN_UPSTREAM % b"1", source_name="mff.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert "double quote" in row.messages[0]
+
+
+def test_multi_field_formula_admits_when_the_upstream_columns_are_unknown():
+    # Origin 9 does not exist, so nothing upstream is known and the check cannot be made.
+    row = report_row(convert_yxmd(MULTI_FIELD_UNKNOWN_UPSTREAM % b"9", source_name="mff.yxmd"), 2)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("Flowfile cannot see" in message for message in row.messages)
+
+
+def test_multi_field_formula_ignores_a_quoted_field_it_does_not_touch():
+    row = convert_yxmd(MULTI_FIELD_QUOTED_NAME % b"False", source_name="mff.yxmd").report.rows[0]
+    assert row.status == "converted"
 
 
 def test_multi_field_formula_runs_fixture_report_counts(multi_field_formula_runs: ConversionResult):
@@ -1861,15 +2368,141 @@ def test_record_id_maps_to_a_record_id_node(extra_tools: ConversionResult):
     assert settings["offset"] == 1
 
 
+# Configurations copied from the corpus: 02 Preparation/Record_ID.yxmd tools 124, 125 and 138.
+RECORD_ID_VARIANTS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="Region" /><Field name="Spend" /></Fields>
+        <Data><r><c>east</c><c>1</c></r><r><c>east</c><c>2</c></r><r><c>west</c><c>3</c></r>
+        </Data></Configuration></Properties></Node>
+    <Node ToolID="124"><GuiSettings Plugin="AlteryxBasePluginsGui.RecordID.RecordID" />
+      <Properties><Configuration><FieldName>Record ID</FieldName><StartValue>1</StartValue>
+        <FieldType>Int64</FieldType><FieldSize>6</FieldSize><Position>0</Position>
+      </Configuration></Properties></Node>
+    <Node ToolID="125"><GuiSettings Plugin="AlteryxBasePluginsGui.RecordID.RecordID" />
+      <Properties><Configuration><FieldName>Record ID Last Column</FieldName><StartValue>-100</StartValue>
+        <FieldType>Int32</FieldType><FieldSize>6</FieldSize><Position>1</Position>
+      </Configuration></Properties></Node>
+    <Node ToolID="138"><GuiSettings Plugin="AlteryxBasePluginsGui.RecordID.RecordID" />
+      <Properties><Configuration><FieldName>Grouped Record ID</FieldName><StartValue>1</StartValue>
+        <FieldType>Int32</FieldType><FieldSize>6</FieldSize><Position>1</Position>
+        <GroupFields orderChanged="False"><Field name="Region" /></GroupFields>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="124" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="124" Connection="Output" /><Destination ToolID="125" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="125" Connection="Output" /><Destination ToolID="138" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+@pytest.fixture()
+def record_id_variants() -> ConversionResult:
+    return convert_yxmd(RECORD_ID_VARIANTS, source_name="record_id.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "node_type"), [(124, "record_id"), (125, "polars_code"), (138, "polars_code")]
+)
+def test_record_id_uses_generated_code_only_where_the_node_cannot_express_it(
+    record_id_variants: ConversionResult, tool_id: int, node_type: str
+):
+    row = report_row(record_id_variants, tool_id)
+    assert (row.status, row.flowfile_node_type) == ("converted", node_type)
+
+
+def test_record_id_runs_with_a_negative_start_and_a_group(tmp_path: Path, record_id_variants: ConversionResult):
+    flow = open_flow(write_flow(record_id_variants, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, run_info
+    last = report_row(record_id_variants, 138).flowfile_node_ids[0]
+    frame = flow.get_node(last).get_resulting_data().data_frame.collect()
+    assert frame["Record ID"].to_list() == [1, 2, 3]
+    # Alteryx counts from the configured start value, which Polars' row index cannot go below.
+    assert frame["Record ID Last Column"].to_list() == [-100, -99, -98]
+    assert frame["Grouped Record ID"].to_list() == [1, 2, 1]
+    # Position=1 puts the new column last; Position=0 puts it first.
+    assert frame.columns == ["Record ID", "Region", "Spend", "Record ID Last Column", "Grouped Record ID"]
+
+
 def test_running_total_maps_to_window_functions(extra_tools: ConversionResult):
     row = report_row(extra_tools, 3)
-    assert row.status == "converted"
+    # A running total accumulates in row order, and nothing upstream of this tool states one.
+    assert (row.status, row.reason) == ("partial", "row_order_unknown")
+    assert "order the rows arrive" in row.messages[0]
     assert row.flowfile_node_type == "window_functions"
     window = dumped_nodes(extra_tools)[row.flowfile_node_ids[0]]["setting_input"]["window_input"]
     assert window["partition_by"] == ["region"]
     assert [(w["column"], w["function"], w["new_column_name"]) for w in window["window_functions"]] == [
         ("sales", "cum_sum", "RunTot_sales")
     ]
+
+
+RUNNING_TOTAL_AFTER_SORT = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort" />
+      <Properties><Configuration>
+        <SortInfo locale="0"><Field field="spend" order="Asc" /></SortInfo>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RunningTotal.RunningTotal" />
+      <Properties><Configuration>
+        <GroupByFields><Field field="city" /></GroupByFields>
+        <RunningTotalFields><Field field="spend" /></RunningTotalFields>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_running_total_stays_converted_when_a_sort_states_the_order():
+    result = convert_yxmd(RUNNING_TOTAL_AFTER_SORT, source_name="running_total.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.messages) == ("converted", [])
+
+
+RUNNING_TOTAL_SECOND_STREAM = RUNNING_TOTAL_AFTER_SORT.replace(
+    b"  </Nodes>",
+    b"""    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="city" /><Field name="spend" /></Fields>
+        <Data><r><c>oslo</c><c>2</c></r></Data></Configuration></Properties>
+    </Node>
+  </Nodes>""",
+).replace(
+    b"  </Connections>",
+    b"""    <Connection name="#2"><Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>""",
+)
+
+RUNNING_TOTAL_AFTER_REFUSED_SORT = RUNNING_TOTAL_AFTER_SORT.replace(
+    b'<SortInfo locale="0"><Field field="spend" order="Asc" /></SortInfo>', b"<SortInfo locale=\"0\" />"
+)
+
+
+def test_a_second_unsorted_stream_keeps_the_running_total_partial():
+    """One unsorted input is enough to make the accumulation order unstated again."""
+    result = convert_yxmd(RUNNING_TOTAL_SECOND_STREAM, source_name="running_total.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason) == ("partial", "row_order_unknown")
+
+
+def test_a_sort_the_importer_refused_does_not_state_an_order():
+    result = convert_yxmd(RUNNING_TOTAL_AFTER_REFUSED_SORT, source_name="running_total.yxmd")
+    assert report_row(result, 1).status != "converted", "the Sort must be refused for this to prove anything"
+    row = report_row(result, 2)
+    assert (row.status, row.reason) == ("partial", "row_order_unknown")
 
 
 def test_transpose_becomes_unpivot_plus_rename(extra_tools: ConversionResult):
