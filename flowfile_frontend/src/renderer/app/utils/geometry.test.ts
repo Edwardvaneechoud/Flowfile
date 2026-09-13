@@ -2,17 +2,19 @@ import { describe, it, expect } from "vitest";
 import {
   GEOMETRY_ICON,
   describeGeometry,
+  displayDataType,
+  extensionParts,
+  geometryCellFormatter,
   geometryIcon,
   geometryTitle,
   isGeometryColumn,
-  isWktValue,
   parseWkt,
 } from "./geometry";
 import type { FileColumn } from "../types/node.types";
 
-// Every string here is producible by the geospatial nodes: the polars path emits
-// "4.0" and "1e-7", DuckDB's ST_AsText emits "4" and "1e-09" and flattens
-// MULTIPOINT to a form with no inner parens, and a bad CRS yields "inf".
+// Every string here is a form a WKT producer can emit: polars-style "4.0" and
+// "1e-7", ST_AsText-style "4" and "1e-09" with MULTIPOINT flattened to a form
+// with no inner parens, and the "inf" a bad CRS transform yields.
 const GEOMETRY = [
   "POINT (4.9041 52.3676)",
   "POINT(4.9041 52.3676)",
@@ -98,13 +100,30 @@ describe("parseWkt", () => {
     expect(parseWkt("SRID=4326;POINT (4.9041 52.3676)")?.coordinate).toEqual([4.9041, 52.3676]);
   });
 
-  it("ignores non-strings and absurd lengths without stalling", () => {
-    expect(isWktValue(null)).toBe(false);
-    expect(isWktValue(42)).toBe(false);
-    expect(isWktValue({ type: "Point" })).toBe(false);
+  it("ignores non-strings", () => {
+    expect(parseWkt(null)).toBeNull();
+    expect(parseWkt(42)).toBeNull();
+    expect(parseWkt({ type: "Point" })).toBeNull();
+  });
+
+  it("stays fast on a huge digit run that reaches the coordinate check", () => {
+    // Passes HEAD, the alphabet and the paren balance; only the pair probe rejects it.
     const start = Date.now();
-    expect(isWktValue("(".repeat(5000))).toBe(false);
-    expect(Date.now() - start).toBeLessThan(1000);
+    expect(parseWkt(`POINT (${"9".repeat(200_000)})`)).toBeNull();
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it("stays fast on a huge whitespace run after the keyword", () => {
+    const start = Date.now();
+    expect(parseWkt(`POINT${" ".repeat(200_000)}x`)).toBeNull();
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it("stays fast on a huge valid polygon", () => {
+    const ring = Array.from({ length: 50_000 }, (_, i) => `${i} ${i}`).join(", ");
+    const start = Date.now();
+    expect(parseWkt(`POLYGON ((${ring}))`)?.points).toBe(50_000);
+    expect(Date.now() - start).toBeLessThan(500);
   });
 });
 
@@ -146,10 +165,49 @@ describe("isGeometryColumn", () => {
   });
 });
 
+describe("extensionParts / displayDataType", () => {
+  it("splits the dtype string polars emits for an extension into name and storage", () => {
+    expect(extensionParts("Extension('geoarrow.wkb', Binary, '{}')")).toEqual({
+      name: "geoarrow.wkb",
+      storage: "Binary",
+    });
+    expect(extensionParts("Extension('geoarrow.point', Struct({'x': Float64}), '{}')")).toEqual({
+      name: "geoarrow.point",
+      storage: "Struct",
+    });
+    expect(extensionParts("String")).toBeNull();
+    expect(extensionParts(undefined)).toBeNull();
+  });
+
+  it("shows the castable storage type in a pill and leaves plain dtypes alone", () => {
+    expect(displayDataType("Extension('geoarrow.wkb', Binary, '{}')")).toBe("Binary");
+    expect(displayDataType("Datetime(time_unit='us', time_zone=None)")).toBe(
+      "Datetime(time_unit='us', time_zone=None)",
+    );
+  });
+});
+
 describe("geometryTitle", () => {
-  it("names the storage dtype so the label never hides what Select can cast", () => {
+  it("names the extension and the storage dtype so the label never hides what Select can cast", () => {
+    expect(geometryTitle("Extension('geoarrow.wkb', Binary, '{}')")).toBe(
+      "Geometry (geoarrow.wkb), stored as Binary",
+    );
     expect(geometryTitle("Binary")).toBe("Geometry (GeoArrow), stored as Binary");
     expect(geometryTitle(undefined)).toBe("Geometry (GeoArrow)");
+  });
+});
+
+describe("geometryCellFormatter", () => {
+  it("summarises WKT and passes everything else through the plain formatter", () => {
+    expect(geometryCellFormatter({ value: "POLYGON ((0 0, 1 0, 1 1, 0 0))" })).toBe(
+      "Polygon · 4 pts",
+    );
+    // A WKB column arrives from core as hex text; there is nothing to summarise.
+    expect(geometryCellFormatter({ value: "0x0101000000EE5A423EE8991340F1F44A5986304A40" })).toBe(
+      "0x0101000000EE5A423EE8991340F1F44A5986304A40",
+    );
+    expect(geometryCellFormatter({ value: { x: 1, y: 2 } })).toBe('{"x":1,"y":2}');
+    expect(geometryCellFormatter({ value: null })).toBe("");
   });
 });
 

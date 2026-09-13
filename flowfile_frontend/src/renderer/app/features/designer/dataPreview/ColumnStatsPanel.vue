@@ -16,7 +16,7 @@
         <span v-if="isGeometry" class="csp-dtype__icon material-icons" aria-hidden="true">
           {{ GEOMETRY_ICON }}
         </span>
-        <span class="csp-dtype__text">{{ dataType }}</span>
+        <span class="csp-dtype__text">{{ displayDataType(dataType) }}</span>
       </span>
       <button class="csp-close" type="button" aria-label="Close" @click="emit('close')">
         <span class="material-icons" aria-hidden="true">close</span>
@@ -115,7 +115,12 @@
 // alone (placement.ts) — never measured — so the first paint is the final one.
 import { computed } from "vue";
 import type { FileColumn, SemanticType } from "../../../types/node.types";
-import { GEOMETRY_ICON, geometryTitle, isGeometryColumn } from "../../../utils/geometry";
+import {
+  GEOMETRY_ICON,
+  displayDataType,
+  geometryTitle,
+  isGeometryColumn,
+} from "../../../utils/geometry";
 import { PANEL_WIDTH, computePlacement } from "./placement";
 import {
   formatCount,

@@ -1,5 +1,5 @@
 <template>
-  <span v-if="hasValue" class="dp-geometry-cell" :title="raw">
+  <span v-if="hasValue" class="dp-geometry-cell" :title="title">
     <span class="dp-geometry-cell__icon material-icons" aria-hidden="true">{{ icon }}</span>
     <span class="dp-geometry-cell__text">{{ text }}</span>
   </span>
@@ -15,8 +15,16 @@ import { geometryIcon } from "../../../utils/geometry";
 
 const props = defineProps<{ params: ICellRendererParams }>();
 
-const hasValue = computed(() => props.params.value !== null && props.params.value !== undefined);
+const hasValue = computed(
+  () =>
+    props.params.value !== null && props.params.value !== undefined && props.params.value !== "",
+);
 const raw = computed(() => formatCellValue(props.params.value));
+// A tooltip past this is unreadable anyway; keeps huge WKT out of the DOM on every row.
+const TITLE_MAX = 2000;
+const title = computed(() =>
+  raw.value.length > TITLE_MAX ? `${raw.value.slice(0, TITLE_MAX)}\u2026` : raw.value,
+);
 const text = computed(() => props.params.valueFormatted ?? raw.value);
 const icon = computed(() => geometryIcon(props.params.value));
 </script>

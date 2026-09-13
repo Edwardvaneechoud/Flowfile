@@ -7,9 +7,24 @@ import type { SemanticType } from "../types/node.types";
 export const isGeometryColumn = (column: { semantic_type?: SemanticType | null }): boolean =>
   column.semantic_type === "geometry";
 
+// Mirrors core's _EXTENSION_DTYPE: Extension('<name>', <storage>, ...) → name + storage base token.
+const EXTENSION_DTYPE = /^Extension\('([^']*)',\s*([A-Za-z0-9_]+)/;
+
+export const extensionParts = (dataType?: string): { name: string; storage: string } | null => {
+  const match = dataType ? EXTENSION_DTYPE.exec(dataType) : null;
+  return match ? { name: match[1], storage: match[2] } : null;
+};
+
+/** Pill/badge text: an extension dtype shows the storage type it is castable as. */
+export const displayDataType = (dataType: string): string =>
+  extensionParts(dataType)?.storage ?? dataType;
+
 /** The one phrase every geometry surface shows: header pill, stats panel, select node, formula list. */
-export const geometryTitle = (dataType?: string): string =>
-  dataType ? `Geometry (GeoArrow), stored as ${dataType}` : "Geometry (GeoArrow)";
+export const geometryTitle = (dataType?: string): string => {
+  const parts = extensionParts(dataType);
+  if (parts) return `Geometry (${parts.name}), stored as ${parts.storage}`;
+  return dataType ? `Geometry (GeoArrow), stored as ${dataType}` : "Geometry (GeoArrow)";
+};
 
 /** Material icon for a column-level geometry mark. */
 export const GEOMETRY_ICON = "pentagon";
@@ -25,8 +40,9 @@ const KEYWORDS = [
 ] as const;
 
 // Optional SRID prefix, keyword, optional Z/M/ZM tag, then EMPTY or "(" (spacing varies).
+// The tag owns its trailing whitespace so two \s* never compete for one run (quadratic otherwise).
 const HEAD = new RegExp(
-  `^\\s*(?:SRID=\\d{1,7}\\s*;\\s*)?(${KEYWORDS.join("|")})\\s*(ZM|Z|M)?\\s*(?:(EMPTY)\\s*$|\\()`,
+  `^\\s*(?:SRID=\\d{1,7}\\s*;\\s*)?(${KEYWORDS.join("|")})\\s*(?:(ZM|Z|M)\\s*)?(?:(EMPTY)\\s*$|\\()`,
   "i",
 );
 
@@ -34,8 +50,11 @@ const HEAD = new RegExp(
 const BODY_ALPHABET = /^[-+0-9.eE\s,()]*$/;
 
 // Bare ints, ".5", both exponent spellings, and the inf/nan a bad CRS transform emits.
-const NUMBER = "[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?|[-+]?(?:inf|nan)";
+const NUMBER = "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?|[-+]?(?:inf|nan)";
 const COORD_PAIR = new RegExp(`(?:${NUMBER})\\s+(?:${NUMBER})`, "i");
+// A real geometry's first pair sits within a few dozen chars of "("; probing a prefix keeps the
+// unanchored search bounded whatever the cell length.
+const COORD_PROBE = 1024;
 
 // Cap pathological values so one cell cannot stall the grid.
 const MAX_LEN = 1 << 20;
@@ -112,7 +131,11 @@ export const parseWkt = (value: unknown): GeometryInfo | null => {
   const normalized = isCollection
     ? normalizeBody(body).replace(CHILD_KEYWORD, "")
     : normalizeBody(body);
-  if (!BODY_ALPHABET.test(normalized) || !bodyIsBalanced(body) || !COORD_PAIR.test(normalized)) {
+  if (
+    !BODY_ALPHABET.test(normalized) ||
+    !bodyIsBalanced(body) ||
+    !COORD_PAIR.test(normalized.slice(0, COORD_PROBE))
+  ) {
     return null;
   }
 
@@ -124,8 +147,6 @@ export const parseWkt = (value: unknown): GeometryInfo | null => {
   }
   return { type, dimension, points, coordinate };
 };
-
-export const isWktValue = (value: unknown): boolean => parseWkt(value) !== null;
 
 /** Material icon for one cell by shape; WKB and native encodings get the generic mark. */
 export const geometryIcon = (value: unknown): string => {

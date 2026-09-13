@@ -18,7 +18,7 @@
         >
           {{ GEOMETRY_ICON }}
         </span>
-        {{ child.data_type }}
+        {{ displayDataType(child.data_type) }}
       </span>
     </button>
   </div>
@@ -29,7 +29,12 @@ import { ref, computed, watch, onMounted, defineEmits } from "vue";
 import { MenuContents, ColumnSelectorInterface } from "./types";
 import { useNodeStore } from "../../../../stores/column-store";
 import { FileColumn } from "../../../../components/nodes/baseNode/nodeInterfaces";
-import { GEOMETRY_ICON, geometryTitle, isGeometryColumn } from "../../../../utils/geometry";
+import {
+  GEOMETRY_ICON,
+  displayDataType,
+  geometryTitle,
+  isGeometryColumn,
+} from "../../../../utils/geometry";
 
 // tableSchema overrides the store read (e.g. the gate's control input);
 // leaving it undefined keeps the default main-input behavior.
@@ -184,9 +189,14 @@ defineExpose({ showOptions });
   background-color: var(--color-focus-ring-purple-light);
 }
 
-.badge-complex,
-.badge-geometry {
+.badge-complex {
   color: var(--color-accent-hover);
+  background-color: var(--color-accent-subtle);
+}
+
+/* Same family as Complex, on the theme-aware accent text token the other geometry marks use. */
+.badge-geometry {
+  color: var(--color-accent-dark);
   background-color: var(--color-accent-subtle);
 }
 

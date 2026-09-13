@@ -9,6 +9,7 @@ silently as mangled text instead. Both are covered here.
 import datetime as dt
 import json
 from decimal import Decimal
+from enum import Enum
 
 import polars as pl
 import pytest
@@ -100,3 +101,50 @@ def test_binary_column_serializes_over_http():
     response = TestClient(app).get("/node/data")
     assert response.status_code == 200
     assert response.json()["data"][0]["geometry"].startswith("0x")
+
+
+def _object_frame(**columns) -> pl.DataFrame:
+    return pl.DataFrame({k: [v] for k, v in columns.items()}, schema={k: pl.Object for k in columns})
+
+
+def test_object_whose_str_raises_does_not_take_down_the_preview():
+    class Broken:
+        def __repr__(self) -> str:
+            raise RuntimeError("boom")
+
+    row = _first_row(_object_frame(o=Broken()).with_columns(pl.lit(1).alias("id")))
+    assert row["id"] == 1
+    assert row["o"] == "<unrepresentable Broken>"
+
+
+def test_pathological_nesting_is_bounded():
+    deep: list = []
+    cursor = deep
+    for _ in range(5000):
+        nxt: list = []
+        cursor.append(nxt)
+        cursor = nxt
+    loop: list = []
+    loop.append(loop)
+    row = _first_row(_object_frame(deep=deep, loop=loop))
+    assert "nested too deep" in json.dumps(row["deep"])
+    assert "nested too deep" in json.dumps(row["loop"])
+
+
+def test_dict_keys_and_enum_values_are_coerced():
+    class Tag(Enum):
+        WKB = b"\x01\x02"
+
+    row = _first_row(_object_frame(o={b"\xff": 1, 2: "two"}, e=Tag.WKB))
+    assert row["o"] == {"0xFF": 1, "2": "two"}
+    assert row["e"] == "0x0102"
+
+
+def test_object_text_fallback_is_bounded_like_bytes():
+    class Huge:
+        def __repr__(self) -> str:
+            return "x" * 50_000
+
+    row = _first_row(_object_frame(o=Huge()))
+    assert row["o"].endswith("\u2026 (50000 chars)")
+    assert len(row["o"]) < 1100

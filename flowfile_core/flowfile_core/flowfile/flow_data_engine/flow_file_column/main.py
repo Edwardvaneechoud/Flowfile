@@ -14,11 +14,20 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas import input_schema
+from shared.delta_utils import format_binary_preview
 
 MAX_STAT_VALUE_LENGTH = 200
 
 # pl.Extension stringifies as Extension('<name>', <storage>, <metadata>); capture name + storage base token.
+# TODO(polars-2): extension dtypes then survive IPC/Parquet by default; see tests/…/test_polars2_extension_dtypes.py.
 _EXTENSION_DTYPE = re.compile(r"^Extension\('([^']*)',\s*([A-Za-z0-9_]+)")
+
+
+def _stat_repr(value: Any) -> str:
+    """Bounded string form of a min/max bound; bytes use the shared hex preview encoding."""
+    if isinstance(value, bytes | bytearray | memoryview):
+        return format_binary_preview(value)[:MAX_STAT_VALUE_LENGTH]
+    return str(value)[:MAX_STAT_VALUE_LENGTH]
 
 
 @dataclass
@@ -205,8 +214,8 @@ class FlowfileColumn:
         self.size = total_rows - null_count
         self.number_of_empty_values = null_count
         self.number_of_unique_values = -1 if n_unique is None else n_unique
-        self.min_value = None if min_value is None else str(min_value)[:MAX_STAT_VALUE_LENGTH]
-        self.max_value = None if max_value is None else str(max_value)[:MAX_STAT_VALUE_LENGTH]
+        self.min_value = None if min_value is None else _stat_repr(min_value)
+        self.max_value = None if max_value is None else _stat_repr(max_value)
         if isinstance(average_value, float):
             average_value = round(average_value, 4)
         self.average_value = None if average_value is None else str(average_value)[:MAX_STAT_VALUE_LENGTH]
@@ -355,6 +364,8 @@ class FlowfileColumn:
 
     def update_type_from_polars_type(self, pl_type: PlType):
         self.data_type = str(pl_type.pl_datatype.base_type())
+        self.data_type_group = self.get_readable_datatype_group()
+        self.semantic_type = self.get_semantic_type()
 
 
 def convert_stats_to_column_info(stats: list[dict]) -> list[FlowfileColumn]:

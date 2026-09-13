@@ -62,6 +62,7 @@ def safe_eval_pl_type(type_string: str):
         "Enum": pl.Enum,
         "Null": pl.Null,
         "Object": pl.Object,
+        "Extension": pl.Extension,
         # Disable dangerous built-ins
         "__builtins__": {},
     }

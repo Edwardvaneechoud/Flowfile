@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, SemanticType
+from shared.delta_utils import format_binary_preview
 
 
 class NodeResult(BaseModel):
@@ -90,34 +91,53 @@ class FileColumn(BaseModel):
 
 # Coerce by value, not dtype: pl.Object reports group "Other", so a dtype guard misses it.
 _JSON_NATIVE = bool | int | float | str
-_BINARY_PREVIEW_BYTES = 16
+_MAX_NESTING = 32
+_MAX_OBJECT_CHARS = 1000
 
 
-def _format_binary_cell(raw: bytes) -> str:
-    """Render bytes as GIS-conventional uppercase hex, truncated with a byte count."""
-    head = raw[:_BINARY_PREVIEW_BYTES].hex().upper()
-    if len(raw) <= _BINARY_PREVIEW_BYTES:
-        return f"0x{head}"
-    return f"0x{head}\u2026 ({len(raw)} bytes)"
+def _object_repr(value: Any) -> str:
+    """str() of an arbitrary pl.Object payload: never raises, never unbounded."""
+    try:
+        text = str(value)
+    except Exception:
+        return f"<unrepresentable {type(value).__name__}>"
+    if len(text) <= _MAX_OBJECT_CHARS:
+        return text
+    return f"{text[:_MAX_OBJECT_CHARS]}\u2026 ({len(text)} chars)"
 
 
-def make_preview_cell_json_safe(value: Any) -> Any:
+def _key_repr(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    if isinstance(key, bytes | bytearray | memoryview):
+        return format_binary_preview(key)
+    return _object_repr(key)
+
+
+def make_preview_cell_json_safe(value: Any, _depth: int = 0) -> Any:
     """Coerce one preview cell to a JSON-serializable value, recursing into containers.
 
     Lists and structs are preserved as lists/dicts so the frontend keeps rendering
-    them as JSON; only genuinely unserializable leaves are replaced.
+    them as JSON; only genuinely unserializable leaves are replaced. A pl.Object
+    cell can hold anything Python can build, so the fallback must not raise
+    (one bad cell used to hide every column) and nesting is bounded so a
+    self-referential or absurdly deep object cannot recurse forever.
     """
     if value is None or isinstance(value, _JSON_NATIVE):
         return value
     if isinstance(value, bytes | bytearray | memoryview):
-        return _format_binary_cell(bytes(value))
+        return format_binary_preview(value)
+    if _depth >= _MAX_NESTING:
+        return "<nested too deep>"
     if isinstance(value, dict):
-        return {k: make_preview_cell_json_safe(v) for k, v in value.items()}
+        return {_key_repr(k): make_preview_cell_json_safe(v, _depth + 1) for k, v in value.items()}
     if isinstance(value, list | tuple | set):
-        return [make_preview_cell_json_safe(v) for v in value]
-    if isinstance(value, datetime | date | time_of_day | timedelta | Decimal | UUID | Enum):
+        return [make_preview_cell_json_safe(v, _depth + 1) for v in value]
+    if isinstance(value, Enum):
+        return make_preview_cell_json_safe(value.value, _depth + 1)
+    if isinstance(value, datetime | date | time_of_day | timedelta | Decimal | UUID):
         return value
-    return str(value)
+    return _object_repr(value)
 
 
 class TableExample(BaseModel):

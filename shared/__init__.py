@@ -13,6 +13,7 @@ __all__ = [
     "get_temp_directory",
     "get_flows_directory",
     "format_delta_timestamp",
+    "format_binary_preview",
     "get_delta_size_bytes",
     "make_json_safe",
     "validate_catalog_path",
@@ -44,6 +45,7 @@ _LAZY_EXPORTS = {
     **dict.fromkeys(
         (
             "format_delta_timestamp",
+            "format_binary_preview",
             "get_delta_size_bytes",
             "make_json_safe",
             "validate_catalog_path",

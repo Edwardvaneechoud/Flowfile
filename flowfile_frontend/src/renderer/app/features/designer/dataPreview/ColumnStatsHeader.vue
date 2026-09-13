@@ -10,7 +10,7 @@
       <span v-if="isGeometry" class="dp-col-header__dtype-icon material-icons" aria-hidden="true">
         {{ GEOMETRY_ICON }}
       </span>
-      <span class="dp-col-header__dtype-text">{{ params.dataType }}</span>
+      <span class="dp-col-header__dtype-text">{{ displayDataType(params.dataType) }}</span>
     </span>
     <span v-if="sortDirection" class="dp-col-header__icon material-icons" aria-hidden="true">
       {{ sortDirection === "asc" ? "arrow_upward" : "arrow_downward" }}
@@ -36,7 +36,12 @@
 import { computed, onBeforeUnmount, ref } from "vue";
 import type { IHeaderParams } from "@ag-grid-community/core";
 import type { SemanticType } from "../../../types/node.types";
-import { GEOMETRY_ICON, geometryTitle, isGeometryColumn } from "../../../utils/geometry";
+import {
+  GEOMETRY_ICON,
+  displayDataType,
+  geometryTitle,
+  isGeometryColumn,
+} from "../../../utils/geometry";
 
 const props = defineProps<{
   params: IHeaderParams & { dataType?: string; semanticType?: SemanticType | null };
