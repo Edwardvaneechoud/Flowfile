@@ -20,6 +20,7 @@ from flowfile_core.flowfile.node_designer.state import (
     ColumnSelectorState,
     ComponentState,
     DesignerState,
+    FilePickerState,
     NumericInputState,
     SecretSelectorState,
     SectionState,
@@ -167,6 +168,17 @@ class _Renderer:
                 kwargs.append(("default", _py_literal(comp.default)))
             if comp.placeholder is not None:
                 kwargs.append(("placeholder", _py_literal(comp.placeholder)))
+        elif isinstance(comp, FilePickerState):
+            if comp.default is not None:
+                kwargs.append(("default", _py_literal(comp.default)))
+            if comp.placeholder is not None:
+                kwargs.append(("placeholder", _py_literal(comp.placeholder)))
+            if comp.mode != "open":
+                kwargs.append(("mode", _py_literal(comp.mode)))
+            if comp.file_types:
+                kwargs.append(("file_types", [_py_literal(ext) for ext in comp.file_types]))
+            if comp.allow_directory:
+                kwargs.append(("allow_directory", _py_literal(comp.allow_directory)))
         elif isinstance(comp, NumericInputState):
             if comp.default is not None:
                 kwargs.append(("default", _py_literal(comp.default)))

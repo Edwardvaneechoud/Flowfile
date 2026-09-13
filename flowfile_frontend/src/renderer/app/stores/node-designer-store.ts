@@ -597,6 +597,7 @@ export const useNodeDesignerStore = defineStore("node-designer", () => {
   function defaultPreviewValue(comp: ComponentState): unknown {
     switch (comp.component_type) {
       case "TextInput":
+      case "FilePicker":
         return comp.default ?? "";
       case "NumericInput":
       case "SliderInput":
