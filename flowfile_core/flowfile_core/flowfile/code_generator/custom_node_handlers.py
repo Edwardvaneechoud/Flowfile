@@ -14,7 +14,7 @@ _SDK_IMPORT_MARKERS = ("node_designer", "shared.node_designer")
 # Symbols an inlined bare-import node body may reference.
 _CANONICAL_SDK_SYMBOLS = (
     "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
-    "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
+    "IncomingColumns, ColumnSelector, NumericInput, TextInput, FilePicker, "
     "ColumnActionInput, SliderInput, ToggleSwitch, SecretSelector"
 )
 _CANONICAL_SDK_SYMBOL_SET = frozenset(name.strip() for name in _CANONICAL_SDK_SYMBOLS.split(","))

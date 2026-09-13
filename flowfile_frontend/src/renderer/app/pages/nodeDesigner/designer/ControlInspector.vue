@@ -85,6 +85,61 @@
           </div>
         </div>
 
+        <!-- FilePicker -->
+        <div v-else-if="comp.component_type === 'FilePicker'" class="field-group">
+          <div class="field-group-title">File</div>
+          <div class="field-row">
+            <label>Default Path</label>
+            <input
+              :value="comp.default ?? ''"
+              type="text"
+              class="ins-input"
+              @input="update('default', ($event.target as HTMLInputElement).value)"
+            />
+          </div>
+          <div class="field-row">
+            <label>Placeholder</label>
+            <input
+              :value="comp.placeholder ?? ''"
+              type="text"
+              class="ins-input"
+              @input="update('placeholder', ($event.target as HTMLInputElement).value)"
+            />
+          </div>
+          <div class="field-row">
+            <label>Mode</label>
+            <select
+              class="ins-input"
+              :value="comp.mode"
+              @change="update('mode', ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="open">Pick an existing file</option>
+              <option value="create">Pick or name a new file</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label>File Types (comma-separated)</label>
+            <input
+              :value="fileTypesCsv"
+              type="text"
+              class="ins-input"
+              placeholder="csv, parquet"
+              @input="updateFileTypes(($event.target as HTMLInputElement).value)"
+            />
+            <span class="field-hint">Leave empty to list every file.</span>
+          </div>
+          <div class="field-row">
+            <label>
+              <input
+                :checked="comp.allow_directory"
+                type="checkbox"
+                @change="update('allow_directory', ($event.target as HTMLInputElement).checked)"
+              />
+              Allow selecting a folder
+            </label>
+          </div>
+        </div>
+
         <!-- NumericInput -->
         <div v-else-if="comp.component_type === 'NumericInput'" class="field-group">
           <div class="field-group-title">Number</div>
@@ -508,6 +563,21 @@ function updateArtifactTypeFilter(raw: string) {
     .map((s) => s.trim())
     .filter(Boolean);
   update("artifact_type_filter", filters);
+}
+
+const fileTypesCsv = computed(() => {
+  const c = comp.value;
+  return c && c.component_type === "FilePicker" ? c.file_types.join(", ") : "";
+});
+
+function updateFileTypes(raw: string) {
+  update(
+    "file_types",
+    raw
+      .split(",")
+      .map((s) => s.trim().replace(/^\./, ""))
+      .filter(Boolean),
+  );
 }
 
 const actionsCsv = computed(() => {

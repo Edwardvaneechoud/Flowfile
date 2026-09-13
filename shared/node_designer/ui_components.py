@@ -181,6 +181,28 @@ class TextInput(FlowfileInComponent):
             self.value = self.default
 
 
+class FilePicker(FlowfileInComponent):
+    """
+    A path field with a browse button that opens Flowfile's standard file browser.
+
+    The browser runs against the machine hosting flowfile_core, so the same control
+    works in the desktop app, the web UI and Docker. The value is the selected path.
+    """
+
+    component_type: Literal["FilePicker"] = "FilePicker"
+    default: str | None = ""
+    placeholder: str | None = ""
+    mode: Literal["open", "create"] = "open"
+    file_types: list[str] = Field(default_factory=list)
+    allow_directory: bool = False
+    input_type: InputType = "text"
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if self.value is None and self.default is not None:
+            self.value = self.default
+
+
 class NumericInput(FlowfileInComponent):
     """A numeric input field with optional minimum and maximum value validation."""
 

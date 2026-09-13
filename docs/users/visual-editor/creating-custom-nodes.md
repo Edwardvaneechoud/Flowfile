@@ -178,6 +178,7 @@ Flowfile ships nine settings components:
 | Component | Value in `process` | Reach for it when |
 |-----------|--------------------|-------------------|
 | [Text Input](#text-input-value-str) | `str` | Free-form text, or a column name typed by hand |
+| [File Picker](#file-picker-value-str) | `str` | A file or folder path, chosen with the file browser |
 | [Numeric Input](#numeric-input-value-float) | `float` | Exact numeric entry, optional bounds |
 | [Slider](#slider-value-float) | `float` | A bounded value where dragging beats typing |
 | [Toggle Switch](#toggle-switch-value-bool) | `bool` | A single on/off flag |
@@ -211,6 +212,27 @@ return lf.with_columns((pl.lit(prefix) + pl.col("name")).alias("greeting"))
 ```
 
 **When to use** — free-form text, or a column name typed by hand.
+
+### File Picker — `.value` → `str`
+
+A path field with a **Browse** button that opens Flowfile's standard file browser — the same one the Read and Write nodes use.
+
+```python
+input_file = nd.FilePicker(
+    label="Input file",
+    placeholder="/data/input.csv",
+    file_types=["csv", "parquet"],
+)
+```
+
+**Configure** — `default`, `placeholder`, `mode` (`"open"` to pick an existing path, `"create"` to also allow naming a new file), `file_types` (extensions the browser lists; omit to show every file), `allow_directory` (let the user select a folder). **Needs a connected input:** no.
+
+```python
+path = self.settings_schema.source.input_file.value
+return pl.scan_csv(path)
+```
+
+**When to use** — any setting that is a file or folder path. The browser runs on the machine hosting `flowfile_core`, so in Docker or the web UI it lists the *server's* filesystem, not the viewer's.
 
 ### Numeric Input — `.value` → `float`
 

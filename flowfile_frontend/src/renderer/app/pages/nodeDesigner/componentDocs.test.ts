@@ -8,6 +8,7 @@ import type { ComponentType } from "./designerState";
 
 const ALL_TYPES: ComponentType[] = [
   "TextInput",
+  "FilePicker",
   "NumericInput",
   "SliderInput",
   "ToggleSwitch",

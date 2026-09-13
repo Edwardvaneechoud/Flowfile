@@ -20,6 +20,7 @@ from flowfile_core.flowfile.node_designer.state import (
     DesignerState,
     EnvironmentState,
     ExampleInput,
+    FilePickerState,
     NodeManifest,
     NumericInputState,
     ParseIssue,
@@ -74,6 +75,7 @@ _SDK_SYMBOLS = set(_sdk.__all__) | {"TypeGroup"}
 
 _COMPONENT_TYPES = {
     "TextInput",
+    "FilePicker",
     "NumericInput",
     "SliderInput",
     "ToggleSwitch",
@@ -89,6 +91,7 @@ _BUILDERS = {"SectionBuilder", "NodeSettingsBuilder"}
 
 _COMPONENT_KWARGS: dict[str, set[str]] = {
     "TextInput": {"label", "default", "placeholder"},
+    "FilePicker": {"label", "default", "placeholder", "mode", "file_types", "allow_directory"},
     "NumericInput": {"label", "default", "min_value", "max_value"},
     "SliderInput": {"label", "default", "min_value", "max_value", "step"},
     "ToggleSwitch": {"label", "default", "description"},
@@ -694,6 +697,13 @@ class _SourceParser:
         common = {"name": comp_name, "label": kwargs.get("label")}
         if symbol == "TextInput":
             return TextInputState(**common, default=kwargs.get("default"), placeholder=kwargs.get("placeholder"))
+        if symbol == "FilePicker":
+            return FilePickerState(
+                **common,
+                default=kwargs.get("default"),
+                placeholder=kwargs.get("placeholder"),
+                **{k: v for k, v in kwargs.items() if k in ("mode", "file_types", "allow_directory") and v is not None},
+            )
         if symbol == "NumericInput":
             return NumericInputState(
                 **common,

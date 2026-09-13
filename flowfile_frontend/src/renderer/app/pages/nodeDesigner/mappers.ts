@@ -23,6 +23,7 @@ import type {
   AvailableArtifactsMarker,
   ColumnActionInputComponent,
   ColumnSelectorComponent,
+  FilePickerComponent,
   MultiSelectComponent,
   NumericInputComponent,
   SecretSelectorComponent,
@@ -58,6 +59,7 @@ export function toPascalCase(str: string): string {
 
 const OPTIONS_INPUT_TYPE: Record<ComponentType, string> = {
   TextInput: "text",
+  FilePicker: "text",
   NumericInput: "number",
   SliderInput: "number",
   ToggleSwitch: "boolean",
@@ -99,6 +101,17 @@ function componentToFrontend(comp: ComponentState): UIComponent {
         default: comp.default ?? null,
         placeholder: comp.placeholder ?? undefined,
       } as TextInputComponent;
+    case "FilePicker":
+      return {
+        ...base,
+        component_type: "FilePicker",
+        value: comp.default ?? null,
+        default: comp.default ?? null,
+        placeholder: comp.placeholder ?? undefined,
+        mode: comp.mode,
+        file_types: comp.file_types,
+        allow_directory: comp.allow_directory,
+      } as FilePickerComponent;
     case "NumericInput":
       return {
         ...base,
@@ -205,6 +218,17 @@ export function defaultComponentState(type: ComponentType, name: string): Compon
   switch (type) {
     case "TextInput":
       return { component_type: "TextInput", name, label, default: "", placeholder: null };
+    case "FilePicker":
+      return {
+        component_type: "FilePicker",
+        name,
+        label,
+        default: "",
+        placeholder: null,
+        mode: "open",
+        file_types: [],
+        allow_directory: false,
+      };
     case "NumericInput":
       return {
         component_type: "NumericInput",

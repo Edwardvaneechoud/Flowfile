@@ -84,6 +84,7 @@ _CUSTOM_NODE_FALLBACK_IMPORTS = (
     "    ColumnActionInput,\n"
     "    ColumnSelector,\n"
     "    CustomNodeBase,\n"
+    "    FilePicker,\n"
     "    IncomingColumns,\n"
     "    MultiSelect,\n"
     "    NodeSettings,\n"
