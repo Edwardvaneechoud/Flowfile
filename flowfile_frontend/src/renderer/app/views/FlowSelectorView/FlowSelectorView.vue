@@ -126,6 +126,7 @@ import SaveDialog from "../../features/designer/components/SaveDialog.vue";
 import SaveConfirmationModal from "../DesignerView/SaveConfirmationModal.vue";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import { computeCloseTargets, tabMenuOptions, type TabCloseAction } from "./flowTabActions";
+import { overflowState, stripMetrics, wheelScrollDelta } from "./flowTabScroll";
 
 const getAllFlows = FlowApi.getAllFlows;
 
@@ -181,8 +182,9 @@ let stripObserver: ResizeObserver | null = null;
 const updateOverflow = () => {
   const strip = tabStrip.value;
   if (!strip) return;
-  canScrollLeft.value = strip.scrollLeft > 0;
-  canScrollRight.value = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+  const state = overflowState(stripMetrics(strip));
+  canScrollLeft.value = state.left;
+  canScrollRight.value = state.right;
 };
 
 const scrollStrip = (direction: -1 | 1) => {
@@ -193,10 +195,11 @@ const scrollStrip = (direction: -1 | 1) => {
 
 const onTabStripWheel = (event: WheelEvent) => {
   const strip = tabStrip.value;
-  if (!strip || strip.scrollWidth <= strip.clientWidth) return;
-  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  if (!strip) return;
+  const delta = wheelScrollDelta(event, stripMetrics(strip));
+  if (delta === null) return;
   event.preventDefault();
-  strip.scrollLeft += event.deltaY;
+  strip.scrollLeft += delta;
 };
 
 const scrollActiveTabIntoView = () => {
