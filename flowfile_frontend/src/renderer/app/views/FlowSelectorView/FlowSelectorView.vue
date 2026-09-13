@@ -1,6 +1,16 @@
 <template>
   <div class="flow-tabs-container">
-    <div class="flow-tabs">
+    <button
+      v-if="canScrollLeft"
+      type="button"
+      class="tab-scroll-btn left"
+      aria-label="Scroll tabs left"
+      title="More tabs"
+      @click="scrollStrip(-1)"
+    >
+      <span class="material-icons">chevron_left</span>
+    </button>
+    <div ref="tabStrip" class="flow-tabs" @wheel="onTabStripWheel" @scroll.passive="updateOverflow">
       <!-- trigger-keys=[] : the trigger's default keys include Space, and its keydown
            handler preventDefaults it — swallowing spaces typed in the rename input. -->
       <el-tooltip
@@ -62,6 +72,16 @@
         <span class="material-icons">add</span>
       </button>
     </div>
+    <button
+      v-if="canScrollRight"
+      type="button"
+      class="tab-scroll-btn right"
+      aria-label="Scroll tabs right"
+      title="More tabs"
+      @click="scrollStrip(1)"
+    >
+      <span class="material-icons">chevron_right</span>
+    </button>
   </div>
 
   <!-- Save Confirmation Modal -->
@@ -94,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, computed, nextTick } from "vue";
+import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
@@ -149,6 +169,47 @@ const setRenameInput = (el: unknown) => {
 
 // Tab context menu
 const tabMenu = ref<{ flowId: number; x: number; y: number } | null>(null);
+
+// Overflow scrolling: the strip hides its scrollbar, so translate vertical
+// wheel deltas into horizontal scroll, keep the active tab in view, and show
+// edge arrows whenever tabs are clipped on that side.
+const tabStrip = ref<HTMLElement | null>(null);
+const canScrollLeft = ref(false);
+const canScrollRight = ref(false);
+let stripObserver: ResizeObserver | null = null;
+
+const updateOverflow = () => {
+  const strip = tabStrip.value;
+  if (!strip) return;
+  canScrollLeft.value = strip.scrollLeft > 0;
+  canScrollRight.value = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+};
+
+const scrollStrip = (direction: -1 | 1) => {
+  const strip = tabStrip.value;
+  if (!strip) return;
+  strip.scrollBy({ left: direction * strip.clientWidth * 0.6, behavior: "smooth" });
+};
+
+const onTabStripWheel = (event: WheelEvent) => {
+  const strip = tabStrip.value;
+  if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  event.preventDefault();
+  strip.scrollLeft += event.deltaY;
+};
+
+const scrollActiveTabIntoView = () => {
+  nextTick(() => {
+    const strip = tabStrip.value;
+    const tabs = strip?.querySelectorAll<HTMLElement>(".flow-tab");
+    const active = strip?.querySelector<HTMLElement>(".flow-tab.active");
+    if (!strip || !tabs || !active) return;
+    // The last tab also reveals the trailing "+" button.
+    if (active === tabs[tabs.length - 1]) strip.scrollLeft = strip.scrollWidth;
+    else active.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+};
 
 // Bulk close (Close Others / All / Left / Right)
 const bulkQueue = ref<number[]>([]);
@@ -458,6 +519,9 @@ watch(
   },
 );
 
+watch(selectedFlowId, scrollActiveTabIntoView);
+watch(flows, () => nextTick(updateOverflow), { deep: true });
+
 watch(
   () => flows.value,
   (newFlows) => {
@@ -477,6 +541,14 @@ watch(
 
 onMounted(() => {
   loadFlows();
+  if (tabStrip.value && typeof ResizeObserver !== "undefined") {
+    stripObserver = new ResizeObserver(updateOverflow);
+    stripObserver.observe(tabStrip.value);
+  }
+});
+
+onBeforeUnmount(() => {
+  stripObserver?.disconnect();
 });
 
 defineExpose({
@@ -490,32 +562,62 @@ defineExpose({
 
 <style scoped>
 .flow-tabs-container {
+  position: relative;
   width: 100%;
   font-family: var(--font-family-base);
 }
 
+/* Overlaid on the strip's edges so toggling them never shifts the tabs. */
+.tab-scroll-btn {
+  position: absolute;
+  top: 0;
+  bottom: 1px;
+  width: 30px;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  z-index: 2;
+}
+
+.tab-scroll-btn.left {
+  left: 0;
+  justify-content: flex-start;
+  background: linear-gradient(to right, var(--color-background-secondary) 55%, transparent);
+}
+
+.tab-scroll-btn.right {
+  right: 0;
+  justify-content: flex-end;
+  background: linear-gradient(to left, var(--color-background-secondary) 55%, transparent);
+}
+
+.tab-scroll-btn .material-icons {
+  font-size: 20px;
+}
+
+.tab-scroll-btn:hover {
+  color: var(--color-primary);
+}
+
+/* Scrollbar hidden: a visible one steals height from the 34px strip and
+   forces a second (vertical) scrollbar. Wheel + active-tab tracking cover it. */
 .flow-tabs {
   display: flex;
   align-items: center;
   overflow-x: auto;
+  overflow-y: hidden;
   background-color: var(--color-background-secondary);
   border-bottom: 1px solid var(--color-border-primary);
   height: 34px;
   padding-left: var(--spacing-1);
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .flow-tabs::-webkit-scrollbar {
-  height: 4px;
-}
-
-.flow-tabs::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.flow-tabs::-webkit-scrollbar-thumb {
-  background-color: var(--color-border-secondary);
-  border-radius: var(--border-radius-full);
+  display: none;
 }
 
 .flow-tab {
