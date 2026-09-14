@@ -482,6 +482,19 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         '{"received_file": {"name": "users.csv", "file_type": "csv"}}. '
         "Often paired downstream with 'filter' / 'select' (initial cleanup)."
     ),
+    "list_files": (
+        "List the contents of a local folder as a table — one row per file, with "
+        "columns file_name, file_path, directory, relative_path, file_type, "
+        "size_bytes, last_modified, created_date, is_directory. Use to inventory a "
+        "folder, or to filter files by extension / size / date before acting on "
+        "them. Don't use to read the *contents* of those files — 'read' has a "
+        "directory scan mode that loads a whole folder of csv/parquet as one "
+        "table. Options: file_types (extensions, no dot), recursive + max_depth, "
+        "include_hidden, include_files / include_directories, max_files. Example: "
+        '{"path": "/data/incoming", "file_types": ["csv"], "recursive": true}. '
+        "Often paired downstream with 'filter' (narrow by size or date) or "
+        "'record_count' (how many files arrived)."
+    ),
     "database_reader": (
         "Read from a SQL database via a stored connection. Use to pull the result "
         "of a SELECT directly into a flow without a local file. Specify the "
@@ -1034,6 +1047,18 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "customers.csv, leave format=csv. Pitfall: this is for local "
         "files. For cloud paths (s3://, gs://) use 'Read from cloud "
         "provider'; for databases use 'Read from Database'."
+    ),
+    "list_files": (
+        "Settings panel: a 'Folder' path box with a Browse button that "
+        "opens the folder picker, then 'Filter' (file types, whether to "
+        "include files and/or folders, hidden files) and 'Subfolders' "
+        "(search subfolders + max depth, max rows). Worked example: "
+        "'which csv files landed in the drop folder this week?' → drag "
+        "'List files' from Input Sources, browse to the folder, set file "
+        "types to csv, then add a 'Filter' on last_modified. Pitfall: "
+        "this lists file *metadata*, it does not open the files — to "
+        "load a whole folder of data use 'Read data' and switch its "
+        "Source to Directory."
     ),
     "database_reader": (
         "Settings panel: a 'Connection' dropdown (lists previously-saved "

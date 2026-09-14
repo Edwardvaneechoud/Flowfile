@@ -120,7 +120,9 @@ class TestScan:
 
     def test_size_and_timestamps_are_populated(self, sample_tree):
         df = scan_directory_to_frame(settings(sample_tree, file_types=["csv"]))
-        assert df["size_bytes"][0] == len("x,y\n1,2\n")
+        # Compare against the real on-disk size: Windows rewrites \n as \r\n,
+        # so the literal byte count of the written text is platform-dependent.
+        assert df["size_bytes"][0] == (sample_tree / "a.csv").stat().st_size
         assert df["last_modified"][0] is not None
         assert df["created_date"][0] is not None
 
@@ -356,7 +358,10 @@ class TestCancellationHardening:
         data = tmp_path / "data"
         data.mkdir()
         (data / "a.csv").write_text("v\n1\n")
-        (data / "backup").symlink_to(data, target_is_directory=True)
+        try:
+            (data / "backup").symlink_to(data, target_is_directory=True)
+        except OSError:  # Windows without the create-symlink privilege
+            pytest.skip("cannot create a directory symlink on this platform")
 
         df = scan_directory_to_frame(settings(data, recursive=True, max_depth=12))
         assert df["file_name"].to_list() == ["a.csv"], "symlink cycle expanded"

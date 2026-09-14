@@ -70,8 +70,8 @@ drop it on the canvas themselves. Don't try to stage it.
 renders sample data in the UI panel — so it's fine for you to add
 when the user wants to inspect intermediate results.
 
-Source-only nodes (``manual_input``, ``read``, ``database_reader``,
-``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``,
+Source-only nodes (``manual_input``, ``read``, ``list_files``,
+``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``,
 ``google_analytics_reader``, ``rest_api_reader``, ``external_source``,
 ``flow_input``) are NOT writers
 either — they **provide** data, they don't consume it. ``add_<source>``
