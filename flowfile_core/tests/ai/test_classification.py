@@ -39,6 +39,8 @@ def test_source_set_includes_all_readers() -> None:
     expected_source = {
         "manual_input",
         "read",
+        # Source with a fixed output schema, so it predicts via the mirror.
+        "list_files",
         "database_reader",
         "cloud_storage_reader",
         "catalog_reader",

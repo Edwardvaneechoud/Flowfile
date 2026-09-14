@@ -974,6 +974,51 @@ class NodeRead(NodeBase):
         return f"{name} ({rf.file_type})"
 
 
+class NodeListFiles(NodeBase):
+    """Settings for a node that lists the files inside a directory.
+
+    The output schema is fixed (see ``LIST_FILES_SCHEMA`` in the flow graph), so the
+    directory is only ever walked at run time — never during schema prediction.
+    """
+
+    path: str = ""
+    file_types: list[str] = Field(default_factory=list)
+    recursive: bool = False
+    max_depth: int = Field(default=5, ge=1, le=50)
+    include_hidden: bool = False
+    include_files: bool = True
+    include_directories: bool = False
+    max_files: int | None = Field(default=None, ge=1)
+
+    @field_validator("file_types", mode="before")
+    @classmethod
+    def _normalize_file_types(cls, v):
+        """Accepts ``.csv``/``CSV``/``csv`` alike and drops blanks."""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = [part for part in re.split(r"[,\s]+", v) if part]
+        return [str(t).strip().lstrip(".").lower() for t in v if str(t).strip().lstrip(".")]
+
+    @model_validator(mode="after")
+    def _at_least_one_entry_kind(self):
+        if not self.include_files and not self.include_directories:
+            raise ValueError("list_files must include files, directories, or both")
+        return self
+
+    def get_default_description(self) -> str:
+        """Describes the directory being listed."""
+        if not self.path:
+            return ""
+        name = Path(self.path).name or self.path
+        bits = [name]
+        if self.file_types:
+            bits.append(", ".join(f".{t}" for t in self.file_types[:3]))
+        if self.recursive:
+            bits.append("recursive")
+        return " · ".join(bits)
+
+
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 

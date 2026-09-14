@@ -106,6 +106,7 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     concat,
     from_dict,
     from_raw_data,
+    list_files,
     read_avro,
     read_csv,
     read_excel,
