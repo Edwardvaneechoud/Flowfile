@@ -1249,7 +1249,7 @@ class FlowDataEngine:
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
 
     @classmethod
-    def create_from_path(cls, received_table: input_schema.ReceivedTable) -> FlowDataEngine:
+    def create_from_path(cls, received_table: input_schema.ReceivedTable, node_logger=None) -> FlowDataEngine:
         """Creates a FlowDataEngine from a local file path.
 
         Supports various file types like CSV, Parquet, and Excel.
@@ -1257,6 +1257,7 @@ class FlowDataEngine:
         Args:
             received_table: A `ReceivedTableBase` object containing the file path
                 and format details.
+            node_logger: Optional node logger, so a reader can report into the flow log.
 
         Returns:
             A new `FlowDataEngine` instance with data from the file.
@@ -1281,7 +1282,9 @@ class FlowDataEngine:
         if not handler:
             raise Exception(f"Cannot create from {received_table.file_type}")
 
-        flow_file = cls(handler(received_table))
+        # Only the excel reader reports which engine it used; the rest take the table alone.
+        extra = {"logger": node_logger} if received_table.file_type == "excel" else {}
+        flow_file = cls(handler(received_table, **extra))
         if received_table.file_type == "parquet":
             count = create_funcs.parquet_row_count(received_table)
             if count is not None:

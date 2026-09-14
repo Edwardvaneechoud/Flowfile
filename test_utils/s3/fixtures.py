@@ -154,15 +154,30 @@ def is_docker_available() -> bool:
         return False
 
 
-def _image_available(image: str) -> bool:
-    """True if the image is already local or can be pulled."""
+# Auth/existence failures never succeed on a retry; registry 5xx and rate limits do.
+_PERMANENT_PULL_ERRORS = ("denied", "unauthorized", "not found", "manifest unknown")
+
+
+def _image_available(image: str, attempts: int = 3) -> bool:
+    """True if the image is already local or can be pulled, retrying transient pull failures."""
     if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0:
         return True
-    logger.info(f"Pulling {image}...")
-    try:
-        return subprocess.run(["docker", "pull", image], capture_output=True, timeout=600).returncode == 0
-    except subprocess.SubprocessError:
-        return False
+    for attempt in range(1, attempts + 1):
+        logger.info(f"Pulling {image} (attempt {attempt}/{attempts})...")
+        try:
+            result = subprocess.run(["docker", "pull", image], capture_output=True, timeout=600)
+        except subprocess.SubprocessError as exc:
+            logger.warning(f"docker pull {image} errored: {exc}")
+        else:
+            if result.returncode == 0:
+                return True
+            error = result.stderr.decode(errors="replace").strip() or "(no stderr)"
+            logger.warning(f"docker pull {image} failed: {error}")
+            if any(marker in error.lower() for marker in _PERMANENT_PULL_ERRORS):
+                return False
+        if attempt < attempts:
+            time.sleep(2 * attempt)
+    return False
 
 
 def resolve_minio_image() -> str:
@@ -172,6 +187,11 @@ def resolve_minio_image() -> str:
     if MINIO_IMAGE_FALLBACK and _image_available(MINIO_IMAGE_FALLBACK):
         logger.warning(f"{MINIO_IMAGE} unavailable, using {MINIO_IMAGE_FALLBACK}")
         return MINIO_IMAGE_FALLBACK
+    logger.error(
+        f"No MinIO image could be pulled ({MINIO_IMAGE}"
+        + (f", {MINIO_IMAGE_FALLBACK}" if MINIO_IMAGE_FALLBACK else "")
+        + "); set TEST_MINIO_IMAGE to a reachable image."
+    )
     return MINIO_IMAGE
 
 
