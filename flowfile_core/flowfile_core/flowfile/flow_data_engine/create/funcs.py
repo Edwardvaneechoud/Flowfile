@@ -3,9 +3,10 @@ import os
 import polars as pl
 from polars._typing import CsvEncoding
 
-from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
+from flowfile_core.configs import logger as _module_logger
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
+from shared.excel_reader import read_excel_table
 from shared.path_utils import NoFilesMatchedError, expand_glob_pattern, is_url
 
 INFER_SCHEMA_RUNGS = (10_000, 100_000)
@@ -327,58 +328,13 @@ def create_from_path_avro(received_table: input_schema.ReceivedTable) -> pl.Data
     return pl.read_avro(received_table.abs_file_path)
 
 
-def create_from_path_excel(received_table: input_schema.ReceivedTable):
+def create_from_path_excel(received_table: input_schema.ReceivedTable, logger=None):
+    """Read an Excel sheet; see ``shared.excel_reader`` for engine selection and the openpyxl fallback.
+
+    ``logger`` is the node logger during a run, so the engine used lands in the flow log.
+    """
     if not isinstance(received_table.table_settings, input_schema.InputExcelTable):
         raise ValueError("Received table settings are not of type InputExcelTable")
-    table_settings: input_schema.InputExcelTable = received_table.table_settings
-    if table_settings.type_inference:
-        engine = "openpyxl"
-    elif table_settings.start_row > 0 and table_settings.start_column == 0:
-        engine = "calamine" if table_settings.has_headers else "xlsx2csv"
-    elif table_settings.start_column > 0 or table_settings.start_row > 0:
-        engine = "openpyxl"
-    else:
-        engine = "calamine"
-
-    sheet_name = table_settings.sheet_name
-
-    if engine == "calamine":
-        df = df_from_calamine_xlsx(
-            file_path=received_table.abs_file_path,
-            sheet_name=sheet_name,
-            start_row=table_settings.start_row,
-            end_row=table_settings.end_row,
-        )
-        if table_settings.end_column > 0:
-            end_col_index = table_settings.end_column
-            cols_to_select = [df.columns[i] for i in range(table_settings.start_column, end_col_index)]
-            df = df.select(cols_to_select)
-
-    elif engine == "xlsx2csv":
-        csv_options = {"skip_rows": table_settings.start_row}
-        df = pl.read_excel(
-            source=received_table.abs_file_path,
-            read_options=csv_options,
-            engine="xlsx2csv",
-            sheet_name=table_settings.sheet_name,
-            has_header=table_settings.has_headers,
-        )
-        end_col_index = table_settings.end_column if table_settings.end_column > 0 else len(df.columns)
-        cols_to_select = [df.columns[i] for i in range(table_settings.start_column, end_col_index)]
-        df = df.select(cols_to_select)
-        if 0 < table_settings.end_row < len(df):
-            df = df.head(table_settings.end_row)
-
-    else:
-        max_col = table_settings.end_column if table_settings.end_column > 0 else None
-        max_row = table_settings.end_row + 1 if table_settings.end_row > 0 else None
-        df = df_from_openpyxl(
-            file_path=received_table.abs_file_path,
-            sheet_name=table_settings.sheet_name,
-            min_row=table_settings.start_row + 1,
-            min_col=table_settings.start_column + 1,
-            max_row=max_row,
-            max_col=max_col,
-            has_headers=table_settings.has_headers,
-        )
-    return df
+    return read_excel_table(
+        received_table.abs_file_path, received_table.table_settings, logger=logger or _module_logger
+    )

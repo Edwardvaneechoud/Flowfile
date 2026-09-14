@@ -156,6 +156,14 @@ class InputExcelTable(InputTableBase):
     has_headers: bool = True
     type_inference: bool = False
 
+    @field_validator("sheet_name", mode="before")
+    @classmethod
+    def normalize_sheet_name(cls, v):
+        """A blank sheet name means 'read the first sheet'."""
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
+
     @model_validator(mode="after")
     def validate_range_values(self):
         """Validates that the Excel cell range is logical."""

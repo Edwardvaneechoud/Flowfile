@@ -458,6 +458,10 @@ def main():
 
     common_imports = [
         "fastexcel",
+        # polars imports xlsx2csv lazily inside pl.read_excel(engine="xlsx2csv"), so the static
+        # scan misses it; shared/excel_reader.py picks that engine for headerless reads starting
+        # below row 1.
+        "xlsx2csv",
         "polars",
         "numpy",
         "numpy.core._methods",

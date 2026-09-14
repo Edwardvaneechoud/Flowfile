@@ -15,7 +15,6 @@ from time import time
 from typing import Any, Literal, NamedTuple, Union
 from uuid import uuid1
 
-import fastexcel
 import polars as pl
 import yaml
 from fastapi.exceptions import HTTPException
@@ -5880,20 +5879,15 @@ class FlowGraph:
                 received.file_type, getattr(received.table_settings, "encoding", None), received.path
             )
 
-        if (
-            input_file.received_file.file_type in ("xlsx", "excel")
-            and input_file.received_file.table_settings.sheet_name == ""
-        ):
-            sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
-            input_file.received_file.table_settings.sheet_name = sheet_name
-
         received_file = input_file.received_file
         input_file.received_file.set_absolute_filepath()
 
         def _func():
             input_file.received_file.set_absolute_filepath()
             if self.execution_location == "local":
-                input_data = FlowDataEngine.create_from_path(input_file.received_file)
+                input_data = FlowDataEngine.create_from_path(
+                    input_file.received_file, node_logger=self.flow_logger.get_node_logger(input_file.node_id)
+                )
             elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif input_file.received_file.file_type == "csv" and is_utf8_encoding(
