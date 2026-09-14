@@ -98,8 +98,7 @@ select {
   border-radius: 4px;
 }
 
-/* Element Plus draws each control's chrome on its wrapper, so its inner field stays
-   bare — without this the rule above would double the border. */
+/* Element Plus draws its chrome on the wrapper; styling the inner field doubles the border. */
 input.el-input__inner,
 input.el-select__input,
 input.el-range-input,
