@@ -9,6 +9,7 @@ shared.delta_utils) is imported inside the task that needs it.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import io
 import logging
 import os
@@ -1265,6 +1266,9 @@ def generic_task(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting generic task")
     number_of_records: int | None = None
+    if "logger" in inspect.signature(func).parameters:
+        # Opt-in: lets a reader report what it did into the flow log the user sees.
+        kwargs["logger"] = flowfile_logger
     try:
         result = func(*args, **kwargs)
         if result is None:

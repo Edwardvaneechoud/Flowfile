@@ -81,6 +81,33 @@ button {
   font-size: inherit;
 }
 
+/* Listed by type, not :not(), to stay a low-specificity base components can override. */
+input:not([type]),
+input[type="text"],
+input[type="number"],
+input[type="search"],
+input[type="email"],
+input[type="url"],
+input[type="password"],
+input[type="tel"],
+textarea,
+select {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+}
+
+/* Element Plus draws its chrome on the wrapper; styling the inner field doubles the border. */
+input.el-input__inner,
+input.el-select__input,
+input.el-range-input,
+textarea.el-textarea__inner {
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+}
+
 button {
   cursor: pointer;
 }

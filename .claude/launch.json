@@ -84,6 +84,33 @@
         "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8082"
       ],
       "port": 8082
+    },
+    {
+      "name": "core-63592",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_OFFLOAD_TO_WORKER=0 poetry run flowfile_core --port 63592"
+      ],
+      "port": 63592
+    },
+    {
+      "name": "web-63592",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63592 npm run dev:web --prefix flowfile_frontend -- --port 8083"
+      ],
+      "port": 8083
+    },
+    {
+      "name": "web-verify",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8084"
+      ],
+      "port": 8084
     }
   ]
 }

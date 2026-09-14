@@ -1,93 +1,100 @@
 <template>
-  <div v-if="isLoaded">
-    <div class="table">
-      <div v-if="localExcelTable" class="selectors">
-        <!-- Sheet Name Dropdown -->
-        <div class="row">
-          <el-row>
-            <div class="input-wrapper">
-              <label>Sheet Name</label>
-              <drop-down
-                v-model="localExcelTable.sheet_name"
-                placeholder="Select or type sheet name"
-                :column-options="sheetNames"
-                :is-loading="!sheetNamesLoaded"
-              />
-              <span v-if="showWarning" class="warning-sign">⚠️</span>
-            </div>
-          </el-row>
-        </div>
+  <div v-if="isLoaded && localExcelTable" class="excel-settings">
+    <div class="field">
+      <div class="field-label">
+        Sheet name
+        <span class="field-optional">optional</span>
+      </div>
+      <div class="sheet-row">
+        <drop-down
+          v-model="localExcelTable.sheet_name"
+          label="Sheet name"
+          placeholder="First sheet (default)"
+          :column-options="sheetNames"
+          :is-loading="!sheetNamesLoaded"
+        />
+        <span v-if="showWarning" class="warning-sign" title="This sheet is not in the workbook">
+          ⚠️
+        </span>
+      </div>
+    </div>
 
-        <!-- Checkboxes Group  -->
-        <div class="row">
-          <el-checkbox v-model="localExcelTable.has_headers" label="Has headers" size="large" />
-          <el-checkbox
-            v-model="localExcelTable.type_inference"
-            label="Type inference"
-            size="large"
+    <div class="checkbox-row">
+      <el-checkbox v-model="localExcelTable.has_headers" label="Has headers" />
+      <el-checkbox v-model="localExcelTable.type_inference" label="Type inference" />
+    </div>
+
+    <div class="optional">
+      <button
+        type="button"
+        class="disclosure"
+        :aria-expanded="showOptionalSettings"
+        :aria-controls="rangeGroupId"
+        @click="toggleOptionalSettings"
+      >
+        <svg class="disclosure-chevron" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path
+            fill-rule="evenodd"
+            d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+            clip-rule="evenodd"
+          />
+        </svg>
+        Read range
+        <span class="field-optional">optional</span>
+      </button>
+
+      <div v-if="showOptionalSettings" :id="rangeGroupId" class="range-group">
+        <div class="range-row">
+          <span class="range-label">Rows</span>
+          <el-input-number
+            v-model="startRow"
+            class="range-field"
+            size="small"
+            :min="0"
+            :precision="0"
+            :controls="false"
+            placeholder="First"
+            aria-label="First row"
+          />
+          <span class="range-sep">to</span>
+          <el-input-number
+            v-model="endRow"
+            class="range-field"
+            size="small"
+            :min="0"
+            :precision="0"
+            :controls="false"
+            placeholder="Last"
+            aria-label="Last row"
           />
         </div>
 
-        <hr class="section-divider" />
-
-        <div class="button-container">
-          <button class="toggle-button" @click="toggleOptionalSettings">
-            {{ showOptionalSettings ? "Hide" : "Show" }} Optional Settings
-          </button>
+        <div class="range-row">
+          <span class="range-label">Columns</span>
+          <el-input-number
+            v-model="startColumn"
+            class="range-field"
+            size="small"
+            :min="0"
+            :precision="0"
+            :controls="false"
+            placeholder="First"
+            aria-label="First column"
+          />
+          <span class="range-sep">to</span>
+          <el-input-number
+            v-model="endColumn"
+            class="range-field"
+            size="small"
+            :min="0"
+            :precision="0"
+            :controls="false"
+            placeholder="Last"
+            aria-label="Last column"
+          />
         </div>
 
-        <div v-if="showOptionalSettings" class="optional-section">
-          <hr class="section-divider" />
-
-          <!-- Table Sizes Title -->
-          <div class="table-sizes">Table sizes</div>
-
-          <!-- Start and End Row Inputs -->
-          <div class="row">
-            <div class="input-wrapper">
-              <label for="start-row">Start Row</label>
-              <input
-                id="start-row"
-                v-model.number="localExcelTable.start_row"
-                type="number"
-                class="compact-input"
-              />
-            </div>
-            <div class="input-wrapper">
-              <label for="end-row">End Row</label>
-              <input
-                id="end-row"
-                v-model.number="localExcelTable.end_row"
-                type="number"
-                class="compact-input"
-              />
-            </div>
-          </div>
-
-          <hr class="section-divider" />
-
-          <!-- Start and End Column Inputs -->
-          <div class="row">
-            <div class="input-wrapper">
-              <label for="start-column">Start Column</label>
-              <input
-                id="start-column"
-                v-model.number="localExcelTable.start_column"
-                type="number"
-                class="compact-input"
-              />
-            </div>
-            <div class="input-wrapper">
-              <label for="end-column">End Column</label>
-              <input
-                id="end-column"
-                v-model.number="localExcelTable.end_column"
-                type="number"
-                class="compact-input"
-              />
-            </div>
-          </div>
-        </div>
+        <p class="range-hint">Leave a field blank to read to the edge of the sheet.</p>
       </div>
     </div>
   </div>
@@ -98,7 +105,7 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { InputExcelTable } from "../../../baseNode/nodeInput";
 import dropDown from "../../../baseNode/page_objects/dropDown.vue";
-import { getXlsxSheetNamesForPath } from "./utils";
+import { excelOptionalSettingsOpen, getXlsxSheetNamesForPath } from "./utils";
 import { CodeLoader } from "vue-content-loader";
 
 const props = defineProps<{
@@ -110,7 +117,31 @@ const isLoaded = ref(false);
 const emit = defineEmits(["update:modelValue"]);
 const localExcelTable = ref({ ...props.modelValue });
 
-const showOptionalSettings = ref(false);
+const showOptionalSettings = excelOptionalSettingsOpen;
+const rangeGroupId = `excel-range-${Math.random().toString(36).slice(2, 9)}`;
+
+type RangeField = "start_row" | "end_row" | "start_column" | "end_column";
+
+/**
+ * The schema encodes "unbounded" as 0, which is indistinguishable from a real
+ * offset of 0 in the UI. Blank fields carry that meaning instead, so nobody has
+ * to type a sentinel; the 0 goes back on the wire untouched. el-input-number
+ * models an empty field as null, so that is the blank on this side.
+ */
+const rangeBound = (field: RangeField) =>
+  computed<number | null>({
+    get: () => localExcelTable.value[field] || null,
+    set: (value) => {
+      const isBounded = typeof value === "number" && Number.isFinite(value) && value > 0;
+      localExcelTable.value[field] = isBounded ? Math.trunc(value as number) : 0;
+    },
+  });
+
+const startRow = rangeBound("start_row");
+const endRow = rangeBound("end_row");
+const startColumn = rangeBound("start_column");
+const endColumn = rangeBound("end_column");
+
 const sheetNames = ref<string[]>([]);
 const sheetNamesLoaded = ref(false);
 
@@ -147,78 +178,139 @@ watch(
 </script>
 
 <style scoped>
-.selectors {
+.excel-settings {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-3);
+  /* Aligns the content edge with the "File Specs" bar above it. */
+  padding: var(--spacing-2-5) var(--spacing-2-5) var(--spacing-2);
 }
 
-.input-wrapper {
+.field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  flex: 1;
+  gap: var(--spacing-1-5);
 }
 
-label {
-  font-weight: 500;
-  color: var(--color-text-primary);
-  font-size: 14px;
+.field-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-1-5);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
 }
 
-input {
-  padding: 6px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-  font-size: 14px;
-  width: 99%;
+.field-optional {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-muted);
 }
 
-.row {
+.sheet-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: var(--spacing-2);
 }
 
-.compact-input {
-  width: 96%;
-  padding: 6px;
-  font-size: 14px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-}
-
-.button-container {
-  display: flex;
-  justify-content: center;
-  margin: 16px 0;
-}
-
-.optional-section {
-  margin-top: 20px;
-}
-
-.section-divider {
-  margin: 16px 0;
-  border: none;
-  border-top: 1px solid var(--color-border-primary);
-}
-
-.table-sizes {
-  font-weight: bold;
-  margin-bottom: 10px;
+.sheet-row > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .warning-sign {
-  color: var(--color-danger);
-  font-size: 16px;
-  margin-left: 8px;
+  flex: none;
+  font-size: var(--font-size-base);
+  line-height: 1;
 }
 
-@media (max-width: 600px) {
-  .row {
-    flex-direction: column;
-  }
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-2) var(--spacing-5);
+}
+
+.optional {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2-5);
+  padding-top: var(--spacing-3);
+  border-top: 1px solid var(--color-border-light);
+}
+
+.disclosure {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--spacing-1-5);
+  margin-left: calc(var(--spacing-1) * -1);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: none;
+  border-radius: var(--border-radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+  transition:
+    color var(--transition-fast) var(--transition-timing),
+    background-color var(--transition-fast) var(--transition-timing);
+}
+
+.disclosure:hover {
+  color: var(--color-text-primary);
+  background-color: var(--color-background-soft);
+}
+
+.disclosure:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.disclosure-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast) var(--transition-timing);
+}
+
+.disclosure[aria-expanded="true"] .disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+.range-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.range-label {
+  flex: 0 0 64px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.range-field {
+  width: 84px;
+}
+
+.range-sep {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.range-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-tertiary);
 }
 </style>

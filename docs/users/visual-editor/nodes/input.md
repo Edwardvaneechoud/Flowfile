@@ -37,7 +37,7 @@ When a **CSV** file is selected, the following setup options are available:
 ---
 
 #### Excel  
-When an **Excel** file is selected, you can specify the sheet, select specific rows and columns, and configure headers and type inference options to tailor data loading to your needs.
+When an **Excel** file is selected, you can specify the sheet, select specific rows and columns, and configure headers and type inference options to tailor data loading to your needs. Type inference picks the reader: enabled, a more permissive reader parses the sheet and assigns a data type per column; disabled, a faster reader returns the values as they are stored. A sheet the fast reader cannot handle — blank cells or stray values outside the table — falls back to the permissive reader automatically, noted in the run log.
 
 | Parameter          | Description                                                                                                                                              |
 |--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
