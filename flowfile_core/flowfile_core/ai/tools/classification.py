@@ -76,6 +76,9 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "output": "static",
     "api_response": "static",
     "read": "source",
+    # Fixed output schema (LIST_FILES_SCHEMA) regardless of the folder, so the
+    # mirror predicts it without walking the filesystem.
+    "list_files": "source",
     "database_reader": "source",
     "database_writer": "static",
     "cloud_storage_reader": "source",

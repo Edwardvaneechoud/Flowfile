@@ -129,6 +129,7 @@ def _eval_in_validation_namespace(code: str):
 # appended only when a label is shared by several boundaries (see _plan_boundary_names).
 NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "read": "source",
+    "list_files": "source",
     "csv_read": "source",
     "excel_read": "source",
     "manual_input": "source",

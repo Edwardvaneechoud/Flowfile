@@ -25,6 +25,7 @@ EXPECTED_SOURCE_TYPES = {
     "flow_input",
     "google_analytics_reader",
     "kafka_source",
+    "list_files",
     "manual_input",
     "read",
     "rest_api_reader",

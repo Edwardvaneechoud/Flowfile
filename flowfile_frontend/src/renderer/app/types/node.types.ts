@@ -1084,6 +1084,17 @@ export interface NodeSample extends NodeBase {
   seed: number | null;
 }
 
+export interface NodeListFiles extends NodeBase {
+  path: string;
+  file_types: string[];
+  recursive: boolean;
+  max_depth: number;
+  include_hidden: boolean;
+  include_files: boolean;
+  include_directories: boolean;
+  max_files: number | null;
+}
+
 export interface RandomSplitGroup {
   name: string;
   percentage: number;

@@ -754,6 +754,69 @@ def from_raw_data(
     )
 
 
+def list_files(
+    directory: str | Path,
+    *,
+    file_types: list[str] | None = None,
+    recursive: bool = False,
+    max_depth: int = 5,
+    include_hidden: bool = False,
+    include_files: bool = True,
+    include_directories: bool = False,
+    max_files: int | None = None,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+) -> FlowFrame:
+    """List the contents of a directory as a table.
+
+    One row per entry, with the fixed columns ``file_name``, ``file_path``, ``directory``,
+    ``relative_path``, ``file_type``, ``size_bytes``, ``last_modified``, ``created_date``
+    and ``is_directory``. Feed ``file_path`` into a reader to process a whole folder.
+
+    Args:
+        directory: Folder to list.
+        file_types: Extensions to keep (``["csv"]`` or ``[".csv"]``); empty lists everything.
+        recursive: Descend into subfolders.
+        max_depth: How deep to descend when ``recursive`` is set.
+        include_hidden: Include dotfiles / hidden entries.
+        include_files: Include files in the output.
+        include_directories: Include subfolders in the output.
+        max_files: Cap the number of rows.
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+
+    Returns:
+        A FlowFrame with one row per directory entry.
+    """
+    node_id = generate_node_id()
+
+    if not flow_graph:
+        flow_graph = create_flow_graph()
+
+    settings = input_schema.NodeListFiles(
+        flow_id=flow_graph.flow_id,
+        node_id=node_id,
+        path=str(directory),
+        file_types=file_types or [],
+        recursive=recursive,
+        max_depth=max_depth,
+        include_hidden=include_hidden,
+        include_files=include_files,
+        include_directories=include_directories,
+        max_files=max_files,
+        pos_x=100,
+        pos_y=100,
+        is_setup=True,
+        description=description,
+    )
+
+    flow_graph.add_list_files(settings)
+
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
 def concat(
     frames: list["FlowFrame"],
     how: str = "vertical",
