@@ -13,6 +13,7 @@
         :show-new-columns="true"
         :show-old-columns="true"
         :source-types="sourceTypes"
+        :source-semantic-types="sourceSemanticTypes"
         :show-headers="true"
         :show-title="false"
         title="Select data"
@@ -28,10 +29,11 @@ import { ref } from "vue";
 import {
   applySelectPositions,
   createNodeSelect,
+  sourceSemanticTypesFromSchema,
   sourceTypesFromSchema,
   updateNodeSelect,
 } from "../../../baseNode/selectComponents/nodeSelectLogic";
-import { NodeSelect } from "../../../baseNode/nodeInput";
+import { NodeSelect, SemanticType } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -44,6 +46,7 @@ const nodeStore = useNodeStore();
 const nodeSelect = ref<NodeSelect>(createNodeSelect().value);
 const dataLoaded = ref(false);
 const sourceTypes = ref<Record<string, string>>({});
+const sourceSemanticTypes = ref<Record<string, SemanticType>>({});
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSelect,
@@ -62,6 +65,7 @@ const loadNodeData = async (nodeId: number) => {
   if (result) {
     const main_input = result.main_input;
     sourceTypes.value = sourceTypesFromSchema(main_input?.table_schema);
+    sourceSemanticTypes.value = sourceSemanticTypesFromSchema(main_input?.table_schema);
     try {
       if (result.setting_input && main_input && result.setting_input.is_setup) {
         nodeSelect.value = result.setting_input;

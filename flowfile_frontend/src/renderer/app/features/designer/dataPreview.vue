@@ -112,7 +112,8 @@
     <ColumnStatsPanel
       v-if="statsPanelOpen && activeStatsColumn && statsAnchorRect"
       :column-name="activeStatsColumn"
-      :data-type="activeStatsDataType"
+      :data-type="activeStatsSchema?.data_type"
+      :semantic-type="activeStatsSchema?.semantic_type"
       :stats="statsData"
       :loading="statsLoading"
       :error-kind="statsErrorKind"
@@ -134,10 +135,12 @@ import debounce from "lodash/debounce";
 import { TableExample, FileColumn } from "../../components/nodes/baseNode/nodeInterfaces";
 import { NodeApi } from "../../api/node.api";
 import { cellValueFormatter, formatCellValue } from "../../utils/cellFormat";
+import { geometryCellFormatter, isGeometryColumn } from "../../utils/geometry";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
 import ColumnStatsHeader from "./dataPreview/ColumnStatsHeader.vue";
+import GeometryCellRenderer from "./dataPreview/GeometryCellRenderer.vue";
 import ColumnStatsPanel from "./dataPreview/ColumnStatsPanel.vue";
 import { formatCount, totalRowCount } from "./dataPreview/columnQuality";
 import { classifyStatsError, statsCacheKey, type StatsVerdict } from "./dataPreview/statsRequest";
@@ -344,8 +347,8 @@ function openStatsPanelNow() {
   statsPanelOpen.value = true;
 }
 
-const activeStatsDataType = computed(
-  () => dataPreview.value?.table_schema?.find((c) => c.name === activeStatsColumn.value)?.data_type,
+const activeStatsSchema = computed(() =>
+  dataPreview.value?.table_schema?.find((c) => c.name === activeStatsColumn.value),
 );
 
 const sampleRowCount = computed(() => (Array.isArray(rowData.value) ? rowData.value.length : 0));
@@ -470,13 +473,17 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => ({
-        field: item.name,
-        headerName: item.name,
-        resizable: true,
-        headerComponentParams: { dataType: item.data_type },
-        valueFormatter: cellValueFormatter,
-      }));
+      columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => {
+        const isGeometry = isGeometryColumn(item);
+        return {
+          field: item.name,
+          headerName: item.name,
+          resizable: true,
+          headerComponentParams: { dataType: item.data_type, semanticType: item.semantic_type },
+          valueFormatter: isGeometry ? geometryCellFormatter : cellValueFormatter,
+          cellRenderer: isGeometry ? GeometryCellRenderer : undefined,
+        };
+      });
 
       if (resp.has_example_data === false) {
         showFetchButton.value = true;

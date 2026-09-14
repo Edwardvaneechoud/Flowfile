@@ -208,3 +208,12 @@ class TestOptimizeDelta:
         assert isinstance(metrics, dict)
         # table still readable after optimize
         assert DeltaTable(str(p)).to_pyarrow_table().num_rows == 4
+
+
+def test_make_json_safe_uses_the_hex_preview_encoding_for_bytes():
+    from shared.delta_utils import format_binary_preview, make_json_safe
+
+    assert make_json_safe(b"\x01\x02") == "0x0102"
+    assert make_json_safe(memoryview(b"\x01")) == "0x01"
+    assert make_json_safe(bytes(range(17))) == format_binary_preview(bytes(range(17)))
+    assert make_json_safe(bytes(range(17))).endswith("\u2026 (17 bytes)")
