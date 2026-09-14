@@ -110,6 +110,9 @@
       "wasm_type": "kafka_source",
       "docs_anchor": "kafka-source"
     },
+    "list_files": {
+      "tier": "absent"
+    },
     "manual_input": {
       "tier": "supported",
       "wasm_type": "manual_input"
@@ -250,6 +253,6 @@
   "counts": {
     "supported": 24,
     "locked": 16,
-    "absent": 9
+    "absent": 10
   }
 }

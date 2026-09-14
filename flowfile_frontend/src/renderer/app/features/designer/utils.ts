@@ -31,6 +31,7 @@ const SVG_NODE_ICONS = [
   "input_data.svg",
   "join.svg",
   "kafka_source.svg",
+  "list_files.svg",
   "manual_input.svg",
   "multi_field_formula.svg",
   "output.svg",

@@ -37,9 +37,11 @@ from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.configs.node_store.nodes import get_source_node_types, get_source_node_types_str
+from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
+from flowfile_core.fileExplorer.funcs import SecureFileExplorer
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -498,6 +500,100 @@ class CatalogSqlTables(NamedTuple):
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
     # Each physical table's namespace_id, for per-catalog storage resolution.
     table_namespaces: dict[str, int | None]
+
+
+LIST_FILES_SCHEMA: list[tuple[str, Any]] = [
+    ("file_name", pl.String),
+    ("file_path", pl.String),
+    ("directory", pl.String),
+    ("relative_path", pl.String),
+    ("file_type", pl.String),
+    ("size_bytes", pl.Int64),
+    ("last_modified", pl.Datetime("us")),
+    ("created_date", pl.Datetime("us")),
+    ("is_directory", pl.Boolean),
+]
+"""Fixed output schema of the ``list_files`` node.
+
+Fixed on purpose: schema prediction must never walk the filesystem, so the columns
+cannot depend on the selected directory. ``file_path`` is the column a downstream
+Read node consumes; ``relative_path`` keeps partition-style folder structure usable.
+"""
+
+
+def list_files_schema() -> list[FlowfileColumn]:
+    """The ``list_files`` output schema as FlowfileColumns."""
+    return [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in LIST_FILES_SCHEMA]
+
+
+def _list_files_sandbox_root() -> Path | None:
+    """Run-time filesystem boundary for the ``list_files`` node.
+
+    Mirrors ``GET /files/directory_contents/`` exactly: the desktop app browses the
+    whole machine, every other mode is confined to the user-data directory. Enforcing
+    it here too matters because a flow can be run by the scheduler or the API, which
+    never pass through the browse route.
+    """
+    return None if is_electron_mode() else storage.user_data_directory
+
+
+def scan_directory_to_frame(settings: input_schema.NodeListFiles) -> pl.DataFrame:
+    """Walk ``settings.path`` and return one row per entry, in ``LIST_FILES_SCHEMA`` shape.
+
+    Raises ``HTTPException`` rather than a bare exception so the settings route reports a
+    usable message instead of a generic 419.
+    """
+    if not settings.path:
+        raise HTTPException(status_code=400, detail="No folder selected")
+
+    sandbox_root = _list_files_sandbox_root()
+    try:
+        explorer = SecureFileExplorer(settings.path, sandbox_root)
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail=f"Access denied: '{settings.path}' is outside the allowed directory"
+        ) from None
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Could not open folder '{settings.path}': {e}") from e
+
+    root = explorer.current_path
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=400, detail=f"Folder does not exist: {settings.path}")
+
+    entries = explorer.list_contents(
+        show_hidden=settings.include_hidden,
+        file_types=settings.file_types or None,
+        recursive=settings.recursive,
+        max_depth=settings.max_depth,
+    )
+    if not settings.include_directories:
+        entries = [e for e in entries if not e.is_directory]
+    if not settings.include_files:
+        entries = [e for e in entries if e.is_directory]
+    if settings.max_files is not None:
+        entries = entries[: settings.max_files]
+
+    rows = []
+    for entry in entries:
+        entry_path = Path(entry.path)
+        try:
+            relative_path = str(entry_path.relative_to(root))
+        except ValueError:
+            relative_path = entry.name
+        rows.append(
+            {
+                "file_name": entry.name,
+                "file_path": str(entry_path),
+                "directory": str(entry_path.parent),
+                "relative_path": relative_path,
+                "file_type": entry.file_type,
+                "size_bytes": entry.size,
+                "last_modified": entry.last_modified,
+                "created_date": entry.created_date,
+                "is_directory": entry.is_directory,
+            }
+        )
+    return pl.DataFrame(rows, schema=dict(LIST_FILES_SCHEMA))
 
 
 def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
@@ -6026,6 +6122,54 @@ class FlowGraph:
             self.add_node_to_starting_list(node)
             self._node_ids.append(input_file.node_id)
         return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_list_files(self, node_list_files: input_schema.NodeListFiles) -> None:
+        """Adds a source node that lists a directory's contents as a table.
+
+        The scan runs in core rather than on the worker: it is local filesystem
+        metadata (one ``iterdir``/``stat`` pass), not network I/O and not a dataset,
+        so there is nothing to offload and a CLI/scheduler run with no worker still
+        works. The schema is fixed (``LIST_FILES_SCHEMA``), so ``schema_callback``
+        never touches the disk and opening a flow costs no directory walk.
+        """
+        logger.info("Adding list files")
+        node_type = "list_files"
+
+        def schema_callback() -> list[FlowfileColumn]:
+            return list_files_schema()
+
+        def _func() -> FlowDataEngine:
+            return FlowDataEngine(
+                scan_directory_to_frame(node_list_files),
+                schema=schema_callback(),
+                number_of_records=None,
+            )
+
+        node = self.get_node(node_list_files.node_id)
+        if node:
+            node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_list_files
+            node.node_settings.cache_results = node_list_files.cache_results
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                node_list_files.node_id,
+                function=_func,
+                setting_input=node_list_files,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            node.user_provided_schema_callback = schema_callback
+            self._node_db[node_list_files.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_list_files.node_id)
 
     def add_manual_input(self, input_file: input_schema.NodeManualInput):
         """Adds a node for manual data entry.
