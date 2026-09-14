@@ -66,6 +66,24 @@
         "8081"
       ],
       "port": 8081
+    },
+    {
+      "name": "core-alt",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_OFFLOAD_TO_WORKER=0 poetry run flowfile_core --port 63590"
+      ],
+      "port": 63590
+    },
+    {
+      "name": "web-alt",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8082"
+      ],
+      "port": 8082
     }
   ]
 }

@@ -14,7 +14,7 @@ import polars as pl
 
 import engine
 from engine import state
-from engine.dtypes import to_json_safe_value
+from engine.dtypes import readable_data_type_group, to_json_safe_value
 
 _PRIMITIVE = (str, int, float, bool, type(None))
 
@@ -48,7 +48,8 @@ def test_to_json_safe_value_branches():
     assert to_json_safe_value(datetime.timedelta(seconds=90)) == 90.0
     dec = to_json_safe_value(Decimal("1.50"))
     assert isinstance(dec, float) and dec == 1.5
-    assert to_json_safe_value(b"hi") == "hi"
+    # Hex like core's preview: decoded text was indistinguishable from real data.
+    assert to_json_safe_value(b"hi") == "0x6869"
     # Primitives pass straight through.
     assert to_json_safe_value(7) == 7
     assert to_json_safe_value("ok") == "ok"
@@ -69,7 +70,7 @@ def test_fetch_preview_coerces_every_cell():
     assert row["t"] == "12:30:00"
     assert row["dur"] == 90.0
     assert row["dec"] == 1.5
-    assert row["bin"] == "hi"
+    assert row["bin"] == "0x6869"
     assert row["i"] == 7
     assert row["s"] == "ok"
 
@@ -94,3 +95,14 @@ def test_explore_data_shares_the_same_coercion():
     assert all(isinstance(v, _PRIMITIVE) for v in data_row.values()), data_row
     assert data_row["d"] == "2024-01-01"
     assert data_row["dec"] == 1.5
+
+
+def test_bytes_render_with_the_same_hex_preview_as_core():
+    assert to_json_safe_value(b"POINT") == "0x504F494E54"
+    assert to_json_safe_value(memoryview(b"\x01")) == "0x01"
+    assert to_json_safe_value(bytes(range(21))).endswith("\u2026 (21 bytes)")
+
+
+def test_extension_dtype_groups_by_its_storage_type_like_core():
+    assert readable_data_type_group("Extension('geoarrow.wkb', Binary, '{}')") == readable_data_type_group("Binary")
+    assert readable_data_type_group("Extension('geoarrow.wkt', String, '{}')") == "String"

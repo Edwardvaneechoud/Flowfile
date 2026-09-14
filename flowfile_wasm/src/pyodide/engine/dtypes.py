@@ -1,10 +1,23 @@
 import datetime
+import re
 from decimal import Decimal
 from typing import Any
 
 import polars as pl
 
 _DTYPE_STR_MAP: dict[str, Any] = {}
+
+_BINARY_PREVIEW_BYTES = 16
+# Mirrors core's _EXTENSION_DTYPE: Extension('<name>', <storage>, ...) → group by the storage token.
+_EXTENSION_DTYPE = re.compile(r"^Extension\('([^']*)',\s*([A-Za-z0-9_]+)")
+
+
+def _format_binary_preview(raw: bytes | bytearray | memoryview) -> str:
+    """Mirrors shared.delta_utils.format_binary_preview so a WKB cell reads the same in-browser."""
+    head = bytes(raw[:_BINARY_PREVIEW_BYTES]).hex().upper()
+    if len(raw) <= _BINARY_PREVIEW_BYTES:
+        return f"0x{head}"
+    return f"0x{head}\u2026 ({len(raw)} bytes)"
 
 
 def to_json_safe_value(v: Any) -> Any:
@@ -23,11 +36,8 @@ def to_json_safe_value(v: Any) -> Any:
         return v.total_seconds()
     if isinstance(v, Decimal):
         return float(v)
-    if isinstance(v, bytes | bytearray):
-        try:
-            return v.decode("utf-8", errors="replace")
-        except Exception:
-            return str(v)
+    if isinstance(v, bytes | bytearray | memoryview):
+        return _format_binary_preview(v)
     return v
 
 
@@ -89,7 +99,8 @@ def readable_data_type_group(data_type: str) -> str:
     and Binary deliberately fold into "Numeric" there. Parametric dtypes (e.g.
     'Datetime(...)') are matched on their base name.
     """
-    base = data_type.split("(")[0]
+    extension = _EXTENSION_DTYPE.match(data_type)
+    base = extension.group(2) if extension else data_type.split("(")[0]
     if base in ("Utf8", "VARCHAR", "CHAR", "NVARCHAR", "String"):
         return "String"
     if base in _NUMERIC_DTYPE_BASES:

@@ -1119,7 +1119,8 @@ class FlowDataEngine:
             if transform.data_type is not None
         )
 
-        actual_transforms = [c for c in idx_mapping if c[2] != dtypes[c[1]]]
+        # Compare base types: an Extension instance never equals its own class.
+        actual_transforms = [c for c in idx_mapping if c[2].base_type() != dtypes[c[1]]]
         transformations = [
             utils.define_pl_col_transformation(
                 col_name=transform[0], col_type=transform[2], source_type=dtypes[transform[1]]

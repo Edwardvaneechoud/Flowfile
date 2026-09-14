@@ -1,9 +1,17 @@
 <template>
   <div class="dp-col-header" @click="onHeaderClicked">
     <span class="dp-col-header__label" :title="params.displayName">{{ params.displayName }}</span>
-    <span v-if="params.dataType" class="dp-col-header__dtype" :title="params.dataType">{{
-      params.dataType
-    }}</span>
+    <span
+      v-if="params.dataType"
+      class="dp-col-header__dtype"
+      :class="{ 'dp-col-header__dtype--geometry': isGeometry }"
+      :title="isGeometry ? geometryTitle(params.dataType) : params.dataType"
+    >
+      <span v-if="isGeometry" class="dp-col-header__dtype-icon material-icons" aria-hidden="true">
+        {{ GEOMETRY_ICON }}
+      </span>
+      <span class="dp-col-header__dtype-text">{{ displayDataType(params.dataType) }}</span>
+    </span>
     <span v-if="sortDirection" class="dp-col-header__icon material-icons" aria-hidden="true">
       {{ sortDirection === "asc" ? "arrow_upward" : "arrow_downward" }}
     </span>
@@ -24,11 +32,22 @@
 // Custom AG Grid header: label + data-type pill + click-to-sort + a dedicated
 // ⓘ button that requests column statistics via grid context. The ⓘ is a
 // separate, deliberate click — stats compute never rides along on a sort click.
-// dataType arrives via headerComponentParams from the preview's table_schema.
-import { onBeforeUnmount, ref } from "vue";
+// dataType and semanticType arrive via headerComponentParams from the preview.
+import { computed, onBeforeUnmount, ref } from "vue";
 import type { IHeaderParams } from "@ag-grid-community/core";
+import type { SemanticType } from "../../../types/node.types";
+import {
+  GEOMETRY_ICON,
+  displayDataType,
+  geometryTitle,
+  isGeometryColumn,
+} from "../../../utils/geometry";
 
-const props = defineProps<{ params: IHeaderParams & { dataType?: string } }>();
+const props = defineProps<{
+  params: IHeaderParams & { dataType?: string; semanticType?: SemanticType | null };
+}>();
+
+const isGeometry = computed(() => isGeometryColumn({ semantic_type: props.params.semanticType }));
 
 const sortDirection = ref<"asc" | "desc" | null>(props.params.column.getSort() ?? null);
 
@@ -72,11 +91,12 @@ const onInfoClicked = (event: MouseEvent) => {
 }
 
 .dp-col-header__dtype {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   flex-shrink: 1;
   min-width: 0;
   max-width: 90px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 5px;
   border-radius: 7px;
@@ -88,6 +108,24 @@ const onInfoClicked = (event: MouseEvent) => {
   line-height: 13px;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.dp-col-header__dtype-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Same accent family as the List/Struct badges, so geometry reads as a sibling of Complex. */
+.dp-col-header__dtype--geometry {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent-dark);
+}
+
+.dp-col-header__dtype-icon {
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
 .dp-col-header__icon {

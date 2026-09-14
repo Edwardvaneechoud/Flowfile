@@ -1,5 +1,11 @@
 import { ref, Ref } from "vue";
-import { FileColumn, NodeSelect, SelectInput, TableExample } from "../../../../types/node.types";
+import {
+  FileColumn,
+  NodeSelect,
+  SelectInput,
+  SemanticType,
+  TableExample,
+} from "../../../../types/node.types";
 import axios from "axios";
 
 export const createSelectInput = (
@@ -87,6 +93,16 @@ export const sourceTypesFromSchema = (
   tableSchema: FileColumn[] | undefined,
 ): Record<string, string> =>
   Object.fromEntries((tableSchema ?? []).map((column) => [column.name, column.data_type]));
+
+/** old_name → upstream semantic type (only columns that carry one), so a picker can mark them. */
+export const sourceSemanticTypesFromSchema = (
+  tableSchema: FileColumn[] | undefined,
+): Record<string, SemanticType> =>
+  Object.fromEntries(
+    (tableSchema ?? []).flatMap((column) =>
+      column.semantic_type ? [[column.name, column.semantic_type]] : [],
+    ),
+  );
 
 /** Undo a data-type edit in place, keeping the same flag contract as applySelectPositions. */
 export const restoreSourceType = (selectInput: SelectInput, sourceType: string): SelectInput => {

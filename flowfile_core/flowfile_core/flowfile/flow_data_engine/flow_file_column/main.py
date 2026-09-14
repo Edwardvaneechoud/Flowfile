@@ -1,16 +1,33 @@
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 import polars as pl
 
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import DataTypeGroup, ReadableDataTypeGroup
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import (
+    DataTypeGroup,
+    ReadableDataTypeGroup,
+    SemanticType,
+)
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas import input_schema
+from shared.delta_utils import format_binary_preview
 
 MAX_STAT_VALUE_LENGTH = 200
+
+# pl.Extension stringifies as Extension('<name>', <storage>, <metadata>); capture name + storage base token.
+# TODO(polars-2): extension dtypes then survive IPC/Parquet by default; see tests/…/test_polars2_extension_dtypes.py.
+_EXTENSION_DTYPE = re.compile(r"^Extension\('([^']*)',\s*([A-Za-z0-9_]+)")
+
+
+def _stat_repr(value: Any) -> str:
+    """Bounded string form of a min/max bound; bytes use the shared hex preview encoding."""
+    if isinstance(value, bytes | bytearray | memoryview):
+        return format_binary_preview(value)[:MAX_STAT_VALUE_LENGTH]
+    return str(value)[:MAX_STAT_VALUE_LENGTH]
 
 
 @dataclass
@@ -25,6 +42,7 @@ class FlowfileColumn:
     number_of_unique_values: int
     example_values: str
     data_type_group: ReadableDataTypeGroup
+    semantic_type: SemanticType | None
     __sql_type: Any | None
     __is_unique: bool | None
     __nullable: bool | None
@@ -51,6 +69,7 @@ class FlowfileColumn:
         self.__perc_unique = None
         self.__stats_applied = False
         self.data_type_group = self.get_readable_datatype_group()
+        self.semantic_type = self.get_semantic_type()
 
     def __repr__(self):
         """
@@ -195,8 +214,8 @@ class FlowfileColumn:
         self.size = total_rows - null_count
         self.number_of_empty_values = null_count
         self.number_of_unique_values = -1 if n_unique is None else n_unique
-        self.min_value = None if min_value is None else str(min_value)[:MAX_STAT_VALUE_LENGTH]
-        self.max_value = None if max_value is None else str(max_value)[:MAX_STAT_VALUE_LENGTH]
+        self.min_value = None if min_value is None else _stat_repr(min_value)
+        self.max_value = None if max_value is None else _stat_repr(max_value)
         if isinstance(average_value, float):
             average_value = round(average_value, 4)
         self.average_value = None if average_value is None else str(average_value)[:MAX_STAT_VALUE_LENGTH]
@@ -233,6 +252,7 @@ class FlowfileColumn:
             size=None if null_count is None else self.size,
             data_type=str(self.data_type),
             data_type_group=self.data_type_group,
+            semantic_type=self.semantic_type,
             has_values=self.has_values,
             is_unique=self.is_unique,
             max_value=bound_repr(self.max_value),
@@ -280,10 +300,24 @@ class FlowfileColumn:
         else:
             return "str"
 
+    def _extension_parts(self) -> tuple[str, str] | None:
+        """(extension name, storage base token) for a pl.Extension dtype, else None."""
+        match = _EXTENSION_DTYPE.match(self.data_type)
+        return (match.group(1), match.group(2)) if match else None
+
+    def get_semantic_type(self) -> SemanticType | None:
+        """Only a declared GeoArrow extension dtype counts as geometry; values are never sniffed."""
+        extension = self._extension_parts()
+        if extension is not None and extension[0].lower().startswith("geoarrow."):
+            return "geometry"
+        return None
+
     def get_readable_datatype_group(self) -> ReadableDataTypeGroup:
         # Parameterized dtypes stringify with their inner type, e.g. "List(Int64)"
-        # or "Datetime(time_unit='us', ...)" — match on the base token.
-        base = self.data_type.split("(", 1)[0]
+        # or "Datetime(time_unit='us', ...)" — match on the base token. An extension
+        # dtype groups by its storage type.
+        extension = self._extension_parts()
+        base = extension[1] if extension else self.data_type.split("(", 1)[0]
         if base in ("Utf8", "VARCHAR", "CHAR", "NVARCHAR", "String"):
             return "String"
         elif base in ("boolean", "Boolean"):
@@ -330,6 +364,8 @@ class FlowfileColumn:
 
     def update_type_from_polars_type(self, pl_type: PlType):
         self.data_type = str(pl_type.pl_datatype.base_type())
+        self.data_type_group = self.get_readable_datatype_group()
+        self.semantic_type = self.get_semantic_type()
 
 
 def convert_stats_to_column_info(stats: list[dict]) -> list[FlowfileColumn]:

@@ -9,6 +9,10 @@ import type { AccessInfo } from "./sharing.types";
 
 type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
+// What the values mean beyond their storage dtype; core derives it from a declared
+// dtype only (a GeoArrow extension), never from sampled values.
+export type SemanticType = "geometry";
+
 // Column and Table Types
 
 // The statistics fields are null until actually computed — either never
@@ -26,6 +30,7 @@ export interface FileColumn {
   number_of_unique_values: number | null;
   size: number | null;
   data_type_group: DataTypeGroup;
+  semantic_type?: SemanticType | null;
 }
 
 export interface TableExample {

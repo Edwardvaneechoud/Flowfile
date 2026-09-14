@@ -58,8 +58,10 @@ def _staged_dict_to_flowfile_column(col: dict[str, Any]) -> Any:
     obj._FlowfileColumn__perc_unique = None
     try:
         obj.data_type_group = obj.get_readable_datatype_group()
+        obj.semantic_type = obj.get_semantic_type()
     except Exception:
         obj.data_type_group = None
+        obj.semantic_type = None
     return obj
 
 
