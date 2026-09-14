@@ -16,6 +16,7 @@ from flowfile_core.flowfile.flow_graph import (
     scan_directory_to_frame,
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas
 
 
@@ -206,6 +207,30 @@ class TestGraph:
         assert run_info.success, run_info.errors
         counted = graph.get_node(2).get_resulting_data().data_frame.collect()
         assert counted["number_of_records"][0] == 2
+
+
+class TestPersistence:
+    def test_survives_a_save_reload_round_trip(self, sample_tree, tmp_path):
+        graph = create_graph()
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="list_files"))
+        graph.add_list_files(
+            settings(sample_tree, file_types=["csv"], recursive=True, include_hidden=True, max_files=5)
+        )
+
+        yaml_path = tmp_path / "list_files_flow.yaml"
+        graph.save_flow(str(yaml_path))
+        loaded = open_flow(yaml_path)
+
+        reloaded = loaded.get_node(1).setting_input
+        assert isinstance(reloaded, input_schema.NodeListFiles)
+        assert reloaded.path == str(sample_tree)
+        assert reloaded.file_types == ["csv"]
+        assert (reloaded.recursive, reloaded.include_hidden, reloaded.max_files) == (True, True, 5)
+
+        run_info = loaded.run_graph()
+        assert run_info.success, run_info.errors
+        names = loaded.get_node(1).get_resulting_data().collect()["file_name"].to_list()
+        assert sorted(names) == [".hidden.csv", "a.csv", "c.csv"]
 
 
 class TestCodeExport:

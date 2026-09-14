@@ -37,7 +37,9 @@
             </el-select>
           </el-col>
         </el-row>
-        <div class="hint">Leave empty to list every file. Extensions are matched without the dot.</div>
+        <div class="hint">
+          Leave empty to list every file. Extensions are matched without the dot.
+        </div>
 
         <el-row align="middle" class="setting-row">
           <el-col :span="10" class="grid-content">Include</el-col>

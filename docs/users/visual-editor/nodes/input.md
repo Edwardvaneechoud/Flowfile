@@ -106,6 +106,51 @@ The **Cloud Storage Reader** node reads data directly from cloud object storage.
 
 ---
 
+### ![List Files](../../../assets/images/nodes/list_files.svg){ width="50" height="50" } List Files
+
+The **List Files** node turns a folder into a table — one row per file, with its path, size and timestamps. Use it to inventory a drop folder, filter down to the files you actually want, and feed their paths into whatever comes next.
+
+#### **Settings:**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Folder** | The folder to list. Accepts a flow parameter, e.g. `${data_dir}/incoming` |
+| **File types** | Extensions to keep (`csv`, `parquet`, …). Leave empty to list everything |
+| **Include** | Whether to list files, folders, or both |
+| **Hidden files** | Include dotfiles and hidden entries (off by default) |
+| **Search subfolders** | Descend into subfolders, up to **Max depth** |
+| **Max rows** | Cap the number of rows returned |
+
+#### **Output columns:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `file_name` | String | Name including the extension |
+| `file_path` | String | Absolute path — the column downstream readers consume |
+| `directory` | String | Absolute path of the containing folder |
+| `relative_path` | String | Path relative to the folder you selected |
+| `file_type` | String | Extension without the dot |
+| `size_bytes` | Int64 | Size on disk |
+| `last_modified` | Datetime | Last modification time |
+| `created_date` | Datetime | Creation time |
+| `is_directory` | Boolean | `true` for folders |
+
+The columns are fixed, so downstream nodes know the schema before the flow runs.
+
+#### **Usage:**
+
+1. Add a **List Files** node and browse to a folder
+2. Optionally filter by extension or turn on **Search subfolders**
+3. Run the flow to see the inventory
+
+!!! tip "Reading every file in the folder"
+    To *read* a folder of files rather than inventory it, the [Read Data](#read-data) node has a
+    **Directory** scan mode that reads them as one table. Reach for **List Files** when you want the
+    file metadata itself — to audit a folder, filter on size or modification date, or drive
+    downstream logic from the file list.
+
+---
+
 ### ![Manual Input](../../../assets/images/nodes/manual_input.svg){ width="50" height="50" } Manual Input
 
 The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.

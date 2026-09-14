@@ -783,6 +783,30 @@ def test_add_generic_settings():
     ), "Settings not set"
 
 
+def test_update_settings_list_files():
+    """Covers the string-convention dispatch: node_type -> add_list_files + NodeListFiles."""
+    import tempfile
+
+    directory = tempfile.mkdtemp()
+    (Path(directory) / "a.csv").write_text("x\n1\n")
+    (Path(directory) / "b.parquet").write_bytes(b"PAR1")
+
+    flow_id = ensure_clean_flow()
+    add_node_placeholder("list_files", node_id=1, flow_id=flow_id)
+    settings = input_schema.NodeListFiles(flow_id=flow_id, node_id=1, path=directory, file_types=["csv"])
+    r = client.post("/update_settings/", json=settings.model_dump(), params={"node_type": "list_files"})
+    assert r.status_code == 200, r.text
+
+    flow = flow_file_handler.get_flow(flow_id)
+    node = flow.get_node(1)
+    assert node.node_type == "list_files"
+    assert [c.column_name for c in node.get_predicted_schema()][:2] == ["file_name", "file_path"]
+
+    flow.run_graph()
+    data = node.get_resulting_data().collect()
+    assert data["file_name"].to_list() == ["a.csv"]
+
+
 def test_update_settings_invalid_identifier_returns_422():
     flow_id = ensure_clean_flow()
     add_node_placeholder("database_writer", flow_id=flow_id)
