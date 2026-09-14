@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
+from flowfile_core.fileExplorer import funcs as file_explorer_funcs
+from flowfile_core.fileExplorer.funcs import DirectoryScanCancelledError
 from flowfile_core.flowfile.flow_graph import (
     FlowGraph,
     add_connection,
@@ -207,6 +209,163 @@ class TestGraph:
         assert run_info.success, run_info.errors
         counted = graph.get_node(2).get_resulting_data().data_frame.collect()
         assert counted["number_of_records"][0] == 2
+
+
+class TestCancellation:
+    """The walk runs in core, so it must poll for cancellation itself."""
+
+    @pytest.fixture
+    def many_files(self, tmp_path: Path) -> Path:
+        for i in range(40):
+            (tmp_path / f"f{i:03d}.csv").write_text("v\n1\n")
+        return tmp_path
+
+    def test_cancel_check_aborts_the_walk(self, many_files):
+        with pytest.raises(DirectoryScanCancelledError):
+            scan_directory_to_frame(settings(many_files), cancel_check=lambda: True)
+
+    def test_cancel_check_is_polled_per_entry(self, many_files):
+        """Polling granularity is one entry, so a huge folder still aborts promptly."""
+        calls = {"n": 0}
+
+        def cancel_after_five() -> bool:
+            calls["n"] += 1
+            return calls["n"] >= 5
+
+        with pytest.raises(DirectoryScanCancelledError):
+            scan_directory_to_frame(settings(many_files), cancel_check=cancel_after_five)
+        assert calls["n"] == 5, "walk kept going past the cancel"
+
+    def test_no_cancel_check_is_unaffected(self, many_files):
+        assert scan_directory_to_frame(settings(many_files)).height == 40
+        assert scan_directory_to_frame(settings(many_files), cancel_check=lambda: False).height == 40
+
+    def test_cancelling_a_run_stops_the_node_mid_walk(self, many_files, monkeypatch):
+        """Regression: the scan used to run to completion after cancel was requested."""
+        graph = create_graph()
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="list_files"))
+        graph.add_list_files(settings(many_files))
+
+        original = file_explorer_funcs.FileInfo.from_path
+        seen = {"n": 0}
+
+        def cancel_partway(cls_path, *args, **kwargs):
+            seen["n"] += 1
+            if seen["n"] == 5:
+                graph.cancel()
+            return original(cls_path, *args, **kwargs)
+
+        monkeypatch.setattr(file_explorer_funcs.FileInfo, "from_path", cancel_partway)
+
+        run_info = graph.run_graph()
+        assert not run_info.success
+        assert graph.get_node(1).node_stats.is_canceled
+        assert seen["n"] < 40, f"walk visited {seen['n']}/40 entries after cancel"
+        # A cancelled node reports success=None (cancelled), never False (failed).
+        assert [r.success for r in run_info.node_step_result] == [None]
+
+
+class TestCancellationHardening:
+    """Regressions found reviewing the first cut of the cancel fix."""
+
+    @pytest.fixture
+    def empty_dirs(self, tmp_path: Path) -> Path:
+        """A tree that is all directories and no files: the per-entry poll never fires."""
+        for i in range(200):
+            (tmp_path / f"d{i:03d}").mkdir()
+        return tmp_path
+
+    def test_queue_loop_polls_on_a_tree_of_empty_directories(self, empty_dirs):
+        """Without a poll in the ``while dirs_to_process`` loop this ran to completion."""
+        calls = {"n": 0}
+
+        def cancel_after(n: int):
+            def check() -> bool:
+                calls["n"] += 1
+                return calls["n"] > n
+
+            return check
+
+        with pytest.raises(DirectoryScanCancelledError):
+            scan_directory_to_frame(
+                settings(empty_dirs, recursive=True, include_directories=True),
+                cancel_check=cancel_after(210),
+            )
+        assert calls["n"] < 500, "queue loop kept walking after the cancel"
+
+    def test_a_cancelled_run_does_not_poison_the_next_preview(self, sample_tree):
+        """The graph flag is only cleared at the *next* run, so it must be ignored when idle."""
+        graph = create_graph()
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="list_files"))
+        graph.add_list_files(settings(sample_tree, file_types=["csv"]))
+
+        graph.flow_settings.is_running = True
+        graph.cancel()
+        graph.flow_settings.is_running = False
+        graph.get_node(1)._execution_state.is_canceled = False
+
+        # Materialising outside a run (preview / fetch) must still work.
+        data = graph.get_node(1).get_resulting_data().collect()
+        assert data["file_name"].to_list() == ["a.csv"]
+
+    def test_graph_cancel_is_mirrored_onto_the_node(self, sample_tree, monkeypatch):
+        """FlowGraph.cancel sets the graph flag first; the node flag is what reclassifies."""
+        graph = create_graph()
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="list_files"))
+        graph.add_list_files(settings(sample_tree))
+        node = graph.get_node(1)
+
+        # Simulate observing the graph flag before FlowNode.cancel() reached this node.
+        graph.flow_settings.is_running = True
+        graph.flow_settings.is_canceled = True
+        node._execution_state.is_canceled = False
+
+        with pytest.raises(DirectoryScanCancelledError):
+            node.get_resulting_data()
+        assert node._execution_state.is_canceled, "node flag not mirrored; executor would log a failure"
+
+    def test_cancelled_node_is_not_stamped_with_an_invalid_graph_error(self, many_files_for_error, monkeypatch):
+        graph = create_graph()
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="list_files"))
+        graph.add_list_files(settings(many_files_for_error))
+
+        original = file_explorer_funcs.FileInfo.from_path
+        seen = {"n": 0}
+
+        def cancel_partway(cls_path, *args, **kwargs):
+            seen["n"] += 1
+            if seen["n"] == 5:
+                graph.cancel()
+            return original(cls_path, *args, **kwargs)
+
+        monkeypatch.setattr(file_explorer_funcs.FileInfo, "from_path", cancel_partway)
+        graph.run_graph()
+
+        errors = graph.get_node(1).results.errors
+        assert errors is None or "invalid graph" not in errors, f"misleading error on a cancel: {errors!r}"
+
+    @pytest.fixture
+    def many_files_for_error(self, tmp_path: Path) -> Path:
+        for i in range(40):
+            (tmp_path / f"f{i:03d}.csv").write_text("v\n1\n")
+        return tmp_path
+
+    def test_symlink_cycle_does_not_expand(self, tmp_path):
+        """A symlink to an ancestor yields a fresh Path per level, so the visited
+        set must key on the real path or the cycle is walked once per depth level."""
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / "a.csv").write_text("v\n1\n")
+        (data / "backup").symlink_to(data, target_is_directory=True)
+
+        df = scan_directory_to_frame(settings(data, recursive=True, max_depth=12))
+        assert df["file_name"].to_list() == ["a.csv"], "symlink cycle expanded"
+
+    def test_cancellation_error_is_telemetry_classified(self):
+        """The allowlist already names the DB read's twin; an unlisted class reports OtherError."""
+        from flowfile_core.telemetry import ERROR_CLASS_ALLOWLIST
+
+        assert "DirectoryScanCancelledError" in ERROR_CLASS_ALLOWLIST
 
 
 class TestPersistence:

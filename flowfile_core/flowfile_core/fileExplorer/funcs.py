@@ -1,6 +1,7 @@
 import os
 import re
 import string
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -10,6 +11,10 @@ from pydantic import BaseModel
 
 from flowfile_core.configs import settings
 from shared.storage_config import storage
+
+
+class DirectoryScanCancelledError(Exception):
+    """Raised when a directory walk is abandoned because ``cancel_check`` fired."""
 
 
 class FileInfo(BaseModel):
@@ -188,10 +193,19 @@ class SecureFileExplorer:
         reverse: bool = False,
         exclude_patterns: list[str] | None = None,
         max_depth: int = 5,  # Add depth limit for recursive operations
+        cancel_check: Callable[[], bool] | None = None,
     ) -> list[FileInfo]:
-        """List contents with security-conscious filtering."""
+        """List contents with security-conscious filtering.
+
+        ``cancel_check`` is polled once per entry so a long walk over a big or slow
+        tree can be abandoned; it raises ``DirectoryScanCancelledError`` when it fires.
+        """
         contents: list[FileInfo] = []
         excluded_paths: set[str] = set()
+
+        def check_cancelled() -> None:
+            if cancel_check is not None and cancel_check():
+                raise DirectoryScanCancelledError("Directory scan cancelled")
 
         if exclude_patterns:
             for pattern in exclude_patterns:
@@ -221,15 +235,25 @@ class SecureFileExplorer:
                 processed = set()
 
                 while dirs_to_process:
+                    check_cancelled()
                     current_dir, depth = dirs_to_process.pop(0)
 
-                    if current_dir in processed or depth > max_depth:
+                    # Key the visited set on the REAL path: a symlink pointing at an
+                    # ancestor yields a fresh Path every level, so an unresolved key
+                    # never repeats and the cycle is walked once per depth level.
+                    try:
+                        dir_key = Path(os.path.realpath(current_dir))
+                    except OSError:
                         continue
 
-                    processed.add(current_dir)
+                    if dir_key in processed or depth > max_depth:
+                        continue
+
+                    processed.add(dir_key)
 
                     try:
                         for item in current_dir.iterdir():
+                            check_cancelled()
                             if not self._is_path_safe(item):
                                 continue
 
@@ -246,6 +270,7 @@ class SecureFileExplorer:
                         continue
             else:
                 for item in self.current_path.iterdir():
+                    check_cancelled()
                     if not self._is_path_safe(item):
                         continue
 

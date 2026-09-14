@@ -85,6 +85,7 @@ ERROR_CLASS_ALLOWLIST = frozenset(
         "CodegenError",
         "CustomNodeExecError",
         "DatabaseReadCancelledError",
+        "DirectoryScanCancelledError",
         "DirectoryScanUnsupportedError",
         "KernelCodegenError",
         "KernelDependencyError",
