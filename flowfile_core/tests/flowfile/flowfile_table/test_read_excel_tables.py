@@ -298,3 +298,81 @@ def test_blank_header_cell_is_not_named_none(tmp_path):
     )
     flowfile_table = FlowDataEngine.create_from_path(received_table)
     assert flowfile_table.columns == ["a", "b", "_unnamed_column_2", "d"]
+
+
+COMPLEX_FILE = SUPPORT_FILES / "complex_excel_test.xlsx"
+
+
+def complex_table(sheet_name: str, **settings) -> ReceivedTable:
+    """A read of one sheet of the awkward-shapes fixture (see support_files/make_complex_excel_test.py)."""
+    return ReceivedTable(
+        path=str(COMPLEX_FILE),
+        name="complex_excel_test.xlsx",
+        file_type="excel",
+        table_settings=InputExcelTable(sheet_name=sheet_name, **settings),
+    )
+
+
+def test_complex_sales_report_ignores_the_stray_cell(tmp_path):
+    """A title block above the table and a note in K1 must not widen the table to 11 columns."""
+    flowfile_table = FlowDataEngine.create_from_path(complex_table("Sales Report", start_row=4))
+    assert flowfile_table.columns == ["Region", "Rep", "Q1", "Q2", "Q3", "Q4", "Total", "Margin %"]
+
+
+def test_complex_sales_report_with_type_inference_keeps_cents():
+    """A quarter column mixing whole and fractional amounts must widen to Float64, not fail on the float."""
+    flowfile_table = FlowDataEngine.create_from_path(
+        complex_table("Sales Report", start_row=4, type_inference=True)
+    )
+    dtypes = {name: str(dtype) for name, dtype in flowfile_table.data_frame.collect_schema().items()}
+    assert dtypes["Q3"] == "Float64"
+    assert 162500.25 in [row["Q3"] for row in flowfile_table.to_pylist()]
+
+
+def test_complex_raw_export_names_blank_and_duplicate_headers():
+    """A blank header cell and a repeated one both have to survive as usable, distinct names."""
+    flowfile_table = FlowDataEngine.create_from_path(complex_table("Raw Export"))
+    assert flowfile_table.columns == [
+        "order_id",
+        "customer",
+        "_unnamed_column_2",
+        "amount",
+        "amount_v2",
+        "ordered_at",
+        "qty",
+        "active",
+    ]
+
+
+def test_complex_inventory_reads_despite_excel_error_values():
+    """unit_cost holds floats, an int and '#N/A'; the mixed column becomes text rather than failing."""
+    flowfile_table = FlowDataEngine.create_from_path(complex_table("Inventory"))
+    assert flowfile_table.columns == ["sku", "location", "on_hand", "reorder_at", "unit_cost", "status"]
+    assert "#N/A" in [row["unit_cost"] for row in flowfile_table.to_pylist()]
+
+
+def test_complex_timesheet_header_below_a_title_row():
+    flowfile_table = FlowDataEngine.create_from_path(complex_table("Timesheet 2026", start_row=2))
+    assert flowfile_table.columns == ["employee", "mon", "tue", "wed", "thu", "fri", "notes"]
+
+
+def test_complex_headers_only_sheet_yields_no_rows():
+    flowfile_table = FlowDataEngine.create_from_path(complex_table("Headers Only"))
+    assert flowfile_table.columns == ["col_a", "col_b", "col_c"]
+    assert flowfile_table.count() == 0
+
+
+def test_complex_long_tail_reads_every_row():
+    flowfile_table = FlowDataEngine.create_from_path(complex_table("Long Tail"))
+    assert flowfile_table.count() == 2000
+
+
+def test_complex_sales_report_matches_between_core_and_worker():
+    """The fixture is the cross-service check: both sides read it through shared.excel_reader."""
+    local = FlowDataEngine.create_from_path(complex_table("Sales Report", start_row=4))
+    remote = FlowDataEngine.create_from_path_worker(
+        complex_table("Sales Report", start_row=4), flow_id=-1, node_id=-1
+    )
+    remote.collect()
+    assert remote.columns == local.columns
+    assert remote.to_pylist() == local.to_pylist()

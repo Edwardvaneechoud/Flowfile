@@ -102,6 +102,15 @@
         "FLOWFILE_CORE_PORT=63592 npm run dev:web --prefix flowfile_frontend -- --port 8083"
       ],
       "port": 8083
+    },
+    {
+      "name": "web-verify",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8084"
+      ],
+      "port": 8084
     }
   ]
 }

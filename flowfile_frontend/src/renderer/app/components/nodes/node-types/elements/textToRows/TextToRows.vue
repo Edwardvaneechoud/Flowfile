@@ -182,7 +182,7 @@ label {
 
 input {
   padding: 3px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-size: 14px;
   width: 100%;

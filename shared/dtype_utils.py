@@ -29,6 +29,22 @@ def standardize_col_dtype(vals):
         return [convert_to_string(v) for v in vals]
 
 
+def make_column_constructible(vals):
+    """Reconcile the one case ``standardize_col_dtype`` deliberately leaves mixed: int + float.
+
+    Polars infers a column's dtype from its leading values and then rejects the first value that
+    disagrees, so ``[141000, 87500, 162500.25]`` becomes Int64 and raises on the float. A purely
+    numeric column is promoted to float (widening, never truncating); anything else mixed in
+    alongside the numbers falls back to the stringification every other mixed column already gets.
+    """
+    types = set(type(val) for val in vals if val is not None)
+    if not (int in types and float in types):
+        return vals
+    if types <= {int, float}:
+        return [None if val is None else float(val) for val in vals]
+    return [convert_to_string(v) for v in vals]
+
+
 def create_pl_df_type_save(raw_data: Iterable[Iterable], orient: str = "row") -> pl.DataFrame:
     """
         orient : {'col', 'row'}, default None
@@ -41,5 +57,5 @@ def create_pl_df_type_save(raw_data: Iterable[Iterable], orient: str = "row") ->
     """
     if orient == "row":
         raw_data = zip(*raw_data, strict=False)
-    raw_data = [standardize_col_dtype(values) for values in raw_data]
+    raw_data = [make_column_constructible(standardize_col_dtype(values)) for values in raw_data]
     return pl.DataFrame(raw_data, orient="col")
