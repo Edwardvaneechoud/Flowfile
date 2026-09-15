@@ -12,7 +12,7 @@ A flow replaces that with something that can be *seen*: every step a labeled nod
 
 ## 2. Know your toolbox
 
-Most flows lean on the same five nodes: Read data, Filter data, Formula, Join, and Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), and the [node reference](visual-editor/nodes/index.md) covers the rest — [Input](visual-editor/nodes/input.md), [Transform](visual-editor/nodes/transform.md), [Combine](visual-editor/nodes/combine.md), [Aggregate](visual-editor/nodes/aggregate.md), [Output](visual-editor/nodes/output.md), [Machine Learning](visual-editor/nodes/ml.md) — when you need a less common one.
+Most flows lean on the same five nodes: Read data, Filter data, Formula, Join, and Group by. Node names say what they do to the data (*Drop duplicates*, *Text to rows*, *Fuzzy match*), and [Data Actions](visual-editor/nodes/index.md) lists every one of them — [Input Sources](visual-editor/nodes/input.md), [Transformations](visual-editor/nodes/transform.md), [Combine Operations](visual-editor/nodes/combine.md), [Aggregations](visual-editor/nodes/aggregate.md), [Machine Learning](visual-editor/nodes/ml.md), [Output Operations](visual-editor/nodes/output.md) — with a lookup by what you want to do.
 
 ![Flowfile's node palette, grouped into its seven categories — Input Sources, Transformations, Combine Operations, Aggregations, Machine Learning, Output Operations, User Defined Operations — with the five everyday workhorses (Read data, Filter data, Formula, Join, Group by) highlighted in cyan and the rest dimmed.](../assets/images/guides/building-flows/node-palette-annotated.svg)
 

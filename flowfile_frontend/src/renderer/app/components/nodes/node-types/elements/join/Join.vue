@@ -138,7 +138,8 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 type JoinType = "inner" | "left" | "right" | "full" | "semi" | "anti" | "cross";
 
-const joinTypes: JoinType[] = ["inner", "left", "right", "full", "semi", "anti", "cross"];
+// "cross" is excluded: the backend's JoinKeyStrategy rejects it on a join node.
+const joinTypes: JoinType[] = ["inner", "left", "right", "full", "semi", "anti"];
 
 const JOIN_TYPES_WITHOUT_COLUMN_SELECTION: JoinType[] = ["anti", "semi"];
 

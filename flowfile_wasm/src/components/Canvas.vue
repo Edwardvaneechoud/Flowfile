@@ -640,7 +640,7 @@ function findNodeDef(type: string): NodeDefinition | undefined {
 // node's heading anchor. Nodes without a documented section omit docsAnchor and land
 // on the category page.
 function nodeDocsUrl(category: NodeCategory, node: NodeDefinition): string {
-  const base = category.docsUrl ?? ''
+  const base = node.docsUrl ?? category.docsUrl ?? ''
   return node.docsAnchor ? `${base}#${node.docsAnchor}` : base
 }
 
